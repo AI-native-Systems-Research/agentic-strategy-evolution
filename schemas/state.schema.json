@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/state.schema.json",
+  "title": "Investigation State",
+  "description": "Current phase, family, and iteration — the investigation checkpoint.",
+  "type": "object",
+  "required": ["phase", "iteration", "run_id", "family", "timestamp"],
+  "additionalProperties": false,
+  "properties": {
+    "phase": {
+      "type": "string",
+      "enum": [
+        "INIT", "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+        "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+        "TUNING", "EXTRACTION", "DONE"
+      ],
+      "description": "Current state machine phase."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Current iteration number (0 = baseline)."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique campaign identifier."
+    },
+    "family": {
+      "type": ["string", "null"],
+      "description": "Current mechanism family under investigation, null before framing."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last state update."
+    }
+  }
+}

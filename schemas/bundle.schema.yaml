@@ -1,0 +1,62 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/bundle.schema.yaml"
+title: Hypothesis Bundle
+description: >
+  A structured set of falsifiable hypotheses (arms) designed to test a mechanism.
+  Each arm is a (prediction, mechanism, diagnostic) triple.
+
+type: object
+required: [metadata, arms]
+additionalProperties: false
+
+properties:
+  metadata:
+    type: object
+    required: [iteration, family, research_question]
+    additionalProperties: false
+    properties:
+      iteration:
+        type: integer
+        minimum: 1
+      family:
+        type: string
+        minLength: 1
+      research_question:
+        type: string
+        minLength: 1
+
+  arms:
+    type: array
+    minItems: 1
+    items:
+      $ref: "#/$defs/arm"
+
+$defs:
+  arm:
+    type: object
+    required: [type, prediction, mechanism, diagnostic]
+    additionalProperties: false
+    properties:
+      type:
+        type: string
+        enum:
+          - h-main
+          - h-ablation
+          - h-super-additivity
+          - h-control-negative
+          - h-robustness
+      component:
+        type: string
+        description: "Component name, used for h-ablation arms."
+      prediction:
+        type: string
+        minLength: 1
+        description: "Quantitative claim with measurable success/failure threshold."
+      mechanism:
+        type: string
+        minLength: 1
+        description: "Causal explanation of how/why."
+      diagnostic:
+        type: string
+        minLength: 1
+        description: "What to investigate if the prediction is wrong."

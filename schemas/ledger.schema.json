@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/ledger.schema.json",
+  "title": "Investigation Ledger",
+  "description": "Append-only log: one record per completed iteration.",
+  "type": "object",
+  "required": ["iterations"],
+  "additionalProperties": false,
+  "properties": {
+    "iterations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ledger_row" }
+    }
+  },
+  "$defs": {
+    "ledger_row": {
+      "type": "object",
+      "required": [
+        "iteration", "family", "timestamp", "candidate_id",
+        "h_main_result", "ablation_results", "control_result",
+        "robustness_result", "prediction_accuracy",
+        "principles_extracted", "frontier_update"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "iteration": { "type": "integer", "minimum": 0 },
+        "family": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "candidate_id": { "type": "string" },
+        "h_main_result": {
+          "type": ["string", "null"],
+          "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED", null]
+        },
+        "ablation_results": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED"]
+          }
+        },
+        "control_result": {
+          "type": ["string", "null"],
+          "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED", null]
+        },
+        "robustness_result": {
+          "type": ["string", "null"],
+          "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED", null]
+        },
+        "prediction_accuracy": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/accuracy" }
+          ]
+        },
+        "principles_extracted": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/principle_ref" }
+        },
+        "frontier_update": { "type": ["string", "null"] }
+      }
+    },
+    "accuracy": {
+      "type": "object",
+      "required": ["arms_correct", "arms_total", "accuracy_pct"],
+      "additionalProperties": false,
+      "properties": {
+        "arms_correct": { "type": "integer", "minimum": 0 },
+        "arms_total": { "type": "integer", "minimum": 1 },
+        "accuracy_pct": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "principle_ref": {
+      "type": "object",
+      "required": ["id", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string", "enum": ["INSERT", "UPDATE", "PRUNE"] }
+      }
+    }
+  }
+}

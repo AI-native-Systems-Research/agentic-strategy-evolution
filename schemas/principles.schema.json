@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/principles.schema.json",
+  "title": "Principle Store",
+  "description": "Living knowledge base of extracted principles. Supports insert, update, and prune operations.",
+  "type": "object",
+  "required": ["principles"],
+  "additionalProperties": false,
+  "properties": {
+    "principles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/principle" }
+    }
+  },
+  "$defs": {
+    "principle": {
+      "type": "object",
+      "required": [
+        "id", "statement", "confidence", "regime", "evidence",
+        "contradicts", "extraction_iteration", "mechanism",
+        "applicability_bounds", "superseded_by", "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "statement": { "type": "string", "minLength": 1 },
+        "confidence": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "regime": { "type": "string" },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "contradicts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "extraction_iteration": { "type": "integer", "minimum": 0 },
+        "mechanism": { "type": "string" },
+        "applicability_bounds": { "type": "string" },
+        "superseded_by": { "type": ["string", "null"] },
+        "status": {
+          "type": "string",
+          "enum": ["active", "updated", "pruned"]
+        }
+      }
+    }
+  }
+}

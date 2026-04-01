@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/findings.schema.json",
+  "title": "Experiment Findings",
+  "description": "Prediction-vs-outcome table with discrepancy analysis for one iteration.",
+  "type": "object",
+  "required": ["iteration", "bundle_ref", "arms", "discrepancy_analysis"],
+  "additionalProperties": false,
+  "properties": {
+    "iteration": { "type": "integer", "minimum": 1 },
+    "bundle_ref": { "type": "string", "minLength": 1 },
+    "arms": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/arm_result" }
+    },
+    "discrepancy_analysis": { "type": "string" }
+  },
+  "$defs": {
+    "arm_result": {
+      "type": "object",
+      "required": ["arm_type", "predicted", "observed", "status", "error_type", "diagnostic_note"],
+      "additionalProperties": false,
+      "properties": {
+        "arm_type": {
+          "type": "string",
+          "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness"]
+        },
+        "predicted": { "type": "string", "minLength": 1 },
+        "observed": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED"]
+        },
+        "error_type": {
+          "type": ["string", "null"],
+          "enum": ["direction", "magnitude", "regime", null]
+        },
+        "diagnostic_note": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
