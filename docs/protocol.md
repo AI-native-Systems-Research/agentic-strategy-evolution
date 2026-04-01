@@ -62,7 +62,7 @@ The ledger records one row per completed iteration, including prediction accurac
 
 ### Phase 4: Bayesian Parameter Optimization
 
-For confirmed mechanisms only. The Executor uses Gaussian process optimization over the parameter space. This separates mechanism design (Phase 2) from parameter tuning, ensuring fair comparisons.
+For confirmed mechanisms only. The protocol calls for Gaussian process optimization over the parameter space (e.g., 30-50 evaluations per strategy across 3+ seeds). This separates mechanism design (Phase 2) from parameter tuning, ensuring fair comparisons.
 
 If H-main was refuted, this phase is skipped entirely (fast-fail).
 
@@ -145,7 +145,9 @@ Reviews follow a convergence protocol:
 5. Re-run the full review after revision
 6. Maximum 10 rounds per gate
 
-SUGGESTION-level items do not block advancement. Only CRITICAL and IMPORTANT findings require resolution.
+SUGGESTION-level items do not block advancement. Only CRITICAL findings block the gate. IMPORTANT findings are surfaced to the human reviewer but do not prevent advancement to the gate.
+
+> **Note:** The specific perspective counts (5 for design, 10 for findings) and the 10-round maximum are protocol targets. The Phase 1 orchestrator skeleton dispatches reviews individually; enforcement of these counts is deferred to Phase 2 (agent prompts).
 
 ### Review Gates
 
@@ -194,6 +196,13 @@ INIT -> FRAMING -> DESIGN -> DESIGN_REVIEW -> HUMAN_DESIGN_GATE
   -> RUNNING -> FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
   -> TUNING (if H-main confirmed) or EXTRACTION (if refuted)
   -> EXTRACTION -> DESIGN (next iteration) or DONE
+
+Backward/looping transitions:
+  DESIGN_REVIEW -> DESIGN         (CRITICAL findings in review)
+  HUMAN_DESIGN_GATE -> DESIGN     (human rejects)
+  FINDINGS_REVIEW -> RUNNING      (CRITICAL findings in review)
+  HUMAN_FINDINGS_GATE -> RUNNING  (human rejects)
+  EXTRACTION -> DESIGN            (next iteration, increments counter)
 ```
 
 ### Agent Roles

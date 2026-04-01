@@ -19,6 +19,49 @@ class TestStateTransitions:
         assert "DONE" not in TRANSITIONS
 
 
+class TestEngineLoadErrors:
+    def test_missing_state_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            Engine(tmp_path)
+
+    def test_corrupt_state_file_raises(self, tmp_path):
+        (tmp_path / "state.json").write_text("{invalid json")
+        with pytest.raises(ValueError, match="Corrupt state.json"):
+            Engine(tmp_path)
+
+    def test_missing_keys_raises(self, tmp_path):
+        (tmp_path / "state.json").write_text('{"phase": "INIT"}')
+        with pytest.raises(ValueError, match="missing required keys"):
+            Engine(tmp_path)
+
+    def test_transition_from_unknown_state_raises(self, tmp_path):
+        state = {
+            "phase": "BOGUS",
+            "iteration": 0,
+            "run_id": "test",
+            "family": None,
+            "timestamp": "2026-04-01T00:00:00Z",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+        with pytest.raises(ValueError, match="Unknown state"):
+            engine.transition("FRAMING")
+
+    def test_transition_updates_timestamp(self, tmp_path):
+        state = {
+            "phase": "INIT",
+            "iteration": 0,
+            "run_id": "test",
+            "family": None,
+            "timestamp": "2026-04-01T00:00:00Z",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+        old_ts = engine.state["timestamp"]
+        engine.transition("FRAMING")
+        assert engine.state["timestamp"] != old_ts
+
+
 class TestEngine:
     @pytest.fixture
     def work_dir(self, tmp_path):
@@ -93,6 +136,7 @@ class TestEngine:
             engine.transition(s)
         engine.transition("DESIGN")  # criticals found, loop back
         assert engine.state["phase"] == "DESIGN"
+        assert engine.state["iteration"] == 0  # must NOT increment
 
     def test_findings_review_criticals_loop_back(self, work_dir):
         engine = Engine(work_dir)

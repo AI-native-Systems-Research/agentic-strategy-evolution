@@ -1,12 +1,15 @@
 """Fast-fail rules for the Nous orchestrator.
 
-Pure functions: take findings, return action. No side effects.
+Pure functions: take findings, return recommended action for the orchestrator.
+The caller is responsible for acting on the returned FastFailAction.
 
 Rules (in priority order):
-1. H-main refuted -> skip remaining arms, go to EXTRACTION
-2. H-control-negative fails -> mechanism confounded, return to DESIGN
-3. Single dominant component (>80% of total effect) -> SIMPLIFY
+1. H-main refuted -> caller should skip remaining arms, go to EXTRACTION
+2. H-control-negative fails -> caller should return to DESIGN (mechanism confounded)
+3. Single dominant component (>80% of total effect) -> caller should SIMPLIFY
 4. Otherwise -> CONTINUE normally
+
+Callers must validate findings against findings.schema.json before calling.
 """
 from enum import Enum
 

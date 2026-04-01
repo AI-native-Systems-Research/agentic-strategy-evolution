@@ -1,8 +1,8 @@
 """Agent dispatch for the Nous orchestrator.
 
-Loads prompt template, invokes LLM API (or stub), writes output.
-Default: StubDispatcher that produces valid schema-conformant artifacts
-without calling any LLM.
+Real dispatcher (future): loads prompt template, invokes LLM API, writes output.
+Phase 1: StubDispatcher produces valid schema-conformant artifacts without
+calling any LLM, enabling end-to-end testing of the orchestrator loop.
 """
 import json
 from pathlib import Path

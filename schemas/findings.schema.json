@@ -7,14 +7,20 @@
   "required": ["iteration", "bundle_ref", "arms", "discrepancy_analysis"],
   "additionalProperties": false,
   "properties": {
-    "iteration": { "type": "integer", "minimum": 1 },
+    "iteration": { "type": "integer", "minimum": 1, "description": "Iteration number (starts at 1; iteration 0 is the baseline with no experiment)." },
     "bundle_ref": { "type": "string", "minLength": 1 },
     "arms": {
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/arm_result" }
     },
-    "discrepancy_analysis": { "type": "string" }
+    "discrepancy_analysis": { "type": "string" },
+    "dominant_component_pct": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Percentage of total effect from single dominant component, if detected. Triggers SIMPLIFY fast-fail when >80%."
+    }
   },
   "$defs": {
     "arm_result": {

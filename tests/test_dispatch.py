@@ -74,6 +74,26 @@ class TestStubDispatcher:
         assert len(result["principles"]) == 1
         jsonschema.validate(result, _load_schema("principles.schema.json"))
 
+    def test_dispatch_extractor_creates_new_file(self, work_dir):
+        dispatcher = StubDispatcher(work_dir)
+        output_path = work_dir / "new_principles.json"
+        # Do NOT pre-create the file
+        dispatcher.dispatch(
+            "extractor", "extract", output_path=output_path, iteration=1,
+        )
+        result = json.loads(output_path.read_text())
+        assert len(result["principles"]) == 1
+
+    def test_dispatch_extractor_accumulates(self, work_dir):
+        (work_dir / "principles.json").write_text('{"principles": []}')
+        dispatcher = StubDispatcher(work_dir)
+        path = work_dir / "principles.json"
+        dispatcher.dispatch("extractor", "extract", output_path=path, iteration=1)
+        dispatcher.dispatch("extractor", "extract", output_path=path, iteration=2)
+        result = json.loads(path.read_text())
+        assert len(result["principles"]) == 2
+        assert result["principles"][0]["id"] != result["principles"][1]["id"]
+
     def test_dispatch_unknown_role_rejected(self, work_dir):
         dispatcher = StubDispatcher(work_dir)
         with pytest.raises(ValueError, match="Unknown role"):

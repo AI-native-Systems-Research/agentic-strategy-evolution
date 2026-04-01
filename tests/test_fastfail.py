@@ -67,3 +67,16 @@ class TestFastFail:
             ]
         }
         assert check_fast_fail(findings) == FastFailAction.CONTINUE
+
+    def test_exactly_80_does_not_simplify(self):
+        findings = {
+            "arms": [{"arm_type": "h-main", "status": "CONFIRMED"}],
+            "dominant_component_pct": 80.0,
+        }
+        assert check_fast_fail(findings) == FastFailAction.CONTINUE
+
+    def test_missing_h_main_arm_continues(self):
+        findings = {
+            "arms": [{"arm_type": "h-control-negative", "status": "CONFIRMED"}],
+        }
+        assert check_fast_fail(findings) == FastFailAction.CONTINUE
