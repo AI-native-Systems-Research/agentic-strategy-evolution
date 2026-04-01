@@ -1,0 +1,282 @@
+# Architecture
+
+This document describes the internal architecture of the Nous framework: what each component does, how they interact, and the design decisions behind them.
+
+## Design Philosophy
+
+Nous separates **deterministic orchestration** from **AI reasoning**. The orchestrator is a Python state machine — it never calls an LLM. It owns phase transitions, checkpointing, gate enforcement, and fast-fail rules. AI agents are external processes invoked by the orchestrator with structured prompts and schema-governed outputs.
+
+This separation exists because:
+- The orchestrator must be auditable and predictable — you need to trust that gates cannot be bypassed, fast-fail rules fire correctly, and state is always recoverable.
+- AI agents are stochastic and expensive — isolating them makes the system testable without LLM calls and lets you swap agent implementations without touching control flow.
+
+## System Overview
+
+```
+                    ┌─────────────────────────────────────┐
+                    │          Orchestrator (Python)       │
+                    │                                      │
+                    │  ┌──────────┐    ┌───────────────┐  │
+                    │  │  Engine   │───▶│  state.json   │  │
+                    │  │ (states)  │    │  (checkpoint)  │  │
+                    │  └────┬─────┘    └───────────────┘  │
+                    │       │                              │
+                    │  ┌────▼─────┐    ┌───────────────┐  │
+                    │  │ Dispatch │───▶│  Agent (LLM)  │  │
+                    │  └────┬─────┘    └───────┬───────┘  │
+                    │       │                  │           │
+                    │       │          schema-validated    │
+                    │       │            artifacts         │
+                    │       │                  │           │
+                    │  ┌────▼─────┐    ┌──────▼────────┐  │
+                    │  │  Gates   │    │  Fast-Fail    │  │
+                    │  │ (human)  │    │  (rules)      │  │
+                    │  └──────────┘    └───────────────┘  │
+                    └─────────────────────────────────────┘
+
+                    ┌─────────────────────────────────────┐
+                    │           Campaign Directory         │
+                    │                                      │
+                    │  state.json      ledger.json         │
+                    │  principles.json problem.md          │
+                    │  runs/iter-N/    trace.jsonl         │
+                    │    bundle.yaml   findings.json       │
+                    │    reviews/      summary.json        │
+                    └─────────────────────────────────────┘
+```
+
+## Components
+
+### Engine (`orchestrator/engine.py`)
+
+The engine owns the 11-state state machine and checkpoint/resume.
+
+**State machine:**
+
+```
+INIT ──▶ FRAMING ──▶ DESIGN ──▶ DESIGN_REVIEW ──▶ HUMAN_DESIGN_GATE
+                        ▲            │                    │
+                        │            │ (CRITICAL)         │ (reject)
+                        └────────────┘                    │
+                        ▲                                 │
+                        └─────────────────────────────────┘
+                                                          │ (approve)
+                                                          ▼
+         ┌──────────── RUNNING ◀──────────────────────────┘
+         │               ▲
+         ▼               │ (CRITICAL or reject)
+    FINDINGS_REVIEW ─────┘
+         │
+         ▼
+    HUMAN_FINDINGS_GATE
+         │
+         ├──▶ TUNING ──▶ EXTRACTION ──▶ DONE
+         │                    │
+         └──▶ EXTRACTION ◀───┘
+                    │
+                    └──▶ DESIGN  (next iteration, counter increments)
+```
+
+**Key behaviors:**
+- `transition(to_state)` validates against the transition table, updates the timestamp, and atomically writes `state.json`.
+- Iteration counter increments only on the EXTRACTION → DESIGN transition (starting a new iteration). Loopbacks from DESIGN_REVIEW → DESIGN (critical findings) do NOT increment — they are revisions within the same iteration.
+- The DONE state is terminal — no transitions out.
+
+**Atomic writes:** State is written to a temporary file, fsynced, then renamed over `state.json`. This prevents data loss if the process crashes mid-write. The in-memory state is only updated after the disk write succeeds, so state never diverges.
+
+### Dispatch (`orchestrator/dispatch.py`)
+
+The dispatcher invokes AI agents by role and phase, passing structured input and writing schema-validated output.
+
+**Agent roles:**
+
+| Role | Invoked During | Produces |
+|---|---|---|
+| **Planner** | FRAMING, DESIGN | `problem.md`, `bundle.yaml` |
+| **Executor** | RUNNING, TUNING | `findings.json`, `results/` |
+| **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
+| **Extractor** | EXTRACTION | Updated `principles.json` |
+
+**Phase 1 implementation:** `StubDispatcher` produces valid, schema-conformant artifacts without calling any LLM. This enables full end-to-end testing of the orchestrator loop. The stub is designed to be replaced by a real dispatcher that loads prompt templates, calls an LLM API, validates the response against the schema, and writes the output.
+
+**Dispatch interface:**
+```python
+dispatcher.dispatch(
+    role="executor",           # which agent
+    phase="run",               # which phase
+    output_path=path,          # where to write
+    iteration=1,               # current iteration
+    h_main_result="CONFIRMED", # optional: control stub behavior
+)
+```
+
+### Gates (`orchestrator/gates.py`)
+
+Human gates are hard stops that cannot be bypassed. They surface the artifact and review summaries, then wait for a decision.
+
+**Valid decisions:**
+- `approve` — advance to the next phase
+- `reject` — loop back (DESIGN_REVIEW → DESIGN, FINDINGS_REVIEW → RUNNING)
+- `abort` — end the campaign
+
+**Testing modes:** `auto_approve=True` or `auto_response="reject"` for deterministic testing without human interaction.
+
+**Where gates appear:**
+1. After DESIGN_REVIEW — human sees the hypothesis bundle and all review summaries
+2. After FINDINGS_REVIEW — human sees the findings and all review summaries
+
+### Fast-Fail Rules (`orchestrator/fastfail.py`)
+
+Pure functions that examine findings and return a recommended action. The orchestrator decides how to act on the recommendation.
+
+**Rules in priority order:**
+
+| Rule | Trigger | Action | Rationale |
+|---|---|---|---|
+| 1 | H-main refuted | `SKIP_TO_EXTRACTION` | Mechanism doesn't work — running more arms is pointless |
+| 2 | H-control-negative refuted | `REDESIGN` | Mechanism is confounded — it produces effects where it shouldn't |
+| 3 | Dominant component >80% | `SIMPLIFY` | One component does all the work — drop the others |
+| — | None of the above | `CONTINUE` | Proceed normally |
+
+Rule 1 takes priority: if H-main is refuted, the control-negative result doesn't matter.
+
+## Data Flow
+
+### Within One Iteration
+
+```
+                    Planner
+                       │
+                       ▼
+                  bundle.yaml ──▶ Reviewer (5 perspectives)
+                       │                    │
+                       │         ◀──── (if CRITICAL, loop back)
+                       ▼
+                  Human Gate (approve/reject/abort)
+                       │
+                       ▼
+                    Executor
+                       │
+                       ▼
+                 findings.json ──▶ Reviewer (10 perspectives)
+                       │                    │
+                       │         ◀──── (if CRITICAL, loop back)
+                       ▼
+                  Human Gate (approve/reject/abort)
+                       │
+                       ▼
+                   Fast-Fail ──▶ SKIP_TO_EXTRACTION (if refuted)
+                       │          REDESIGN (if confounded)
+                       │          SIMPLIFY (if dominated)
+                       ▼
+                    Tuning (if H-main confirmed)
+                       │
+                       ▼
+                    Extractor
+                       │
+                       ▼
+                 principles.json (insert / update / prune)
+```
+
+### Across Iterations
+
+```
+Iteration 1                    Iteration 2                    Iteration N
+┌──────────────────┐          ┌──────────────────┐          ┌──────────────┐
+│ Frame            │          │ Frame            │          │              │
+│ Design           │          │ Design           │          │   ...        │
+│ Execute          │   ───▶   │  (constrained by │   ───▶   │              │
+│ Extract          │          │   principles)    │          │              │
+│  → 2 principles  │          │ Execute          │          │              │
+│                  │          │ Extract          │          │              │
+│                  │          │  → 1 new,        │          │              │
+│                  │          │    1 updated     │          │              │
+└──────────────────┘          └──────────────────┘          └──────────────┘
+
+principles.json grows and refines over time:
+  iter 1: [P1, P2]
+  iter 2: [P1, P2', P3]       (P2 updated, P3 inserted)
+  iter 3: [P1, P2', P4]       (P3 pruned, P4 inserted)
+```
+
+Principles are hard constraints: the Planner must not design bundles that contradict active principles without explicit justification.
+
+## Schema Contracts
+
+Every artifact exchanged between components is validated against a JSON Schema (Draft 2020-12). This ensures agents produce well-formed output and makes the system testable without LLMs.
+
+| Schema | Format | Governs |
+|---|---|---|
+| `state.schema.json` | JSON | Orchestrator checkpoint (phase, iteration, run_id) |
+| `bundle.schema.yaml` | YAML | Hypothesis bundles (arms with predictions, mechanisms, diagnostics) |
+| `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |
+| `principles.schema.json` | JSON | Principle store (statement, confidence, regime, evidence, status) |
+| `ledger.schema.json` | JSON | Append-only iteration log with prediction accuracy |
+| `summary.schema.json` | JSON | Campaign rollup (cost, tokens, principles extracted) |
+| `trace.schema.json` | JSON | Observability events (LLM calls, state transitions, gate decisions) |
+
+The bundle schema uses YAML format because hypothesis bundles contain free-text fields (predictions, mechanisms, diagnostics) that are more readable in YAML. All other schemas use JSON.
+
+## Review Protocol
+
+Reviews run N independent perspectives in parallel, each examining the artifact from a different angle (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity).
+
+**Convergence gating:**
+1. Run all perspectives in parallel
+2. Collect findings with severity: CRITICAL, IMPORTANT, SUGGESTION
+3. Zero CRITICAL → advance to human gate
+4. Any CRITICAL → return to authoring agent for revision
+5. Re-run full review after revision (max 10 rounds)
+
+SUGGESTION items never block. IMPORTANT items are surfaced to the human reviewer but do not prevent advancement.
+
+| Gate | Perspectives | After |
+|---|---|---|
+| Design Review | 5 | Bundle design |
+| Findings Review | 10 | Experiment execution |
+
+## Prediction Error Taxonomy
+
+When a prediction is wrong, the error type determines what the system learns:
+
+| Error Type | Meaning | System Response |
+|---|---|---|
+| **Direction** | Mechanism is fundamentally wrong | Prune or heavily revise the principle |
+| **Magnitude** | Right mechanism, wrong strength | Update principle with calibrated bounds |
+| **Regime** | Works under different conditions | Update principle with correct regime boundaries |
+
+Direction errors are the most serious and most valuable — they reveal where the causal model is fundamentally flawed. In the BLIS case study, a direction error in iteration 1 (predicting <10% degradation, observing 62.4% degradation) redirected the entire scheduling investigation toward admission control.
+
+## Crash Safety and Recovery
+
+The orchestrator is designed for crash-safe operation:
+
+- **Atomic state writes:** `state.json` is written to a temp file, fsynced, then renamed. A crash during write leaves the previous valid state intact.
+- **Checkpoint/resume:** The engine loads state from `state.json` on construction. Kill the process at any point and restart — it resumes from the last committed state.
+- **Append-only ledger:** `ledger.json` is never rewritten, only appended to. Lost writes lose at most the current row.
+- **Idempotent extraction:** The extractor reads the existing `principles.json`, appends new principles, and writes back. Re-running extraction for the same iteration produces a duplicate (detectable by ID) rather than corruption.
+
+## Extending Nous
+
+### Adding a Custom Agent
+
+Replace `StubDispatcher` with a real dispatcher that:
+1. Loads a prompt template for the (role, phase) pair
+2. Injects context: current principles, prior findings, problem framing
+3. Calls an LLM API
+4. Validates the response against the relevant schema
+5. Writes the validated output to the specified path
+
+The dispatcher interface is role-based: `dispatch(role, phase, output_path=..., **kwargs)`. Your implementation must produce artifacts that pass schema validation — the orchestrator trusts the schema contract, not the content.
+
+### Adding a New Arm Type
+
+1. Add the type to the `enum` in `schemas/bundle.schema.yaml` (arm type) and `schemas/findings.schema.json` (arm_type)
+2. Update `orchestrator/fastfail.py` if the new arm type has fast-fail implications
+3. Add test cases to `tests/test_schemas.py` and `tests/test_fastfail.py`
+
+### Adding a New Fast-Fail Rule
+
+1. Add a new `FastFailAction` enum value
+2. Add the rule to `check_fast_fail()` with appropriate priority ordering
+3. Add test cases covering the rule and its interaction with existing rules
