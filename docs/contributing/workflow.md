@@ -18,7 +18,7 @@ Any contributor with Claude Code should follow this workflow when working on an 
 /superpowers:using-git-worktrees
 ```
 
-This creates an isolated copy of the repo in a separate directory. All subsequent steps happen inside this worktree.
+This creates an isolated working directory linked to the same git repository. All subsequent steps happen inside this worktree. The worktree skill creates and checks out a branch — this is the branch you will push in Step 8.
 
 ---
 
@@ -30,34 +30,33 @@ Inside the worktree, before writing any plan or code:
 - Explore the relevant source files and understand the existing structure.
 - Note affected files, dependencies, edge cases, and risks.
 
-```bash
-# Example: search for relevant patterns
-grep -r "keyword" src/
-```
+When using Claude Code, use the built-in Grep tool to search rather than shell `grep`.
 
 ---
 
 ## Step 3: Plan with `/superpowers:writing-plans`
 
-Invoke the planning skill to produce a structured implementation plan saved to `docs/plans/`:
+Invoke the planning skill to structure your implementation plan:
 
 ```
 /superpowers:writing-plans
 ```
 
-- Plans are saved to `docs/plans/YYYY-MM-DD-<feature-name>-plan.md`.
-- The plan must include: goal, architecture, exact file paths, step-by-step tasks with code, and a commit message per task.
-- `docs/plans/` is listed in `.gitignore` — plan files never appear in PRs.
+The skill guides the planning process. Save the resulting plan to `docs/plans/` using the naming convention `YYYY-MM-DD-<feature-name>-plan.md`. The plan must include: goal, architecture, exact file paths, step-by-step tasks with code, and a commit message per task.
+
+`docs/plans/` is listed in `.gitignore` — plan files never appear in PRs.
 
 ---
 
 ## Step 4: Review the Plan with an Agent
 
-Have an agent critique the plan before presenting it to the human:
+Have an agent critique the plan before presenting it to the human. Pass the plan file path to a review agent:
 
 ```
 /research-ideas:_review-plan
 ```
+
+> Note: `_review-plan` is an internal sub-skill. If unavailable, ask a general-purpose agent to review the plan file directly by providing its path.
 
 The agent should check for:
 - Missing steps or ambiguities
@@ -85,39 +84,41 @@ Summarize the finalized plan for the human contributor:
 
 ## Step 6: Implement Step by Step
 
-Follow the approved plan, one task at a time:
+Invoke the subagent-driven development skill to execute the approved plan. This drives each task in sequence within the current session, using a fresh subagent per task with a review checkpoint between tasks:
+
+```
+/superpowers:subagent-driven-development
+```
 
 - Mark each task complete before starting the next.
 - Keep changes focused — no scope creep.
 - Commit after each task using the message from the plan.
 - Run tests after each task if applicable.
 
-```
-/superpowers:subagent-driven-development
-```
-
 ---
 
 ## Step 7: Review the Implementation
 
-Once all tasks are complete, run a full review before opening the PR:
+Once all tasks are complete, run a comprehensive PR review using specialized agents before opening the PR:
 
 ```
 /pr-review-toolkit:review-pr
 ```
 
-This checks adherence to the plan, code quality, test coverage, and comment accuracy. Address all issues found before proceeding.
+Address all issues found before proceeding.
 
 ---
 
 ## Step 8: Create the PR
 
-Push changes to a branch in your fork and open a PR to the upstream repository.
+Confirm your current branch name (set by the worktree in Step 1), then push and open a PR to the upstream repository.
 
 ```bash
-# Branch naming convention
-git checkout -b feat/issue-<number>-<short-description>
-git push -u origin feat/issue-<number>-<short-description>
+# Confirm branch name
+git branch --show-current
+
+# Push to your fork
+git push -u origin <your-branch-name>
 
 # Open PR to upstream
 gh pr create \
@@ -152,7 +153,7 @@ EOF
 | Step | Action | Skill / Command |
 |------|--------|-----------------|
 | 1 | Create worktree | `/superpowers:using-git-worktrees` |
-| 2 | Analyze issue + code | Read files, grep, explore |
+| 2 | Analyze issue + code | Read files, explore |
 | 3 | Write plan | `/superpowers:writing-plans` |
 | 4 | Review plan | `/research-ideas:_review-plan` |
 | 5 | Human approval | Summarize + wait |
