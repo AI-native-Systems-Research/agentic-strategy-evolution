@@ -25,6 +25,15 @@ class TestPhaseEnum:
         with pytest.raises(TypeError):
             TRANSITIONS["NEW_STATE"] = frozenset({"INIT"})
 
+    def test_every_non_terminal_phase_has_transitions_entry(self):
+        """Every phase except DONE must have outgoing transitions."""
+        for phase in Phase:
+            if phase == Phase.DONE:
+                continue
+            assert phase.value in TRANSITIONS, (
+                f"Non-terminal phase {phase.value} has no TRANSITIONS entry"
+            )
+
 
 class TestEngineLoadErrors:
     def test_missing_state_file_raises(self, tmp_path):
@@ -117,6 +126,12 @@ class TestEngine:
         engine = Engine(work_dir)
         with pytest.raises(ValueError, match="Invalid transition"):
             engine.transition("RUNNING")
+
+    def test_typo_in_transition_target_rejected(self, work_dir):
+        """Typos are caught at the call site before checking TRANSITIONS."""
+        engine = Engine(work_dir)
+        with pytest.raises(ValueError, match="not a recognized phase"):
+            engine.transition("FRAMNG")
 
     def test_checkpoint_resume(self, work_dir):
         engine = Engine(work_dir)
@@ -250,3 +265,26 @@ class TestSaveStateAtomicity:
         (tmp_path / "state.json").write_text(json.dumps(state))
         with pytest.raises(ValueError, match="missing required keys"):
             Engine(tmp_path)
+
+    def test_write_failure_cleans_up_fd(self, tmp_path):
+        """If os.write fails, fd is closed and temp file removed."""
+        state = {
+            "phase": "INIT",
+            "iteration": 0,
+            "run_id": "test",
+            "family": None,
+            "timestamp": "2026-04-01T00:00:00Z",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+
+        with patch("os.write", side_effect=OSError("disk full")):
+            with pytest.raises(OSError, match="disk full"):
+                engine.transition("FRAMING")
+
+        # State unchanged
+        assert engine.phase == "INIT"
+        saved = json.loads((tmp_path / "state.json").read_text())
+        assert saved["phase"] == "INIT"
+        # No temp files
+        assert list(tmp_path.glob("*.json.tmp")) == []

@@ -6,6 +6,8 @@ calling any LLM, enabling end-to-end testing of the orchestrator loop.
 """
 import json
 import logging
+import os
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -36,6 +38,13 @@ class StubDispatcher:
         perspective: str | None = None,
         h_main_result: str = "CONFIRMED",
     ) -> None:
+        _VALID_H_MAIN_RESULTS = {"CONFIRMED", "REFUTED"}
+        if h_main_result not in _VALID_H_MAIN_RESULTS:
+            raise ValueError(
+                f"Invalid h_main_result: {h_main_result!r}. "
+                f"Must be one of: {_VALID_H_MAIN_RESULTS}"
+            )
+
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -150,4 +159,22 @@ class StubDispatcher:
                 "status": "active",
             }
         )
-        path.write_text(json.dumps(store, indent=2) + "\n")
+        # Atomic write: temp file + rename (same pattern as engine._save_state)
+        data = json.dumps(store, indent=2) + "\n"
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".json.tmp")
+        try:
+            os.write(fd, data.encode())
+            os.fsync(fd)
+            os.close(fd)
+            os.rename(tmp, str(path))
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+            except OSError:
+                pass
+            raise

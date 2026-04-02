@@ -96,7 +96,7 @@ engine.transition("FRAMING")
 pytest -v
 ```
 
-All 98 tests validate schemas, templates, state machine transitions, gates, dispatch, fast-fail rules, and end-to-end integration.
+The full test suite validates schemas, templates, state machine transitions, gates, dispatch, fast-fail rules, protocol conformance, and end-to-end integration.
 
 ## Project Structure
 
@@ -132,7 +132,7 @@ docs/
   case-studies/
     blis.md                30-iteration validation on LLM inference serving
 
-tests/                   98 tests (schemas, templates, engine, gates, dispatch, fastfail, integration)
+tests/                   116 tests (schemas, templates, engine, gates, dispatch, fastfail, protocols, integration)
 ```
 
 ## Case Study: LLM Inference Serving

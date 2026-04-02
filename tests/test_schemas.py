@@ -414,6 +414,56 @@ class TestTraceSchema:
             jsonschema.validate(instance, schema)
 
 
+class TestAdditionalPropertiesRejected:
+    """Verify additionalProperties: false is enforced across schemas."""
+
+    def test_state_rejects_extra_field(self, load_schema):
+        schema = load_schema("state.schema.json")
+        instance = {
+            "phase": "INIT",
+            "iteration": 0,
+            "run_id": "test",
+            "family": None,
+            "timestamp": "2026-04-01T00:00:00Z",
+            "extra_field": "should be rejected",
+        }
+        with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+            jsonschema.validate(instance, schema)
+
+    def test_findings_rejects_extra_field(self, load_schema):
+        schema = load_schema("findings.schema.json")
+        instance = {
+            "iteration": 1,
+            "bundle_ref": "test",
+            "arms": [
+                {
+                    "arm_type": "h-main",
+                    "predicted": "x",
+                    "observed": "y",
+                    "status": "CONFIRMED",
+                    "error_type": None,
+                    "diagnostic_note": None,
+                }
+            ],
+            "discrepancy_analysis": "test",
+            "bogus_key": True,
+        }
+        with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+            jsonschema.validate(instance, schema)
+
+    def test_trace_rejects_extra_field(self, load_schema):
+        schema = load_schema("trace.schema.json")
+        instance = {
+            "timestamp": "2026-04-01T12:00:00Z",
+            "run_id": "test",
+            "event_type": "state_transition",
+            "payload": {},
+            "extra": "nope",
+        }
+        with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+            jsonschema.validate(instance, schema)
+
+
 class TestSummarySchema:
     def test_valid_summary(self, load_schema):
         schema = load_schema("summary.schema.json")

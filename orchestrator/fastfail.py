@@ -28,7 +28,17 @@ def check_fast_fail(findings: dict) -> FastFailAction:
     if "arms" not in findings:
         raise ValueError("findings dict missing required 'arms' key")
 
-    arms = {a["arm_type"]: a for a in findings["arms"]}
+    arms = {}
+    for a in findings["arms"]:
+        arm_type = a.get("arm_type")
+        if arm_type is None:
+            raise ValueError(f"arm entry missing required 'arm_type' key: {a}")
+        if arm_type in arms:
+            raise ValueError(
+                f"Duplicate arm_type '{arm_type}' in findings. "
+                f"Each arm type must appear exactly once."
+            )
+        arms[arm_type] = a
 
     # Validate h-main arm exists — fast-fail cannot work without it
     if "h-main" not in arms:

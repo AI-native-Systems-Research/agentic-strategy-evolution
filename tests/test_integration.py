@@ -25,6 +25,12 @@ def load_schema(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+@pytest.fixture(autouse=True)
+def _allow_auto_approve(monkeypatch):
+    """Set env var so auto_approve=True works in tests."""
+    monkeypatch.setenv("NOUS_ALLOW_AUTO_APPROVE", "1")
+
+
 def _make_gate():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

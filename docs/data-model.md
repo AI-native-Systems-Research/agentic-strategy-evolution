@@ -32,7 +32,7 @@ A bookmark. It tells the orchestrator what phase we're in, which iteration we're
 
 | Field | What it means |
 |---|---|
-| `phase` | Which step of the loop (INIT, FRAMING, DESIGN, RUNNING, EXTRACTION, DONE, etc.) |
+| `phase` | Which step of the loop (INIT, FRAMING, DESIGN, DESIGN_REVIEW, HUMAN_DESIGN_GATE, RUNNING, FINDINGS_REVIEW, HUMAN_FINDINGS_GATE, TUNING, EXTRACTION, DONE) |
 | `iteration` | How many times we've gone around the loop (0 = haven't started yet) |
 | `run_id` | A name for this campaign |
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |
@@ -70,12 +70,15 @@ Each principle has:
 
 | Field | What it means |
 |---|---|
+| `id` | Unique identifier (e.g., "RP-1", "S-3") |
 | `statement` | The insight (e.g., "SLO-gated admission control is non-zero-sum at saturation") |
 | `confidence` | low / medium / high |
 | `regime` | When does this apply? (e.g., "arrival_rate > 50% capacity") |
 | `evidence` | Which experiments support this |
 | `mechanism` | Why does it work? |
 | `contradicts` | Which other principles disagree with this one |
+| `extraction_iteration` | Which iteration produced this principle |
+| `applicability_bounds` | Conditions under which this principle holds |
 | `status` | active (in use), updated (refined), or pruned (retired) |
 | `superseded_by` | If pruned, what replaced it |
 

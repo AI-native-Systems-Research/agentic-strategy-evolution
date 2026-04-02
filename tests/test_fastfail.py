@@ -108,3 +108,22 @@ class TestFastFailValidation:
         }
         with pytest.raises(TypeError, match="must be numeric"):
             check_fast_fail(findings)
+
+    def test_duplicate_arm_type_raises(self):
+        findings = {
+            "arms": [
+                {"arm_type": "h-main", "status": "CONFIRMED"},
+                {"arm_type": "h-main", "status": "REFUTED"},
+            ]
+        }
+        with pytest.raises(ValueError, match="Duplicate arm_type"):
+            check_fast_fail(findings)
+
+    def test_missing_arm_type_key_raises(self):
+        findings = {
+            "arms": [
+                {"status": "CONFIRMED"},  # no arm_type
+            ]
+        }
+        with pytest.raises(ValueError, match="missing required 'arm_type' key"):
+            check_fast_fail(findings)

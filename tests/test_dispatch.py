@@ -1,5 +1,6 @@
 """Tests for the agent dispatch module."""
 import json
+import os
 import warnings
 
 import jsonschema
@@ -7,6 +8,8 @@ import pytest
 import yaml
 
 from orchestrator.dispatch import StubDispatcher
+from orchestrator.gates import HumanGate
+from orchestrator.protocols import Dispatcher, Gate
 
 
 SCHEMAS_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent / "schemas"
@@ -134,3 +137,29 @@ class TestDispatchErrorHandling:
             StubDispatcher(tmp_path)
             assert len(w) == 1
             assert "StubDispatcher" in str(w[0].message)
+
+    def test_invalid_h_main_result_raises(self, tmp_path):
+        dispatcher = _make_dispatcher(tmp_path)
+        with pytest.raises(ValueError, match="Invalid h_main_result"):
+            dispatcher.dispatch(
+                "executor", "run",
+                output_path=tmp_path / "findings.json",
+                iteration=1, h_main_result="INVALID",
+            )
+
+
+class TestProtocolConformance:
+    def test_stub_dispatcher_satisfies_dispatcher_protocol(self, tmp_path):
+        dispatcher = _make_dispatcher(tmp_path)
+        assert isinstance(dispatcher, Dispatcher)
+
+    def test_human_gate_satisfies_gate_protocol(self, monkeypatch):
+        monkeypatch.setenv("NOUS_ALLOW_AUTO_APPROVE", "1")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            gate = HumanGate(auto_approve=True)
+        assert isinstance(gate, Gate)
+
+    def test_human_gate_auto_response_satisfies_gate_protocol(self):
+        gate = HumanGate(auto_response="approve")
+        assert isinstance(gate, Gate)

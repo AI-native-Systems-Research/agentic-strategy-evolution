@@ -4,6 +4,7 @@ Pauses execution, surfaces artifact + review summary, prompts for decision.
 Supports auto-approve mode for testing.
 """
 import logging
+import os
 import warnings
 from enum import Enum
 from pathlib import Path
@@ -37,6 +38,12 @@ class HumanGate:
                 "Use one or the other."
             )
         if auto_approve:
+            if os.environ.get("NOUS_ALLOW_AUTO_APPROVE") != "1":
+                raise RuntimeError(
+                    "auto_approve=True requires NOUS_ALLOW_AUTO_APPROVE=1 "
+                    "environment variable. This prevents accidental bypass "
+                    "of human gates in production."
+                )
             warnings.warn(
                 "HumanGate auto_approve=True: ALL human gates will be bypassed. "
                 "This MUST only be used in testing.",
@@ -59,7 +66,7 @@ class HumanGate:
     ) -> str:
         if self._response:
             logger.info("Gate auto-response: %s", self._response)
-            return self._response
+            return Decision(self._response).value
         # Interactive mode
         if artifact_path:
             print(f"\n--- Artifact: {artifact_path} ---")
@@ -95,8 +102,8 @@ class HumanGate:
             except KeyboardInterrupt:
                 print("\nAborted by user.")
                 logger.info("Gate aborted by KeyboardInterrupt")
-                return "abort"
+                return Decision.ABORT.value
             if answer in VALID_DECISIONS:
                 logger.info("Gate decision: %s", answer)
-                return answer
+                return Decision(answer).value
             print(f"Invalid. Choose from: {VALID_DECISIONS}")

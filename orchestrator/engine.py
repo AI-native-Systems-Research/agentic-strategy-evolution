@@ -102,6 +102,12 @@ class Engine:
         return state
 
     def transition(self, to_state: str) -> None:
+        # Validate target phase early — catches typos at the call site
+        if to_state not in ALL_STATES:
+            raise ValueError(
+                f"'{to_state}' is not a recognized phase. "
+                f"Valid phases: {sorted(s.value for s in Phase)}"
+            )
         current = self._state["phase"]
         if current == "DONE":
             raise ValueError("Campaign is already DONE")
@@ -118,6 +124,8 @@ class Engine:
             new_state["iteration"] += 1
         new_state["phase"] = to_state
         new_state["timestamp"] = datetime.now(timezone.utc).isoformat()
+        # Write to disk BEFORE updating in-memory state. If _save_state
+        # fails, self._state remains unchanged (disk and memory stay consistent).
         self._save_state(new_state)
         self._state = new_state
         logger.info("Transition: %s -> %s (iteration=%d)", current, to_state, new_state["iteration"])
@@ -134,8 +142,16 @@ class Engine:
             fd_closed = True
             os.rename(tmp, str(self.state_path))
         except BaseException:
-            if not fd_closed:
-                os.close(fd)
-            if os.path.exists(tmp):
-                os.unlink(tmp)
+            # Guard cleanup individually so a cleanup failure never masks
+            # the original exception (e.g., bad fd after signal).
+            try:
+                if not fd_closed:
+                    os.close(fd)
+            except OSError:
+                pass
+            try:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+            except OSError:
+                pass
             raise
