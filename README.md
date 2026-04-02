@@ -132,7 +132,7 @@ docs/
   case-studies/
     blis.md                30-iteration validation on LLM inference serving
 
-tests/                   116 tests (schemas, templates, engine, gates, dispatch, fastfail, protocols, integration)
+tests/                   119 tests (schemas, templates, engine, gates, dispatch, fastfail, protocols, integration)
 ```
 
 ## Case Study: LLM Inference Serving

@@ -38,6 +38,13 @@ class StubDispatcher:
         perspective: str | None = None,
         h_main_result: str = "CONFIRMED",
     ) -> None:
+        """Dispatch a stub agent to produce a schema-conformant artifact.
+
+        Args:
+            iteration: 1-indexed human label for the experiment (used in
+                artifact filenames and content). This is NOT the engine's
+                0-indexed counter — callers should pass engine.iteration + 1.
+        """
         _VALID_H_MAIN_RESULTS = {"CONFIRMED", "REFUTED"}
         if h_main_result not in _VALID_H_MAIN_RESULTS:
             raise ValueError(
