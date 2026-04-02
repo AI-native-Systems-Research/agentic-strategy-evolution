@@ -19,7 +19,7 @@ class Dispatcher(Protocol):
         output_path: Path,
         iteration: int,
         perspective: str | None = None,
-        **kwargs,
+        h_main_result: str = "CONFIRMED",
     ) -> None: ...
 
 

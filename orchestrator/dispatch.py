@@ -175,7 +175,7 @@ class StubDispatcher:
             os.fsync(fd)
             os.close(fd)
             fd_closed = True
-            os.rename(tmp, str(path))
+            os.replace(tmp, str(path))
         except BaseException:
             try:
                 if not fd_closed:

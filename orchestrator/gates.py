@@ -102,7 +102,7 @@ class HumanGate:
             except KeyboardInterrupt:
                 print("\nAborted by user.")
                 logger.info("Gate aborted by KeyboardInterrupt")
-                return Decision.ABORT.value
+                raise
             if answer in VALID_DECISIONS:
                 logger.info("Gate decision: %s", answer)
                 return Decision(answer).value

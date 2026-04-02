@@ -65,7 +65,7 @@ class Engine:
 
     @property
     def state(self) -> dict:
-        """Read-only copy of the current state."""
+        """Shallow copy of the current state (safe: state is always a flat dict)."""
         return dict(self._state)
 
     @property
@@ -140,7 +140,7 @@ class Engine:
             os.fsync(fd)
             os.close(fd)
             fd_closed = True
-            os.rename(tmp, str(self.state_path))
+            os.replace(tmp, str(self.state_path))
         except BaseException:
             # Guard cleanup individually so a cleanup failure never masks
             # the original exception (e.g., bad fd after signal).

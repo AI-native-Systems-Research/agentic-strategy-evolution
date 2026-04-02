@@ -48,9 +48,16 @@ def check_fast_fail(findings: dict) -> FastFailAction:
             f"Arms present: {list(arms.keys())}"
         )
 
+    _KNOWN_STATUSES = {"CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED"}
+
     h_main_status = arms["h-main"].get("status")
     if h_main_status is None:
         raise ValueError("h-main arm missing required 'status' field")
+    if h_main_status not in _KNOWN_STATUSES:
+        logger.warning(
+            "Unrecognized h-main status %r — no fast-fail rules will match. "
+            "Known statuses: %s", h_main_status, sorted(_KNOWN_STATUSES)
+        )
 
     # Rule 1: H-main refuted -> skip to extraction (highest priority)
     if h_main_status == "REFUTED":

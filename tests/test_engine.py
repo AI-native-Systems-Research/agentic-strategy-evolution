@@ -250,7 +250,7 @@ class TestSaveStateAtomicity:
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        with patch("os.rename", side_effect=OSError("cross-device link")):
+        with patch("os.replace", side_effect=OSError("cross-device link")):
             with pytest.raises(OSError, match="cross-device link"):
                 engine.transition("FRAMING")
 

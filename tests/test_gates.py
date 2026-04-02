@@ -99,4 +99,5 @@ class TestHumanGate:
             "builtins.input",
             lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
         )
-        assert gate.prompt("Approve?") == "abort"
+        with pytest.raises(KeyboardInterrupt):
+            gate.prompt("Approve?")

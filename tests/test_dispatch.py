@@ -154,7 +154,7 @@ class TestWritePrinciplesAtomicity:
         dispatcher = _make_dispatcher(tmp_path)
         with pytest.raises(OSError, match="cross-device"):
             with __import__("unittest.mock", fromlist=["patch"]).patch(
-                "os.rename", side_effect=OSError("cross-device link")
+                "os.replace", side_effect=OSError("cross-device link")
             ):
                 dispatcher.dispatch(
                     "extractor", "extract",

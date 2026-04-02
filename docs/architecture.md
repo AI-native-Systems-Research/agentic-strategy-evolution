@@ -116,7 +116,7 @@ Human gates are hard stops that cannot be bypassed. They surface the artifact an
 
 **Valid decisions:**
 - `approve` — advance to the next phase
-- `reject` — loop back (DESIGN_REVIEW → DESIGN, FINDINGS_REVIEW → RUNNING)
+- `reject` — loop back (HUMAN_DESIGN_GATE → DESIGN, HUMAN_FINDINGS_GATE → RUNNING)
 - `abort` — end the campaign
 
 **Testing modes:** `auto_approve=True` or `auto_response="reject"` for deterministic testing without human interaction.
@@ -217,7 +217,7 @@ The bundle schema uses YAML format because hypothesis bundles contain free-text 
 
 ## Review Protocol
 
-Reviews run N independent perspectives in parallel, each examining the artifact from a different angle (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity).
+Reviews run N independent perspectives in parallel, each examining the artifact from a different angle (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity). The specific perspective counts (5 for design, 10 for findings) are protocol targets; the Phase 1 orchestrator dispatches reviews individually and enforcement of these counts is deferred to Phase 2 (agent prompts).
 
 **Convergence gating:**
 1. Run all perspectives in parallel

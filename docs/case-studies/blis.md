@@ -2,6 +2,8 @@
 
 This case study documents how the Nous methodology was developed and validated through 30 iterations and over 1,000 experiments on [BLIS](https://github.com/inference-sim/inference-sim), a discrete-event simulator for LLM inference serving systems.
 
+> **Provenance:** These results are from internal research experiments conducted by the authors using BLIS. The principles and metrics reported here are empirical findings from simulation, not published benchmarks. They serve as a concrete validation of the Nous methodology on a realistic system.
+
 ## Context
 
 BLIS models the full lifecycle of LLM inference requests — routing, scheduling, KV-cache management, and batching — at the level of individual decode steps. It supports multiple GPU types, SLO tiers, and arrival distributions.
