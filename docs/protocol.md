@@ -52,7 +52,7 @@ The Executor agent:
 1. Implements the strategy and experiment code for all arms
 2. Executes all arms across 3+ seeds
 3. Compares predictions to outcomes arm-by-arm
-4. Documents results in `findings.md`
+4. Documents results in `findings.json`
 
 Findings pass through:
 1. AI Findings Review (10 independent perspectives, convergence-gated)
@@ -210,7 +210,7 @@ Backward/looping transitions:
 | Role | Phases | Reads | Writes | Shell |
 |---|---|---|---|---|
 | Planner | Frame, Design | all | `problem.md`, `bundle.yaml` | — |
-| Executor | Run, Tune | all | `findings.md`, `results/` | yes |
+| Executor | Run, Tune | all | `findings.json`, `results/` | yes |
 | Reviewer | Design Review, Findings Review | all | `review-*.md` | — |
 | Extractor | Extract | all | `principles.json`, `summary.md` | — |
 
@@ -225,7 +225,7 @@ campaign-dir/
   runs/
     iter-N/
       bundle.yaml     — hypothesis bundle
-      findings.md     — prediction vs outcome
+      findings.json    — prediction vs outcome
       reviews/        — multi-perspective reviews
   trace.jsonl         — observability log
   summary.json        — campaign rollup (generated at end)

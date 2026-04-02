@@ -45,8 +45,9 @@ class TestTemplateConformance:
         assert "Baseline" in content
         assert "Success Criteria" in content
 
-    def test_findings_template_exists(self, templates_dir):
-        assert (templates_dir / "findings.md").exists()
-        content = (templates_dir / "findings.md").read_text()
-        assert "Prediction vs. Outcome" in content
-        assert "Discrepancy Analysis" in content
+    def test_findings_template_conforms(self, load_schema, load_template):
+        schema = load_schema("findings.schema.json")
+        template = load_template("findings.json")
+        jsonschema.validate(template, schema)
+        assert template["iteration"] == 1
+        assert len(template["arms"]) >= 1

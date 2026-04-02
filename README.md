@@ -116,7 +116,7 @@ templates/               Starter files for new campaigns
   principles.json          Empty principle store
   bundle.yaml              Hypothesis bundle with TODO markers
   problem.md               Problem framing template
-  findings.md              Findings documentation template
+  findings.json            Findings template (schema-conformant)
 
 orchestrator/            Python orchestrator (deterministic, not an LLM)
   engine.py                State machine with atomic checkpoint/resume

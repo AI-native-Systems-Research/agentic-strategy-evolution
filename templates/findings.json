@@ -1,0 +1,16 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "TODO: quantitative prediction",
+      "observed": "TODO: observed outcome",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "discrepancy_analysis": "TODO: analyze prediction vs outcome for each arm.",
+  "dominant_component_pct": null
+}
