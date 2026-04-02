@@ -1,4 +1,6 @@
 """Tests for fast-fail rules."""
+import pytest
+
 from orchestrator.fastfail import check_fast_fail, FastFailAction
 
 
@@ -75,8 +77,34 @@ class TestFastFail:
         }
         assert check_fast_fail(findings) == FastFailAction.CONTINUE
 
-    def test_missing_h_main_arm_continues(self):
+
+class TestFastFailValidation:
+    def test_missing_h_main_arm_raises(self):
         findings = {
             "arms": [{"arm_type": "h-control-negative", "status": "CONFIRMED"}],
         }
-        assert check_fast_fail(findings) == FastFailAction.CONTINUE
+        with pytest.raises(ValueError, match="missing required 'h-main' arm"):
+            check_fast_fail(findings)
+
+    def test_missing_arms_key_raises(self):
+        with pytest.raises(ValueError, match="missing required 'arms' key"):
+            check_fast_fail({"iteration": 1})
+
+    def test_empty_arms_raises(self):
+        with pytest.raises(ValueError, match="missing required 'h-main' arm"):
+            check_fast_fail({"arms": []})
+
+    def test_h_main_missing_status_raises(self):
+        findings = {
+            "arms": [{"arm_type": "h-main"}],
+        }
+        with pytest.raises(ValueError, match="missing required 'status' field"):
+            check_fast_fail(findings)
+
+    def test_dominant_component_pct_string_raises(self):
+        findings = {
+            "arms": [{"arm_type": "h-main", "status": "CONFIRMED"}],
+            "dominant_component_pct": "85%",
+        }
+        with pytest.raises(TypeError, match="must be numeric"):
+            check_fast_fail(findings)

@@ -3,9 +3,24 @@
 Pauses execution, surfaces artifact + review summary, prompts for decision.
 Supports auto-approve mode for testing.
 """
+import logging
+import warnings
+from enum import Enum
 from pathlib import Path
 
-VALID_DECISIONS = {"approve", "reject", "abort"}
+logger = logging.getLogger(__name__)
+
+
+class Decision(str, Enum):
+    """Valid gate decisions."""
+
+    APPROVE = "approve"
+    REJECT = "reject"
+    ABORT = "abort"
+
+
+VALID_DECISIONS = frozenset(d.value for d in Decision)
+_DECISIONS_DISPLAY = "/".join(d.value for d in Decision)
 
 
 class HumanGate:
@@ -16,7 +31,18 @@ class HumanGate:
         auto_approve: bool = False,
         auto_response: str | None = None,
     ) -> None:
+        if auto_approve and auto_response is not None:
+            raise ValueError(
+                "Cannot specify both auto_approve=True and auto_response. "
+                "Use one or the other."
+            )
         if auto_approve:
+            warnings.warn(
+                "HumanGate auto_approve=True: ALL human gates will be bypassed. "
+                "This MUST only be used in testing.",
+                stacklevel=2,
+            )
+            logger.warning("HumanGate created with auto_approve=True")
             self._response = "approve"
         elif auto_response:
             if auto_response not in VALID_DECISIONS:
@@ -32,19 +58,45 @@ class HumanGate:
         reviews: list[str] | None = None,
     ) -> str:
         if self._response:
+            logger.info("Gate auto-response: %s", self._response)
             return self._response
         # Interactive mode
         if artifact_path:
             print(f"\n--- Artifact: {artifact_path} ---")
             path = Path(artifact_path)
-            if path.exists():
-                print(path.read_text()[:2000])
+            if not path.exists():
+                print(f"  WARNING: artifact file not found at {artifact_path}")
+            else:
+                try:
+                    content = path.read_text()
+                except (OSError, UnicodeDecodeError) as e:
+                    print(f"  WARNING: could not read artifact: {e}")
+                    content = ""
+                if len(content) > 2000:
+                    print(content[:2000])
+                    print(f"\n  ... (truncated: showing 2000 of {len(content)} chars)")
+                    print(f"  Full artifact: {artifact_path}")
+                else:
+                    print(content)
         if reviews:
             print(f"\n--- Reviews ({len(reviews)}) ---")
             for r in reviews:
                 print(f"  - {r}")
         while True:
-            answer = input(f"\n{question} [{'/'.join(VALID_DECISIONS)}]: ").strip().lower()
+            try:
+                answer = input(
+                    f"\n{question} [{_DECISIONS_DISPLAY}]: "
+                ).strip().lower()
+            except EOFError:
+                raise RuntimeError(
+                    "Interactive input required but stdin reached EOF. "
+                    "Use auto_approve=True for non-interactive environments."
+                ) from None
+            except KeyboardInterrupt:
+                print("\nAborted by user.")
+                logger.info("Gate aborted by KeyboardInterrupt")
+                return "abort"
             if answer in VALID_DECISIONS:
+                logger.info("Gate decision: %s", answer)
                 return answer
             print(f"Invalid. Choose from: {VALID_DECISIONS}")

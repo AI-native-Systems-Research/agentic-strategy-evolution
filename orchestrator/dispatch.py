@@ -5,9 +5,13 @@ Phase 1: StubDispatcher produces valid schema-conformant artifacts without
 calling any LLM, enabling end-to-end testing of the orchestrator loop.
 """
 import json
+import logging
+import warnings
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class StubDispatcher:
@@ -15,6 +19,12 @@ class StubDispatcher:
 
     def __init__(self, work_dir: Path) -> None:
         self.work_dir = Path(work_dir)
+        warnings.warn(
+            "Using StubDispatcher — no real LLM calls will be made. "
+            "All artifacts are synthetic.",
+            stacklevel=2,
+        )
+        logger.warning("StubDispatcher instantiated — all artifacts are synthetic")
 
     def dispatch(
         self,
@@ -40,6 +50,8 @@ class StubDispatcher:
                 self._write_principles(output_path, iteration)
             case _:
                 raise ValueError(f"Unknown role: {role}")
+
+        logger.info("Dispatched role=%s phase=%s -> %s", role, phase, output_path)
 
     def _write_bundle(self, path: Path, iteration: int) -> None:
         bundle = {
@@ -108,7 +120,21 @@ class StubDispatcher:
         )
 
     def _write_principles(self, path: Path, iteration: int) -> None:
-        store = json.loads(path.read_text()) if path.exists() else {"principles": []}
+        if path.exists():
+            try:
+                store = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError) as e:
+                raise RuntimeError(
+                    f"Cannot read existing principles file at {path}: {e}. "
+                    f"The file may be corrupt from a previous failed write."
+                ) from e
+            if "principles" not in store:
+                raise RuntimeError(
+                    f"Principles file at {path} is missing 'principles' key. "
+                    f"Expected schema: {{'principles': [...]}}"
+                )
+        else:
+            store = {"principles": []}
         store["principles"].append(
             {
                 "id": f"stub-principle-{iteration}",

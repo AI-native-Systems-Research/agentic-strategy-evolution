@@ -1,6 +1,7 @@
 """End-to-end integration tests — full single-iteration with stub agents."""
 import json
 import shutil
+import warnings
 from pathlib import Path
 
 import jsonschema
@@ -24,6 +25,18 @@ def load_schema(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+def _make_gate():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return HumanGate(auto_approve=True)
+
+
+def _make_dispatcher(work_dir):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return StubDispatcher(work_dir)
+
+
 class TestSingleIterationHappyPath:
     """Orchestrator completes one full iteration with stub agents."""
 
@@ -39,8 +52,8 @@ class TestSingleIterationHappyPath:
 
     def test_happy_path_confirmed(self, campaign_dir):
         engine = Engine(campaign_dir)
-        dispatcher = StubDispatcher(campaign_dir)
-        gate = HumanGate(auto_approve=True)
+        dispatcher = _make_dispatcher(campaign_dir)
+        gate = _make_gate()
         iter_dir = campaign_dir / "runs" / "iter-1"
 
         # INIT -> FRAMING
@@ -102,12 +115,12 @@ class TestSingleIterationHappyPath:
 
         # Campaign done
         engine.transition("DONE")
-        assert engine.state["phase"] == "DONE"
+        assert engine.phase == "DONE"
 
     def test_fast_fail_h_main_refuted(self, campaign_dir):
         engine = Engine(campaign_dir)
-        dispatcher = StubDispatcher(campaign_dir)
-        gate = HumanGate(auto_approve=True)
+        dispatcher = _make_dispatcher(campaign_dir)
+        gate = _make_gate()
         iter_dir = campaign_dir / "runs" / "iter-1"
 
         for s in ["FRAMING", "DESIGN"]:
@@ -136,7 +149,7 @@ class TestSingleIterationHappyPath:
         engine.transition("HUMAN_FINDINGS_GATE")
         # Skip TUNING -> go to EXTRACTION
         engine.transition("EXTRACTION")
-        assert engine.state["phase"] == "EXTRACTION"
+        assert engine.phase == "EXTRACTION"
 
     def test_checkpoint_resume(self, campaign_dir):
         engine = Engine(campaign_dir)
@@ -145,15 +158,15 @@ class TestSingleIterationHappyPath:
 
         # Simulate crash: create new engine from same dir
         engine2 = Engine(campaign_dir)
-        assert engine2.state["phase"] == "DESIGN"
+        assert engine2.phase == "DESIGN"
         engine2.transition("DESIGN_REVIEW")
-        assert engine2.state["phase"] == "DESIGN_REVIEW"
+        assert engine2.phase == "DESIGN_REVIEW"
 
     def test_multi_iteration_campaign(self, campaign_dir):
         """Two full iterations: first confirmed, second refuted."""
         engine = Engine(campaign_dir)
-        dispatcher = StubDispatcher(campaign_dir)
-        gate = HumanGate(auto_approve=True)
+        dispatcher = _make_dispatcher(campaign_dir)
+        gate = _make_gate()
 
         # Iteration 1: confirmed
         engine.transition("FRAMING")
@@ -176,11 +189,11 @@ class TestSingleIterationHappyPath:
             "extractor", "extract",
             output_path=campaign_dir / "principles.json", iteration=1,
         )
-        assert engine.state["iteration"] == 0
+        assert engine.iteration == 0
 
         # Loop to next iteration
         engine.transition("DESIGN")
-        assert engine.state["iteration"] == 1
+        assert engine.iteration == 1
 
         # Iteration 2: refuted
         iter_dir2 = campaign_dir / "runs" / "iter-2"
@@ -204,8 +217,8 @@ class TestSingleIterationHappyPath:
         )
 
         engine.transition("DONE")
-        assert engine.state["phase"] == "DONE"
-        assert engine.state["iteration"] == 1
+        assert engine.phase == "DONE"
+        assert engine.iteration == 1
 
         # Verify principles accumulated
         principles = json.loads((campaign_dir / "principles.json").read_text())
