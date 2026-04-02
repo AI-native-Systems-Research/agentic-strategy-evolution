@@ -45,7 +45,7 @@ Each iteration follows five phases:
    → next iteration or DONE
 ```
 
-See [docs/protocol.md](docs/protocol.md) for the full methodology and [docs/architecture.md](docs/architecture.md) for system internals.
+See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, and [docs/architecture.md](docs/architecture.md) for system internals.
 
 ## Hypothesis Bundle Arms
 
@@ -96,7 +96,7 @@ engine.transition("FRAMING")
 pytest -v
 ```
 
-All 79 tests validate schemas, templates, state machine transitions, gates, dispatch, fast-fail rules, and end-to-end integration.
+All 98 tests validate schemas, templates, state machine transitions, gates, dispatch, fast-fail rules, and end-to-end integration.
 
 ## Project Structure
 
@@ -123,14 +123,16 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   dispatch.py              Agent dispatch (stub dispatcher for Phase 1)
   gates.py                 Human approval gates
   fastfail.py              Fast-fail rule evaluation
+  protocols.py             Dispatcher and Gate interface contracts
 
 docs/
   protocol.md              Full methodology specification
+  data-model.md            Plain-English guide to every data structure
   architecture.md          System architecture and component design
   case-studies/
     blis.md                30-iteration validation on LLM inference serving
 
-tests/                   79 tests (schemas, templates, engine, gates, dispatch, fastfail, integration)
+tests/                   98 tests (schemas, templates, engine, gates, dispatch, fastfail, integration)
 ```
 
 ## Case Study: LLM Inference Serving
