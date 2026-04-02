@@ -164,12 +164,10 @@ Rule 1 takes priority: if H-main is refuted, the control-negative result doesn't
                        ▼
                   Human Gate (approve/reject/abort)
                        │
+                       ├──▶ EXTRACTION  (fast-fail: h-main refuted)
+                       ├──▶ DESIGN      (fast-fail: h-control confounded)
                        ▼
-                   Fast-Fail ──▶ SKIP_TO_EXTRACTION (if refuted)
-                       │          REDESIGN (if confounded)
-                       │          SIMPLIFY (if dominated)
-                       ▼
-                    Tuning (if H-main confirmed)
+                    Tuning (if H-main confirmed, no fast-fail)
                        │
                        ▼
                     Extractor

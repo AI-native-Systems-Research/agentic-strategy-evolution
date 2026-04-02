@@ -80,7 +80,7 @@ class TestSingleIterationHappyPath:
             dispatcher.dispatch(
                 "reviewer", "review-design",
                 output_path=iter_dir / "reviews" / f"review-{p}.md",
-                perspective=p,
+                iteration=1, perspective=p,
             )
 
         # DESIGN_REVIEW -> HUMAN_DESIGN_GATE (no criticals)

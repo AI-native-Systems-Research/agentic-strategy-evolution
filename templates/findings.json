@@ -1,6 +1,6 @@
 {
-  "iteration": 1,
-  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "iteration": 0,
+  "bundle_ref": "runs/iter-0/bundle.yaml",
   "arms": [
     {
       "arm_type": "h-main",

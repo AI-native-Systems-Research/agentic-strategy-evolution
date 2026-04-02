@@ -17,7 +17,7 @@ class Dispatcher(Protocol):
         phase: str,
         *,
         output_path: Path,
-        iteration: int = 1,
+        iteration: int,
         perspective: str | None = None,
         **kwargs,
     ) -> None: ...

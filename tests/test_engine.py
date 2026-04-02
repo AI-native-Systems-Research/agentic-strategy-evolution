@@ -160,6 +160,13 @@ class TestEngine:
         engine.transition("EXTRACTION")
         assert engine.phase == "EXTRACTION"
 
+    def test_framing_to_design_does_not_increment(self, work_dir):
+        """Only EXTRACTION -> DESIGN increments, not FRAMING -> DESIGN."""
+        engine = Engine(work_dir)
+        engine.transition("FRAMING")
+        engine.transition("DESIGN")
+        assert engine.iteration == 0
+
     def test_iteration_increments_on_next_design(self, work_dir):
         engine = Engine(work_dir)
         for s in [

@@ -66,7 +66,7 @@ class TestStubDispatcher:
         output_path = work_dir / "runs" / "iter-1" / "reviews" / "review-stats.md"
         dispatcher.dispatch(
             "reviewer", "review-design",
-            output_path=output_path, perspective="statistical-rigor",
+            output_path=output_path, iteration=1, perspective="statistical-rigor",
         )
         assert output_path.exists()
         content = output_path.read_text()
@@ -108,7 +108,7 @@ class TestStubDispatcher:
         dispatcher = _make_dispatcher(work_dir)
         with pytest.raises(ValueError, match="Unknown role"):
             dispatcher.dispatch(
-                "unknown", "phase", output_path=work_dir / "out.txt",
+                "unknown", "phase", output_path=work_dir / "out.txt", iteration=1,
             )
 
 
@@ -146,6 +146,42 @@ class TestDispatchErrorHandling:
                 output_path=tmp_path / "findings.json",
                 iteration=1, h_main_result="INVALID",
             )
+
+
+class TestWritePrinciplesAtomicity:
+    def test_rename_failure_preserves_original(self, tmp_path):
+        (tmp_path / "principles.json").write_text('{"principles": []}')
+        dispatcher = _make_dispatcher(tmp_path)
+        with pytest.raises(OSError, match="cross-device"):
+            with __import__("unittest.mock", fromlist=["patch"]).patch(
+                "os.rename", side_effect=OSError("cross-device link")
+            ):
+                dispatcher.dispatch(
+                    "extractor", "extract",
+                    output_path=tmp_path / "principles.json", iteration=1,
+                )
+        # Original file unchanged
+        result = json.loads((tmp_path / "principles.json").read_text())
+        assert result == {"principles": []}
+        # No temp files left
+        assert list(tmp_path.glob("*.json.tmp")) == []
+
+    def test_write_failure_preserves_original(self, tmp_path):
+        (tmp_path / "principles.json").write_text('{"principles": []}')
+        dispatcher = _make_dispatcher(tmp_path)
+        with pytest.raises(OSError, match="disk full"):
+            with __import__("unittest.mock", fromlist=["patch"]).patch(
+                "os.write", side_effect=OSError("disk full")
+            ):
+                dispatcher.dispatch(
+                    "extractor", "extract",
+                    output_path=tmp_path / "principles.json", iteration=1,
+                )
+        # Original file unchanged
+        result = json.loads((tmp_path / "principles.json").read_text())
+        assert result == {"principles": []}
+        # No temp files left
+        assert list(tmp_path.glob("*.json.tmp")) == []
 
 
 class TestProtocolConformance:
