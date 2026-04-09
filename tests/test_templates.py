@@ -63,5 +63,5 @@ class TestTemplateConformance:
         schema = load_schema("findings.schema.json")
         template = load_template("findings.json")
         jsonschema.validate(template, schema)
-        assert template["iteration"] == 0
+        assert template["iteration"] == 1
         assert len(template["arms"]) >= 1
