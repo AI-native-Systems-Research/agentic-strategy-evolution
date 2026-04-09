@@ -163,6 +163,7 @@ class StubDispatcher:
                 "mechanism": "Stub mechanism",
                 "applicability_bounds": "stub",
                 "superseded_by": None,
+                "category": "domain",
                 "status": "active",
             }
         )

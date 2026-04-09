@@ -41,6 +41,11 @@
         "mechanism": { "type": "string" },
         "applicability_bounds": { "type": "string" },
         "superseded_by": { "type": ["string", "null"] },
+        "category": {
+          "type": "string",
+          "enum": ["domain", "meta"],
+          "description": "Whether this principle is about the target system (domain) or the investigation process itself (meta)."
+        },
         "status": {
           "type": "string",
           "enum": ["active", "updated", "pruned"]
