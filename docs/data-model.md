@@ -1,10 +1,10 @@
 # Data Model Guide
 
-Nous uses 7 schema-governed artifacts to drive the investigation loop. This guide explains each one in plain English.
+Nous uses 8 schema-governed artifacts to drive the investigation loop. This guide explains each one in plain English.
 
 ## How They Fit Together
 
-`state.json` drives the loop. Each iteration produces a `bundle.yaml` (experiment plan) and `findings.json` (results). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
+`campaign.yaml` describes the target system and configures the reviewer panel. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (experiment plan) and `findings.json` (results). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
 
 ```
 state.json          "Where are we?"         Drives the loop
@@ -24,6 +24,25 @@ findings.json       "What happened?"        Prediction vs outcome, arm by arm
                                                              Final report card
 ```
 
+## 0. campaign.yaml — "What system are we investigating?"
+
+**Schema:** `schemas/campaign.schema.yaml`
+
+The campaign configuration. Describes the target system, configures the reviewer panel, and points to prompt layers. Created once during setup (with Claude assistance) and referenced by `state.json` via `config_ref`.
+
+| Section | What it configures |
+|---|---|
+| `target_system.name` / `description` | What system Nous is investigating |
+| `target_system.observable_metrics` | What you can measure (latency, throughput, error rate, etc.) |
+| `target_system.controllable_knobs` | What you can change (algorithms, configs, resource limits) |
+| `review.design_perspectives` | Reviewer perspectives for design review (default: 5) |
+| `review.findings_perspectives` | Reviewer perspectives for findings review (default: 10) |
+| `review.max_review_rounds` | Maximum convergence rounds per gate |
+| `prompts.methodology_layer` | Path to generic Nous methodology prompts |
+| `prompts.domain_adapter_layer` | Path to domain-specific prompt overrides (null until generated) |
+
+The reviewer panel starts with 5 default perspectives (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity) and can be adjusted per domain — fewer for simple systems, more for safety-critical ones.
+
 ## 1. state.json — "Where are we right now?"
 
 **Schema:** `schemas/state.schema.json`
@@ -37,6 +56,7 @@ A bookmark. It tells the orchestrator what phase we're in, which iteration we're
 | `run_id` | A name for this campaign |
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |
 | `timestamp` | When this was last updated |
+| `config_ref` | Path to the campaign configuration file (null before setup) |
 
 The orchestrator writes this atomically (temp file + rename) so a crash never leaves a corrupt checkpoint.
 
@@ -79,6 +99,7 @@ Each principle has:
 | `contradicts` | Which other principles disagree with this one |
 | `extraction_iteration` | Which iteration produced this principle |
 | `applicability_bounds` | Conditions under which this principle holds |
+| `category` | domain (about the target system) or meta (about the investigation process) |
 | `status` | active (in use), updated (refined), or pruned (retired) |
 | `superseded_by` | If pruned, what replaced it |
 

@@ -37,8 +37,9 @@ This separation exists because:
                     ┌─────────────────────────────────────┐
                     │           Campaign Directory         │
                     │                                      │
-                    │  state.json      ledger.json         │
-                    │  principles.json problem.md          │
+                    │  campaign.yaml   state.json          │
+                    │  ledger.json     principles.json     │
+                    │  problem.md                          │
                     │  runs/iter-N/    trace.jsonl         │
                     │    bundle.yaml   findings.json       │
                     │    reviews/      summary.json        │
@@ -205,19 +206,20 @@ Every artifact exchanged between components is validated against a JSON Schema (
 
 | Schema | Format | Governs |
 |---|---|---|
-| `state.schema.json` | JSON | Orchestrator checkpoint (phase, iteration, run_id) |
+| `campaign.schema.yaml` | YAML | Campaign configuration (target system, reviewer panel, prompt layers) |
+| `state.schema.json` | JSON | Orchestrator checkpoint (phase, iteration, run_id, config_ref) |
 | `bundle.schema.yaml` | YAML | Hypothesis bundles (arms with predictions, mechanisms, diagnostics) |
 | `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |
-| `principles.schema.json` | JSON | Principle store (statement, confidence, regime, evidence, status) |
-| `ledger.schema.json` | JSON | Append-only iteration log with prediction accuracy |
+| `principles.schema.json` | JSON | Principle store (statement, confidence, regime, evidence, category, status) |
+| `ledger.schema.json` | JSON | Append-only iteration log with prediction accuracy and domain metrics |
 | `summary.schema.json` | JSON | Campaign rollup (cost, tokens, principles extracted) |
 | `trace.schema.json` | JSON | Observability events (LLM calls, state transitions, gate decisions) |
 
-The bundle schema uses YAML format because hypothesis bundles contain free-text fields (predictions, mechanisms, diagnostics) that are more readable in YAML. All other schemas use JSON.
+The bundle and campaign schemas use YAML format because they contain free-text fields that are more readable in YAML. All other schemas use JSON.
 
 ## Review Protocol
 
-Reviews run N independent perspectives in parallel, each examining the artifact from a different angle (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity). The specific perspective counts (5 for design, 10 for findings) are protocol targets; the Phase 1 orchestrator dispatches reviews individually and enforcement of these counts is deferred to Phase 2 (agent prompts).
+Reviews run N independent perspectives in parallel, each examining the artifact from a different angle (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity). The perspective counts (default: 5 for design, 10 for findings) are configurable per campaign via `campaign.yaml`; the Phase 1 orchestrator dispatches reviews individually and enforcement of these counts is deferred to Phase 2 (agent prompts).
 
 **Convergence gating:**
 1. Run all perspectives in parallel

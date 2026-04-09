@@ -76,9 +76,10 @@ mkdir -p my-campaign/runs
 cp templates/state.json my-campaign/
 cp templates/ledger.json my-campaign/
 cp templates/principles.json my-campaign/
+cp templates/campaign.yaml my-campaign/
 ```
 
-Edit `my-campaign/state.json` to set your `run_id`, then use the orchestrator engine to drive the state machine:
+Edit `my-campaign/state.json` to set your `run_id` and `my-campaign/campaign.yaml` to describe your target system, then use the orchestrator engine to drive the state machine:
 
 ```python
 from orchestrator.engine import Engine
@@ -103,6 +104,7 @@ The full test suite validates schemas, templates, state machine transitions, gat
 ```
 schemas/                 JSON Schema definitions (Draft 2020-12)
   bundle.schema.yaml       Hypothesis bundle (arms + metadata)
+  campaign.schema.yaml     Campaign configuration (target system, reviewers, prompts)
   findings.schema.json     Prediction-vs-outcome results
   principles.schema.json   Living principle store
   state.schema.json        Orchestrator checkpoint
@@ -112,6 +114,7 @@ schemas/                 JSON Schema definitions (Draft 2020-12)
 
 templates/               Starter files for new campaigns
   state.json               Initial state (INIT, iteration 0)
+  campaign.yaml            Campaign config (target system, reviewer panel, prompts)
   ledger.json              Baseline ledger row
   principles.json          Empty principle store
   bundle.yaml              Hypothesis bundle with TODO markers
@@ -132,7 +135,7 @@ docs/
   case-studies/
     blis.md                30-iteration validation on LLM inference serving
 
-tests/                   119 tests (schemas, templates, engine, gates, dispatch, fastfail, protocols, integration)
+tests/                   139 tests (schemas, templates, engine, gates, dispatch, fastfail, protocols, integration)
 ```
 
 ## Case Study: LLM Inference Serving
