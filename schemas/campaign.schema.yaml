@@ -1,0 +1,69 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/campaign.schema.yaml"
+title: Campaign Configuration
+description: >
+  Domain-specific settings for a Nous campaign. Configures the target system,
+  reviewer panel, and prompt layers. Generated during setup (with Claude assistance)
+  and referenced by state.json via config_ref.
+
+type: object
+required: [target_system, review, prompts]
+additionalProperties: false
+
+properties:
+  target_system:
+    type: object
+    required: [name, description, observable_metrics, controllable_knobs]
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+        minLength: 1
+        description: "Human-readable system name."
+      description:
+        type: string
+        minLength: 1
+        description: "What the system does — domain, purpose, architecture."
+      observable_metrics:
+        type: array
+        items: { type: string, minLength: 1 }
+        minItems: 1
+        description: "Measurable outputs (e.g., latency, throughput, error rate)."
+      controllable_knobs:
+        type: array
+        items: { type: string, minLength: 1 }
+        minItems: 1
+        description: "What can be changed (algorithms, configs, resource limits)."
+
+  review:
+    type: object
+    required: [design_perspectives, findings_perspectives, max_review_rounds]
+    additionalProperties: false
+    properties:
+      design_perspectives:
+        type: array
+        items: { type: string, minLength: 1 }
+        minItems: 1
+        description: "Reviewer perspectives for design review (default: 5)."
+      findings_perspectives:
+        type: array
+        items: { type: string, minLength: 1 }
+        minItems: 1
+        description: "Reviewer perspectives for findings review (default: 10)."
+      max_review_rounds:
+        type: integer
+        minimum: 1
+        description: "Maximum convergence rounds per review gate."
+
+  prompts:
+    type: object
+    required: [methodology_layer]
+    additionalProperties: false
+    properties:
+      methodology_layer:
+        type: string
+        minLength: 1
+        description: "Path to generic Nous methodology prompts."
+      domain_adapter_layer:
+        type: ["string", "null"]
+        description: "Path to domain-specific prompt overrides. Null if not yet generated."
