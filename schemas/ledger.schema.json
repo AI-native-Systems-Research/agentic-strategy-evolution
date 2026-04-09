@@ -56,7 +56,11 @@
           "type": "array",
           "items": { "$ref": "#/$defs/principle_ref" }
         },
-        "frontier_update": { "type": ["string", "null"] }
+        "frontier_update": { "type": ["string", "null"] },
+        "domain_metrics": {
+          "type": "object",
+          "description": "Optional domain-specific metrics for this iteration (e.g., memory usage, compilation time)."
+        }
       }
     },
     "accuracy": {
