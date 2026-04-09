@@ -27,6 +27,7 @@ class TestTemplateConformance:
         t = load_template("state.json")
         assert t["phase"] == "INIT"
         assert t["iteration"] == 0
+        assert t["config_ref"] is None
 
     def test_ledger_template_has_baseline(self, load_template):
         t = load_template("ledger.json")
@@ -44,6 +45,19 @@ class TestTemplateConformance:
         assert "Research Question" in content
         assert "Baseline" in content
         assert "Success Criteria" in content
+        assert "Experimental Conditions" in content
+
+    def test_campaign_template_conforms(self, load_schema, load_template):
+        schema = load_schema("campaign.schema.yaml")
+        template = load_template("campaign.yaml")
+        jsonschema.validate(template, schema)
+
+    def test_campaign_template_has_defaults(self, load_template):
+        t = load_template("campaign.yaml")
+        assert len(t["review"]["design_perspectives"]) == 5
+        assert len(t["review"]["findings_perspectives"]) == 10
+        assert t["review"]["max_review_rounds"] == 10
+        assert t["prompts"]["domain_adapter_layer"] is None
 
     def test_findings_template_conforms(self, load_schema, load_template):
         schema = load_schema("findings.schema.json")

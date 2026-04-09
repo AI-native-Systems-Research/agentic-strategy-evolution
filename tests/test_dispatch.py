@@ -82,6 +82,7 @@ class TestStubDispatcher:
         )
         result = json.loads((work_dir / "principles.json").read_text())
         assert len(result["principles"]) == 1
+        assert result["principles"][0]["category"] == "domain"
         jsonschema.validate(result, _load_schema("principles.schema.json"))
 
     def test_dispatch_extractor_creates_new_file(self, work_dir):

@@ -511,3 +511,289 @@ class TestSummarySchema:
         }
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(instance, schema)
+
+
+class TestCampaignSchema:
+    def test_valid_campaign(self, load_schema):
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "target_system": {
+                "name": "BLIS",
+                "description": "LLM inference serving simulator",
+                "observable_metrics": ["latency_p99", "throughput"],
+                "controllable_knobs": ["routing_algorithm", "batch_size"],
+            },
+            "review": {
+                "design_perspectives": ["stats", "causal", "confound"],
+                "findings_perspectives": ["stats", "causal", "confound", "robustness"],
+                "max_review_rounds": 10,
+            },
+            "prompts": {
+                "methodology_layer": "prompts/methodology/",
+                "domain_adapter_layer": "prompts/blis/",
+            },
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_minimal_campaign(self, load_schema):
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "target_system": {
+                "name": "my-system",
+                "description": "A system.",
+                "observable_metrics": ["latency"],
+                "controllable_knobs": ["config_a"],
+            },
+            "review": {
+                "design_perspectives": ["general"],
+                "findings_perspectives": ["general"],
+                "max_review_rounds": 1,
+            },
+            "prompts": {
+                "methodology_layer": "prompts/",
+                "domain_adapter_layer": None,
+            },
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_missing_target_system_rejected(self, load_schema):
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "review": {
+                "design_perspectives": ["general"],
+                "findings_perspectives": ["general"],
+                "max_review_rounds": 5,
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance, schema)
+
+    def test_empty_metrics_rejected(self, load_schema):
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "target_system": {
+                "name": "x",
+                "description": "x",
+                "observable_metrics": [],
+                "controllable_knobs": ["a"],
+            },
+            "review": {
+                "design_perspectives": ["general"],
+                "findings_perspectives": ["general"],
+                "max_review_rounds": 5,
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance, schema)
+
+    def test_zero_review_rounds_rejected(self, load_schema):
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "target_system": {
+                "name": "x",
+                "description": "x",
+                "observable_metrics": ["m"],
+                "controllable_knobs": ["k"],
+            },
+            "review": {
+                "design_perspectives": ["general"],
+                "findings_perspectives": ["general"],
+                "max_review_rounds": 0,
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance, schema)
+
+    def test_extra_top_level_field_rejected(self, load_schema):
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "target_system": {
+                "name": "x",
+                "description": "x",
+                "observable_metrics": ["m"],
+                "controllable_knobs": ["k"],
+            },
+            "review": {
+                "design_perspectives": ["general"],
+                "findings_perspectives": ["general"],
+                "max_review_rounds": 5,
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+            "extra_field": "should fail",
+        }
+        with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+            jsonschema.validate(instance, schema)
+
+
+class TestPrinciplesCategoryField:
+    def test_domain_category_accepted(self, load_schema):
+        schema = load_schema("principles.schema.json")
+        instance = {
+            "principles": [{
+                "id": "P-1", "statement": "test", "confidence": "high",
+                "regime": "all", "evidence": [], "contradicts": [],
+                "extraction_iteration": 1, "mechanism": "test",
+                "applicability_bounds": "test", "superseded_by": None,
+                "category": "domain", "status": "active",
+            }]
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_meta_category_accepted(self, load_schema):
+        schema = load_schema("principles.schema.json")
+        instance = {
+            "principles": [{
+                "id": "M-1", "statement": "reviewer X is ineffective",
+                "confidence": "medium", "regime": "all", "evidence": [],
+                "contradicts": [], "extraction_iteration": 5,
+                "mechanism": "meta-review", "applicability_bounds": "all",
+                "superseded_by": None, "category": "meta", "status": "active",
+            }]
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_omitted_category_accepted(self, load_schema):
+        schema = load_schema("principles.schema.json")
+        instance = {
+            "principles": [{
+                "id": "P-1", "statement": "test", "confidence": "high",
+                "regime": "all", "evidence": [], "contradicts": [],
+                "extraction_iteration": 1, "mechanism": "test",
+                "applicability_bounds": "test", "superseded_by": None,
+                "status": "active",
+            }]
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_invalid_category_rejected(self, load_schema):
+        schema = load_schema("principles.schema.json")
+        instance = {
+            "principles": [{
+                "id": "P-1", "statement": "test", "confidence": "high",
+                "regime": "all", "evidence": [], "contradicts": [],
+                "extraction_iteration": 1, "mechanism": "test",
+                "applicability_bounds": "test", "superseded_by": None,
+                "category": "system", "status": "active",
+            }]
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance, schema)
+
+
+class TestStateConfigRef:
+    def test_config_ref_string_accepted(self, load_schema):
+        schema = load_schema("state.schema.json")
+        instance = {
+            "phase": "INIT", "iteration": 0, "run_id": "test",
+            "family": None, "timestamp": "2026-04-01T00:00:00Z",
+            "config_ref": "campaign.yaml",
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_config_ref_null_accepted(self, load_schema):
+        schema = load_schema("state.schema.json")
+        instance = {
+            "phase": "INIT", "iteration": 0, "run_id": "test",
+            "family": None, "timestamp": "2026-04-01T00:00:00Z",
+            "config_ref": None,
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_config_ref_omitted_accepted(self, load_schema):
+        schema = load_schema("state.schema.json")
+        instance = {
+            "phase": "INIT", "iteration": 0, "run_id": "test",
+            "family": None, "timestamp": "2026-04-01T00:00:00Z",
+        }
+        jsonschema.validate(instance, schema)
+
+
+class TestArmMetadata:
+    def test_bundle_arm_with_metadata(self, load_schema):
+        schema = load_schema("bundle.schema.yaml")
+        instance = {
+            "metadata": {
+                "iteration": 1, "family": "test",
+                "research_question": "test?",
+            },
+            "arms": [{
+                "type": "h-main",
+                "prediction": "x", "mechanism": "y", "diagnostic": "z",
+                "metadata": {"gpu_type": "A100", "custom_param": 42},
+            }],
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_bundle_arm_without_metadata(self, load_schema):
+        schema = load_schema("bundle.schema.yaml")
+        instance = {
+            "metadata": {
+                "iteration": 1, "family": "test",
+                "research_question": "test?",
+            },
+            "arms": [{
+                "type": "h-main",
+                "prediction": "x", "mechanism": "y", "diagnostic": "z",
+            }],
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_findings_arm_with_metadata(self, load_schema):
+        schema = load_schema("findings.schema.json")
+        instance = {
+            "iteration": 1, "bundle_ref": "test",
+            "arms": [{
+                "arm_type": "h-main",
+                "predicted": "x", "observed": "y",
+                "status": "CONFIRMED", "error_type": None,
+                "diagnostic_note": None,
+                "metadata": {"latency_p99_ms": 42.1},
+            }],
+            "discrepancy_analysis": "test",
+        }
+        jsonschema.validate(instance, schema)
+
+
+class TestLedgerDomainMetrics:
+    def test_ledger_row_with_domain_metrics(self, load_schema):
+        schema = load_schema("ledger.schema.json")
+        instance = {
+            "iterations": [{
+                "iteration": 1, "family": "test",
+                "timestamp": "2026-04-01T00:00:00Z",
+                "candidate_id": "test",
+                "h_main_result": "CONFIRMED",
+                "ablation_results": {},
+                "control_result": None,
+                "robustness_result": None,
+                "prediction_accuracy": None,
+                "principles_extracted": [],
+                "frontier_update": None,
+                "domain_metrics": {
+                    "memory_peak_gb": 12.4,
+                    "compilation_time_s": 3.2,
+                },
+            }]
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_ledger_row_without_domain_metrics(self, load_schema):
+        schema = load_schema("ledger.schema.json")
+        instance = {
+            "iterations": [{
+                "iteration": 1, "family": "test",
+                "timestamp": "2026-04-01T00:00:00Z",
+                "candidate_id": "test",
+                "h_main_result": None,
+                "ablation_results": {},
+                "control_result": None,
+                "robustness_result": None,
+                "prediction_accuracy": None,
+                "principles_extracted": [],
+                "frontier_update": None,
+            }]
+        }
+        jsonschema.validate(instance, schema)
