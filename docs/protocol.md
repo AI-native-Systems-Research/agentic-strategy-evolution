@@ -31,7 +31,7 @@ Each iteration follows five phases:
 The Planner agent writes `problem.md` containing:
 - Research question — what mechanism or behavior is under investigation
 - Baseline — current system behavior without intervention, with metrics
-- Workload — arrival patterns, request types, load levels
+- Experimental conditions — input characteristics, scale parameters, environment configuration
 - Success criteria — quantitative thresholds for success
 - Constraints — what cannot be changed (resource limits, SLOs, compatibility)
 - Prior knowledge — relevant principles from earlier iterations

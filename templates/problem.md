@@ -8,9 +8,9 @@
 
 <!-- What is the current system behavior without intervention? Include metrics. -->
 
-## Workload
+## Experimental Conditions
 
-<!-- What workload will you use? Describe arrival patterns, request types, load levels. -->
+<!-- Describe the conditions under which you will test. Include input characteristics, scale parameters, and environment configuration. -->
 
 ## Success Criteria
 
