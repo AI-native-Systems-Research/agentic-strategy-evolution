@@ -41,7 +41,7 @@ The Planner agent writes `problem.md` containing:
 The Planner agent generates 2–3 candidate strategies, selects a winner via multi-judge review, and decomposes it into a **hypothesis bundle** — a structured set of falsifiable predictions.
 
 A bundle passes through:
-1. AI Design Review (5 independent perspectives, convergence-gated)
+1. AI Design Review (default: 5 independent perspectives, configurable per campaign via `campaign.yaml`)
 2. Human Approval Gate (hard stop — human sees bundle + review summaries)
 
 If the human rejects, the Planner revises. If approved, the bundle advances to execution.
@@ -55,7 +55,7 @@ The Executor agent:
 4. Documents results in `findings.json`
 
 Findings pass through:
-1. AI Findings Review (10 independent perspectives, convergence-gated)
+1. AI Findings Review (default: 10 independent perspectives, configurable per campaign via `campaign.yaml`)
 2. Human Approval Gate
 
 The ledger records one row per completed iteration, including prediction accuracy.
@@ -147,14 +147,14 @@ Reviews follow a convergence protocol:
 
 SUGGESTION-level items do not block advancement. Only CRITICAL findings block the gate. IMPORTANT findings are surfaced to the human reviewer but do not prevent advancement to the gate.
 
-> **Note:** The specific perspective counts (5 for design, 10 for findings) and the 10-round maximum are protocol targets. The Phase 1 orchestrator skeleton dispatches reviews individually; enforcement of these counts is deferred to Phase 2 (agent prompts).
+> **Note:** The perspective counts (5 for design, 10 for findings) and the 10-round maximum are configurable defaults, set per campaign in `campaign.yaml`. The Phase 1 orchestrator skeleton dispatches reviews individually; enforcement of these counts is deferred to Phase 2 (agent prompts).
 
 ### Review Gates
 
 | Gate | Perspectives | Reviews | Blocks on |
 |---|---|---|---|
-| Design Review | 5 | After bundle design | Any CRITICAL finding |
-| Findings Review | 10 | After experiment execution | Any CRITICAL finding |
+| Design Review | 5 (default) | After bundle design | Any CRITICAL finding |
+| Findings Review | 10 (default) | After experiment execution | Any CRITICAL finding |
 
 ## Human Gates
 
