@@ -60,3 +60,6 @@ $defs:
         type: string
         minLength: 1
         description: "What to investigate if the prediction is wrong."
+      metadata:
+        type: object
+        description: "Optional domain-specific metadata for this arm."

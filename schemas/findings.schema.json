@@ -42,7 +42,11 @@
           "type": ["string", "null"],
           "enum": ["direction", "magnitude", "regime", null]
         },
-        "diagnostic_note": { "type": ["string", "null"] }
+        "diagnostic_note": { "type": ["string", "null"] },
+        "metadata": {
+          "type": "object",
+          "description": "Optional domain-specific metadata for this arm result."
+        }
       }
     }
   }
