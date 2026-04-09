@@ -125,6 +125,7 @@ The principle store is a living knowledge base. Each principle records:
 - **Regime** — conditions under which the principle holds
 - **Evidence** — links to the iterations and arms that established it
 - **Mechanism** — the causal explanation underlying the principle
+- **Category** — domain (about the target system) or meta (about the investigation process)
 - **Status** — active, updated, or pruned
 
 Principles are hard constraints on subsequent iterations. The Planner must not design bundles that contradict active principles without explicit justification.
@@ -218,6 +219,7 @@ Backward/looping transitions:
 
 ```
 campaign-dir/
+  campaign.yaml       — campaign configuration (target system, reviewers, prompts)
   state.json          — investigation checkpoint
   ledger.json         — append-only iteration log
   principles.json     — living principle store

@@ -232,8 +232,8 @@ SUGGESTION items never block. IMPORTANT items are surfaced to the human reviewer
 
 | Gate | Perspectives | After |
 |---|---|---|
-| Design Review | 5 | Bundle design |
-| Findings Review | 10 | Experiment execution |
+| Design Review | 5 (default) | Bundle design |
+| Findings Review | 10 (default) | Experiment execution |
 
 ## Prediction Error Taxonomy
 

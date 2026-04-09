@@ -44,12 +44,12 @@ properties:
         type: array
         items: { type: string, minLength: 1 }
         minItems: 1
-        description: "Reviewer perspectives for design review (default: 5)."
+        description: "Reviewer perspectives for design review."
       findings_perspectives:
         type: array
         items: { type: string, minLength: 1 }
         minItems: 1
-        description: "Reviewer perspectives for findings review (default: 10)."
+        description: "Reviewer perspectives for findings review."
       max_review_rounds:
         type: integer
         minimum: 1

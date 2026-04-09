@@ -7,6 +7,9 @@ Nous uses 8 schema-governed artifacts to drive the investigation loop. This guid
 `campaign.yaml` describes the target system and configures the reviewer panel. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (experiment plan) and `findings.json` (results). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
 
 ```
+campaign.yaml       "What system?"          Target system, reviewers, prompts
+    │
+    ▼
 state.json          "Where are we?"         Drives the loop
     │
     ▼
