@@ -41,7 +41,7 @@ The campaign configuration. Describes the target system, configures the reviewer
 | `prompts.methodology_layer` | Path to generic Nous methodology prompts |
 | `prompts.domain_adapter_layer` | Path to domain-specific prompt overrides (null until generated) |
 
-The reviewer panel starts with 5 default perspectives (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity) and can be adjusted per domain — fewer for simple systems, more for safety-critical ones.
+The template ships with 5 design perspectives (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity). Campaigns may use fewer or more depending on the domain — the schema requires at least 1.
 
 ## 1. state.json — "Where are we right now?"
 
@@ -79,6 +79,7 @@ Each row records:
 | `prediction_accuracy` | How many arms did we predict correctly? (e.g., 4/6 = 66.7%) |
 | `principles_extracted` | What principles were added, updated, or pruned this iteration |
 | `frontier_update` | What should we explore next? |
+| `domain_metrics` | Optional domain-specific metrics (e.g., memory usage, compilation time) |
 
 ## 3. principles.json — "What have we learned?"
 
@@ -123,7 +124,7 @@ The experiment plan. A set of hypotheses ("arms") designed together to test one 
 | `h-control-negative` | At low load, the strategy should have no effect (proves mechanism, not noise) |
 | `h-robustness` | Does it hold across different workloads? |
 
-Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal explanation), **diagnostic** (what to investigate if wrong).
+Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal explanation), **diagnostic** (what to investigate if wrong). Arms may also carry an optional **metadata** object for domain-specific extensions.
 
 ## 5. findings.json — "What actually happened?"
 
@@ -140,6 +141,7 @@ The experiment results. Compares what we predicted to what we observed, arm by a
 | `arms[].error_type` | If wrong: direction (opposite effect), magnitude (right direction, wrong amount), or regime (different conditions behave differently) |
 | `arms[].diagnostic_note` | What we learned from the failure |
 | `discrepancy_analysis` | Overall explanation of what went wrong/right |
+| `arms[].metadata` | Optional domain-specific data attached to the arm result |
 | `dominant_component_pct` | If one component accounts for >80% of the effect, triggers simplification |
 
 **Fast-fail rules** read this artifact:
