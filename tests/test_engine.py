@@ -159,6 +159,16 @@ class TestEngine:
             engine.transition(s)
         engine.transition("EXTRACTION")
         assert engine.phase == "EXTRACTION"
+        assert engine.iteration == 0  # skipping TUNING must not increment
+
+    def test_human_design_gate_reject(self, work_dir):
+        """Human rejects at design gate -> back to DESIGN without incrementing."""
+        engine = Engine(work_dir)
+        for s in ["FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE"]:
+            engine.transition(s)
+        engine.transition("DESIGN")  # human rejects
+        assert engine.phase == "DESIGN"
+        assert engine.iteration == 0  # must NOT increment
 
     def test_framing_to_design_does_not_increment(self, work_dir):
         """Only EXTRACTION -> DESIGN increments, not FRAMING -> DESIGN."""

@@ -16,6 +16,32 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+def _atomic_write(path: Path, data: str | bytes) -> None:
+    """Write data to path atomically via temp file + fsync + rename."""
+    if isinstance(data, str):
+        data = data.encode()
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    fd_closed = False
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+        os.close(fd)
+        fd_closed = True
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            if not fd_closed:
+                os.close(fd)
+        except OSError:
+            pass
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 class StubDispatcher:
     """Produces valid, schema-conformant stub artifacts for testing."""
 
@@ -91,7 +117,7 @@ class StubDispatcher:
                 },
             ],
         }
-        path.write_text(yaml.dump(bundle, default_flow_style=False, sort_keys=False))
+        _atomic_write(path, yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False))
 
     def _write_findings(self, path: Path, iteration: int, h_main_result: str) -> None:
         findings = {
@@ -125,14 +151,15 @@ class StubDispatcher:
             if h_main_result == "CONFIRMED"
             else "Stub analysis: H-main refuted, mechanism does not hold.",
         }
-        path.write_text(json.dumps(findings, indent=2) + "\n")
+        _atomic_write(path, json.dumps(findings, indent=2) + "\n")
 
     def _write_review(self, path: Path, perspective: str) -> None:
-        path.write_text(
+        _atomic_write(
+            path,
             f"# Review — {perspective}\n\n"
             f"**Severity:** SUGGESTION\n\n"
             f"No CRITICAL or IMPORTANT findings.\n"
-            f"Stub review from {perspective} perspective.\n"
+            f"Stub review from {perspective} perspective.\n",
         )
 
     def _write_principles(self, path: Path, iteration: int) -> None:
@@ -167,25 +194,4 @@ class StubDispatcher:
                 "status": "active",
             }
         )
-        # Atomic write: temp file + rename (same pattern as engine._save_state)
-        data = json.dumps(store, indent=2) + "\n"
-        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".json.tmp")
-        fd_closed = False
-        try:
-            os.write(fd, data.encode())
-            os.fsync(fd)
-            os.close(fd)
-            fd_closed = True
-            os.replace(tmp, str(path))
-        except BaseException:
-            try:
-                if not fd_closed:
-                    os.close(fd)
-            except OSError:
-                pass
-            try:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        _atomic_write(path, json.dumps(store, indent=2) + "\n")

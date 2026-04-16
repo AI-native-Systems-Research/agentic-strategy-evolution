@@ -77,6 +77,16 @@ class TestFastFail:
         }
         assert check_fast_fail(findings) == FastFailAction.CONTINUE
 
+    def test_partially_confirmed_h_main_continues(self):
+        """PARTIALLY_CONFIRMED is a valid h-main status and should not fast-fail."""
+        findings = {
+            "arms": [
+                {"arm_type": "h-main", "status": "PARTIALLY_CONFIRMED"},
+                {"arm_type": "h-control-negative", "status": "CONFIRMED"},
+            ]
+        }
+        assert check_fast_fail(findings) == FastFailAction.CONTINUE
+
 
 class TestFastFailValidation:
     def test_missing_h_main_arm_raises(self):
