@@ -1,0 +1,31 @@
+target_system:
+  name: "TODO-SET-SYSTEM-NAME"
+  description: "TODO: Describe what the system does."
+  observable_metrics:
+    - "TODO: latency, throughput, error rate, etc."
+  controllable_knobs:
+    - "TODO: algorithms, configurations, resource limits, etc."
+
+review:
+  design_perspectives:
+    - statistical-rigor
+    - causal-sufficiency
+    - confound-risk
+    - generalization
+    - mechanism-clarity
+  findings_perspectives:
+    - statistical-rigor
+    - causal-sufficiency
+    - confound-risk
+    - generalization
+    - mechanism-clarity
+    - reproducibility
+    - measurement-validity
+    - alternative-explanations
+    - practical-significance
+    - scope-boundaries
+  max_review_rounds: 10
+
+prompts:
+  methodology_layer: "prompts/methodology/"
+  domain_adapter_layer: null

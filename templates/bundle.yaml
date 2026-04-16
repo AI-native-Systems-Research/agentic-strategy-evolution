@@ -1,0 +1,31 @@
+metadata:
+  iteration: 1  # TODO: set iteration number
+  family: "TODO-mechanism-family"
+  research_question: "TODO: What mechanism are you investigating?"
+
+arms:
+  - type: h-main
+    prediction: "TODO: quantitative claim with measurable threshold"
+    mechanism: "TODO: causal explanation of how/why"
+    diagnostic: "TODO: what to investigate if prediction is wrong"
+
+  - type: h-ablation
+    component: "TODO-component-name"
+    prediction: "TODO: component's individual contribution claim"
+    mechanism: "TODO: why this component matters independently"
+    diagnostic: "TODO: what to check if component doesn't contribute"
+
+  - type: h-super-additivity
+    prediction: "TODO: compound effect > sum of parts"
+    mechanism: "TODO: why components interact non-linearly"
+    diagnostic: "TODO: what to check if components are independent"
+
+  - type: h-control-negative
+    prediction: "TODO: where the effect should vanish"
+    mechanism: "TODO: why mechanism is irrelevant in this regime"
+    diagnostic: "TODO: what overhead or side-effect to look for"
+
+  - type: h-robustness
+    prediction: "TODO: effect holds across workloads/conditions"
+    mechanism: "TODO: why mechanism generalizes"
+    diagnostic: "TODO: what property the mechanism depends on"

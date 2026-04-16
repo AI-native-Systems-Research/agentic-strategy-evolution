@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/trace.schema.json",
+  "title": "Trace Event",
+  "description": "One line per event in trace.jsonl — LLM calls, tool calls, state transitions, gate decisions.",
+  "type": "object",
+  "required": ["timestamp", "run_id", "event_type", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "timestamp": { "type": "string", "format": "date-time" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "event_type": {
+      "type": "string",
+      "enum": ["llm_call", "tool_call", "state_transition", "gate_decision"]
+    },
+    "payload": { "type": "object" }
+  }
+}

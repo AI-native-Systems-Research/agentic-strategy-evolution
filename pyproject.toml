@@ -1,0 +1,23 @@
+[project]
+name = "nous"
+version = "0.1.0"
+description = "Nous — hypothesis-driven experimentation framework for software systems"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "jsonschema>=4.20.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["orchestrator*"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
