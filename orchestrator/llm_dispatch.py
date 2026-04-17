@@ -20,8 +20,8 @@ from orchestrator.util import atomic_write
 logger = logging.getLogger(__name__)
 
 _FENCE_RE = {
-    "yaml": re.compile(r"```yaml\s*\n(.*?)```", re.DOTALL),
-    "json": re.compile(r"```json\s*\n(.*?)```", re.DOTALL),
+    "yaml": re.compile(r"```yaml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE),
+    "json": re.compile(r"```json\s*\n(.*?)```", re.DOTALL | re.IGNORECASE),
 }
 
 # Schema cache: schema_name -> parsed schema dict
@@ -183,27 +183,37 @@ class LLMDispatcher:
     def _read_research_question(self, phase: str, iteration: int) -> str:
         """Read the research question for frame/design phases."""
         if phase == "frame":
-            # For framing, the research question comes from campaign config
-            # or is the first iteration's guiding question.
-            return self.campaign.get(
-                "research_question",
-                "What is the primary performance bottleneck in the target system?",
-            )
+            rq = self.campaign.get("research_question")
+            if rq is None:
+                logger.warning(
+                    "No 'research_question' in campaign config; "
+                    "using default framing question."
+                )
+                return "What is the primary performance bottleneck in the target system?"
+            return rq
         # For design, read from the problem.md produced by framing.
         problem_path = self.work_dir / "runs" / f"iter-{iteration}" / "problem.md"
-        if problem_path.exists():
-            text = problem_path.read_text()
-            # Extract the first non-empty, non-heading line after "## Research Question"
-            in_section = False
-            for line in text.splitlines():
-                if line.strip().startswith("## Research Question"):
-                    in_section = True
-                    continue
-                if in_section and line.strip().startswith("##"):
-                    break
-                if in_section and line.strip():
-                    return line.strip()
-        return "See problem.md for the research question."
+        if not problem_path.exists():
+            raise FileNotFoundError(
+                f"Expected {problem_path} for design phase. "
+                f"Was the framing phase completed for iteration {iteration}?"
+            )
+        text = problem_path.read_text()
+        in_section = False
+        for line in text.splitlines():
+            if line.strip().startswith("## Research Question"):
+                in_section = True
+                continue
+            if in_section and line.strip().startswith("##"):
+                break
+            if in_section and line.strip():
+                return line.strip()
+        logger.warning(
+            "Could not extract research question from %s; "
+            "using full problem.md content as context.",
+            problem_path,
+        )
+        return text[:500]
 
     def _format_principles(self) -> str:
         """Read principles.json and format active ones for prompt injection."""
@@ -212,15 +222,19 @@ class LLMDispatcher:
             return "No principles extracted yet."
         try:
             store = json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            return "No principles extracted yet."
+        except json.JSONDecodeError as exc:
+            logger.error("principles.json contains invalid JSON: %s", exc)
+            raise RuntimeError(
+                f"Cannot read principles.json: corrupt JSON. {exc}"
+            ) from exc
         active = [
             p for p in store.get("principles", []) if p.get("status") == "active"
         ]
         if not active:
             return "No principles extracted yet."
         lines = [
-            f"- {p['id']}: {p['statement']} [confidence: {p['confidence']}]"
+            f"- {p.get('id', '?')}: {p.get('statement', '?')} "
+            f"[confidence: {p.get('confidence', '?')}]"
             for p in active
         ]
         return "\n".join(lines)
@@ -236,10 +250,20 @@ class LLMDispatcher:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message or "Please proceed."},
         ]
-        response = self._completion(
-            model=self.model, messages=messages, max_tokens=4096
-        )
-        return response.choices[0].message.content
+        try:
+            response = self._completion(
+                model=self.model, messages=messages, max_tokens=4096
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"LLM API call failed (model={self.model}): {exc}"
+            ) from exc
+        if not response.choices:
+            raise RuntimeError("LLM returned empty choices list.")
+        content = response.choices[0].message.content
+        if content is None:
+            raise RuntimeError("LLM returned None content.")
+        return content
 
     def _retry_with_feedback(
         self,
@@ -294,11 +318,19 @@ class LLMDispatcher:
         if matches:
             raw = matches[-1]  # use last fence
         else:
-            raw = text  # fallback: try parsing entire response
+            logger.warning(
+                "No ```%s``` code fence found in LLM response (%d chars); "
+                "attempting raw parse.",
+                fmt, len(text),
+            )
+            raw = text
 
-        if fmt == "yaml":
-            return yaml.safe_load(raw)
-        return json.loads(raw)
+        parsed = yaml.safe_load(raw) if fmt == "yaml" else json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"Expected a {fmt} object from LLM, got {type(parsed).__name__}"
+            )
+        return parsed
 
     @staticmethod
     def _validate(data: dict, schema_name: str) -> None:

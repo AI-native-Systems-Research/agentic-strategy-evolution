@@ -124,6 +124,10 @@ def work_dir(tmp_path: Path) -> Path:
     """Create a work directory with minimal campaign structure."""
     iter_dir = tmp_path / "runs" / "iter-1"
     iter_dir.mkdir(parents=True)
+    (iter_dir / "problem.md").write_text(
+        "# Problem Framing\n\n## Research Question\n"
+        "Does batch size affect latency in TestSystem?\n"
+    )
     (iter_dir / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
     (iter_dir / "findings.json").write_text(VALID_FINDINGS_JSON)
     (tmp_path / "principles.json").write_text(
