@@ -5,7 +5,7 @@ Run a single Nous iteration on any target system.
 ## Prerequisites
 
 - **Python 3.11+**
-- **An LLM API key** — any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers). Set the appropriate environment variable (e.g., `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+- **An LLM API key** — any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers). Set the appropriate environment variable (e.g., `OPENAI_API_KEY`).
 - **A target system** — something you can describe in terms of observable metrics and controllable knobs.
 
 ## Install

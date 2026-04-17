@@ -72,10 +72,10 @@ pip install -e ".[dev]"
 ### 2. Set your LLM API key
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...   # or OPENAI_API_KEY, etc.
+export OPENAI_API_KEY=sk-...
 ```
 
-Any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers) works.
+Any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers) works — set the appropriate env var for your provider.
 
 ### 3. Run on the BLIS example
 

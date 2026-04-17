@@ -8,9 +8,8 @@ Creates a working directory named after the target system, copies templates,
 and runs one full iteration with human gates for approval.
 
 Set your LLM API key before running:
-    export ANTHROPIC_API_KEY=sk-...
     export OPENAI_API_KEY=sk-...
-    (or any LiteLLM-supported provider)
+    (or any LiteLLM-supported provider env var)
 """
 import argparse
 import json
