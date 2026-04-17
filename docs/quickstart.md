@@ -1,6 +1,6 @@
 # Quickstart
 
-Run a single Nous iteration on any target system via the Python API.
+Run a single Nous iteration on any target system.
 
 ## Prerequisites
 
@@ -96,10 +96,10 @@ After completion, check:
 
 ## Choosing a model
 
-By default, `LLMDispatcher` uses `aws/claude-opus-4-6`. Pass any [LiteLLM model string](https://docs.litellm.ai/docs/providers) to use a different model:
+By default, `run_iteration.py` uses `aws/claude-opus-4-6`. Pass any [LiteLLM model string](https://docs.litellm.ai/docs/providers) via `--model`:
 
-```python
-dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model="gpt-4o")
+```bash
+python run_iteration.py campaign.yaml --model gpt-4o
 ```
 
 ## Phase 2 limitation

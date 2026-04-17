@@ -61,50 +61,44 @@ Every experiment is structured as a bundle of falsifiable predictions:
 
 ## Quick Start
 
-See [docs/quickstart.md](docs/quickstart.md) for a full walkthrough, or the [BLIS example](examples/blis/) for a concrete campaign configuration.
-
-### Install
+### 1. Install
 
 ```bash
+git clone https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git
+cd agentic-strategy-evolution
 pip install -e ".[dev]"
 ```
 
-### Run a Single Iteration
+### 2. Set your LLM API key
 
-```python
-import json, shutil, yaml
-from pathlib import Path
-from orchestrator.engine import Engine
-from orchestrator.llm_dispatch import LLMDispatcher
-from orchestrator.gates import HumanGate
-
-# Set up working directory
-work_dir = Path("my-campaign")
-work_dir.mkdir(exist_ok=True)
-for t in ["state.json", "ledger.json", "principles.json"]:
-    shutil.copy(f"templates/{t}", work_dir / t)
-
-# Load campaign config (see examples/blis/campaign.yaml)
-campaign = yaml.safe_load(Path("campaign.yaml").read_text())
-
-# Initialize and run
-engine = Engine(work_dir)
-dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign)
-gate = HumanGate()
-
-engine.transition("FRAMING")
-dispatcher.dispatch("planner", "frame",
-    output_path=work_dir / "runs/iter-1/problem.md", iteration=1)
-# ... see docs/quickstart.md for the full loop
+```bash
+export ANTHROPIC_API_KEY=sk-...   # or OPENAI_API_KEY, etc.
 ```
 
-### Run Tests
+Any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers) works.
+
+### 3. Run on the BLIS example
+
+```bash
+python run_iteration.py examples/blis/campaign.yaml
+```
+
+The script walks through all phases (framing, design, review, execution, extraction) and pauses at two human gates for your approval. Output goes to `blis-run/`.
+
+### Run on your own system
+
+1. Copy `templates/campaign.yaml` and fill in your system's name, description, metrics, and knobs
+2. Run: `python run_iteration.py your-campaign.yaml`
+
+See [docs/quickstart.md](docs/quickstart.md) for details, or [examples/blis/](examples/blis/) for a complete example.
+
+### Run tests
 
 ```bash
 pytest -v
 ```
 
-The test suite validates schemas, templates, state machine transitions, gates, stub and LLM dispatch, fast-fail rules, protocol conformance, prompt loading, and end-to-end integration (164 tests).
+168 tests covering schemas, templates, engine, gates, dispatch, fast-fail, prompt loading, and end-to-end integration.
 
 ## Project Structure
 

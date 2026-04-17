@@ -53,7 +53,7 @@ python run_iteration.py examples/blis/campaign.yaml -v
 After running, your working directory will contain:
 
 ```
-blis-run-001/
+blis-run/
   state.json              # phase: DONE
   principles.json         # extracted principles
   ledger.json
@@ -80,4 +80,4 @@ To adapt this for a different LLM inference system:
 1. Copy `campaign.yaml` to a new directory
 2. Update `target_system` fields (name, description, metrics, knobs)
 3. Optionally adjust reviewer perspectives in `review`
-4. Run the same Python script with the new campaign config
+4. Run: `python run_iteration.py path/to/your/campaign.yaml`
