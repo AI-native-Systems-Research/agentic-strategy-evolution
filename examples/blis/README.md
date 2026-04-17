@@ -24,104 +24,28 @@ The `campaign.yaml` in this directory configures Nous for BLIS:
 
 ## Running a single iteration
 
-```python
-import json
-import shutil
-from pathlib import Path
+```bash
+python run_iteration.py examples/blis/campaign.yaml
+```
 
-import yaml
+That's it. The script will:
 
-from orchestrator.engine import Engine
-from orchestrator.llm_dispatch import LLMDispatcher
-from orchestrator.gates import HumanGate
+1. Create a working directory (`blis-run/`)
+2. Walk through all phases: framing, design, review, execution, extraction
+3. Pause at two human gates for your approval
+4. Print progress as it goes
 
-# 1. Set up working directory
-work_dir = Path("blis-run-001")
-work_dir.mkdir(exist_ok=True)
+Options:
 
-# Copy templates
-for t in ["state.json", "ledger.json", "principles.json"]:
-    shutil.copy(f"templates/{t}", work_dir / t)
+```bash
+# Use a different model
+python run_iteration.py examples/blis/campaign.yaml --model gpt-4o
 
-# Update run ID
-state = json.loads((work_dir / "state.json").read_text())
-state["run_id"] = "blis-run-001"
-(work_dir / "state.json").write_text(json.dumps(state, indent=2))
+# Custom working directory name
+python run_iteration.py examples/blis/campaign.yaml --run-id my-experiment
 
-# 2. Load campaign config
-campaign = yaml.safe_load(Path("examples/blis/campaign.yaml").read_text())
-
-# 3. Initialize components
-engine = Engine(work_dir)
-dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign)
-gate = HumanGate()  # interactive approval prompts
-
-# 4. Run the loop
-iteration = 1
-iter_dir = work_dir / "runs" / f"iter-{iteration}"
-
-# INIT -> FRAMING: produce problem.md
-engine.transition("FRAMING")
-dispatcher.dispatch(
-    "planner", "frame",
-    output_path=iter_dir / "problem.md", iteration=iteration,
-)
-
-# FRAMING -> DESIGN: produce hypothesis bundle
-engine.transition("DESIGN")
-dispatcher.dispatch(
-    "planner", "design",
-    output_path=iter_dir / "bundle.yaml", iteration=iteration,
-)
-
-# DESIGN -> DESIGN_REVIEW: reviewers evaluate the bundle
-engine.transition("DESIGN_REVIEW")
-for perspective in campaign["review"]["design_perspectives"]:
-    dispatcher.dispatch(
-        "reviewer", "review-design",
-        output_path=iter_dir / "reviews" / f"review-{perspective}.md",
-        iteration=iteration, perspective=perspective,
-    )
-
-# DESIGN_REVIEW -> HUMAN_DESIGN_GATE: you approve or reject
-engine.transition("HUMAN_DESIGN_GATE")
-gate.prompt(
-    "Review the bundle and reviews. Approve?",
-    artifact_path=str(iter_dir / "bundle.yaml"),
-    reviews=[str(p) for p in (iter_dir / "reviews").glob("review-*.md")],
-)
-
-# HUMAN_DESIGN_GATE -> RUNNING: executor analyzes the system
-engine.transition("RUNNING")
-dispatcher.dispatch(
-    "executor", "run",
-    output_path=iter_dir / "findings.json", iteration=iteration,
-)
-
-# RUNNING -> FINDINGS_REVIEW: reviewers evaluate findings
-engine.transition("FINDINGS_REVIEW")
-for perspective in campaign["review"]["findings_perspectives"]:
-    dispatcher.dispatch(
-        "reviewer", "review-findings",
-        output_path=iter_dir / "reviews" / f"review-findings-{perspective}.md",
-        iteration=iteration, perspective=perspective,
-    )
-
-# FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
-engine.transition("HUMAN_FINDINGS_GATE")
-gate.prompt("Review the findings and reviews. Approve?")
-
-# HUMAN_FINDINGS_GATE -> TUNING -> EXTRACTION
-engine.transition("TUNING")
-engine.transition("EXTRACTION")
-dispatcher.dispatch(
-    "extractor", "extract",
-    output_path=work_dir / "principles.json", iteration=iteration,
-)
-
-# EXTRACTION -> DONE
-engine.transition("DONE")
-print("Iteration complete! Check", iter_dir)
+# Verbose logging
+python run_iteration.py examples/blis/campaign.yaml -v
 ```
 
 ## Expected output

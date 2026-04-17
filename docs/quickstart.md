@@ -64,87 +64,24 @@ prompts:
 | `review.design_perspectives` | How many reviewers check the hypothesis bundle (one per perspective) |
 | `review.findings_perspectives` | How many reviewers check the findings (typically more than design) |
 
-## Initialize working directory
-
-```python
-import json
-import shutil
-from pathlib import Path
-
-work_dir = Path("my-experiment")
-work_dir.mkdir(exist_ok=True)
-
-# Copy template files
-for template in ["state.json", "ledger.json", "principles.json"]:
-    shutil.copy(f"templates/{template}", work_dir / template)
-
-# Set a run ID
-state = json.loads((work_dir / "state.json").read_text())
-state["run_id"] = "my-experiment-001"
-(work_dir / "state.json").write_text(json.dumps(state, indent=2))
-```
-
 ## Run a single iteration
 
-```python
-import yaml
-from orchestrator.engine import Engine
-from orchestrator.llm_dispatch import LLMDispatcher
-from orchestrator.gates import HumanGate
+```bash
+python run_iteration.py campaign.yaml
+```
 
-campaign = yaml.safe_load(Path("campaign.yaml").read_text())
+The script handles setup, runs all phases, and pauses at human gates for your approval. Options:
 
-engine = Engine(work_dir)
-dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign)
-gate = HumanGate()  # interactive approval prompts
+```bash
+python run_iteration.py campaign.yaml --model gpt-4o    # different model
+python run_iteration.py campaign.yaml --run-id my-run    # custom work dir
+python run_iteration.py campaign.yaml -v                 # verbose logging
+```
 
-iteration = 1
-iter_dir = work_dir / "runs" / f"iter-{iteration}"
+Or try the BLIS example directly:
 
-# Framing: define the problem
-engine.transition("FRAMING")
-dispatcher.dispatch("planner", "frame", output_path=iter_dir / "problem.md", iteration=iteration)
-
-# Design: create hypothesis bundle
-engine.transition("DESIGN")
-dispatcher.dispatch("planner", "design", output_path=iter_dir / "bundle.yaml", iteration=iteration)
-
-# Design review: multiple perspectives evaluate the bundle
-engine.transition("DESIGN_REVIEW")
-for p in campaign["review"]["design_perspectives"]:
-    dispatcher.dispatch("reviewer", "review-design",
-        output_path=iter_dir / "reviews" / f"review-{p}.md",
-        iteration=iteration, perspective=p)
-
-# Human gate: you review and approve
-engine.transition("HUMAN_DESIGN_GATE")
-gate.prompt("Approve the hypothesis bundle?",
-    artifact_path=str(iter_dir / "bundle.yaml"))
-
-# Execution: analyze the system
-engine.transition("RUNNING")
-dispatcher.dispatch("executor", "run",
-    output_path=iter_dir / "findings.json", iteration=iteration)
-
-# Findings review
-engine.transition("FINDINGS_REVIEW")
-for p in campaign["review"]["findings_perspectives"]:
-    dispatcher.dispatch("reviewer", "review-findings",
-        output_path=iter_dir / "reviews" / f"review-findings-{p}.md",
-        iteration=iteration, perspective=p)
-
-# Human gate: approve findings
-engine.transition("HUMAN_FINDINGS_GATE")
-gate.prompt("Approve the findings?")
-
-# Extract principles
-engine.transition("TUNING")
-engine.transition("EXTRACTION")
-dispatcher.dispatch("extractor", "extract",
-    output_path=work_dir / "principles.json", iteration=iteration)
-
-engine.transition("DONE")
-print("Done! Principles:", work_dir / "principles.json")
+```bash
+python run_iteration.py examples/blis/campaign.yaml
 ```
 
 ## Review output
