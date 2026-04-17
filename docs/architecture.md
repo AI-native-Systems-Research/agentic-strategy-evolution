@@ -98,7 +98,10 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
 | **Extractor** | EXTRACTION | Updated `principles.json` |
 
-**Phase 1 implementation:** `StubDispatcher` produces valid, schema-conformant artifacts without calling any LLM. This enables full end-to-end testing of the orchestrator loop. The stub is designed to be replaced by a real dispatcher that loads prompt templates, calls an LLM API, validates the response against the schema, and writes the output.
+**Implementations:**
+
+- `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
+- `LLMDispatcher` (`llm_dispatch.py`) calls a real LLM via [LiteLLM](https://docs.litellm.ai/), parses structured output from code fences, validates against schemas, and writes artifacts atomically. This is the production dispatcher.
 
 **Dispatch interface:**
 ```python
@@ -107,9 +110,55 @@ dispatcher.dispatch(
     phase="run",               # which phase
     output_path=path,          # where to write
     iteration=1,               # current iteration
-    h_main_result="CONFIRMED", # optional: control stub behavior
 )
 ```
+
+Both dispatchers satisfy the `Dispatcher` protocol (`protocols.py`).
+
+## LLM Dispatch (Phase 2)
+
+`LLMDispatcher` is the real dispatcher that replaces stub agents with LLM-driven agents.
+
+### Two-Layer Prompt System
+
+Prompts have two layers:
+
+| Layer | Source | Content |
+|-------|--------|---------|
+| **Methodology layer** | Ships with Nous (`prompts/methodology/`) | Generic scientific method: "check for confounds", "is the causal mechanism plausible?", "are 3 seeds enough?" |
+| **Domain adapter layer** | Generated per system from `campaign.yaml` | System-specific vocabulary, metrics, knobs, experiment commands |
+
+The methodology layer is 6 prompt templates (one per role+phase combination). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:
+
+- `{{target_system}}`, `{{system_description}}` — from `campaign.yaml`
+- `{{observable_metrics}}`, `{{controllable_knobs}}` — from `campaign.yaml`
+- `{{active_principles}}` — formatted from `principles.json`
+- Phase-specific context: `{{bundle_yaml}}`, `{{findings_json}}`, `{{perspective_name}}`
+
+### Schema Validation with Retry
+
+For structured outputs (bundle YAML, findings JSON, principles JSON), the dispatcher:
+
+1. Extracts content from a code fence (`` ```yaml `` or `` ```json ``)
+2. Parses and validates against the relevant JSON Schema
+3. On validation failure: retries once, sending the error message as feedback
+4. On second failure: raises `RuntimeError`
+
+Markdown outputs (problem framing, reviews) are written directly without validation.
+
+### Executor Analysis Mode
+
+In Phase 2, the executor operates in **analysis mode** — it reasons about the target system based on its understanding of the code and mechanisms, but does not run actual experiments. The prompt explicitly states this limitation. Phase 3 will add real experiment execution via plugin shell access.
+
+### Model Configuration
+
+`LLMDispatcher` uses any [LiteLLM-supported model](https://docs.litellm.ai/docs/providers). Default: `aws/claude-opus-4-6`. Pass a different model string to the constructor:
+
+```python
+dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model="gpt-4o")
+```
+
+The `completion_fn` constructor parameter allows test injection without mocking internals.
 
 ### Gates (`orchestrator/gates.py`)
 
@@ -258,16 +307,14 @@ The orchestrator is designed for crash-safe operation:
 
 ## Extending Nous
 
-### Adding a Custom Agent
+### Using a Different Dispatcher
 
-Replace `StubDispatcher` with a real dispatcher that:
-1. Loads a prompt template for the (role, phase) pair
-2. Injects context: current principles, prior findings, problem framing
-3. Calls an LLM API
-4. Validates the response against the relevant schema
-5. Writes the validated output to the specified path
+Nous ships with two dispatchers:
 
-The dispatcher interface is role-based: `dispatch(role, phase, output_path=..., **kwargs)`. Your implementation must produce artifacts that pass schema validation — the orchestrator trusts the schema contract, not the content.
+- `StubDispatcher` — deterministic stubs for testing
+- `LLMDispatcher` — real LLM calls via LiteLLM
+
+To create a custom dispatcher, implement the `Dispatcher` protocol from `orchestrator/protocols.py`. Your dispatcher must produce artifacts that pass schema validation — the orchestrator trusts the schema contract, not the content.
 
 ### Adding a New Arm Type
 

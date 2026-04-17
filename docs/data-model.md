@@ -166,6 +166,15 @@ An activity log. One JSON line per event — every LLM call, tool invocation, st
 
 Phase 1 defines the envelope; Phase 4 will tighten per-event-type payload schemas.
 
+## Dispatch and Prompt Templates
+
+The orchestrator invokes agents through a dispatcher. Two implementations exist:
+
+- `StubDispatcher` (`orchestrator/dispatch.py`) — produces deterministic, schema-valid artifacts without LLM calls. Used for testing.
+- `LLMDispatcher` (`orchestrator/llm_dispatch.py`) — calls a real LLM via LiteLLM, parses structured output, validates against schemas, and writes artifacts atomically.
+
+`LLMDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. For structured outputs (bundle, findings, principles), it extracts content from code fences and validates against the relevant schema before writing. The FRAMING phase dispatches `role="planner", phase="frame"` to produce `problem.md`.
+
 ## 7. summary.json — "How did the whole campaign go?"
 
 **Schema:** `schemas/summary.schema.json`

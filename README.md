@@ -61,34 +61,41 @@ Every experiment is structured as a bundle of falsifiable predictions:
 
 ## Quick Start
 
+See [docs/quickstart.md](docs/quickstart.md) for a full walkthrough, or the [BLIS example](examples/blis/) for a concrete campaign configuration.
+
 ### Install
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-### Initialize a Campaign
-
-Copy the templates to create a new campaign directory:
-
-```bash
-mkdir -p my-campaign/runs
-cp templates/state.json my-campaign/
-cp templates/ledger.json my-campaign/
-cp templates/principles.json my-campaign/
-cp templates/campaign.yaml my-campaign/
-```
-
-Edit `my-campaign/state.json` to set your `run_id` and `my-campaign/campaign.yaml` to describe your target system, then use the orchestrator engine to drive the state machine:
+### Run a Single Iteration
 
 ```python
+import json, shutil, yaml
+from pathlib import Path
 from orchestrator.engine import Engine
+from orchestrator.llm_dispatch import LLMDispatcher
+from orchestrator.gates import HumanGate
 
-engine = Engine("my-campaign")
-print(engine.state)  # {"phase": "INIT", "iteration": 0, ...}
+# Set up working directory
+work_dir = Path("my-campaign")
+work_dir.mkdir(exist_ok=True)
+for t in ["state.json", "ledger.json", "principles.json"]:
+    shutil.copy(f"templates/{t}", work_dir / t)
+
+# Load campaign config (see examples/blis/campaign.yaml)
+campaign = yaml.safe_load(Path("campaign.yaml").read_text())
+
+# Initialize and run
+engine = Engine(work_dir)
+dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign)
+gate = HumanGate()
 
 engine.transition("FRAMING")
-# ... dispatch agents, run reviews, advance through phases
+dispatcher.dispatch("planner", "frame",
+    output_path=work_dir / "runs/iter-1/problem.md", iteration=1)
+# ... see docs/quickstart.md for the full loop
 ```
 
 ### Run Tests
@@ -97,7 +104,7 @@ engine.transition("FRAMING")
 pytest -v
 ```
 
-The full test suite validates schemas, templates, state machine transitions, gates, dispatch, fast-fail rules, protocol conformance, and end-to-end integration.
+The test suite validates schemas, templates, state machine transitions, gates, stub and LLM dispatch, fast-fail rules, protocol conformance, prompt loading, and end-to-end integration (164 tests).
 
 ## Project Structure
 
@@ -123,19 +130,37 @@ templates/               Starter files for new campaigns
 
 orchestrator/            Python orchestrator (deterministic, not an LLM)
   engine.py                State machine with atomic checkpoint/resume
-  dispatch.py              Agent dispatch (stub dispatcher for Phase 1)
+  dispatch.py              Stub agent dispatch (for testing without LLM)
+  llm_dispatch.py          LLM-based agent dispatch via LiteLLM
+  prompt_loader.py         Template loading with {{placeholder}} rendering
   gates.py                 Human approval gates
   fastfail.py              Fast-fail rule evaluation
   protocols.py             Dispatcher and Gate interface contracts
+  util.py                  Shared utilities (atomic_write)
+
+prompts/                 Methodology prompt templates
+  methodology/
+    frame.md               Problem framing (planner)
+    design.md              Hypothesis bundle design (planner)
+    run.md                 Analysis-mode execution (executor)
+    review_design.md       Design review from a perspective (reviewer)
+    review_findings.md     Findings review from a perspective (reviewer)
+    extract.md             Principle extraction (extractor)
+
+examples/
+  blis/                    Reference campaign for BLIS inference simulator
+    campaign.yaml            Filled-in campaign config
+    README.md                Step-by-step walkthrough
 
 docs/
+  quickstart.md            How to run Nous on any target system
   protocol.md              Full methodology specification
   data-model.md            Plain-English guide to every data structure
   architecture.md          System architecture and component design
   case-studies/
     blis.md                30-iteration validation on LLM inference serving
 
-tests/                   139 tests (schemas, templates, engine, gates, dispatch, fastfail, protocols, integration)
+tests/                   164 tests (schemas, templates, engine, gates, stub dispatch, LLM dispatch, prompt loader, fastfail, protocols, integration)
 ```
 
 ## Case Study: LLM Inference Serving
@@ -152,9 +177,11 @@ See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the Claud
 
 ## Current Status
 
-**Phase 1 (current):** Schemas, templates, orchestrator skeleton, and protocol documentation. The orchestrator drives the full state machine with stub agent dispatch, enabling end-to-end testing of the loop without LLM calls.
+**Phase 1 (complete):** Schemas, templates, orchestrator skeleton, and protocol documentation. The orchestrator drives the full state machine with stub agent dispatch.
 
-**Phase 2 (next):** Agent prompts and real LLM dispatch — replacing stubs with actual agent implementations that produce hypothesis bundles, execute experiments, run reviews, and extract principles.
+**Phase 2 (current):** Agent prompts and real LLM dispatch. `LLMDispatcher` replaces stubs with LLM-driven agents via [LiteLLM](https://docs.litellm.ai/) (model-agnostic — Claude, GPT, Gemini, etc.). Six methodology prompt templates, schema validation with retry, and a BLIS example campaign. The executor operates in analysis mode (reasons about code, does not run experiments).
+
+**Phase 3 (next):** Plugin integration — `/nous:init` and `/nous:investigate` commands, real experiment execution via shell access, worktree isolation.
 
 ## License
 
