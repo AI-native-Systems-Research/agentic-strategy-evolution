@@ -517,6 +517,7 @@ class TestCampaignSchema:
     def test_valid_campaign(self, load_schema):
         schema = load_schema("campaign.schema.yaml")
         instance = {
+            "research_question": "Can routing algorithms reduce tail latency?",
             "target_system": {
                 "name": "BLIS",
                 "description": "LLM inference serving simulator",
@@ -538,6 +539,7 @@ class TestCampaignSchema:
     def test_minimal_campaign(self, load_schema):
         schema = load_schema("campaign.schema.yaml")
         instance = {
+            "research_question": "What affects latency?",
             "target_system": {
                 "name": "my-system",
                 "description": "A system.",
@@ -610,6 +612,7 @@ class TestCampaignSchema:
     def test_extra_top_level_field_rejected(self, load_schema):
         schema = load_schema("campaign.schema.yaml")
         instance = {
+            "research_question": "What affects latency?",
             "target_system": {
                 "name": "x",
                 "description": "x",
