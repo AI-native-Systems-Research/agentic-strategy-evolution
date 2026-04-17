@@ -298,16 +298,13 @@ class TestLLMDispatcher:
         # The mock response has CONFIRMED — proving h_main_result was ignored
         assert findings["arms"][0]["status"] == "CONFIRMED"
 
-    def test_no_code_fence_falls_back_to_raw_parse(self, work_dir: Path) -> None:
-        # Return raw JSON without code fence
+    def test_no_code_fence_raises(self, work_dir: Path) -> None:
+        # Raw JSON without code fence should raise, not silently parse
         d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON])
         out = work_dir / "runs" / "iter-1" / "findings_raw.json"
 
-        d.dispatch("executor", "run", output_path=out, iteration=1)
-
-        findings = json.loads(out.read_text())
-        schema = load_schema("findings.schema.json")
-        jsonschema.validate(findings, schema)
+        with pytest.raises(RuntimeError, match="No ```json``` code fence found"):
+            d.dispatch("executor", "run", output_path=out, iteration=1)
 
     def test_multiple_code_fences_uses_last(self, work_dir: Path) -> None:
         first_json = json.dumps({"bad": True})

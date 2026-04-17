@@ -48,6 +48,13 @@ class LLMDispatcher:
             or Path(__file__).parent.parent / "prompts" / "methodology"
         )
         self._completion = completion_fn or litellm.completion
+        dal = campaign.get("prompts", {}).get("domain_adapter_layer")
+        if dal is not None:
+            logger.warning(
+                "domain_adapter_layer is set to %r but is not yet supported "
+                "(Phase 3 scope). Only the methodology layer will be used.",
+                dal,
+            )
 
     @staticmethod
     def _validate_campaign(campaign: dict) -> None:
@@ -64,6 +71,13 @@ class LLMDispatcher:
                 f"Campaign 'target_system' missing required keys: {missing}. "
                 f"See examples/blis/campaign.yaml for the expected format."
             )
+        for field in ("observable_metrics", "controllable_knobs"):
+            val = ts[field]
+            if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+                raise ValueError(
+                    f"Campaign 'target_system.{field}' must be a list of strings. "
+                    f"Got: {val!r}"
+                )
 
     # ------------------------------------------------------------------
     # Public interface (satisfies Dispatcher protocol)
@@ -87,7 +101,7 @@ class LLMDispatcher:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        template, fmt, schema = self._route(role, phase)
+        template, fmt, schema_name = self._route(role, phase)
         context = self._build_context(role, phase, iteration, perspective)
         prompt = self.loader.load(template, context)
 
@@ -104,16 +118,16 @@ class LLMDispatcher:
                     f"LLM response for {role}/{phase} could not be parsed as {fmt}. "
                     f"Response length: {len(response)} chars. Error: {exc}"
                 ) from exc
-            if schema is not None:
+            if schema_name is not None:
                 try:
-                    self._validate(data, schema)
+                    self._validate(data, schema_name)
                 except jsonschema.ValidationError as exc:
                     logger.warning(
                         "Schema validation failed for %s/%s, retrying: %s",
                         role, phase, exc.message,
                     )
                     data = self._retry_with_feedback(
-                        prompt, response, exc, fmt, schema
+                        prompt, response, exc, fmt, schema_name
                     )
 
             if fmt == "yaml":
@@ -250,8 +264,15 @@ class LLMDispatcher:
             raise RuntimeError(
                 f"Cannot read principles.json: corrupt JSON. {exc}"
             ) from exc
+        principles_list = store.get("principles")
+        if principles_list is None:
+            logger.warning(
+                "principles.json has no 'principles' key — treating as empty. "
+                "File may be corrupt."
+            )
+            return "No principles extracted yet."
         active = [
-            p for p in store.get("principles", []) if p.get("status") == "active"
+            p for p in principles_list if p.get("status") == "active"
         ]
         if not active:
             return "No principles extracted yet."
@@ -279,7 +300,8 @@ class LLMDispatcher:
             )
         except Exception as exc:
             raise RuntimeError(
-                f"LLM API call failed (model={self.model}): {exc}"
+                f"LLM API call failed (model={self.model}): "
+                f"{type(exc).__name__}: {exc}"
             ) from exc
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list.")
@@ -315,7 +337,7 @@ class LLMDispatcher:
         except Exception as exc:
             raise RuntimeError(
                 f"LLM API call failed during schema-validation retry "
-                f"(model={self.model}): {exc}"
+                f"(model={self.model}): {type(exc).__name__}: {exc}"
             ) from exc
         if not response.choices:
             raise RuntimeError(
@@ -350,7 +372,7 @@ class LLMDispatcher:
 
         If the response contains multiple fences, uses the last one
         (LLMs often explain before giving the final answer).
-        Falls back to parsing the entire response if no fence is found.
+        Raises ValueError if no code fence is found — callers handle retry.
         """
         pattern = _FENCE_RE.get(fmt)
         if pattern is None:
@@ -360,12 +382,10 @@ class LLMDispatcher:
         if matches:
             raw = matches[-1]  # use last fence
         else:
-            logger.warning(
-                "No ```%s``` code fence found in LLM response (%d chars); "
-                "attempting raw parse.",
-                fmt, len(text),
+            raise ValueError(
+                f"No ```{fmt}``` code fence found in LLM response ({len(text)} chars). "
+                f"Expected the LLM to wrap its output in a ```{fmt}``` block."
             )
-            raw = text
 
         parsed = yaml.safe_load(raw) if fmt == "yaml" else json.loads(raw)
         if not isinstance(parsed, dict):

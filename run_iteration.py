@@ -122,8 +122,17 @@ def run_iteration(
     )
     print(f"  -> {iter_dir / 'findings.json'}")
 
-    # Fast-fail check
+    # Validate findings against schema, then check fast-fail rules
     findings = json.loads((iter_dir / "findings.json").read_text())
+    findings_schema = json.loads((SCHEMAS_DIR / "findings.schema.json").read_text())
+    try:
+        jsonschema.validate(findings, findings_schema)
+    except jsonschema.ValidationError as exc:
+        print(
+            f"Error: findings.json failed schema validation: {exc.message}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     ff = check_fast_fail(findings)
     if ff == FastFailAction.SKIP_TO_EXTRACTION:
         print("  ** H-main REFUTED — skipping to extraction")
