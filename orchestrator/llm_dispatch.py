@@ -97,7 +97,13 @@ class LLMDispatcher:
             # Plain markdown output — no parsing or validation needed.
             atomic_write(output_path, response)
         else:
-            data = self._extract_fenced_content(response, fmt)
+            try:
+                data = self._extract_fenced_content(response, fmt)
+            except (json.JSONDecodeError, yaml.YAMLError, ValueError) as exc:
+                raise RuntimeError(
+                    f"LLM response for {role}/{phase} could not be parsed as {fmt}. "
+                    f"Response length: {len(response)} chars. Error: {exc}"
+                ) from exc
             if schema is not None:
                 try:
                     self._validate(data, schema)
@@ -214,6 +220,7 @@ class LLMDispatcher:
             )
         text = problem_path.read_text()
         in_section = False
+        lines: list[str] = []
         for line in text.splitlines():
             if line.strip().startswith("## Research Question"):
                 in_section = True
@@ -221,7 +228,9 @@ class LLMDispatcher:
             if in_section and line.strip().startswith("##"):
                 break
             if in_section and line.strip():
-                return line.strip()
+                lines.append(line.strip())
+        if lines:
+            return "\n".join(lines)
         logger.warning(
             "Could not extract research question from %s; "
             "using full problem.md content as context.",

@@ -98,7 +98,7 @@ See [docs/quickstart.md](docs/quickstart.md) for details, or [examples/blis/](ex
 pytest -v
 ```
 
-168 tests covering schemas, templates, engine, gates, dispatch, fast-fail, prompt loading, and end-to-end integration.
+Comprehensive test suite covering schemas, templates, engine, gates, dispatch, fast-fail, prompt loading, and end-to-end integration.
 
 ## Project Structure
 
@@ -154,7 +154,7 @@ docs/
   case-studies/
     blis.md                30-iteration validation on LLM inference serving
 
-tests/                   164 tests (schemas, templates, engine, gates, stub dispatch, LLM dispatch, prompt loader, fastfail, protocols, integration)
+tests/                   Comprehensive test suite (schemas, templates, engine, gates, stub + LLM dispatch, prompt loader, fastfail, protocols, integration)
 ```
 
 ## Case Study: LLM Inference Serving

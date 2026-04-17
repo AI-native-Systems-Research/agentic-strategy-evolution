@@ -19,14 +19,17 @@ import shutil
 import sys
 from pathlib import Path
 
+import jsonschema
 import yaml
 
 from orchestrator.engine import Engine
 from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
 from orchestrator.llm_dispatch import LLMDispatcher
+from orchestrator.util import atomic_write
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+SCHEMAS_DIR = Path(__file__).parent / "schemas"
 
 
 def setup_work_dir(run_id: str) -> Path:
@@ -39,7 +42,7 @@ def setup_work_dir(run_id: str) -> Path:
             shutil.copy(TEMPLATES_DIR / t, dest)
     state = json.loads((work_dir / "state.json").read_text())
     state["run_id"] = run_id
-    (work_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n")
+    atomic_write(work_dir / "state.json", json.dumps(state, indent=2) + "\n")
     return work_dir
 
 
@@ -125,11 +128,15 @@ def run_iteration(
     ff = check_fast_fail(findings)
     if ff == FastFailAction.SKIP_TO_EXTRACTION:
         print("  ** H-main REFUTED — skipping to extraction")
+        # Advance state machine through required intermediate states
+        # (no human prompt — fast-fail overrides the gate)
         engine.transition("FINDINGS_REVIEW")
         engine.transition("HUMAN_FINDINGS_GATE")
         engine.transition("EXTRACTION")
     elif ff == FastFailAction.REDESIGN:
-        print("  ** Control-negative failed — mechanism confounded, back to DESIGN")
+        print("  ** Control-negative REFUTED — mechanism confounded.")
+        print("     The experiment needs redesign. Re-run after revising the campaign.")
+        # Advance to RUNNING so the next run can re-execute
         engine.transition("FINDINGS_REVIEW")
         engine.transition("HUMAN_FINDINGS_GATE")
         engine.transition("RUNNING")
@@ -210,6 +217,19 @@ def main() -> None:
         sys.exit(1)
 
     campaign = yaml.safe_load(campaign_path.read_text())
+
+    # Validate campaign against schema for early, clear error messages
+    schema = yaml.safe_load((SCHEMAS_DIR / "campaign.schema.yaml").read_text())
+    try:
+        jsonschema.validate(campaign, schema)
+    except jsonschema.ValidationError as exc:
+        print(
+            f"Error: {campaign_path} is not a valid campaign config.\n"
+            f"  {exc.message}\n\n"
+            f"See examples/blis/campaign.yaml for a working example.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     run_id = args.run_id or campaign_path.parent.name + "-run"
     work_dir = setup_work_dir(run_id)

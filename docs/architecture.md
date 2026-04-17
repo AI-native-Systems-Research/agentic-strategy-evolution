@@ -94,7 +94,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 | Role | Invoked During | Produces |
 |---|---|---|
 | **Planner** | FRAMING, DESIGN | `problem.md`, `bundle.yaml` |
-| **Executor** | RUNNING, TUNING | `findings.json`, `results/` |
+| **Executor** | RUNNING | `findings.json` |
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
 | **Extractor** | EXTRACTION | Updated `principles.json` |
 
