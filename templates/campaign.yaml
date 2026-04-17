@@ -1,3 +1,5 @@
+research_question: "TODO: What mechanism or behavior are you investigating?"
+
 target_system:
   name: "TODO-SET-SYSTEM-NAME"
   description: "TODO: Describe what the system does."

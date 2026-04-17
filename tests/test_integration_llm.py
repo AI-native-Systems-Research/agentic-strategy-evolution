@@ -19,6 +19,7 @@ SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 SAMPLE_CAMPAIGN = {
+    "research_question": "Does batch size affect latency in TestSystem?",
     "target_system": {
         "name": "TestSystem",
         "description": "A test system for integration testing.",

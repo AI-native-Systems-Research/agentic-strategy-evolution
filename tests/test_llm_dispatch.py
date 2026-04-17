@@ -42,6 +42,7 @@ def make_mock_completion(responses: list[str]):
 
 
 SAMPLE_CAMPAIGN = {
+    "research_question": "Does batch size affect latency in TestSystem?",
     "target_system": {
         "name": "TestSystem",
         "description": "A test system for unit tests.",

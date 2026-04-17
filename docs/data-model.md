@@ -35,6 +35,7 @@ The campaign configuration. Describes the target system, configures the reviewer
 
 | Section | What it configures |
 |---|---|
+| `research_question` | The guiding research question for this campaign |
 | `target_system.name` / `description` | What system Nous is investigating |
 | `target_system.observable_metrics` | What you can measure (latency, throughput, error rate, etc.) |
 | `target_system.controllable_knobs` | What you can change (algorithms, configs, resource limits) |

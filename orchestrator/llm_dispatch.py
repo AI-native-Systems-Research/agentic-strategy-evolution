@@ -204,14 +204,7 @@ class LLMDispatcher:
     def _read_research_question(self, phase: str, iteration: int) -> str:
         """Read the research question for frame/design phases."""
         if phase == "frame":
-            rq = self.campaign.get("research_question")
-            if rq is None:
-                logger.warning(
-                    "No 'research_question' in campaign config; "
-                    "using default framing question."
-                )
-                return "What is the primary performance bottleneck in the target system?"
-            return rq
+            return self.campaign["research_question"]
         # For design, read from the problem.md produced by framing.
         problem_path = self.work_dir / "runs" / f"iter-{iteration}" / "problem.md"
         if not problem_path.exists():

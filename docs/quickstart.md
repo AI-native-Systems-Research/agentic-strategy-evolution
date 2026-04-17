@@ -21,6 +21,9 @@ pip install -e ".[dev]"
 Create a `campaign.yaml` that describes your target system. See [campaign.schema.yaml](../schemas/campaign.schema.yaml) for the full schema, or use the [BLIS example](../examples/blis/campaign.yaml) as a starting point.
 
 ```yaml
+research_question: >
+  What mechanism drives the primary performance bottleneck in your system?
+
 target_system:
   name: "Your System Name"
   description: >
@@ -55,6 +58,7 @@ prompts:
 
 | Field | Description |
 |-------|-------------|
+| `research_question` | The guiding question for the campaign — what mechanism are you investigating? |
 | `target_system.observable_metrics` | What agents can measure — these appear in predictions and findings |
 | `target_system.controllable_knobs` | What agents can change — these define the experimental design space |
 | `review.design_perspectives` | How many reviewers check the hypothesis bundle (one per perspective) |

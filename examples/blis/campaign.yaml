@@ -1,3 +1,7 @@
+research_question: >
+  Can SLO-gated admission control reduce TTFT P99 latency under high load
+  without degrading overall throughput?
+
 target_system:
   name: "BLIS — LLM Inference Serving Simulator"
   description: >
