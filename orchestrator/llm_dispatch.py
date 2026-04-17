@@ -40,6 +40,7 @@ class LLMDispatcher:
         completion_fn: Callable | None = None,
     ) -> None:
         self.work_dir = Path(work_dir)
+        self._validate_campaign(campaign)
         self.campaign = campaign
         self.model = model
         self.loader = PromptLoader(
@@ -47,6 +48,22 @@ class LLMDispatcher:
             or Path(__file__).parent.parent / "prompts" / "methodology"
         )
         self._completion = completion_fn or litellm.completion
+
+    @staticmethod
+    def _validate_campaign(campaign: dict) -> None:
+        ts = campaign.get("target_system")
+        if not isinstance(ts, dict):
+            raise ValueError(
+                "Campaign config missing 'target_system' section. "
+                "See examples/blis/campaign.yaml for the expected format."
+            )
+        required = ["name", "description", "observable_metrics", "controllable_knobs"]
+        missing = [k for k in required if k not in ts]
+        if missing:
+            raise ValueError(
+                f"Campaign 'target_system' missing required keys: {missing}. "
+                f"See examples/blis/campaign.yaml for the expected format."
+            )
 
     # ------------------------------------------------------------------
     # Public interface (satisfies Dispatcher protocol)
@@ -149,26 +166,30 @@ class LLMDispatcher:
         if phase in ("frame", "design"):
             ctx["research_question"] = self._read_research_question(phase, iteration)
 
-        if phase in ("design", "review-design"):
+        if phase in ("design", "review-design", "run"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
-            if bundle_path.exists():
+            if phase == "design" and not bundle_path.exists():
+                pass  # bundle doesn't exist yet during design — template ignores it
+            elif not bundle_path.exists():
+                raise FileNotFoundError(
+                    f"Cannot run '{phase}' phase: {bundle_path} not found. "
+                    f"Ensure the design phase completed for iteration {iteration}."
+                )
+            else:
                 ctx["bundle_yaml"] = bundle_path.read_text()
 
-        if phase == "run":
-            bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
-            ctx["bundle_yaml"] = bundle_path.read_text()
-
-        if phase == "review-findings":
+        if phase in ("review-findings", "extract"):
             findings_path = (
                 self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
             )
+            if not findings_path.exists():
+                raise FileNotFoundError(
+                    f"Cannot run '{phase}' phase: {findings_path} not found. "
+                    f"Ensure the executor completed for iteration {iteration}."
+                )
             ctx["findings_json"] = findings_path.read_text()
 
         if phase == "extract":
-            findings_path = (
-                self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
-            )
-            ctx["findings_json"] = findings_path.read_text()
             principles_path = self.work_dir / "principles.json"
             if principles_path.exists():
                 ctx["current_principles_json"] = principles_path.read_text()
@@ -285,11 +306,30 @@ class LLMDispatcher:
             {"role": "assistant", "content": first_response},
             {"role": "user", "content": feedback},
         ]
-        response = self._completion(
-            model=self.model, messages=messages, max_tokens=4096
-        )
+        try:
+            response = self._completion(
+                model=self.model, messages=messages, max_tokens=4096
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"LLM API call failed during schema-validation retry "
+                f"(model={self.model}): {exc}"
+            ) from exc
+        if not response.choices:
+            raise RuntimeError(
+                "LLM returned empty choices list during retry."
+            )
         retry_text = response.choices[0].message.content
-        data = self._extract_fenced_content(retry_text, fmt)
+        if retry_text is None:
+            raise RuntimeError(
+                "LLM returned None content during retry."
+            )
+        try:
+            data = self._extract_fenced_content(retry_text, fmt)
+        except (json.JSONDecodeError, yaml.YAMLError, ValueError) as exc:
+            raise RuntimeError(
+                f"LLM retry response could not be parsed as {fmt}: {exc}"
+            ) from exc
         try:
             self._validate(data, schema_name)
         except jsonschema.ValidationError as exc:

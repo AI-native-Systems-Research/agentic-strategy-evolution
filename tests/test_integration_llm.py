@@ -74,6 +74,7 @@ FINDINGS_JSON = json.dumps({
         },
     ],
     "discrepancy_analysis": "All arms confirmed. Batch amortization holds.",
+    "dominant_component_pct": None,
 }, indent=2)
 
 PRINCIPLES_JSON = json.dumps({

@@ -97,6 +97,7 @@ VALID_FINDINGS_JSON = json.dumps({
         },
     ],
     "discrepancy_analysis": "All arms confirmed. Batch amortization mechanism validated.",
+    "dominant_component_pct": None,
 }, indent=2)
 
 VALID_PRINCIPLES_JSON = json.dumps({
@@ -325,6 +326,45 @@ class TestLLMDispatcher:
         d = _make_dispatcher(work_dir, [])
         with pytest.raises(ValueError, match="Unknown role/phase"):
             d.dispatch("wizard", "conjure", output_path=work_dir / "x", iteration=1)
+
+
+    def test_invalid_campaign_missing_target_system_raises(self, work_dir: Path) -> None:
+        bad_campaign = {"review": {}, "prompts": {}}
+        with pytest.raises(ValueError, match="missing 'target_system'"):
+            LLMDispatcher(
+                work_dir=work_dir, campaign=bad_campaign,
+                completion_fn=make_mock_completion([]),
+            )
+
+    def test_invalid_campaign_missing_keys_raises(self, work_dir: Path) -> None:
+        bad_campaign = {
+            "target_system": {"name": "X"},
+            "review": {},
+            "prompts": {},
+        }
+        with pytest.raises(ValueError, match="missing required keys"):
+            LLMDispatcher(
+                work_dir=work_dir, campaign=bad_campaign,
+                completion_fn=make_mock_completion([]),
+            )
+
+    def test_missing_bundle_for_run_raises(self, work_dir: Path) -> None:
+        # Remove the bundle so the run phase fails with a clear message
+        (work_dir / "runs" / "iter-1" / "bundle.yaml").unlink()
+        d = _make_dispatcher(work_dir, ["unused"])
+        out = work_dir / "runs" / "iter-1" / "findings_fail.json"
+        with pytest.raises(FileNotFoundError, match="design phase completed"):
+            d.dispatch("executor", "run", output_path=out, iteration=1)
+
+    def test_missing_findings_for_review_raises(self, work_dir: Path) -> None:
+        (work_dir / "runs" / "iter-1" / "findings.json").unlink()
+        d = _make_dispatcher(work_dir, ["unused"])
+        out = work_dir / "runs" / "iter-1" / "review-test.md"
+        with pytest.raises(FileNotFoundError, match="executor completed"):
+            d.dispatch(
+                "reviewer", "review-findings",
+                output_path=out, iteration=1, perspective="test",
+            )
 
 
 class TestBLISCampaign:

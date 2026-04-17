@@ -1,7 +1,10 @@
 """Shared utilities for the Nous orchestrator."""
+import logging
 import os
 import tempfile
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def atomic_write(path: Path, data: str | bytes) -> None:
@@ -20,11 +23,11 @@ def atomic_write(path: Path, data: str | bytes) -> None:
         try:
             if not fd_closed:
                 os.close(fd)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("Failed to close fd during cleanup: %s", exc)
         try:
             if os.path.exists(tmp):
                 os.unlink(tmp)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("Failed to remove temp file %s during cleanup: %s", tmp, exc)
         raise
