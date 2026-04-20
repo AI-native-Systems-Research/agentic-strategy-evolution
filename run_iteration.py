@@ -144,11 +144,13 @@ def run_iteration(
     elif ff == FastFailAction.REDESIGN:
         print("  ** Control-negative REFUTED — mechanism confounded.")
         print("     The experiment needs redesign. Re-run after revising the campaign.")
-        # Advance to RUNNING so the next run can re-execute
         engine.transition("FINDINGS_REVIEW")
         engine.transition("HUMAN_FINDINGS_GATE")
         engine.transition("RUNNING")
         return
+    elif ff == FastFailAction.SIMPLIFY:
+        print("  ** Dominant component >80% — consider simplifying the model.")
+        print("     Proceeding to findings review with this note.")
     else:
         # FINDINGS REVIEW
         print(f"\n{'='*60}")
