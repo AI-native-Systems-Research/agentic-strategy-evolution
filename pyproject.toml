@@ -7,6 +7,7 @@ license = "Apache-2.0"
 dependencies = [
     "jsonschema>=4.20.0",
     "pyyaml>=6.0",
+    "litellm>=1.40.0",
 ]
 
 [project.optional-dependencies]
@@ -16,7 +17,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["orchestrator*"]
+include = ["orchestrator*", "prompts*"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

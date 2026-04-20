@@ -7,10 +7,15 @@ description: >
   and referenced by state.json via config_ref.
 
 type: object
-required: [target_system, review, prompts]
+required: [target_system, research_question, review, prompts]
 additionalProperties: false
 
 properties:
+  research_question:
+    type: string
+    minLength: 1
+    description: "The guiding research question for this campaign."
+
   target_system:
     type: object
     required: [name, description, observable_metrics, controllable_knobs]

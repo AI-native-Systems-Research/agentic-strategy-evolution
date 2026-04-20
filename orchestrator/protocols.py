@@ -1,7 +1,7 @@
 """Protocol definitions for Nous orchestrator components.
 
 These protocols define the contracts that real implementations must satisfy.
-Phase 1 provides stub implementations; future phases will add real ones.
+Phase 1 provides StubDispatcher; Phase 2 adds LLMDispatcher as the production implementation.
 """
 from pathlib import Path
 from typing import Protocol, runtime_checkable

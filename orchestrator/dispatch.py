@@ -1,45 +1,20 @@
 """Agent dispatch for the Nous orchestrator.
 
-Real dispatcher (future): loads prompt template, invokes LLM API, writes output.
-Phase 1: StubDispatcher produces valid schema-conformant artifacts without
-calling any LLM, enabling end-to-end testing of the orchestrator loop.
+StubDispatcher produces valid schema-conformant artifacts without calling any
+LLM, enabling end-to-end testing of the orchestrator loop.
+
+For real LLM dispatch, see llm_dispatch.py (Phase 2).
 """
 import json
 import logging
-import os
-import tempfile
 import warnings
 from pathlib import Path
 
 import yaml
 
+from orchestrator.util import atomic_write
+
 logger = logging.getLogger(__name__)
-
-
-def _atomic_write(path: Path, data: str | bytes) -> None:
-    """Write data to path atomically via temp file + fsync + rename."""
-    if isinstance(data, str):
-        data = data.encode()
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    fd_closed = False
-    try:
-        os.write(fd, data)
-        os.fsync(fd)
-        os.close(fd)
-        fd_closed = True
-        os.replace(tmp, str(path))
-    except BaseException:
-        try:
-            if not fd_closed:
-                os.close(fd)
-        except OSError:
-            pass
-        try:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-        except OSError:
-            pass
-        raise
 
 
 class StubDispatcher:
@@ -117,7 +92,7 @@ class StubDispatcher:
                 },
             ],
         }
-        _atomic_write(path, yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False))
+        atomic_write(path, yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False))
 
     def _write_findings(self, path: Path, iteration: int, h_main_result: str) -> None:
         findings = {
@@ -151,10 +126,10 @@ class StubDispatcher:
             if h_main_result == "CONFIRMED"
             else "Stub analysis: H-main refuted, mechanism does not hold.",
         }
-        _atomic_write(path, json.dumps(findings, indent=2) + "\n")
+        atomic_write(path, json.dumps(findings, indent=2) + "\n")
 
     def _write_review(self, path: Path, perspective: str) -> None:
-        _atomic_write(
+        atomic_write(
             path,
             f"# Review — {perspective}\n\n"
             f"**Severity:** SUGGESTION\n\n"
@@ -194,4 +169,4 @@ class StubDispatcher:
                 "status": "active",
             }
         )
-        _atomic_write(path, json.dumps(store, indent=2) + "\n")
+        atomic_write(path, json.dumps(store, indent=2) + "\n")
