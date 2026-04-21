@@ -630,6 +630,47 @@ class TestCampaignSchema:
         with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
             jsonschema.validate(instance, schema)
 
+    def test_max_iterations_accepted(self, load_schema):
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "research_question": "What affects latency?",
+            "max_iterations": 5,
+            "target_system": {
+                "name": "x",
+                "description": "x",
+                "observable_metrics": ["m"],
+                "controllable_knobs": ["k"],
+            },
+            "review": {
+                "design_perspectives": ["general"],
+                "findings_perspectives": ["general"],
+                "max_review_rounds": 1,
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_max_iterations_zero_rejected(self, load_schema):
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "research_question": "What affects latency?",
+            "max_iterations": 0,
+            "target_system": {
+                "name": "x",
+                "description": "x",
+                "observable_metrics": ["m"],
+                "controllable_knobs": ["k"],
+            },
+            "review": {
+                "design_perspectives": ["general"],
+                "findings_perspectives": ["general"],
+                "max_review_rounds": 1,
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance, schema)
+
 
 class TestPrinciplesCategoryField:
     def test_domain_category_accepted(self, load_schema):

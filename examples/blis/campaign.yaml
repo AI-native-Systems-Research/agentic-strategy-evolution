@@ -1,6 +1,8 @@
 research_question: >
   Does increasing the prefix ratio in a workload reduce TTFT under moderate load?
 
+max_iterations: 10
+
 target_system:
   name: "BLIS — LLM Inference Serving Simulator"
   description: >
