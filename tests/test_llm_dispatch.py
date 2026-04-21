@@ -371,3 +371,143 @@ class TestBLISCampaign:
         campaign = yaml.safe_load(blis_path.read_text())
         schema = load_schema("campaign.schema.yaml")
         jsonschema.validate(campaign, schema)
+
+
+# ------------------------------------------------------------------
+# Real execution routes (run-plan, run-analyze)
+# ------------------------------------------------------------------
+
+VALID_EXPERIMENT_PLAN_JSON = json.dumps({
+    "baseline": {
+        "description": "Default config baseline",
+        "command": "./sim run --metrics-path {metrics_path}",
+    },
+    "experiments": [
+        {
+            "arm_type": "h-main",
+            "description": "Test batch size doubling",
+            "config_changes": "Added --batch-size 64",
+            "command": "./sim run --batch-size 64 --metrics-path {metrics_path}",
+        },
+        {
+            "arm_type": "h-control-negative",
+            "description": "Single item batch",
+            "config_changes": "Set --batch-size 1",
+            "command": "./sim run --batch-size 1 --metrics-path {metrics_path}",
+        },
+    ],
+}, indent=2)
+
+SAMPLE_CAMPAIGN_WITH_EXECUTION = {
+    **SAMPLE_CAMPAIGN,
+    "target_system": {
+        **SAMPLE_CAMPAIGN["target_system"],
+        "execution": {
+            "run_command": "./sim run --metrics-path {metrics_path}",
+            "repo_path": None,
+            "timeout": 300,
+        },
+    },
+}
+
+
+class TestRunPlanDispatch:
+    def test_dispatch_run_plan_produces_valid_plan(self, work_dir: Path) -> None:
+        response = f"```json\n{VALID_EXPERIMENT_PLAN_JSON}\n```"
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
+            completion_fn=make_mock_completion([response]),
+        )
+        out = work_dir / "runs" / "iter-1" / "experiment_plan.json"
+        d.dispatch("executor", "run-plan", output_path=out, iteration=1)
+        assert out.exists()
+        plan = json.loads(out.read_text())
+        schema = load_schema("experiment_plan.schema.json")
+        jsonschema.validate(plan, schema)
+        assert plan["baseline"]["command"]
+        assert len(plan["experiments"]) == 2
+
+    def test_run_plan_context_includes_execution_config(self, work_dir: Path) -> None:
+        response = f"```json\n{VALID_EXPERIMENT_PLAN_JSON}\n```"
+        mock = make_mock_completion([response])
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
+            completion_fn=mock,
+        )
+        out = work_dir / "runs" / "iter-1" / "experiment_plan.json"
+        d.dispatch("executor", "run-plan", output_path=out, iteration=1)
+        # The prompt should contain the run_command_template
+        prompt = mock.call_log[0]["messages"][0]["content"]
+        assert "./sim run --metrics-path {metrics_path}" in prompt
+
+    def test_run_plan_missing_bundle_raises(self, work_dir: Path) -> None:
+        (work_dir / "runs" / "iter-1" / "bundle.yaml").unlink()
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
+            completion_fn=make_mock_completion(["unused"]),
+        )
+        out = work_dir / "runs" / "iter-1" / "plan.json"
+        with pytest.raises(FileNotFoundError, match="design phase completed"):
+            d.dispatch("executor", "run-plan", output_path=out, iteration=1)
+
+
+class TestRunAnalyzeDispatch:
+    def test_dispatch_run_analyze_produces_valid_findings(self, work_dir: Path) -> None:
+        # Write experiment results to disk
+        results = {"baseline": {"latency_ms": 100}, "h-main": {"latency_ms": 80}}
+        results_path = work_dir / "runs" / "iter-1" / "experiment_results.json"
+        results_path.write_text(json.dumps(results, indent=2))
+
+        response = f"```json\n{VALID_FINDINGS_JSON}\n```"
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
+            completion_fn=make_mock_completion([response]),
+        )
+        out = work_dir / "runs" / "iter-1" / "findings_real.json"
+        d.dispatch("executor", "run-analyze", output_path=out, iteration=1)
+        assert out.exists()
+        findings = json.loads(out.read_text())
+        schema = load_schema("findings.schema.json")
+        jsonschema.validate(findings, schema)
+
+    def test_run_analyze_context_includes_experiment_results(self, work_dir: Path) -> None:
+        results = {"baseline": {"latency_ms": 100}, "h-main": {"latency_ms": 80}}
+        results_path = work_dir / "runs" / "iter-1" / "experiment_results.json"
+        results_path.write_text(json.dumps(results, indent=2))
+
+        response = f"```json\n{VALID_FINDINGS_JSON}\n```"
+        mock = make_mock_completion([response])
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
+            completion_fn=mock,
+        )
+        out = work_dir / "runs" / "iter-1" / "findings_real.json"
+        d.dispatch("executor", "run-analyze", output_path=out, iteration=1)
+        prompt = mock.call_log[0]["messages"][0]["content"]
+        assert "latency_ms" in prompt
+
+    def test_run_analyze_missing_results_raises(self, work_dir: Path) -> None:
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
+            completion_fn=make_mock_completion(["unused"]),
+        )
+        out = work_dir / "runs" / "iter-1" / "findings_real.json"
+        with pytest.raises(FileNotFoundError, match="experiment_results.json"):
+            d.dispatch("executor", "run-analyze", output_path=out, iteration=1)
+
+    def test_analysis_mode_still_works(self, work_dir: Path) -> None:
+        """Existing (executor, run) route still works with no execution config."""
+        response = f"```json\n{VALID_FINDINGS_JSON}\n```"
+        d = _make_dispatcher(work_dir, [response])
+        out = work_dir / "runs" / "iter-1" / "findings_analysis.json"
+        d.dispatch("executor", "run", output_path=out, iteration=1)
+        assert out.exists()
+        findings = json.loads(out.read_text())
+        schema = load_schema("findings.schema.json")
+        jsonschema.validate(findings, schema)

@@ -149,6 +149,8 @@ class LLMDispatcher:
         ("planner", "frame"): ("frame", None, None),
         ("planner", "design"): ("design", "yaml", "bundle.schema.yaml"),
         ("executor", "run"): ("run", "json", "findings.schema.json"),
+        ("executor", "run-plan"): ("run_plan", "json", "experiment_plan.schema.json"),
+        ("executor", "run-analyze"): ("run_analyze", "json", "findings.schema.json"),
         ("reviewer", "review-design"): ("review_design", None, None),
         ("reviewer", "review-findings"): ("review_findings", None, None),
         ("extractor", "extract"): ("extract", "json", "principles.schema.json"),
@@ -186,7 +188,7 @@ class LLMDispatcher:
         if phase in ("frame", "design"):
             ctx["research_question"] = self._read_research_question(phase, iteration)
 
-        if phase in ("design", "review-design", "run"):
+        if phase in ("design", "review-design", "run", "run-plan", "run-analyze"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
                 pass  # bundle doesn't exist yet during design — template ignores it
@@ -197,6 +199,22 @@ class LLMDispatcher:
                 )
             else:
                 ctx["bundle_yaml"] = bundle_path.read_text()
+
+        if phase == "run-plan":
+            execution = self.campaign["target_system"].get("execution", {})
+            ctx["run_command_template"] = execution.get("run_command", "")
+            ctx["setup_commands"] = "\n".join(execution.get("setup_commands", []))
+
+        if phase == "run-analyze":
+            results_path = (
+                self.work_dir / "runs" / f"iter-{iteration}" / "experiment_results.json"
+            )
+            if not results_path.exists():
+                raise FileNotFoundError(
+                    f"Cannot run 'run-analyze' phase: {results_path} not found. "
+                    f"Ensure experiment commands were executed for iteration {iteration}."
+                )
+            ctx["experiment_results"] = results_path.read_text()
 
         if phase in ("review-findings", "extract"):
             findings_path = (
