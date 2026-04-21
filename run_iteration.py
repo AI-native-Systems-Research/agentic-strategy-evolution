@@ -19,6 +19,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from enum import Enum
 from pathlib import Path
 
 import jsonschema
@@ -29,6 +30,14 @@ from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.util import atomic_write
+
+
+class IterationOutcome(str, Enum):
+    """Outcome of a single iteration — used by run_campaign to decide next step."""
+    COMPLETED = "COMPLETED"    # Final iteration, transitioned to DONE
+    CONTINUE = "CONTINUE"      # Non-final iteration, stopped at EXTRACTION
+    ABORTED = "ABORTED"        # Human aborted at a gate
+    REDESIGN = "REDESIGN"      # Control-negative refuted, needs redesign
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 SCHEMAS_DIR = Path(__file__).parent / "schemas"
@@ -270,8 +279,17 @@ def run_iteration(
     work_dir: Path,
     iteration: int = 1,
     model: str = "aws/claude-opus-4-6",
-) -> None:
+    final: bool = True,
+) -> str:
     """Run a single iteration of the Nous loop.
+
+    Args:
+        final: If True (default), transitions to DONE after extraction.
+            If False, stops at EXTRACTION so run_campaign can continue
+            with the next iteration.
+
+    Returns:
+        An IterationOutcome value: COMPLETED, CONTINUE, ABORTED, or REDESIGN.
 
     Supports resume: if the process crashes, re-running picks up from the
     last committed phase in state.json. Phases already completed are skipped.
@@ -284,7 +302,7 @@ def run_iteration(
 
     if engine.phase == "DONE":
         print(f"Iteration {iteration} already complete.")
-        return
+        return IterationOutcome.COMPLETED
 
     if engine.phase != "INIT":
         print(f"\n  Resuming from {engine.phase}\n")
@@ -337,10 +355,10 @@ def run_iteration(
         if decision == "reject":
             print("Design rejected. Re-run after revising the campaign config.")
             engine.transition("DESIGN")
-            return
+            return IterationOutcome.REDESIGN
         if decision == "abort":
             print("Aborted.")
-            return
+            return IterationOutcome.ABORTED
 
     # RUNNING (executor)
     if _enter_phase(engine, "RUNNING"):
@@ -393,7 +411,7 @@ def run_iteration(
         _enter_phase(engine, "FINDINGS_REVIEW")
         _enter_phase(engine, "HUMAN_FINDINGS_GATE")
         engine.transition("RUNNING")
-        return
+        return IterationOutcome.REDESIGN
     else:
         if ff == FastFailAction.SIMPLIFY:
             print("  ** Dominant component >80% — consider simplifying the model.")
@@ -421,10 +439,10 @@ def run_iteration(
             if decision == "reject":
                 print("Findings rejected. Re-running executor.")
                 engine.transition("RUNNING")
-                return
+                return IterationOutcome.REDESIGN
             if decision == "abort":
                 print("Aborted.")
-                return
+                return IterationOutcome.ABORTED
 
         _enter_phase(engine, "TUNING")
         _enter_phase(engine, "EXTRACTION")
@@ -439,13 +457,17 @@ def run_iteration(
     )
     print(f"  -> {work_dir / 'principles.json'}")
 
-    # DONE
-    engine.transition("DONE")
-    print(f"\n{'='*60}")
-    print(f"  DONE — iteration {iteration} complete")
-    print(f"{'='*60}")
-    print(f"\nOutput in: {iter_dir}")
-    print(f"Principles: {work_dir / 'principles.json'}")
+    if final:
+        engine.transition("DONE")
+        print(f"\n{'='*60}")
+        print(f"  DONE — iteration {iteration} complete")
+        print(f"{'='*60}")
+        print(f"\nOutput in: {iter_dir}")
+        print(f"Principles: {work_dir / 'principles.json'}")
+        return IterationOutcome.COMPLETED
+    else:
+        print(f"\n  Iteration {iteration} extraction complete — ready for next iteration.")
+        return IterationOutcome.CONTINUE
 
 
 def main() -> None:

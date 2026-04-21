@@ -415,7 +415,10 @@ class TestAnalysisModeFallback:
 # Resume logic tests
 # ---------------------------------------------------------------------------
 
-from run_iteration import _enter_phase, _PHASE_ORDER, _PHASE_INDEX
+from run_iteration import (
+    _enter_phase, _PHASE_ORDER, _PHASE_INDEX,
+    run_iteration, IterationOutcome, setup_work_dir,
+)
 from orchestrator.engine import Engine, Phase
 
 
@@ -496,3 +499,100 @@ class TestEnterPhase:
         # Can advance to next
         assert _enter_phase(engine, "HUMAN_FINDINGS_GATE") is True
         assert engine.phase == "HUMAN_FINDINGS_GATE"
+
+
+# ---------------------------------------------------------------------------
+# IterationOutcome tests
+# ---------------------------------------------------------------------------
+
+from orchestrator.dispatch import StubDispatcher
+import warnings
+
+
+def _setup_stub_iteration(tmp_path, monkeypatch):
+    """Prepare a work_dir with stub dispatcher for testing run_iteration outcomes."""
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    # Copy templates
+    import shutil
+    templates_dir = Path(__file__).resolve().parent.parent / "templates"
+    for t in ["state.json", "ledger.json", "principles.json"]:
+        shutil.copy(templates_dir / t, work_dir / t)
+    state = json.loads((work_dir / "state.json").read_text())
+    state["run_id"] = "test"
+    (work_dir / "state.json").write_text(json.dumps(state, indent=2))
+
+    campaign = {
+        "research_question": "Test question?",
+        "target_system": {
+            "name": "TestSystem",
+            "description": "Test system.",
+            "observable_metrics": ["latency_ms"],
+            "controllable_knobs": ["config"],
+        },
+        "review": {
+            "design_perspectives": ["rigor"],
+            "findings_perspectives": ["rigor"],
+            "max_review_rounds": 1,
+        },
+        "prompts": {
+            "methodology_layer": "prompts/methodology",
+            "domain_adapter_layer": None,
+        },
+    }
+
+    # Monkeypatch LLMDispatcher -> StubDispatcher in run_iteration module
+    import run_iteration as ri
+    original_llm_dispatcher = ri.LLMDispatcher
+
+    def stub_factory(work_dir, campaign, model=None):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return StubDispatcher(work_dir)
+
+    monkeypatch.setattr(ri, "LLMDispatcher", stub_factory)
+    return work_dir, campaign
+
+
+class TestIterationOutcome:
+    """Test that run_iteration returns correct IterationOutcome values."""
+
+    def test_returns_completed_by_default(self, tmp_path, monkeypatch):
+        work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
+        import run_iteration as ri
+        monkeypatch.setattr(ri, "HumanGate", lambda: MagicMock(prompt=MagicMock(return_value="approve")))
+
+        result = run_iteration(campaign, work_dir, iteration=1)
+
+        assert result == IterationOutcome.COMPLETED
+        engine = Engine(work_dir)
+        assert engine.phase == "DONE"
+
+    def test_returns_continue_when_not_final(self, tmp_path, monkeypatch):
+        work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
+        import run_iteration as ri
+        monkeypatch.setattr(ri, "HumanGate", lambda: MagicMock(prompt=MagicMock(return_value="approve")))
+
+        result = run_iteration(campaign, work_dir, iteration=1, final=False)
+
+        assert result == IterationOutcome.CONTINUE
+        engine = Engine(work_dir)
+        assert engine.phase == "EXTRACTION"
+
+    def test_returns_aborted_on_design_gate_abort(self, tmp_path, monkeypatch):
+        work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
+        import run_iteration as ri
+        monkeypatch.setattr(ri, "HumanGate", lambda: MagicMock(prompt=MagicMock(return_value="abort")))
+
+        result = run_iteration(campaign, work_dir, iteration=1)
+
+        assert result == IterationOutcome.ABORTED
+
+    def test_returns_redesign_on_design_gate_reject(self, tmp_path, monkeypatch):
+        work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
+        import run_iteration as ri
+        monkeypatch.setattr(ri, "HumanGate", lambda: MagicMock(prompt=MagicMock(return_value="reject")))
+
+        result = run_iteration(campaign, work_dir, iteration=1)
+
+        assert result == IterationOutcome.REDESIGN
