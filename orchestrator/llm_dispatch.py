@@ -1,8 +1,12 @@
 """LLM-based agent dispatch for the Nous orchestrator.
 
-Replaces StubDispatcher with real LLM calls via LiteLLM.  Loads prompt
-templates, calls the model, parses structured output from code fences,
-validates against JSON Schema, and writes artifacts atomically.
+Calls an OpenAI-compatible LLM API, loads prompt templates, parses
+structured output from code fences, validates against JSON Schema,
+and writes artifacts atomically.
+
+Works with any OpenAI-compatible endpoint (OpenAI, Anthropic via proxy,
+LiteLLM proxy, etc.).  Set OPENAI_API_KEY and OPENAI_BASE_URL environment
+variables to configure.
 """
 import json
 import logging
@@ -12,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 import jsonschema
-import litellm
+import openai
 import yaml
 
 from orchestrator.prompt_loader import PromptLoader
@@ -38,6 +42,7 @@ class LLMDispatcher:
         campaign: dict,
         model: str = "aws/claude-opus-4-6",
         api_base: str | None = None,
+        api_key: str | None = None,
         prompts_dir: Path | None = None,
         completion_fn: Callable | None = None,
     ) -> None:
@@ -45,12 +50,18 @@ class LLMDispatcher:
         self._validate_campaign(campaign)
         self.campaign = campaign
         self.model = model
-        self.api_base = api_base or os.environ.get("OPENAI_API_BASE")
         self.loader = PromptLoader(
             prompts_dir
             or Path(__file__).parent.parent / "prompts" / "methodology"
         )
-        self._completion = completion_fn or litellm.completion
+        if completion_fn:
+            self._completion = completion_fn
+        else:
+            client = openai.OpenAI(
+                api_key=api_key or os.environ.get("OPENAI_API_KEY"),
+                base_url=api_base or os.environ.get("OPENAI_BASE_URL"),
+            )
+            self._completion = client.chat.completions.create
         dal = campaign.get("prompts", {}).get("domain_adapter_layer")
         if dal is not None:
             logger.warning(
@@ -315,11 +326,10 @@ class LLMDispatcher:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message or "Please proceed."},
         ]
-        kwargs = dict(model=self.model, messages=messages, max_tokens=4096)
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
         try:
-            response = self._completion(**kwargs)
+            response = self._completion(
+                model=self.model, messages=messages, max_tokens=4096,
+            )
         except Exception as exc:
             raise RuntimeError(
                 f"LLM API call failed (model={self.model}): "
@@ -352,11 +362,10 @@ class LLMDispatcher:
             {"role": "assistant", "content": first_response},
             {"role": "user", "content": feedback},
         ]
-        kwargs = dict(model=self.model, messages=messages, max_tokens=4096)
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
         try:
-            response = self._completion(**kwargs)
+            response = self._completion(
+                model=self.model, messages=messages, max_tokens=4096,
+            )
         except Exception as exc:
             raise RuntimeError(
                 f"LLM API call failed during schema-validation retry "
