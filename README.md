@@ -82,7 +82,7 @@ export OPENAI_API_KEY=sk-...
 export OPENAI_BASE_URL=https://your-endpoint.example.com  # if using a proxy
 ```
 
-Works with OpenAI, Anthropic via proxy, LiteLLM proxy, or any OpenAI-compatible endpoint.
+Works with OpenAI, Anthropic via proxy, or any OpenAI-compatible endpoint.
 
 ### 3. (Optional) Build the BLIS simulator for real execution
 
