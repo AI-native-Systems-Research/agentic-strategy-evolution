@@ -33,7 +33,7 @@ Produce a JSON summary with these fields:
 
 1. **what_was_tested**: One sentence describing the hypothesis family and mechanism tested.
 2. **key_findings**: 2-3 sentences on what was learned. Include whether H-main was confirmed or refuted, and any notable error types.
-3. **principles_changed**: List which principles were inserted, updated, or pruned this iteration. Reference principle IDs.
+3. **principles_changed**: Describe which principles were inserted, updated, or pruned this iteration. Reference principle IDs.
 4. **open_questions**: What remains unclear? What was not tested? What surprised you?
 5. **suggested_next_direction**: Based on what was learned, what should the next iteration investigate?
 

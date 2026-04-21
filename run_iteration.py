@@ -280,13 +280,15 @@ def run_iteration(
     iteration: int = 1,
     model: str = "aws/claude-opus-4-6",
     final: bool = True,
-) -> str:
+    auto_approve: bool = False,
+) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
 
     Args:
         final: If True (default), transitions to DONE after extraction.
             If False, stops at EXTRACTION so run_campaign can continue
             with the next iteration.
+        auto_approve: If True, all human gates are automatically approved.
 
     Returns:
         An IterationOutcome value: COMPLETED, CONTINUE, ABORTED, or REDESIGN.
@@ -296,7 +298,7 @@ def run_iteration(
     """
     engine = Engine(work_dir)
     dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=model)
-    gate = HumanGate()
+    gate = HumanGate(auto_response="approve") if auto_approve else HumanGate()
 
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
 
@@ -480,6 +482,8 @@ def main() -> None:
                         help="Model name (default: aws/claude-opus-4-6)")
     parser.add_argument("--run-id", default=None,
                         help="Working directory name (default: derived from campaign)")
+    parser.add_argument("--auto-approve", action="store_true",
+                        help="Auto-approve all human gates (skip interactive prompts)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -513,7 +517,7 @@ def main() -> None:
     work_dir = setup_work_dir(run_id)
     print(f"Working directory: {work_dir.resolve()}")
 
-    run_iteration(campaign, work_dir, model=args.model)
+    run_iteration(campaign, work_dir, model=args.model, auto_approve=args.auto_approve)
 
 
 if __name__ == "__main__":

@@ -224,7 +224,7 @@ Backward/looping transitions:
 | Planner | Frame, Design | all | `problem.md`, `bundle.yaml` | — |
 | Executor | Run, Tune | all | `findings.json`, `results/` | yes |
 | Reviewer | Design Review, Findings Review | all | `review-*.md` | — |
-| Extractor | Extract | all | `principles.json`, `summary.md` | — |
+| Extractor | Extract | all | `principles.json`, `investigation_summary.json`, `summary.json` | — |
 
 ### File Layout
 

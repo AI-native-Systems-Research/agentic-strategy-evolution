@@ -132,7 +132,7 @@ Prompts have two layers:
 | **Methodology layer** | Ships with Nous (`prompts/methodology/`) | Generic scientific method: "check for confounds", "is the causal mechanism plausible?", "are 3 seeds enough?" |
 | **Domain adapter layer** | Generated per system from `campaign.yaml` | System-specific vocabulary, metrics, knobs, experiment commands |
 
-The methodology layer is 6 prompt templates (one per role+phase combination). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:
+The methodology layer is 9 prompt templates (one per role+phase combination). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:
 
 - `{{target_system}}`, `{{system_description}}` — from `campaign.yaml`
 - `{{observable_metrics}}`, `{{controllable_knobs}}` — from `campaign.yaml`
@@ -362,7 +362,7 @@ The orchestrator is designed for crash-safe operation:
 
 - **Atomic state writes:** `state.json` is written to a temp file, fsynced, then renamed. A crash during write leaves the previous valid state intact.
 - **Checkpoint/resume:** The engine loads state from `state.json` on construction. Kill the process at any point and restart — it resumes from the last committed state.
-- **Append-only ledger:** `ledger.json` is never rewritten, only appended to. Lost writes lose at most the current row.
+- **Append-only ledger:** `ledger.json` is logically append-only — rows are never modified or deleted. Implementation reads, appends, and atomically rewrites the file.
 - **Idempotent extraction:** The extractor reads the existing `principles.json`, appends new principles, and writes back. Re-running extraction for the same iteration produces a duplicate (detectable by ID) rather than corruption.
 
 ## Extending Nous

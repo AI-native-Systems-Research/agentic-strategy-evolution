@@ -53,12 +53,14 @@ def append_ledger_row(work_dir: Path, iteration: int) -> None:
 
 def _read_bundle(path: Path) -> dict:
     if not path.exists():
+        logger.warning("No bundle.yaml at %s — ledger row will use family='unknown'.", path)
         return {}
     return yaml.safe_load(path.read_text()) or {}
 
 
 def _read_principles(path: Path) -> dict:
     if not path.exists():
+        logger.warning("No principles.json at %s — ledger row will have empty principles.", path)
         return {"principles": []}
     return json.loads(path.read_text())
 

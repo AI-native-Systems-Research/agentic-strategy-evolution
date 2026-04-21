@@ -212,6 +212,11 @@ class LLMDispatcher:
                 if prev_summary_path.exists():
                     ctx["investigation_summary"] = prev_summary_path.read_text()
                 else:
+                    logger.warning(
+                        "Investigation summary for iteration %d not found at %s. "
+                        "Design prompt will proceed without prior learning context.",
+                        iteration - 1, prev_summary_path,
+                    )
                     ctx["investigation_summary"] = (
                         "No investigation summary available from the previous iteration."
                     )

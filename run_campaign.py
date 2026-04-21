@@ -43,6 +43,7 @@ def run_campaign(
     *,
     max_iterations: int = 10,
     model: str = "aws/claude-opus-4-6",
+    auto_approve: bool = False,
 ) -> None:
     """Run a multi-iteration Nous campaign.
 
@@ -55,8 +56,12 @@ def run_campaign(
         work_dir: Working directory (must already be initialized).
         max_iterations: Maximum number of iterations to run.
         model: LLM model name.
+        auto_approve: If True, all human gates (including continue gate)
+            are automatically approved.
     """
-    continue_gate = HumanGate()
+    continue_gate = (
+        HumanGate(auto_response="approve") if auto_approve else HumanGate()
+    )
 
     for i in range(1, max_iterations + 1):
         is_last = (i == max_iterations)
@@ -66,6 +71,7 @@ def run_campaign(
 
         outcome = run_iteration(
             campaign, work_dir, iteration=i, model=model, final=is_last,
+            auto_approve=auto_approve,
         )
 
         if outcome == IterationOutcome.COMPLETED:
@@ -78,19 +84,13 @@ def run_campaign(
             return
 
         if outcome == IterationOutcome.REDESIGN:
-            print(f"\n  Iteration {i} needs redesign. Re-running same iteration.")
-            # The engine is already rewound to the appropriate phase.
-            # Decrement i effectively by not incrementing — but since we're
-            # in a for loop, we continue to the next i. Instead, we just
-            # re-run the same iteration number in the next pass... but a
-            # for-range doesn't allow that. Use a while loop approach.
-            # For simplicity in the for-loop structure: just abort and let
-            # the user re-run. The engine is rewound so resume will work.
-            print("  Re-run the campaign to retry from the rewound phase.")
+            print(f"\n  Iteration {i} returned REDESIGN.")
+            print("  The engine has been rewound. Re-run the campaign to resume.")
             return
 
         # outcome == CONTINUE — non-final iteration completed extraction
-        assert outcome == IterationOutcome.CONTINUE
+        if outcome != IterationOutcome.CONTINUE:
+            raise ValueError(f"Unexpected outcome: {outcome}")
 
         # Post-iteration: ledger + investigation summary
         append_ledger_row(work_dir, i)
@@ -139,6 +139,8 @@ def main() -> None:
                         help="Model name (default: aws/claude-opus-4-6)")
     parser.add_argument("--run-id", default=None,
                         help="Working directory name (default: derived from campaign)")
+    parser.add_argument("--auto-approve", action="store_true",
+                        help="Auto-approve all human gates (skip interactive prompts)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -167,14 +169,22 @@ def main() -> None:
         )
         sys.exit(1)
 
-    max_iter = campaign.get("max_iterations", args.max_iterations)
+    # CLI --max-iterations overrides campaign.yaml; campaign.yaml is fallback.
+    if args.max_iterations != 10:
+        max_iter = args.max_iterations
+    else:
+        max_iter = campaign.get("max_iterations", args.max_iterations)
 
     run_id = args.run_id or campaign_path.parent.name + "-run"
     work_dir = setup_work_dir(run_id)
     print(f"Working directory: {work_dir.resolve()}")
     print(f"Max iterations: {max_iter}")
 
-    run_campaign(campaign, work_dir, max_iterations=max_iter, model=args.model)
+    run_campaign(
+        campaign, work_dir,
+        max_iterations=max_iter, model=args.model,
+        auto_approve=args.auto_approve,
+    )
 
 
 if __name__ == "__main__":

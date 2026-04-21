@@ -222,7 +222,7 @@ An activity log. One JSON line per event — every LLM call, tool invocation, st
 | `event_type` | `llm_call`, `tool_call`, `state_transition`, or `gate_decision` |
 | `payload` | Event-specific details (tokens used, from/to state, approval decision, etc.) |
 
-Phase 1 defines the envelope; Phase 4 will tighten per-event-type payload schemas.
+Phase 1 defines the envelope; per-event-type payload schemas are planned for a future phase.
 
 ## Dispatch and Prompt Templates
 
