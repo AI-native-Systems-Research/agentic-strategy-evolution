@@ -54,9 +54,11 @@ def remove_experiment_worktree(repo_path: Path, experiment_id: str) -> None:
         logger.info("Removed experiment worktree: %s", worktree_dir)
 
     # Clean up the branch (ignore errors if already gone)
-    subprocess.run(
+    result = subprocess.run(
         ["git", "branch", "-D", branch_name],
         cwd=repo_path,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        logger.debug("Branch cleanup for %s: %s", branch_name, result.stderr.strip())

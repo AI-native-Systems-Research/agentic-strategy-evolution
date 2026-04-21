@@ -97,6 +97,17 @@ def run_experiment_commands(
     metrics_dir.mkdir(parents=True, exist_ok=True)
     results = {}
 
+    # Validate that all commands contain {metrics_path}
+    all_entries = [("baseline", plan["baseline"])] + [
+        (e["arm_type"], e) for e in plan["experiments"]
+    ]
+    for label, entry in all_entries:
+        if "{metrics_path}" not in entry["command"]:
+            raise RuntimeError(
+                f"Experiment command for '{label}' missing {{metrics_path}} placeholder. "
+                f"Command: {entry['command']}"
+            )
+
     # Run baseline
     baseline_metrics_path = metrics_dir / "baseline.json"
     cmd = plan["baseline"]["command"].replace("{metrics_path}", str(baseline_metrics_path))

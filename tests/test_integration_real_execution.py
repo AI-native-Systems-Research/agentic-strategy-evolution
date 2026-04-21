@@ -214,10 +214,10 @@ class TestRunExperimentCommands:
         plan = {
             "baseline": {
                 "description": "will fail",
-                "command": f"{sys.executable} -c \"import sys; sys.exit(1)\"",
+                "command": f"{sys.executable} -c \"import sys; sys.exit(1)\" --metrics-path {{metrics_path}}",
             },
             "experiments": [
-                {"arm_type": "h-main", "description": "x", "command": "echo x"},
+                {"arm_type": "h-main", "description": "x", "command": "echo {metrics_path}"},
             ],
         }
         with pytest.raises(RuntimeError, match="Command failed"):
@@ -230,10 +230,10 @@ class TestRunExperimentCommands:
         plan = {
             "baseline": {
                 "description": "will timeout",
-                "command": f"{sys.executable} -c \"import time; time.sleep(10)\"",
+                "command": f"{sys.executable} -c \"import time; time.sleep(10)\" --metrics-path {{metrics_path}}",
             },
             "experiments": [
-                {"arm_type": "h-main", "description": "x", "command": "echo x"},
+                {"arm_type": "h-main", "description": "x", "command": "echo {metrics_path}"},
             ],
         }
         with pytest.raises(RuntimeError, match="timed out"):
@@ -243,14 +243,14 @@ class TestRunExperimentCommands:
         iter_dir = tmp_path / "runs" / "iter-1"
         iter_dir.mkdir(parents=True)
 
-        # Command succeeds but doesn't write metrics
+        # Command succeeds but doesn't write metrics (placeholder present but ignored)
         plan = {
             "baseline": {
                 "description": "no metrics",
-                "command": f"{sys.executable} -c \"print('ok')\"",
+                "command": f"{sys.executable} -c \"print('ok')\" --dummy {{metrics_path}}",
             },
             "experiments": [
-                {"arm_type": "h-main", "description": "x", "command": "echo x"},
+                {"arm_type": "h-main", "description": "x", "command": "echo {metrics_path}"},
             ],
         }
         with pytest.raises(RuntimeError, match="Metrics file not found"):
