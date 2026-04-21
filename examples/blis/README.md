@@ -16,10 +16,10 @@ The `campaign.yaml` in this directory configures Nous for BLIS:
 |---------|-----------------|
 | `target_system.name` | Human-readable name shown in prompts |
 | `target_system.description` | System description given to all agents |
-| `target_system.observable_metrics` | What agents can measure (TTFT, TPOT, throughput, etc.) |
-| `target_system.controllable_knobs` | What agents can change (scheduler_policy, max_batch_size, etc.) |
-| `review.design_perspectives` | Reviewer perspectives for hypothesis bundle review (5 perspectives) |
-| `review.findings_perspectives` | Reviewer perspectives for findings review (10 perspectives) |
+| `target_system.observable_metrics` | What agents can measure (ttft_mean_ms, ttft_p99_ms, e2e_mean_ms, responses_per_sec) |
+| `target_system.controllable_knobs` | What agents can change (prefix_tokens, rate) |
+| `review.design_perspectives` | Reviewer perspectives for hypothesis bundle review |
+| `review.findings_perspectives` | Reviewer perspectives for findings review |
 | `review.max_review_rounds` | Maximum convergence rounds per review gate |
 
 ## Running a single iteration
@@ -61,7 +61,10 @@ blis-run/
     iter-1/
       problem.md          # problem framing
       bundle.yaml         # hypothesis bundle
+      experiment_plan.json  # experiment commands (real execution)
+      experiment_results.json # collected metrics (real execution)
       findings.json       # executor findings
+      metrics/            # per-arm metric files (real execution)
       reviews/
         review-*.md       # design reviews
         review-findings-*.md  # findings reviews
@@ -82,7 +85,7 @@ The campaign includes an `execution` block that enables real experiment executio
 
 When `repo_path` is set, Nous creates an isolated git worktree in the BLIS repo, runs the simulator commands, collects real metrics, and compares them against hypothesis predictions.
 
-When `repo_path` is null (or the `execution` block is removed), the executor falls back to **analysis mode** — reasoning about the system without running real experiments.
+When the `execution` block is removed (or `run_command` is absent), the executor falls back to **analysis mode** — reasoning about the system without running real experiments. When `repo_path` is null but `run_command` is present, experiments run in the current directory without worktree isolation.
 
 ## Customizing
 

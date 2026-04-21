@@ -15,7 +15,7 @@ target_system:
     - prefix_tokens
     - rate
   execution:
-    repo_path: /Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/run-single-iteration/blis
+    repo_path: null  # Set to your local BLIS checkout path for worktree isolation
     setup_commands:
       - "go build -o blis ."
     run_command: >-

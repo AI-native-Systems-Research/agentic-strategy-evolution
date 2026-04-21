@@ -32,6 +32,7 @@ from orchestrator.util import atomic_write
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 SCHEMAS_DIR = Path(__file__).parent / "schemas"
+_ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Phase ordering for resume logic
 _PHASE_ORDER = [
@@ -166,7 +167,6 @@ def run_experiment_commands(
     results["baseline"] = _read_metrics(baseline_metrics_path, label="baseline")
 
     # Run each arm
-    _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
     for exp in plan["experiments"]:
         arm = exp["arm_type"]
         if not _ARM_TYPE_RE.match(arm):
@@ -302,7 +302,8 @@ def run_iteration(
 
                 # Step 2: Run commands, collect metrics
                 run_cmd_template = execution.get("run_command", "")
-                expected_exe = shlex.split(run_cmd_template)[0] if run_cmd_template else None
+                parts = shlex.split(run_cmd_template) if run_cmd_template else []
+                expected_exe = parts[0] if parts else None
                 metrics_results = run_experiment_commands(
                     plan,
                     work_dir=cmd_work_dir,
@@ -349,7 +350,15 @@ def run_iteration(
             print(f"  -> {iter_dir / 'findings.json'}")
 
     # Validate findings against schema, then check fast-fail rules
-    findings = json.loads((iter_dir / "findings.json").read_text())
+    findings_path = iter_dir / "findings.json"
+    if not findings_path.exists():
+        print(
+            f"Error: {findings_path} not found. "
+            f"The RUNNING phase may have failed to produce findings.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    findings = json.loads(findings_path.read_text())
     findings_schema = json.loads((SCHEMAS_DIR / "findings.schema.json").read_text())
     try:
         jsonschema.validate(findings, findings_schema)

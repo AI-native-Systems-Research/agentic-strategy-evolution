@@ -1,7 +1,6 @@
 """Integration tests for real experiment execution flow."""
 import json
 import stat
-import shutil
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -10,16 +9,9 @@ import jsonschema
 import pytest
 import yaml
 
-from run_iteration import (
-    run_iteration,
-    setup_work_dir,
-    run_experiment_commands,
-    _run_single_command,
-    _read_metrics,
-)
+from run_iteration import run_experiment_commands
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
 def load_schema(name: str) -> dict:
@@ -126,25 +118,6 @@ FINDINGS = {
     ],
     "discrepancy_analysis": "All arms confirmed by real experiment data.",
     "dominant_component_pct": None,
-}
-
-PRINCIPLES = {
-    "principles": [
-        {
-            "id": "RP-1",
-            "statement": "Batch size amortizes fixed overhead",
-            "confidence": "high",
-            "regime": "batch_size > 1",
-            "evidence": ["iteration-1-h-main"],
-            "contradicts": [],
-            "extraction_iteration": 1,
-            "mechanism": "Fixed per-request overhead is shared",
-            "applicability_bounds": "When fixed overhead dominates",
-            "superseded_by": None,
-            "category": "domain",
-            "status": "active",
-        }
-    ]
 }
 
 BUNDLE_YAML = """\
@@ -436,3 +409,90 @@ class TestAnalysisModeFallback:
         # No experiment_plan.json or experiment_results.json should exist
         assert not (iter_dir / "experiment_plan.json").exists()
         assert not (iter_dir / "experiment_results.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Resume logic tests
+# ---------------------------------------------------------------------------
+
+from run_iteration import _enter_phase, _PHASE_ORDER, _PHASE_INDEX
+from orchestrator.engine import Engine, Phase
+
+
+class TestEnterPhase:
+    """Tests for _enter_phase resume logic."""
+
+    def test_skip_past_phase(self, tmp_path):
+        """When engine is past a phase, _enter_phase returns False (skip)."""
+        state = {
+            "phase": "RUNNING", "iteration": 0,
+            "run_id": "test", "family": None, "timestamp": "t",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+
+        assert _enter_phase(engine, "FRAMING") is False
+        assert _enter_phase(engine, "DESIGN") is False
+        assert _enter_phase(engine, "HUMAN_DESIGN_GATE") is False
+        assert engine.phase == "RUNNING"  # unchanged
+
+    def test_redo_current_phase(self, tmp_path):
+        """When engine is at a phase, _enter_phase returns True without transition."""
+        state = {
+            "phase": "RUNNING", "iteration": 0,
+            "run_id": "test", "family": None, "timestamp": "t",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+
+        assert _enter_phase(engine, "RUNNING") is True
+        assert engine.phase == "RUNNING"  # no transition happened
+
+    def test_advance_to_next_phase(self, tmp_path):
+        """When engine is before a phase, _enter_phase transitions and returns True."""
+        state = {
+            "phase": "INIT", "iteration": 0,
+            "run_id": "test", "family": None, "timestamp": "t",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+
+        assert _enter_phase(engine, "FRAMING") is True
+        assert engine.phase == "FRAMING"
+
+    def test_done_skips_everything(self, tmp_path):
+        """When engine is DONE, all phases are skipped."""
+        state = {
+            "phase": "DONE", "iteration": 0,
+            "run_id": "test", "family": None, "timestamp": "t",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+
+        for phase in _PHASE_ORDER:
+            assert _enter_phase(engine, phase) is (phase == "DONE")
+
+    def test_phase_order_matches_engine_phases(self):
+        """_PHASE_ORDER must contain exactly the same phases as the engine."""
+        engine_phases = {p.value for p in Phase}
+        order_phases = set(_PHASE_ORDER)
+        assert engine_phases == order_phases, (
+            f"Mismatch: engine has {engine_phases - order_phases}, "
+            f"_PHASE_ORDER has {order_phases - engine_phases}"
+        )
+
+    def test_fast_fail_resume_from_findings_review(self, tmp_path):
+        """Resuming at FINDINGS_REVIEW skips RUNNING and earlier phases."""
+        state = {
+            "phase": "FINDINGS_REVIEW", "iteration": 0,
+            "run_id": "test", "family": None, "timestamp": "t",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+
+        assert _enter_phase(engine, "RUNNING") is False
+        assert _enter_phase(engine, "FINDINGS_REVIEW") is True
+        assert engine.phase == "FINDINGS_REVIEW"
+        # Can advance to next
+        assert _enter_phase(engine, "HUMAN_FINDINGS_GATE") is True
+        assert engine.phase == "HUMAN_FINDINGS_GATE"
