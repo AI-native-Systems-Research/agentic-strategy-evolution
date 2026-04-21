@@ -1,6 +1,5 @@
 research_question: >
-  Can SLO-gated admission control reduce TTFT P99 latency under high load
-  without degrading overall throughput?
+  Does increasing the prefix ratio in a workload reduce TTFT under moderate load?
 
 target_system:
   name: "BLIS — LLM Inference Serving Simulator"
