@@ -1,10 +1,10 @@
 # Data Model Guide
 
-Nous uses 8 schema-governed artifacts to drive the investigation loop. This guide explains each one in plain English.
+Nous uses 9 schema-governed artifacts to drive the investigation loop. This guide explains each one in plain English.
 
 ## How They Fit Together
 
-`campaign.yaml` describes the target system and configures the reviewer panel. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (experiment plan) and `findings.json` (results). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
+`campaign.yaml` describes the target system and configures the reviewer panel. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (experiment plan) and `findings.json` (results). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. After each non-final iteration, `investigation_summary.json` captures a bounded summary that feeds into the next iteration's design prompt. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
 
 ```
 campaign.yaml       "What system?"          Target system, reviewers, prompts
@@ -14,12 +14,14 @@ state.json          "Where are we?"         Drives the loop
     │
     ▼
 bundle.yaml         "What are we testing?"  Experiment plan for this iteration
-    │
-    ▼
-findings.json       "What happened?"        Prediction vs outcome, arm by arm
-    │
-    ├──▶ ledger.json       "What happened each iteration?"  Append-only history
-    ├──▶ principles.json   "What have we learned?"          Living knowledge base
+    │                                        ▲
+    ▼                                        │ (injected into design prompt)
+findings.json       "What happened?"         │
+    │                                        │
+    ├──▶ ledger.json                 investigation_summary.json
+    │       "What happened each iteration?"  "What did we learn this round?"
+    │                                        Bounded summary for next iteration
+    ├──▶ principles.json   "What have we learned?"   Living knowledge base
     └──▶ trace.jsonl       "What happened under the hood?"  Activity log
                                                              │
                                                              ▼
@@ -191,7 +193,24 @@ The experiment results. Compares what we predicted to what we observed, arm by a
 - H-control-negative refuted → mechanism confounded, go back to DESIGN
 - Dominant component >80% → simplify the strategy
 
-## 6. trace.jsonl — "What happened under the hood?"
+## 6. investigation_summary.json — "What did we learn this round?"
+
+**Schema:** `schemas/investigation_summary.schema.json`
+
+A bounded summary produced after each non-final iteration by the Extractor agent. It captures the essential learnings from the iteration in a form that can be injected into the next iteration's design prompt. This is what enables cross-iteration learning without growing agent context proportionally to campaign depth.
+
+| Field | What it means |
+|---|---|
+| `iteration` | Which iteration this summarizes |
+| `what_was_tested` | The hypothesis family and key arms tested |
+| `key_findings` | Main results — what was confirmed, refuted, or surprising |
+| `principles_changed` | Which principles were inserted, updated, or pruned |
+| `open_questions` | What remains unanswered — candidate questions for the next iteration |
+| `suggested_next_direction` | Recommended focus area for the next iteration |
+
+Located at `runs/iter-N/investigation_summary.json`. The design prompt for iteration N+1 receives this summary to inform hypothesis bundle creation.
+
+## 7. trace.jsonl — "What happened under the hood?"
 
 **Schema:** `schemas/trace.schema.json`
 
@@ -214,7 +233,7 @@ The orchestrator invokes agents through a dispatcher. Two implementations exist:
 
 `LLMDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. For structured outputs (bundle, findings, principles), it extracts content from code fences and validates against the relevant schema before writing. The FRAMING phase dispatches `role="planner", phase="frame"` to produce `problem.md`.
 
-## 7. summary.json — "How did the whole campaign go?"
+## 8. summary.json — "How did the whole campaign go?"
 
 **Schema:** `schemas/summary.schema.json`
 

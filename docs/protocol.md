@@ -167,10 +167,11 @@ SUGGESTION-level items do not block advancement. Only CRITICAL findings block th
 
 ## Human Gates
 
-Two hard stops require explicit human approval:
+Three hard stops require explicit human approval:
 
 1. **Design Approval** (after Design Review) — the human sees the hypothesis bundle and all review summaries, then approves, rejects, or aborts the campaign.
 2. **Findings Approval** (after Findings Review) — the human sees the findings and all review summaries, then approves, rejects, or aborts.
+3. **Continue Gate** (after Extraction, multi-iteration only) — the human decides whether to continue to the next iteration or stop the campaign. This gate only appears when using `run_campaign.py`.
 
 Human gates cannot be bypassed. They are the mechanism by which domain expertise enters the loop.
 
@@ -185,6 +186,8 @@ The orchestrator enforces three rules to avoid wasted work:
 ## Stopping Criteria
 
 A campaign stops when:
+- The `--max-iterations` limit is reached (default: 10, configurable via CLI flag or `max_iterations` in `campaign.yaml`)
+- The human chooses to stop at the continue gate after any iteration
 - Consecutive iterations produce null or marginal results (no new principles extracted)
 - The human decides the research question has been sufficiently answered
 - The principle store has stabilized (no inserts, updates, or prunes for N iterations)
@@ -238,6 +241,7 @@ campaign-dir/
       experiment_plan.json   — executor commands (real execution only)
       experiment_results.json — collected metrics (real execution only)
       findings.json    — prediction vs outcome
+      investigation_summary.json — bounded iteration summary
       metrics/        — per-arm metric files (real execution only)
       reviews/        — multi-perspective reviews
   trace.jsonl         — observability log
@@ -246,9 +250,14 @@ campaign-dir/
 
 ## Investigation Summary
 
-After each Extraction phase, the Extractor produces a bounded investigation summary. The next iteration's Design prompt receives:
-- Research question
-- Investigation summary (what's been tried, what principles hold, open questions)
-- Last iteration outcome
+After each non-final Extraction phase, the Extractor produces a bounded investigation summary (`investigation_summary.json`). This summary captures:
 
-This keeps agent context at O(summary) regardless of campaign depth. The full ledger remains on disk for audit purposes but is not passed to agents.
+- **What was tested** — the hypothesis family and arms
+- **Key findings** — what was confirmed, refuted, or unexpected
+- **Principles changed** — which principles were inserted, updated, or pruned
+- **Open questions** — what remains unanswered
+- **Suggested next direction** — where the next iteration should focus
+
+The next iteration's Design prompt receives this summary alongside the active principles and campaign context. This keeps agent context at O(summary) regardless of campaign depth — the Planner does not need to read the full history of all prior iterations.
+
+The full ledger (`ledger.json`) remains on disk for audit and analysis but is not passed to agents. The deterministic ledger module (`orchestrator/ledger.py`) appends one row per iteration with prediction accuracy and principle changes, without any LLM calls.

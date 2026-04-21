@@ -99,6 +99,14 @@ Then set `repo_path` in `examples/blis/campaign.yaml` to your BLIS checkout path
 python run_iteration.py examples/blis/campaign.yaml
 ```
 
+### 5. Run a multi-iteration campaign
+
+```bash
+python run_campaign.py examples/blis/campaign.yaml --max-iterations 5
+```
+
+The campaign loops through iterations, pausing at human gates (design, findings, and continue gates). After each iteration, it generates an investigation summary that feeds into the next design prompt. See [docs/quickstart.md](docs/quickstart.md) for details.
+
 ### What to expect
 
 The script walks through these phases, printing progress:
@@ -140,6 +148,7 @@ schemas/                 JSON Schema definitions (Draft 2020-12)
   campaign.schema.yaml     Campaign configuration (target system, reviewers, prompts)
   experiment_plan.schema.json  Executor experiment commands (real execution)
   findings.schema.json     Prediction-vs-outcome results
+  investigation_summary.schema.json  Bounded iteration summary for cross-iteration learning
   principles.schema.json   Living principle store
   state.schema.json        Orchestrator checkpoint
   ledger.schema.json       Append-only iteration log
@@ -162,6 +171,7 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   prompt_loader.py         Template loading with {{placeholder}} rendering
   gates.py                 Human approval gates
   fastfail.py              Fast-fail rule evaluation
+  ledger.py                Deterministic ledger append (no LLM)
   worktree.py              Git worktree isolation for experiments
   protocols.py             Dispatcher and Gate interface contracts
   util.py                  Shared utilities (atomic_write)
@@ -176,6 +186,7 @@ prompts/                 Methodology prompt templates
     review_design.md       Design review from a perspective (reviewer)
     review_findings.md     Findings review from a perspective (reviewer)
     extract.md             Principle extraction (extractor)
+    summarize.md           Investigation summary (extractor)
 
 examples/
   blis/                    Reference campaign for BLIS inference simulator
@@ -211,9 +222,11 @@ See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the Claud
 
 **Phase 2 (complete):** Agent prompts and real LLM dispatch. `LLMDispatcher` replaces stubs with LLM-driven agents via the OpenAI SDK (works with any OpenAI-compatible endpoint). Methodology prompt templates, schema validation with retry, and a BLIS example campaign.
 
-**Phase 3 (current):** Real experiment execution. The executor runs actual experiments via shell commands, collects real metrics, and analyzes results. Two-phase executor dispatch (plan commands → run → analyze), git worktree isolation for experiments, configurable timeouts, and backward-compatible `execution` config in `campaign.yaml`. Systems without execution config fall back to analysis mode.
+**Phase 3 (complete):** Real experiment execution. The executor runs actual experiments via shell commands, collects real metrics, and analyzes results. Two-phase executor dispatch (plan commands → run → analyze), git worktree isolation for experiments, configurable timeouts, and backward-compatible `execution` config in `campaign.yaml`. Systems without execution config fall back to analysis mode.
 
-**Phase 4 (next):** Multi-iteration campaigns — automated iteration loops, ledger tracking, and convergence detection.
+**Phase 4 (complete):** Multi-iteration campaigns. `run_campaign.py` loops through iterations with human continue gates, deterministic ledger tracking, and bounded investigation summaries that feed into each subsequent iteration's design prompt. Knowledge compounds across iterations via principles and summaries.
+
+**Phase 5 (next):** Domain adapter layer, cost tracking, and trace population.
 
 ## License
 
