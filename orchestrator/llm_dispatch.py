@@ -203,6 +203,23 @@ class LLMDispatcher:
         if phase in ("frame", "design"):
             ctx["research_question"] = self._read_research_question(phase, iteration)
 
+        if phase == "design":
+            if iteration > 1:
+                prev_summary_path = (
+                    self.work_dir / "runs" / f"iter-{iteration - 1}"
+                    / "investigation_summary.json"
+                )
+                if prev_summary_path.exists():
+                    ctx["investigation_summary"] = prev_summary_path.read_text()
+                else:
+                    ctx["investigation_summary"] = (
+                        "No investigation summary available from the previous iteration."
+                    )
+            else:
+                ctx["investigation_summary"] = (
+                    "This is the first iteration. No prior investigation summary."
+                )
+
         if phase in ("design", "review-design", "run", "run-plan", "run-analyze", "summarize"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
