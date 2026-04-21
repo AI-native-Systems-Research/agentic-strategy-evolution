@@ -6,6 +6,7 @@ validates against JSON Schema, and writes artifacts atomically.
 """
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Callable
@@ -36,6 +37,7 @@ class LLMDispatcher:
         work_dir: Path,
         campaign: dict,
         model: str = "aws/claude-opus-4-6",
+        api_base: str | None = None,
         prompts_dir: Path | None = None,
         completion_fn: Callable | None = None,
     ) -> None:
@@ -43,6 +45,7 @@ class LLMDispatcher:
         self._validate_campaign(campaign)
         self.campaign = campaign
         self.model = model
+        self.api_base = api_base or os.environ.get("OPENAI_API_BASE")
         self.loader = PromptLoader(
             prompts_dir
             or Path(__file__).parent.parent / "prompts" / "methodology"
@@ -312,10 +315,11 @@ class LLMDispatcher:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message or "Please proceed."},
         ]
+        kwargs = dict(model=self.model, messages=messages, max_tokens=4096)
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
         try:
-            response = self._completion(
-                model=self.model, messages=messages, max_tokens=4096
-            )
+            response = self._completion(**kwargs)
         except Exception as exc:
             raise RuntimeError(
                 f"LLM API call failed (model={self.model}): "
@@ -348,10 +352,11 @@ class LLMDispatcher:
             {"role": "assistant", "content": first_response},
             {"role": "user", "content": feedback},
         ]
+        kwargs = dict(model=self.model, messages=messages, max_tokens=4096)
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
         try:
-            response = self._completion(
-                model=self.model, messages=messages, max_tokens=4096
-            )
+            response = self._completion(**kwargs)
         except Exception as exc:
             raise RuntimeError(
                 f"LLM API call failed during schema-validation retry "
