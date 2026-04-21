@@ -61,7 +61,13 @@ Every experiment is structured as a bundle of falsifiable predictions:
 
 ## Quick Start
 
-### 1. Install
+### Prerequisites
+
+- **Python 3.11+**
+- **Go** (to build the BLIS simulator) — or skip real execution and use analysis mode
+- **An LLM API key** — any OpenAI-compatible endpoint works
+
+### 1. Install Nous
 
 ```bash
 git clone https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git
@@ -69,26 +75,52 @@ cd agentic-strategy-evolution
 pip install -e ".[dev]"
 ```
 
-### 2. Set your LLM API key
+### 2. Set up your LLM
 
 ```bash
 export OPENAI_API_KEY=sk-...
+export OPENAI_BASE_URL=https://your-endpoint.example.com  # if using a proxy
 ```
 
-Any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers) works — set the appropriate env var for your provider.
+Works with OpenAI, Anthropic via proxy, or any OpenAI-compatible endpoint.
 
-### 3. Run on the BLIS example
+### 3. (Optional) Build the BLIS simulator for real execution
+
+```bash
+git clone https://github.com/mtoslalibu/inference-sim.git blis
+cd blis && go build -o blis . && cd ..
+```
+
+Then set `repo_path` in `examples/blis/campaign.yaml` to your BLIS checkout path. Without this, the executor runs in analysis mode (LLM reasons about the system without executing experiments).
+
+### 4. Run a single iteration
 
 ```bash
 python run_iteration.py examples/blis/campaign.yaml
 ```
 
-The script walks through all phases (framing, design, review, execution, extraction) and pauses at two human gates for your approval. Output goes to `blis-run/`.
+### What to expect
+
+The script walks through these phases, printing progress:
+
+| Phase | What happens | Output |
+|-------|-------------|--------|
+| **FRAMING** | LLM defines the research problem | `runs/iter-1/problem.md` |
+| **DESIGN** | LLM creates hypothesis bundle with arms | `runs/iter-1/bundle.yaml` |
+| **DESIGN REVIEW** | Multiple reviewer perspectives check the bundle | `runs/iter-1/reviews/review-*.md` |
+| **HUMAN GATE** | **Pauses for your approval** — read the bundle and reviews, then type `approve` | |
+| **RUNNING** | LLM designs commands, orchestrator executes them, collects real metrics | `runs/iter-1/experiment_plan.json`, `experiment_results.json` |
+| **FINDINGS REVIEW** | Reviewers check prediction vs. outcome | `runs/iter-1/reviews/review-findings-*.md` |
+| **HUMAN GATE** | **Pauses again** for your approval | |
+| **EXTRACTION** | LLM extracts reusable principles | `principles.json` |
+
+Output goes to `blis-run/`. The two human gates are hard stops — the system waits for you.
 
 ### Run on your own system
 
 1. Copy `templates/campaign.yaml` and fill in your system's name, description, metrics, and knobs
-2. Run: `python run_iteration.py your-campaign.yaml`
+2. Optionally add an `execution` block with your system's run command
+3. Run: `python run_iteration.py your-campaign.yaml`
 
 See [docs/quickstart.md](docs/quickstart.md) for details, or [examples/blis/](examples/blis/) for a complete example.
 
@@ -106,6 +138,7 @@ Comprehensive test suite covering schemas, templates, engine, gates, dispatch, f
 schemas/                 JSON Schema definitions (Draft 2020-12)
   bundle.schema.yaml       Hypothesis bundle (arms + metadata)
   campaign.schema.yaml     Campaign configuration (target system, reviewers, prompts)
+  experiment_plan.schema.json  Executor experiment commands (real execution)
   findings.schema.json     Prediction-vs-outcome results
   principles.schema.json   Living principle store
   state.schema.json        Orchestrator checkpoint
@@ -125,10 +158,11 @@ templates/               Starter files for new campaigns
 orchestrator/            Python orchestrator (deterministic, not an LLM)
   engine.py                State machine with atomic checkpoint/resume
   dispatch.py              Stub agent dispatch (for testing without LLM)
-  llm_dispatch.py          LLM-based agent dispatch via LiteLLM
+  llm_dispatch.py          LLM-based agent dispatch via OpenAI SDK
   prompt_loader.py         Template loading with {{placeholder}} rendering
   gates.py                 Human approval gates
   fastfail.py              Fast-fail rule evaluation
+  worktree.py              Git worktree isolation for experiments
   protocols.py             Dispatcher and Gate interface contracts
   util.py                  Shared utilities (atomic_write)
 
@@ -136,7 +170,9 @@ prompts/                 Methodology prompt templates
   methodology/
     frame.md               Problem framing (planner)
     design.md              Hypothesis bundle design (planner)
-    run.md                 Analysis-mode execution (executor)
+    run.md                 Analysis-mode execution (executor, no execution config)
+    run_plan.md            Experiment command design (executor, real execution)
+    run_analyze.md         Real metrics analysis (executor, real execution)
     review_design.md       Design review from a perspective (reviewer)
     review_findings.md     Findings review from a perspective (reviewer)
     extract.md             Principle extraction (extractor)
@@ -173,9 +209,11 @@ See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the Claud
 
 **Phase 1 (complete):** Schemas, templates, orchestrator skeleton, and protocol documentation. The orchestrator drives the full state machine with stub agent dispatch.
 
-**Phase 2 (current):** Agent prompts and real LLM dispatch. `LLMDispatcher` replaces stubs with LLM-driven agents via [LiteLLM](https://docs.litellm.ai/) (model-agnostic — Claude, GPT, Gemini, etc.). Six methodology prompt templates, schema validation with retry, and a BLIS example campaign. The executor operates in analysis mode (reasons about code, does not run experiments).
+**Phase 2 (complete):** Agent prompts and real LLM dispatch. `LLMDispatcher` replaces stubs with LLM-driven agents via the OpenAI SDK (works with any OpenAI-compatible endpoint). Methodology prompt templates, schema validation with retry, and a BLIS example campaign.
 
-**Phase 3 (next):** Plugin integration — `/nous:init` and `/nous:investigate` commands, real experiment execution via shell access, worktree isolation.
+**Phase 3 (current):** Real experiment execution. The executor runs actual experiments via shell commands, collects real metrics, and analyzes results. Two-phase executor dispatch (plan commands → run → analyze), git worktree isolation for experiments, configurable timeouts, and backward-compatible `execution` config in `campaign.yaml`. Systems without execution config fall back to analysis mode.
+
+**Phase 4 (next):** Multi-iteration campaigns — automated iteration loops, ledger tracking, and convergence detection.
 
 ## License
 

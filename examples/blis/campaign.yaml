@@ -1,45 +1,45 @@
 research_question: >
-  Can SLO-gated admission control reduce TTFT P99 latency under high load
-  without degrading overall throughput?
+  Does increasing the prefix ratio in a workload reduce TTFT under moderate load?
 
 target_system:
   name: "BLIS — LLM Inference Serving Simulator"
   description: >
-    BLIS is a discrete-event simulator for LLM inference serving systems.
-    It models request arrivals, scheduling policies, KV-cache management,
-    and GPU resource allocation to study performance under realistic workloads.
+    BLIS is a discrete-event simulator for LLM inference serving.
+    It models request arrivals, scheduling, and KV-cache management.
   observable_metrics:
-    - TTFT_P50_ms
-    - TTFT_P99_ms
-    - TPOT_ms
-    - throughput_req_per_sec
-    - gpu_utilization_pct
-    - kv_cache_hit_rate
+    - ttft_mean_ms
+    - ttft_p99_ms
+    - e2e_mean_ms
+    - responses_per_sec
   controllable_knobs:
-    - scheduler_policy
-    - max_batch_size
-    - preemption_mode
-    - cache_eviction_policy
-    - admission_control_threshold
+    - prefix_tokens
+    - rate
+  execution:
+    repo_path: null  # Set to your local BLIS checkout path for worktree isolation
+    setup_commands:
+      - "go build -o blis ."
+    run_command: >-
+      ./blis run
+      --model qwen/qwen3-14b
+      --num-instances 4
+      --rate 100
+      --num-requests 500
+      --seed 42
+      --metrics-path {metrics_path}
+    metrics_output_format: json
+    cleanup_commands: []
+    timeout: 300
 
 review:
   design_perspectives:
     - statistical-rigor
     - causal-sufficiency
     - confound-risk
-    - generalization
-    - mechanism-clarity
   findings_perspectives:
     - statistical-rigor
     - causal-sufficiency
     - confound-risk
-    - generalization
-    - mechanism-clarity
-    - reproducibility
     - measurement-validity
-    - error-classification
-    - principle-consistency
-    - domain-plausibility
   max_review_rounds: 3
 
 prompts:

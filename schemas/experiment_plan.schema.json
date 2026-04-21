@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/experiment_plan.schema.json",
+  "title": "Experiment Plan",
+  "description": "Shell commands designed by the executor for each hypothesis arm.",
+  "type": "object",
+  "required": ["baseline", "experiments"],
+  "additionalProperties": false,
+  "properties": {
+    "baseline": {
+      "type": "object",
+      "required": ["description", "command"],
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "command": { "type": "string", "minLength": 1 }
+      }
+    },
+    "experiments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["arm_type", "description", "command"],
+        "additionalProperties": false,
+        "properties": {
+          "arm_type": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z0-9_-]+$" },
+          "description": { "type": "string" },
+          "config_changes": { "type": "string" },
+          "command": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

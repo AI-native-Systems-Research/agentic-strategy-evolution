@@ -39,6 +39,35 @@ properties:
         items: { type: string, minLength: 1 }
         minItems: 1
         description: "What can be changed (algorithms, configs, resource limits)."
+      execution:
+        type: object
+        required: [run_command]
+        additionalProperties: false
+        description: "Optional: enable real experiment execution. When absent, executor uses analysis mode."
+        properties:
+          repo_path:
+            type: ["string", "null"]
+            description: "Path to target system git repo. If set, experiments run in isolated worktrees."
+          setup_commands:
+            type: array
+            items: { type: string }
+            description: "Commands to run before experiments (install deps, build, etc.)."
+          run_command:
+            type: string
+            minLength: 1
+            description: "Command template for running the simulator. Must contain {metrics_path} placeholder."
+          metrics_output_format:
+            type: string
+            enum: [json]
+            description: "Format of metrics output. Currently only JSON supported."
+          cleanup_commands:
+            type: array
+            items: { type: string }
+            description: "Commands to run after all experiments complete."
+          timeout:
+            type: integer
+            minimum: 1
+            description: "Max seconds per command. Default: 300."
 
   review:
     type: object
