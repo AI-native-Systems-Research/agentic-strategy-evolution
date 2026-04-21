@@ -5,7 +5,7 @@ This example shows how to run a single Nous iteration on [BLIS](https://github.c
 ## Prerequisites
 
 - Python 3.11+
-- An LLM API key set as an environment variable (e.g., `OPENAI_API_KEY`, or any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers))
+- An LLM API key: `export OPENAI_API_KEY=...` (and `OPENAI_BASE_URL` if using a proxy)
 - Nous installed: `pip install -e ".[dev]"`
 
 ## Campaign configuration
@@ -16,10 +16,10 @@ The `campaign.yaml` in this directory configures Nous for BLIS:
 |---------|-----------------|
 | `target_system.name` | Human-readable name shown in prompts |
 | `target_system.description` | System description given to all agents |
-| `target_system.observable_metrics` | What agents can measure (TTFT, TPOT, throughput, etc.) |
-| `target_system.controllable_knobs` | What agents can change (scheduler_policy, max_batch_size, etc.) |
-| `review.design_perspectives` | Reviewer perspectives for hypothesis bundle review (5 perspectives) |
-| `review.findings_perspectives` | Reviewer perspectives for findings review (10 perspectives) |
+| `target_system.observable_metrics` | What agents can measure (ttft_mean_ms, ttft_p99_ms, e2e_mean_ms, responses_per_sec) |
+| `target_system.controllable_knobs` | What agents can change (prefix_tokens, rate) |
+| `review.design_perspectives` | Reviewer perspectives for hypothesis bundle review |
+| `review.findings_perspectives` | Reviewer perspectives for findings review |
 | `review.max_review_rounds` | Maximum convergence rounds per review gate |
 
 ## Running a single iteration
@@ -61,17 +61,31 @@ blis-run/
     iter-1/
       problem.md          # problem framing
       bundle.yaml         # hypothesis bundle
+      experiment_plan.json  # experiment commands (real execution)
+      experiment_results.json # collected metrics (real execution)
       findings.json       # executor findings
+      metrics/            # per-arm metric files (real execution)
       reviews/
         review-*.md       # design reviews
         review-findings-*.md  # findings reviews
 ```
 
-## Phase 2 limitation
+## Real experiment execution
 
-In Phase 2, the executor operates in **analysis mode** — it reasons about the BLIS codebase and mechanisms but does not run actual benchmarks. The executor produces findings based on its understanding of how scheduling policies, batching, and cache management affect performance.
+The campaign includes an `execution` block that enables real experiment execution. To use it:
 
-Phase 3 will add real experiment execution via shell access.
+1. Clone the [BLIS repository](https://github.com/inference-sim/inference-sim) locally
+2. Build it (follow BLIS docs)
+3. Set `repo_path` in `campaign.yaml` to your local BLIS checkout:
+   ```yaml
+   execution:
+     repo_path: "/path/to/your/blis"
+   ```
+4. Run: `python run_iteration.py examples/blis/campaign.yaml`
+
+When `repo_path` is set, Nous creates an isolated git worktree in the BLIS repo, runs the simulator commands, collects real metrics, and compares them against hypothesis predictions.
+
+When the `execution` block is removed (or `run_command` is absent), the executor falls back to **analysis mode** — reasoning about the system without running real experiments. When `repo_path` is null but `run_command` is present, experiments run in the current directory without worktree isolation.
 
 ## Customizing
 

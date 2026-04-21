@@ -7,6 +7,13 @@ target_system:
     - "TODO: latency, throughput, error rate, etc."
   controllable_knobs:
     - "TODO: algorithms, configurations, resource limits, etc."
+  # execution:                                  # Optional: enable real experiment execution
+  #   repo_path: null                           # Path to target repo (null = current dir)
+  #   setup_commands: []                        # Run before experiments
+  #   run_command: "TODO --metrics-path {metrics_path}"  # Simulator command template
+  #   metrics_output_format: json
+  #   cleanup_commands: []                      # Run after all experiments
+  #   timeout: 300                              # Max seconds per command
 
 review:
   design_perspectives:

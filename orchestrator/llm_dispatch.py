@@ -1,17 +1,22 @@
 """LLM-based agent dispatch for the Nous orchestrator.
 
-Replaces StubDispatcher with real LLM calls via LiteLLM.  Loads prompt
-templates, calls the model, parses structured output from code fences,
-validates against JSON Schema, and writes artifacts atomically.
+Calls an OpenAI-compatible LLM API, loads prompt templates, parses
+structured output from code fences, validates against JSON Schema,
+and writes artifacts atomically.
+
+Works with any OpenAI-compatible endpoint (OpenAI, Anthropic via proxy,
+LiteLLM proxy, etc.).  Set OPENAI_API_KEY and OPENAI_BASE_URL environment
+variables to configure.
 """
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Callable
 
 import jsonschema
-import litellm
+import openai
 import yaml
 
 from orchestrator.prompt_loader import PromptLoader
@@ -36,6 +41,8 @@ class LLMDispatcher:
         work_dir: Path,
         campaign: dict,
         model: str = "aws/claude-opus-4-6",
+        api_base: str | None = None,
+        api_key: str | None = None,
         prompts_dir: Path | None = None,
         completion_fn: Callable | None = None,
     ) -> None:
@@ -47,12 +54,19 @@ class LLMDispatcher:
             prompts_dir
             or Path(__file__).parent.parent / "prompts" / "methodology"
         )
-        self._completion = completion_fn or litellm.completion
+        if completion_fn:
+            self._completion = completion_fn
+        else:
+            client = openai.OpenAI(
+                api_key=api_key or os.environ.get("OPENAI_API_KEY"),
+                base_url=api_base or os.environ.get("OPENAI_BASE_URL"),
+            )
+            self._completion = client.chat.completions.create
         dal = campaign.get("prompts", {}).get("domain_adapter_layer")
         if dal is not None:
             logger.warning(
-                "domain_adapter_layer is set to %r but is not yet supported "
-                "(Phase 3 scope). Only the methodology layer will be used.",
+                "domain_adapter_layer is set to %r but is not yet supported. "
+                "Only the methodology layer will be used.",
                 dal,
             )
 
@@ -149,6 +163,8 @@ class LLMDispatcher:
         ("planner", "frame"): ("frame", None, None),
         ("planner", "design"): ("design", "yaml", "bundle.schema.yaml"),
         ("executor", "run"): ("run", "json", "findings.schema.json"),
+        ("executor", "run-plan"): ("run_plan", "json", "experiment_plan.schema.json"),
+        ("executor", "run-analyze"): ("run_analyze", "json", "findings.schema.json"),
         ("reviewer", "review-design"): ("review_design", None, None),
         ("reviewer", "review-findings"): ("review_findings", None, None),
         ("extractor", "extract"): ("extract", "json", "principles.schema.json"),
@@ -186,7 +202,7 @@ class LLMDispatcher:
         if phase in ("frame", "design"):
             ctx["research_question"] = self._read_research_question(phase, iteration)
 
-        if phase in ("design", "review-design", "run"):
+        if phase in ("design", "review-design", "run", "run-plan", "run-analyze"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
                 pass  # bundle doesn't exist yet during design — template ignores it
@@ -197,6 +213,22 @@ class LLMDispatcher:
                 )
             else:
                 ctx["bundle_yaml"] = bundle_path.read_text()
+
+        if phase == "run-plan":
+            execution = self.campaign["target_system"].get("execution", {})
+            ctx["run_command_template"] = execution.get("run_command", "")
+            ctx["setup_commands"] = "\n".join(execution.get("setup_commands", []))
+
+        if phase == "run-analyze":
+            results_path = (
+                self.work_dir / "runs" / f"iter-{iteration}" / "experiment_results.json"
+            )
+            if not results_path.exists():
+                raise FileNotFoundError(
+                    f"Cannot run 'run-analyze' phase: {results_path} not found. "
+                    f"Ensure experiment commands were executed for iteration {iteration}."
+                )
+            ctx["experiment_results"] = results_path.read_text()
 
         if phase in ("review-findings", "extract"):
             findings_path = (
@@ -296,7 +328,7 @@ class LLMDispatcher:
         ]
         try:
             response = self._completion(
-                model=self.model, messages=messages, max_tokens=4096
+                model=self.model, messages=messages, max_tokens=4096,
             )
         except Exception as exc:
             raise RuntimeError(
@@ -332,7 +364,7 @@ class LLMDispatcher:
         ]
         try:
             response = self._completion(
-                model=self.model, messages=messages, max_tokens=4096
+                model=self.model, messages=messages, max_tokens=4096,
             )
         except Exception as exc:
             raise RuntimeError(

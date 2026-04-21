@@ -39,6 +39,7 @@ The campaign configuration. Describes the target system, configures the reviewer
 | `target_system.name` / `description` | What system Nous is investigating |
 | `target_system.observable_metrics` | What you can measure (latency, throughput, error rate, etc.) |
 | `target_system.controllable_knobs` | What you can change (algorithms, configs, resource limits) |
+| `target_system.execution` | (Optional) How to run real experiments — see below |
 | `review.design_perspectives` | Reviewer perspectives for design review (default: 5) |
 | `review.findings_perspectives` | Reviewer perspectives for findings review (default: 10) |
 | `review.max_review_rounds` | Maximum convergence rounds per gate |
@@ -46,6 +47,27 @@ The campaign configuration. Describes the target system, configures the reviewer
 | `prompts.domain_adapter_layer` | Path to domain-specific prompt overrides (null until generated) |
 
 The template ships with 5 design perspectives (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity). Campaigns may use fewer or more depending on the domain — the schema requires at least 1.
+
+### Execution config
+
+The optional `target_system.execution` section enables real experiment execution. Without it, the executor operates in analysis mode (LLM-only reasoning).
+
+| Field | What it configures |
+|---|---|
+| `run_command` | Shell command template with `{metrics_path}` placeholder |
+| `repo_path` | Git repo to create experiment worktrees in (null = run in current dir) |
+| `setup_commands` | Commands to run before experiments (e.g., build steps) |
+| `cleanup_commands` | Commands to run after experiments |
+| `timeout` | Max seconds per command (default: 300) |
+| `metrics_output_format` | Format of metrics files (currently only `json`) |
+
+Example:
+```yaml
+target_system:
+  execution:
+    run_command: "./blis run --model qwen/qwen3-14b --metrics-path {metrics_path}"
+    timeout: 300
+```
 
 ## 1. state.json — "Where are we right now?"
 
@@ -130,6 +152,22 @@ The experiment plan. A set of hypotheses ("arms") designed together to test one 
 
 Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal explanation), **diagnostic** (what to investigate if wrong). Arms may also carry an optional **metadata** object for domain-specific extensions.
 
+## 4b. experiment_plan.json — "How should we run each arm?"
+
+**Schema:** `schemas/experiment_plan.schema.json`
+
+Only produced in real execution mode (when `campaign.yaml` has an `execution` config). The executor LLM designs shell commands for the baseline and each hypothesis arm, based on the bundle and the `run_command` template from the campaign.
+
+| Field | What it means |
+|---|---|
+| `baseline.description` | What the baseline measures |
+| `baseline.command` | Shell command to run, with `{metrics_path}` replaced by the actual path |
+| `experiments[].arm_type` | Which arm this command tests (h-main, h-ablation, etc.) |
+| `experiments[].command` | Shell command for this arm |
+| `experiments[].config_changes` | What was changed relative to the baseline |
+
+The orchestrator runs each command via `subprocess` (no shell), writes the collected metrics to `experiment_results.json`, and feeds both to the analyze phase.
+
 ## 5. findings.json — "What actually happened?"
 
 **Schema:** `schemas/findings.schema.json`
@@ -172,7 +210,7 @@ Phase 1 defines the envelope; Phase 4 will tighten per-event-type payload schema
 The orchestrator invokes agents through a dispatcher. Two implementations exist:
 
 - `StubDispatcher` (`orchestrator/dispatch.py`) — produces deterministic, schema-valid artifacts without LLM calls. Used for testing.
-- `LLMDispatcher` (`orchestrator/llm_dispatch.py`) — calls a real LLM via LiteLLM, parses structured output, validates against schemas, and writes artifacts atomically.
+- `LLMDispatcher` (`orchestrator/llm_dispatch.py`) — calls a real LLM via the OpenAI SDK, parses structured output, validates against schemas, and writes artifacts atomically.
 
 `LLMDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. For structured outputs (bundle, findings, principles), it extracts content from code fences and validates against the relevant schema before writing. The FRAMING phase dispatches `role="planner", phase="frame"` to produce `problem.md`.
 

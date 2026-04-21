@@ -5,7 +5,7 @@ Run a single Nous iteration on any target system.
 ## Prerequisites
 
 - **Python 3.11+**
-- **An LLM API key** — any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers). Set the appropriate environment variable (e.g., `OPENAI_API_KEY`).
+- **An LLM API key** — `export OPENAI_API_KEY=...` (and `OPENAI_BASE_URL` if using a proxy). Works with any OpenAI-compatible endpoint.
 - **A target system** — something you can describe in terms of observable metrics and controllable knobs.
 
 ## Install
@@ -89,22 +89,51 @@ python run_iteration.py examples/blis/campaign.yaml
 After completion, check:
 
 - **`runs/iter-1/problem.md`** — How the problem was framed
-- **`runs/iter-1/bundle.yaml`** — The hypothesis bundle (validate against `schemas/bundle.schema.yaml`)
-- **`runs/iter-1/findings.json`** — Executor findings (validate against `schemas/findings.schema.json`)
+- **`runs/iter-1/bundle.yaml`** — The hypothesis bundle
+- **`runs/iter-1/experiment_plan.json`** — Executor commands (real execution only)
+- **`runs/iter-1/experiment_results.json`** — Collected metrics (real execution only)
+- **`runs/iter-1/findings.json`** — Prediction vs. outcome analysis
 - **`runs/iter-1/reviews/`** — All reviewer perspectives
 - **`principles.json`** — Extracted principles that guide future iterations
 
 ## Choosing a model
 
-By default, `run_iteration.py` uses `aws/claude-opus-4-6`. Pass any [LiteLLM model string](https://docs.litellm.ai/docs/providers) via `--model`:
+By default, `run_iteration.py` uses `aws/claude-opus-4-6`. Pass any model name via `--model`:
 
 ```bash
 python run_iteration.py campaign.yaml --model gpt-4o
 ```
 
-## Phase 2 limitation
+## Real experiment execution
 
-The executor currently operates in **analysis mode** — it reasons about the system rather than running actual experiments. Real experiment execution is planned for Phase 3.
+If your target system can be invoked from the command line and produces JSON metrics, add an `execution` section to your campaign:
+
+```yaml
+target_system:
+  # ... name, description, metrics, knobs ...
+  execution:
+    run_command: "./your-tool --metrics-path {metrics_path}"
+    timeout: 300
+```
+
+With this config, the executor will:
+
+1. Design shell commands for the baseline and each hypothesis arm
+2. Run each command and collect metrics from the JSON files
+3. Analyze the real metrics against predictions
+
+The `{metrics_path}` placeholder is replaced with the actual output path at runtime. Your tool must write a JSON file to that path.
+
+Optional execution fields:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `repo_path` | null | Git repo for worktree isolation |
+| `setup_commands` | [] | Commands to run before experiments |
+| `cleanup_commands` | [] | Commands to run after experiments |
+| `timeout` | 300 | Max seconds per command |
+
+Without an `execution` section, the executor operates in **analysis mode** — reasoning about the system without running experiments.
 
 ## Next steps
 
