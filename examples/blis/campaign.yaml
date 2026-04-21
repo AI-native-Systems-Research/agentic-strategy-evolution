@@ -21,6 +21,20 @@ target_system:
     - preemption_mode
     - cache_eviction_policy
     - admission_control_threshold
+  execution:
+    repo_path: null  # Set to your local BLIS repo path to enable real execution
+    setup_commands: []
+    run_command: >-
+      ./blis run
+      --model qwen/qwen3-14b
+      --num-instances 4
+      --rate 100
+      --num-requests 500
+      --seed 42
+      --metrics-path {metrics_path}
+    metrics_output_format: json
+    cleanup_commands: []
+    timeout: 300
 
 review:
   design_perspectives:

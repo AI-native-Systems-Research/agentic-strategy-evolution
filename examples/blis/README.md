@@ -67,11 +67,22 @@ blis-run/
         review-findings-*.md  # findings reviews
 ```
 
-## Phase 2 limitation
+## Real experiment execution
 
-In Phase 2, the executor operates in **analysis mode** — it reasons about the BLIS codebase and mechanisms but does not run actual benchmarks. The executor produces findings based on its understanding of how scheduling policies, batching, and cache management affect performance.
+The campaign includes an `execution` block that enables real experiment execution. To use it:
 
-Phase 3 will add real experiment execution via shell access.
+1. Clone the [BLIS repository](https://github.com/inference-sim/inference-sim) locally
+2. Build it (follow BLIS docs)
+3. Set `repo_path` in `campaign.yaml` to your local BLIS checkout:
+   ```yaml
+   execution:
+     repo_path: "/path/to/your/blis"
+   ```
+4. Run: `python run_iteration.py examples/blis/campaign.yaml`
+
+When `repo_path` is set, Nous creates an isolated git worktree in the BLIS repo, runs the simulator commands, collects real metrics, and compares them against hypothesis predictions.
+
+When `repo_path` is null (or the `execution` block is removed), the executor falls back to **analysis mode** — reasoning about the system without running real experiments.
 
 ## Customizing
 
