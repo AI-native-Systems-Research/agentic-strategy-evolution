@@ -133,7 +133,7 @@ def main() -> None:
         epilog="Example: python run_campaign.py examples/blis/campaign.yaml --max-iterations 5",
     )
     parser.add_argument("campaign", help="Path to campaign.yaml")
-    parser.add_argument("--max-iterations", type=int, default=10,
+    parser.add_argument("--max-iterations", type=int, default=None,
                         help="Maximum iterations (default: 10)")
     parser.add_argument("--model", default="aws/claude-opus-4-6",
                         help="Model name (default: aws/claude-opus-4-6)")
@@ -170,10 +170,10 @@ def main() -> None:
         sys.exit(1)
 
     # CLI --max-iterations overrides campaign.yaml; campaign.yaml is fallback.
-    if args.max_iterations != 10:
+    if args.max_iterations is not None:
         max_iter = args.max_iterations
     else:
-        max_iter = campaign.get("max_iterations", args.max_iterations)
+        max_iter = campaign.get("max_iterations", 10)
 
     run_id = args.run_id or campaign_path.parent.name + "-run"
     work_dir = setup_work_dir(run_id)

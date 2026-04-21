@@ -9,7 +9,7 @@
   "properties": {
     "iteration": {
       "type": "integer",
-      "minimum": 0,
+      "minimum": 1,
       "description": "Which iteration this summary covers."
     },
     "what_was_tested": {
