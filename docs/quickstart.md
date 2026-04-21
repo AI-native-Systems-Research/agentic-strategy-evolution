@@ -5,7 +5,7 @@ Run a single Nous iteration on any target system.
 ## Prerequisites
 
 - **Python 3.11+**
-- **An LLM API key** — any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers). Set the appropriate environment variable (e.g., `OPENAI_API_KEY`).
+- **An LLM API key** — `export OPENAI_API_KEY=...` (and `OPENAI_BASE_URL` if using a proxy). Works with any OpenAI-compatible endpoint.
 - **A target system** — something you can describe in terms of observable metrics and controllable knobs.
 
 ## Install
@@ -98,7 +98,7 @@ After completion, check:
 
 ## Choosing a model
 
-By default, `run_iteration.py` uses `aws/claude-opus-4-6`. Pass any [LiteLLM model string](https://docs.litellm.ai/docs/providers) via `--model`:
+By default, `run_iteration.py` uses `aws/claude-opus-4-6`. Pass any model name via `--model`:
 
 ```bash
 python run_iteration.py campaign.yaml --model gpt-4o

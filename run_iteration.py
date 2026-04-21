@@ -9,7 +9,7 @@ and runs one full iteration with human gates for approval.
 
 Set your LLM API key before running:
     export OPENAI_API_KEY=sk-...
-    (or any LiteLLM-supported provider env var)
+    (or set OPENAI_BASE_URL for a proxy endpoint)
 """
 import argparse
 import json
@@ -400,7 +400,7 @@ def main() -> None:
     )
     parser.add_argument("campaign", help="Path to campaign.yaml")
     parser.add_argument("--model", default="aws/claude-opus-4-6",
-                        help="LiteLLM model string (default: aws/claude-opus-4-6)")
+                        help="Model name (default: aws/claude-opus-4-6)")
     parser.add_argument("--run-id", default=None,
                         help="Working directory name (default: derived from campaign)")
     parser.add_argument("-v", "--verbose", action="store_true",

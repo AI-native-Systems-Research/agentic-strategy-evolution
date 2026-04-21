@@ -104,7 +104,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 **Implementations:**
 
 - `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
-- `LLMDispatcher` (`llm_dispatch.py`) calls a real LLM via [LiteLLM](https://docs.litellm.ai/), parses structured output from code fences, validates against schemas, and writes artifacts atomically. This is the production dispatcher.
+- `LLMDispatcher` (`llm_dispatch.py`) calls a real LLM via the OpenAI SDK, parses structured output from code fences, validates against schemas, and writes artifacts atomically. Works with any OpenAI-compatible endpoint. This is the production dispatcher.
 
 **Dispatch interface:**
 ```python
@@ -169,13 +169,14 @@ This design is backward-compatible — existing campaigns without `execution` co
 
 ### Model Configuration
 
-`LLMDispatcher` uses any [LiteLLM-supported model](https://docs.litellm.ai/docs/providers). Default: `aws/claude-opus-4-6`. Pass a different model string to the constructor:
+`LLMDispatcher` uses the OpenAI SDK and works with any OpenAI-compatible endpoint. Set `OPENAI_API_KEY` and `OPENAI_BASE_URL` environment variables, or pass them to the constructor:
 
 ```python
 dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model="gpt-4o")
+dispatcher = LLMDispatcher(..., api_base="https://my-proxy.example.com", api_key="sk-...")
 ```
 
-The `completion_fn` constructor parameter allows test injection without mocking internals.
+Default model: `aws/claude-opus-4-6`. The `completion_fn` constructor parameter allows test injection without mocking internals.
 
 ### Gates (`orchestrator/gates.py`)
 
@@ -334,7 +335,7 @@ The orchestrator is designed for crash-safe operation:
 Nous ships with two dispatchers:
 
 - `StubDispatcher` — deterministic stubs for testing
-- `LLMDispatcher` — real LLM calls via LiteLLM
+- `LLMDispatcher` — real LLM calls via OpenAI SDK
 
 To create a custom dispatcher, implement the `Dispatcher` protocol from `orchestrator/protocols.py`. Your dispatcher must produce artifacts that pass schema validation — the orchestrator trusts the schema contract, not the content.
 

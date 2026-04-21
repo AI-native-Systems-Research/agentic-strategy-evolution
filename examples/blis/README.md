@@ -5,7 +5,7 @@ This example shows how to run a single Nous iteration on [BLIS](https://github.c
 ## Prerequisites
 
 - Python 3.11+
-- An LLM API key set as an environment variable (e.g., `OPENAI_API_KEY`, or any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers))
+- An LLM API key: `export OPENAI_API_KEY=...` (and `OPENAI_BASE_URL` if using a proxy)
 - Nous installed: `pip install -e ".[dev]"`
 
 ## Campaign configuration

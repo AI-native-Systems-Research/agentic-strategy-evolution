@@ -26,7 +26,7 @@ def load_schema(name: str) -> dict:
 # ------------------------------------------------------------------
 
 def make_mock_completion(responses: list[str]):
-    """Return a callable mimicking litellm.completion."""
+    """Return a callable mimicking openai chat completions."""
     call_log: list[dict] = []
     idx = {"n": 0}
 
