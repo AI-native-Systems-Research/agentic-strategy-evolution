@@ -881,6 +881,59 @@ class TestCampaignExecutionConfig:
             jsonschema.validate(instance, schema)
 
 
+class TestInvestigationSummarySchema:
+    """Tests for investigation_summary.schema.json."""
+
+    def test_valid_summary(self, load_schema):
+        schema = load_schema("investigation_summary.schema.json")
+        instance = {
+            "iteration": 1,
+            "what_was_tested": "Prefix token sharing mechanism for KV-cache reuse.",
+            "key_findings": "H-main refuted: BLIS does not implement prefix reuse.",
+            "principles_changed": "Inserted RP-1 (no prefix reuse), MP-1 (verify features).",
+            "open_questions": "Does the scheduler affect TTFT under load?",
+            "suggested_next_direction": "Investigate scheduling policy effects.",
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_missing_field_rejected(self, load_schema):
+        schema = load_schema("investigation_summary.schema.json")
+        instance = {
+            "iteration": 1,
+            "what_was_tested": "test",
+            # missing key_findings and others
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance, schema)
+
+    def test_empty_string_rejected(self, load_schema):
+        schema = load_schema("investigation_summary.schema.json")
+        instance = {
+            "iteration": 1,
+            "what_was_tested": "",
+            "key_findings": "x",
+            "principles_changed": "x",
+            "open_questions": "x",
+            "suggested_next_direction": "x",
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance, schema)
+
+    def test_extra_field_rejected(self, load_schema):
+        schema = load_schema("investigation_summary.schema.json")
+        instance = {
+            "iteration": 1,
+            "what_was_tested": "x",
+            "key_findings": "x",
+            "principles_changed": "x",
+            "open_questions": "x",
+            "suggested_next_direction": "x",
+            "extra": "nope",
+        }
+        with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+            jsonschema.validate(instance, schema)
+
+
 class TestExperimentPlanSchema:
     """Tests for experiment_plan.schema.json."""
 
