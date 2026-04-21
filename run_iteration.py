@@ -179,6 +179,92 @@ def run_experiment_commands(
     return results
 
 
+def _run_real_execution(
+    execution: dict,
+    dispatcher: "LLMDispatcher",
+    iter_dir: Path,
+    iteration: int,
+) -> None:
+    """Plan, execute, and analyze a real experiment.
+
+    Handles worktree creation/cleanup, setup/cleanup commands,
+    LLM-designed experiment commands, and metrics collection.
+    """
+    repo_path = execution.get("repo_path")
+    timeout = execution.get("timeout", 300)
+    experiment_dir = None
+    experiment_id = None
+
+    try:
+        # Create worktree if repo_path is set
+        if repo_path:
+            from orchestrator.worktree import (
+                create_experiment_worktree,
+                remove_experiment_worktree,
+            )
+            experiment_dir, experiment_id = create_experiment_worktree(
+                Path(repo_path), iteration,
+            )
+            cmd_work_dir = experiment_dir
+            print(f"  Experiment worktree: {experiment_dir}")
+        else:
+            cmd_work_dir = Path(".")
+
+        # Run setup commands
+        for cmd in execution.get("setup_commands", []):
+            _run_single_command(
+                cmd, work_dir=cmd_work_dir, timeout=timeout, label="setup",
+            )
+
+        # Step 1: LLM designs experiment commands
+        dispatcher.dispatch(
+            "executor", "run-plan",
+            output_path=iter_dir / "experiment_plan.json",
+            iteration=iteration,
+        )
+        plan = json.loads((iter_dir / "experiment_plan.json").read_text())
+        print(f"  -> {iter_dir / 'experiment_plan.json'}")
+
+        # Step 2: Run commands, collect metrics
+        run_cmd_template = execution.get("run_command", "")
+        parts = shlex.split(run_cmd_template) if run_cmd_template else []
+        expected_exe = parts[0] if parts else None
+        metrics_results = run_experiment_commands(
+            plan,
+            work_dir=cmd_work_dir,
+            iter_dir=iter_dir,
+            timeout=timeout,
+            allowed_executable=expected_exe,
+        )
+
+        # Write results to disk for the analyze phase to read
+        atomic_write(
+            iter_dir / "experiment_results.json",
+            json.dumps(metrics_results, indent=2) + "\n",
+        )
+        print(f"  -> {iter_dir / 'experiment_results.json'}")
+
+        # Run cleanup commands
+        for cmd in execution.get("cleanup_commands", []):
+            _run_single_command(
+                cmd, work_dir=cmd_work_dir, timeout=timeout, label="cleanup",
+            )
+
+        # Step 3: LLM analyzes real metrics, produces findings
+        dispatcher.dispatch(
+            "executor", "run-analyze",
+            output_path=iter_dir / "findings.json",
+            iteration=iteration,
+        )
+        print(f"  -> {iter_dir / 'findings.json'}")
+
+    finally:
+        # Clean up worktree
+        if repo_path and experiment_id:
+            from orchestrator.worktree import remove_experiment_worktree
+            remove_experiment_worktree(Path(repo_path), experiment_id)
+
+
 def run_iteration(
     campaign: dict,
     work_dir: Path,
@@ -264,80 +350,7 @@ def run_iteration(
             print(f"\n{'='*60}")
             print(f"  RUNNING — real experiment execution")
             print(f"{'='*60}")
-
-            repo_path = execution.get("repo_path")
-            timeout = execution.get("timeout", 300)
-            experiment_dir = None
-            experiment_id = None
-
-            try:
-                # Create worktree if repo_path is set
-                if repo_path:
-                    from orchestrator.worktree import (
-                        create_experiment_worktree,
-                        remove_experiment_worktree,
-                    )
-                    experiment_dir, experiment_id = create_experiment_worktree(
-                        Path(repo_path), iteration,
-                    )
-                    cmd_work_dir = experiment_dir
-                    print(f"  Experiment worktree: {experiment_dir}")
-                else:
-                    cmd_work_dir = Path(".")
-
-                # Run setup commands
-                for cmd in execution.get("setup_commands", []):
-                    _run_single_command(
-                        cmd, work_dir=cmd_work_dir, timeout=timeout, label="setup",
-                    )
-
-                # Step 1: LLM designs experiment commands
-                dispatcher.dispatch(
-                    "executor", "run-plan",
-                    output_path=iter_dir / "experiment_plan.json",
-                    iteration=iteration,
-                )
-                plan = json.loads((iter_dir / "experiment_plan.json").read_text())
-                print(f"  -> {iter_dir / 'experiment_plan.json'}")
-
-                # Step 2: Run commands, collect metrics
-                run_cmd_template = execution.get("run_command", "")
-                parts = shlex.split(run_cmd_template) if run_cmd_template else []
-                expected_exe = parts[0] if parts else None
-                metrics_results = run_experiment_commands(
-                    plan,
-                    work_dir=cmd_work_dir,
-                    iter_dir=iter_dir,
-                    timeout=timeout,
-                    allowed_executable=expected_exe,
-                )
-
-                # Write results to disk for the analyze phase to read
-                atomic_write(
-                    iter_dir / "experiment_results.json",
-                    json.dumps(metrics_results, indent=2) + "\n",
-                )
-                print(f"  -> {iter_dir / 'experiment_results.json'}")
-
-                # Run cleanup commands
-                for cmd in execution.get("cleanup_commands", []):
-                    _run_single_command(
-                        cmd, work_dir=cmd_work_dir, timeout=timeout, label="cleanup",
-                    )
-
-                # Step 3: LLM analyzes real metrics, produces findings
-                dispatcher.dispatch(
-                    "executor", "run-analyze",
-                    output_path=iter_dir / "findings.json",
-                    iteration=iteration,
-                )
-                print(f"  -> {iter_dir / 'findings.json'}")
-
-            finally:
-                # Clean up worktree
-                if repo_path and experiment_id:
-                    from orchestrator.worktree import remove_experiment_worktree
-                    remove_experiment_worktree(Path(repo_path), experiment_id)
+            _run_real_execution(execution, dispatcher, iter_dir, iteration)
         else:
             # Analysis mode (no execution config)
             print(f"\n{'='*60}")
