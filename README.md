@@ -106,6 +106,7 @@ Comprehensive test suite covering schemas, templates, engine, gates, dispatch, f
 schemas/                 JSON Schema definitions (Draft 2020-12)
   bundle.schema.yaml       Hypothesis bundle (arms + metadata)
   campaign.schema.yaml     Campaign configuration (target system, reviewers, prompts)
+  experiment_plan.schema.json  Executor experiment commands (real execution)
   findings.schema.json     Prediction-vs-outcome results
   principles.schema.json   Living principle store
   state.schema.json        Orchestrator checkpoint
@@ -129,6 +130,7 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   prompt_loader.py         Template loading with {{placeholder}} rendering
   gates.py                 Human approval gates
   fastfail.py              Fast-fail rule evaluation
+  worktree.py              Git worktree isolation for experiments
   protocols.py             Dispatcher and Gate interface contracts
   util.py                  Shared utilities (atomic_write)
 
@@ -136,7 +138,9 @@ prompts/                 Methodology prompt templates
   methodology/
     frame.md               Problem framing (planner)
     design.md              Hypothesis bundle design (planner)
-    run.md                 Analysis-mode execution (executor)
+    run.md                 Analysis-mode execution (executor, no execution config)
+    run_plan.md            Experiment command design (executor, real execution)
+    run_analyze.md         Real metrics analysis (executor, real execution)
     review_design.md       Design review from a perspective (reviewer)
     review_findings.md     Findings review from a perspective (reviewer)
     extract.md             Principle extraction (extractor)
@@ -173,9 +177,11 @@ See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the Claud
 
 **Phase 1 (complete):** Schemas, templates, orchestrator skeleton, and protocol documentation. The orchestrator drives the full state machine with stub agent dispatch.
 
-**Phase 2 (current):** Agent prompts and real LLM dispatch. `LLMDispatcher` replaces stubs with LLM-driven agents via [LiteLLM](https://docs.litellm.ai/) (model-agnostic — Claude, GPT, Gemini, etc.). Six methodology prompt templates, schema validation with retry, and a BLIS example campaign. The executor operates in analysis mode (reasons about code, does not run experiments).
+**Phase 2 (complete):** Agent prompts and real LLM dispatch. `LLMDispatcher` replaces stubs with LLM-driven agents via [LiteLLM](https://docs.litellm.ai/) (model-agnostic — Claude, GPT, Gemini, etc.). Six methodology prompt templates, schema validation with retry, and a BLIS example campaign.
 
-**Phase 3 (next):** Plugin integration — `/nous:init` and `/nous:investigate` commands, real experiment execution via shell access, worktree isolation.
+**Phase 3 (current):** Real experiment execution. The executor runs actual experiments via shell commands, collects real metrics, and analyzes results. Two-phase executor dispatch (plan commands → run → analyze), git worktree isolation for experiments, configurable timeouts, and backward-compatible `execution` config in `campaign.yaml`. Systems without execution config fall back to analysis mode.
+
+**Phase 4 (next):** Multi-iteration campaigns — automated iteration loops, ledger tracking, and convergence detection.
 
 ## License
 

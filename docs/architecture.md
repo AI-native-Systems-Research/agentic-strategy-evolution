@@ -42,7 +42,10 @@ This separation exists because:
                     │  problem.md                          │
                     │  runs/iter-N/    trace.jsonl         │
                     │    bundle.yaml   findings.json       │
-                    │    reviews/      summary.json        │
+                    │    experiment_plan.json (real exec)  │
+                    │    experiment_results.json (real exec)│
+                    │    metrics/      reviews/            │
+                    │                  summary.json        │
                     └─────────────────────────────────────┘
 ```
 
@@ -94,7 +97,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 | Role | Invoked During | Produces |
 |---|---|---|
 | **Planner** | FRAMING, DESIGN | `problem.md`, `bundle.yaml` |
-| **Executor** | RUNNING | `findings.json` |
+| **Executor** | RUNNING | `experiment_plan.json`, `experiment_results.json`, `findings.json` |
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
 | **Extractor** | EXTRACTION | Updated `principles.json` |
 
@@ -146,9 +149,23 @@ For structured outputs (bundle YAML, findings JSON, principles JSON), the dispat
 
 Markdown outputs (problem framing, reviews) are written directly without validation.
 
-### Executor Analysis Mode
+### Executor Modes
 
-In Phase 2, the executor operates in **analysis mode** — it reasons about the target system based on its understanding of the code and mechanisms, but does not run actual experiments. The prompt explicitly states this limitation. Phase 3 will add real experiment execution via plugin shell access.
+The executor operates in one of two modes, chosen automatically based on `campaign.yaml`:
+
+**Real execution mode** (when `target_system.execution` is present):
+
+1. **Plan** — LLM designs shell commands for the baseline and each hypothesis arm (`executor/run-plan` route, produces `experiment_plan.json`)
+2. **Run** — Orchestrator executes each command via `subprocess`, collecting metrics from JSON files written by the target system
+3. **Analyze** — LLM compares predictions to real metrics (`executor/run-analyze` route, produces `findings.json`)
+
+Commands run with `shell=False` (via `shlex.split`) for safety, with configurable timeouts. If `execution.repo_path` is set, the orchestrator creates a git worktree for isolation and cleans it up afterward.
+
+**Analysis mode** (no `execution` config):
+
+The executor reasons about the target system based on its understanding of the code and mechanisms, but does not run actual experiments. The `executor/run` route produces `findings.json` directly from LLM analysis.
+
+This design is backward-compatible — existing campaigns without `execution` config continue to work unchanged.
 
 ### Model Configuration
 
@@ -207,6 +224,10 @@ Rule 1 takes priority: if H-main is refuted, the control-negative result doesn't
                        ▼
                     Executor
                        │
+                       ├──▶ experiment_plan.json  (real execution only)
+                       ├──▶ run commands, collect metrics
+                       ├──▶ experiment_results.json
+                       │
                        ▼
                  findings.json ──▶ Reviewer (10 perspectives)
                        │                    │
@@ -255,7 +276,8 @@ Every artifact exchanged between components is validated against a JSON Schema (
 
 | Schema | Format | Governs |
 |---|---|---|
-| `campaign.schema.yaml` | YAML | Campaign configuration (target system, reviewer panel, prompt layers) |
+| `campaign.schema.yaml` | YAML | Campaign configuration (target system, execution, reviewer panel, prompt layers) |
+| `experiment_plan.schema.json` | JSON | Executor experiment commands (baseline + per-arm commands) |
 | `state.schema.json` | JSON | Orchestrator checkpoint (phase, iteration, run_id, config_ref) |
 | `bundle.schema.yaml` | YAML | Hypothesis bundles (arms with predictions, mechanisms, diagnostics) |
 | `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |
