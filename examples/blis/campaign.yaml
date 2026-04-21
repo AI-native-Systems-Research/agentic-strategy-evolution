@@ -14,8 +14,6 @@ target_system:
   controllable_knobs:
     - prefix_tokens
     - rate
-    - num_instances
-    - scheduler
   execution:
     repo_path: /Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/run-single-iteration/blis
     setup_commands:

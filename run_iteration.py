@@ -135,7 +135,7 @@ def run_experiment_commands(
 
     Returns dict with metrics keyed by label: {"baseline": {...}, "h-main": {...}, ...}
     """
-    metrics_dir = iter_dir / "metrics"
+    metrics_dir = (iter_dir / "metrics").resolve()
     metrics_dir.mkdir(parents=True, exist_ok=True)
     results = {}
 
