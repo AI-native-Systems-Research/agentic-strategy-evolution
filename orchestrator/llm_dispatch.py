@@ -168,6 +168,7 @@ class LLMDispatcher:
         ("reviewer", "review-design"): ("review_design", None, None),
         ("reviewer", "review-findings"): ("review_findings", None, None),
         ("extractor", "extract"): ("extract", "json", "principles.schema.json"),
+        ("extractor", "summarize"): ("summarize", "json", "investigation_summary.schema.json"),
     }
 
     def _route(
@@ -202,7 +203,7 @@ class LLMDispatcher:
         if phase in ("frame", "design"):
             ctx["research_question"] = self._read_research_question(phase, iteration)
 
-        if phase in ("design", "review-design", "run", "run-plan", "run-analyze"):
+        if phase in ("design", "review-design", "run", "run-plan", "run-analyze", "summarize"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
                 pass  # bundle doesn't exist yet during design — template ignores it
@@ -230,7 +231,7 @@ class LLMDispatcher:
                 )
             ctx["experiment_results"] = results_path.read_text()
 
-        if phase in ("review-findings", "extract"):
+        if phase in ("review-findings", "extract", "summarize"):
             findings_path = (
                 self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
             )
