@@ -44,14 +44,21 @@ def remove_experiment_worktree(repo_path: Path, experiment_id: str) -> None:
     branch_name = f"nous-exp-{experiment_id}"
 
     if worktree_dir.exists():
-        subprocess.run(
-            ["git", "worktree", "remove", str(worktree_dir), "--force"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        logger.info("Removed experiment worktree: %s", worktree_dir)
+        try:
+            subprocess.run(
+                ["git", "worktree", "remove", str(worktree_dir), "--force"],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            logger.info("Removed experiment worktree: %s", worktree_dir)
+        except subprocess.CalledProcessError as exc:
+            logger.warning(
+                "Failed to remove experiment worktree %s: %s",
+                worktree_dir,
+                exc.stderr.strip() if exc.stderr else str(exc),
+            )
 
     # Clean up the branch (ignore errors if already gone)
     result = subprocess.run(

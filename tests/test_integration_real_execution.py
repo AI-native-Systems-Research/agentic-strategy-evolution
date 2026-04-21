@@ -1,6 +1,5 @@
 """Integration tests for real experiment execution flow."""
 import json
-import os
 import stat
 import shutil
 import sys
@@ -254,6 +253,33 @@ class TestRunExperimentCommands:
             ],
         }
         with pytest.raises(RuntimeError, match="Metrics file not found"):
+            run_experiment_commands(plan, work_dir=tmp_path, iter_dir=iter_dir, timeout=30)
+
+    def test_invalid_json_metrics_raises(self, fake_simulator, tmp_path):
+        iter_dir = tmp_path / "runs" / "iter-1"
+        iter_dir.mkdir(parents=True)
+
+        # Write a script that produces invalid JSON
+        bad_script = tmp_path / "bad_sim"
+        bad_script.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "mp = sys.argv[sys.argv.index('--metrics-path')+1]\n"
+            "open(mp, 'w').write('not valid json')\n"
+        )
+        bad_script.chmod(bad_script.stat().st_mode | stat.S_IEXEC)
+
+        plan = {
+            "baseline": {
+                "description": "bad json",
+                "command": f"{sys.executable} {bad_script} --metrics-path {{metrics_path}}",
+            },
+            "experiments": [
+                {"arm_type": "h-main", "description": "x",
+                 "command": f"{sys.executable} {fake_simulator} --metrics-path {{metrics_path}}"},
+            ],
+        }
+        with pytest.raises(RuntimeError, match="invalid JSON"):
             run_experiment_commands(plan, work_dir=tmp_path, iter_dir=iter_dir, timeout=30)
 
 

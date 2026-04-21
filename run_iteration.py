@@ -14,6 +14,7 @@ Set your LLM API key before running:
 import argparse
 import json
 import logging
+import re
 import shlex
 import shutil
 import subprocess
@@ -78,18 +79,34 @@ def _read_metrics(path: Path, *, label: str) -> dict:
             f"The simulator may have crashed before writing output."
         )
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
         raise RuntimeError(
             f"Metrics file for arm '{label}' contains invalid JSON: {path}. "
             f"Error: {exc}"
         ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"Metrics file for arm '{label}' must contain a JSON object, "
+            f"got {type(data).__name__}: {path}"
+        )
+    return data
 
 
 def run_experiment_commands(
-    plan: dict, *, work_dir: Path, iter_dir: Path, timeout: int = 300,
+    plan: dict,
+    *,
+    work_dir: Path,
+    iter_dir: Path,
+    timeout: int = 300,
+    allowed_executable: str | None = None,
 ) -> dict:
     """Execute experiment commands from the plan and collect metrics.
+
+    Args:
+        allowed_executable: If set, every command must start with this
+            executable (derived from campaign run_command). Prevents the
+            LLM from generating commands that run arbitrary binaries.
 
     Returns dict with metrics keyed by label: {"baseline": {...}, "h-main": {...}, ...}
     """
@@ -97,16 +114,25 @@ def run_experiment_commands(
     metrics_dir.mkdir(parents=True, exist_ok=True)
     results = {}
 
-    # Validate that all commands contain {metrics_path}
+    # Validate all commands before executing any
     all_entries = [("baseline", plan["baseline"])] + [
         (e["arm_type"], e) for e in plan["experiments"]
     ]
     for label, entry in all_entries:
-        if "{metrics_path}" not in entry["command"]:
+        cmd = entry["command"]
+        if "{metrics_path}" not in cmd:
             raise RuntimeError(
                 f"Experiment command for '{label}' missing {{metrics_path}} placeholder. "
-                f"Command: {entry['command']}"
+                f"Command: {cmd}"
             )
+        if allowed_executable:
+            actual = shlex.split(cmd)[0]
+            if actual != allowed_executable:
+                raise RuntimeError(
+                    f"Experiment command for '{label}' uses executable '{actual}' "
+                    f"but campaign run_command uses '{allowed_executable}'. "
+                    f"Commands must be based on the campaign's run_command template."
+                )
 
     # Run baseline
     baseline_metrics_path = metrics_dir / "baseline.json"
@@ -115,8 +141,11 @@ def run_experiment_commands(
     results["baseline"] = _read_metrics(baseline_metrics_path, label="baseline")
 
     # Run each arm
+    _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
     for exp in plan["experiments"]:
         arm = exp["arm_type"]
+        if not _ARM_TYPE_RE.match(arm):
+            raise RuntimeError(f"Invalid arm_type '{arm}': must match [a-zA-Z0-9_-]+")
         arm_metrics_path = metrics_dir / f"{arm}.json"
         cmd = exp["command"].replace("{metrics_path}", str(arm_metrics_path))
         _run_single_command(cmd, work_dir=work_dir, timeout=timeout, label=arm)
@@ -236,8 +265,14 @@ def run_iteration(
             print(f"  -> {iter_dir / 'experiment_plan.json'}")
 
             # Step 2: Run commands, collect metrics
+            run_cmd_template = execution.get("run_command", "")
+            expected_exe = shlex.split(run_cmd_template)[0] if run_cmd_template else None
             metrics_results = run_experiment_commands(
-                plan, work_dir=cmd_work_dir, iter_dir=iter_dir, timeout=timeout,
+                plan,
+                work_dir=cmd_work_dir,
+                iter_dir=iter_dir,
+                timeout=timeout,
+                allowed_executable=expected_exe,
             )
 
             # Write results to disk for the analyze phase to read

@@ -51,8 +51,8 @@ class LLMDispatcher:
         dal = campaign.get("prompts", {}).get("domain_adapter_layer")
         if dal is not None:
             logger.warning(
-                "domain_adapter_layer is set to %r but is not yet supported "
-                "(Phase 3 scope). Only the methodology layer will be used.",
+                "domain_adapter_layer is set to %r but is not yet supported. "
+                "Only the methodology layer will be used.",
                 dal,
             )
 
