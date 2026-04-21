@@ -14,7 +14,9 @@ Set your LLM API key before running:
 import argparse
 import json
 import logging
+import shlex
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,6 +45,73 @@ def setup_work_dir(run_id: str) -> Path:
     state["run_id"] = run_id
     atomic_write(work_dir / "state.json", json.dumps(state, indent=2) + "\n")
     return work_dir
+
+
+def _run_single_command(
+    cmd: str, *, work_dir: Path, timeout: int, label: str,
+) -> None:
+    """Run a single shell command. Raises RuntimeError on failure."""
+    args = shlex.split(cmd)
+    print(f"    [{label}] Running: {cmd}")
+    try:
+        result = subprocess.run(
+            args, cwd=work_dir, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"Command timed out after {timeout}s for arm '{label}': {cmd}"
+        )
+    if result.returncode != 0:
+        stderr_tail = result.stderr[-2000:] if result.stderr else "(no stderr)"
+        raise RuntimeError(
+            f"Command failed (exit {result.returncode}) for arm '{label}': {cmd}\n"
+            f"stderr: {stderr_tail}"
+        )
+    print(f"    [{label}] Completed (exit 0)")
+
+
+def _read_metrics(path: Path, *, label: str) -> dict:
+    """Read and validate a metrics JSON file."""
+    if not path.exists():
+        raise RuntimeError(
+            f"Metrics file not found for arm '{label}': {path}. "
+            f"The simulator may have crashed before writing output."
+        )
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Metrics file for arm '{label}' contains invalid JSON: {path}. "
+            f"Error: {exc}"
+        ) from exc
+
+
+def run_experiment_commands(
+    plan: dict, *, work_dir: Path, iter_dir: Path, timeout: int = 300,
+) -> dict:
+    """Execute experiment commands from the plan and collect metrics.
+
+    Returns dict with metrics keyed by label: {"baseline": {...}, "h-main": {...}, ...}
+    """
+    metrics_dir = iter_dir / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    results = {}
+
+    # Run baseline
+    baseline_metrics_path = metrics_dir / "baseline.json"
+    cmd = plan["baseline"]["command"].replace("{metrics_path}", str(baseline_metrics_path))
+    _run_single_command(cmd, work_dir=work_dir, timeout=timeout, label="baseline")
+    results["baseline"] = _read_metrics(baseline_metrics_path, label="baseline")
+
+    # Run each arm
+    for exp in plan["experiments"]:
+        arm = exp["arm_type"]
+        arm_metrics_path = metrics_dir / f"{arm}.json"
+        cmd = exp["command"].replace("{metrics_path}", str(arm_metrics_path))
+        _run_single_command(cmd, work_dir=work_dir, timeout=timeout, label=arm)
+        results[arm] = _read_metrics(arm_metrics_path, label=arm)
+
+    return results
 
 
 def run_iteration(
@@ -112,15 +181,91 @@ def run_iteration(
         return
 
     # RUNNING (executor)
-    print(f"\n{'='*60}")
-    print(f"  RUNNING — executor analyzing the system")
-    print(f"{'='*60}")
-    engine.transition("RUNNING")
-    dispatcher.dispatch(
-        "executor", "run",
-        output_path=iter_dir / "findings.json", iteration=iteration,
-    )
-    print(f"  -> {iter_dir / 'findings.json'}")
+    execution = campaign["target_system"].get("execution")
+    if execution and execution.get("run_command"):
+        # Real execution mode
+        print(f"\n{'='*60}")
+        print(f"  RUNNING — real experiment execution")
+        print(f"{'='*60}")
+        engine.transition("RUNNING")
+
+        repo_path = execution.get("repo_path")
+        timeout = execution.get("timeout", 300)
+        experiment_dir = None
+        experiment_id = None
+
+        try:
+            # Create worktree if repo_path is set
+            if repo_path:
+                from orchestrator.worktree import (
+                    create_experiment_worktree,
+                    remove_experiment_worktree,
+                )
+                experiment_dir, experiment_id = create_experiment_worktree(
+                    Path(repo_path), iteration,
+                )
+                cmd_work_dir = experiment_dir
+                print(f"  Experiment worktree: {experiment_dir}")
+            else:
+                cmd_work_dir = Path(".")
+
+            # Run setup commands
+            for cmd in execution.get("setup_commands", []):
+                _run_single_command(
+                    cmd, work_dir=cmd_work_dir, timeout=timeout, label="setup",
+                )
+
+            # Step 1: LLM designs experiment commands
+            dispatcher.dispatch(
+                "executor", "run-plan",
+                output_path=iter_dir / "experiment_plan.json",
+                iteration=iteration,
+            )
+            plan = json.loads((iter_dir / "experiment_plan.json").read_text())
+            print(f"  -> {iter_dir / 'experiment_plan.json'}")
+
+            # Step 2: Run commands, collect metrics
+            metrics_results = run_experiment_commands(
+                plan, work_dir=cmd_work_dir, iter_dir=iter_dir, timeout=timeout,
+            )
+
+            # Write results to disk for the analyze phase to read
+            atomic_write(
+                iter_dir / "experiment_results.json",
+                json.dumps(metrics_results, indent=2) + "\n",
+            )
+            print(f"  -> {iter_dir / 'experiment_results.json'}")
+
+            # Run cleanup commands
+            for cmd in execution.get("cleanup_commands", []):
+                _run_single_command(
+                    cmd, work_dir=cmd_work_dir, timeout=timeout, label="cleanup",
+                )
+
+            # Step 3: LLM analyzes real metrics, produces findings
+            dispatcher.dispatch(
+                "executor", "run-analyze",
+                output_path=iter_dir / "findings.json",
+                iteration=iteration,
+            )
+            print(f"  -> {iter_dir / 'findings.json'}")
+
+        finally:
+            # Clean up worktree
+            if repo_path and experiment_id:
+                from orchestrator.worktree import remove_experiment_worktree
+                remove_experiment_worktree(Path(repo_path), experiment_id)
+    else:
+        # Analysis mode (no execution config)
+        print(f"\n{'='*60}")
+        print(f"  RUNNING — analysis mode (no execution config)")
+        print(f"{'='*60}")
+        engine.transition("RUNNING")
+        dispatcher.dispatch(
+            "executor", "run",
+            output_path=iter_dir / "findings.json", iteration=iteration,
+        )
+        print(f"  -> {iter_dir / 'findings.json'}")
 
     # Validate findings against schema, then check fast-fail rules
     findings = json.loads((iter_dir / "findings.json").read_text())
