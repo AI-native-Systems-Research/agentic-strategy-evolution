@@ -15,7 +15,6 @@ Set your LLM API key before running:
     (or set OPENAI_BASE_URL for a proxy endpoint)
 """
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path

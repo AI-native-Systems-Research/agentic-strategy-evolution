@@ -543,8 +543,6 @@ def _setup_stub_iteration(tmp_path, monkeypatch):
 
     # Monkeypatch LLMDispatcher -> StubDispatcher in run_iteration module
     import run_iteration as ri
-    original_llm_dispatcher = ri.LLMDispatcher
-
     def stub_factory(work_dir, campaign, model=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

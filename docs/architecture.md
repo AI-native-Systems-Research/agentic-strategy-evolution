@@ -39,14 +39,13 @@ This separation exists because:
                     │                                      │
                     │  campaign.yaml   state.json          │
                     │  ledger.json     principles.json     │
-                    │  problem.md                          │
+                    │  problem.md      summary.json        │
                     │  runs/iter-N/    trace.jsonl         │
                     │    bundle.yaml   findings.json       │
                     │    experiment_plan.json (real exec)  │
                     │    experiment_results.json (real exec)│
                     │    investigation_summary.json         │
                     │    metrics/      reviews/            │
-                    │                  summary.json        │
                     └─────────────────────────────────────┘
 ```
 
@@ -100,7 +99,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 | **Planner** | FRAMING, DESIGN | `problem.md`, `bundle.yaml` |
 | **Executor** | RUNNING | `experiment_plan.json`, `experiment_results.json`, `findings.json` |
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
-| **Extractor** | EXTRACTION | Updated `principles.json`, `investigation_summary.json` |
+| **Extractor** | EXTRACTION, post-iteration | Updated `principles.json`, `investigation_summary.json` |
 
 **Implementations:**
 

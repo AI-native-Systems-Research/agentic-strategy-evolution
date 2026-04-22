@@ -2,7 +2,6 @@
 import json
 
 import jsonschema
-import pytest
 import yaml
 
 from orchestrator.ledger import append_ledger_row

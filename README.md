@@ -105,7 +105,7 @@ python run_iteration.py examples/blis/campaign.yaml
 python run_campaign.py examples/blis/campaign.yaml --max-iterations 5
 ```
 
-The campaign loops through iterations, pausing at human gates (design, findings, and continue gates). After each iteration, it generates an investigation summary that feeds into the next design prompt. See [docs/quickstart.md](docs/quickstart.md) for details.
+The campaign loops through iterations, pausing at human gates (design, findings, and continue gates). After each non-final iteration, it generates an investigation summary that feeds into the next design prompt. See [docs/quickstart.md](docs/quickstart.md) for details.
 
 ### What to expect
 

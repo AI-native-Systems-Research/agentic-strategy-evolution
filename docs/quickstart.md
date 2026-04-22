@@ -143,7 +143,7 @@ For investigations that require more than one iteration, use `run_campaign.py`:
 python run_campaign.py campaign.yaml --max-iterations 5
 ```
 
-This loops through iterations automatically. After each iteration:
+This loops through iterations automatically. After each non-final iteration:
 
 1. A **ledger row** is appended with prediction accuracy and principle changes
 2. An **investigation summary** is generated — a bounded JSON capturing what was tested, key findings, and suggested next direction
