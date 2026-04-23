@@ -671,6 +671,28 @@ class TestCampaignSchema:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(instance, schema)
 
+    def test_campaign_minimal_valid(self, load_schema):
+        """Campaign with only name, description, repo_path is valid."""
+        schema = load_schema("campaign.schema.yaml")
+        minimal = {
+            "research_question": "Why is it slow?",
+            "target_system": {
+                "name": "TestSys",
+                "description": "A test system.",
+                "repo_path": "/tmp/repo",
+            },
+            "review": {
+                "design_perspectives": ["rigor"],
+                "findings_perspectives": ["rigor"],
+                "max_review_rounds": 1,
+            },
+            "prompts": {
+                "methodology_layer": "prompts/methodology",
+                "domain_adapter_layer": None,
+            },
+        }
+        jsonschema.validate(minimal, schema)  # Should not raise
+
 
 class TestPrinciplesCategoryField:
     def test_domain_category_accepted(self, load_schema):

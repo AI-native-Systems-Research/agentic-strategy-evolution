@@ -78,7 +78,7 @@ class LLMDispatcher:
                 "Campaign config missing 'target_system' section. "
                 "See examples/blis/campaign.yaml for the expected format."
             )
-        required = ["name", "description", "observable_metrics", "controllable_knobs"]
+        required = ["name", "description"]
         missing = [k for k in required if k not in ts]
         if missing:
             raise ValueError(
@@ -86,12 +86,13 @@ class LLMDispatcher:
                 f"See examples/blis/campaign.yaml for the expected format."
             )
         for field in ("observable_metrics", "controllable_knobs"):
-            val = ts[field]
-            if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
-                raise ValueError(
-                    f"Campaign 'target_system.{field}' must be a list of strings. "
-                    f"Got: {val!r}"
-                )
+            val = ts.get(field)
+            if val is not None:
+                if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+                    raise ValueError(
+                        f"Campaign 'target_system.{field}' must be a list of strings. "
+                        f"Got: {val!r}"
+                    )
 
     # ------------------------------------------------------------------
     # Public interface (satisfies Dispatcher protocol)
@@ -195,8 +196,8 @@ class LLMDispatcher:
         ctx: dict[str, str] = {
             "target_system": ts["name"],
             "system_description": ts["description"],
-            "observable_metrics": ", ".join(ts["observable_metrics"]),
-            "controllable_knobs": ", ".join(ts["controllable_knobs"]),
+            "observable_metrics": ", ".join(ts["observable_metrics"]) if ts.get("observable_metrics") else "Not specified — planner should discover from code",
+            "controllable_knobs": ", ".join(ts["controllable_knobs"]) if ts.get("controllable_knobs") else "Not specified — planner should discover from code",
             "active_principles": self._format_principles(),
             "iteration": str(iteration),
         }

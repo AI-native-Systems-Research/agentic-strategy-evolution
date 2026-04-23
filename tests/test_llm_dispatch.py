@@ -647,3 +647,69 @@ class TestSummarizeDispatch:
         # Should contain bundle and findings content
         assert "h-main" in prompt
         assert "CONFIRMED" in prompt
+
+
+# Minimal campaign without observable_metrics/controllable_knobs
+MINIMAL_CAMPAIGN = {
+    "research_question": "What drives latency in MySystem?",
+    "target_system": {
+        "name": "MySystem",
+        "description": "A system under test.",
+        "repo_path": "/tmp/fake-repo",
+    },
+    "review": {
+        "design_perspectives": ["rigor"],
+        "findings_perspectives": ["rigor"],
+        "max_review_rounds": 1,
+    },
+    "prompts": {
+        "methodology_layer": "prompts/methodology",
+        "domain_adapter_layer": None,
+    },
+}
+
+
+class TestSimplifiedCampaign:
+    """Campaigns without observable_metrics/controllable_knobs should be valid."""
+
+    def test_minimal_campaign_accepted_by_dispatcher(self, work_dir: Path) -> None:
+        """LLMDispatcher should accept a campaign without metrics/knobs."""
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=MINIMAL_CAMPAIGN,
+            completion_fn=make_mock_completion(["stub"]),
+        )
+        assert isinstance(d, Dispatcher)
+
+    def test_minimal_campaign_context_has_empty_metrics(self, work_dir: Path) -> None:
+        """Context should show 'Not specified' for missing metrics/knobs."""
+        md = "# Framing\n\nStub output."
+        mock_fn = make_mock_completion([md])
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=MINIMAL_CAMPAIGN,
+            completion_fn=mock_fn,
+        )
+        out = work_dir / "runs" / "iter-1" / "problem.md"
+        d.dispatch("planner", "frame", output_path=out, iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "Not specified" in prompt
+
+    def test_full_campaign_still_works(self, work_dir: Path) -> None:
+        """Existing full campaigns with metrics/knobs remain valid."""
+        md = "# Framing\n\nStub output."
+        mock_fn = make_mock_completion([md])
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=SAMPLE_CAMPAIGN,
+            completion_fn=mock_fn,
+        )
+        out = work_dir / "runs" / "iter-1" / "problem.md"
+        d.dispatch("planner", "frame", output_path=out, iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "latency_ms" in prompt
+
+    def test_minimal_campaign_validates_against_schema(self) -> None:
+        """Schema should accept campaign without metrics/knobs."""
+        schema = load_schema("campaign.schema.yaml")
+        jsonschema.validate(MINIMAL_CAMPAIGN, schema)
