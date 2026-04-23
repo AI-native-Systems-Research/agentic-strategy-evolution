@@ -226,6 +226,18 @@ class TestAppendLedgerRow:
         jsonschema.validate(ledger, _load_schema("ledger.schema.json"))
         assert ledger["iterations"][0]["principles_extracted"] == []
 
+    def test_idempotent_no_duplicate(self, tmp_path):
+        iter_dir = tmp_path / "runs" / "iter-1"
+        _write_bundle(iter_dir)
+        _write_findings(iter_dir)
+        _write_principles(tmp_path, [])
+
+        append_ledger_row(tmp_path, 1)
+        append_ledger_row(tmp_path, 1)  # Second call for same iteration
+
+        ledger = json.loads((tmp_path / "ledger.json").read_text())
+        assert len(ledger["iterations"]) == 1
+
     def test_no_bundle_still_works(self, tmp_path):
         iter_dir = tmp_path / "runs" / "iter-1"
         iter_dir.mkdir(parents=True)

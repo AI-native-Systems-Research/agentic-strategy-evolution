@@ -46,6 +46,11 @@ def append_ledger_row(work_dir: Path, iteration: int) -> None:
     else:
         ledger = {"iterations": []}
 
+    # Idempotency guard: skip if this iteration already has a ledger row
+    if any(r.get("iteration") == iteration for r in ledger["iterations"]):
+        logger.info("Ledger row for iteration %d already exists — skipping.", iteration)
+        return
+
     ledger["iterations"].append(row)
     atomic_write(ledger_path, json.dumps(ledger, indent=2) + "\n")
     logger.info("Appended ledger row for iteration %d.", iteration)

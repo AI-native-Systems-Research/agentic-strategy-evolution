@@ -97,10 +97,8 @@ class TestTwoIterationHappyPath:
 
         # Ledger should have baseline + 2 iteration rows
         ledger = json.loads((work_dir / "ledger.json").read_text())
-        # The template has 1 baseline row, we appended 1 row (iter 1 only;
-        # iter 2 is final so it goes to DONE without ledger append)
         iter_rows = [r for r in ledger["iterations"] if r["iteration"] > 0]
-        assert len(iter_rows) == 1  # only iter-1 gets ledger (iter-2 is final)
+        assert len(iter_rows) == 2  # both iter-1 and iter-2 (final) get ledger rows
         jsonschema.validate(ledger, _load_schema("ledger.schema.json"))
 
         # Investigation summary should exist for iter-1
@@ -170,10 +168,10 @@ class TestThreeIterations:
         principles = json.loads((work_dir / "principles.json").read_text())
         assert len(principles["principles"]) == 3
 
-        # Ledger has rows for iter 1 and 2 (iter 3 is final)
+        # Ledger has rows for all 3 iterations (including final)
         ledger = json.loads((work_dir / "ledger.json").read_text())
         iter_rows = [r for r in ledger["iterations"] if r["iteration"] > 0]
-        assert len(iter_rows) == 2
+        assert len(iter_rows) == 3
 
         # Summaries for iter 1 and 2 (not iter 3 since it's final)
         assert (work_dir / "runs" / "iter-1" / "investigation_summary.json").exists()

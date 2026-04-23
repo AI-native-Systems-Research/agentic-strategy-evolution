@@ -74,6 +74,7 @@ def run_campaign(
         )
 
         if outcome == IterationOutcome.COMPLETED:
+            append_ledger_row(work_dir, i)
             print(f"\n  Campaign complete after {i} iteration(s).")
             return
 
