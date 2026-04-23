@@ -135,6 +135,46 @@ Optional execution fields:
 
 Without an `execution` section, the executor operates in **analysis mode** — reasoning about the system without running experiments.
 
+## Code-access mode (simplified campaign)
+
+If your system has a git repository that agents should explore, use a simplified campaign with just a `repo_path`:
+
+```yaml
+research_question: >
+  What mechanism drives the primary performance bottleneck?
+
+target_system:
+  name: "Your System Name"
+  description: >
+    What the system does and its architecture.
+  repo_path: /path/to/your/repo
+
+review:
+  design_perspectives:
+    - statistical-rigor
+    - causal-sufficiency
+    - confound-risk
+  findings_perspectives:
+    - statistical-rigor
+    - causal-sufficiency
+    - confound-risk
+    - reproducibility
+  max_review_rounds: 3
+
+prompts:
+  methodology_layer: "prompts/methodology"
+  domain_adapter_layer: null
+```
+
+With this config:
+- The planner explores the codebase to discover metrics, knobs, and execution methods
+- The executor can read and modify code in an isolated git worktree
+- No need to manually specify `observable_metrics` or `controllable_knobs`
+
+**Requires:** Claude Code CLI (`claude`) installed and authenticated.
+
+You can still provide `observable_metrics` and `controllable_knobs` as hints — they'll be used alongside code exploration.
+
 ## Run a multi-iteration campaign
 
 For investigations that require more than one iteration, use `run_campaign.py`:
@@ -186,6 +226,18 @@ Each iteration has two gates (design and findings approval). Between iterations,
 | Continue gate | After extraction | Continue to the next iteration? |
 
 Type `approve` to continue, `abort` to stop the campaign.
+
+### Human gates with summaries
+
+Each gate now shows a formatted summary before the raw artifact:
+
+| Gate | Summary shows | Raw artifact |
+|------|--------------|-------------|
+| Design gate | What we're testing, hypothesis in plain language | bundle.yaml |
+| Findings gate | Results vs predictions, surprises | findings.json |
+| Continue gate | What we've learned, what's next | investigation_summary.json |
+
+Type `approve` to continue, `reject` to loop back, `abort` to stop.
 
 ## Next steps
 

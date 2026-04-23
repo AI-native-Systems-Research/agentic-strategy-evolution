@@ -39,8 +39,9 @@ The campaign configuration. Describes the target system, configures the reviewer
 |---|---|
 | `research_question` | The guiding research question for this campaign |
 | `target_system.name` / `description` | What system Nous is investigating |
-| `target_system.observable_metrics` | What you can measure (latency, throughput, error rate, etc.) |
-| `target_system.controllable_knobs` | What you can change (algorithms, configs, resource limits) |
+| `target_system.observable_metrics` | (Optional) What agents can measure — provided as hints, or discovered from code |
+| `target_system.controllable_knobs` | (Optional) What agents can change — provided as hints, or discovered from code |
+| `target_system.repo_path` | (Optional) Path to target system git repo — enables code-access agents |
 | `target_system.execution` | (Optional) How to run real experiments — see below |
 | `review.design_perspectives` | Reviewer perspectives for design review (default: 5) |
 | `review.findings_perspectives` | Reviewer perspectives for findings review (default: 10) |
@@ -152,7 +153,7 @@ The experiment plan. A set of hypotheses ("arms") designed together to test one 
 | `h-control-negative` | At low load, the strategy should have no effect (proves mechanism, not noise) |
 | `h-robustness` | Does it hold across different workloads? |
 
-Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal explanation), **diagnostic** (what to investigate if wrong). Arms may also carry an optional **metadata** object for domain-specific extensions.
+Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal explanation), **diagnostic** (what to investigate if wrong). Arms may also carry optional **code_changes** (file/intent/rationale triples describing what code to modify) and a **metadata** object for domain-specific extensions.
 
 ## 4b. experiment_plan.json — "How should we run each arm?"
 
@@ -209,6 +210,20 @@ A bounded summary produced after each non-final iteration by the Extractor agent
 | `suggested_next_direction` | Recommended focus area for the next iteration |
 
 Located at `runs/iter-N/investigation_summary.json`. The design prompt for iteration N+1 receives this summary to inform hypothesis bundle creation.
+
+## 6b. gate_summary_*.json — "What should I know before deciding?"
+
+**Schema:** `schemas/gate_summary.schema.json`
+
+A human-readable summary produced by the summarizer agent before each human gate. Designed to help the human make an approve/reject/abort decision without reading raw artifacts.
+
+| Field | What it means |
+|---|---|
+| `gate_type` | Which gate: `design`, `findings`, `continue`, or `end_of_campaign` |
+| `summary` | 1-3 sentence plain-language summary of what's being decided |
+| `key_points` | Bullet points with specific numbers, metrics, and hypothesis references |
+
+Located at `runs/iter-N/gate_summary_<type>.json`. Generated on the fly before each gate — not persisted across sessions.
 
 ## 7. trace.jsonl — "What happened under the hood?"
 

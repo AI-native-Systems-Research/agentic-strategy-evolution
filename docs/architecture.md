@@ -100,11 +100,13 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 | **Executor** | RUNNING | `experiment_plan.json`, `experiment_results.json`, `findings.json` |
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
 | **Extractor** | EXTRACTION, post-iteration | Updated `principles.json`, `investigation_summary.json` |
+| **Summarizer** | Before each human gate | `gate_summary_*.json` |
 
 **Implementations:**
 
 - `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
 - `LLMDispatcher` (`llm_dispatch.py`) calls a real LLM via the OpenAI SDK, parses structured output from code fences, validates against schemas, and writes artifacts atomically. Works with any OpenAI-compatible endpoint. This is the production dispatcher.
+- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Used for planner and executor roles when the campaign specifies a `repo_path`. Shares the same routing table and prompt templates as `LLMDispatcher`, but sends prompts via stdin to the Claude CLI instead of calling an API endpoint. The agent can read files, grep code, and run commands in the target repo.
 
 **Dispatch interface:**
 ```python
@@ -178,6 +180,51 @@ dispatcher = LLMDispatcher(..., api_base="https://my-proxy.example.com", api_key
 
 Default model: `aws/claude-opus-4-6`. The `completion_fn` constructor parameter allows test injection without mocking internals.
 
+## CLI Dispatch (Phase 4.5)
+
+`CLIDispatcher` invokes `claude -p` for agents that need code and shell access. It shares the same `Dispatcher` protocol, routing table, and prompt templates as `LLMDispatcher`.
+
+### When to Use Which Dispatcher
+
+| Dispatcher | When | Why |
+|---|---|---|
+| `LLMDispatcher` | Campaign has `observable_metrics` and `controllable_knobs` | Agent has all context in the prompt — no code access needed |
+| `CLIDispatcher` | Campaign has `repo_path` | Agent needs to read code, discover metrics/knobs, run commands |
+
+The entry points (`run_iteration.py`, `run_campaign.py`) auto-select: if `target_system.repo_path` is set, planner and executor use `CLIDispatcher`. Reviewer, extractor, and summarizer always use `LLMDispatcher` (they operate on artifacts, not code).
+
+### Simplified Campaign
+
+With `CLIDispatcher`, a campaign configuration can be as simple as:
+
+```yaml
+research_question: "What drives latency in my system?"
+target_system:
+  name: "My System"
+  description: "A service that processes requests."
+  repo_path: /path/to/repo
+```
+
+The planner explores the codebase to discover observable metrics, controllable knobs, and execution methods. The full campaign format (with explicit metrics, knobs, and execution config) remains supported and takes precedence when provided.
+
+### Code Change Intents
+
+When using `CLIDispatcher`, the planner can include optional `code_changes` in bundle arms:
+
+```yaml
+arms:
+  - type: h-main
+    prediction: "TTFT decreases by 15-25%"
+    mechanism: "SJF reorders by predicted compute cost"
+    diagnostic: "Check scheduling order"
+    code_changes:
+      - file: scheduler/policy.go
+        intent: "Replace FCFS with shortest-job-first"
+        rationale: "Prefix-heavy requests have predictable cost"
+```
+
+The planner says **what and why** — the executor implements the actual changes in a git worktree.
+
 ### Ledger (`orchestrator/ledger.py`)
 
 Deterministic module that appends a schema-conformant row to `ledger.json` after each iteration. Reads `findings.json`, `bundle.yaml`, and `principles.json` to extract: h_main_result, ablation_results, control_result, robustness_result, prediction accuracy, and principle changes. No LLM calls — purely deterministic computation.
@@ -197,6 +244,12 @@ Human gates are hard stops that cannot be bypassed. They surface the artifact an
 1. After DESIGN_REVIEW — human sees the hypothesis bundle and all review summaries
 2. After FINDINGS_REVIEW — human sees the findings and all review summaries
 3. After EXTRACTION (multi-iteration only) — human decides whether to continue to the next iteration
+
+### Gate Summaries (Phase 4.5)
+
+Before each human gate, a summarizer agent produces a formatted summary (`gate_summary_*.json`). The summary includes a plain-language description and bullet points highlighting what matters for the decision. This replaces the raw truncated artifact dumps from earlier phases.
+
+Gates display the summary first, then the raw artifact (for those who want full detail). If summary generation fails, the gate falls back to the previous behavior.
 
 ### Fast-Fail Rules (`orchestrator/fastfail.py`)
 
