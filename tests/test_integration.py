@@ -229,3 +229,42 @@ class TestSingleIterationHappyPath:
         # Verify principles accumulated
         principles = json.loads((campaign_dir / "principles.json").read_text())
         assert len(principles["principles"]) == 2
+
+
+class TestGateSummaries:
+    """Integration: gate summaries are generated when a summarizer is available."""
+
+    @pytest.fixture
+    def campaign_dir(self, tmp_path):
+        shutil.copy(TEMPLATES_DIR / "state.json", tmp_path / "state.json")
+        shutil.copy(TEMPLATES_DIR / "ledger.json", tmp_path / "ledger.json")
+        shutil.copy(TEMPLATES_DIR / "principles.json", tmp_path / "principles.json")
+        state = json.loads((tmp_path / "state.json").read_text())
+        state["run_id"] = "test-summary-gate"
+        (tmp_path / "state.json").write_text(json.dumps(state, indent=2))
+        return tmp_path
+
+    def test_gate_summary_file_created_at_design_gate(self, campaign_dir):
+        """StubDispatcher generates a gate summary file during the design gate phase."""
+        engine = Engine(campaign_dir)
+        dispatcher = _make_dispatcher(campaign_dir)
+        iter_dir = campaign_dir / "runs" / "iter-1"
+
+        engine.transition("FRAMING")
+        engine.transition("DESIGN")
+        dispatcher.dispatch(
+            "planner", "design", output_path=iter_dir / "bundle.yaml", iteration=1,
+        )
+        engine.transition("DESIGN_REVIEW")
+
+        # Generate gate summary (what run_iteration.py would do before the gate)
+        dispatcher.dispatch(
+            "summarizer", "summarize-gate",
+            output_path=iter_dir / "gate_summary_design.json",
+            iteration=1, perspective="design",
+        )
+
+        summary_path = iter_dir / "gate_summary_design.json"
+        assert summary_path.exists()
+        summary = json.loads(summary_path.read_text())
+        assert summary["gate_type"] == "design"

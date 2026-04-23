@@ -106,12 +106,25 @@ def run_campaign(
         )
         print(f"  -> {iter_dir / 'investigation_summary.json'}")
 
+        # Generate continue gate summary
+        gate_summary_path = iter_dir / "gate_summary_continue.json"
+        try:
+            dispatcher.dispatch(
+                "summarizer", "summarize-gate",
+                output_path=gate_summary_path,
+                iteration=i,
+                perspective="continue",
+            )
+        except Exception:
+            gate_summary_path = None
+
         # Human gate: continue?
         print(f"\n{'='*60}")
         print(f"  CONTINUE GATE — Iteration {i} complete")
         print(f"{'='*60}")
         decision = continue_gate.prompt(
             f"Continue to iteration {i + 1}?",
+            summary_path=str(gate_summary_path) if gate_summary_path else None,
         )
         if decision != "approve":
             engine = Engine(work_dir)

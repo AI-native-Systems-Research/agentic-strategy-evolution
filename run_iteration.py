@@ -298,6 +298,25 @@ def _run_real_execution(
             remove_experiment_worktree(Path(repo_path), experiment_id)
 
 
+def _generate_gate_summary(
+    dispatcher, iter_dir: Path, iteration: int, gate_type: str,
+) -> Path | None:
+    """Generate a gate summary file. Returns the path, or None on failure."""
+    summary_path = iter_dir / f"gate_summary_{gate_type}.json"
+    try:
+        dispatcher.dispatch(
+            "summarizer", "summarize-gate",
+            output_path=summary_path,
+            iteration=iteration,
+            perspective=gate_type,
+        )
+        return summary_path
+    except Exception as exc:
+        logger = logging.getLogger(__name__)
+        logger.warning("Gate summary generation failed: %s", exc)
+        return None
+
+
 def run_iteration(
     campaign: dict,
     work_dir: Path,
@@ -321,7 +340,14 @@ def run_iteration(
     last committed phase in state.json. Phases already completed are skipped.
     """
     engine = Engine(work_dir)
-    dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=model)
+    repo_path = campaign.get("target_system", {}).get("repo_path")
+    if repo_path:
+        from orchestrator.cli_dispatch import CLIDispatcher
+        dispatcher = CLIDispatcher(work_dir=work_dir, campaign=campaign, model=model)
+    else:
+        dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=model)
+    # LLM dispatcher for roles that don't need code access (reviewer, extractor, summarizer)
+    llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=model)
     gate = HumanGate(auto_response="approve") if auto_approve else HumanGate()
 
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
@@ -362,7 +388,7 @@ def run_iteration(
         print(f"{'='*60}")
         perspectives = campaign["review"]["design_perspectives"]
         def _run_design_review(p):
-            dispatcher.dispatch(
+            llm_dispatcher.dispatch(
                 "reviewer", "review-design",
                 output_path=iter_dir / "reviews" / f"review-{p}.md",
                 iteration=iteration, perspective=p,
@@ -378,10 +404,12 @@ def run_iteration(
         print(f"\n{'='*60}")
         print(f"  HUMAN DESIGN GATE")
         print(f"{'='*60}")
+        summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "design")
         decision = gate.prompt(
             "Review the hypothesis bundle and reviews. Approve?",
             artifact_path=str(iter_dir / "bundle.yaml"),
             reviews=[str(p) for p in sorted((iter_dir / "reviews").glob("review-*.md"))],
+            summary_path=str(summary_path) if summary_path else None,
         )
         if decision == "reject":
             print("Design rejected. Re-run after revising the campaign config.")
@@ -455,7 +483,7 @@ def run_iteration(
             print(f"{'='*60}")
             perspectives = campaign["review"]["findings_perspectives"]
             def _run_findings_review(p):
-                dispatcher.dispatch(
+                llm_dispatcher.dispatch(
                     "reviewer", "review-findings",
                     output_path=iter_dir / "reviews" / f"review-findings-{p}.md",
                     iteration=iteration, perspective=p,
@@ -471,7 +499,11 @@ def run_iteration(
             print(f"\n{'='*60}")
             print(f"  HUMAN FINDINGS GATE")
             print(f"{'='*60}")
-            decision = gate.prompt("Review the findings and reviews. Approve?")
+            summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "findings")
+            decision = gate.prompt(
+                "Review the findings and reviews. Approve?",
+                summary_path=str(summary_path) if summary_path else None,
+            )
             if decision == "reject":
                 print("Findings rejected. Re-running executor.")
                 engine.transition("RUNNING")
@@ -487,7 +519,7 @@ def run_iteration(
     print(f"\n{'='*60}")
     print(f"  EXTRACTION — extracting principles")
     print(f"{'='*60}")
-    dispatcher.dispatch(
+    llm_dispatcher.dispatch(
         "extractor", "extract",
         output_path=work_dir / "principles.json", iteration=iteration,
     )
