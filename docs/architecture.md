@@ -188,8 +188,8 @@ Default model: `aws/claude-opus-4-6`. The `completion_fn` constructor parameter 
 
 | Dispatcher | When | Why |
 |---|---|---|
-| `LLMDispatcher` | Campaign has `observable_metrics` and `controllable_knobs` | Agent has all context in the prompt — no code access needed |
-| `CLIDispatcher` | Campaign has `repo_path` | Agent needs to read code, discover metrics/knobs, run commands |
+| `LLMDispatcher` | Campaign has no `repo_path` (default) | Agent has all context in the prompt — no code access needed |
+| `CLIDispatcher` | Campaign has `repo_path` set | Agent needs to read code, discover metrics/knobs, run commands |
 
 The entry points (`run_iteration.py`, `run_campaign.py`) auto-select: if `target_system.repo_path` is set, planner and executor use `CLIDispatcher`. Reviewer, extractor, and summarizer always use `LLMDispatcher` (they operate on artifacts, not code).
 

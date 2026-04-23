@@ -69,6 +69,8 @@ class StubDispatcher:
                 else:
                     self._write_principles(output_path, iteration)
             case "summarizer":
+                if phase != "summarize-gate":
+                    raise ValueError(f"Unknown phase for summarizer: {phase}")
                 self._write_gate_summary(output_path, perspective or "design")
             case _:
                 raise ValueError(f"Unknown role: {role}")

@@ -12,11 +12,9 @@ Agents dispatched via CLIDispatcher can:
 """
 import json
 import logging
-import re
 import subprocess
 from pathlib import Path
 
-import jsonschema
 import yaml
 
 from orchestrator.llm_dispatch import LLMDispatcher
@@ -25,11 +23,6 @@ from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
 
-_FENCE_RE = {
-    "yaml": re.compile(r"```yaml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE),
-    "json": re.compile(r"```json\s*\n(.*?)```", re.DOTALL | re.IGNORECASE),
-}
-
 
 class CLIDispatcher:
     """Dispatch agent roles via `claude -p` subprocess.
@@ -37,8 +30,8 @@ class CLIDispatcher:
     Implements the same Dispatcher protocol as LLMDispatcher.
     Used for planner and executor roles that need code/shell access.
 
-    Shares LLMDispatcher's routing table and uses its own PromptLoader
-    and context builder — does NOT instantiate LLMDispatcher.
+    Shares LLMDispatcher's routing table and delegates context building
+    to a temporary LLMDispatcher (with dummy completion_fn — no API key needed).
     """
 
     # Reuse the same routing table from LLMDispatcher
@@ -48,7 +41,7 @@ class CLIDispatcher:
         self,
         work_dir: Path,
         campaign: dict,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "aws/claude-opus-4-6",
         prompts_dir: Path | None = None,
         timeout: int = 600,
     ) -> None:
@@ -132,31 +125,8 @@ class CLIDispatcher:
         )
         return inner._build_context(role, phase, iteration, perspective)
 
-    @staticmethod
-    def _extract_fenced_content(text: str, fmt: str) -> dict:
-        """Extract and parse content from a code-fenced block.
-
-        Same logic as LLMDispatcher._extract_fenced_content.
-        """
-        pattern = _FENCE_RE.get(fmt)
-        if pattern is None:
-            raise ValueError(f"Unsupported format: {fmt}")
-
-        matches = pattern.findall(text)
-        if matches:
-            raw = matches[-1]
-        else:
-            raise ValueError(
-                f"No ```{fmt}``` code fence found in claude -p output "
-                f"({len(text)} chars). Expected fenced {fmt} block."
-            )
-
-        parsed = yaml.safe_load(raw) if fmt == "yaml" else json.loads(raw)
-        if not isinstance(parsed, dict):
-            raise ValueError(
-                f"Expected a {fmt} object, got {type(parsed).__name__}"
-            )
-        return parsed
+    # Reuse LLMDispatcher's static parsing/validation methods
+    _extract_fenced_content = staticmethod(LLMDispatcher._extract_fenced_content)
 
     def _call_claude(self, prompt: str) -> str:
         """Invoke `claude -p` with the prompt on stdin, return stdout."""
