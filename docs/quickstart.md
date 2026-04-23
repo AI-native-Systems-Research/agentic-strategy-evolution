@@ -171,7 +171,7 @@ With this config:
 - The executor can read and modify code in an isolated git worktree
 - No need to manually specify `observable_metrics` or `controllable_knobs`
 
-**Requires:** Claude Code CLI (`claude`) installed and authenticated.
+**Requires:** Claude Code CLI (`claude`) installed and authenticated, plus an LLM API key (`OPENAI_API_KEY`) — reviewer, extractor, and summarizer agents still use the LLM API.
 
 You can still provide `observable_metrics` and `controllable_knobs` as hints — they'll be used alongside code exploration.
 

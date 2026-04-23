@@ -101,7 +101,7 @@ This uses `CLIDispatcher` (invokes `claude -p`) so the planner can read Go sourc
 files and the executor can run experiments with shell access. No need to manually
 specify `observable_metrics` or `controllable_knobs`.
 
-**Requires:** Claude Code CLI installed and authenticated.
+**Requires:** Claude Code CLI installed and authenticated, plus an LLM API key (`OPENAI_API_KEY`) — reviewer, extractor, and summarizer agents still use the LLM API.
 
 ## Customizing
 

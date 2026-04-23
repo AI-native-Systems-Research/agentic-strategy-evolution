@@ -1,6 +1,7 @@
 # Simplified campaign — planner discovers metrics and knobs from code.
 # Requires: repo_path pointing to a local BLIS checkout,
-#           Claude Code CLI installed and authenticated.
+#           Claude Code CLI installed and authenticated,
+#           an LLM API key (OPENAI_API_KEY) for reviewer/extractor/summarizer agents.
 
 research_question: >
   Does increasing the prefix ratio in a workload reduce TTFT under moderate load?
