@@ -209,3 +209,6 @@ __marimo__/
 
 # Claude Code planning artifacts
 docs/plans/
+
+# Git worktrees
+.worktrees/
