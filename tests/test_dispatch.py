@@ -124,6 +124,19 @@ class TestStubDispatcher:
         jsonschema.validate(summary, _load_schema("investigation_summary.schema.json"))
         assert summary["iteration"] == 1
 
+    def test_dispatch_summarizer_produces_valid_gate_summary(self, work_dir):
+        dispatcher = _make_dispatcher(work_dir)
+        output_path = work_dir / "runs" / "iter-1" / "gate_summary.json"
+        dispatcher.dispatch(
+            "summarizer", "summarize-gate",
+            output_path=output_path, iteration=1, perspective="design",
+        )
+        assert output_path.exists()
+        summary = json.loads(output_path.read_text())
+        assert summary["gate_type"] == "design"
+        assert len(summary["key_points"]) >= 1
+        jsonschema.validate(summary, _load_schema("gate_summary.schema.json"))
+
 
 class TestDispatchErrorHandling:
     def test_corrupt_principles_file_raises(self, tmp_path):
