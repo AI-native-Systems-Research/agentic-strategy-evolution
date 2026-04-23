@@ -308,6 +308,53 @@ class TestBundleSchema:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(instance, schema)
 
+    def test_bundle_arm_with_code_changes(self, load_schema):
+        """Bundle arms can optionally include code_changes."""
+        schema = load_schema("bundle.schema.yaml")
+        bundle = {
+            "metadata": {
+                "iteration": 1,
+                "family": "test-family",
+                "research_question": "Does SJF reduce TTFT?",
+            },
+            "arms": [
+                {
+                    "type": "h-main",
+                    "prediction": "TTFT decreases by 15-25%",
+                    "mechanism": "SJF reorders by predicted compute cost",
+                    "diagnostic": "Check scheduling order in logs",
+                    "code_changes": [
+                        {
+                            "file": "scheduler/policy.go",
+                            "intent": "Replace FCFS dispatch with shortest-job-first ordering",
+                            "rationale": "Prefix-heavy requests have predictable compute cost",
+                        }
+                    ],
+                }
+            ],
+        }
+        jsonschema.validate(bundle, schema)  # Should not raise
+
+    def test_bundle_arm_without_code_changes(self, load_schema):
+        """Bundle arms without code_changes remain valid (backwards compatible)."""
+        schema = load_schema("bundle.schema.yaml")
+        bundle = {
+            "metadata": {
+                "iteration": 1,
+                "family": "test-family",
+                "research_question": "Does batch size matter?",
+            },
+            "arms": [
+                {
+                    "type": "h-main",
+                    "prediction": ">10% improvement",
+                    "mechanism": "Batching amortizes overhead",
+                    "diagnostic": "Check overhead per item",
+                }
+            ],
+        }
+        jsonschema.validate(bundle, schema)  # Should not raise (existing behavior)
+
 
 class TestFindingsSchema:
     def test_valid_findings(self, load_schema):
