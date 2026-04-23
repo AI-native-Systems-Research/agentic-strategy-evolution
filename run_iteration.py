@@ -18,6 +18,7 @@ import re
 import shlex
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
 from enum import Enum
 from pathlib import Path
@@ -336,13 +337,18 @@ def run_iteration(
         print(f"\n{'='*60}")
         print(f"  DESIGN REVIEW — {len(campaign['review']['design_perspectives'])} reviewers")
         print(f"{'='*60}")
-        for perspective in campaign["review"]["design_perspectives"]:
+        perspectives = campaign["review"]["design_perspectives"]
+        def _run_design_review(p):
             dispatcher.dispatch(
                 "reviewer", "review-design",
-                output_path=iter_dir / "reviews" / f"review-{perspective}.md",
-                iteration=iteration, perspective=perspective,
+                output_path=iter_dir / "reviews" / f"review-{p}.md",
+                iteration=iteration, perspective=p,
             )
-            print(f"  -> review-{perspective}.md")
+            return p
+        with ThreadPoolExecutor(max_workers=len(perspectives)) as pool:
+            futures = [pool.submit(_run_design_review, p) for p in perspectives]
+            for f in as_completed(futures):
+                print(f"  -> review-{f.result()}.md")
 
     # HUMAN DESIGN GATE
     if _enter_phase(engine, "HUMAN_DESIGN_GATE"):
@@ -424,13 +430,18 @@ def run_iteration(
             print(f"\n{'='*60}")
             print(f"  FINDINGS REVIEW — {len(campaign['review']['findings_perspectives'])} reviewers")
             print(f"{'='*60}")
-            for perspective in campaign["review"]["findings_perspectives"]:
+            perspectives = campaign["review"]["findings_perspectives"]
+            def _run_findings_review(p):
                 dispatcher.dispatch(
                     "reviewer", "review-findings",
-                    output_path=iter_dir / "reviews" / f"review-findings-{perspective}.md",
-                    iteration=iteration, perspective=perspective,
+                    output_path=iter_dir / "reviews" / f"review-findings-{p}.md",
+                    iteration=iteration, perspective=p,
                 )
-                print(f"  -> review-findings-{perspective}.md")
+                return p
+            with ThreadPoolExecutor(max_workers=len(perspectives)) as pool:
+                futures = [pool.submit(_run_findings_review, p) for p in perspectives]
+                for f in as_completed(futures):
+                    print(f"  -> review-findings-{f.result()}.md")
 
         # HUMAN FINDINGS GATE
         if _enter_phase(engine, "HUMAN_FINDINGS_GATE"):
