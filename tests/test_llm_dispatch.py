@@ -579,6 +579,29 @@ class TestInvestigationSummaryContext:
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "No investigation summary available" in prompt
 
+    def test_design_iter2_falls_back_to_iter1_problem_md(self, work_dir: Path) -> None:
+        """Iteration 2+ skips framing, so design falls back to iter-1's problem.md."""
+        # Only iter-1 has problem.md (framing only runs once)
+        iter1 = work_dir / "runs" / "iter-1"
+        iter1.mkdir(parents=True, exist_ok=True)
+        (iter1 / "problem.md").write_text(
+            "# Problem Framing\n\n## Research Question\n"
+            "Does prefix caching reduce TTFT?\n"
+        )
+        # iter-2 exists but has no problem.md
+        iter2 = work_dir / "runs" / "iter-2"
+        iter2.mkdir(parents=True)
+
+        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(
+            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
+        )
+        out = iter2 / "bundle.yaml"
+        d.dispatch("planner", "design", output_path=out, iteration=2)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "prefix caching" in prompt.lower()
+
 
 class TestSummarizeDispatch:
     """Verify the summarize route works end-to-end via LLMDispatcher."""

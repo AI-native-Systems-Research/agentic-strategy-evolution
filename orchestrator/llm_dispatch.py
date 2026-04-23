@@ -281,7 +281,11 @@ class LLMDispatcher:
         if phase == "frame":
             return self.campaign["research_question"]
         # For design, read from the problem.md produced by framing.
+        # In multi-iteration campaigns, framing only runs for iteration 1;
+        # subsequent iterations reuse iter-1's problem.md.
         problem_path = self.work_dir / "runs" / f"iter-{iteration}" / "problem.md"
+        if not problem_path.exists() and iteration > 1:
+            problem_path = self.work_dir / "runs" / "iter-1" / "problem.md"
         if not problem_path.exists():
             raise FileNotFoundError(
                 f"Expected {problem_path} for design phase. "
