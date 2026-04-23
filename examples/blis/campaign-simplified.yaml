@@ -1,0 +1,29 @@
+# Simplified campaign — planner discovers metrics and knobs from code.
+# Requires: repo_path pointing to a local BLIS checkout,
+#           Claude Code CLI installed and authenticated.
+
+research_question: >
+  Does increasing the prefix ratio in a workload reduce TTFT under moderate load?
+
+target_system:
+  name: "BLIS — LLM Inference Serving Simulator"
+  description: >
+    BLIS is a discrete-event simulator for LLM inference serving.
+    It models request arrivals, scheduling, and KV-cache management.
+  repo_path: null  # Set to your local BLIS checkout path
+
+review:
+  design_perspectives:
+    - statistical-rigor
+    - causal-sufficiency
+    - confound-risk
+  findings_perspectives:
+    - statistical-rigor
+    - causal-sufficiency
+    - confound-risk
+    - measurement-validity
+  max_review_rounds: 3
+
+prompts:
+  methodology_layer: "prompts/methodology"
+  domain_adapter_layer: null

@@ -87,6 +87,22 @@ When `repo_path` is set, Nous creates an isolated git worktree in the BLIS repo,
 
 When the `execution` block is removed (or `run_command` is absent), the executor falls back to **analysis mode** — reasoning about the system without running real experiments. When `repo_path` is null but `run_command` is present, experiments run in the current directory without worktree isolation.
 
+## Simplified mode (code-access agents)
+
+If you want agents to explore the BLIS codebase to discover metrics, knobs, and
+execution methods:
+
+```bash
+# Edit campaign-simplified.yaml: set repo_path to your BLIS checkout
+python run_iteration.py examples/blis/campaign-simplified.yaml
+```
+
+This uses `CLIDispatcher` (invokes `claude -p`) so the planner can read Go source
+files and the executor can run experiments with shell access. No need to manually
+specify `observable_metrics` or `controllable_knobs`.
+
+**Requires:** Claude Code CLI installed and authenticated.
+
 ## Customizing
 
 To adapt this for a different LLM inference system:
