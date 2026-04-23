@@ -144,11 +144,14 @@ def run_experiment_commands(
             executable (derived from campaign run_command). Prevents the
             LLM from generating commands that run arbitrary binaries.
 
-    Returns dict with metrics keyed by label: {"baseline": {...}, "h-main": {...}, ...}
+    Returns dict with metrics keyed by label.  When an arm_type appears
+    once the value is a single dict; when it appears multiple times the
+    value is a list of dicts (one per run, in plan order).
+    Baseline is always a single dict.
     """
     metrics_dir = (iter_dir / "metrics").resolve()
     metrics_dir.mkdir(parents=True, exist_ok=True)
-    results = {}
+    results: dict = {}
 
     # Validate all commands before executing any
     all_entries = [("baseline", plan["baseline"])] + [
@@ -176,15 +179,35 @@ def run_experiment_commands(
     _run_single_command(cmd, work_dir=work_dir, timeout=timeout, label="baseline")
     results["baseline"] = _read_metrics(baseline_metrics_path, label="baseline")
 
-    # Run each arm
+    # Count experiments per arm to decide indexing
+    arm_counts: dict[str, int] = {}
+    for exp in plan["experiments"]:
+        arm_counts[exp["arm_type"]] = arm_counts.get(exp["arm_type"], 0) + 1
+
+    # Run each arm — index the metrics file when >1 run per arm
+    arm_indices: dict[str, int] = {}
     for exp in plan["experiments"]:
         arm = exp["arm_type"]
         if not _ARM_TYPE_RE.match(arm):
             raise RuntimeError(f"Invalid arm_type '{arm}': must match [a-zA-Z0-9_-]+")
-        arm_metrics_path = metrics_dir / f"{arm}.json"
+        idx = arm_indices.get(arm, 0)
+        arm_indices[arm] = idx + 1
+
+        if arm_counts[arm] > 1:
+            arm_metrics_path = metrics_dir / f"{arm}-{idx}.json"
+        else:
+            arm_metrics_path = metrics_dir / f"{arm}.json"
         cmd = exp["command"].replace("{metrics_path}", str(arm_metrics_path))
-        _run_single_command(cmd, work_dir=work_dir, timeout=timeout, label=arm)
-        results[arm] = _read_metrics(arm_metrics_path, label=arm)
+        label_str = f"{arm}-{idx}" if arm_counts[arm] > 1 else arm
+        _run_single_command(cmd, work_dir=work_dir, timeout=timeout, label=label_str)
+        metrics = _read_metrics(arm_metrics_path, label=label_str)
+        metrics["_experiment_description"] = exp.get("description", "")
+        metrics["_config_changes"] = exp.get("config_changes", "")
+
+        if arm_counts[arm] > 1:
+            results.setdefault(arm, []).append(metrics)
+        else:
+            results[arm] = metrics
 
     return results
 

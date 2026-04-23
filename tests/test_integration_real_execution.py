@@ -179,6 +179,53 @@ class TestRunExperimentCommands:
         assert results["baseline"]["ttft_p99_ms"] == 250.8
         assert results["h-main"]["ttft_p99_ms"] == 200.0
 
+    def test_multiple_experiments_per_arm(self, fake_simulator, tmp_path):
+        """Multiple experiments for the same arm_type produce a list of results."""
+        iter_dir = tmp_path / "runs" / "iter-1"
+        iter_dir.mkdir(parents=True)
+
+        plan = {
+            "baseline": {
+                "description": "baseline",
+                "command": f"{sys.executable} {fake_simulator} --metrics-path {{metrics_path}}",
+            },
+            "experiments": [
+                {
+                    "arm_type": "h-main",
+                    "description": "run A",
+                    "config_changes": "config A",
+                    "command": f"{sys.executable} {fake_simulator} --batch-size 64 --metrics-path {{metrics_path}}",
+                },
+                {
+                    "arm_type": "h-main",
+                    "description": "run B",
+                    "config_changes": "config B",
+                    "command": f"{sys.executable} {fake_simulator} --batch-size 128 --metrics-path {{metrics_path}}",
+                },
+                {
+                    "arm_type": "h-control-negative",
+                    "description": "single control",
+                    "command": f"{sys.executable} {fake_simulator} --metrics-path {{metrics_path}}",
+                },
+            ],
+        }
+        results = run_experiment_commands(
+            plan, work_dir=tmp_path, iter_dir=iter_dir, timeout=30,
+        )
+        # h-main appears twice -> list
+        assert isinstance(results["h-main"], list)
+        assert len(results["h-main"]) == 2
+        assert results["h-main"][0]["_experiment_description"] == "run A"
+        assert results["h-main"][1]["_experiment_description"] == "run B"
+        # h-control-negative appears once -> dict
+        assert isinstance(results["h-control-negative"], dict)
+        # Indexed metrics files should exist
+        assert (iter_dir / "metrics" / "h-main-0.json").exists()
+        assert (iter_dir / "metrics" / "h-main-1.json").exists()
+        assert (iter_dir / "metrics" / "h-control-negative.json").exists()
+        # No overwritten h-main.json
+        assert not (iter_dir / "metrics" / "h-main.json").exists()
+
     def test_command_failure_raises(self, tmp_path):
         iter_dir = tmp_path / "runs" / "iter-1"
         iter_dir.mkdir(parents=True)

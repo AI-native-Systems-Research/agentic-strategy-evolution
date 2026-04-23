@@ -356,7 +356,7 @@ class LLMDispatcher:
         ]
         try:
             response = self._completion(
-                model=self.model, messages=messages, max_tokens=4096,
+                model=self.model, messages=messages, max_tokens=16384,
             )
         except Exception as exc:
             raise RuntimeError(
@@ -391,7 +391,7 @@ class LLMDispatcher:
         ]
         try:
             response = self._completion(
-                model=self.model, messages=messages, max_tokens=4096,
+                model=self.model, messages=messages, max_tokens=16384,
             )
         except Exception as exc:
             raise RuntimeError(
@@ -432,7 +432,7 @@ class LLMDispatcher:
         ]
         try:
             response = self._completion(
-                model=self.model, messages=messages, max_tokens=4096,
+                model=self.model, messages=messages, max_tokens=16384,
             )
         except Exception as exc:
             raise RuntimeError(
