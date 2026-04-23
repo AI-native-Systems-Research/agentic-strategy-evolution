@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/investigation_summary.schema.json",
+  "title": "Investigation Summary",
+  "description": "Bounded iteration-level summary for context passing to the next iteration's planner. Produced after extraction, consumed by the design prompt.",
+  "type": "object",
+  "required": ["iteration", "what_was_tested", "key_findings", "principles_changed", "open_questions", "suggested_next_direction"],
+  "additionalProperties": false,
+  "properties": {
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Which iteration this summary covers."
+    },
+    "what_was_tested": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Brief description of the hypothesis tested this iteration."
+    },
+    "key_findings": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What was learned: confirmed, refuted, or partially confirmed results."
+    },
+    "principles_changed": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Which principles were inserted, updated, or pruned."
+    },
+    "open_questions": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What remains unclear or untested."
+    },
+    "suggested_next_direction": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What the next iteration should investigate."
+    }
+  }
+}
