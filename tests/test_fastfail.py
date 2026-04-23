@@ -119,7 +119,7 @@ class TestFastFailValidation:
         with pytest.raises(TypeError, match="must be numeric"):
             check_fast_fail(findings)
 
-    def test_duplicate_arm_type_raises(self):
+    def test_duplicate_h_main_raises(self):
         findings = {
             "arms": [
                 {"arm_type": "h-main", "status": "CONFIRMED"},
@@ -128,6 +128,38 @@ class TestFastFailValidation:
         }
         with pytest.raises(ValueError, match="Duplicate arm_type"):
             check_fast_fail(findings)
+
+    def test_duplicate_h_control_negative_raises(self):
+        findings = {
+            "arms": [
+                {"arm_type": "h-main", "status": "CONFIRMED"},
+                {"arm_type": "h-control-negative", "status": "CONFIRMED"},
+                {"arm_type": "h-control-negative", "status": "REFUTED"},
+            ]
+        }
+        with pytest.raises(ValueError, match="Duplicate arm_type"):
+            check_fast_fail(findings)
+
+    def test_multiple_robustness_arms_allowed(self):
+        findings = {
+            "arms": [
+                {"arm_type": "h-main", "status": "REFUTED"},
+                {"arm_type": "h-control-negative", "status": "CONFIRMED"},
+                {"arm_type": "h-robustness", "status": "REFUTED"},
+                {"arm_type": "h-robustness", "status": "REFUTED"},
+            ]
+        }
+        assert check_fast_fail(findings) == FastFailAction.SKIP_TO_EXTRACTION
+
+    def test_multiple_ablation_arms_allowed(self):
+        findings = {
+            "arms": [
+                {"arm_type": "h-main", "status": "CONFIRMED"},
+                {"arm_type": "h-ablation", "status": "CONFIRMED"},
+                {"arm_type": "h-ablation", "status": "REFUTED"},
+            ]
+        }
+        assert check_fast_fail(findings) == FastFailAction.CONTINUE
 
     def test_missing_arm_type_key_raises(self):
         findings = {
