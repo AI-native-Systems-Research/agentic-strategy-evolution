@@ -171,6 +171,7 @@ class LLMDispatcher:
         ("reviewer", "review-findings"): ("review_findings", None, None),
         ("extractor", "extract"): ("extract", "json", "principles.schema.json"),
         ("extractor", "summarize"): ("summarize", "json", "investigation_summary.schema.json"),
+        ("summarizer", "summarize-gate"): ("summarize_gate", "json", "gate_summary.schema.json"),
     }
 
     def _route(
@@ -275,6 +276,34 @@ class LLMDispatcher:
 
         if perspective is not None:
             ctx["perspective_name"] = perspective
+
+        if phase == "summarize-gate":
+            gate_type = perspective or "design"
+            ctx["gate_type"] = gate_type
+            # Build context based on gate type
+            if gate_type == "design":
+                bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
+                if bundle_path.exists():
+                    ctx["gate_context"] = f"Hypothesis bundle:\n```yaml\n{bundle_path.read_text()}\n```"
+                else:
+                    ctx["gate_context"] = "Bundle not available."
+            elif gate_type == "findings":
+                findings_path = self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
+                if findings_path.exists():
+                    ctx["gate_context"] = f"Findings:\n```json\n{findings_path.read_text()}\n```"
+                else:
+                    ctx["gate_context"] = "Findings not available."
+            elif gate_type in ("continue", "end_of_campaign"):
+                summary_path = (
+                    self.work_dir / "runs" / f"iter-{iteration}"
+                    / "investigation_summary.json"
+                )
+                if summary_path.exists():
+                    ctx["gate_context"] = f"Investigation summary:\n```json\n{summary_path.read_text()}\n```"
+                else:
+                    ctx["gate_context"] = "Investigation summary not available."
+            else:
+                ctx["gate_context"] = "No additional context."
 
         return ctx
 

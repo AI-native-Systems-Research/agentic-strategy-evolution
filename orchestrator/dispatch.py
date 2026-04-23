@@ -68,6 +68,8 @@ class StubDispatcher:
                     self._write_investigation_summary(output_path, iteration)
                 else:
                     self._write_principles(output_path, iteration)
+            case "summarizer":
+                self._write_gate_summary(output_path, perspective or "design")
             case _:
                 raise ValueError(f"Unknown role: {role}")
 
@@ -184,3 +186,14 @@ class StubDispatcher:
             }
         )
         atomic_write(path, json.dumps(store, indent=2) + "\n")
+
+    def _write_gate_summary(self, path: Path, gate_type: str) -> None:
+        summary = {
+            "gate_type": gate_type,
+            "summary": f"Stub: summary for {gate_type} gate.",
+            "key_points": [
+                f"Stub: key point 1 for {gate_type}",
+                f"Stub: key point 2 for {gate_type}",
+            ],
+        }
+        atomic_write(path, json.dumps(summary, indent=2) + "\n")

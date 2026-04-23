@@ -32,4 +32,5 @@ class Gate(Protocol):
         question: str,
         artifact_path: str | None = None,
         reviews: list[str] | None = None,
+        summary_path: str | None = None,
     ) -> str: ...

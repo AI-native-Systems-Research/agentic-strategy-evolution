@@ -3,6 +3,7 @@
 Pauses execution, surfaces artifact + review summary, prompts for decision.
 Supports auto-approve mode for testing.
 """
+import json
 import logging
 import os
 import warnings
@@ -63,7 +64,24 @@ class HumanGate:
         question: str,
         artifact_path: str | None = None,
         reviews: list[str] | None = None,
+        summary_path: str | None = None,
     ) -> str:
+        # Show summary if available (before raw artifact and auto-response)
+        if summary_path:
+            spath = Path(summary_path)
+            if spath.exists():
+                try:
+                    summary = json.loads(spath.read_text())
+                    print(f"\n{'─'*60}")
+                    print(f"  SUMMARY")
+                    print(f"{'─'*60}")
+                    print(f"\n  {summary.get('summary', '')}\n")
+                    for point in summary.get("key_points", []):
+                        print(f"  * {point}")
+                    print(f"\n{'─'*60}")
+                except (json.JSONDecodeError, OSError):
+                    pass  # Fall through to raw artifact display
+
         if self._response:
             logger.info("Gate auto-response: %s", self._response)
             return Decision(self._response).value

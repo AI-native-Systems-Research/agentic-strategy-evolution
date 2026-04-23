@@ -713,3 +713,41 @@ class TestSimplifiedCampaign:
         """Schema should accept campaign without metrics/knobs."""
         schema = load_schema("campaign.schema.yaml")
         jsonschema.validate(MINIMAL_CAMPAIGN, schema)
+
+
+class TestGateSummaryDispatch:
+    """Verify the summarizer/summarize-gate route works."""
+
+    VALID_GATE_SUMMARY = json.dumps({
+        "gate_type": "design",
+        "summary": "Testing whether batch size amortizes overhead in TestSystem.",
+        "key_points": [
+            "H-main predicts 20% latency reduction when batch_size doubles",
+            "Control-negative checks no effect at batch_size=1",
+            "Confirms if fixed overhead is the bottleneck",
+        ],
+    }, indent=2)
+
+    def test_dispatch_summarize_gate_produces_valid_summary(self, work_dir: Path) -> None:
+        resp = f"```json\n{self.VALID_GATE_SUMMARY}\n```"
+        d = _make_dispatcher(work_dir, [resp])
+        out = work_dir / "runs" / "iter-1" / "gate_summary.json"
+        d.dispatch("summarizer", "summarize-gate", output_path=out, iteration=1)
+        assert out.exists()
+        summary = json.loads(out.read_text())
+        schema = load_schema("gate_summary.schema.json")
+        jsonschema.validate(summary, schema)
+
+    def test_summarize_gate_context_includes_bundle(self, work_dir: Path) -> None:
+        resp = f"```json\n{self.VALID_GATE_SUMMARY}\n```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(
+            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
+        )
+        out = work_dir / "runs" / "iter-1" / "gate_summary.json"
+        d.dispatch(
+            "summarizer", "summarize-gate", output_path=out, iteration=1,
+            perspective="design",
+        )
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "h-main" in prompt.lower() or "bundle" in prompt.lower()

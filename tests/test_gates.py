@@ -1,4 +1,5 @@
 """Tests for the human gate logic."""
+import json
 import os
 import warnings
 
@@ -101,3 +102,36 @@ class TestHumanGate:
         )
         with pytest.raises(KeyboardInterrupt):
             gate.prompt("Approve?")
+
+
+class TestSummarizedGate:
+    """Gates show summaries when a summary file exists."""
+
+    def test_gate_displays_summary_when_present(self, tmp_path, monkeypatch):
+        gate = HumanGate(auto_response="approve")
+        summary = {
+            "gate_type": "design",
+            "summary": "Testing batch overhead amortization.",
+            "key_points": ["H-main: 20% latency reduction", "Control: no effect at 1"],
+        }
+        summary_path = tmp_path / "gate_summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2))
+
+        printed = []
+        monkeypatch.setattr("builtins.print", lambda *a, **kw: printed.append(" ".join(str(x) for x in a)))
+
+        gate.prompt(
+            "Approve?",
+            artifact_path=str(tmp_path / "bundle.yaml"),
+            summary_path=str(summary_path),
+        )
+
+        output = "\n".join(printed)
+        assert "Testing batch overhead amortization" in output
+        assert "H-main: 20% latency reduction" in output
+
+    def test_gate_works_without_summary(self, monkeypatch):
+        """Backwards compatible: gates work when no summary_path is given."""
+        gate = HumanGate(auto_response="approve")
+        result = gate.prompt("Approve?")
+        assert result == "approve"
