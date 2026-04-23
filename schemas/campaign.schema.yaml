@@ -16,6 +16,11 @@ properties:
     minLength: 1
     description: "The guiding research question for this campaign."
 
+  max_iterations:
+    type: integer
+    minimum: 1
+    description: "Maximum number of iterations for run_campaign.py. CLI --max-iterations overrides this. Default: 10."
+
   target_system:
     type: object
     required: [name, description, observable_metrics, controllable_knobs]

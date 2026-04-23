@@ -18,7 +18,9 @@ import re
 import shlex
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
+from enum import Enum
 from pathlib import Path
 
 import jsonschema
@@ -29,6 +31,14 @@ from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.util import atomic_write
+
+
+class IterationOutcome(str, Enum):
+    """Outcome of a single iteration — used by run_campaign to decide next step."""
+    COMPLETED = "COMPLETED"    # Final iteration, transitioned to DONE
+    CONTINUE = "CONTINUE"      # Non-final iteration, stopped at EXTRACTION
+    ABORTED = "ABORTED"        # Human aborted at a gate
+    REDESIGN = "REDESIGN"      # Control-negative refuted, needs redesign
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 SCHEMAS_DIR = Path(__file__).parent / "schemas"
@@ -134,11 +144,14 @@ def run_experiment_commands(
             executable (derived from campaign run_command). Prevents the
             LLM from generating commands that run arbitrary binaries.
 
-    Returns dict with metrics keyed by label: {"baseline": {...}, "h-main": {...}, ...}
+    Returns dict with metrics keyed by label.  When an arm_type appears
+    once the value is a single dict; when it appears multiple times the
+    value is a list of dicts (one per run, in plan order).
+    Baseline is always a single dict.
     """
     metrics_dir = (iter_dir / "metrics").resolve()
     metrics_dir.mkdir(parents=True, exist_ok=True)
-    results = {}
+    results: dict = {}
 
     # Validate all commands before executing any
     all_entries = [("baseline", plan["baseline"])] + [
@@ -166,15 +179,35 @@ def run_experiment_commands(
     _run_single_command(cmd, work_dir=work_dir, timeout=timeout, label="baseline")
     results["baseline"] = _read_metrics(baseline_metrics_path, label="baseline")
 
-    # Run each arm
+    # Count experiments per arm to decide indexing
+    arm_counts: dict[str, int] = {}
+    for exp in plan["experiments"]:
+        arm_counts[exp["arm_type"]] = arm_counts.get(exp["arm_type"], 0) + 1
+
+    # Run each arm — index the metrics file when >1 run per arm
+    arm_indices: dict[str, int] = {}
     for exp in plan["experiments"]:
         arm = exp["arm_type"]
         if not _ARM_TYPE_RE.match(arm):
             raise RuntimeError(f"Invalid arm_type '{arm}': must match [a-zA-Z0-9_-]+")
-        arm_metrics_path = metrics_dir / f"{arm}.json"
+        idx = arm_indices.get(arm, 0)
+        arm_indices[arm] = idx + 1
+
+        if arm_counts[arm] > 1:
+            arm_metrics_path = metrics_dir / f"{arm}-{idx}.json"
+        else:
+            arm_metrics_path = metrics_dir / f"{arm}.json"
         cmd = exp["command"].replace("{metrics_path}", str(arm_metrics_path))
-        _run_single_command(cmd, work_dir=work_dir, timeout=timeout, label=arm)
-        results[arm] = _read_metrics(arm_metrics_path, label=arm)
+        label_str = f"{arm}-{idx}" if arm_counts[arm] > 1 else arm
+        _run_single_command(cmd, work_dir=work_dir, timeout=timeout, label=label_str)
+        metrics = _read_metrics(arm_metrics_path, label=label_str)
+        metrics["_experiment_description"] = exp.get("description", "")
+        metrics["_config_changes"] = exp.get("config_changes", "")
+
+        if arm_counts[arm] > 1:
+            results.setdefault(arm, []).append(metrics)
+        else:
+            results[arm] = metrics
 
     return results
 
@@ -270,21 +303,32 @@ def run_iteration(
     work_dir: Path,
     iteration: int = 1,
     model: str = "aws/claude-opus-4-6",
-) -> None:
+    final: bool = True,
+    auto_approve: bool = False,
+) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
+
+    Args:
+        final: If True (default), transitions to DONE after extraction.
+            If False, stops at EXTRACTION so run_campaign can continue
+            with the next iteration.
+        auto_approve: If True, all human gates are automatically approved.
+
+    Returns:
+        An IterationOutcome value: COMPLETED, CONTINUE, ABORTED, or REDESIGN.
 
     Supports resume: if the process crashes, re-running picks up from the
     last committed phase in state.json. Phases already completed are skipped.
     """
     engine = Engine(work_dir)
     dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=model)
-    gate = HumanGate()
+    gate = HumanGate(auto_response="approve") if auto_approve else HumanGate()
 
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
 
     if engine.phase == "DONE":
         print(f"Iteration {iteration} already complete.")
-        return
+        return IterationOutcome.COMPLETED
 
     if engine.phase != "INIT":
         print(f"\n  Resuming from {engine.phase}\n")
@@ -316,13 +360,18 @@ def run_iteration(
         print(f"\n{'='*60}")
         print(f"  DESIGN REVIEW — {len(campaign['review']['design_perspectives'])} reviewers")
         print(f"{'='*60}")
-        for perspective in campaign["review"]["design_perspectives"]:
+        perspectives = campaign["review"]["design_perspectives"]
+        def _run_design_review(p):
             dispatcher.dispatch(
                 "reviewer", "review-design",
-                output_path=iter_dir / "reviews" / f"review-{perspective}.md",
-                iteration=iteration, perspective=perspective,
+                output_path=iter_dir / "reviews" / f"review-{p}.md",
+                iteration=iteration, perspective=p,
             )
-            print(f"  -> review-{perspective}.md")
+            return p
+        with ThreadPoolExecutor(max_workers=len(perspectives)) as pool:
+            futures = [pool.submit(_run_design_review, p) for p in perspectives]
+            for f in as_completed(futures):
+                print(f"  -> review-{f.result()}.md")
 
     # HUMAN DESIGN GATE
     if _enter_phase(engine, "HUMAN_DESIGN_GATE"):
@@ -337,10 +386,10 @@ def run_iteration(
         if decision == "reject":
             print("Design rejected. Re-run after revising the campaign config.")
             engine.transition("DESIGN")
-            return
+            return IterationOutcome.REDESIGN
         if decision == "abort":
             print("Aborted.")
-            return
+            return IterationOutcome.ABORTED
 
     # RUNNING (executor)
     if _enter_phase(engine, "RUNNING"):
@@ -393,7 +442,7 @@ def run_iteration(
         _enter_phase(engine, "FINDINGS_REVIEW")
         _enter_phase(engine, "HUMAN_FINDINGS_GATE")
         engine.transition("RUNNING")
-        return
+        return IterationOutcome.REDESIGN
     else:
         if ff == FastFailAction.SIMPLIFY:
             print("  ** Dominant component >80% — consider simplifying the model.")
@@ -404,13 +453,18 @@ def run_iteration(
             print(f"\n{'='*60}")
             print(f"  FINDINGS REVIEW — {len(campaign['review']['findings_perspectives'])} reviewers")
             print(f"{'='*60}")
-            for perspective in campaign["review"]["findings_perspectives"]:
+            perspectives = campaign["review"]["findings_perspectives"]
+            def _run_findings_review(p):
                 dispatcher.dispatch(
                     "reviewer", "review-findings",
-                    output_path=iter_dir / "reviews" / f"review-findings-{perspective}.md",
-                    iteration=iteration, perspective=perspective,
+                    output_path=iter_dir / "reviews" / f"review-findings-{p}.md",
+                    iteration=iteration, perspective=p,
                 )
-                print(f"  -> review-findings-{perspective}.md")
+                return p
+            with ThreadPoolExecutor(max_workers=len(perspectives)) as pool:
+                futures = [pool.submit(_run_findings_review, p) for p in perspectives]
+                for f in as_completed(futures):
+                    print(f"  -> review-findings-{f.result()}.md")
 
         # HUMAN FINDINGS GATE
         if _enter_phase(engine, "HUMAN_FINDINGS_GATE"):
@@ -421,10 +475,10 @@ def run_iteration(
             if decision == "reject":
                 print("Findings rejected. Re-running executor.")
                 engine.transition("RUNNING")
-                return
+                return IterationOutcome.REDESIGN
             if decision == "abort":
                 print("Aborted.")
-                return
+                return IterationOutcome.ABORTED
 
         _enter_phase(engine, "TUNING")
         _enter_phase(engine, "EXTRACTION")
@@ -439,13 +493,17 @@ def run_iteration(
     )
     print(f"  -> {work_dir / 'principles.json'}")
 
-    # DONE
-    engine.transition("DONE")
-    print(f"\n{'='*60}")
-    print(f"  DONE — iteration {iteration} complete")
-    print(f"{'='*60}")
-    print(f"\nOutput in: {iter_dir}")
-    print(f"Principles: {work_dir / 'principles.json'}")
+    if final:
+        engine.transition("DONE")
+        print(f"\n{'='*60}")
+        print(f"  DONE — iteration {iteration} complete")
+        print(f"{'='*60}")
+        print(f"\nOutput in: {iter_dir}")
+        print(f"Principles: {work_dir / 'principles.json'}")
+        return IterationOutcome.COMPLETED
+    else:
+        print(f"\n  Iteration {iteration} extraction complete — ready for next iteration.")
+        return IterationOutcome.CONTINUE
 
 
 def main() -> None:
@@ -458,6 +516,8 @@ def main() -> None:
                         help="Model name (default: aws/claude-opus-4-6)")
     parser.add_argument("--run-id", default=None,
                         help="Working directory name (default: derived from campaign)")
+    parser.add_argument("--auto-approve", action="store_true",
+                        help="Auto-approve all human gates (skip interactive prompts)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -491,7 +551,7 @@ def main() -> None:
     work_dir = setup_work_dir(run_id)
     print(f"Working directory: {work_dir.resolve()}")
 
-    run_iteration(campaign, work_dir, model=args.model)
+    run_iteration(campaign, work_dir, model=args.model, auto_approve=args.auto_approve)
 
 
 if __name__ == "__main__":

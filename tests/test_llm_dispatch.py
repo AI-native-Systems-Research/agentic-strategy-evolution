@@ -298,13 +298,23 @@ class TestLLMDispatcher:
         # The mock response has CONFIRMED — proving h_main_result was ignored
         assert findings["arms"][0]["status"] == "CONFIRMED"
 
-    def test_no_code_fence_raises(self, work_dir: Path) -> None:
-        # Raw JSON without code fence should raise, not silently parse
-        d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON])
+    def test_no_code_fence_retries_then_raises(self, work_dir: Path) -> None:
+        # Raw JSON without code fence triggers retry; if retry also fails, raises
+        d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON, VALID_FINDINGS_JSON])
         out = work_dir / "runs" / "iter-1" / "findings_raw.json"
 
-        with pytest.raises(RuntimeError, match="No ```json``` code fence found"):
+        with pytest.raises(RuntimeError, match="retry response could not be parsed"):
             d.dispatch("executor", "run", output_path=out, iteration=1)
+
+    def test_no_code_fence_retry_succeeds(self, work_dir: Path) -> None:
+        # First response has no fence, retry returns a proper fenced response
+        fenced = f"```json\n{VALID_FINDINGS_JSON}\n```"
+        d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON, fenced])
+        out = work_dir / "runs" / "iter-1" / "findings_retry.json"
+
+        d.dispatch("executor", "run", output_path=out, iteration=1)
+        findings = json.loads(out.read_text())
+        assert "arms" in findings
 
     def test_multiple_code_fences_uses_last(self, work_dir: Path) -> None:
         first_json = json.dumps({"bad": True})
@@ -511,3 +521,129 @@ class TestRunAnalyzeDispatch:
         findings = json.loads(out.read_text())
         schema = load_schema("findings.schema.json")
         jsonschema.validate(findings, schema)
+
+
+class TestInvestigationSummaryContext:
+    """Verify investigation_summary is injected into design prompts."""
+
+    def test_design_iter1_gets_first_iteration_default(self, work_dir: Path) -> None:
+        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(
+            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
+        )
+        out = work_dir / "runs" / "iter-1" / "bundle_ctx.yaml"
+        d.dispatch("planner", "design", output_path=out, iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "first iteration" in prompt.lower()
+
+    def test_design_iter2_includes_previous_summary(self, work_dir: Path) -> None:
+        # Set up iter-2 directory with bundle + problem.md
+        iter2 = work_dir / "runs" / "iter-2"
+        iter2.mkdir(parents=True)
+        (iter2 / "problem.md").write_text(
+            "# Problem Framing\n\n## Research Question\n"
+            "Does worker_count affect throughput?\n"
+        )
+        (iter2 / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
+        # Write investigation summary for iter-1
+        summary = {
+            "iteration": 1,
+            "what_was_tested": "Batch size amortization",
+            "key_findings": "H-main confirmed at 18% improvement",
+            "principles_changed": "Inserted RP-1",
+            "open_questions": "Does this hold under high load?",
+            "suggested_next_direction": "Test with worker_count scaling",
+        }
+        summary_path = work_dir / "runs" / "iter-1" / "investigation_summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2))
+
+        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(
+            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
+        )
+        out = iter2 / "bundle_ctx.yaml"
+        d.dispatch("planner", "design", output_path=out, iteration=2)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "Batch size amortization" in prompt
+        assert "H-main confirmed" in prompt
+
+    def test_design_iter2_missing_summary_gets_default(self, work_dir: Path) -> None:
+        # Set up iter-2 without a summary for iter-1
+        iter2 = work_dir / "runs" / "iter-2"
+        iter2.mkdir(parents=True)
+        (iter2 / "problem.md").write_text(
+            "# Problem Framing\n\n## Research Question\n"
+            "Does worker_count affect throughput?\n"
+        )
+        (iter2 / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
+
+        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(
+            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
+        )
+        out = iter2 / "bundle_ctx.yaml"
+        d.dispatch("planner", "design", output_path=out, iteration=2)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "No investigation summary available" in prompt
+
+    def test_design_iter2_falls_back_to_iter1_problem_md(self, work_dir: Path) -> None:
+        """Iteration 2+ skips framing, so design falls back to iter-1's problem.md."""
+        # Only iter-1 has problem.md (framing only runs once)
+        iter1 = work_dir / "runs" / "iter-1"
+        iter1.mkdir(parents=True, exist_ok=True)
+        (iter1 / "problem.md").write_text(
+            "# Problem Framing\n\n## Research Question\n"
+            "Does prefix caching reduce TTFT?\n"
+        )
+        # iter-2 exists but has no problem.md
+        iter2 = work_dir / "runs" / "iter-2"
+        iter2.mkdir(parents=True)
+
+        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(
+            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
+        )
+        out = iter2 / "bundle.yaml"
+        d.dispatch("planner", "design", output_path=out, iteration=2)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "prefix caching" in prompt.lower()
+
+
+class TestSummarizeDispatch:
+    """Verify the summarize route works end-to-end via LLMDispatcher."""
+
+    VALID_SUMMARY_JSON = json.dumps({
+        "iteration": 1,
+        "what_was_tested": "Batch size amortization hypothesis",
+        "key_findings": "H-main confirmed with 18% latency reduction",
+        "principles_changed": "Inserted RP-1: batch amortization",
+        "open_questions": "Does this hold under high contention?",
+        "suggested_next_direction": "Test with concurrent workers",
+    }, indent=2)
+
+    def test_dispatch_summarize_produces_valid_summary(self, work_dir: Path) -> None:
+        resp = f"```json\n{self.VALID_SUMMARY_JSON}\n```"
+        d = _make_dispatcher(work_dir, [resp])
+        out = work_dir / "runs" / "iter-1" / "investigation_summary.json"
+        d.dispatch("extractor", "summarize", output_path=out, iteration=1)
+        assert out.exists()
+        summary = json.loads(out.read_text())
+        schema = load_schema("investigation_summary.schema.json")
+        jsonschema.validate(summary, schema)
+
+    def test_summarize_context_includes_bundle_and_findings(self, work_dir: Path) -> None:
+        resp = f"```json\n{self.VALID_SUMMARY_JSON}\n```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(
+            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
+        )
+        out = work_dir / "runs" / "iter-1" / "investigation_summary.json"
+        d.dispatch("extractor", "summarize", output_path=out, iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        # Should contain bundle and findings content
+        assert "h-main" in prompt
+        assert "CONFIRMED" in prompt

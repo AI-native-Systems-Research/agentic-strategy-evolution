@@ -39,13 +39,13 @@ This separation exists because:
                     │                                      │
                     │  campaign.yaml   state.json          │
                     │  ledger.json     principles.json     │
-                    │  problem.md                          │
+                    │  problem.md      summary.json        │
                     │  runs/iter-N/    trace.jsonl         │
                     │    bundle.yaml   findings.json       │
                     │    experiment_plan.json (real exec)  │
                     │    experiment_results.json (real exec)│
+                    │    investigation_summary.json         │
                     │    metrics/      reviews/            │
-                    │                  summary.json        │
                     └─────────────────────────────────────┘
 ```
 
@@ -99,7 +99,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 | **Planner** | FRAMING, DESIGN | `problem.md`, `bundle.yaml` |
 | **Executor** | RUNNING | `experiment_plan.json`, `experiment_results.json`, `findings.json` |
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
-| **Extractor** | EXTRACTION | Updated `principles.json` |
+| **Extractor** | EXTRACTION, post-iteration | Updated `principles.json`, `investigation_summary.json` |
 
 **Implementations:**
 
@@ -131,7 +131,7 @@ Prompts have two layers:
 | **Methodology layer** | Ships with Nous (`prompts/methodology/`) | Generic scientific method: "check for confounds", "is the causal mechanism plausible?", "are 3 seeds enough?" |
 | **Domain adapter layer** | Generated per system from `campaign.yaml` | System-specific vocabulary, metrics, knobs, experiment commands |
 
-The methodology layer is 6 prompt templates (one per role+phase combination). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:
+The methodology layer is 9 prompt templates (one per role+phase combination). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:
 
 - `{{target_system}}`, `{{system_description}}` — from `campaign.yaml`
 - `{{observable_metrics}}`, `{{controllable_knobs}}` — from `campaign.yaml`
@@ -178,6 +178,10 @@ dispatcher = LLMDispatcher(..., api_base="https://my-proxy.example.com", api_key
 
 Default model: `aws/claude-opus-4-6`. The `completion_fn` constructor parameter allows test injection without mocking internals.
 
+### Ledger (`orchestrator/ledger.py`)
+
+Deterministic module that appends a schema-conformant row to `ledger.json` after each iteration. Reads `findings.json`, `bundle.yaml`, and `principles.json` to extract: h_main_result, ablation_results, control_result, robustness_result, prediction accuracy, and principle changes. No LLM calls — purely deterministic computation.
+
 ### Gates (`orchestrator/gates.py`)
 
 Human gates are hard stops that cannot be bypassed. They surface the artifact and review summaries, then wait for a decision.
@@ -192,6 +196,7 @@ Human gates are hard stops that cannot be bypassed. They surface the artifact an
 **Where gates appear:**
 1. After DESIGN_REVIEW — human sees the hypothesis bundle and all review summaries
 2. After FINDINGS_REVIEW — human sees the findings and all review summaries
+3. After EXTRACTION (multi-iteration only) — human decides whether to continue to the next iteration
 
 ### Fast-Fail Rules (`orchestrator/fastfail.py`)
 
@@ -271,6 +276,36 @@ principles.json grows and refines over time:
 
 Principles are hard constraints: the Planner must not design bundles that contradict active principles without explicit justification.
 
+### Multi-Iteration Campaign Flow
+
+`run_campaign.py` loops through iterations, adding post-iteration steps between each one:
+
+```
+for i in 1..max_iterations:
+  ┌─────────────────────────────────────────────────────┐
+  │  run_iteration(iteration=i, final=(i==max))         │
+  │    FRAMING → DESIGN → REVIEW → RUNNING → EXTRACTION │
+  └─────────────────────┬───────────────────────────────┘
+                        │
+                  (if not final)
+                        │
+              append_ledger_row(i)
+              dispatch("extractor", "summarize")
+                → investigation_summary.json
+                        │
+              CONTINUE GATE: "Continue to iteration i+1?"
+                        │
+              engine.transition("DESIGN")
+                  (increments iteration counter)
+                        │
+                    next iteration
+                  (summary injected into design prompt)
+```
+
+The investigation summary is bounded — it captures what was tested, key findings, open questions, and suggested next direction. This keeps agent context at O(summary) regardless of how many iterations have run.
+
+The deterministic ledger (`orchestrator/ledger.py`) appends one row per iteration with prediction accuracy and principle changes, without any LLM calls.
+
 ## Schema Contracts
 
 Every artifact exchanged between components is validated against a JSON Schema (Draft 2020-12). This ensures agents produce well-formed output and makes the system testable without LLMs.
@@ -282,6 +317,7 @@ Every artifact exchanged between components is validated against a JSON Schema (
 | `state.schema.json` | JSON | Orchestrator checkpoint (phase, iteration, run_id, config_ref) |
 | `bundle.schema.yaml` | YAML | Hypothesis bundles (arms with predictions, mechanisms, diagnostics) |
 | `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |
+| `investigation_summary.schema.json` | JSON | Bounded iteration summary for cross-iteration context |
 | `principles.schema.json` | JSON | Principle store (statement, confidence, regime, evidence, category, status) |
 | `ledger.schema.json` | JSON | Append-only iteration log with prediction accuracy and domain metrics |
 | `summary.schema.json` | JSON | Campaign rollup (cost, tokens, principles extracted) |
@@ -325,7 +361,7 @@ The orchestrator is designed for crash-safe operation:
 
 - **Atomic state writes:** `state.json` is written to a temp file, fsynced, then renamed. A crash during write leaves the previous valid state intact.
 - **Checkpoint/resume:** The engine loads state from `state.json` on construction. Kill the process at any point and restart — it resumes from the last committed state.
-- **Append-only ledger:** `ledger.json` is never rewritten, only appended to. Lost writes lose at most the current row.
+- **Append-only ledger:** `ledger.json` is logically append-only — rows are never modified or deleted. Implementation reads, appends, and atomically rewrites the file.
 - **Idempotent extraction:** The extractor reads the existing `principles.json`, appends new principles, and writes back. Re-running extraction for the same iteration produces a duplicate (detectable by ID) rather than corruption.
 
 ## Extending Nous

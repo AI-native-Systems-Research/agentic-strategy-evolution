@@ -21,6 +21,10 @@ This is iteration {{iteration}} of the investigation.
 
 {{active_principles}}
 
+## Investigation Summary (Previous Iteration)
+
+{{investigation_summary}}
+
 ## Instructions
 
 Design a hypothesis bundle with the following structure:

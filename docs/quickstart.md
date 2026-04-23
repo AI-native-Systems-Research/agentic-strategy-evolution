@@ -1,6 +1,6 @@
 # Quickstart
 
-Run a single Nous iteration on any target system.
+Run Nous iterations on any target system — single or multi-iteration campaigns.
 
 ## Prerequisites
 
@@ -134,6 +134,58 @@ Optional execution fields:
 | `timeout` | 300 | Max seconds per command |
 
 Without an `execution` section, the executor operates in **analysis mode** — reasoning about the system without running experiments.
+
+## Run a multi-iteration campaign
+
+For investigations that require more than one iteration, use `run_campaign.py`:
+
+```bash
+python run_campaign.py campaign.yaml --max-iterations 5
+```
+
+This loops through iterations automatically. After each non-final iteration:
+
+1. A **ledger row** is appended with prediction accuracy and principle changes
+2. An **investigation summary** is generated — a bounded JSON capturing what was tested, key findings, and suggested next direction
+3. A **continue gate** pauses for your approval before starting the next iteration
+
+The investigation summary feeds into the next iteration's design prompt, so each hypothesis bundle is informed by all prior learning. The summary is bounded — agent context stays at O(summary) regardless of campaign depth.
+
+Options:
+
+```bash
+python run_campaign.py campaign.yaml --max-iterations 10   # default: 10
+python run_campaign.py campaign.yaml --model gpt-4o        # different model
+python run_campaign.py campaign.yaml --run-id my-campaign   # custom work dir
+python run_campaign.py campaign.yaml -v                     # verbose logging
+```
+
+You can also set `max_iterations` in `campaign.yaml`:
+
+```yaml
+max_iterations: 10  # CLI --max-iterations overrides this
+```
+
+### Campaign output
+
+After a multi-iteration campaign, your working directory contains:
+
+- **`runs/iter-N/`** — artifacts for each iteration (bundle, findings, reviews, etc.)
+- **`runs/iter-N/investigation_summary.json`** — bounded summary for each non-final iteration
+- **`ledger.json`** — append-only log with one row per completed iteration
+- **`principles.json`** — accumulated principles across all iterations
+
+### Three human gates
+
+Each iteration has two gates (design and findings approval). Between iterations, a third **continue gate** asks whether to proceed:
+
+| Gate | When | Question |
+|------|------|----------|
+| Design gate | After design review | Approve the hypothesis bundle? |
+| Findings gate | After findings review | Approve the results? |
+| Continue gate | After extraction | Continue to the next iteration? |
+
+Type `approve` to continue, `abort` to stop the campaign.
 
 ## Next steps
 

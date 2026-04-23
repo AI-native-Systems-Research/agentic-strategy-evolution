@@ -113,6 +113,18 @@ class TestStubDispatcher:
             )
 
 
+    def test_dispatch_extractor_summarize(self, work_dir):
+        dispatcher = _make_dispatcher(work_dir)
+        output_path = work_dir / "runs" / "iter-1" / "investigation_summary.json"
+        dispatcher.dispatch(
+            "extractor", "summarize", output_path=output_path, iteration=1,
+        )
+        assert output_path.exists()
+        summary = json.loads(output_path.read_text())
+        jsonschema.validate(summary, _load_schema("investigation_summary.schema.json"))
+        assert summary["iteration"] == 1
+
+
 class TestDispatchErrorHandling:
     def test_corrupt_principles_file_raises(self, tmp_path):
         (tmp_path / "principles.json").write_text("{bad json")

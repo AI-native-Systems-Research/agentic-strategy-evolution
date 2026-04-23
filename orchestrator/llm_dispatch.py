@@ -128,10 +128,11 @@ class LLMDispatcher:
             try:
                 data = self._extract_fenced_content(response, fmt)
             except (json.JSONDecodeError, yaml.YAMLError, ValueError) as exc:
-                raise RuntimeError(
-                    f"LLM response for {role}/{phase} could not be parsed as {fmt}. "
-                    f"Response length: {len(response)} chars. Error: {exc}"
-                ) from exc
+                logger.warning(
+                    "Parse failed for %s/%s (%s), retrying with feedback.",
+                    role, phase, exc,
+                )
+                data = self._retry_parse(prompt, response, exc, fmt)
             if schema_name is not None:
                 try:
                     self._validate(data, schema_name)
@@ -168,6 +169,7 @@ class LLMDispatcher:
         ("reviewer", "review-design"): ("review_design", None, None),
         ("reviewer", "review-findings"): ("review_findings", None, None),
         ("extractor", "extract"): ("extract", "json", "principles.schema.json"),
+        ("extractor", "summarize"): ("summarize", "json", "investigation_summary.schema.json"),
     }
 
     def _route(
@@ -202,7 +204,29 @@ class LLMDispatcher:
         if phase in ("frame", "design"):
             ctx["research_question"] = self._read_research_question(phase, iteration)
 
-        if phase in ("design", "review-design", "run", "run-plan", "run-analyze"):
+        if phase == "design":
+            if iteration > 1:
+                prev_summary_path = (
+                    self.work_dir / "runs" / f"iter-{iteration - 1}"
+                    / "investigation_summary.json"
+                )
+                if prev_summary_path.exists():
+                    ctx["investigation_summary"] = prev_summary_path.read_text()
+                else:
+                    logger.warning(
+                        "Investigation summary for iteration %d not found at %s. "
+                        "Design prompt will proceed without prior learning context.",
+                        iteration - 1, prev_summary_path,
+                    )
+                    ctx["investigation_summary"] = (
+                        "No investigation summary available from the previous iteration."
+                    )
+            else:
+                ctx["investigation_summary"] = (
+                    "This is the first iteration. No prior investigation summary."
+                )
+
+        if phase in ("design", "review-design", "run", "run-plan", "run-analyze", "summarize"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
                 pass  # bundle doesn't exist yet during design — template ignores it
@@ -230,7 +254,7 @@ class LLMDispatcher:
                 )
             ctx["experiment_results"] = results_path.read_text()
 
-        if phase in ("review-findings", "extract"):
+        if phase in ("review-findings", "extract", "summarize"):
             findings_path = (
                 self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
             )
@@ -258,7 +282,11 @@ class LLMDispatcher:
         if phase == "frame":
             return self.campaign["research_question"]
         # For design, read from the problem.md produced by framing.
+        # In multi-iteration campaigns, framing only runs for iteration 1;
+        # subsequent iterations reuse iter-1's problem.md.
         problem_path = self.work_dir / "runs" / f"iter-{iteration}" / "problem.md"
+        if not problem_path.exists() and iteration > 1:
+            problem_path = self.work_dir / "runs" / "iter-1" / "problem.md"
         if not problem_path.exists():
             raise FileNotFoundError(
                 f"Expected {problem_path} for design phase. "
@@ -328,7 +356,7 @@ class LLMDispatcher:
         ]
         try:
             response = self._completion(
-                model=self.model, messages=messages, max_tokens=4096,
+                model=self.model, messages=messages, max_tokens=16384,
             )
         except Exception as exc:
             raise RuntimeError(
@@ -341,6 +369,46 @@ class LLMDispatcher:
         if content is None:
             raise RuntimeError("LLM returned None content.")
         return content
+
+    def _retry_parse(
+        self,
+        original_prompt: str,
+        original_response: str,
+        error: Exception,
+        fmt: str,
+    ) -> dict:
+        """Retry when the LLM response couldn't be parsed (missing fence, bad JSON/YAML)."""
+        feedback = (
+            f"Your previous response could not be parsed.\n\n"
+            f"Error: {error}\n\n"
+            f"Please output ONLY a ```{fmt}``` code fence with valid {fmt.upper()} inside. "
+            f"No explanation outside the fence."
+        )
+        messages = [
+            {"role": "system", "content": original_prompt},
+            {"role": "assistant", "content": original_response},
+            {"role": "user", "content": feedback},
+        ]
+        try:
+            response = self._completion(
+                model=self.model, messages=messages, max_tokens=16384,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"LLM API call failed during parse retry "
+                f"(model={self.model}): {type(exc).__name__}: {exc}"
+            ) from exc
+        if not response.choices:
+            raise RuntimeError("LLM returned empty choices list during parse retry.")
+        retry_text = response.choices[0].message.content
+        if retry_text is None:
+            raise RuntimeError("LLM returned None content during parse retry.")
+        try:
+            return self._extract_fenced_content(retry_text, fmt)
+        except (json.JSONDecodeError, yaml.YAMLError, ValueError) as exc:
+            raise RuntimeError(
+                f"LLM retry response could not be parsed as {fmt}: {exc}"
+            ) from exc
 
     def _retry_with_feedback(
         self,
@@ -364,7 +432,7 @@ class LLMDispatcher:
         ]
         try:
             response = self._completion(
-                model=self.model, messages=messages, max_tokens=4096,
+                model=self.model, messages=messages, max_tokens=16384,
             )
         except Exception as exc:
             raise RuntimeError(

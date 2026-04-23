@@ -64,7 +64,10 @@ class StubDispatcher:
             case "reviewer":
                 self._write_review(output_path, perspective or "general")
             case "extractor":
-                self._write_principles(output_path, iteration)
+                if phase == "summarize":
+                    self._write_investigation_summary(output_path, iteration)
+                else:
+                    self._write_principles(output_path, iteration)
             case _:
                 raise ValueError(f"Unknown role: {role}")
 
@@ -136,6 +139,17 @@ class StubDispatcher:
             f"No CRITICAL or IMPORTANT findings.\n"
             f"Stub review from {perspective} perspective.\n",
         )
+
+    def _write_investigation_summary(self, path: Path, iteration: int) -> None:
+        summary = {
+            "iteration": iteration,
+            "what_was_tested": f"Stub: hypothesis family tested in iteration {iteration}.",
+            "key_findings": "Stub: H-main confirmed. No significant discrepancies.",
+            "principles_changed": f"Stub: Inserted stub-principle-{iteration}.",
+            "open_questions": "Stub: No open questions from stub iteration.",
+            "suggested_next_direction": "Stub: Continue with next mechanism family.",
+        }
+        atomic_write(path, json.dumps(summary, indent=2) + "\n")
 
     def _write_principles(self, path: Path, iteration: int) -> None:
         if path.exists():
