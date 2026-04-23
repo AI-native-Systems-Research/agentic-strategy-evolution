@@ -298,13 +298,23 @@ class TestLLMDispatcher:
         # The mock response has CONFIRMED — proving h_main_result was ignored
         assert findings["arms"][0]["status"] == "CONFIRMED"
 
-    def test_no_code_fence_raises(self, work_dir: Path) -> None:
-        # Raw JSON without code fence should raise, not silently parse
-        d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON])
+    def test_no_code_fence_retries_then_raises(self, work_dir: Path) -> None:
+        # Raw JSON without code fence triggers retry; if retry also fails, raises
+        d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON, VALID_FINDINGS_JSON])
         out = work_dir / "runs" / "iter-1" / "findings_raw.json"
 
-        with pytest.raises(RuntimeError, match="No ```json``` code fence found"):
+        with pytest.raises(RuntimeError, match="retry response could not be parsed"):
             d.dispatch("executor", "run", output_path=out, iteration=1)
+
+    def test_no_code_fence_retry_succeeds(self, work_dir: Path) -> None:
+        # First response has no fence, retry returns a proper fenced response
+        fenced = f"```json\n{VALID_FINDINGS_JSON}\n```"
+        d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON, fenced])
+        out = work_dir / "runs" / "iter-1" / "findings_retry.json"
+
+        d.dispatch("executor", "run", output_path=out, iteration=1)
+        findings = json.loads(out.read_text())
+        assert "arms" in findings
 
     def test_multiple_code_fences_uses_last(self, work_dir: Path) -> None:
         first_json = json.dumps({"bad": True})
