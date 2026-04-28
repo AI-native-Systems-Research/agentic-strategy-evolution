@@ -1,12 +1,3 @@
-# Nous campaign for BLIS — LLM inference serving simulator.
-#
-# Minimal config: research_question + target_system (name, description, repo_path).
-# The planner explores the codebase to discover metrics, knobs, and execution methods.
-#
-# Requires:
-#   - Claude Code CLI installed and authenticated (for planner/executor code access)
-#   - An LLM API key (OPENAI_API_KEY) for reviewer/extractor/summarizer agents
-
 research_question: >
   Does increasing the prefix ratio in a workload reduce TTFT under moderate load?
 
@@ -18,35 +9,6 @@ target_system:
     BLIS is a discrete-event simulator for LLM inference serving.
     It models request arrivals, scheduling, and KV-cache management.
   repo_path: null  # Set to your local BLIS checkout path
-
-  # Optional — planner discovers these from code when repo_path is set.
-  # Provide as hints if you want to constrain the design space.
-  #
-  # observable_metrics:
-  #   - ttft_mean_ms
-  #   - ttft_p99_ms
-  #   - e2e_mean_ms
-  #   - responses_per_sec
-  # controllable_knobs:
-  #   - prefix_tokens
-  #   - rate
-
-  # Optional — enables real experiment execution (run commands, collect metrics).
-  # Without this, the executor operates in analysis mode.
-  #
-  # execution:
-  #   setup_commands:
-  #     - "go build -o blis ."
-  #   run_command: >-
-  #     ./blis run
-  #     --model qwen/qwen3-14b
-  #     --num-instances 4
-  #     --rate 100
-  #     --num-requests 500
-  #     --seed 42
-  #     --metrics-path {metrics_path}
-  #   cleanup_commands: []
-  #   timeout: 300
 
 review:
   design_perspectives:
