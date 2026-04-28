@@ -147,7 +147,7 @@ def _make_routing_completion(responses: dict[tuple[str, str], str]):
             text = responses[("reviewer", "review-design")]
         elif "review" in system_msg.lower() and "experiment findings" in system_msg.lower():
             text = responses[("reviewer", "review-findings")]
-        elif "analyze" in system_msg.lower() and "findings" in system_msg.lower():
+        elif "scientific executor" in system_msg.lower():
             text = responses[("executor", "run")]
         else:
             text = "Unrecognized prompt."

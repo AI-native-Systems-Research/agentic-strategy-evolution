@@ -42,12 +42,6 @@ target_system:
   #   - algorithm
   #   - cache_size
 
-  # Optional — enables real experiment execution.
-  # Without this, the executor operates in analysis mode.
-  # execution:
-  #   run_command: "./your-tool --metrics-path {metrics_path}"
-  #   timeout: 300
-
 review:
   design_perspectives:
     - statistical-rigor
@@ -73,7 +67,6 @@ prompts:
 | `target_system.repo_path` | Path to git repo — planner explores code to discover metrics and knobs |
 | `target_system.observable_metrics` | Optional hints — what agents can measure (discovered from code if omitted) |
 | `target_system.controllable_knobs` | Optional hints — what agents can change (discovered from code if omitted) |
-| `target_system.execution` | Optional — enables real experiment execution with shell commands |
 | `max_iterations` | Max iterations (default: 10, CLI flag overrides) |
 
 ## Run a campaign
@@ -133,27 +126,6 @@ Default is `aws/claude-opus-4-6`. Pass any model name via `--model`:
 ```bash
 python run_campaign.py campaign.yaml --model gpt-4o
 ```
-
-## Real experiment execution
-
-To run actual experiments (not just analysis), uncomment the `execution` section in your campaign:
-
-```yaml
-execution:
-  setup_commands:
-    - "go build -o blis ."
-  run_command: "./blis run --metrics-path {metrics_path}"
-  timeout: 300
-```
-
-The `{metrics_path}` placeholder is replaced at runtime. Your tool must write a JSON file to that path.
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `setup_commands` | [] | Commands to run before experiments |
-| `run_command` | — | Command template with `{metrics_path}` placeholder |
-| `cleanup_commands` | [] | Commands to run after experiments |
-| `timeout` | 300 | Max seconds per command |
 
 ## Single iteration (advanced)
 

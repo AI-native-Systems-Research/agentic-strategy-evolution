@@ -165,8 +165,6 @@ class LLMDispatcher:
         ("planner", "frame"): ("frame", None, None),
         ("planner", "design"): ("design", "yaml", "bundle.schema.yaml"),
         ("executor", "run"): ("run", "json", "findings.schema.json"),
-        ("executor", "run-plan"): ("run_plan", "json", "experiment_plan.schema.json"),
-        ("executor", "run-analyze"): ("run_analyze", "json", "findings.schema.json"),
         ("reviewer", "review-design"): ("review_design", None, None),
         ("reviewer", "review-findings"): ("review_findings", None, None),
         ("extractor", "extract"): ("extract", "json", "principles.schema.json"),
@@ -228,7 +226,7 @@ class LLMDispatcher:
                     "This is the first iteration. No prior investigation summary."
                 )
 
-        if phase in ("design", "review-design", "run", "run-plan", "run-analyze", "summarize"):
+        if phase in ("design", "review-design", "run", "summarize"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
                 pass  # bundle doesn't exist yet during design — template ignores it
@@ -240,21 +238,15 @@ class LLMDispatcher:
             else:
                 ctx["bundle_yaml"] = bundle_path.read_text()
 
-        if phase == "run-plan":
-            execution = self.campaign["target_system"].get("execution", {})
-            ctx["run_command_template"] = execution.get("run_command", "")
-            ctx["setup_commands"] = "\n".join(execution.get("setup_commands", []))
-
-        if phase == "run-analyze":
-            results_path = (
-                self.work_dir / "runs" / f"iter-{iteration}" / "experiment_results.json"
-            )
-            if not results_path.exists():
-                raise FileNotFoundError(
-                    f"Cannot run 'run-analyze' phase: {results_path} not found. "
-                    f"Ensure experiment commands were executed for iteration {iteration}."
-                )
-            ctx["experiment_results"] = results_path.read_text()
+        if phase == "run":
+            # Inject problem.md so executor has full framing context
+            problem_path = self.work_dir / "runs" / f"iter-{iteration}" / "problem.md"
+            if not problem_path.exists() and iteration > 1:
+                problem_path = self.work_dir / "runs" / "iter-1" / "problem.md"
+            if problem_path.exists():
+                ctx["problem_md"] = problem_path.read_text()
+            else:
+                ctx["problem_md"] = "No problem framing available."
 
         if phase in ("review-findings", "extract", "summarize"):
             findings_path = (

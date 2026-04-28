@@ -250,3 +250,57 @@ class TestCLIDispatcherUnit:
 
         d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, timeout=120)
         assert d.timeout == 120
+
+    def test_override_cwd_changes_subprocess_cwd(self, work_dir: Path, tmp_path: Path) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        repo_dir = tmp_path / "fake-repo"
+        repo_dir.mkdir()
+        override_dir = tmp_path / "worktree"
+        override_dir.mkdir()
+
+        campaign = {
+            **SAMPLE_CAMPAIGN,
+            "target_system": {
+                **SAMPLE_CAMPAIGN["target_system"],
+                "repo_path": str(repo_dir),
+            },
+        }
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "# Framing\nStub."
+        mock_result.stderr = ""
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with d.override_cwd(override_dir):
+                d.dispatch("planner", "frame", output_path=work_dir / "out.md", iteration=1)
+
+        call_kwargs = mock_run.call_args
+        cwd_used = call_kwargs.kwargs.get("cwd") or call_kwargs[1].get("cwd")
+        assert str(cwd_used) == str(override_dir)
+
+    def test_override_cwd_restores_original(self, work_dir: Path, tmp_path: Path) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        repo_dir = tmp_path / "fake-repo"
+        repo_dir.mkdir()
+        override_dir = tmp_path / "worktree"
+        override_dir.mkdir()
+
+        campaign = {
+            **SAMPLE_CAMPAIGN,
+            "target_system": {
+                **SAMPLE_CAMPAIGN["target_system"],
+                "repo_path": str(repo_dir),
+            },
+        }
+
+        d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+        original_cwd = d._cwd
+
+        with d.override_cwd(override_dir):
+            assert d._cwd == override_dir
+
+        assert d._cwd == original_cwd

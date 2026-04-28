@@ -61,7 +61,6 @@ Optional fields (documented as inline comments in `campaign.yaml`):
 |-------|---------|
 | `observable_metrics` | Constrain what agents measure (planner discovers from code if omitted) |
 | `controllable_knobs` | Constrain what agents change (planner discovers from code if omitted) |
-| `execution` | Enable real experiment execution with shell commands |
 
 ## Expected output
 

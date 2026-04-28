@@ -42,10 +42,8 @@ This separation exists because:
                     │  problem.md      summary.json        │
                     │  runs/iter-N/    trace.jsonl         │
                     │    bundle.yaml   findings.json       │
-                    │    experiment_plan.json (real exec)  │
-                    │    experiment_results.json (real exec)│
                     │    investigation_summary.json         │
-                    │    metrics/      reviews/            │
+                    │    reviews/                          │
                     └─────────────────────────────────────┘
 ```
 
@@ -97,7 +95,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 | Role | Invoked During | Produces |
 |---|---|---|
 | **Planner** | FRAMING, DESIGN | `problem.md`, `bundle.yaml` |
-| **Executor** | RUNNING | `experiment_plan.json`, `experiment_results.json`, `findings.json` |
+| **Executor** | RUNNING | `findings.json` |
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
 | **Extractor** | EXTRACTION, post-iteration | Updated `principles.json`, `investigation_summary.json` |
 | **Summarizer** | Before each human gate | `gate_summary_*.json` |
@@ -106,7 +104,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 
 - `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
 - `LLMDispatcher` (`llm_dispatch.py`) calls a real LLM via the OpenAI SDK, parses structured output from code fences, validates against schemas, and writes artifacts atomically. Works with any OpenAI-compatible endpoint. This is the production dispatcher.
-- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Used for planner and executor roles when the campaign specifies a `repo_path`. Shares the same routing table and prompt templates as `LLMDispatcher`, but sends prompts via stdin to the Claude CLI instead of calling an API endpoint. The agent can read files, grep code, and run commands in the target repo.
+- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Used for the planner (framing) and executor roles when the campaign specifies a `repo_path`. Shares the same routing table and prompt templates as `LLMDispatcher`, but sends prompts via stdin to the Claude CLI instead of calling an API endpoint. The agent can read files, grep code, and run commands in the target repo. Supports `override_cwd()` context manager for temporarily pointing the executor at a git worktree.
 
 **Dispatch interface:**
 ```python
@@ -151,23 +149,11 @@ For structured outputs (bundle YAML, findings JSON, principles JSON), the dispat
 
 Markdown outputs (problem framing, reviews) are written directly without validation.
 
-### Executor Modes
+### Executor
 
-The executor operates in one of two modes, chosen automatically based on `campaign.yaml`:
+The executor receives the hypothesis bundle, the problem framing document, and access to the target system. When dispatched via `CLIDispatcher` (i.e., `repo_path` is set), the executor has shell access and runs inside a git worktree of the target system. It can build the system, run experiments, read metrics, implement code changes, handle failures, and produce `findings.json`.
 
-**Real execution mode** (when `target_system.execution` is present):
-
-1. **Plan** — LLM designs shell commands for the baseline and each hypothesis arm (`executor/run-plan` route, produces `experiment_plan.json`)
-2. **Run** — Orchestrator executes each command via `subprocess`, collecting metrics from JSON files written by the target system
-3. **Analyze** — LLM compares predictions to real metrics (`executor/run-analyze` route, produces `findings.json`)
-
-Commands run with `shell=False` (via `shlex.split`) for safety, with configurable timeouts. If `execution.repo_path` is set, the orchestrator creates a git worktree for isolation and cleans it up afterward.
-
-**Analysis mode** (no `execution` config):
-
-The executor reasons about the target system based on its understanding of the code and mechanisms, but does not run actual experiments. The `executor/run` route produces `findings.json` directly from LLM analysis.
-
-This design is backward-compatible — existing campaigns without `execution` config continue to work unchanged.
+When dispatched via `LLMDispatcher` (no `repo_path`), the executor reasons about the system based on the bundle and problem framing, producing `findings.json` from analysis alone.
 
 ### Model Configuration
 
@@ -186,12 +172,12 @@ Default model: `aws/claude-opus-4-6`. The `completion_fn` constructor parameter 
 
 ### When to Use Which Dispatcher
 
-| Dispatcher | When | Why |
+| Dispatcher | Role | When |
 |---|---|---|
-| `LLMDispatcher` | Campaign has no `repo_path` (default) | Agent has all context in the prompt — no code access needed |
-| `CLIDispatcher` | Campaign has `repo_path` set | Agent needs to read code, discover metrics/knobs, run commands |
+| `CLIDispatcher` | Planner (framing), Executor | `repo_path` is set — agent needs code/shell access |
+| `LLMDispatcher` | Planner (design), Reviewer, Extractor, Summarizer | Always — operates on artifacts, no code access needed |
 
-The entry points (`run_iteration.py`, `run_campaign.py`) auto-select: if `target_system.repo_path` is set, planner and executor use `CLIDispatcher`. Reviewer, extractor, and summarizer always use `LLMDispatcher` (they operate on artifacts, not code).
+The entry points (`run_iteration.py`, `run_campaign.py`) auto-select: if `target_system.repo_path` is set, a `CLIDispatcher` is created alongside the `LLMDispatcher`. Framing uses CLI (to explore code), design uses LLM API (to reason from the framing output), and execution uses CLI (to run experiments in a worktree). Reviewer, extractor, and summarizer always use `LLMDispatcher`.
 
 ### Simplified Campaign
 
@@ -283,10 +269,6 @@ Rule 1 takes priority: if H-main is refuted, the control-negative result doesn't
                        ▼
                     Executor
                        │
-                       ├──▶ experiment_plan.json  (real execution only)
-                       ├──▶ run commands, collect metrics
-                       ├──▶ experiment_results.json
-                       │
                        ▼
                  findings.json ──▶ Reviewer (10 perspectives)
                        │                    │
@@ -365,8 +347,7 @@ Every artifact exchanged between components is validated against a JSON Schema (
 
 | Schema | Format | Governs |
 |---|---|---|
-| `campaign.schema.yaml` | YAML | Campaign configuration (target system, execution, reviewer panel, prompt layers) |
-| `experiment_plan.schema.json` | JSON | Executor experiment commands (baseline + per-arm commands) |
+| `campaign.schema.yaml` | YAML | Campaign configuration (target system, reviewer panel, prompt layers) |
 | `state.schema.json` | JSON | Orchestrator checkpoint (phase, iteration, run_id, config_ref) |
 | `bundle.schema.yaml` | YAML | Hypothesis bundles (arms with predictions, mechanisms, diagnostics) |
 | `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |

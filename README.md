@@ -99,7 +99,7 @@ target_system:
   repo_path: /path/to/your/repo
 ```
 
-The planner explores the codebase to discover metrics, knobs, and execution methods. You can optionally provide `observable_metrics`, `controllable_knobs`, and `execution` config as hints — see [examples/blis/campaign.yaml](examples/blis/campaign.yaml) for all options.
+The planner explores the codebase to discover metrics, knobs, and execution methods. You can optionally provide `observable_metrics` and `controllable_knobs` as hints — see [examples/blis/campaign.yaml](examples/blis/campaign.yaml) for all options.
 
 ### 4. Run a campaign
 

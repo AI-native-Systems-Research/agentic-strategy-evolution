@@ -13,6 +13,7 @@ Agents dispatched via CLIDispatcher can:
 import json
 import logging
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -55,6 +56,16 @@ class CLIDispatcher:
         )
         repo_path = campaign.get("target_system", {}).get("repo_path")
         self._cwd = Path(repo_path) if repo_path else None
+
+    @contextmanager
+    def override_cwd(self, cwd: Path):
+        """Temporarily override the subprocess working directory."""
+        old = self._cwd
+        self._cwd = cwd
+        try:
+            yield
+        finally:
+            self._cwd = old
 
     def dispatch(
         self,
