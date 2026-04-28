@@ -64,8 +64,8 @@ Every experiment is structured as a bundle of falsifiable predictions:
 ### Prerequisites
 
 - **Python 3.11+**
-- **Go** (to build the BLIS simulator) — or skip real execution and use analysis mode
-- **An LLM API key** — any OpenAI-compatible endpoint works
+- **Claude Code CLI** (`claude`) — installed and authenticated
+- **An LLM API key** — `export OPENAI_API_KEY=...` (any OpenAI-compatible endpoint). Required for reviewer, extractor, and summarizer agents.
 
 ### 1. Install Nous
 
@@ -75,62 +75,80 @@ cd agentic-strategy-evolution
 pip install -e ".[dev]"
 ```
 
-### 2. Set up your LLM
+### 2. Set up credentials
 
 ```bash
 export OPENAI_API_KEY=sk-...
 export OPENAI_BASE_URL=https://your-endpoint.example.com  # if using a proxy
 ```
 
-Works with OpenAI, Anthropic via proxy, or any OpenAI-compatible endpoint.
+### 3. Create a campaign
 
-### 3. (Optional) Build the BLIS simulator for real execution
+Create a `campaign.yaml` pointing to your target repo:
+
+```yaml
+research_question: >
+  What mechanism drives the primary performance bottleneck?
+
+max_iterations: 5
+
+target_system:
+  name: "Your System"
+  description: >
+    What the system does and its architecture.
+  repo_path: /path/to/your/repo
+```
+
+The planner explores the codebase to discover metrics, knobs, and execution methods. You can optionally provide `observable_metrics`, `controllable_knobs`, and `execution` config as hints — see [examples/blis/campaign.yaml](examples/blis/campaign.yaml) for all options.
+
+### 4. Run a campaign
 
 ```bash
-git clone https://github.com/mtoslalibu/inference-sim.git blis
+python run_campaign.py campaign.yaml --max-iterations 3
+```
+
+Each iteration runs the full loop (framing → design → review → execution → extraction), pausing at three human gates:
+
+| Gate | When | You decide |
+|------|------|------------|
+| **Design gate** | After design review | Approve the hypothesis bundle? |
+| **Findings gate** | After findings review | Approve the results? |
+| **Continue gate** | After extraction | Continue to next iteration? |
+
+Each gate shows a formatted summary. Type `approve`, `reject`, or `abort`.
+
+Options:
+
+```bash
+python run_campaign.py campaign.yaml --max-iterations 5 -v   # verbose
+python run_campaign.py campaign.yaml --model gpt-4o          # different model
+python run_campaign.py campaign.yaml --auto-approve           # skip gates
+```
+
+### 5. Try the BLIS example
+
+```bash
+git clone https://github.com/inference-sim/inference-sim.git blis
 cd blis && go build -o blis . && cd ..
+# Edit examples/blis/campaign.yaml: set repo_path to your blis/ path
+python run_campaign.py examples/blis/campaign.yaml --max-iterations 3
 ```
 
-Then set `repo_path` in `examples/blis/campaign.yaml` to your BLIS checkout path. Without this, the executor runs in analysis mode (LLM reasons about the system without executing experiments).
+### Output
 
-### 4. Run a single iteration
-
-```bash
-python run_iteration.py examples/blis/campaign.yaml
 ```
-
-### 5. Run a multi-iteration campaign
-
-```bash
-python run_campaign.py examples/blis/campaign.yaml --max-iterations 5
+blis-run/
+  state.json              # orchestrator checkpoint
+  principles.json         # accumulated principles
+  ledger.json             # one row per iteration
+  runs/iter-N/
+    problem.md            # problem framing
+    bundle.yaml           # hypothesis bundle
+    findings.json         # prediction vs outcome
+    gate_summary_*.json   # human-readable summaries
+    investigation_summary.json  # iteration summary (non-final)
+    reviews/              # reviewer perspectives
 ```
-
-The campaign loops through iterations, pausing at human gates (design, findings, and continue gates). After each non-final iteration, it generates an investigation summary that feeds into the next design prompt. See [docs/quickstart.md](docs/quickstart.md) for details.
-
-### What to expect
-
-The script walks through these phases, printing progress:
-
-| Phase | What happens | Output |
-|-------|-------------|--------|
-| **FRAMING** | LLM defines the research problem | `runs/iter-1/problem.md` |
-| **DESIGN** | LLM creates hypothesis bundle with arms | `runs/iter-1/bundle.yaml` |
-| **DESIGN REVIEW** | Multiple reviewer perspectives check the bundle | `runs/iter-1/reviews/review-*.md` |
-| **HUMAN GATE** | **Pauses for your approval** — read the bundle and reviews, then type `approve` | |
-| **RUNNING** | LLM designs commands, orchestrator executes them, collects real metrics | `runs/iter-1/experiment_plan.json`, `experiment_results.json` |
-| **FINDINGS REVIEW** | Reviewers check prediction vs. outcome | `runs/iter-1/reviews/review-findings-*.md` |
-| **HUMAN GATE** | **Pauses again** for your approval | |
-| **EXTRACTION** | LLM extracts reusable principles | `principles.json` |
-
-Output goes to `blis-run/`. The two human gates are hard stops — the system waits for you.
-
-### Run on your own system
-
-1. Copy `templates/campaign.yaml` and fill in your system's name, description, metrics, and knobs
-2. Optionally add an `execution` block with your system's run command
-3. Run: `python run_iteration.py your-campaign.yaml`
-
-See [docs/quickstart.md](docs/quickstart.md) for details, or [examples/blis/](examples/blis/) for a complete example.
 
 ### Run tests
 
@@ -138,70 +156,27 @@ See [docs/quickstart.md](docs/quickstart.md) for details, or [examples/blis/](ex
 pytest -v
 ```
 
-Comprehensive test suite covering schemas, templates, engine, gates, dispatch, fast-fail, prompt loading, and end-to-end integration.
-
 ## Project Structure
 
 ```
 schemas/                 JSON Schema definitions (Draft 2020-12)
-  bundle.schema.yaml       Hypothesis bundle (arms + metadata)
-  campaign.schema.yaml     Campaign configuration (target system, reviewers, prompts)
-  experiment_plan.schema.json  Executor experiment commands (real execution)
-  findings.schema.json     Prediction-vs-outcome results
-  investigation_summary.schema.json  Bounded iteration summary for cross-iteration learning
-  principles.schema.json   Living principle store
-  state.schema.json        Orchestrator checkpoint
-  ledger.schema.json       Append-only iteration log
-  summary.schema.json      Campaign rollup
-  trace.schema.json        Observability log (JSONL lines)
-
 templates/               Starter files for new campaigns
-  state.json               Initial state (INIT, iteration 0)
-  campaign.yaml            Campaign config (target system, reviewer panel, prompts)
-  ledger.json              Baseline ledger row
-  principles.json          Empty principle store
-  bundle.yaml              Hypothesis bundle with TODO markers
-  problem.md               Problem framing template
-  findings.json            Findings template (schema-conformant)
-
 orchestrator/            Python orchestrator (deterministic, not an LLM)
   engine.py                State machine with atomic checkpoint/resume
   dispatch.py              Stub agent dispatch (for testing without LLM)
   llm_dispatch.py          LLM-based agent dispatch via OpenAI SDK
+  cli_dispatch.py          Code-access agent dispatch via claude -p
   prompt_loader.py         Template loading with {{placeholder}} rendering
-  gates.py                 Human approval gates
+  gates.py                 Human approval gates with summaries
   fastfail.py              Fast-fail rule evaluation
   ledger.py                Deterministic ledger append (no LLM)
   worktree.py              Git worktree isolation for experiments
   protocols.py             Dispatcher and Gate interface contracts
   util.py                  Shared utilities (atomic_write)
-
-prompts/                 Methodology prompt templates
-  methodology/
-    frame.md               Problem framing (planner)
-    design.md              Hypothesis bundle design (planner)
-    run.md                 Analysis-mode execution (executor, no execution config)
-    run_plan.md            Experiment command design (executor, real execution)
-    run_analyze.md         Real metrics analysis (executor, real execution)
-    review_design.md       Design review from a perspective (reviewer)
-    review_findings.md     Findings review from a perspective (reviewer)
-    extract.md             Principle extraction (extractor)
-    summarize.md           Investigation summary (extractor)
-
-examples/
-  blis/                    Reference campaign for BLIS inference simulator
-    campaign.yaml            Filled-in campaign config
-    README.md                Step-by-step walkthrough
-
-docs/
-  quickstart.md            How to run Nous on any target system
-  protocol.md              Full methodology specification
-  data-model.md            Plain-English guide to every data structure
-  architecture.md          System architecture and component design
-  case-studies/
-    blis.md                30-iteration validation on LLM inference serving
-
-tests/                   Comprehensive test suite (schemas, templates, engine, gates, stub + LLM dispatch, prompt loader, fastfail, protocols, integration)
+prompts/methodology/     Methodology prompt templates
+examples/blis/           Reference campaign for BLIS inference simulator
+docs/                    Quickstart, protocol, data model, architecture
+tests/                   Comprehensive test suite
 ```
 
 ## Case Study: LLM Inference Serving
@@ -218,15 +193,17 @@ See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the Claud
 
 ## Current Status
 
-**Phase 1 (complete):** Schemas, templates, orchestrator skeleton, and protocol documentation. The orchestrator drives the full state machine with stub agent dispatch.
+**Phase 1 (complete):** Schemas, templates, orchestrator skeleton, and protocol documentation.
 
-**Phase 2 (complete):** Agent prompts and real LLM dispatch. `LLMDispatcher` replaces stubs with LLM-driven agents via the OpenAI SDK (works with any OpenAI-compatible endpoint). Methodology prompt templates, schema validation with retry, and a BLIS example campaign.
+**Phase 2 (complete):** Agent prompts and real LLM dispatch via OpenAI SDK.
 
-**Phase 3 (complete):** Real experiment execution. The executor runs actual experiments via shell commands, collects real metrics, and analyzes results. Two-phase executor dispatch (plan commands → run → analyze), git worktree isolation for experiments, configurable timeouts, and backward-compatible `execution` config in `campaign.yaml`. Systems without execution config fall back to analysis mode.
+**Phase 3 (complete):** Real experiment execution with git worktree isolation.
 
-**Phase 4 (complete):** Multi-iteration campaigns. `run_campaign.py` loops through iterations with human continue gates, deterministic ledger tracking, and bounded investigation summaries that feed into each subsequent iteration's design prompt. Knowledge compounds across iterations via principles and summaries.
+**Phase 4 (complete):** Multi-iteration campaigns with compounding knowledge.
 
-**Phase 5 (next):** Domain adapter layer, cost tracking, and trace population.
+**Phase 4.5 (complete):** Code-access agents via CLIDispatcher (`claude -p`), simplified campaigns, and gate summaries for human UX.
+
+**Phase 5 (next):** Plugin UX — `/nous:init`, `/nous:investigate`, `/nous:status`.
 
 ## License
 

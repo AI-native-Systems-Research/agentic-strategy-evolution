@@ -1,115 +1,92 @@
 # Running Nous on BLIS
 
-This example shows how to run a single Nous iteration on [BLIS](https://github.com/inference-sim/inference-sim), a discrete-event simulator for LLM inference serving systems.
+This example shows how to run Nous on [BLIS](https://github.com/inference-sim/inference-sim), a discrete-event simulator for LLM inference serving systems.
 
 ## Prerequisites
 
 - Python 3.11+
+- Claude Code CLI (`claude`) installed and authenticated
 - An LLM API key: `export OPENAI_API_KEY=...` (and `OPENAI_BASE_URL` if using a proxy)
 - Nous installed: `pip install -e ".[dev]"`
 
-## Campaign configuration
+## Setup
 
-The `campaign.yaml` in this directory configures Nous for BLIS:
+1. Clone BLIS locally and build it:
+   ```bash
+   git clone https://github.com/inference-sim/inference-sim.git blis
+   cd blis && go build -o blis .
+   ```
 
-| Section | What it controls |
-|---------|-----------------|
-| `target_system.name` | Human-readable name shown in prompts |
-| `target_system.description` | System description given to all agents |
-| `target_system.observable_metrics` | What agents can measure (ttft_mean_ms, ttft_p99_ms, e2e_mean_ms, responses_per_sec) |
-| `target_system.controllable_knobs` | What agents can change (prefix_tokens, rate) |
-| `review.design_perspectives` | Reviewer perspectives for hypothesis bundle review |
-| `review.findings_perspectives` | Reviewer perspectives for findings review |
-| `review.max_review_rounds` | Maximum convergence rounds per review gate |
+2. Edit `campaign.yaml` — set `repo_path` to your BLIS checkout:
+   ```yaml
+   repo_path: /path/to/your/blis
+   ```
 
-## Running a single iteration
+## Running a campaign
 
 ```bash
-python run_iteration.py examples/blis/campaign.yaml
+python run_campaign.py examples/blis/campaign.yaml --max-iterations 3
 ```
 
-That's it. The script will:
+The script will loop through iterations. Each iteration:
 
-1. Create a working directory (`blis-run/`)
-2. Walk through all phases: framing, design, review, execution, extraction
-3. Pause at two human gates for your approval
-4. Print progress as it goes
+1. **Framing** — planner explores the BLIS codebase and frames the problem
+2. **Design** — planner creates a hypothesis bundle with code-level specificity
+3. **Design review** — 3 reviewers check the bundle
+4. **Human design gate** — shows summary, asks approve/reject/abort
+5. **Running** — executor runs the experiment
+6. **Findings review** — reviewers check findings
+7. **Human findings gate** — shows summary, asks approve/reject/abort
+8. **Extraction** — extracts principles for next iteration
+9. **Continue gate** — asks whether to proceed to next iteration
 
 Options:
 
 ```bash
-# Use a different model
-python run_iteration.py examples/blis/campaign.yaml --model gpt-4o
-
-# Custom working directory name
-python run_iteration.py examples/blis/campaign.yaml --run-id my-experiment
-
-# Verbose logging
-python run_iteration.py examples/blis/campaign.yaml -v
+python run_campaign.py examples/blis/campaign.yaml --max-iterations 5 -v
+python run_campaign.py examples/blis/campaign.yaml --model gpt-4o
+python run_campaign.py examples/blis/campaign.yaml --run-id my-campaign
+python run_campaign.py examples/blis/campaign.yaml --auto-approve  # skip gates
 ```
+
+You can also set `max_iterations` in `campaign.yaml` (CLI flag overrides it).
+
+## Campaign configuration
+
+The `campaign.yaml` starts minimal — just a research question, system description, and `repo_path`. The planner discovers metrics, knobs, and execution methods from the code.
+
+Optional fields (documented as inline comments in `campaign.yaml`):
+
+| Field | Purpose |
+|-------|---------|
+| `observable_metrics` | Constrain what agents measure (planner discovers from code if omitted) |
+| `controllable_knobs` | Constrain what agents change (planner discovers from code if omitted) |
+| `execution` | Enable real experiment execution with shell commands |
 
 ## Expected output
 
-After running, your working directory will contain:
-
 ```
 blis-run/
-  state.json              # phase: DONE
-  principles.json         # extracted principles
+  state.json
+  principles.json
   ledger.json
-  runs/
-    iter-1/
-      problem.md          # problem framing
-      bundle.yaml         # hypothesis bundle
-      experiment_plan.json  # experiment commands (real execution)
-      experiment_results.json # collected metrics (real execution)
-      findings.json       # executor findings
-      metrics/            # per-arm metric files (real execution)
-      reviews/
-        review-*.md       # design reviews
-        review-findings-*.md  # findings reviews
-      gate_summary_design.json    # human gate summary (if summarizer enabled)
-      gate_summary_findings.json  # human gate summary (if summarizer enabled)
+  runs/iter-N/
+    problem.md                     # problem framing
+    bundle.yaml                    # hypothesis bundle
+    findings.json                  # results
+    gate_summary_design.json       # human-readable design summary
+    gate_summary_findings.json     # human-readable findings summary
+    investigation_summary.json     # iteration summary (non-final iterations)
+    reviews/
+      review-*.md                  # design reviews
+      review-findings-*.md         # findings reviews
 ```
-
-## Real experiment execution
-
-The campaign includes an `execution` block that enables real experiment execution. To use it:
-
-1. Clone the [BLIS repository](https://github.com/inference-sim/inference-sim) locally
-2. Build it (follow BLIS docs)
-3. Set `repo_path` in `campaign.yaml` to your local BLIS checkout:
-   ```yaml
-   execution:
-     repo_path: "/path/to/your/blis"
-   ```
-4. Run: `python run_iteration.py examples/blis/campaign.yaml`
-
-When `repo_path` is set, Nous creates an isolated git worktree in the BLIS repo, runs the simulator commands, collects real metrics, and compares them against hypothesis predictions.
-
-When the `execution` block is removed (or `run_command` is absent), the executor falls back to **analysis mode** — reasoning about the system without running real experiments. When `repo_path` is null but `run_command` is present, experiments run in the current directory without worktree isolation.
-
-## Simplified mode (code-access agents)
-
-If you want agents to explore the BLIS codebase to discover metrics, knobs, and
-execution methods:
-
-```bash
-# Edit campaign-simplified.yaml: set repo_path to your BLIS checkout
-python run_iteration.py examples/blis/campaign-simplified.yaml
-```
-
-This uses `CLIDispatcher` (invokes `claude -p`) so the planner can read Go source
-files and the executor can run experiments with shell access. No need to manually
-specify `observable_metrics` or `controllable_knobs`.
-
-**Requires:** Claude Code CLI installed and authenticated, plus an LLM API key (`OPENAI_API_KEY`) — reviewer, extractor, and summarizer agents still use the LLM API.
 
 ## Customizing
 
-To adapt this for a different LLM inference system:
+To adapt for a different system:
 
-1. Copy `campaign.yaml` to a new directory
-2. Update `target_system` fields (name, description, metrics, knobs)
+1. Copy `campaign.yaml`
+2. Update `target_system` (name, description, repo_path)
 3. Optionally adjust reviewer perspectives in `review`
-4. Run: `python run_iteration.py path/to/your/campaign.yaml`
+4. Run: `python run_campaign.py path/to/your/campaign.yaml --max-iterations 3`
