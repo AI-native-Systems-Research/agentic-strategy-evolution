@@ -68,6 +68,8 @@ blis-run/
       reviews/
         review-*.md       # design reviews
         review-findings-*.md  # findings reviews
+      gate_summary_design.json    # human gate summary (if summarizer enabled)
+      gate_summary_findings.json  # human gate summary (if summarizer enabled)
 ```
 
 ## Real experiment execution

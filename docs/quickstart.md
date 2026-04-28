@@ -6,7 +6,7 @@ Run Nous iterations on any target system — single or multi-iteration campaigns
 
 - **Python 3.11+**
 - **An LLM API key** — `export OPENAI_API_KEY=...` (and `OPENAI_BASE_URL` if using a proxy). Works with any OpenAI-compatible endpoint.
-- **A target system** — something you can describe in terms of observable metrics and controllable knobs.
+- **A target system** — either a git repo (code-access mode) or a description with observable metrics and controllable knobs.
 
 ## Install
 
@@ -59,8 +59,9 @@ prompts:
 | Field | Description |
 |-------|-------------|
 | `research_question` | The guiding question for the campaign — what mechanism are you investigating? |
-| `target_system.observable_metrics` | What agents can measure — these appear in predictions and findings |
-| `target_system.controllable_knobs` | What agents can change — these define the experimental design space |
+| `target_system.observable_metrics` | What agents can measure (optional in code-access mode — planner discovers from code) |
+| `target_system.controllable_knobs` | What agents can change (optional in code-access mode — planner discovers from code) |
+| `target_system.repo_path` | Path to git repo for code-access mode (optional — enables CLIDispatcher) |
 | `review.design_perspectives` | How many reviewers check the hypothesis bundle (one per perspective) |
 | `review.findings_perspectives` | How many reviewers check the findings (typically more than design) |
 
@@ -225,7 +226,7 @@ Each iteration has two gates (design and findings approval). Between iterations,
 | Findings gate | After findings review | Approve the results? |
 | Continue gate | After extraction | Continue to the next iteration? |
 
-Type `approve` to continue, `abort` to stop the campaign.
+Type `approve` to continue, `reject` to loop back, `abort` to stop the campaign.
 
 ### Human gates with summaries
 
