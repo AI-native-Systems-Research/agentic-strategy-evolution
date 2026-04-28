@@ -16,6 +16,7 @@ import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 
+import jsonschema
 import yaml
 
 from orchestrator.llm_dispatch import LLMDispatcher
@@ -32,7 +33,8 @@ class CLIDispatcher:
     Used for planner and executor roles that need code/shell access.
 
     Shares LLMDispatcher's routing table and delegates context building
-    to a temporary LLMDispatcher (with dummy completion_fn — no API key needed).
+    to an internal LLMDispatcher instance (with dummy completion_fn — no
+    API key needed).
     """
 
     # Reuse the same routing table from LLMDispatcher
@@ -47,12 +49,24 @@ class CLIDispatcher:
         timeout: int = 600,
     ) -> None:
         self.work_dir = Path(work_dir)
+        LLMDispatcher._validate_campaign(campaign)
         self.campaign = campaign
         self.model = model
         self.timeout = timeout
-        self.loader = PromptLoader(
+        resolved_prompts_dir = (
             prompts_dir
             or Path(__file__).parent.parent / "prompts" / "methodology"
+        )
+        self.loader = PromptLoader(resolved_prompts_dir)
+        # Shared LLMDispatcher for context building only (completion_fn is never called).
+        self._context_builder = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=campaign,
+            model=model,
+            prompts_dir=resolved_prompts_dir,
+            completion_fn=lambda **kw: (_ for _ in ()).throw(
+                RuntimeError("CLIDispatcher: completion_fn should never be called")
+            ),
         )
         repo_path = campaign.get("target_system", {}).get("repo_path")
         self._cwd = Path(repo_path) if repo_path else None
@@ -91,9 +105,24 @@ class CLIDispatcher:
             # Plain markdown — write directly
             atomic_write(output_path, response)
         else:
-            data = self._extract_fenced_content(response, fmt)
+            try:
+                data = self._extract_fenced_content(response, fmt)
+            except (json.JSONDecodeError, yaml.YAMLError, ValueError) as exc:
+                logger.warning(
+                    "Parse failed for %s/%s (%s), retrying with feedback.",
+                    role, phase, exc,
+                )
+                data = self._retry_parse(prompt, response, exc, fmt)
+
             if schema_name is not None:
-                LLMDispatcher._validate(data, schema_name)
+                try:
+                    LLMDispatcher._validate(data, schema_name)
+                except jsonschema.ValidationError as exc:
+                    logger.warning(
+                        "Schema validation failed for %s/%s, retrying: %s",
+                        role, phase, exc.message,
+                    )
+                    data = self._retry_schema(prompt, exc, fmt, schema_name)
 
             if fmt == "yaml":
                 atomic_write(
@@ -122,27 +151,69 @@ class CLIDispatcher:
         iteration: int,
         perspective: str | None,
     ) -> dict[str, str]:
-        """Build prompt context — mirrors LLMDispatcher._build_context."""
-        # Delegate to a temporary LLMDispatcher for context building.
-        # This is a pure data method — the completion_fn is never called.
-        inner = LLMDispatcher(
-            work_dir=self.work_dir,
-            campaign=self.campaign,
-            model=self.model,
-            prompts_dir=self.loader.prompts_dir,
-            completion_fn=lambda **kw: (_ for _ in ()).throw(
-                RuntimeError("CLIDispatcher: completion_fn should never be called")
-            ),
-        )
-        return inner._build_context(role, phase, iteration, perspective)
+        """Build prompt context — delegates to shared LLMDispatcher instance."""
+        return self._context_builder._build_context(role, phase, iteration, perspective)
 
     # Reuse LLMDispatcher's static parsing/validation methods
     _extract_fenced_content = staticmethod(LLMDispatcher._extract_fenced_content)
 
+    def _retry_parse(
+        self,
+        original_prompt: str,
+        original_response: str,
+        error: Exception,
+        fmt: str,
+    ) -> dict:
+        """Retry when claude -p output couldn't be parsed."""
+        feedback = (
+            f"Your previous response could not be parsed.\n\n"
+            f"Error: {error}\n\n"
+            f"Please output ONLY a ```{fmt}``` code fence with valid "
+            f"{fmt.upper()} inside. No explanation outside the fence."
+        )
+        retry_prompt = f"{original_prompt}\n\n---\n\n{feedback}"
+        retry_response = self._call_claude(retry_prompt)
+        try:
+            return self._extract_fenced_content(retry_response, fmt)
+        except (json.JSONDecodeError, yaml.YAMLError, ValueError) as exc:
+            raise RuntimeError(
+                f"claude -p retry response could not be parsed as {fmt}: {exc}"
+            ) from exc
+
+    def _retry_schema(
+        self,
+        original_prompt: str,
+        error: jsonschema.ValidationError,
+        fmt: str,
+        schema_name: str,
+    ) -> dict:
+        """Retry when claude -p output failed schema validation."""
+        feedback = (
+            f"Your output failed schema validation:\n{error.message}\n\n"
+            f"Please fix the issue and return only the corrected "
+            f"{fmt} in a code fence."
+        )
+        retry_prompt = f"{original_prompt}\n\n---\n\n{feedback}"
+        retry_response = self._call_claude(retry_prompt)
+        try:
+            data = self._extract_fenced_content(retry_response, fmt)
+        except (json.JSONDecodeError, yaml.YAMLError, ValueError) as exc:
+            raise RuntimeError(
+                f"claude -p retry response could not be parsed as {fmt}: {exc}"
+            ) from exc
+        LLMDispatcher._validate(data, schema_name)
+        return data
+
     def _call_claude(self, prompt: str) -> str:
         """Invoke `claude -p` with the prompt on stdin, return stdout."""
         cmd = ["claude", "-p", "--model", self.model]
-        cwd = self._cwd if self._cwd and self._cwd.exists() else None
+        cwd = self._cwd
+        if cwd and not cwd.exists():
+            raise RuntimeError(
+                f"CLIDispatcher cwd does not exist: {cwd}. "
+                f"Check that 'repo_path' in campaign.yaml is correct, "
+                f"or that the experiment worktree was created successfully."
+            )
         logger.info(
             "Calling claude -p (model=%s, cwd=%s, timeout=%ds, prompt=%d chars)",
             self.model, cwd, self.timeout, len(prompt),

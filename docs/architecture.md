@@ -191,7 +191,7 @@ target_system:
   repo_path: /path/to/repo
 ```
 
-The planner explores the codebase to discover observable metrics, controllable knobs, and execution methods. The full campaign format (with explicit metrics, knobs, and execution config) remains supported and takes precedence when provided.
+The planner explores the codebase to discover observable metrics, controllable knobs, and execution methods. The full campaign format (with explicit metrics and knobs) remains supported — provided values take precedence over what the planner discovers.
 
 ### Code Change Intents
 

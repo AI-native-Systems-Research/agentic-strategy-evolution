@@ -95,7 +95,7 @@ def _generate_gate_summary(
             perspective=gate_type,
         )
         return summary_path
-    except Exception as exc:
+    except (RuntimeError, FileNotFoundError, OSError) as exc:
         logger = logging.getLogger(__name__)
         logger.warning("Gate summary generation failed: %s", exc)
         return None

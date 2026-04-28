@@ -48,19 +48,15 @@ If the human rejects, the Planner revises. If approved, the bundle advances to e
 
 ### Phase 3: Implement and Verify
 
-The Executor operates in one of two modes:
+The Executor receives the approved hypothesis bundle and runs the experiment end-to-end:
 
-**Real execution** (when `campaign.yaml` provides `target_system.execution`):
+1. Reads the bundle and problem framing context
+2. Implements code changes (if `code_changes` specified in arms)
+3. Runs experiments using commands discovered during framing
+4. Collects metrics and compares against predictions
+5. Produces `findings.json`
 
-1. LLM designs shell commands for the baseline and each arm (`experiment_plan.json`)
-2. Orchestrator runs each command, collecting metrics from JSON output files
-3. LLM analyzes real metrics against predictions, produces `findings.json`
-
-Commands run in subprocess with configurable timeouts. If `repo_path` is set, experiments run in an isolated git worktree.
-
-**Analysis mode** (no execution config):
-
-The Executor reasons about the system based on code understanding and produces `findings.json` directly.
+When `repo_path` is set, experiments run in an isolated git worktree via CLIDispatcher (`claude -p` with shell access). The executor handles failures by reading stderr, reasoning about the error, and retrying — no orchestrator-level retry logic needed.
 
 Findings pass through:
 1. AI Findings Review (default: 10 independent perspectives, configurable per campaign via `campaign.yaml`)
@@ -238,11 +234,9 @@ campaign-dir/
   runs/
     iter-N/
       bundle.yaml     — hypothesis bundle
-      experiment_plan.json   — executor commands (real execution only)
-      experiment_results.json — collected metrics (real execution only)
       findings.json    — prediction vs outcome
       investigation_summary.json — bounded iteration summary
-      metrics/        — per-arm metric files (real execution only)
+      gate_summary_*.json — human-readable gate summaries
       reviews/        — multi-perspective reviews
   trace.jsonl         — observability log
   summary.json        — campaign rollup (generated at end)

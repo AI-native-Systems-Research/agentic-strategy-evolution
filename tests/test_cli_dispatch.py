@@ -21,23 +21,28 @@ def load_schema(name: str) -> dict:
     return json.loads(path.read_text())
 
 
-SAMPLE_CAMPAIGN = {
-    "research_question": "Does batch size affect latency?",
-    "target_system": {
-        "name": "TestSystem",
-        "description": "A test system.",
-        "repo_path": "/tmp/fake-repo",
-    },
-    "review": {
-        "design_perspectives": ["rigor"],
-        "findings_perspectives": ["rigor"],
-        "max_review_rounds": 1,
-    },
-    "prompts": {
-        "methodology_layer": "prompts/methodology",
-        "domain_adapter_layer": None,
-    },
-}
+def _make_campaign(repo_path: str = "/tmp/fake-repo") -> dict:
+    return {
+        "research_question": "Does batch size affect latency?",
+        "target_system": {
+            "name": "TestSystem",
+            "description": "A test system.",
+            "repo_path": repo_path,
+        },
+        "review": {
+            "design_perspectives": ["rigor"],
+            "findings_perspectives": ["rigor"],
+            "max_review_rounds": 1,
+        },
+        "prompts": {
+            "methodology_layer": "prompts/methodology",
+            "domain_adapter_layer": None,
+        },
+    }
+
+
+# Default campaign for tests that don't need a real repo_path
+SAMPLE_CAMPAIGN = _make_campaign()
 
 VALID_BUNDLE_YAML = """\
 metadata:
@@ -83,7 +88,7 @@ VALID_FINDINGS_JSON = json.dumps({
 
 @pytest.fixture()
 def work_dir(tmp_path: Path) -> Path:
-    """Create a work directory with minimal structure."""
+    """Create a work directory with minimal structure and a real repo_path dir."""
     iter_dir = tmp_path / "runs" / "iter-1"
     iter_dir.mkdir(parents=True)
     (iter_dir / "problem.md").write_text(
@@ -95,7 +100,16 @@ def work_dir(tmp_path: Path) -> Path:
     (tmp_path / "principles.json").write_text(
         json.dumps({"principles": []}, indent=2)
     )
+    # Create a real repo_path directory so CLIDispatcher cwd validation passes
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
     return tmp_path
+
+
+@pytest.fixture()
+def campaign(work_dir: Path) -> dict:
+    """Campaign with repo_path pointing to a real directory."""
+    return _make_campaign(repo_path=str(work_dir / "repo"))
 
 
 class TestCLIDispatcherProtocol:
@@ -108,7 +122,7 @@ class TestCLIDispatcherProtocol:
 class TestCLIDispatcherUnit:
     """Unit tests with mocked subprocess."""
 
-    def test_dispatch_planner_design_produces_valid_bundle(self, work_dir: Path) -> None:
+    def test_dispatch_planner_design_produces_valid_bundle(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
         mock_result = MagicMock()
@@ -117,7 +131,7 @@ class TestCLIDispatcherUnit:
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
-            d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN)
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             out = work_dir / "runs" / "iter-1" / "bundle_cli.yaml"
             d.dispatch("planner", "design", output_path=out, iteration=1)
 
@@ -125,7 +139,7 @@ class TestCLIDispatcherUnit:
         bundle = yaml.safe_load(out.read_text())
         jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))
 
-    def test_dispatch_executor_run_produces_valid_findings(self, work_dir: Path) -> None:
+    def test_dispatch_executor_run_produces_valid_findings(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
         mock_result = MagicMock()
@@ -134,7 +148,7 @@ class TestCLIDispatcherUnit:
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
-            d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN)
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             out = work_dir / "runs" / "iter-1" / "findings_cli.json"
             d.dispatch("executor", "run", output_path=out, iteration=1)
 
@@ -142,7 +156,7 @@ class TestCLIDispatcherUnit:
         findings = json.loads(out.read_text())
         jsonschema.validate(findings, load_schema("findings.schema.json"))
 
-    def test_dispatch_planner_frame_writes_markdown(self, work_dir: Path) -> None:
+    def test_dispatch_planner_frame_writes_markdown(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
         mock_result = MagicMock()
@@ -151,28 +165,28 @@ class TestCLIDispatcherUnit:
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
-            d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN)
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             out = work_dir / "runs" / "iter-1" / "problem_cli.md"
             d.dispatch("planner", "frame", output_path=out, iteration=1)
 
         assert out.exists()
         assert "Research Question" in out.read_text()
 
-    def test_claude_not_found_raises(self, work_dir: Path) -> None:
+    def test_claude_not_found_raises(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
         with patch(
             "orchestrator.cli_dispatch.subprocess.run",
             side_effect=FileNotFoundError("claude not found"),
         ):
-            d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN)
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             with pytest.raises(RuntimeError, match="claude.*not found"):
                 d.dispatch(
                     "planner", "frame",
                     output_path=work_dir / "out.md", iteration=1,
                 )
 
-    def test_claude_nonzero_exit_raises(self, work_dir: Path) -> None:
+    def test_claude_nonzero_exit_raises(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
         mock_result = MagicMock()
@@ -181,14 +195,14 @@ class TestCLIDispatcherUnit:
         mock_result.stderr = "Error: API key not set"
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
-            d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN)
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             with pytest.raises(RuntimeError, match="claude.*exited.*1"):
                 d.dispatch(
                     "planner", "frame",
                     output_path=work_dir / "out.md", iteration=1,
                 )
 
-    def test_prompt_includes_campaign_context(self, work_dir: Path) -> None:
+    def test_prompt_includes_campaign_context(self, work_dir: Path, campaign: dict) -> None:
         """The system prompt passed to claude -p should include campaign info."""
         from orchestrator.cli_dispatch import CLIDispatcher
 
@@ -198,7 +212,7 @@ class TestCLIDispatcherUnit:
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result) as mock_run:
-            d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN)
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             d.dispatch(
                 "planner", "frame",
                 output_path=work_dir / "out.md", iteration=1,

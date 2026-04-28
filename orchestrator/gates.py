@@ -79,8 +79,9 @@ class HumanGate:
                     for point in summary.get("key_points", []):
                         print(f"  * {point}")
                     print(f"\n{'─'*60}")
-                except (json.JSONDecodeError, OSError):
-                    pass  # Fall through to raw artifact display
+                except (json.JSONDecodeError, OSError) as exc:
+                    logger.warning("Could not display gate summary from %s: %s", spath, exc)
+                    print(f"  (Gate summary could not be read: {exc})")
 
         if self._response:
             logger.info("Gate auto-response: %s", self._response)

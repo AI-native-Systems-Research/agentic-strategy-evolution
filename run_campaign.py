@@ -115,7 +115,8 @@ def run_campaign(
                 iteration=i,
                 perspective="continue",
             )
-        except Exception:
+        except (RuntimeError, FileNotFoundError, OSError) as exc:
+            logger.warning("Continue gate summary generation failed: %s", exc)
             gate_summary_path = None
 
         # Human gate: continue?
