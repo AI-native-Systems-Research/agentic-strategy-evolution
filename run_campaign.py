@@ -5,7 +5,7 @@ Usage:
     python run_campaign.py examples/blis/campaign.yaml --max-iterations 5
 
 Runs iterations in a loop: each iteration runs the full Nous loop
-(FRAMING → DESIGN → REVIEW → RUNNING → EXTRACTION), then appends a
+(FRAMING → DESIGN → REVIEW → PLAN_EXECUTION → EXECUTING → ANALYSIS → EXTRACTION), then appends a
 ledger row, generates an investigation summary, and prompts whether to
 continue.  The investigation summary is injected into the next iteration's
 design prompt so that each hypothesis bundle is informed by all prior learning.
@@ -36,6 +36,20 @@ from run_iteration import (
 logger = logging.getLogger(__name__)
 
 
+def _generate_report(campaign: dict, work_dir: Path, model: str) -> None:
+    """Generate report.md summarizing the campaign."""
+    try:
+        dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=model)
+        dispatcher.dispatch(
+            "extractor", "report",
+            output_path=work_dir / "report.md",
+            iteration=0,
+        )
+        print(f"  -> {work_dir / 'report.md'}")
+    except (RuntimeError, FileNotFoundError, OSError) as exc:
+        logger.warning("Report generation failed: %s", exc)
+
+
 def run_campaign(
     campaign: dict,
     work_dir: Path,
@@ -43,6 +57,7 @@ def run_campaign(
     max_iterations: int = 10,
     model: str = "aws/claude-opus-4-6",
     auto_approve: bool = False,
+    timeout: int = 1800,
 ) -> None:
     """Run a multi-iteration Nous campaign.
 
@@ -70,12 +85,13 @@ def run_campaign(
 
         outcome = run_iteration(
             campaign, work_dir, iteration=i, model=model, final=is_last,
-            auto_approve=auto_approve,
+            auto_approve=auto_approve, timeout=timeout,
         )
 
         if outcome == IterationOutcome.COMPLETED:
             append_ledger_row(work_dir, i)
             print(f"\n  Campaign complete after {i} iteration(s).")
+            _generate_report(campaign, work_dir, model)
             return
 
         if outcome == IterationOutcome.ABORTED:
@@ -131,6 +147,7 @@ def run_campaign(
             engine = Engine(work_dir)
             engine.transition("DONE")
             print(f"\n  Campaign stopped after {i} iteration(s).")
+            _generate_report(campaign, work_dir, model)
             return
 
         # Advance engine from EXTRACTION → DESIGN (increments iteration)
@@ -139,6 +156,7 @@ def run_campaign(
         print(f"\n  Advancing to iteration {i + 1}...")
 
     print(f"\n  Campaign reached max_iterations ({max_iterations}).")
+    _generate_report(campaign, work_dir, model)
 
 
 def main() -> None:
@@ -155,6 +173,8 @@ def main() -> None:
                         help="Working directory name (default: derived from campaign)")
     parser.add_argument("--auto-approve", action="store_true",
                         help="Auto-approve all human gates (skip interactive prompts)")
+    parser.add_argument("--timeout", type=int, default=1800,
+                        help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -197,7 +217,7 @@ def main() -> None:
     run_campaign(
         campaign, work_dir,
         max_iterations=max_iter, model=args.model,
-        auto_approve=args.auto_approve,
+        auto_approve=args.auto_approve, timeout=args.timeout,
     )
 
 

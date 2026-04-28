@@ -1,10 +1,10 @@
 # Data Model Guide
 
-Nous uses 9 schema-governed artifacts to drive the investigation loop. This guide explains each one in plain English.
+Nous uses 11 schema-governed artifacts to drive the investigation loop. This guide explains each one in plain English.
 
 ## How They Fit Together
 
-`campaign.yaml` describes the target system and configures the reviewer panel. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (experiment plan) and `findings.json` (results). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. After each non-final iteration, `investigation_summary.json` captures a bounded summary that feeds into the next iteration's design prompt. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
+`campaign.yaml` describes the target system and configures the reviewer panel. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (hypothesis bundle), `experiment_plan.yaml` (exact commands), `execution_results.json` (raw output), and `findings.json` (analysis). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. After each non-final iteration, `investigation_summary.json` captures a bounded summary that feeds into the next iteration's design prompt. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
 
 ```
 campaign.yaml       "What system?"          Target system, reviewers, prompts
@@ -13,9 +13,15 @@ campaign.yaml       "What system?"          Target system, reviewers, prompts
 state.json          "Where are we?"         Drives the loop
     │
     ▼
-bundle.yaml         "What are we testing?"  Experiment plan for this iteration
+bundle.yaml         "What are we testing?"  Hypothesis bundle for this iteration
     │                                        ▲
     ▼                                        │ (injected into design prompt)
+experiment_plan.yaml "How to run it?"         Exact commands per arm
+    │                                        │
+    ▼                                        │
+execution_results.json "Raw output"          Stdout/stderr per condition
+    │                                        │
+    ▼                                        │
 findings.json       "What happened?"         │
     │                                        │
     ├──▶ ledger.json                 investigation_summary.json
@@ -58,7 +64,7 @@ A bookmark. It tells the orchestrator what phase we're in, which iteration we're
 
 | Field | What it means |
 |---|---|
-| `phase` | Which step of the loop (INIT, FRAMING, DESIGN, DESIGN_REVIEW, HUMAN_DESIGN_GATE, RUNNING, FINDINGS_REVIEW, HUMAN_FINDINGS_GATE, TUNING, EXTRACTION, DONE) |
+| `phase` | Which step of the loop (INIT, FRAMING, DESIGN, DESIGN_REVIEW, HUMAN_DESIGN_GATE, PLAN_EXECUTION, EXECUTING, ANALYSIS, FINDINGS_REVIEW, HUMAN_FINDINGS_GATE, TUNING, EXTRACTION, DONE) |
 | `iteration` | How many times we've gone around the loop (0 = haven't started yet) |
 | `run_id` | A name for this campaign |
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |
@@ -132,6 +138,45 @@ The experiment plan. A set of hypotheses ("arms") designed together to test one 
 | `h-robustness` | Does it hold across different workloads? |
 
 Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal explanation), **diagnostic** (what to investigate if wrong). Arms may also carry optional **code_changes** (file/intent/rationale triples describing what code to modify) and a **metadata** object for domain-specific extensions.
+
+## 4b. experiment_plan.yaml — "What commands to run?"
+
+**Schema:** `schemas/experiment_plan.schema.yaml`
+
+The experiment plan. Produced by the executor agent during PLAN_EXECUTION. Contains exact shell commands to run for each arm, making experiments reproducible and auditable.
+
+| Section | What it means |
+|---|---|
+| `metadata.iteration` | Which iteration this plan is for |
+| `metadata.bundle_ref` | Path to the hypothesis bundle this plan implements |
+| `setup[]` | Optional setup commands (build, install, etc.) |
+| `arms[].arm_id` | Which hypothesis arm |
+| `arms[].conditions[].name` | Condition name (e.g., "baseline-seed42") |
+| `arms[].conditions[].cmd` | Exact shell command to execute |
+| `arms[].conditions[].output` | Optional: path to output file to capture |
+| `arms[].conditions[].description` | Optional human description |
+
+Located at `runs/iter-N/experiment_plan.yaml`. If the plan is revised due to command failures, revised versions are saved as `experiment_plan_v2.yaml`, `experiment_plan_v3.yaml`, etc.
+
+## 4c. execution_results.json — "What did the commands produce?"
+
+No schema — internal artifact written by the Python orchestrator during EXECUTING.
+
+Contains the raw output of every command from the experiment plan. Used by the ANALYSIS phase to produce findings.
+
+| Section | What it means |
+|---|---|
+| `plan_ref` | Path to the experiment plan |
+| `setup_results[]` | Output of setup commands (cmd, exit_code, stdout_tail, stderr_tail) |
+| `arms[].arm_id` | Which arm |
+| `arms[].conditions[].name` | Condition name |
+| `arms[].conditions[].cmd` | Command that was run |
+| `arms[].conditions[].exit_code` | 0 = success |
+| `arms[].conditions[].stdout_tail` | Last 4000 chars of stdout |
+| `arms[].conditions[].stderr_tail` | Last 4000 chars of stderr |
+| `arms[].conditions[].output_content` | Content of output file (if specified in plan) |
+
+Located at `runs/iter-N/execution_results.json`. Full stdout/stderr are also saved per condition at `runs/iter-N/results/<arm_id>/<name>.stdout` and `.stderr`.
 
 ## 5. findings.json — "What actually happened?"
 
@@ -220,7 +265,7 @@ The final report card, generated at the end of a campaign. Rolls everything into
 |---|---|
 | `total_cost_usd` / `total_tokens` | How much it cost |
 | `total_iterations` | How many times around the loop |
-| `cost_by_phase` | Where the money went (DESIGN vs RUNNING, etc.) |
+| `cost_by_phase` | Where the money went (DESIGN vs PLAN_EXECUTION vs ANALYSIS, etc.) |
 | `per_iteration_stats` | Cost and result for each iteration |
 | `mechanism_families_investigated` | What areas were explored |
 | `principles_inserted` / `updated` / `pruned` | Knowledge base changes |

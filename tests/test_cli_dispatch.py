@@ -139,22 +139,32 @@ class TestCLIDispatcherUnit:
         bundle = yaml.safe_load(out.read_text())
         jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))
 
-    def test_dispatch_executor_run_produces_valid_findings(self, work_dir: Path, campaign: dict) -> None:
+    def test_dispatch_executor_plan_execution_produces_valid_plan(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
+        valid_plan_yaml = (
+            "metadata:\n"
+            "  iteration: 1\n"
+            "  bundle_ref: runs/iter-1/bundle.yaml\n"
+            "arms:\n"
+            "  - arm_id: h-main\n"
+            "    conditions:\n"
+            "      - name: baseline\n"
+            "        cmd: echo baseline\n"
+        )
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = f"Analysis:\n\n```json\n{VALID_FINDINGS_JSON}\n```\n"
+        mock_result.stdout = f"Here is the plan:\n\n```yaml\n{valid_plan_yaml}```\n"
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            out = work_dir / "runs" / "iter-1" / "findings_cli.json"
-            d.dispatch("executor", "run", output_path=out, iteration=1)
+            out = work_dir / "runs" / "iter-1" / "experiment_plan.yaml"
+            d.dispatch("executor", "plan-execution", output_path=out, iteration=1)
 
         assert out.exists()
-        findings = json.loads(out.read_text())
-        jsonschema.validate(findings, load_schema("findings.schema.json"))
+        plan = yaml.safe_load(out.read_text())
+        jsonschema.validate(plan, load_schema("experiment_plan.schema.yaml"))
 
     def test_dispatch_planner_frame_writes_markdown(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher

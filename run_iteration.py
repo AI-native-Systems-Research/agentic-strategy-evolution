@@ -45,7 +45,8 @@ _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 # Phase ordering for resume logic
 _PHASE_ORDER = [
     "INIT", "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-    "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE", "TUNING",
+    "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+    "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE", "TUNING",
     "EXTRACTION", "DONE",
 ]
 _PHASE_INDEX = {p: i for i, p in enumerate(_PHASE_ORDER)}
@@ -108,6 +109,7 @@ def run_iteration(
     model: str = "aws/claude-opus-4-6",
     final: bool = True,
     auto_approve: bool = False,
+    timeout: int = 1800,
 ) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
 
@@ -125,9 +127,26 @@ def run_iteration(
     """
     engine = Engine(work_dir)
     repo_path = campaign.get("target_system", {}).get("repo_path")
+    skip_reviews = campaign.get("skip_reviews", False)
+
+    # Per-phase model resolution
+    models_cfg = campaign.get("models", {})
+    def _model_for(phase_key: str) -> str:
+        """Resolve model for a phase: campaign.models > default."""
+        _DEFAULTS = {
+            "framing": "aws/claude-sonnet-4-5",
+            "plan_execution": "aws/claude-haiku-4-5",
+        }
+        return models_cfg.get(phase_key) or _DEFAULTS.get(phase_key) or model
+
     # CLIDispatcher for code-access roles (framing, execution); LLMDispatcher for everything else
     from orchestrator.cli_dispatch import CLIDispatcher
-    cli_dispatcher = CLIDispatcher(work_dir=work_dir, campaign=campaign, model=model) if repo_path else None
+    cli_dispatcher = (
+        CLIDispatcher(
+            work_dir=work_dir, campaign=campaign,
+            model=_model_for("framing"), timeout=timeout, max_turns=10,
+        ) if repo_path else None
+    )
     llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=model)
     gate = HumanGate(auto_response="approve") if auto_approve else HumanGate()
 
@@ -164,7 +183,7 @@ def run_iteration(
         print(f"  -> {iter_dir / 'bundle.yaml'}")
 
     # DESIGN REVIEW
-    if _enter_phase(engine, "DESIGN_REVIEW"):
+    if _enter_phase(engine, "DESIGN_REVIEW") and not skip_reviews:
         print(f"\n{'='*60}")
         print(f"  DESIGN REVIEW — {len(campaign['review']['design_perspectives'])} reviewers")
         print(f"{'='*60}")
@@ -201,13 +220,17 @@ def run_iteration(
             print("Aborted.")
             return IterationOutcome.ABORTED
 
-    # RUNNING (executor) — single dispatch, worktree isolation if repo_path set
-    if _enter_phase(engine, "RUNNING"):
+    # PLAN_EXECUTION — executor (claude -p) produces experiment_plan.yaml
+    experiment_dir = experiment_id = None
+    if _enter_phase(engine, "PLAN_EXECUTION"):
         print(f"\n{'='*60}")
-        print(f"  RUNNING — executing experiments")
+        print(f"  PLAN_EXECUTION — designing experiment commands")
         print(f"{'='*60}")
-        run_dispatcher = cli_dispatcher or llm_dispatcher
-        experiment_dir = experiment_id = None
+        # Use cheaper model + tighter turn limit for plan execution
+        if cli_dispatcher:
+            cli_dispatcher.model = _model_for("plan_execution")
+            cli_dispatcher.max_turns = 5
+        plan_dispatcher = cli_dispatcher or llm_dispatcher
         try:
             if repo_path:
                 from orchestrator.worktree import (
@@ -217,30 +240,80 @@ def run_iteration(
                 experiment_dir, experiment_id = create_experiment_worktree(
                     Path(repo_path), iteration,
                 )
+                # Persist for resume
+                (iter_dir / ".experiment_id").write_text(experiment_id)
                 print(f"  Experiment worktree: {experiment_dir}")
             if experiment_dir and cli_dispatcher:
                 with cli_dispatcher.override_cwd(experiment_dir):
-                    run_dispatcher.dispatch(
-                        "executor", "run",
-                        output_path=iter_dir / "findings.json", iteration=iteration,
+                    plan_dispatcher.dispatch(
+                        "executor", "plan-execution",
+                        output_path=iter_dir / "experiment_plan.yaml",
+                        iteration=iteration,
                     )
             else:
-                run_dispatcher.dispatch(
-                    "executor", "run",
-                    output_path=iter_dir / "findings.json", iteration=iteration,
+                plan_dispatcher.dispatch(
+                    "executor", "plan-execution",
+                    output_path=iter_dir / "experiment_plan.yaml",
+                    iteration=iteration,
                 )
-            print(f"  -> {iter_dir / 'findings.json'}")
+            print(f"  -> {iter_dir / 'experiment_plan.yaml'}")
+        except BaseException:
+            if repo_path and experiment_id:
+                from orchestrator.worktree import remove_experiment_worktree
+                remove_experiment_worktree(Path(repo_path), experiment_id)
+            raise
+
+    # EXECUTING — orchestrator runs commands from plan (no LLM)
+    if _enter_phase(engine, "EXECUTING"):
+        print(f"\n{'='*60}")
+        print(f"  EXECUTING — running experiment commands")
+        print(f"{'='*60}")
+        # Recover worktree reference on resume
+        if not experiment_dir and repo_path:
+            eid_path = iter_dir / ".experiment_id"
+            if eid_path.exists():
+                experiment_id = eid_path.read_text().strip()
+                experiment_dir = Path(repo_path) / ".nous-experiments" / experiment_id
+
+        revision_fn = None
+        if cli_dispatcher and experiment_dir:
+            def _revise(plan, error_info):
+                with cli_dispatcher.override_cwd(experiment_dir):
+                    return cli_dispatcher.revise_plan(plan, error_info)
+            revision_fn = _revise
+
+        try:
+            from orchestrator.executor import execute_plan
+            plan = yaml.safe_load((iter_dir / "experiment_plan.yaml").read_text())
+            execute_plan(
+                plan,
+                cwd=experiment_dir or Path(repo_path) if repo_path else iter_dir,
+                iter_dir=iter_dir,
+                revision_fn=revision_fn,
+            )
+            print(f"  -> {iter_dir / 'execution_results.json'}")
         finally:
             if repo_path and experiment_id:
                 from orchestrator.worktree import remove_experiment_worktree
                 remove_experiment_worktree(Path(repo_path), experiment_id)
+
+    # ANALYSIS — LLM API compares observed metrics vs predictions
+    if _enter_phase(engine, "ANALYSIS"):
+        print(f"\n{'='*60}")
+        print(f"  ANALYSIS — comparing results to predictions")
+        print(f"{'='*60}")
+        llm_dispatcher.dispatch(
+            "executor", "analyze",
+            output_path=iter_dir / "findings.json", iteration=iteration,
+        )
+        print(f"  -> {iter_dir / 'findings.json'}")
 
     # Validate findings against schema, then check fast-fail rules
     findings_path = iter_dir / "findings.json"
     if not findings_path.exists():
         print(
             f"Error: {findings_path} not found. "
-            f"The RUNNING phase may have failed to produce findings.",
+            f"The ANALYSIS phase may have failed to produce findings.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -265,7 +338,7 @@ def run_iteration(
         print("     The experiment needs redesign. Re-run after revising the campaign.")
         _enter_phase(engine, "FINDINGS_REVIEW")
         _enter_phase(engine, "HUMAN_FINDINGS_GATE")
-        engine.transition("RUNNING")
+        engine.transition("PLAN_EXECUTION")
         return IterationOutcome.REDESIGN
     else:
         if ff == FastFailAction.SIMPLIFY:
@@ -273,7 +346,7 @@ def run_iteration(
             print("     Proceeding to findings review with this note.")
 
         # FINDINGS REVIEW (runs for both SIMPLIFY and CONTINUE)
-        if _enter_phase(engine, "FINDINGS_REVIEW"):
+        if _enter_phase(engine, "FINDINGS_REVIEW") and not skip_reviews:
             print(f"\n{'='*60}")
             print(f"  FINDINGS REVIEW — {len(campaign['review']['findings_perspectives'])} reviewers")
             print(f"{'='*60}")
@@ -302,7 +375,7 @@ def run_iteration(
             )
             if decision == "reject":
                 print("Findings rejected. Re-running executor.")
-                engine.transition("RUNNING")
+                engine.transition("PLAN_EXECUTION")
                 return IterationOutcome.REDESIGN
             if decision == "abort":
                 print("Aborted.")
@@ -346,6 +419,8 @@ def main() -> None:
                         help="Working directory name (default: derived from campaign)")
     parser.add_argument("--auto-approve", action="store_true",
                         help="Auto-approve all human gates (skip interactive prompts)")
+    parser.add_argument("--timeout", type=int, default=1800,
+                        help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -379,7 +454,10 @@ def main() -> None:
     work_dir = setup_work_dir(run_id)
     print(f"Working directory: {work_dir.resolve()}")
 
-    run_iteration(campaign, work_dir, model=args.model, auto_approve=args.auto_approve)
+    run_iteration(
+        campaign, work_dir, model=args.model,
+        auto_approve=args.auto_approve, timeout=args.timeout,
+    )
 
 
 if __name__ == "__main__":

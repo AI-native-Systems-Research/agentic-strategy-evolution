@@ -53,6 +53,21 @@ arms:
     diagnostic: "Verify single-item path"
 """
 
+EXPERIMENT_PLAN_YAML = """\
+metadata:
+  iteration: 1
+  bundle_ref: runs/iter-1/bundle.yaml
+arms:
+  - arm_id: h-main
+    conditions:
+      - name: baseline
+        cmd: "echo baseline"
+  - arm_id: h-control-negative
+    conditions:
+      - name: control
+        cmd: "echo control"
+"""
+
 FINDINGS_JSON = json.dumps({
     "iteration": 1,
     "bundle_ref": "runs/iter-1/bundle.yaml",
@@ -111,7 +126,8 @@ def _mock_responses() -> dict[tuple[str, str], str]:
             "## Prior Knowledge\nNo principles extracted yet.\n"
         ),
         ("planner", "design"): f"```yaml\n{BUNDLE_YAML}```",
-        ("executor", "run"): f"```json\n{FINDINGS_JSON}\n```",
+        ("executor", "plan-execution"): f"```yaml\n{EXPERIMENT_PLAN_YAML}```",
+        ("executor", "analyze"): f"```json\n{FINDINGS_JSON}\n```",
         ("reviewer", "review-design"): (
             "# Review — {perspective}\n\n"
             "## CRITICAL\nNo CRITICAL findings.\n\n"
@@ -136,19 +152,24 @@ def _make_routing_completion(responses: dict[tuple[str, str], str]):
         call_log.append(kwargs)
         system_msg = kwargs["messages"][0]["content"]
 
-        # Determine which response to return based on prompt keywords
+        # Determine which response to return based on prompt keywords.
+        # Order matters: check more specific conditions first.
         if "problem framing document" in system_msg:
             text = responses[("planner", "frame")]
         elif "principle store" in system_msg.lower():
             text = responses[("extractor", "extract")]
-        elif "hypothesis bundle" in system_msg and "review" not in system_msg.lower():
-            text = responses[("planner", "design")]
-        elif "review" in system_msg.lower() and "hypothesis bundle" in system_msg.lower():
-            text = responses[("reviewer", "review-design")]
+        elif "scientific executor" in system_msg.lower() and "experiment commands" in system_msg.lower():
+            text = responses[("executor", "plan-execution")]
+        elif "scientific executor" in system_msg.lower() and "analyze real experiment" in system_msg.lower():
+            text = responses[("executor", "analyze")]
+        elif "scientific executor" in system_msg.lower():
+            text = responses[("executor", "analyze")]
         elif "review" in system_msg.lower() and "experiment findings" in system_msg.lower():
             text = responses[("reviewer", "review-findings")]
-        elif "scientific executor" in system_msg.lower():
-            text = responses[("executor", "run")]
+        elif "review" in system_msg.lower() and "hypothesis bundle" in system_msg.lower():
+            text = responses[("reviewer", "review-design")]
+        elif "hypothesis bundle" in system_msg:
+            text = responses[("planner", "design")]
         else:
             text = "Unrecognized prompt."
 
@@ -232,10 +253,35 @@ class TestSingleIterationWithMockedLLM:
         engine.transition("HUMAN_DESIGN_GATE")
         assert gate.prompt("Approve design?") == "approve"
 
-        # HUMAN_DESIGN_GATE -> RUNNING
-        engine.transition("RUNNING")
+        # HUMAN_DESIGN_GATE -> PLAN_EXECUTION
+        engine.transition("PLAN_EXECUTION")
         dispatcher.dispatch(
-            "executor", "run",
+            "executor", "plan-execution",
+            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
+        )
+
+        # PLAN_EXECUTION -> EXECUTING (write stub execution results)
+        engine.transition("EXECUTING")
+        exec_results = {
+            "plan_ref": "runs/iter-1/experiment_plan.yaml",
+            "setup_results": [],
+            "arms": [
+                {"arm_id": "h-main", "conditions": [
+                    {"name": "baseline", "cmd": "echo baseline", "exit_code": 0,
+                     "stdout_tail": "baseline", "stderr_tail": "", "output_content": None},
+                ]},
+                {"arm_id": "h-control-negative", "conditions": [
+                    {"name": "control", "cmd": "echo control", "exit_code": 0,
+                     "stdout_tail": "control", "stderr_tail": "", "output_content": None},
+                ]},
+            ],
+        }
+        (iter_dir / "execution_results.json").write_text(json.dumps(exec_results, indent=2))
+
+        # EXECUTING -> ANALYSIS
+        engine.transition("ANALYSIS")
+        dispatcher.dispatch(
+            "executor", "analyze",
             output_path=iter_dir / "findings.json", iteration=1,
         )
         findings = json.loads((iter_dir / "findings.json").read_text())
@@ -245,7 +291,7 @@ class TestSingleIterationWithMockedLLM:
         ff = check_fast_fail(findings)
         assert ff == FastFailAction.CONTINUE
 
-        # RUNNING -> FINDINGS_REVIEW
+        # ANALYSIS -> FINDINGS_REVIEW
         engine.transition("FINDINGS_REVIEW")
         for perspective in SAMPLE_CAMPAIGN["review"]["findings_perspectives"]:
             dispatcher.dispatch(
@@ -282,6 +328,6 @@ class TestSingleIterationWithMockedLLM:
         assert (iter_dir / "reviews").is_dir()
 
         # Verify LLM was called the expected number of times:
-        # 1 frame + 1 design + 2 design reviewers + 1 executor +
-        # 2 findings reviewers + 1 extractor = 8
-        assert len(mock_fn.call_log) == 8
+        # 1 frame + 1 design + 2 design reviewers + 1 plan-execution +
+        # 1 analyze + 2 findings reviewers + 1 extractor = 9
+        assert len(mock_fn.call_log) == 9

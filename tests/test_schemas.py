@@ -17,10 +17,10 @@ class TestStateSchema:
         }
         jsonschema.validate(instance, schema)
 
-    def test_valid_running_state(self, load_schema):
+    def test_valid_plan_execution_state(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "RUNNING",
+            "phase": "PLAN_EXECUTION",
             "iteration": 3,
             "run_id": "campaign-001",
             "family": "routing-signals",
@@ -32,7 +32,8 @@ class TestStateSchema:
         schema = load_schema("state.schema.json")
         phases = [
             "INIT", "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "TUNING", "EXTRACTION", "DONE",
         ]
         for phase in phases:
@@ -522,7 +523,8 @@ class TestSummarySchema:
             "cost_by_phase": {
                 "FRAMING": 2.5,
                 "DESIGN": 8.3,
-                "RUNNING": 18.0,
+                "PLAN_EXECUTION": 6.0,
+                "ANALYSIS": 12.0,
             },
             "per_iteration_stats": [
                 {

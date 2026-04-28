@@ -41,7 +41,9 @@ This separation exists because:
                     │  ledger.json     principles.json     │
                     │  problem.md      summary.json        │
                     │  runs/iter-N/    trace.jsonl         │
-                    │    bundle.yaml   findings.json       │
+                    │    bundle.yaml   experiment_plan.yaml │
+                    │    execution_results.json              │
+                    │    findings.json                      │
                     │    investigation_summary.json         │
                     │    reviews/                          │
                     └─────────────────────────────────────┘
@@ -51,7 +53,7 @@ This separation exists because:
 
 ### Engine (`orchestrator/engine.py`)
 
-The engine owns the 11-state state machine and checkpoint/resume.
+The engine owns the 13-state state machine and checkpoint/resume.
 
 **State machine:**
 
@@ -64,19 +66,27 @@ INIT ──▶ FRAMING ──▶ DESIGN ──▶ DESIGN_REVIEW ──▶ HUMAN_
                         └─────────────────────────────────┘
                                                           │ (approve)
                                                           ▼
-         ┌──────────── RUNNING ◀──────────────────────────┘
-         │               ▲
-         ▼               │ (CRITICAL or reject)
-    FINDINGS_REVIEW ─────┘
-         │
-         ▼
-    HUMAN_FINDINGS_GATE
-         │
-         ├──▶ TUNING ──▶ EXTRACTION ──▶ DONE
+         ┌─── PLAN_EXECUTION ◀────────────────────────────┘
+         │         │
+         │         ▼
+         │     EXECUTING
+         │         │
+         │         ▼
+         │     ANALYSIS
+         │         │
+         │         ▼                  ▲
+         │   FINDINGS_REVIEW ─────────┘ (CRITICAL or reject)
+         │         │
+         │         ▼
+         │   HUMAN_FINDINGS_GATE
+         │         │
+         │         ├──▶ TUNING ──▶ EXTRACTION ──▶ DONE
+         │         │                    │
+         │         └──▶ EXTRACTION ◀───┘
          │                    │
-         └──▶ EXTRACTION ◀───┘
-                    │
-                    └──▶ DESIGN  (next iteration, counter increments)
+         │                    └──▶ DESIGN  (next iteration, counter increments)
+         │
+         └──── (FINDINGS_REVIEW or HUMAN_FINDINGS_GATE loops back here)
 ```
 
 **Key behaviors:**
@@ -95,7 +105,8 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 | Role | Invoked During | Produces |
 |---|---|---|
 | **Planner** | FRAMING, DESIGN | `problem.md`, `bundle.yaml` |
-| **Executor** | RUNNING | `findings.json` |
+| **Executor** | PLAN_EXECUTION, ANALYSIS | `experiment_plan.yaml`, `findings.json` |
+| **Orchestrator** | EXECUTING | `execution_results.json` (deterministic, no LLM) |
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
 | **Extractor** | EXTRACTION, post-iteration | Updated `principles.json`, `investigation_summary.json` |
 | **Summarizer** | Before each human gate | `gate_summary_*.json` |
@@ -110,7 +121,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 ```python
 dispatcher.dispatch(
     role="executor",           # which agent
-    phase="run",               # which phase
+    phase="plan-execution",    # which phase
     output_path=path,          # where to write
     iteration=1,               # current iteration
 )
@@ -149,11 +160,17 @@ For structured outputs (bundle YAML, findings JSON, principles JSON), the dispat
 
 Markdown outputs (problem framing, reviews) are written directly without validation.
 
-### Executor
+### Three-Phase Execution
 
-The executor receives the hypothesis bundle, the problem framing document, and access to the target system. When dispatched via `CLIDispatcher` (i.e., `repo_path` is set), the executor has shell access and runs inside a git worktree of the target system. It can build the system, run experiments, read metrics, implement code changes, handle failures, and produce `findings.json`.
+Execution is split into three checkpointable sub-phases:
 
-When dispatched via `LLMDispatcher` (no `repo_path`), the executor reasons about the system based on the bundle and problem framing, producing `findings.json` from analysis alone.
+1. **PLAN_EXECUTION** — The executor agent (`claude -p` via `CLIDispatcher`) explores the target repo, discovers build commands, and produces `experiment_plan.yaml` with exact shell commands per arm. The plan is a first-class artifact, schema-validated and auditable.
+
+2. **EXECUTING** — The Python orchestrator (`orchestrator/executor.py`) runs the commands deterministically via `subprocess.run()`. No LLM calls. Stdout/stderr are captured per condition and written to `results/<arm_id>/<name>.{stdout,stderr}`. If a command fails, the optional `revision_fn` callback asks the LLM to correct the plan (max 3 retries). Results are written to `execution_results.json`.
+
+3. **ANALYSIS** — The LLM API (`LLMDispatcher`) receives the execution results alongside the bundle and problem framing, compares observed metrics against predictions, and produces `findings.json`.
+
+This separation ensures experiments are reproducible (the plan is recorded), auditable (intermediate results are preserved), and recoverable (crash during EXECUTING resumes from the plan).
 
 ### Model Configuration
 
@@ -221,7 +238,7 @@ Human gates are hard stops that cannot be bypassed. They surface the artifact an
 
 **Valid decisions:**
 - `approve` — advance to the next phase
-- `reject` — loop back (HUMAN_DESIGN_GATE → DESIGN, HUMAN_FINDINGS_GATE → RUNNING)
+- `reject` — loop back (HUMAN_DESIGN_GATE → DESIGN, HUMAN_FINDINGS_GATE → PLAN_EXECUTION)
 - `abort` — end the campaign
 
 **Testing modes:** `auto_approve=True` or `auto_response="reject"` for deterministic testing without human interaction.
@@ -318,8 +335,8 @@ Principles are hard constraints: the Planner must not design bundles that contra
 ```
 for i in 1..max_iterations:
   ┌─────────────────────────────────────────────────────┐
-  │  run_iteration(iteration=i, final=(i==max))         │
-  │    FRAMING → DESIGN → REVIEW → RUNNING → EXTRACTION │
+  │  run_iteration(iteration=i, final=(i==max))                        │
+  │    FRAMING → DESIGN → REVIEW → PLAN_EXECUTION → EXECUTING → ANALYSIS → EXTRACTION │
   └─────────────────────┬───────────────────────────────┘
                         │
                   (if not final)
@@ -350,6 +367,7 @@ Every artifact exchanged between components is validated against a JSON Schema (
 | `campaign.schema.yaml` | YAML | Campaign configuration (target system, reviewer panel, prompt layers) |
 | `state.schema.json` | JSON | Orchestrator checkpoint (phase, iteration, run_id, config_ref) |
 | `bundle.schema.yaml` | YAML | Hypothesis bundles (arms with predictions, mechanisms, diagnostics) |
+| `experiment_plan.schema.yaml` | YAML | Experiment plans (exact commands per arm/condition) |
 | `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |
 | `investigation_summary.schema.json` | JSON | Bounded iteration summary for cross-iteration context |
 | `principles.schema.json` | JSON | Principle store (statement, confidence, regime, evidence, category, status) |

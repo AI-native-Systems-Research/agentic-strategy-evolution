@@ -22,7 +22,7 @@ class TestEnterPhase:
     def test_skip_past_phase(self, tmp_path):
         """When engine is past a phase, _enter_phase returns False (skip)."""
         state = {
-            "phase": "RUNNING", "iteration": 0,
+            "phase": "EXECUTING", "iteration": 0,
             "run_id": "test", "family": None, "timestamp": "t",
         }
         (tmp_path / "state.json").write_text(json.dumps(state))
@@ -31,19 +31,20 @@ class TestEnterPhase:
         assert _enter_phase(engine, "FRAMING") is False
         assert _enter_phase(engine, "DESIGN") is False
         assert _enter_phase(engine, "HUMAN_DESIGN_GATE") is False
-        assert engine.phase == "RUNNING"  # unchanged
+        assert _enter_phase(engine, "PLAN_EXECUTION") is False
+        assert engine.phase == "EXECUTING"  # unchanged
 
     def test_redo_current_phase(self, tmp_path):
         """When engine is at a phase, _enter_phase returns True without transition."""
         state = {
-            "phase": "RUNNING", "iteration": 0,
+            "phase": "EXECUTING", "iteration": 0,
             "run_id": "test", "family": None, "timestamp": "t",
         }
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "RUNNING") is True
-        assert engine.phase == "RUNNING"  # no transition happened
+        assert _enter_phase(engine, "EXECUTING") is True
+        assert engine.phase == "EXECUTING"  # no transition happened
 
     def test_advance_to_next_phase(self, tmp_path):
         """When engine is before a phase, _enter_phase transitions and returns True."""
@@ -79,7 +80,7 @@ class TestEnterPhase:
         )
 
     def test_fast_fail_resume_from_findings_review(self, tmp_path):
-        """Resuming at FINDINGS_REVIEW skips RUNNING and earlier phases."""
+        """Resuming at FINDINGS_REVIEW skips execution phases and earlier."""
         state = {
             "phase": "FINDINGS_REVIEW", "iteration": 0,
             "run_id": "test", "family": None, "timestamp": "t",
@@ -87,7 +88,9 @@ class TestEnterPhase:
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "RUNNING") is False
+        assert _enter_phase(engine, "PLAN_EXECUTION") is False
+        assert _enter_phase(engine, "EXECUTING") is False
+        assert _enter_phase(engine, "ANALYSIS") is False
         assert _enter_phase(engine, "FINDINGS_REVIEW") is True
         assert engine.phase == "FINDINGS_REVIEW"
         # Can advance to next

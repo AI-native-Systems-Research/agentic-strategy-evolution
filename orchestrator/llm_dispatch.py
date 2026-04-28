@@ -164,12 +164,14 @@ class LLMDispatcher:
         # (role, phase) -> (template_name, output_format, schema_name)
         ("planner", "frame"): ("frame", None, None),
         ("planner", "design"): ("design", "yaml", "bundle.schema.yaml"),
-        ("executor", "run"): ("run", "json", "findings.schema.json"),
+        ("executor", "plan-execution"): ("run_plan", "yaml", "experiment_plan.schema.yaml"),
+        ("executor", "analyze"): ("run_analyze", "json", "findings.schema.json"),
         ("reviewer", "review-design"): ("review_design", None, None),
         ("reviewer", "review-findings"): ("review_findings", None, None),
         ("extractor", "extract"): ("extract", "json", "principles.schema.json"),
         ("extractor", "summarize"): ("summarize", "json", "investigation_summary.schema.json"),
         ("summarizer", "summarize-gate"): ("summarize_gate", "json", "gate_summary.schema.json"),
+        ("extractor", "report"): ("report", None, None),
     }
 
     def _route(
@@ -226,7 +228,7 @@ class LLMDispatcher:
                     "This is the first iteration. No prior investigation summary."
                 )
 
-        if phase in ("design", "review-design", "run", "summarize"):
+        if phase in ("design", "review-design", "plan-execution", "analyze", "summarize"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
                 pass  # bundle doesn't exist yet during design — template ignores it
@@ -238,8 +240,17 @@ class LLMDispatcher:
             else:
                 ctx["bundle_yaml"] = bundle_path.read_text()
 
-        if phase == "run":
-            # Inject problem.md so executor has full framing context
+        if phase in ("frame", "plan-execution"):
+            # Pre-inject repo context so claude -p doesn't waste turns exploring
+            repo_path = self.campaign.get("target_system", {}).get("repo_path")
+            if repo_path:
+                from orchestrator.repo_context import gather_repo_context
+                ctx["repo_context"] = gather_repo_context(Path(repo_path))
+            else:
+                ctx["repo_context"] = "(no repo_path configured)"
+
+        if phase in ("plan-execution", "analyze"):
+            # Inject problem.md so executor/analyzer has full framing context
             problem_path = self.work_dir / "runs" / f"iter-{iteration}" / "problem.md"
             if not problem_path.exists() and iteration > 1:
                 problem_path = self.work_dir / "runs" / "iter-1" / "problem.md"
@@ -247,6 +258,17 @@ class LLMDispatcher:
                 ctx["problem_md"] = problem_path.read_text()
             else:
                 ctx["problem_md"] = "No problem framing available."
+
+        if phase == "analyze":
+            results_path = (
+                self.work_dir / "runs" / f"iter-{iteration}" / "execution_results.json"
+            )
+            if not results_path.exists():
+                raise FileNotFoundError(
+                    f"Cannot run 'analyze' phase: {results_path} not found. "
+                    f"Ensure the EXECUTING phase completed for iteration {iteration}."
+                )
+            ctx["experiment_results"] = results_path.read_text()
 
         if phase in ("review-findings", "extract", "summarize"):
             findings_path = (
@@ -296,6 +318,21 @@ class LLMDispatcher:
                     ctx["gate_context"] = "Investigation summary not available."
             else:
                 ctx["gate_context"] = "No additional context."
+
+        if phase == "report":
+            ctx["research_question"] = self.campaign["research_question"]
+            # Ledger summary
+            ledger_path = self.work_dir / "ledger.json"
+            if ledger_path.exists():
+                ctx["ledger_summary"] = ledger_path.read_text()
+            else:
+                ctx["ledger_summary"] = "No ledger entries."
+            # Final principles
+            principles_path = self.work_dir / "principles.json"
+            if principles_path.exists():
+                ctx["final_principles"] = principles_path.read_text()
+            else:
+                ctx["final_principles"] = "No principles extracted."
 
         return ctx
 

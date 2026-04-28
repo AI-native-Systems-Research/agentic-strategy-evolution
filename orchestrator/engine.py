@@ -25,7 +25,9 @@ class Phase(str, Enum):
     DESIGN = "DESIGN"
     DESIGN_REVIEW = "DESIGN_REVIEW"
     HUMAN_DESIGN_GATE = "HUMAN_DESIGN_GATE"
-    RUNNING = "RUNNING"
+    PLAN_EXECUTION = "PLAN_EXECUTION"
+    EXECUTING = "EXECUTING"
+    ANALYSIS = "ANALYSIS"
     FINDINGS_REVIEW = "FINDINGS_REVIEW"
     HUMAN_FINDINGS_GATE = "HUMAN_FINDINGS_GATE"
     TUNING = "TUNING"
@@ -39,10 +41,12 @@ TRANSITIONS: MappingProxyType[str, frozenset[str]] = MappingProxyType({
     "FRAMING":             frozenset({"DESIGN"}),
     "DESIGN":              frozenset({"DESIGN_REVIEW"}),
     "DESIGN_REVIEW":       frozenset({"HUMAN_DESIGN_GATE", "DESIGN"}),
-    "HUMAN_DESIGN_GATE":   frozenset({"RUNNING", "DESIGN"}),
-    "RUNNING":             frozenset({"FINDINGS_REVIEW"}),
-    "FINDINGS_REVIEW":     frozenset({"HUMAN_FINDINGS_GATE", "RUNNING"}),
-    "HUMAN_FINDINGS_GATE": frozenset({"TUNING", "EXTRACTION", "RUNNING"}),
+    "HUMAN_DESIGN_GATE":   frozenset({"PLAN_EXECUTION", "DESIGN"}),
+    "PLAN_EXECUTION":      frozenset({"EXECUTING"}),
+    "EXECUTING":           frozenset({"ANALYSIS"}),
+    "ANALYSIS":            frozenset({"FINDINGS_REVIEW", "EXTRACTION"}),
+    "FINDINGS_REVIEW":     frozenset({"HUMAN_FINDINGS_GATE", "PLAN_EXECUTION"}),
+    "HUMAN_FINDINGS_GATE": frozenset({"TUNING", "EXTRACTION", "PLAN_EXECUTION"}),
     "TUNING":              frozenset({"EXTRACTION"}),
     "EXTRACTION":          frozenset({"DESIGN", "DONE"}),
 })

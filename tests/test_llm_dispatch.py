@@ -60,6 +60,21 @@ SAMPLE_CAMPAIGN = {
     },
 }
 
+VALID_EXPERIMENT_PLAN_YAML = """\
+metadata:
+  iteration: 1
+  bundle_ref: runs/iter-1/bundle.yaml
+arms:
+  - arm_id: h-main
+    conditions:
+      - name: baseline
+        cmd: "echo baseline"
+  - arm_id: h-control-negative
+    conditions:
+      - name: control
+        cmd: "echo control"
+"""
+
 VALID_BUNDLE_YAML = """\
 metadata:
   iteration: 1
@@ -132,6 +147,18 @@ def work_dir(tmp_path: Path) -> Path:
     )
     (iter_dir / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
     (iter_dir / "findings.json").write_text(VALID_FINDINGS_JSON)
+    # Stub execution_results.json needed by _build_context for analyze route
+    exec_results = {
+        "plan_ref": "runs/iter-1/experiment_plan.yaml",
+        "setup_results": [],
+        "arms": [
+            {"arm_id": "h-main", "conditions": [
+                {"name": "baseline", "cmd": "echo baseline", "exit_code": 0,
+                 "stdout_tail": "baseline", "stderr_tail": "", "output_content": None},
+            ]},
+        ],
+    }
+    (iter_dir / "execution_results.json").write_text(json.dumps(exec_results, indent=2))
     (tmp_path / "principles.json").write_text(
         json.dumps({"principles": []}, indent=2)
     )
@@ -180,7 +207,7 @@ class TestLLMDispatcher:
         d = _make_dispatcher(work_dir, [resp])
         out = work_dir / "runs" / "iter-1" / "findings_out.json"
 
-        d.dispatch("executor", "run", output_path=out, iteration=1)
+        d.dispatch("executor", "analyze", output_path=out, iteration=1)
 
         findings = json.loads(out.read_text())
         schema = load_schema("findings.schema.json")
@@ -291,7 +318,7 @@ class TestLLMDispatcher:
 
         # Pass REFUTED but executor should still use its own analysis
         d.dispatch(
-            "executor", "run", output_path=out, iteration=1, h_main_result="REFUTED",
+            "executor", "analyze", output_path=out, iteration=1, h_main_result="REFUTED",
         )
 
         findings = json.loads(out.read_text())
@@ -304,7 +331,7 @@ class TestLLMDispatcher:
         out = work_dir / "runs" / "iter-1" / "findings_raw.json"
 
         with pytest.raises(RuntimeError, match="retry response could not be parsed"):
-            d.dispatch("executor", "run", output_path=out, iteration=1)
+            d.dispatch("executor", "analyze", output_path=out, iteration=1)
 
     def test_no_code_fence_retry_succeeds(self, work_dir: Path) -> None:
         # First response has no fence, retry returns a proper fenced response
@@ -312,7 +339,7 @@ class TestLLMDispatcher:
         d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON, fenced])
         out = work_dir / "runs" / "iter-1" / "findings_retry.json"
 
-        d.dispatch("executor", "run", output_path=out, iteration=1)
+        d.dispatch("executor", "analyze", output_path=out, iteration=1)
         findings = json.loads(out.read_text())
         assert "arms" in findings
 
@@ -325,7 +352,7 @@ class TestLLMDispatcher:
         d = _make_dispatcher(work_dir, [resp])
         out = work_dir / "runs" / "iter-1" / "findings_multi.json"
 
-        d.dispatch("executor", "run", output_path=out, iteration=1)
+        d.dispatch("executor", "analyze", output_path=out, iteration=1)
 
         findings = json.loads(out.read_text())
         assert "arms" in findings  # Used the valid last fence, not the bad first one
@@ -356,13 +383,13 @@ class TestLLMDispatcher:
                 completion_fn=make_mock_completion([]),
             )
 
-    def test_missing_bundle_for_run_raises(self, work_dir: Path) -> None:
-        # Remove the bundle so the run phase fails with a clear message
+    def test_missing_bundle_for_plan_execution_raises(self, work_dir: Path) -> None:
+        # Remove the bundle so the plan-execution phase fails with a clear message
         (work_dir / "runs" / "iter-1" / "bundle.yaml").unlink()
         d = _make_dispatcher(work_dir, ["unused"])
-        out = work_dir / "runs" / "iter-1" / "findings_fail.json"
+        out = work_dir / "runs" / "iter-1" / "experiment_plan.yaml"
         with pytest.raises(FileNotFoundError, match="design phase completed"):
-            d.dispatch("executor", "run", output_path=out, iteration=1)
+            d.dispatch("executor", "plan-execution", output_path=out, iteration=1)
 
     def test_missing_findings_for_review_raises(self, work_dir: Path) -> None:
         (work_dir / "runs" / "iter-1" / "findings.json").unlink()

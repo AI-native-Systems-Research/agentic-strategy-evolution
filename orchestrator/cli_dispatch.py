@@ -46,13 +46,15 @@ class CLIDispatcher:
         campaign: dict,
         model: str = "aws/claude-opus-4-6",
         prompts_dir: Path | None = None,
-        timeout: int = 600,
+        timeout: int = 1800,
+        max_turns: int = 25,
     ) -> None:
         self.work_dir = Path(work_dir)
         LLMDispatcher._validate_campaign(campaign)
         self.campaign = campaign
         self.model = model
         self.timeout = timeout
+        self.max_turns = max_turns
         resolved_prompts_dir = (
             prompts_dir
             or Path(__file__).parent.parent / "prompts" / "methodology"
@@ -80,6 +82,24 @@ class CLIDispatcher:
             yield
         finally:
             self._cwd = old
+
+    def revise_plan(self, plan: dict, error_info: dict) -> dict:
+        """Call claude -p to revise a failed experiment plan.
+
+        Used by orchestrator/executor.py when a command fails during
+        the EXECUTING phase.  Returns the corrected plan dict.
+        """
+        context = {
+            "experiment_plan_yaml": yaml.safe_dump(
+                plan, default_flow_style=False, sort_keys=False,
+            ),
+            "error_info": json.dumps(error_info, indent=2),
+        }
+        prompt = self.loader.load("run_plan_revise", context)
+        response = self._call_claude(prompt)
+        data = self._extract_fenced_content(response, "yaml")
+        LLMDispatcher._validate(data, "experiment_plan.schema.yaml")
+        return data
 
     def dispatch(
         self,
@@ -204,9 +224,11 @@ class CLIDispatcher:
         LLMDispatcher._validate(data, schema_name)
         return data
 
-    def _call_claude(self, prompt: str) -> str:
+    def _call_claude(self, prompt: str, max_turns: int | None = None) -> str:
         """Invoke `claude -p` with the prompt on stdin, return stdout."""
         cmd = ["claude", "-p", "--model", self.model]
+        turns = max_turns or self.max_turns
+        cmd += ["--max-turns", str(turns)]
         cwd = self._cwd
         if cwd and not cwd.exists():
             raise RuntimeError(
@@ -215,10 +237,10 @@ class CLIDispatcher:
                 f"or that the experiment worktree was created successfully."
             )
         logger.info(
-            "Calling claude -p (model=%s, cwd=%s, timeout=%ds, prompt=%d chars)",
-            self.model, cwd, self.timeout, len(prompt),
+            "Calling claude -p (model=%s, cwd=%s, timeout=%ds, max_turns=%d, prompt=%d chars)",
+            self.model, cwd, self.timeout, turns, len(prompt),
         )
-        print(f"    Waiting for claude -p ({self.model})...", flush=True)
+        print(f"    Waiting for claude -p ({self.model}, max_turns={turns})...", flush=True)
         try:
             result = subprocess.run(
                 cmd,

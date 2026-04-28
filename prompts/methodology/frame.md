@@ -19,9 +19,17 @@ The following principles have been extracted from previous iterations:
 
 {{active_principles}}
 
+## Pre-gathered Repo Context
+
+{{repo_context}}
+
+## Speed Constraint
+
+Be fast. The context above gives you repo structure, build system, and CLI flags. Only use shell to read a specific source file or verify a detail. Complete in under 10 tool uses.
+
 ## Instructions
 
-Explore the codebase thoroughly before writing. You must discover and document:
+Explore the codebase to fill gaps not covered above. You must discover and document:
 
 1. **How to build the system** — find build files (Makefile, go.mod, package.json, pyproject.toml, etc.) and determine the build command.
 2. **How to run experiments** — find the CLI entry point, available flags/options, and the command pattern for running with different configurations.

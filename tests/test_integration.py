@@ -87,10 +87,21 @@ class TestSingleIterationHappyPath:
         engine.transition("HUMAN_DESIGN_GATE")
         assert gate.prompt("Approve?") == "approve"
 
-        # HUMAN_DESIGN_GATE -> RUNNING
-        engine.transition("RUNNING")
+        # HUMAN_DESIGN_GATE -> PLAN_EXECUTION
+        engine.transition("PLAN_EXECUTION")
         dispatcher.dispatch(
-            "executor", "run", output_path=iter_dir / "findings.json", iteration=1
+            "executor", "plan-execution",
+            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
+        )
+
+        # PLAN_EXECUTION -> EXECUTING
+        engine.transition("EXECUTING")
+        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
+
+        # EXECUTING -> ANALYSIS
+        engine.transition("ANALYSIS")
+        dispatcher.dispatch(
+            "executor", "analyze", output_path=iter_dir / "findings.json", iteration=1,
         )
         findings = json.loads((iter_dir / "findings.json").read_text())
         jsonschema.validate(findings, load_schema("findings.schema.json"))
@@ -99,7 +110,7 @@ class TestSingleIterationHappyPath:
         ff = check_fast_fail(findings)
         assert ff == FastFailAction.CONTINUE
 
-        # RUNNING -> FINDINGS_REVIEW
+        # ANALYSIS -> FINDINGS_REVIEW
         engine.transition("FINDINGS_REVIEW")
 
         # FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
@@ -137,11 +148,20 @@ class TestSingleIterationHappyPath:
 
         engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
-        engine.transition("RUNNING")
+
+        # Three-phase execution
+        engine.transition("PLAN_EXECUTION")
+        dispatcher.dispatch(
+            "executor", "plan-execution",
+            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
+        )
+        engine.transition("EXECUTING")
+        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
+        engine.transition("ANALYSIS")
 
         # Executor produces refuted findings
         dispatcher.dispatch(
-            "executor", "run",
+            "executor", "analyze",
             output_path=iter_dir / "findings.json",
             iteration=1, h_main_result="REFUTED",
         )
@@ -183,9 +203,16 @@ class TestSingleIterationHappyPath:
         )
         engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
-        engine.transition("RUNNING")
+        engine.transition("PLAN_EXECUTION")
         dispatcher.dispatch(
-            "executor", "run", output_path=iter_dir / "findings.json", iteration=1
+            "executor", "plan-execution",
+            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
+        )
+        engine.transition("EXECUTING")
+        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
+        engine.transition("ANALYSIS")
+        dispatcher.dispatch(
+            "executor", "analyze", output_path=iter_dir / "findings.json", iteration=1,
         )
         engine.transition("FINDINGS_REVIEW")
         engine.transition("HUMAN_FINDINGS_GATE")
@@ -208,9 +235,16 @@ class TestSingleIterationHappyPath:
         )
         engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
-        engine.transition("RUNNING")
+        engine.transition("PLAN_EXECUTION")
         dispatcher.dispatch(
-            "executor", "run",
+            "executor", "plan-execution",
+            output_path=iter_dir2 / "experiment_plan.yaml", iteration=2,
+        )
+        engine.transition("EXECUTING")
+        dispatcher.write_execution_results(iter_dir2 / "execution_results.json", iteration=2)
+        engine.transition("ANALYSIS")
+        dispatcher.dispatch(
+            "executor", "analyze",
             output_path=iter_dir2 / "findings.json",
             iteration=2, h_main_result="REFUTED",
         )

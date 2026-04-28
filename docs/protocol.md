@@ -46,17 +46,22 @@ A bundle passes through:
 
 If the human rejects, the Planner revises. If approved, the bundle advances to execution.
 
-### Phase 3: Implement and Verify
+### Phase 3: Plan, Execute, and Analyze
 
-The Executor receives the approved hypothesis bundle and runs the experiment end-to-end:
+Execution is split into three checkpointable sub-phases:
 
-1. Reads the bundle and problem framing context
-2. Implements code changes (if `code_changes` specified in arms)
-3. Runs experiments using commands discovered during framing
-4. Collects metrics and compares against predictions
-5. Produces `findings.json`
+**PLAN_EXECUTION** — The Executor agent (via `claude -p` with shell access) receives the approved hypothesis bundle and produces `experiment_plan.yaml` — a structured plan with exact shell commands per arm. The agent explores the target repo, discovers build commands, and designs reproducible experiment conditions.
 
-When `repo_path` is set, experiments run in an isolated git worktree via CLIDispatcher (`claude -p` with shell access). The executor handles failures by reading stderr, reasoning about the error, and retrying — no orchestrator-level retry logic needed.
+**EXECUTING** — The Python orchestrator runs the commands from `experiment_plan.yaml` deterministically via `subprocess.run()`. No LLM calls. Stdout/stderr are captured per condition. If a command fails, an optional revision callback asks the LLM to correct the plan (max 3 retries). Results are written to `execution_results.json`.
+
+**ANALYSIS** — The LLM API receives the execution results and compares observed metrics against predictions to produce `findings.json`.
+
+When `repo_path` is set, PLAN_EXECUTION and EXECUTING run in an isolated git worktree. The worktree ID is persisted to `.experiment_id` for crash recovery.
+
+**Key artifacts:**
+- `experiment_plan.yaml` — exact commands per arm (PLAN_EXECUTION output)
+- `execution_results.json` — stdout/stderr/metrics per condition (EXECUTING output)
+- `findings.json` — prediction vs outcome comparison (ANALYSIS output)
 
 Findings pass through:
 1. AI Findings Review (default: 10 independent perspectives, configurable per campaign via `campaign.yaml`)
@@ -191,7 +196,7 @@ A campaign stops when:
 ## Orchestrator
 
 The orchestrator is a Python state machine — NOT an LLM. It owns:
-- Phase transitions between 11 states
+- Phase transitions between 13 states
 - Checkpoint/resume via `state.json`
 - Agent dispatch (invoke LLM agents with structured prompts)
 - Gate logic (pause for human approval)
@@ -201,16 +206,17 @@ The orchestrator is a Python state machine — NOT an LLM. It owns:
 
 ```
 INIT -> FRAMING -> DESIGN -> DESIGN_REVIEW -> HUMAN_DESIGN_GATE
-  -> RUNNING -> FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
+  -> PLAN_EXECUTION -> EXECUTING -> ANALYSIS
+  -> FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
   -> TUNING (if H-main confirmed) or EXTRACTION (if refuted)
   -> EXTRACTION -> DESIGN (next iteration) or DONE
 
 Backward/looping transitions:
-  DESIGN_REVIEW -> DESIGN         (CRITICAL findings in review)
-  HUMAN_DESIGN_GATE -> DESIGN     (human rejects)
-  FINDINGS_REVIEW -> RUNNING      (CRITICAL findings in review)
-  HUMAN_FINDINGS_GATE -> RUNNING  (human rejects)
-  EXTRACTION -> DESIGN            (next iteration, increments counter)
+  DESIGN_REVIEW -> DESIGN              (CRITICAL findings in review)
+  HUMAN_DESIGN_GATE -> DESIGN          (human rejects)
+  FINDINGS_REVIEW -> PLAN_EXECUTION    (CRITICAL findings in review)
+  HUMAN_FINDINGS_GATE -> PLAN_EXECUTION (human rejects)
+  EXTRACTION -> DESIGN                 (next iteration, increments counter)
 ```
 
 ### Agent Roles
@@ -218,7 +224,7 @@ Backward/looping transitions:
 | Role | Phases | Reads | Writes | Shell |
 |---|---|---|---|---|
 | Planner | Frame, Design | all | `problem.md`, `bundle.yaml` | — |
-| Executor | Run, Tune | all | `findings.json`, `results/` | yes |
+| Executor | Plan-Execution, Analyze, Tune | bundle, problem, exec results | `experiment_plan.yaml`, `findings.json` | yes (plan-execution) |
 | Reviewer | Design Review, Findings Review | all | `review-*.md` | — |
 | Extractor | Extract, Summarize | all | `principles.json`, `investigation_summary.json` | — |
 
@@ -234,6 +240,8 @@ campaign-dir/
   runs/
     iter-N/
       bundle.yaml     — hypothesis bundle
+      experiment_plan.yaml — exact commands per arm
+      execution_results.json — stdout/stderr/metrics per condition
       findings.json    — prediction vs outcome
       investigation_summary.json — bounded iteration summary
       gate_summary_*.json — human-readable gate summaries

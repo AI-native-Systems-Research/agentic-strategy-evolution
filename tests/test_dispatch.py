@@ -45,7 +45,7 @@ class TestStubDispatcher:
     def test_dispatch_executor_produces_valid_findings(self, work_dir):
         dispatcher = _make_dispatcher(work_dir)
         output_path = work_dir / "runs" / "iter-1" / "findings.json"
-        dispatcher.dispatch("executor", "run", output_path=output_path, iteration=1)
+        dispatcher.dispatch("executor", "analyze", output_path=output_path, iteration=1)
         assert output_path.exists()
         findings = json.loads(output_path.read_text())
         jsonschema.validate(findings, _load_schema("findings.schema.json"))
@@ -54,12 +54,20 @@ class TestStubDispatcher:
         dispatcher = _make_dispatcher(work_dir)
         output_path = work_dir / "runs" / "iter-1" / "findings.json"
         dispatcher.dispatch(
-            "executor", "run",
+            "executor", "analyze",
             output_path=output_path, iteration=1, h_main_result="REFUTED",
         )
         findings = json.loads(output_path.read_text())
         assert findings["arms"][0]["status"] == "REFUTED"
         jsonschema.validate(findings, _load_schema("findings.schema.json"))
+
+    def test_dispatch_executor_plan_produces_valid_plan(self, work_dir):
+        dispatcher = _make_dispatcher(work_dir)
+        output_path = work_dir / "runs" / "iter-1" / "experiment_plan.yaml"
+        dispatcher.dispatch("executor", "plan-execution", output_path=output_path, iteration=1)
+        assert output_path.exists()
+        plan = yaml.safe_load(output_path.read_text())
+        jsonschema.validate(plan, _load_schema("experiment_plan.schema.yaml"))
 
     def test_dispatch_reviewer_produces_review(self, work_dir):
         dispatcher = _make_dispatcher(work_dir)
@@ -168,7 +176,7 @@ class TestDispatchErrorHandling:
         dispatcher = _make_dispatcher(tmp_path)
         with pytest.raises(ValueError, match="Invalid h_main_result"):
             dispatcher.dispatch(
-                "executor", "run",
+                "executor", "analyze",
                 output_path=tmp_path / "findings.json",
                 iteration=1, h_main_result="INVALID",
             )

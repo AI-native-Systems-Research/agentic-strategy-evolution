@@ -23,9 +23,13 @@ This is iteration {{iteration}}.
 
 {{active_principles}}
 
-## Real Experiment Results
+## Problem Framing
 
-The following metrics were collected from running the experiments. Each entry contains the raw JSON metrics output from the simulator.
+{{problem_md}}
+
+## Experiment Execution Results
+
+The following results were collected by the orchestrator from running the experiment plan. Each entry contains the command that was run, its exit code, and the captured output.
 
 {{experiment_results}}
 
