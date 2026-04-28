@@ -132,6 +132,11 @@ class CLIDispatcher:
         """Invoke `claude -p` with the prompt on stdin, return stdout."""
         cmd = ["claude", "-p", "--model", self.model]
         cwd = self._cwd if self._cwd and self._cwd.exists() else None
+        logger.info(
+            "Calling claude -p (model=%s, cwd=%s, timeout=%ds, prompt=%d chars)",
+            self.model, cwd, self.timeout, len(prompt),
+        )
+        print(f"    Waiting for claude -p ({self.model})...", flush=True)
         try:
             result = subprocess.run(
                 cmd,
@@ -159,4 +164,5 @@ class CLIDispatcher:
                 f"stderr: {stderr_tail}"
             )
 
+        logger.info("claude -p returned (%d chars)", len(result.stdout))
         return result.stdout
