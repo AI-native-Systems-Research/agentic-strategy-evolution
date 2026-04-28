@@ -188,7 +188,7 @@ def main() -> None:
     else:
         max_iter = campaign.get("max_iterations", 10)
 
-    run_id = args.run_id or campaign_path.parent.name + "-run"
+    run_id = args.run_id or campaign.get("run_id") or campaign_path.parent.name + "-run"
     work_dir = setup_work_dir(run_id)
     print(f"Working directory: {work_dir.resolve()}")
     print(f"Max iterations: {max_iter}")

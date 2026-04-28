@@ -16,6 +16,11 @@ properties:
     minLength: 1
     description: "The guiding research question for this campaign."
 
+  run_id:
+    type: string
+    minLength: 1
+    description: "Working directory name for campaign output. CLI --run-id overrides this. Default: derived from campaign file path."
+
   max_iterations:
     type: integer
     minimum: 1
