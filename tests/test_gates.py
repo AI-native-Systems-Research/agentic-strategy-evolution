@@ -33,23 +33,25 @@ def _allow_auto_approve(monkeypatch):
 class TestHumanGate:
     def test_auto_approve(self):
         gate = _make_auto_gate()
-        decision = gate.prompt("Approve design?", artifact_path="runs/iter-1/hypothesis.md")
+        decision, reason = gate.prompt("Approve design?", artifact_path="runs/iter-1/hypothesis.md")
         assert decision == "approve"
+        assert reason is None
 
     def test_auto_reject(self):
         gate = HumanGate(auto_response="reject")
-        decision = gate.prompt("Approve design?")
+        decision, reason = gate.prompt("Approve design?")
         assert decision == "reject"
 
     def test_auto_abort(self):
         gate = HumanGate(auto_response="abort")
-        decision = gate.prompt("Approve?")
+        decision, reason = gate.prompt("Approve?")
         assert decision == "abort"
 
     def test_all_valid_decisions(self):
         for d in VALID_DECISIONS:
             gate = HumanGate(auto_response=d)
-            assert gate.prompt("Q?") == d
+            decision, reason = gate.prompt("Q?")
+            assert decision == d
 
     def test_invalid_auto_response_rejected(self):
         with pytest.raises(ValueError, match="Invalid auto_response"):
@@ -75,18 +77,25 @@ class TestHumanGate:
     def test_interactive_prompt_valid_input(self, monkeypatch):
         gate = HumanGate()
         monkeypatch.setattr("builtins.input", lambda _: "approve")
-        assert gate.prompt("Approve?") == "approve"
+        decision, reason = gate.prompt("Approve?")
+        assert decision == "approve"
+        assert reason is None
 
     def test_interactive_prompt_reject(self, monkeypatch):
         gate = HumanGate()
-        monkeypatch.setattr("builtins.input", lambda _: "reject")
-        assert gate.prompt("Approve?") == "reject"
+        inputs = iter(["reject", "bad design"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+        decision, reason = gate.prompt("Approve?")
+        assert decision == "reject"
+        assert reason == "bad design"
 
     def test_interactive_prompt_retries_on_invalid(self, monkeypatch):
         gate = HumanGate()
         responses = iter(["invalid", "bad", "approve"])
         monkeypatch.setattr("builtins.input", lambda _: next(responses))
-        assert gate.prompt("Approve?") == "approve"
+        decision, reason = gate.prompt("Approve?")
+        assert decision == "approve"
+        assert reason is None
 
     def test_interactive_prompt_eof_raises(self, monkeypatch):
         gate = HumanGate()
@@ -133,5 +142,5 @@ class TestSummarizedGate:
     def test_gate_works_without_summary(self, monkeypatch):
         """Backwards compatible: gates work when no summary_path is given."""
         gate = HumanGate(auto_response="approve")
-        result = gate.prompt("Approve?")
-        assert result == "approve"
+        decision, reason = gate.prompt("Approve?")
+        assert decision == "approve"

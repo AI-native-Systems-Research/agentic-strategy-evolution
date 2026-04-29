@@ -82,4 +82,6 @@ arms:
         output: "results/h-main/treatment-42.json"
 ```
 
+{{human_feedback}}
+
 Output ONLY the YAML code fence. Do not include any explanation outside the fence.

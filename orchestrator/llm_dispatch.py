@@ -228,6 +228,16 @@ class LLMDispatcher:
                     "This is the first iteration. No prior investigation summary."
                 )
 
+        if phase in ("design", "plan-execution"):
+            feedback_path = self.work_dir / "runs" / f"iter-{iteration}" / "feedback.md"
+            if feedback_path.exists():
+                content = feedback_path.read_text().strip()
+                ctx["human_feedback"] = (
+                    f"## Human Feedback (from previous rejection)\n\n{content}"
+                )
+            else:
+                ctx["human_feedback"] = ""
+
         if phase in ("design", "review-design", "plan-execution", "analyze", "summarize"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():

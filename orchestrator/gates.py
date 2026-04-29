@@ -65,7 +65,7 @@ class HumanGate:
         artifact_path: str | None = None,
         reviews: list[str] | None = None,
         summary_path: str | None = None,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         # Show summary if available (before raw artifact and auto-response)
         if summary_path:
             spath = Path(summary_path)
@@ -85,7 +85,7 @@ class HumanGate:
 
         if self._response:
             logger.info("Gate auto-response: %s", self._response)
-            return Decision(self._response).value
+            return Decision(self._response).value, None
         # Interactive mode
         if artifact_path:
             print(f"\n--- Artifact: {artifact_path} ---")
@@ -123,6 +123,12 @@ class HumanGate:
                 logger.info("Gate aborted by KeyboardInterrupt")
                 raise
             if answer in VALID_DECISIONS:
-                logger.info("Gate decision: %s", answer)
-                return Decision(answer).value
+                reason = None
+                if answer == "reject":
+                    try:
+                        reason = input("  Reason (optional, Enter to skip): ").strip() or None
+                    except (EOFError, KeyboardInterrupt):
+                        pass
+                logger.info("Gate decision: %s (reason=%s)", answer, reason)
+                return Decision(answer).value, reason
             print(f"Invalid. Choose from: {VALID_DECISIONS}")

@@ -251,7 +251,7 @@ class TestSingleIterationWithMockedLLM:
 
         # DESIGN_REVIEW -> HUMAN_DESIGN_GATE
         engine.transition("HUMAN_DESIGN_GATE")
-        assert gate.prompt("Approve design?") == "approve"
+        assert gate.prompt("Approve design?") == ("approve", None)
 
         # HUMAN_DESIGN_GATE -> PLAN_EXECUTION
         engine.transition("PLAN_EXECUTION")
@@ -302,7 +302,7 @@ class TestSingleIterationWithMockedLLM:
 
         # FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
         engine.transition("HUMAN_FINDINGS_GATE")
-        assert gate.prompt("Approve findings?") == "approve"
+        assert gate.prompt("Approve findings?") == ("approve", None)
 
         # H-main confirmed -> TUNING
         engine.transition("TUNING")

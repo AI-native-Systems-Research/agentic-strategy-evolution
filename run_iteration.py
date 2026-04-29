@@ -213,13 +213,15 @@ def run_iteration(
         print(f"  HUMAN DESIGN GATE")
         print(f"{'='*60}")
         summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "design")
-        decision = gate.prompt(
+        decision, reason = gate.prompt(
             "Review the hypothesis bundle and reviews. Approve?",
             artifact_path=str(iter_dir / "bundle.yaml"),
             reviews=[str(p) for p in sorted((iter_dir / "reviews").glob("review-*.md"))],
             summary_path=str(summary_path) if summary_path else None,
         )
         if decision == "reject":
+            if reason:
+                atomic_write(iter_dir / "feedback.md", reason + "\n")
             print("Design rejected. Re-run after revising the campaign config.")
             engine.transition("DESIGN")
             return IterationOutcome.REDESIGN
@@ -372,11 +374,13 @@ def run_iteration(
             print(f"  HUMAN FINDINGS GATE")
             print(f"{'='*60}")
             summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "findings")
-            decision = gate.prompt(
+            decision, reason = gate.prompt(
                 "Review the findings and reviews. Approve?",
                 summary_path=str(summary_path) if summary_path else None,
             )
             if decision == "reject":
+                if reason:
+                    atomic_write(iter_dir / "feedback.md", reason + "\n")
                 print("Findings rejected. Re-running executor.")
                 engine.transition("PLAN_EXECUTION")
                 return IterationOutcome.REDESIGN

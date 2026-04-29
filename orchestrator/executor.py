@@ -80,6 +80,10 @@ def execute_plan(
                 "stderr_tail": _truncate(exc.stderr),
                 "stdout_tail": _truncate(exc.stdout),
             }
+            # Persist error for debugging
+            error_path = iter_dir / f"execution_error_v{revisions_used}.json"
+            atomic_write(error_path, json.dumps(error_info, indent=2) + "\n")
+            logger.info("Saved error info to %s", error_path)
             plan = revision_fn(plan, error_info)
             # Save revised plan for audit trail
             revised_path = iter_dir / f"experiment_plan_v{revisions_used + 1}.yaml"

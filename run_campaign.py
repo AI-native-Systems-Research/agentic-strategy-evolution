@@ -155,7 +155,7 @@ def run_campaign(
         print(f"\n{'='*60}")
         print(f"  CONTINUE GATE — Iteration {i} complete")
         print(f"{'='*60}")
-        decision = continue_gate.prompt(
+        decision, _reason = continue_gate.prompt(
             f"Continue to iteration {i + 1}?",
             summary_path=str(gate_summary_path) if gate_summary_path else None,
         )
