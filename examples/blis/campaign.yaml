@@ -1,5 +1,5 @@
 research_question: >
-  Does increasing the prefix ratio in a workload reduce TTFT under moderate load?
+  With total input length held fixed, does increasing the prefix portion (cached tokens) reduce TTFT under moderate load?
 
 run_id: blis-run
 max_iterations: 5
