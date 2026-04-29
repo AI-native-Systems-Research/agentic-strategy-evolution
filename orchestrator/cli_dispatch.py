@@ -44,7 +44,7 @@ class CLIDispatcher:
         self,
         work_dir: Path,
         campaign: dict,
-        model: str = "aws/claude-opus-4-6",
+        model: str = "aws/claude-sonnet-4-5",
         prompts_dir: Path | None = None,
         timeout: int = 1800,
         max_turns: int = 25,

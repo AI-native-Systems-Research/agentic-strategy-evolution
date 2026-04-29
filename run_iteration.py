@@ -40,6 +40,7 @@ class IterationOutcome(str, Enum):
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 SCHEMAS_DIR = Path(__file__).parent / "schemas"
+DEFAULTS_PATH = Path(__file__).parent / "defaults.yaml"
 _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Phase ordering for resume logic
@@ -106,7 +107,7 @@ def run_iteration(
     campaign: dict,
     work_dir: Path,
     iteration: int = 1,
-    model: str = "aws/claude-opus-4-6",
+    model: str | None = None,
     final: bool = True,
     auto_approve: bool = False,
     timeout: int = 1800,
@@ -129,25 +130,31 @@ def run_iteration(
     repo_path = campaign.get("target_system", {}).get("repo_path")
     skip_reviews = campaign.get("skip_reviews", False)
 
-    # Per-phase model resolution
-    models_cfg = campaign.get("models", {})
+    # Load defaults.yaml, then overlay campaign.models
+    defaults = {}
+    if DEFAULTS_PATH.exists():
+        defaults = yaml.safe_load(DEFAULTS_PATH.read_text()) or {}
+    default_models = defaults.get("models", {})
+    default_max_turns = defaults.get("max_turns", {})
+    campaign_models = campaign.get("models", {})
+
     def _model_for(phase_key: str) -> str:
-        """Resolve model for a phase: campaign.models > default."""
-        _DEFAULTS = {
-            "framing": "aws/claude-sonnet-4-5",
-            "plan_execution": "aws/claude-sonnet-4-5",
-        }
-        return models_cfg.get(phase_key) or _DEFAULTS.get(phase_key) or model
+        """Resolve model: campaign.models > defaults.yaml > --model flag."""
+        return campaign_models.get(phase_key) or default_models.get(phase_key) or model
+
+    def _max_turns_for(phase_key: str) -> int:
+        return default_max_turns.get(phase_key, 25)
 
     # CLIDispatcher for code-access roles (framing, execution); LLMDispatcher for everything else
     from orchestrator.cli_dispatch import CLIDispatcher
     cli_dispatcher = (
         CLIDispatcher(
             work_dir=work_dir, campaign=campaign,
-            model=_model_for("framing"), timeout=timeout, max_turns=10,
+            model=_model_for("framing"), timeout=timeout,
+            max_turns=_max_turns_for("framing"),
         ) if repo_path else None
     )
-    llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=model)
+    llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("design"))
     gate = HumanGate(auto_response="approve") if auto_approve else HumanGate()
 
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
@@ -226,10 +233,10 @@ def run_iteration(
         print(f"\n{'='*60}")
         print(f"  PLAN_EXECUTION — designing experiment commands")
         print(f"{'='*60}")
-        # Use cheaper model + tighter turn limit for plan execution
+        # Use per-phase model + turn limit for plan execution
         if cli_dispatcher:
             cli_dispatcher.model = _model_for("plan_execution")
-            cli_dispatcher.max_turns = 5
+            cli_dispatcher.max_turns = _max_turns_for("plan_execution")
         plan_dispatcher = cli_dispatcher or llm_dispatcher
         try:
             if repo_path:
@@ -413,7 +420,7 @@ def main() -> None:
         epilog="Example: python run_iteration.py examples/blis/campaign.yaml",
     )
     parser.add_argument("campaign", help="Path to campaign.yaml")
-    parser.add_argument("--model", default="aws/claude-opus-4-6",
+    parser.add_argument("--model", default=None,
                         help="Model name (default: aws/claude-opus-4-6)")
     parser.add_argument("--run-id", default=None,
                         help="Working directory name (default: derived from campaign)")

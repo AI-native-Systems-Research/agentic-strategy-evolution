@@ -55,7 +55,7 @@ def run_campaign(
     work_dir: Path,
     *,
     max_iterations: int = 10,
-    model: str = "aws/claude-opus-4-6",
+    model: str | None = None,
     auto_approve: bool = False,
     timeout: int = 1800,
 ) -> None:
@@ -167,8 +167,8 @@ def main() -> None:
     parser.add_argument("campaign", help="Path to campaign.yaml")
     parser.add_argument("--max-iterations", type=int, default=None,
                         help="Maximum iterations (default: 10)")
-    parser.add_argument("--model", default="aws/claude-opus-4-6",
-                        help="Model name (default: aws/claude-opus-4-6)")
+    parser.add_argument("--model", default=None,
+                        help="Fallback model name. Overridden by campaign.yaml models: and defaults.yaml.")
     parser.add_argument("--run-id", default=None,
                         help="Working directory name (default: derived from campaign)")
     parser.add_argument("--auto-approve", action="store_true",
