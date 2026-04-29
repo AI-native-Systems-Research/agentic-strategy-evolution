@@ -92,16 +92,31 @@ def run_campaign(
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
 
+    max_redesigns = 3
     for i in range(1, max_iterations + 1):
         is_last = (i == max_iterations)
-        print(f"\n{'#'*60}")
-        print(f"  CAMPAIGN — Iteration {i} of {max_iterations}")
-        print(f"{'#'*60}")
 
-        outcome = run_iteration(
-            campaign, work_dir, iteration=i, model=model, final=is_last,
-            auto_approve=auto_approve, timeout=timeout,
-        )
+        for redesign_attempt in range(max_redesigns + 1):
+            print(f"\n{'#'*60}")
+            if redesign_attempt > 0:
+                print(f"  CAMPAIGN — Iteration {i} (redesign {redesign_attempt})")
+            else:
+                print(f"  CAMPAIGN — Iteration {i} of {max_iterations}")
+            print(f"{'#'*60}")
+
+            outcome = run_iteration(
+                campaign, work_dir, iteration=i, model=model, final=is_last,
+                auto_approve=auto_approve, timeout=timeout,
+            )
+
+            if outcome == IterationOutcome.REDESIGN:
+                if redesign_attempt < max_redesigns:
+                    print(f"\n  Design rejected — retrying iteration {i}...")
+                    continue
+                else:
+                    print(f"\n  Max redesigns ({max_redesigns}) reached. Stopping.")
+                    return
+            break  # any non-REDESIGN outcome exits the retry loop
 
         if outcome == IterationOutcome.COMPLETED:
             append_ledger_row(work_dir, i)
@@ -112,11 +127,6 @@ def run_campaign(
         if outcome == IterationOutcome.ABORTED:
             print(f"\n  Campaign aborted at iteration {i}.")
             print("  Engine state preserved for potential resume.")
-            return
-
-        if outcome == IterationOutcome.REDESIGN:
-            print(f"\n  Iteration {i} returned REDESIGN.")
-            print("  The engine has been rewound. Re-run the campaign to resume.")
             return
 
         # outcome == CONTINUE — non-final iteration completed extraction
