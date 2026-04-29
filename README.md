@@ -34,11 +34,12 @@ Each iteration follows five phases:
 
 ```
 1. FRAMING          Planner defines research question, baseline, success criteria
+   HUMAN_GATE       Human approves or rejects framing (with feedback)
 2. DESIGN           Planner creates hypothesis bundle with multiple arms
    DESIGN_REVIEW    AI multi-perspective review (blocks on CRITICAL findings)
    HUMAN_GATE       Human approves, rejects, or aborts
 3. PLAN_EXECUTION   Executor designs exact shell commands per arm
-   EXECUTING        Orchestrator runs commands deterministically
+   EXECUTING        Orchestrator runs commands (partial results on failure)
    ANALYSIS         LLM compares observed metrics to predictions
    FINDINGS_REVIEW  AI review of prediction-vs-outcome results
    HUMAN_GATE       Human approves findings
