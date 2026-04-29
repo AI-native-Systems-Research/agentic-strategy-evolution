@@ -338,6 +338,8 @@ def run_iteration(
         analysis = findings.get("discrepancy_analysis", "")
         feedback_path = iter_dir / "feedback.md"
         atomic_write(feedback_path, f"## Analysis (experiment invalid)\n\n{analysis}\n")
+        _enter_phase(engine, "FINDINGS_REVIEW")
+        _enter_phase(engine, "HUMAN_FINDINGS_GATE")
         engine.transition("PLAN_EXECUTION")
         return IterationOutcome.REDESIGN
 
