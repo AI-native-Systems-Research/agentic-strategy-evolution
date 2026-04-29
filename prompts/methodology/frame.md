@@ -32,9 +32,9 @@ Be fast. The context above gives you repo structure, build system, and CLI flags
 Explore the codebase to fill gaps not covered above. You must discover and document:
 
 1. **How to build the system** — find build files (Makefile, go.mod, package.json, pyproject.toml, etc.) and determine the build command.
-2. **How to run experiments** — find the CLI entry point, available flags/options, and the command pattern for running with different configurations. Only include CLI flags that actually exist in `--help` output — do not invent flags. For each flag relevant to the experiment, clarify its semantics: e.g., are token counts additive or overlapping? Does a flag replace or augment another? If unclear from `--help`, read the source or run a quick test (e.g., `./tool --flagA 100 --flagB 50` and check the actual values in output).
-3. **What input files look like** — if the CLI takes file-based inputs (e.g., `--config`, `--workload-spec`), find an existing example and include its full content so downstream agents can create correct files without guessing field names.
-4. **What metrics are emitted** — find where metrics are computed and output. Identify the exact metric names and how to collect them (stdout JSON, files, etc.).
+2. **How to run experiments** — find the CLI entry point and available flags. Only include CLI flags that actually exist in `--help` output — do not invent flags. Prefer the simplest possible invocation: use CLI flags directly rather than config files when the parameter space can be expressed that way.
+3. **Code evidence for flag semantics** — for each flag relevant to the experiment, read the source code where it is parsed/used and quote the relevant line(s). This proves the semantics (e.g., are token counts additive or overlapping? Does a flag replace or augment another?).
+4. **What metrics are emitted** — find where metrics are computed and output. Identify the exact metric names, the flag that controls output destination, and the output format.
 5. **Key source files** — identify the files implementing the mechanism under study (e.g., the scheduler, cache, router).
 
 Write a problem framing document in markdown with exactly these sections:
@@ -42,17 +42,22 @@ Write a problem framing document in markdown with exactly these sections:
 ### Research Question
 Restate the research question precisely. Include what mechanism or behavior is being investigated and reference the specific source files that implement it.
 
-### Baseline
-Describe the current system behavior without intervention. Reference specific observable metrics and include the exact command to run the baseline experiment.
+### System Interface
+How to build and run the system. Include:
+- Build command.
+- CLI flags relevant to the experiment with their exact semantics.
+- **Code evidence:** For each relevant flag, quote the source line(s) that define its behavior. This removes ambiguity for downstream agents.
+- The native output flag for collecting metrics (never use shell redirects like `> file`).
 
-### Input File Formats
-If the system takes file-based inputs (configs, workload specs, etc.), include the full content of one representative example file. This is critical — downstream agents will use this as a template.
+### Baseline Command
+A single, complete, copy-pasteable command that runs the baseline experiment. All parameters as CLI flags. Must use the system's native output mechanism.
 
 ### Experimental Conditions
-Describe each experimental condition with:
-- The specific CLI flags or configuration changes needed.
-- The exact commands to run each condition.
-- What parameters vary across conditions and what stays fixed.
+List each condition with:
+- What single parameter changes from baseline.
+- The exact command (copy-pasteable, all CLI flags).
+
+Keep it minimal — vary ONE thing per condition.
 
 ### Success Criteria
 Define quantitative thresholds for success using the observable metrics. Be specific — e.g., "TTFT p99 < 500ms under 100 concurrent requests."
