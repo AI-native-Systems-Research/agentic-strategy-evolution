@@ -332,6 +332,15 @@ def run_iteration(
         raise RuntimeError(
             f"findings.json failed schema validation: {exc.message}"
         ) from exc
+    # If experiment itself was flawed, retry from PLAN_EXECUTION
+    if not findings.get("experiment_valid", True):
+        print("  ** Experiment invalid — retrying with corrected plan")
+        analysis = findings.get("discrepancy_analysis", "")
+        feedback_path = iter_dir / "feedback.md"
+        atomic_write(feedback_path, f"## Analysis (experiment invalid)\n\n{analysis}\n")
+        engine.transition("PLAN_EXECUTION")
+        return IterationOutcome.REDESIGN
+
     ff = check_fast_fail(findings)
     if ff == FastFailAction.SKIP_TO_EXTRACTION:
         print("  ** H-main REFUTED — skipping to extraction")

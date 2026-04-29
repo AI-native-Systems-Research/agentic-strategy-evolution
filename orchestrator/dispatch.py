@@ -217,6 +217,7 @@ class StubDispatcher:
                     "diagnostic_note": None,
                 },
             ],
+            "experiment_valid": True,
             "discrepancy_analysis": "Stub analysis: all predictions within expected range."
             if h_main_result == "CONFIRMED"
             else "Stub analysis: H-main refuted, mechanism does not hold.",
