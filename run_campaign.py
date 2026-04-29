@@ -127,7 +127,8 @@ def run_campaign(
         append_ledger_row(work_dir, i)
 
         dispatcher = LLMDispatcher(
-            work_dir=work_dir, campaign=campaign, model=model,
+            work_dir=work_dir, campaign=campaign,
+            model=_resolve_model(campaign, "extraction", model),
         )
         iter_dir = work_dir / "runs" / f"iter-{i}"
         dispatcher.dispatch(
