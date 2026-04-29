@@ -68,4 +68,6 @@ List what cannot be changed: resource limits, SLOs, compatibility requirements, 
 ### Prior Knowledge
 Reference any active principles that apply. Explain how they inform the experimental design. If no principles exist yet, state that this is the first iteration.
 
+{{human_feedback}}
+
 Output ONLY the markdown document. Do not include any preamble or explanation outside the document.

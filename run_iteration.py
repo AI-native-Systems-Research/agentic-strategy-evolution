@@ -45,7 +45,7 @@ _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Phase ordering for resume logic
 _PHASE_ORDER = [
-    "INIT", "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+    "INIT", "FRAMING", "HUMAN_FRAMING_GATE", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
     "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
     "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE", "TUNING",
     "EXTRACTION", "DONE",
@@ -177,6 +177,25 @@ def run_iteration(
             output_path=iter_dir / "problem.md", iteration=iteration,
         )
         print(f"  -> {iter_dir / 'problem.md'}")
+
+    # HUMAN FRAMING GATE
+    if _enter_phase(engine, "HUMAN_FRAMING_GATE"):
+        print(f"\n{'='*60}")
+        print(f"  HUMAN FRAMING GATE")
+        print(f"{'='*60}")
+        decision, reason = gate.prompt(
+            "Review the problem framing. Approve?",
+            artifact_path=str(iter_dir / "problem.md"),
+        )
+        if decision == "reject":
+            if reason:
+                atomic_write(iter_dir / "feedback.md", reason + "\n")
+            print("  Framing rejected. Re-running framing.")
+            engine.transition("FRAMING")
+            return IterationOutcome.REDESIGN
+        if decision == "abort":
+            print("  Aborted.")
+            return IterationOutcome.ABORTED
 
     # DESIGN — always LLM API (no code access needed, uses framing output)
     if _enter_phase(engine, "DESIGN"):

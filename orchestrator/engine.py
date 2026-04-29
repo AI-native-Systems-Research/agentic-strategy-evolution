@@ -22,6 +22,7 @@ class Phase(str, Enum):
 
     INIT = "INIT"
     FRAMING = "FRAMING"
+    HUMAN_FRAMING_GATE = "HUMAN_FRAMING_GATE"
     DESIGN = "DESIGN"
     DESIGN_REVIEW = "DESIGN_REVIEW"
     HUMAN_DESIGN_GATE = "HUMAN_DESIGN_GATE"
@@ -38,7 +39,8 @@ class Phase(str, Enum):
 # Valid transitions: from_state -> set of valid to_states (immutable)
 TRANSITIONS: MappingProxyType[str, frozenset[str]] = MappingProxyType({
     "INIT":                frozenset({"FRAMING"}),
-    "FRAMING":             frozenset({"DESIGN"}),
+    "FRAMING":             frozenset({"HUMAN_FRAMING_GATE", "DESIGN"}),
+    "HUMAN_FRAMING_GATE":  frozenset({"DESIGN", "FRAMING"}),
     "DESIGN":              frozenset({"DESIGN_REVIEW"}),
     "DESIGN_REVIEW":       frozenset({"HUMAN_DESIGN_GATE", "DESIGN"}),
     "HUMAN_DESIGN_GATE":   frozenset({"PLAN_EXECUTION", "DESIGN"}),

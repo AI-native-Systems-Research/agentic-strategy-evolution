@@ -228,7 +228,7 @@ class LLMDispatcher:
                     "This is the first iteration. No prior investigation summary."
                 )
 
-        if phase in ("design", "plan-execution"):
+        if phase in ("frame", "design", "plan-execution"):
             feedback_path = self.work_dir / "runs" / f"iter-{iteration}" / "feedback.md"
             if feedback_path.exists():
                 content = feedback_path.read_text().strip()
