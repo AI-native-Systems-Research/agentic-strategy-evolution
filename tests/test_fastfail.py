@@ -14,10 +14,22 @@ class TestFastFail:
         }
         assert check_fast_fail(findings) == FastFailAction.SKIP_TO_EXTRACTION
 
-    def test_control_negative_fails_redesign(self):
+    def test_control_negative_refuted_but_main_confirmed_continues(self):
+        """When h-main is confirmed but control-negative refuted, the mechanism
+        is real but broader than hypothesized — proceed, don't redesign."""
         findings = {
             "arms": [
                 {"arm_type": "h-main", "status": "CONFIRMED"},
+                {"arm_type": "h-control-negative", "status": "REFUTED"},
+            ]
+        }
+        assert check_fast_fail(findings) == FastFailAction.CONTINUE
+
+    def test_control_negative_refuted_main_partial_redesigns(self):
+        """When h-main is not confirmed and control-negative refuted, redesign."""
+        findings = {
+            "arms": [
+                {"arm_type": "h-main", "status": "PARTIALLY_CONFIRMED"},
                 {"arm_type": "h-control-negative", "status": "REFUTED"},
             ]
         }

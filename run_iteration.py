@@ -337,7 +337,7 @@ def run_iteration(
         _enter_phase(engine, "HUMAN_FINDINGS_GATE")
         _enter_phase(engine, "EXTRACTION")
     elif ff == FastFailAction.REDESIGN:
-        print("  ** Control-negative REFUTED — mechanism confounded.")
+        print("  ** Control-negative REFUTED and h-main not confirmed — mechanism confounded.")
         print("     The experiment needs redesign. Re-run after revising the campaign.")
         _enter_phase(engine, "FINDINGS_REVIEW")
         _enter_phase(engine, "HUMAN_FINDINGS_GATE")

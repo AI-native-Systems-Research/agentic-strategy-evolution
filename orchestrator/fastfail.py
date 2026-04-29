@@ -5,7 +5,9 @@ The caller is responsible for acting on the returned FastFailAction.
 
 Rules (in priority order):
 1. H-main refuted -> caller should skip remaining arms, go to EXTRACTION
-2. H-control-negative fails -> caller should return to DESIGN (mechanism confounded)
+2. H-control-negative fails AND h-main also not confirmed -> REDESIGN
+   (If h-main is confirmed but control-negative refuted, the mechanism works
+   but is broader than hypothesized — that's a learning, not a confound.)
 3. Single dominant component (>80% of total effect) -> caller should SIMPLIFY
 4. Otherwise -> CONTINUE normally
 
@@ -70,7 +72,9 @@ def check_fast_fail(findings: dict) -> FastFailAction:
         logger.info("Fast-fail: h-main REFUTED -> SKIP_TO_EXTRACTION")
         return FastFailAction.SKIP_TO_EXTRACTION
 
-    # Rule 2: H-control-negative fails -> redesign
+    # Rule 2: H-control-negative fails -> redesign ONLY if h-main is not confirmed.
+    # If h-main is confirmed but control-negative refuted, the mechanism is real
+    # but broader than hypothesized (a discovery, not a confound).
     h_control = arms.get("h-control-negative")
     if h_control is None:
         logger.warning(
@@ -78,8 +82,13 @@ def check_fast_fail(findings: dict) -> FastFailAction:
             "confound detection fast-fail rule cannot be evaluated"
         )
     elif h_control.get("status") == "REFUTED":
-        logger.info("Fast-fail: h-control-negative REFUTED -> REDESIGN")
-        return FastFailAction.REDESIGN
+        if h_main_status != "CONFIRMED":
+            logger.info("Fast-fail: h-control-negative REFUTED (h-main not confirmed) -> REDESIGN")
+            return FastFailAction.REDESIGN
+        logger.info(
+            "Fast-fail: h-control-negative REFUTED but h-main CONFIRMED "
+            "-> mechanism broader than hypothesized, CONTINUE"
+        )
 
     # Rule 3: Single dominant component (>80%) -> simplify
     pct = findings.get("dominant_component_pct")
