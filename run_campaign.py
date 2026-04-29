@@ -27,6 +27,7 @@ from orchestrator.gates import HumanGate
 from orchestrator.ledger import append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
 from run_iteration import (
+    DEFAULTS_PATH,
     IterationOutcome,
     run_iteration,
     setup_work_dir,
@@ -36,10 +37,24 @@ from run_iteration import (
 logger = logging.getLogger(__name__)
 
 
-def _generate_report(campaign: dict, work_dir: Path, model: str) -> None:
+def _resolve_model(campaign: dict, phase_key: str, cli_model: str | None) -> str:
+    """Resolve model: campaign.models > defaults.yaml > --model flag."""
+    campaign_models = campaign.get("models", {})
+    if campaign_models.get(phase_key):
+        return campaign_models[phase_key]
+    if DEFAULTS_PATH.exists():
+        defaults = yaml.safe_load(DEFAULTS_PATH.read_text()) or {}
+        default_model = defaults.get("models", {}).get(phase_key)
+        if default_model:
+            return default_model
+    return cli_model or "aws/claude-sonnet-4-5"
+
+
+def _generate_report(campaign: dict, work_dir: Path, model: str | None) -> None:
     """Generate report.md summarizing the campaign."""
     try:
-        dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=model)
+        resolved = _resolve_model(campaign, "report", model)
+        dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=resolved)
         dispatcher.dispatch(
             "extractor", "report",
             output_path=work_dir / "report.md",
