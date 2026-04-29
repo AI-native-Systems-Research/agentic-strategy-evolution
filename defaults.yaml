@@ -10,8 +10,8 @@
 #   Claude CLI:       sonnet, haiku, opus
 
 models:
-  # FRAMING — explores repo via claude -p. Needs understanding, not deep reasoning.
-  framing: "aws/claude-sonnet-4-5"
+  # FRAMING — explores repo via claude -p. Deep reasoning produces better problem.md.
+  framing: "aws/claude-opus-4-6"
 
   # DESIGN — creates hypothesis bundles. Core reasoning step.
   design: "aws/claude-sonnet-4-5"

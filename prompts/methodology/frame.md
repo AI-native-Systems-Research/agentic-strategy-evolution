@@ -32,7 +32,7 @@ Be fast. The context above gives you repo structure, build system, and CLI flags
 Explore the codebase to fill gaps not covered above. You must discover and document:
 
 1. **How to build the system** — find build files (Makefile, go.mod, package.json, pyproject.toml, etc.) and determine the build command.
-2. **How to run experiments** — find the CLI entry point, available flags/options, and the command pattern for running with different configurations. Only include CLI flags that actually exist in `--help` output — do not invent flags like `--output` if the system doesn't have one.
+2. **How to run experiments** — find the CLI entry point, available flags/options, and the command pattern for running with different configurations. Only include CLI flags that actually exist in `--help` output — do not invent flags. For each flag relevant to the experiment, clarify its semantics: e.g., are token counts additive or overlapping? Does a flag replace or augment another? If unclear from `--help`, read the source or run a quick test (e.g., `./tool --flagA 100 --flagB 50` and check the actual values in output).
 3. **What input files look like** — if the CLI takes file-based inputs (e.g., `--config`, `--workload-spec`), find an existing example and include its full content so downstream agents can create correct files without guessing field names.
 4. **What metrics are emitted** — find where metrics are computed and output. Identify the exact metric names and how to collect them (stdout JSON, files, etc.).
 5. **Key source files** — identify the files implementing the mechanism under study (e.g., the scheduler, cache, router).
