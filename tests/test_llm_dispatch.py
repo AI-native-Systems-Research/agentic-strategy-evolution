@@ -402,10 +402,10 @@ class TestLLMDispatcher:
             )
 
 
-class TestBLISCampaign:
-    def test_blis_campaign_validates_against_schema(self) -> None:
-        blis_path = Path(__file__).resolve().parent.parent / "examples" / "blis" / "campaign.yaml"
-        campaign = yaml.safe_load(blis_path.read_text())
+class TestExampleCampaign:
+    def test_example_campaign_validates_against_schema(self) -> None:
+        example_path = Path(__file__).resolve().parent.parent / "examples" / "campaign.yaml"
+        campaign = yaml.safe_load(example_path.read_text())
         schema = load_schema("campaign.schema.yaml")
         jsonschema.validate(campaign, schema)
 

@@ -76,14 +76,14 @@ class LLMDispatcher:
         if not isinstance(ts, dict):
             raise ValueError(
                 "Campaign config missing 'target_system' section. "
-                "See examples/blis/campaign.yaml for the expected format."
+                "See examples/campaign.yaml for the expected format."
             )
         required = ["name", "description"]
         missing = [k for k in required if k not in ts]
         if missing:
             raise ValueError(
                 f"Campaign 'target_system' missing required keys: {missing}. "
-                f"See examples/blis/campaign.yaml for the expected format."
+                f"See examples/campaign.yaml for the expected format."
             )
         for field in ("observable_metrics", "controllable_knobs"):
             val = ts.get(field)

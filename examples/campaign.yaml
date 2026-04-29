@@ -1,15 +1,17 @@
 research_question: >
-  With total input length held fixed, does increasing the prefix portion (cached tokens) reduce TTFT under moderate load?
+  With total input length held fixed, does increasing the prefix portion
+  (cached tokens) reduce TTFT under moderate load?
 
-run_id: blis-run
-max_iterations: 5
+run_id: blis-fast
+max_iterations: 2
+skip_reviews: true
 
 target_system:
   name: "BLIS — LLM Inference Serving Simulator"
   description: >
     BLIS is a discrete-event simulator for LLM inference serving.
     It models request arrivals, scheduling, and KV-cache management.
-  repo_path: null  # Set to your local BLIS checkout path
+  repo_path: /path/to/your/blis  # Set to your local checkout
 
 review:
   design_perspectives:

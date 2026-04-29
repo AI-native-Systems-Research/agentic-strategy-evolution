@@ -2,7 +2,7 @@
 """Run a multi-iteration Nous campaign.
 
 Usage:
-    python run_campaign.py examples/blis/campaign.yaml --max-iterations 5
+    python run_campaign.py examples/campaign.yaml --max-iterations 5
 
 Runs iterations in a loop: each iteration runs the full Nous loop
 (FRAMING → DESIGN → REVIEW → PLAN_EXECUTION → EXECUTING → ANALYSIS → EXTRACTION), then appends a
@@ -177,7 +177,7 @@ def run_campaign(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run a multi-iteration Nous campaign.",
-        epilog="Example: python run_campaign.py examples/blis/campaign.yaml --max-iterations 5",
+        epilog="Example: python run_campaign.py examples/campaign.yaml --max-iterations 5",
     )
     parser.add_argument("campaign", help="Path to campaign.yaml")
     parser.add_argument("--max-iterations", type=int, default=None,
@@ -213,7 +213,7 @@ def main() -> None:
         print(
             f"Error: {campaign_path} is not a valid campaign config.\n"
             f"  {exc.message}\n\n"
-            f"See examples/blis/campaign.yaml for a working example.",
+            f"See examples/campaign.yaml for a working example.",
             file=sys.stderr,
         )
         sys.exit(1)

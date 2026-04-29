@@ -19,7 +19,7 @@ pip install -e ".[dev]"
 
 ## Create a campaign configuration
 
-Create a `campaign.yaml` with your research question and target repo. See the [BLIS example](../examples/blis/campaign.yaml) as a starting point.
+Create a `campaign.yaml` with your research question and target repo. See [examples/campaign.yaml](../examples/campaign.yaml) as a starting point.
 
 ```yaml
 research_question: >
@@ -89,7 +89,7 @@ python run_campaign.py campaign.yaml --auto-approve           # skip gates
 Or try the BLIS example directly:
 
 ```bash
-python run_campaign.py examples/blis/campaign.yaml --max-iterations 3
+python run_campaign.py examples/campaign.yaml --max-iterations 3
 ```
 
 You can also set `max_iterations` in `campaign.yaml` (CLI `--max-iterations` overrides it).
@@ -137,6 +137,6 @@ python run_iteration.py campaign.yaml --run-id test-run -v
 
 ## Next steps
 
-- See [examples/blis/](../examples/blis/) for a complete BLIS campaign
+- See [examples/campaign.yaml](../examples/campaign.yaml) for a complete example
 - See [docs/architecture.md](architecture.md) for architecture details
 - See [docs/data-model.md](data-model.md) for schema documentation

@@ -2,7 +2,7 @@
 """Run a single Nous iteration.
 
 Usage:
-    python run_iteration.py examples/blis/campaign.yaml
+    python run_iteration.py examples/campaign.yaml
 
 Creates a working directory named after the target system, copies templates,
 and runs one full iteration with human gates for approval.
@@ -413,7 +413,7 @@ def run_iteration(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run a single Nous iteration.",
-        epilog="Example: python run_iteration.py examples/blis/campaign.yaml",
+        epilog="Example: python run_iteration.py examples/campaign.yaml",
     )
     parser.add_argument("campaign", help="Path to campaign.yaml")
     parser.add_argument("--model", default=None,
@@ -448,7 +448,7 @@ def main() -> None:
         print(
             f"Error: {campaign_path} is not a valid campaign config.\n"
             f"  {exc.message}\n\n"
-            f"See examples/blis/campaign.yaml for a working example.",
+            f"See examples/campaign.yaml for a working example.",
             file=sys.stderr,
         )
         sys.exit(1)

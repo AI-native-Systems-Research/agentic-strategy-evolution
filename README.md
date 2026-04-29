@@ -100,7 +100,7 @@ target_system:
   repo_path: /path/to/your/repo
 ```
 
-The planner explores the codebase to discover metrics, knobs, and execution methods. You can optionally provide `observable_metrics` and `controllable_knobs` as hints — see [examples/blis/campaign.yaml](examples/blis/campaign.yaml) for all options.
+The planner explores the codebase to discover metrics, knobs, and execution methods. You can optionally provide `observable_metrics` and `controllable_knobs` as hints — see [examples/campaign.yaml](examples/campaign.yaml) for all options.
 
 ### 4. Run a campaign
 
@@ -131,8 +131,8 @@ python run_campaign.py campaign.yaml --auto-approve           # skip gates
 ```bash
 git clone https://github.com/inference-sim/inference-sim.git blis
 cd blis && go build -o blis . && cd ..
-# Edit examples/blis/campaign.yaml: set repo_path to your blis/ path
-python run_campaign.py examples/blis/campaign.yaml --max-iterations 3
+# Edit examples/campaign.yaml: set repo_path to your blis/ path
+python run_campaign.py examples/campaign.yaml --max-iterations 3
 ```
 
 ### Output
@@ -175,7 +175,7 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   protocols.py             Dispatcher and Gate interface contracts
   util.py                  Shared utilities (atomic_write)
 prompts/methodology/     Methodology prompt templates
-examples/blis/           Reference campaign for BLIS inference simulator
+examples/                Example campaigns
 docs/                    Quickstart, protocol, data model, architecture
 tests/                   Comprehensive test suite
 ```
