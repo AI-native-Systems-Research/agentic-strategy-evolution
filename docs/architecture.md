@@ -74,8 +74,8 @@ INIT ──▶ FRAMING ──▶ DESIGN ──▶ DESIGN_REVIEW ──▶ HUMAN_
          │         ▼
          │     ANALYSIS
          │         │
-         │         ▼                  ▲
-         │   FINDINGS_REVIEW ─────────┘ (CRITICAL or reject)
+         │         ▼
+         │   FINDINGS_REVIEW ─────────▶ PLAN_EXECUTION (fast-fail REDESIGN)
          │         │
          │         ▼
          │   HUMAN_FINDINGS_GATE
@@ -181,7 +181,7 @@ dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model="gpt-4o")
 dispatcher = LLMDispatcher(..., api_base="https://my-proxy.example.com", api_key="sk-...")
 ```
 
-Default model: `aws/claude-opus-4-6`. The `completion_fn` constructor parameter allows test injection without mocking internals.
+Default model: `aws/claude-sonnet-4-5` (configurable per-phase via `defaults.yaml` or `campaign.yaml`). The `completion_fn` constructor parameter allows test injection without mocking internals.
 
 ## CLI Dispatch (Phase 4.5)
 

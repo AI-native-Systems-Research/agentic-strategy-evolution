@@ -121,7 +121,7 @@ After a campaign, your working directory contains:
 
 ## Choosing a model
 
-Default is `aws/claude-opus-4-6`. Pass any model name via `--model`:
+Default is `aws/claude-sonnet-4-5` (from `defaults.yaml`). Pass any model name via `--model`:
 
 ```bash
 python run_campaign.py campaign.yaml --model gpt-4o

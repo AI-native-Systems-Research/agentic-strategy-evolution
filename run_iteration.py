@@ -140,7 +140,7 @@ def run_iteration(
 
     def _model_for(phase_key: str) -> str:
         """Resolve model: campaign.models > defaults.yaml > --model flag."""
-        return campaign_models.get(phase_key) or default_models.get(phase_key) or model
+        return campaign_models.get(phase_key) or default_models.get(phase_key) or model or "aws/claude-sonnet-4-5"
 
     def _max_turns_for(phase_key: str) -> int:
         return default_max_turns.get(phase_key, 25)
@@ -318,22 +318,18 @@ def run_iteration(
     # Validate findings against schema, then check fast-fail rules
     findings_path = iter_dir / "findings.json"
     if not findings_path.exists():
-        print(
-            f"Error: {findings_path} not found. "
-            f"The ANALYSIS phase may have failed to produce findings.",
-            file=sys.stderr,
+        raise RuntimeError(
+            f"{findings_path} not found. "
+            f"The ANALYSIS phase may have failed to produce findings."
         )
-        sys.exit(1)
     findings = json.loads(findings_path.read_text())
     findings_schema = json.loads((SCHEMAS_DIR / "findings.schema.json").read_text())
     try:
         jsonschema.validate(findings, findings_schema)
     except jsonschema.ValidationError as exc:
-        print(
-            f"Error: findings.json failed schema validation: {exc.message}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        raise RuntimeError(
+            f"findings.json failed schema validation: {exc.message}"
+        ) from exc
     ff = check_fast_fail(findings)
     if ff == FastFailAction.SKIP_TO_EXTRACTION:
         print("  ** H-main REFUTED — skipping to extraction")
@@ -421,7 +417,7 @@ def main() -> None:
     )
     parser.add_argument("campaign", help="Path to campaign.yaml")
     parser.add_argument("--model", default=None,
-                        help="Model name (default: aws/claude-opus-4-6)")
+                        help="Fallback model name (default: from defaults.yaml)")
     parser.add_argument("--run-id", default=None,
                         help="Working directory name (default: derived from campaign)")
     parser.add_argument("--auto-approve", action="store_true",

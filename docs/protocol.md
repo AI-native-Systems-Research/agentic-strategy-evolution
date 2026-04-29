@@ -224,7 +224,7 @@ Backward/looping transitions:
 | Role | Phases | Reads | Writes | Shell |
 |---|---|---|---|---|
 | Planner | Frame, Design | all | `problem.md`, `bundle.yaml` | — |
-| Executor | Plan-Execution, Analyze, Tune | bundle, problem, exec results | `experiment_plan.yaml`, `findings.json` | yes (plan-execution) |
+| Executor | Plan-Execution, Analyze | bundle, problem, exec results | `experiment_plan.yaml`, `findings.json` | yes (plan-execution) |
 | Reviewer | Design Review, Findings Review | all | `review-*.md` | — |
 | Extractor | Extract, Summarize | all | `principles.json`, `investigation_summary.json` | — |
 

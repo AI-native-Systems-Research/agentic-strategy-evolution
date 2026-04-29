@@ -46,9 +46,9 @@ Be fast. Your job: translate the hypothesis bundle into exact shell commands. Co
    - Run the experiment
    - Collect output to a specific file path
 
-4. **Include setup commands.** If the system needs to be built or configured before experiments, include those as `setup` commands.
+3. **Include setup commands.** If the system needs to be built or configured before experiments, include those as `setup` commands.
 
-5. **Specify output paths.** Each condition should write metrics to a unique file so the orchestrator can collect results.
+4. **Specify output paths.** Each condition should write metrics to a unique file so the orchestrator can collect results.
 
 Rules:
 - Each command must be a complete, runnable shell command.
