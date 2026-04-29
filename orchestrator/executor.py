@@ -57,12 +57,18 @@ def execute_plan(
             break
         except CommandError as exc:
             if revision_fn is None or revisions_used >= max_revisions:
-                # Save partial results before raising so data isn't lost
-                _save_partial_results(plan, iter_dir, results_dir, cwd)
-                raise RuntimeError(
-                    f"Command failed and no more revisions available "
-                    f"(used {revisions_used}/{max_revisions}): {exc}"
-                ) from exc
+                # Save partial results and continue to analysis instead of crashing
+                logger.warning(
+                    "Command failed, no more revisions (used %d/%d): %s",
+                    revisions_used, max_revisions, exc,
+                )
+                print(
+                    f"    Command failed — no more revisions available. "
+                    f"Continuing with partial results.",
+                    flush=True,
+                )
+                results = _collect_partial_results(plan, results_dir, cwd)
+                break
             revisions_used += 1
             logger.warning(
                 "Command failed (revision %d/%d): %s",
@@ -84,7 +90,13 @@ def execute_plan(
             error_path = iter_dir / f"execution_error_v{revisions_used}.json"
             atomic_write(error_path, json.dumps(error_info, indent=2) + "\n")
             logger.info("Saved error info to %s", error_path)
-            plan = revision_fn(plan, error_info)
+            try:
+                plan = revision_fn(plan, error_info)
+            except (RuntimeError, OSError) as rev_exc:
+                logger.warning("Revision failed: %s. Continuing with partial results.", rev_exc)
+                print(f"    Revision failed. Continuing with partial results.", flush=True)
+                results = _collect_partial_results(plan, results_dir, cwd)
+                break
             # Save revised plan for audit trail
             revised_path = iter_dir / f"experiment_plan_v{revisions_used + 1}.yaml"
             atomic_write(
@@ -222,8 +234,8 @@ def _run_cmd(cmd: str, cwd: Path, timeout: int) -> subprocess.CompletedProcess:
         )
 
 
-def _save_partial_results(plan: dict, iter_dir: Path, results_dir: Path, cwd: Path) -> None:
-    """Save whatever results exist before a fatal error."""
+def _collect_partial_results(plan: dict, results_dir: Path, cwd: Path) -> dict:
+    """Collect whatever results exist from completed arms."""
     arms = []
     for arm in plan["arms"]:
         arm_id = arm["arm_id"]
@@ -241,22 +253,14 @@ def _save_partial_results(plan: dict, iter_dir: Path, results_dir: Path, cwd: Pa
                 conditions.append({
                     "name": name,
                     "cmd": cond["cmd"],
-                    "exit_code": None,  # unknown — partial results
+                    "exit_code": None,
                     "stdout_tail": _truncate(stdout_file.read_text()) if stdout_file.exists() else "",
                     "stderr_tail": _truncate(stderr_file.read_text()) if stderr_file.exists() else "",
                     "output_content": output_content,
                 })
         if conditions:
             arms.append({"arm_id": arm_id, "conditions": conditions})
-    if arms:
-        output = {
-            "plan_ref": f"runs/{iter_dir.name}/experiment_plan.yaml",
-            "partial": True,
-            "setup_results": [],
-            "arms": arms,
-        }
-        atomic_write(iter_dir / "execution_results_partial.json", json.dumps(output, indent=2) + "\n")
-        logger.info("Saved partial results (%d arms) before failure", len(arms))
+    return {"partial": True, "setup_results": [], "arms": arms}
 
 
 def _truncate(text: str, max_chars: int = _MAX_OUTPUT_CHARS) -> str:

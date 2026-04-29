@@ -54,8 +54,8 @@ For each arm in the bundle, produce a finding with:
 - `diagnostic_note`: Explain your reasoning. Reference specific metric values from the results. What does the data tell us about the mechanism?
 
 Also produce:
-- `experiment_valid`: `true` if the experiment executed correctly and results can be trusted. `false` if commands used wrong flags, parameters were misconfigured, or the setup didn't match the intended design (e.g., total input length wasn't held constant when it should have been).
-- `discrepancy_analysis`: Summary across all arms. What did we learn? Were there surprises? If `experiment_valid` is false, explain what went wrong with the setup and how to fix it.
+- `experiment_valid`: `true` if the h-main arm executed correctly and its results can be trusted. `false` ONLY if h-main used wrong flags, parameters were misconfigured, or the setup didn't match the intended design (e.g., total input length wasn't held constant when it should have been). Other arms failing or not being executed does NOT make the experiment invalid — only h-main soundness matters.
+- `discrepancy_analysis`: Summary across all arms. What did we learn? Were there surprises? If `experiment_valid` is false, explain what went wrong with the h-main setup and how to fix it.
 - `dominant_component_pct`: If one component dominates the observed effect (>80%), set this to the percentage. Otherwise set to `null`.
 
 ## Output Format
