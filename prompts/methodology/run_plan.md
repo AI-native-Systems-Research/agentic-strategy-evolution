@@ -50,8 +50,10 @@ Be fast. Do NOT re-explore the repo — the context above plus problem.md give y
 
 Rules:
 - Each command must be a complete, runnable shell command.
+- Do NOT redirect stdout/stderr with `>` or `2>&1`. The orchestrator captures stdout/stderr automatically. If the system has a flag to write metrics to a file (e.g., `--metrics-path`, `--output`), use that and set the `output:` field to the same path.
 - Use absolute or relative paths that work from the repo root.
 - Include seeds in commands for reproducibility.
+- Only use CLI flags documented in the `--help` output above. Do not guess flag names.
 - If an arm requires code changes, describe them in the condition's `description` field. The orchestrator does not apply code changes — include any needed patches as part of the command (e.g., `sed` or config file writes).
 
 ## Output Format

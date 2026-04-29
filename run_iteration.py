@@ -135,7 +135,7 @@ def run_iteration(
         """Resolve model for a phase: campaign.models > default."""
         _DEFAULTS = {
             "framing": "aws/claude-sonnet-4-5",
-            "plan_execution": "aws/claude-haiku-4-5",
+            "plan_execution": "aws/claude-sonnet-4-5",
         }
         return models_cfg.get(phase_key) or _DEFAULTS.get(phase_key) or model
 

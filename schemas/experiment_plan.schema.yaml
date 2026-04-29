@@ -12,7 +12,6 @@ properties:
   metadata:
     type: object
     required: [iteration, bundle_ref]
-    additionalProperties: false
     properties:
       iteration:
         type: integer
@@ -20,6 +19,8 @@ properties:
       bundle_ref:
         type: string
         minLength: 1
+      description:
+        type: string
   setup:
     type: array
     items:

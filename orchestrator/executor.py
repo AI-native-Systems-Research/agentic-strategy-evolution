@@ -57,6 +57,8 @@ def execute_plan(
             break
         except CommandError as exc:
             if revision_fn is None or revisions_used >= max_revisions:
+                # Save partial results before raising so data isn't lost
+                _save_partial_results(plan, iter_dir, results_dir, cwd)
                 raise RuntimeError(
                     f"Command failed and no more revisions available "
                     f"(used {revisions_used}/{max_revisions}): {exc}"
@@ -214,6 +216,43 @@ def _run_cmd(cmd: str, cwd: Path, timeout: int) -> subprocess.CompletedProcess:
             stdout="",
             stderr=f"Command timed out after {timeout}s",
         )
+
+
+def _save_partial_results(plan: dict, iter_dir: Path, results_dir: Path, cwd: Path) -> None:
+    """Save whatever results exist before a fatal error."""
+    arms = []
+    for arm in plan["arms"]:
+        arm_id = arm["arm_id"]
+        conditions = []
+        for cond in arm["conditions"]:
+            name = cond["name"]
+            stdout_file = results_dir / arm_id / f"{name}.stdout"
+            stderr_file = results_dir / arm_id / f"{name}.stderr"
+            output_content = None
+            if cond.get("output"):
+                out_file = cwd / cond["output"]
+                if out_file.exists():
+                    output_content = _truncate(out_file.read_text())
+            if stdout_file.exists() or stderr_file.exists():
+                conditions.append({
+                    "name": name,
+                    "cmd": cond["cmd"],
+                    "exit_code": 0,
+                    "stdout_tail": _truncate(stdout_file.read_text()) if stdout_file.exists() else "",
+                    "stderr_tail": _truncate(stderr_file.read_text()) if stderr_file.exists() else "",
+                    "output_content": output_content,
+                })
+        if conditions:
+            arms.append({"arm_id": arm_id, "conditions": conditions})
+    if arms:
+        output = {
+            "plan_ref": f"runs/{iter_dir.name}/experiment_plan.yaml",
+            "partial": True,
+            "setup_results": [],
+            "arms": arms,
+        }
+        atomic_write(iter_dir / "execution_results_partial.json", json.dumps(output, indent=2) + "\n")
+        logger.info("Saved partial results (%d arms) before failure", len(arms))
 
 
 def _truncate(text: str, max_chars: int = _MAX_OUTPUT_CHARS) -> str:
