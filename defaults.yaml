@@ -33,5 +33,5 @@ models:
 
 # Max tool-use turns for claude -p phases.
 max_turns:
-  framing: 15
+  framing: 25
   plan_execution: 8
