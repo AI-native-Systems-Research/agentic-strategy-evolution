@@ -32,7 +32,7 @@ def gather_repo_context(repo_path: Path) -> str:
             break
 
     # 3. CLI help (try common entry points)
-    for entry in ["./blis", "go run main.go", "./main", "python -m"]:
+    for entry in ["go run main.go", "go run .", "./main", "python -m ."]:
         try:
             result = subprocess.run(
                 f"{entry} --help", shell=True, cwd=repo_path,

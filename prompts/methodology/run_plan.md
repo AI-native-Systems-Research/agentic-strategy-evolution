@@ -68,17 +68,17 @@ metadata:
   bundle_ref: "runs/iter-1/bundle.yaml"
 
 setup:
-  - cmd: "go build -o blis ./cmd/blis"
-    description: "Build the simulator"
+  - cmd: "<build command from problem.md>"
+    description: "Build the system"
 
 arms:
   - arm_id: "h-main"
     conditions:
       - name: "baseline-seed42"
-        cmd: "./blis --config baseline.yaml --seed 42 --output results/h-main/baseline-42.json"
+        cmd: "<baseline command with --metrics-path results/h-main/baseline-42.json>"
         output: "results/h-main/baseline-42.json"
       - name: "treatment-seed42"
-        cmd: "./blis --config treatment.yaml --seed 42 --output results/h-main/treatment-42.json"
+        cmd: "<treatment command with --metrics-path results/h-main/treatment-42.json>"
         output: "results/h-main/treatment-42.json"
 ```
 

@@ -33,15 +33,16 @@ Nous works on any software system that meets four preconditions:
 Each iteration follows five phases:
 
 ```
-1. FRAMING        Planner defines research question, baseline, success criteria
-2. DESIGN         Planner creates hypothesis bundle with multiple arms
-   DESIGN_REVIEW  AI multi-perspective review (blocks on CRITICAL findings)
-   HUMAN_GATE     Human approves, rejects, or aborts
-3. RUNNING        Executor implements, runs experiment across 3+ seeds
-   FINDINGS_REVIEW AI review of prediction-vs-outcome results
-   HUMAN_GATE     Human approves findings
-4. TUNING         Bayesian parameter optimization (skipped if H-main refuted)
-5. EXTRACTION     Extractor updates principle store (insert/update/prune)
+1. FRAMING          Planner defines research question, baseline, success criteria
+2. DESIGN           Planner creates hypothesis bundle with multiple arms
+   DESIGN_REVIEW    AI multi-perspective review (blocks on CRITICAL findings)
+   HUMAN_GATE       Human approves, rejects, or aborts
+3. PLAN_EXECUTION   Executor designs exact shell commands per arm
+   EXECUTING        Orchestrator runs commands deterministically
+   ANALYSIS         LLM compares observed metrics to predictions
+   FINDINGS_REVIEW  AI review of prediction-vs-outcome results
+   HUMAN_GATE       Human approves findings
+4. EXTRACTION       Extractor updates principle store (insert/update/prune)
    → next iteration or DONE
 ```
 
