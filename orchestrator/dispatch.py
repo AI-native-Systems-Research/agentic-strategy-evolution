@@ -60,7 +60,10 @@ class StubDispatcher:
             case "planner":
                 self._write_bundle(output_path, iteration)
             case "executor":
-                self._write_findings(output_path, iteration, h_main_result)
+                if phase == "plan-execution":
+                    self._write_experiment_plan(output_path, iteration)
+                else:
+                    self._write_findings(output_path, iteration, h_main_result)
             case "reviewer":
                 self._write_review(output_path, perspective or "general")
             case "extractor":
@@ -68,6 +71,10 @@ class StubDispatcher:
                     self._write_investigation_summary(output_path, iteration)
                 else:
                     self._write_principles(output_path, iteration)
+            case "summarizer":
+                if phase != "summarize-gate":
+                    raise ValueError(f"Unknown phase for summarizer: {phase}")
+                self._write_gate_summary(output_path, perspective or "design")
             case _:
                 raise ValueError(f"Unknown role: {role}")
 
@@ -97,6 +104,91 @@ class StubDispatcher:
         }
         atomic_write(path, yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False))
 
+    def _write_experiment_plan(self, path: Path, iteration: int) -> None:
+        plan = {
+            "metadata": {
+                "iteration": iteration,
+                "bundle_ref": f"runs/iter-{iteration}/bundle.yaml",
+            },
+            "setup": [
+                {"cmd": "echo 'stub build'", "description": "Stub setup"},
+            ],
+            "arms": [
+                {
+                    "arm_id": "h-main",
+                    "conditions": [
+                        {
+                            "name": "baseline",
+                            "cmd": "echo '{\"latency_ms\": 50}'",
+                            "output": "results/h-main/baseline.json",
+                        },
+                        {
+                            "name": "treatment",
+                            "cmd": "echo '{\"latency_ms\": 40}'",
+                            "output": "results/h-main/treatment.json",
+                        },
+                    ],
+                },
+                {
+                    "arm_id": "h-control-negative",
+                    "conditions": [
+                        {
+                            "name": "control",
+                            "cmd": "echo '{\"latency_ms\": 50}'",
+                            "output": "results/h-control-negative/control.json",
+                        },
+                    ],
+                },
+            ],
+        }
+        atomic_write(path, yaml.safe_dump(plan, default_flow_style=False, sort_keys=False))
+
+    def write_execution_results(self, path: Path, iteration: int) -> None:
+        """Write stub execution results for integration tests."""
+        results = {
+            "plan_ref": f"runs/iter-{iteration}/experiment_plan.yaml",
+            "setup_results": [
+                {"cmd": "echo 'stub build'", "exit_code": 0, "stdout_tail": "stub build", "stderr_tail": ""},
+            ],
+            "arms": [
+                {
+                    "arm_id": "h-main",
+                    "conditions": [
+                        {
+                            "name": "baseline",
+                            "cmd": "echo '{\"latency_ms\": 50}'",
+                            "exit_code": 0,
+                            "stdout_tail": '{"latency_ms": 50}',
+                            "stderr_tail": "",
+                            "output_content": '{"latency_ms": 50}',
+                        },
+                        {
+                            "name": "treatment",
+                            "cmd": "echo '{\"latency_ms\": 40}'",
+                            "exit_code": 0,
+                            "stdout_tail": '{"latency_ms": 40}',
+                            "stderr_tail": "",
+                            "output_content": '{"latency_ms": 40}',
+                        },
+                    ],
+                },
+                {
+                    "arm_id": "h-control-negative",
+                    "conditions": [
+                        {
+                            "name": "control",
+                            "cmd": "echo '{\"latency_ms\": 50}'",
+                            "exit_code": 0,
+                            "stdout_tail": '{"latency_ms": 50}',
+                            "stderr_tail": "",
+                            "output_content": '{"latency_ms": 50}',
+                        },
+                    ],
+                },
+            ],
+        }
+        atomic_write(path, json.dumps(results, indent=2) + "\n")
+
     def _write_findings(self, path: Path, iteration: int, h_main_result: str) -> None:
         findings = {
             "iteration": iteration,
@@ -125,6 +217,7 @@ class StubDispatcher:
                     "diagnostic_note": None,
                 },
             ],
+            "experiment_valid": True,
             "discrepancy_analysis": "Stub analysis: all predictions within expected range."
             if h_main_result == "CONFIRMED"
             else "Stub analysis: H-main refuted, mechanism does not hold.",
@@ -184,3 +277,14 @@ class StubDispatcher:
             }
         )
         atomic_write(path, json.dumps(store, indent=2) + "\n")
+
+    def _write_gate_summary(self, path: Path, gate_type: str) -> None:
+        summary = {
+            "gate_type": gate_type,
+            "summary": f"Stub: summary for {gate_type} gate.",
+            "key_points": [
+                f"Stub: key point 1 for {gate_type}",
+                f"Stub: key point 2 for {gate_type}",
+            ],
+        }
+        atomic_write(path, json.dumps(summary, indent=2) + "\n")

@@ -2,10 +2,10 @@
 """Run a multi-iteration Nous campaign.
 
 Usage:
-    python run_campaign.py examples/blis/campaign.yaml --max-iterations 5
+    python run_campaign.py examples/campaign.yaml --max-iterations 5
 
 Runs iterations in a loop: each iteration runs the full Nous loop
-(FRAMING → DESIGN → REVIEW → RUNNING → EXTRACTION), then appends a
+(FRAMING → DESIGN → REVIEW → PLAN_EXECUTION → EXECUTING → ANALYSIS → EXTRACTION), then appends a
 ledger row, generates an investigation summary, and prompts whether to
 continue.  The investigation summary is injected into the next iteration's
 design prompt so that each hypothesis bundle is informed by all prior learning.
@@ -27,6 +27,7 @@ from orchestrator.gates import HumanGate
 from orchestrator.ledger import append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
 from run_iteration import (
+    DEFAULTS_PATH,
     IterationOutcome,
     run_iteration,
     setup_work_dir,
@@ -36,13 +37,42 @@ from run_iteration import (
 logger = logging.getLogger(__name__)
 
 
+def _resolve_model(campaign: dict, phase_key: str, cli_model: str | None) -> str:
+    """Resolve model: campaign.models > defaults.yaml > --model flag."""
+    campaign_models = campaign.get("models", {})
+    if campaign_models.get(phase_key):
+        return campaign_models[phase_key]
+    if DEFAULTS_PATH.exists():
+        defaults = yaml.safe_load(DEFAULTS_PATH.read_text()) or {}
+        default_model = defaults.get("models", {}).get(phase_key)
+        if default_model:
+            return default_model
+    return cli_model or "aws/claude-sonnet-4-5"
+
+
+def _generate_report(campaign: dict, work_dir: Path, model: str | None) -> None:
+    """Generate report.md summarizing the campaign."""
+    try:
+        resolved = _resolve_model(campaign, "report", model)
+        dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=resolved)
+        dispatcher.dispatch(
+            "extractor", "report",
+            output_path=work_dir / "report.md",
+            iteration=0,
+        )
+        print(f"  -> {work_dir / 'report.md'}")
+    except (RuntimeError, FileNotFoundError, OSError) as exc:
+        logger.warning("Report generation failed: %s", exc)
+
+
 def run_campaign(
     campaign: dict,
     work_dir: Path,
     *,
     max_iterations: int = 10,
-    model: str = "aws/claude-opus-4-6",
+    model: str | None = None,
     auto_approve: bool = False,
+    timeout: int = 1800,
 ) -> None:
     """Run a multi-iteration Nous campaign.
 
@@ -62,30 +92,41 @@ def run_campaign(
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
 
+    max_redesigns = 3
     for i in range(1, max_iterations + 1):
         is_last = (i == max_iterations)
-        print(f"\n{'#'*60}")
-        print(f"  CAMPAIGN — Iteration {i} of {max_iterations}")
-        print(f"{'#'*60}")
 
-        outcome = run_iteration(
-            campaign, work_dir, iteration=i, model=model, final=is_last,
-            auto_approve=auto_approve,
-        )
+        for redesign_attempt in range(max_redesigns + 1):
+            print(f"\n{'#'*60}")
+            if redesign_attempt > 0:
+                print(f"  CAMPAIGN — Iteration {i} (redesign {redesign_attempt})")
+            else:
+                print(f"  CAMPAIGN — Iteration {i} of {max_iterations}")
+            print(f"{'#'*60}")
+
+            outcome = run_iteration(
+                campaign, work_dir, iteration=i, model=model, final=is_last,
+                auto_approve=auto_approve, timeout=timeout,
+            )
+
+            if outcome == IterationOutcome.REDESIGN:
+                if redesign_attempt < max_redesigns:
+                    print(f"\n  Design rejected — retrying iteration {i}...")
+                    continue
+                else:
+                    print(f"\n  Max redesigns ({max_redesigns}) reached. Stopping.")
+                    return
+            break  # any non-REDESIGN outcome exits the retry loop
 
         if outcome == IterationOutcome.COMPLETED:
             append_ledger_row(work_dir, i)
             print(f"\n  Campaign complete after {i} iteration(s).")
+            _generate_report(campaign, work_dir, model)
             return
 
         if outcome == IterationOutcome.ABORTED:
             print(f"\n  Campaign aborted at iteration {i}.")
             print("  Engine state preserved for potential resume.")
-            return
-
-        if outcome == IterationOutcome.REDESIGN:
-            print(f"\n  Iteration {i} returned REDESIGN.")
-            print("  The engine has been rewound. Re-run the campaign to resume.")
             return
 
         # outcome == CONTINUE — non-final iteration completed extraction
@@ -96,7 +137,8 @@ def run_campaign(
         append_ledger_row(work_dir, i)
 
         dispatcher = LLMDispatcher(
-            work_dir=work_dir, campaign=campaign, model=model,
+            work_dir=work_dir, campaign=campaign,
+            model=_resolve_model(campaign, "extraction", model),
         )
         iter_dir = work_dir / "runs" / f"iter-{i}"
         dispatcher.dispatch(
@@ -106,17 +148,32 @@ def run_campaign(
         )
         print(f"  -> {iter_dir / 'investigation_summary.json'}")
 
+        # Generate continue gate summary
+        gate_summary_path = iter_dir / "gate_summary_continue.json"
+        try:
+            dispatcher.dispatch(
+                "summarizer", "summarize-gate",
+                output_path=gate_summary_path,
+                iteration=i,
+                perspective="continue",
+            )
+        except (RuntimeError, FileNotFoundError, OSError) as exc:
+            logger.warning("Continue gate summary generation failed: %s", exc)
+            gate_summary_path = None
+
         # Human gate: continue?
         print(f"\n{'='*60}")
         print(f"  CONTINUE GATE — Iteration {i} complete")
         print(f"{'='*60}")
-        decision = continue_gate.prompt(
+        decision, _reason = continue_gate.prompt(
             f"Continue to iteration {i + 1}?",
+            summary_path=str(gate_summary_path) if gate_summary_path else None,
         )
         if decision != "approve":
             engine = Engine(work_dir)
             engine.transition("DONE")
             print(f"\n  Campaign stopped after {i} iteration(s).")
+            _generate_report(campaign, work_dir, model)
             return
 
         # Advance engine from EXTRACTION → DESIGN (increments iteration)
@@ -125,22 +182,25 @@ def run_campaign(
         print(f"\n  Advancing to iteration {i + 1}...")
 
     print(f"\n  Campaign reached max_iterations ({max_iterations}).")
+    _generate_report(campaign, work_dir, model)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run a multi-iteration Nous campaign.",
-        epilog="Example: python run_campaign.py examples/blis/campaign.yaml --max-iterations 5",
+        epilog="Example: python run_campaign.py examples/campaign.yaml --max-iterations 5",
     )
     parser.add_argument("campaign", help="Path to campaign.yaml")
     parser.add_argument("--max-iterations", type=int, default=None,
                         help="Maximum iterations (default: 10)")
-    parser.add_argument("--model", default="aws/claude-opus-4-6",
-                        help="Model name (default: aws/claude-opus-4-6)")
+    parser.add_argument("--model", default=None,
+                        help="Fallback model name. Overridden by campaign.yaml models: and defaults.yaml.")
     parser.add_argument("--run-id", default=None,
                         help="Working directory name (default: derived from campaign)")
     parser.add_argument("--auto-approve", action="store_true",
                         help="Auto-approve all human gates (skip interactive prompts)")
+    parser.add_argument("--timeout", type=int, default=1800,
+                        help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -164,7 +224,7 @@ def main() -> None:
         print(
             f"Error: {campaign_path} is not a valid campaign config.\n"
             f"  {exc.message}\n\n"
-            f"See examples/blis/campaign.yaml for a working example.",
+            f"See examples/campaign.yaml for a working example.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -175,7 +235,7 @@ def main() -> None:
     else:
         max_iter = campaign.get("max_iterations", 10)
 
-    run_id = args.run_id or campaign_path.parent.name + "-run"
+    run_id = args.run_id or campaign.get("run_id") or campaign_path.parent.name + "-run"
     work_dir = setup_work_dir(run_id)
     print(f"Working directory: {work_dir.resolve()}")
     print(f"Max iterations: {max_iter}")
@@ -183,7 +243,7 @@ def main() -> None:
     run_campaign(
         campaign, work_dir,
         max_iterations=max_iter, model=args.model,
-        auto_approve=args.auto_approve,
+        auto_approve=args.auto_approve, timeout=args.timeout,
     )
 
 

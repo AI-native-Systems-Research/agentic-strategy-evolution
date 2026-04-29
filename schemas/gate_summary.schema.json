@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/gate_summary.schema.json",
+  "title": "Gate Summary",
+  "description": "Human-readable summary shown before a human gate.",
+  "type": "object",
+  "required": ["gate_type", "summary", "key_points"],
+  "additionalProperties": false,
+  "properties": {
+    "gate_type": {
+      "type": "string",
+      "enum": ["design", "findings", "continue", "end_of_campaign"],
+      "description": "Which gate this summary is for."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "1-3 sentence plain-language summary."
+    },
+    "key_points": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Bullet points highlighting what matters for the decision."
+    }
+  }
+}

@@ -77,7 +77,7 @@ def _patch_gates_approve(monkeypatch):
     """All gates auto-approve."""
     import run_iteration as ri
     import run_campaign as rc
-    gate = MagicMock(prompt=MagicMock(return_value="approve"))
+    gate = MagicMock(prompt=MagicMock(return_value=("approve", None)))
     monkeypatch.setattr(ri, "HumanGate", lambda: gate)
     monkeypatch.setattr(rc, "HumanGate", lambda: gate)
     return gate
@@ -125,8 +125,8 @@ class TestStopsOnHumanAbort:
         import run_campaign as rc
 
         # Iteration gates approve, but continue gate aborts
-        iter_gate = MagicMock(prompt=MagicMock(return_value="approve"))
-        continue_gate = MagicMock(prompt=MagicMock(return_value="abort"))
+        iter_gate = MagicMock(prompt=MagicMock(return_value=("approve", None)))
+        continue_gate = MagicMock(prompt=MagicMock(return_value=("abort", None)))
         monkeypatch.setattr(ri, "HumanGate", lambda: iter_gate)
         monkeypatch.setattr(rc, "HumanGate", lambda: continue_gate)
 
@@ -189,7 +189,7 @@ class TestAbortDuringIteration:
         import run_campaign as rc
 
         # Iteration gate aborts
-        gate = MagicMock(prompt=MagicMock(return_value="abort"))
+        gate = MagicMock(prompt=MagicMock(return_value=("abort", None)))
         monkeypatch.setattr(ri, "HumanGate", lambda: gate)
         monkeypatch.setattr(rc, "HumanGate", lambda: gate)
 

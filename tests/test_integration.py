@@ -85,12 +85,23 @@ class TestSingleIterationHappyPath:
 
         # DESIGN_REVIEW -> HUMAN_DESIGN_GATE (no criticals)
         engine.transition("HUMAN_DESIGN_GATE")
-        assert gate.prompt("Approve?") == "approve"
+        assert gate.prompt("Approve?") == ("approve", None)
 
-        # HUMAN_DESIGN_GATE -> RUNNING
-        engine.transition("RUNNING")
+        # HUMAN_DESIGN_GATE -> PLAN_EXECUTION
+        engine.transition("PLAN_EXECUTION")
         dispatcher.dispatch(
-            "executor", "run", output_path=iter_dir / "findings.json", iteration=1
+            "executor", "plan-execution",
+            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
+        )
+
+        # PLAN_EXECUTION -> EXECUTING
+        engine.transition("EXECUTING")
+        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
+
+        # EXECUTING -> ANALYSIS
+        engine.transition("ANALYSIS")
+        dispatcher.dispatch(
+            "executor", "analyze", output_path=iter_dir / "findings.json", iteration=1,
         )
         findings = json.loads((iter_dir / "findings.json").read_text())
         jsonschema.validate(findings, load_schema("findings.schema.json"))
@@ -99,12 +110,12 @@ class TestSingleIterationHappyPath:
         ff = check_fast_fail(findings)
         assert ff == FastFailAction.CONTINUE
 
-        # RUNNING -> FINDINGS_REVIEW
+        # ANALYSIS -> FINDINGS_REVIEW
         engine.transition("FINDINGS_REVIEW")
 
         # FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
         engine.transition("HUMAN_FINDINGS_GATE")
-        assert gate.prompt("Approve?") == "approve"
+        assert gate.prompt("Approve?") == ("approve", None)
 
         # H-main confirmed -> TUNING
         engine.transition("TUNING")
@@ -137,11 +148,20 @@ class TestSingleIterationHappyPath:
 
         engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
-        engine.transition("RUNNING")
+
+        # Three-phase execution
+        engine.transition("PLAN_EXECUTION")
+        dispatcher.dispatch(
+            "executor", "plan-execution",
+            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
+        )
+        engine.transition("EXECUTING")
+        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
+        engine.transition("ANALYSIS")
 
         # Executor produces refuted findings
         dispatcher.dispatch(
-            "executor", "run",
+            "executor", "analyze",
             output_path=iter_dir / "findings.json",
             iteration=1, h_main_result="REFUTED",
         )
@@ -183,9 +203,16 @@ class TestSingleIterationHappyPath:
         )
         engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
-        engine.transition("RUNNING")
+        engine.transition("PLAN_EXECUTION")
         dispatcher.dispatch(
-            "executor", "run", output_path=iter_dir / "findings.json", iteration=1
+            "executor", "plan-execution",
+            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
+        )
+        engine.transition("EXECUTING")
+        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
+        engine.transition("ANALYSIS")
+        dispatcher.dispatch(
+            "executor", "analyze", output_path=iter_dir / "findings.json", iteration=1,
         )
         engine.transition("FINDINGS_REVIEW")
         engine.transition("HUMAN_FINDINGS_GATE")
@@ -208,9 +235,16 @@ class TestSingleIterationHappyPath:
         )
         engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
-        engine.transition("RUNNING")
+        engine.transition("PLAN_EXECUTION")
         dispatcher.dispatch(
-            "executor", "run",
+            "executor", "plan-execution",
+            output_path=iter_dir2 / "experiment_plan.yaml", iteration=2,
+        )
+        engine.transition("EXECUTING")
+        dispatcher.write_execution_results(iter_dir2 / "execution_results.json", iteration=2)
+        engine.transition("ANALYSIS")
+        dispatcher.dispatch(
+            "executor", "analyze",
             output_path=iter_dir2 / "findings.json",
             iteration=2, h_main_result="REFUTED",
         )
@@ -229,3 +263,42 @@ class TestSingleIterationHappyPath:
         # Verify principles accumulated
         principles = json.loads((campaign_dir / "principles.json").read_text())
         assert len(principles["principles"]) == 2
+
+
+class TestGateSummaries:
+    """Integration: gate summaries are generated when a summarizer is available."""
+
+    @pytest.fixture
+    def campaign_dir(self, tmp_path):
+        shutil.copy(TEMPLATES_DIR / "state.json", tmp_path / "state.json")
+        shutil.copy(TEMPLATES_DIR / "ledger.json", tmp_path / "ledger.json")
+        shutil.copy(TEMPLATES_DIR / "principles.json", tmp_path / "principles.json")
+        state = json.loads((tmp_path / "state.json").read_text())
+        state["run_id"] = "test-summary-gate"
+        (tmp_path / "state.json").write_text(json.dumps(state, indent=2))
+        return tmp_path
+
+    def test_gate_summary_file_created_at_design_gate(self, campaign_dir):
+        """StubDispatcher generates a gate summary file during the design gate phase."""
+        engine = Engine(campaign_dir)
+        dispatcher = _make_dispatcher(campaign_dir)
+        iter_dir = campaign_dir / "runs" / "iter-1"
+
+        engine.transition("FRAMING")
+        engine.transition("DESIGN")
+        dispatcher.dispatch(
+            "planner", "design", output_path=iter_dir / "bundle.yaml", iteration=1,
+        )
+        engine.transition("DESIGN_REVIEW")
+
+        # Generate gate summary (what run_iteration.py would do before the gate)
+        dispatcher.dispatch(
+            "summarizer", "summarize-gate",
+            output_path=iter_dir / "gate_summary_design.json",
+            iteration=1, perspective="design",
+        )
+
+        summary_path = iter_dir / "gate_summary_design.json"
+        assert summary_path.exists()
+        summary = json.loads(summary_path.read_text())
+        assert summary["gate_type"] == "design"

@@ -40,7 +40,7 @@ class LLMDispatcher:
         self,
         work_dir: Path,
         campaign: dict,
-        model: str = "aws/claude-opus-4-6",
+        model: str = "aws/claude-sonnet-4-5",
         api_base: str | None = None,
         api_key: str | None = None,
         prompts_dir: Path | None = None,
@@ -76,22 +76,23 @@ class LLMDispatcher:
         if not isinstance(ts, dict):
             raise ValueError(
                 "Campaign config missing 'target_system' section. "
-                "See examples/blis/campaign.yaml for the expected format."
+                "See examples/campaign.yaml for the expected format."
             )
-        required = ["name", "description", "observable_metrics", "controllable_knobs"]
+        required = ["name", "description"]
         missing = [k for k in required if k not in ts]
         if missing:
             raise ValueError(
                 f"Campaign 'target_system' missing required keys: {missing}. "
-                f"See examples/blis/campaign.yaml for the expected format."
+                f"See examples/campaign.yaml for the expected format."
             )
         for field in ("observable_metrics", "controllable_knobs"):
-            val = ts[field]
-            if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
-                raise ValueError(
-                    f"Campaign 'target_system.{field}' must be a list of strings. "
-                    f"Got: {val!r}"
-                )
+            val = ts.get(field)
+            if val is not None:
+                if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+                    raise ValueError(
+                        f"Campaign 'target_system.{field}' must be a list of strings. "
+                        f"Got: {val!r}"
+                    )
 
     # ------------------------------------------------------------------
     # Public interface (satisfies Dispatcher protocol)
@@ -163,13 +164,14 @@ class LLMDispatcher:
         # (role, phase) -> (template_name, output_format, schema_name)
         ("planner", "frame"): ("frame", None, None),
         ("planner", "design"): ("design", "yaml", "bundle.schema.yaml"),
-        ("executor", "run"): ("run", "json", "findings.schema.json"),
-        ("executor", "run-plan"): ("run_plan", "json", "experiment_plan.schema.json"),
-        ("executor", "run-analyze"): ("run_analyze", "json", "findings.schema.json"),
+        ("executor", "plan-execution"): ("run_plan", "yaml", "experiment_plan.schema.yaml"),
+        ("executor", "analyze"): ("run_analyze", "json", "findings.schema.json"),
         ("reviewer", "review-design"): ("review_design", None, None),
         ("reviewer", "review-findings"): ("review_findings", None, None),
         ("extractor", "extract"): ("extract", "json", "principles.schema.json"),
         ("extractor", "summarize"): ("summarize", "json", "investigation_summary.schema.json"),
+        ("summarizer", "summarize-gate"): ("summarize_gate", "json", "gate_summary.schema.json"),
+        ("extractor", "report"): ("report", None, None),
     }
 
     def _route(
@@ -195,8 +197,8 @@ class LLMDispatcher:
         ctx: dict[str, str] = {
             "target_system": ts["name"],
             "system_description": ts["description"],
-            "observable_metrics": ", ".join(ts["observable_metrics"]),
-            "controllable_knobs": ", ".join(ts["controllable_knobs"]),
+            "observable_metrics": ", ".join(ts["observable_metrics"]) if ts.get("observable_metrics") else "Not specified — planner should discover from code",
+            "controllable_knobs": ", ".join(ts["controllable_knobs"]) if ts.get("controllable_knobs") else "Not specified — planner should discover from code",
             "active_principles": self._format_principles(),
             "iteration": str(iteration),
         }
@@ -226,7 +228,17 @@ class LLMDispatcher:
                     "This is the first iteration. No prior investigation summary."
                 )
 
-        if phase in ("design", "review-design", "run", "run-plan", "run-analyze", "summarize"):
+        if phase in ("frame", "design", "plan-execution"):
+            feedback_path = self.work_dir / "runs" / f"iter-{iteration}" / "feedback.md"
+            if feedback_path.exists():
+                content = feedback_path.read_text().strip()
+                ctx["human_feedback"] = (
+                    f"## Human Feedback (from previous rejection)\n\n{content}"
+                )
+            else:
+                ctx["human_feedback"] = ""
+
+        if phase in ("design", "review-design", "plan-execution", "analyze", "summarize"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
                 pass  # bundle doesn't exist yet during design — template ignores it
@@ -238,19 +250,33 @@ class LLMDispatcher:
             else:
                 ctx["bundle_yaml"] = bundle_path.read_text()
 
-        if phase == "run-plan":
-            execution = self.campaign["target_system"].get("execution", {})
-            ctx["run_command_template"] = execution.get("run_command", "")
-            ctx["setup_commands"] = "\n".join(execution.get("setup_commands", []))
+        if phase in ("frame", "plan-execution"):
+            # Pre-inject repo context so claude -p doesn't waste turns exploring
+            repo_path = self.campaign.get("target_system", {}).get("repo_path")
+            if repo_path:
+                from orchestrator.repo_context import gather_repo_context
+                ctx["repo_context"] = gather_repo_context(Path(repo_path))
+            else:
+                ctx["repo_context"] = "(no repo_path configured)"
 
-        if phase == "run-analyze":
+        if phase in ("plan-execution", "analyze"):
+            # Inject problem.md so executor/analyzer has full framing context
+            problem_path = self.work_dir / "runs" / f"iter-{iteration}" / "problem.md"
+            if not problem_path.exists() and iteration > 1:
+                problem_path = self.work_dir / "runs" / "iter-1" / "problem.md"
+            if problem_path.exists():
+                ctx["problem_md"] = problem_path.read_text()
+            else:
+                ctx["problem_md"] = "No problem framing available."
+
+        if phase == "analyze":
             results_path = (
-                self.work_dir / "runs" / f"iter-{iteration}" / "experiment_results.json"
+                self.work_dir / "runs" / f"iter-{iteration}" / "execution_results.json"
             )
             if not results_path.exists():
                 raise FileNotFoundError(
-                    f"Cannot run 'run-analyze' phase: {results_path} not found. "
-                    f"Ensure experiment commands were executed for iteration {iteration}."
+                    f"Cannot run 'analyze' phase: {results_path} not found. "
+                    f"Ensure the EXECUTING phase completed for iteration {iteration}."
                 )
             ctx["experiment_results"] = results_path.read_text()
 
@@ -274,6 +300,49 @@ class LLMDispatcher:
 
         if perspective is not None:
             ctx["perspective_name"] = perspective
+
+        if phase == "summarize-gate":
+            gate_type = perspective or "design"
+            ctx["gate_type"] = gate_type
+            # Build context based on gate type
+            if gate_type == "design":
+                bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
+                if bundle_path.exists():
+                    ctx["gate_context"] = f"Hypothesis bundle:\n```yaml\n{bundle_path.read_text()}\n```"
+                else:
+                    ctx["gate_context"] = "Bundle not available."
+            elif gate_type == "findings":
+                findings_path = self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
+                if findings_path.exists():
+                    ctx["gate_context"] = f"Findings:\n```json\n{findings_path.read_text()}\n```"
+                else:
+                    ctx["gate_context"] = "Findings not available."
+            elif gate_type in ("continue", "end_of_campaign"):
+                summary_path = (
+                    self.work_dir / "runs" / f"iter-{iteration}"
+                    / "investigation_summary.json"
+                )
+                if summary_path.exists():
+                    ctx["gate_context"] = f"Investigation summary:\n```json\n{summary_path.read_text()}\n```"
+                else:
+                    ctx["gate_context"] = "Investigation summary not available."
+            else:
+                ctx["gate_context"] = "No additional context."
+
+        if phase == "report":
+            ctx["research_question"] = self.campaign["research_question"]
+            # Ledger summary
+            ledger_path = self.work_dir / "ledger.json"
+            if ledger_path.exists():
+                ctx["ledger_summary"] = ledger_path.read_text()
+            else:
+                ctx["ledger_summary"] = "No ledger entries."
+            # Final principles
+            principles_path = self.work_dir / "principles.json"
+            if principles_path.exists():
+                ctx["final_principles"] = principles_path.read_text()
+            else:
+                ctx["final_principles"] = "No principles extracted."
 
         return ctx
 

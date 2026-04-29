@@ -41,11 +41,11 @@ This separation exists because:
                     │  ledger.json     principles.json     │
                     │  problem.md      summary.json        │
                     │  runs/iter-N/    trace.jsonl         │
-                    │    bundle.yaml   findings.json       │
-                    │    experiment_plan.json (real exec)  │
-                    │    experiment_results.json (real exec)│
+                    │    bundle.yaml   experiment_plan.yaml │
+                    │    execution_results.json              │
+                    │    findings.json                      │
                     │    investigation_summary.json         │
-                    │    metrics/      reviews/            │
+                    │    reviews/                          │
                     └─────────────────────────────────────┘
 ```
 
@@ -53,7 +53,7 @@ This separation exists because:
 
 ### Engine (`orchestrator/engine.py`)
 
-The engine owns the 11-state state machine and checkpoint/resume.
+The engine owns the 13-state state machine and checkpoint/resume.
 
 **State machine:**
 
@@ -66,19 +66,27 @@ INIT ──▶ FRAMING ──▶ DESIGN ──▶ DESIGN_REVIEW ──▶ HUMAN_
                         └─────────────────────────────────┘
                                                           │ (approve)
                                                           ▼
-         ┌──────────── RUNNING ◀──────────────────────────┘
-         │               ▲
-         ▼               │ (CRITICAL or reject)
-    FINDINGS_REVIEW ─────┘
-         │
-         ▼
-    HUMAN_FINDINGS_GATE
-         │
-         ├──▶ TUNING ──▶ EXTRACTION ──▶ DONE
+         ┌─── PLAN_EXECUTION ◀────────────────────────────┘
+         │         │
+         │         ▼
+         │     EXECUTING
+         │         │
+         │         ▼
+         │     ANALYSIS
+         │         │
+         │         ▼
+         │   FINDINGS_REVIEW ─────────▶ PLAN_EXECUTION (fast-fail REDESIGN)
+         │         │
+         │         ▼
+         │   HUMAN_FINDINGS_GATE
+         │         │
+         │         ├──▶ TUNING ──▶ EXTRACTION ──▶ DONE
+         │         │                    │
+         │         └──▶ EXTRACTION ◀───┘
          │                    │
-         └──▶ EXTRACTION ◀───┘
-                    │
-                    └──▶ DESIGN  (next iteration, counter increments)
+         │                    └──▶ DESIGN  (next iteration, counter increments)
+         │
+         └──── (FINDINGS_REVIEW or HUMAN_FINDINGS_GATE loops back here)
 ```
 
 **Key behaviors:**
@@ -97,20 +105,23 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 | Role | Invoked During | Produces |
 |---|---|---|
 | **Planner** | FRAMING, DESIGN | `problem.md`, `bundle.yaml` |
-| **Executor** | RUNNING | `experiment_plan.json`, `experiment_results.json`, `findings.json` |
+| **Executor** | PLAN_EXECUTION, ANALYSIS | `experiment_plan.yaml`, `findings.json` |
+| **Orchestrator** | EXECUTING | `execution_results.json` (deterministic, no LLM) |
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
 | **Extractor** | EXTRACTION, post-iteration | Updated `principles.json`, `investigation_summary.json` |
+| **Summarizer** | Before each human gate | `gate_summary_*.json` |
 
 **Implementations:**
 
 - `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
 - `LLMDispatcher` (`llm_dispatch.py`) calls a real LLM via the OpenAI SDK, parses structured output from code fences, validates against schemas, and writes artifacts atomically. Works with any OpenAI-compatible endpoint. This is the production dispatcher.
+- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Used for the planner (framing) and executor roles when the campaign specifies a `repo_path`. Shares the same routing table and prompt templates as `LLMDispatcher`, but sends prompts via stdin to the Claude CLI instead of calling an API endpoint. The agent can read files, grep code, and run commands in the target repo. Supports `override_cwd()` context manager for temporarily pointing the executor at a git worktree.
 
 **Dispatch interface:**
 ```python
 dispatcher.dispatch(
     role="executor",           # which agent
-    phase="run",               # which phase
+    phase="plan-execution",    # which phase
     output_path=path,          # where to write
     iteration=1,               # current iteration
 )
@@ -149,23 +160,17 @@ For structured outputs (bundle YAML, findings JSON, principles JSON), the dispat
 
 Markdown outputs (problem framing, reviews) are written directly without validation.
 
-### Executor Modes
+### Three-Phase Execution
 
-The executor operates in one of two modes, chosen automatically based on `campaign.yaml`:
+Execution is split into three checkpointable sub-phases:
 
-**Real execution mode** (when `target_system.execution` is present):
+1. **PLAN_EXECUTION** — The executor agent (`claude -p` via `CLIDispatcher`) explores the target repo, discovers build commands, and produces `experiment_plan.yaml` with exact shell commands per arm. The plan is a first-class artifact, schema-validated and auditable.
 
-1. **Plan** — LLM designs shell commands for the baseline and each hypothesis arm (`executor/run-plan` route, produces `experiment_plan.json`)
-2. **Run** — Orchestrator executes each command via `subprocess`, collecting metrics from JSON files written by the target system
-3. **Analyze** — LLM compares predictions to real metrics (`executor/run-analyze` route, produces `findings.json`)
+2. **EXECUTING** — The Python orchestrator (`orchestrator/executor.py`) runs the commands deterministically via `subprocess.run()`. No LLM calls. Stdout/stderr are captured per condition and written to `results/<arm_id>/<name>.{stdout,stderr}`. If a command fails, the optional `revision_fn` callback asks the LLM to correct the plan (max 3 retries). Results are written to `execution_results.json`.
 
-Commands run with `shell=False` (via `shlex.split`) for safety, with configurable timeouts. If `execution.repo_path` is set, the orchestrator creates a git worktree for isolation and cleans it up afterward.
+3. **ANALYSIS** — The LLM API (`LLMDispatcher`) receives the execution results alongside the bundle and problem framing, compares observed metrics against predictions, and produces `findings.json`.
 
-**Analysis mode** (no `execution` config):
-
-The executor reasons about the target system based on its understanding of the code and mechanisms, but does not run actual experiments. The `executor/run` route produces `findings.json` directly from LLM analysis.
-
-This design is backward-compatible — existing campaigns without `execution` config continue to work unchanged.
+This separation ensures experiments are reproducible (the plan is recorded), auditable (intermediate results are preserved), and recoverable (crash during EXECUTING resumes from the plan).
 
 ### Model Configuration
 
@@ -176,7 +181,52 @@ dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model="gpt-4o")
 dispatcher = LLMDispatcher(..., api_base="https://my-proxy.example.com", api_key="sk-...")
 ```
 
-Default model: `aws/claude-opus-4-6`. The `completion_fn` constructor parameter allows test injection without mocking internals.
+Default model: `aws/claude-sonnet-4-5` (configurable per-phase via `defaults.yaml` or `campaign.yaml`). The `completion_fn` constructor parameter allows test injection without mocking internals.
+
+## CLI Dispatch (Phase 4.5)
+
+`CLIDispatcher` invokes `claude -p` for agents that need code and shell access. It shares the same `Dispatcher` protocol, routing table, and prompt templates as `LLMDispatcher`.
+
+### When to Use Which Dispatcher
+
+| Dispatcher | Role | When |
+|---|---|---|
+| `CLIDispatcher` | Planner (framing), Executor | `repo_path` is set — agent needs code/shell access |
+| `LLMDispatcher` | Planner (design), Reviewer, Extractor, Summarizer | Always — operates on artifacts, no code access needed |
+
+The entry points (`run_iteration.py`, `run_campaign.py`) auto-select: if `target_system.repo_path` is set, a `CLIDispatcher` is created alongside the `LLMDispatcher`. Framing uses CLI (to explore code), design uses LLM API (to reason from the framing output), and execution uses CLI (to run experiments in a worktree). Reviewer, extractor, and summarizer always use `LLMDispatcher`.
+
+### Simplified Campaign
+
+With `CLIDispatcher`, a campaign configuration can be as simple as:
+
+```yaml
+research_question: "What drives latency in my system?"
+target_system:
+  name: "My System"
+  description: "A service that processes requests."
+  repo_path: /path/to/repo
+```
+
+The planner explores the codebase to discover observable metrics, controllable knobs, and execution methods. The full campaign format (with explicit metrics and knobs) remains supported — provided values take precedence over what the planner discovers.
+
+### Code Change Intents
+
+When using `CLIDispatcher`, the planner can include optional `code_changes` in bundle arms:
+
+```yaml
+arms:
+  - type: h-main
+    prediction: "TTFT decreases by 15-25%"
+    mechanism: "SJF reorders by predicted compute cost"
+    diagnostic: "Check scheduling order"
+    code_changes:
+      - file: scheduler/policy.go
+        intent: "Replace FCFS with shortest-job-first"
+        rationale: "Prefix-heavy requests have predictable cost"
+```
+
+The planner says **what and why** — the executor implements the actual changes in a git worktree.
 
 ### Ledger (`orchestrator/ledger.py`)
 
@@ -188,7 +238,7 @@ Human gates are hard stops that cannot be bypassed. They surface the artifact an
 
 **Valid decisions:**
 - `approve` — advance to the next phase
-- `reject` — loop back (HUMAN_DESIGN_GATE → DESIGN, HUMAN_FINDINGS_GATE → RUNNING)
+- `reject` — loop back (HUMAN_DESIGN_GATE → DESIGN, HUMAN_FINDINGS_GATE → PLAN_EXECUTION)
 - `abort` — end the campaign
 
 **Testing modes:** `auto_approve=True` or `auto_response="reject"` for deterministic testing without human interaction.
@@ -197,6 +247,12 @@ Human gates are hard stops that cannot be bypassed. They surface the artifact an
 1. After DESIGN_REVIEW — human sees the hypothesis bundle and all review summaries
 2. After FINDINGS_REVIEW — human sees the findings and all review summaries
 3. After EXTRACTION (multi-iteration only) — human decides whether to continue to the next iteration
+
+### Gate Summaries (Phase 4.5)
+
+Before each human gate, a summarizer agent produces a formatted summary (`gate_summary_*.json`). The summary includes a plain-language description and bullet points highlighting what matters for the decision. This replaces the raw truncated artifact dumps from earlier phases.
+
+Gates display the summary first, then the raw artifact (for those who want full detail). If summary generation fails, the gate falls back to the previous behavior.
 
 ### Fast-Fail Rules (`orchestrator/fastfail.py`)
 
@@ -229,10 +285,6 @@ Rule 1 takes priority: if H-main is refuted, the control-negative result doesn't
                        │
                        ▼
                     Executor
-                       │
-                       ├──▶ experiment_plan.json  (real execution only)
-                       ├──▶ run commands, collect metrics
-                       ├──▶ experiment_results.json
                        │
                        ▼
                  findings.json ──▶ Reviewer (10 perspectives)
@@ -283,8 +335,8 @@ Principles are hard constraints: the Planner must not design bundles that contra
 ```
 for i in 1..max_iterations:
   ┌─────────────────────────────────────────────────────┐
-  │  run_iteration(iteration=i, final=(i==max))         │
-  │    FRAMING → DESIGN → REVIEW → RUNNING → EXTRACTION │
+  │  run_iteration(iteration=i, final=(i==max))                        │
+  │    FRAMING → DESIGN → REVIEW → PLAN_EXECUTION → EXECUTING → ANALYSIS → EXTRACTION │
   └─────────────────────┬───────────────────────────────┘
                         │
                   (if not final)
@@ -312,10 +364,10 @@ Every artifact exchanged between components is validated against a JSON Schema (
 
 | Schema | Format | Governs |
 |---|---|---|
-| `campaign.schema.yaml` | YAML | Campaign configuration (target system, execution, reviewer panel, prompt layers) |
-| `experiment_plan.schema.json` | JSON | Executor experiment commands (baseline + per-arm commands) |
+| `campaign.schema.yaml` | YAML | Campaign configuration (target system, reviewer panel, prompt layers) |
 | `state.schema.json` | JSON | Orchestrator checkpoint (phase, iteration, run_id, config_ref) |
 | `bundle.schema.yaml` | YAML | Hypothesis bundles (arms with predictions, mechanisms, diagnostics) |
+| `experiment_plan.schema.yaml` | YAML | Experiment plans (exact commands per arm/condition) |
 | `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |
 | `investigation_summary.schema.json` | JSON | Bounded iteration summary for cross-iteration context |
 | `principles.schema.json` | JSON | Principle store (statement, confidence, regime, evidence, category, status) |

@@ -1,10 +1,10 @@
 # Data Model Guide
 
-Nous uses 9 schema-governed artifacts to drive the investigation loop. This guide explains each one in plain English.
+Nous uses 11 schema-governed artifacts to drive the investigation loop. This guide explains each one in plain English.
 
 ## How They Fit Together
 
-`campaign.yaml` describes the target system and configures the reviewer panel. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (experiment plan) and `findings.json` (results). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. After each non-final iteration, `investigation_summary.json` captures a bounded summary that feeds into the next iteration's design prompt. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
+`campaign.yaml` describes the target system and configures the reviewer panel. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (hypothesis bundle), `experiment_plan.yaml` (exact commands), `execution_results.json` (raw output), and `findings.json` (analysis). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. After each non-final iteration, `investigation_summary.json` captures a bounded summary that feeds into the next iteration's design prompt. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
 
 ```
 campaign.yaml       "What system?"          Target system, reviewers, prompts
@@ -13,9 +13,15 @@ campaign.yaml       "What system?"          Target system, reviewers, prompts
 state.json          "Where are we?"         Drives the loop
     │
     ▼
-bundle.yaml         "What are we testing?"  Experiment plan for this iteration
+bundle.yaml         "What are we testing?"  Hypothesis bundle for this iteration
     │                                        ▲
     ▼                                        │ (injected into design prompt)
+experiment_plan.yaml "How to run it?"         Exact commands per arm
+    │                                        │
+    ▼                                        │
+execution_results.json "Raw output"          Stdout/stderr per condition
+    │                                        │
+    ▼                                        │
 findings.json       "What happened?"         │
     │                                        │
     ├──▶ ledger.json                 investigation_summary.json
@@ -39,9 +45,9 @@ The campaign configuration. Describes the target system, configures the reviewer
 |---|---|
 | `research_question` | The guiding research question for this campaign |
 | `target_system.name` / `description` | What system Nous is investigating |
-| `target_system.observable_metrics` | What you can measure (latency, throughput, error rate, etc.) |
-| `target_system.controllable_knobs` | What you can change (algorithms, configs, resource limits) |
-| `target_system.execution` | (Optional) How to run real experiments — see below |
+| `target_system.observable_metrics` | (Optional) What agents can measure — provided as hints, or discovered from code |
+| `target_system.controllable_knobs` | (Optional) What agents can change — provided as hints, or discovered from code |
+| `target_system.repo_path` | (Optional) Path to target system git repo — enables code-access agents and worktree isolation |
 | `review.design_perspectives` | Reviewer perspectives for design review (default: 5) |
 | `review.findings_perspectives` | Reviewer perspectives for findings review (default: 10) |
 | `review.max_review_rounds` | Maximum convergence rounds per gate |
@@ -49,27 +55,6 @@ The campaign configuration. Describes the target system, configures the reviewer
 | `prompts.domain_adapter_layer` | Path to domain-specific prompt overrides (null until generated) |
 
 The template ships with 5 design perspectives (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity). Campaigns may use fewer or more depending on the domain — the schema requires at least 1.
-
-### Execution config
-
-The optional `target_system.execution` section enables real experiment execution. Without it, the executor operates in analysis mode (LLM-only reasoning).
-
-| Field | What it configures |
-|---|---|
-| `run_command` | Shell command template with `{metrics_path}` placeholder |
-| `repo_path` | Git repo to create experiment worktrees in (null = run in current dir) |
-| `setup_commands` | Commands to run before experiments (e.g., build steps) |
-| `cleanup_commands` | Commands to run after experiments |
-| `timeout` | Max seconds per command (default: 300) |
-| `metrics_output_format` | Format of metrics files (currently only `json`) |
-
-Example:
-```yaml
-target_system:
-  execution:
-    run_command: "./blis run --model qwen/qwen3-14b --metrics-path {metrics_path}"
-    timeout: 300
-```
 
 ## 1. state.json — "Where are we right now?"
 
@@ -79,7 +64,7 @@ A bookmark. It tells the orchestrator what phase we're in, which iteration we're
 
 | Field | What it means |
 |---|---|
-| `phase` | Which step of the loop (INIT, FRAMING, DESIGN, DESIGN_REVIEW, HUMAN_DESIGN_GATE, RUNNING, FINDINGS_REVIEW, HUMAN_FINDINGS_GATE, TUNING, EXTRACTION, DONE) |
+| `phase` | Which step of the loop (INIT, FRAMING, DESIGN, DESIGN_REVIEW, HUMAN_DESIGN_GATE, PLAN_EXECUTION, EXECUTING, ANALYSIS, FINDINGS_REVIEW, HUMAN_FINDINGS_GATE, TUNING, EXTRACTION, DONE) |
 | `iteration` | How many times we've gone around the loop (0 = haven't started yet) |
 | `run_id` | A name for this campaign |
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |
@@ -152,23 +137,46 @@ The experiment plan. A set of hypotheses ("arms") designed together to test one 
 | `h-control-negative` | At low load, the strategy should have no effect (proves mechanism, not noise) |
 | `h-robustness` | Does it hold across different workloads? |
 
-Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal explanation), **diagnostic** (what to investigate if wrong). Arms may also carry an optional **metadata** object for domain-specific extensions.
+Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal explanation), **diagnostic** (what to investigate if wrong). Arms may also carry optional **code_changes** (file/intent/rationale triples describing what code to modify) and a **metadata** object for domain-specific extensions.
 
-## 4b. experiment_plan.json — "How should we run each arm?"
+## 4b. experiment_plan.yaml — "What commands to run?"
 
-**Schema:** `schemas/experiment_plan.schema.json`
+**Schema:** `schemas/experiment_plan.schema.yaml`
 
-Only produced in real execution mode (when `campaign.yaml` has an `execution` config). The executor LLM designs shell commands for the baseline and each hypothesis arm, based on the bundle and the `run_command` template from the campaign.
+The experiment plan. Produced by the executor agent during PLAN_EXECUTION. Contains exact shell commands to run for each arm, making experiments reproducible and auditable.
 
-| Field | What it means |
+| Section | What it means |
 |---|---|
-| `baseline.description` | What the baseline measures |
-| `baseline.command` | Shell command to run, with `{metrics_path}` replaced by the actual path |
-| `experiments[].arm_type` | Which arm this command tests (h-main, h-ablation, etc.) |
-| `experiments[].command` | Shell command for this arm |
-| `experiments[].config_changes` | What was changed relative to the baseline |
+| `metadata.iteration` | Which iteration this plan is for |
+| `metadata.bundle_ref` | Path to the hypothesis bundle this plan implements |
+| `setup[]` | Optional setup commands (build, install, etc.) |
+| `arms[].arm_id` | Which hypothesis arm |
+| `arms[].conditions[].name` | Condition name (e.g., "baseline-seed42") |
+| `arms[].conditions[].cmd` | Exact shell command to execute |
+| `arms[].conditions[].output` | Optional: path to output file to capture |
+| `arms[].conditions[].description` | Optional human description |
 
-The orchestrator runs each command via `subprocess` (no shell), writes the collected metrics to `experiment_results.json`, and feeds both to the analyze phase.
+Located at `runs/iter-N/experiment_plan.yaml`. If the plan is revised due to command failures, revised versions are saved as `experiment_plan_v2.yaml`, `experiment_plan_v3.yaml`, etc.
+
+## 4c. execution_results.json — "What did the commands produce?"
+
+No schema — internal artifact written by the Python orchestrator during EXECUTING.
+
+Contains the raw output of every command from the experiment plan. Used by the ANALYSIS phase to produce findings.
+
+| Section | What it means |
+|---|---|
+| `plan_ref` | Path to the experiment plan |
+| `setup_results[]` | Output of setup commands (cmd, exit_code, stdout_tail, stderr_tail) |
+| `arms[].arm_id` | Which arm |
+| `arms[].conditions[].name` | Condition name |
+| `arms[].conditions[].cmd` | Command that was run |
+| `arms[].conditions[].exit_code` | 0 = success |
+| `arms[].conditions[].stdout_tail` | Last 4000 chars of stdout |
+| `arms[].conditions[].stderr_tail` | Last 4000 chars of stderr |
+| `arms[].conditions[].output_content` | Content of output file (if specified in plan) |
+
+Located at `runs/iter-N/execution_results.json`. Full stdout/stderr are also saved per condition at `runs/iter-N/results/<arm_id>/<name>.stdout` and `.stderr`.
 
 ## 5. findings.json — "What actually happened?"
 
@@ -210,6 +218,20 @@ A bounded summary produced after each non-final iteration by the Extractor agent
 
 Located at `runs/iter-N/investigation_summary.json`. The design prompt for iteration N+1 receives this summary to inform hypothesis bundle creation.
 
+## 6b. gate_summary_*.json — "What should I know before deciding?"
+
+**Schema:** `schemas/gate_summary.schema.json`
+
+A human-readable summary produced by the summarizer agent before each human gate. Designed to help the human make an approve/reject/abort decision without reading raw artifacts.
+
+| Field | What it means |
+|---|---|
+| `gate_type` | Which gate: `design`, `findings`, `continue`, or `end_of_campaign` |
+| `summary` | 1-3 sentence plain-language summary of what's being decided |
+| `key_points` | Bullet points with specific numbers, metrics, and hypothesis references |
+
+Located at `runs/iter-N/gate_summary_<type>.json`. Generated on the fly before each gate — not persisted across sessions.
+
 ## 7. trace.jsonl — "What happened under the hood?"
 
 **Schema:** `schemas/trace.schema.json`
@@ -243,7 +265,7 @@ The final report card, generated at the end of a campaign. Rolls everything into
 |---|---|
 | `total_cost_usd` / `total_tokens` | How much it cost |
 | `total_iterations` | How many times around the loop |
-| `cost_by_phase` | Where the money went (DESIGN vs RUNNING, etc.) |
+| `cost_by_phase` | Where the money went (DESIGN vs PLAN_EXECUTION vs ANALYSIS, etc.) |
 | `per_iteration_stats` | Cost and result for each iteration |
 | `mechanism_families_investigated` | What areas were explored |
 | `principles_inserted` / `updated` / `pruned` | Knowledge base changes |

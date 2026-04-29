@@ -17,10 +17,10 @@ class TestStateSchema:
         }
         jsonschema.validate(instance, schema)
 
-    def test_valid_running_state(self, load_schema):
+    def test_valid_plan_execution_state(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "RUNNING",
+            "phase": "PLAN_EXECUTION",
             "iteration": 3,
             "run_id": "campaign-001",
             "family": "routing-signals",
@@ -32,7 +32,8 @@ class TestStateSchema:
         schema = load_schema("state.schema.json")
         phases = [
             "INIT", "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "TUNING", "EXTRACTION", "DONE",
         ]
         for phase in phases:
@@ -308,6 +309,53 @@ class TestBundleSchema:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(instance, schema)
 
+    def test_bundle_arm_with_code_changes(self, load_schema):
+        """Bundle arms can optionally include code_changes."""
+        schema = load_schema("bundle.schema.yaml")
+        bundle = {
+            "metadata": {
+                "iteration": 1,
+                "family": "test-family",
+                "research_question": "Does SJF reduce TTFT?",
+            },
+            "arms": [
+                {
+                    "type": "h-main",
+                    "prediction": "TTFT decreases by 15-25%",
+                    "mechanism": "SJF reorders by predicted compute cost",
+                    "diagnostic": "Check scheduling order in logs",
+                    "code_changes": [
+                        {
+                            "file": "scheduler/policy.go",
+                            "intent": "Replace FCFS dispatch with shortest-job-first ordering",
+                            "rationale": "Prefix-heavy requests have predictable compute cost",
+                        }
+                    ],
+                }
+            ],
+        }
+        jsonschema.validate(bundle, schema)  # Should not raise
+
+    def test_bundle_arm_without_code_changes(self, load_schema):
+        """Bundle arms without code_changes remain valid (backwards compatible)."""
+        schema = load_schema("bundle.schema.yaml")
+        bundle = {
+            "metadata": {
+                "iteration": 1,
+                "family": "test-family",
+                "research_question": "Does batch size matter?",
+            },
+            "arms": [
+                {
+                    "type": "h-main",
+                    "prediction": ">10% improvement",
+                    "mechanism": "Batching amortizes overhead",
+                    "diagnostic": "Check overhead per item",
+                }
+            ],
+        }
+        jsonschema.validate(bundle, schema)  # Should not raise (existing behavior)
+
 
 class TestFindingsSchema:
     def test_valid_findings(self, load_schema):
@@ -475,7 +523,8 @@ class TestSummarySchema:
             "cost_by_phase": {
                 "FRAMING": 2.5,
                 "DESIGN": 8.3,
-                "RUNNING": 18.0,
+                "PLAN_EXECUTION": 6.0,
+                "ANALYSIS": 12.0,
             },
             "per_iteration_stats": [
                 {
@@ -671,6 +720,28 @@ class TestCampaignSchema:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(instance, schema)
 
+    def test_campaign_minimal_valid(self, load_schema):
+        """Campaign with only name, description, repo_path is valid."""
+        schema = load_schema("campaign.schema.yaml")
+        minimal = {
+            "research_question": "Why is it slow?",
+            "target_system": {
+                "name": "TestSys",
+                "description": "A test system.",
+                "repo_path": "/tmp/repo",
+            },
+            "review": {
+                "design_perspectives": ["rigor"],
+                "findings_perspectives": ["rigor"],
+                "max_review_rounds": 1,
+            },
+            "prompts": {
+                "methodology_layer": "prompts/methodology",
+                "domain_adapter_layer": None,
+            },
+        }
+        jsonschema.validate(minimal, schema)  # Should not raise
+
 
 class TestPrinciplesCategoryField:
     def test_domain_category_accepted(self, load_schema):
@@ -843,85 +914,6 @@ class TestLedgerDomainMetrics:
         jsonschema.validate(instance, schema)
 
 
-class TestCampaignExecutionConfig:
-    """Tests for the optional execution config in campaign schema."""
-
-    def _base_campaign(self, **execution_fields):
-        campaign = {
-            "research_question": "Test question?",
-            "target_system": {
-                "name": "test",
-                "description": "test system",
-                "observable_metrics": ["latency"],
-                "controllable_knobs": ["config"],
-            },
-            "review": {
-                "design_perspectives": ["general"],
-                "findings_perspectives": ["general"],
-                "max_review_rounds": 1,
-            },
-            "prompts": {"methodology_layer": "prompts/"},
-        }
-        if execution_fields:
-            campaign["target_system"]["execution"] = execution_fields
-        return campaign
-
-    def test_campaign_without_execution_valid(self, load_schema):
-        schema = load_schema("campaign.schema.yaml")
-        jsonschema.validate(self._base_campaign(), schema)
-
-    def test_campaign_with_execution_valid(self, load_schema):
-        schema = load_schema("campaign.schema.yaml")
-        instance = self._base_campaign(
-            run_command="./sim run --metrics-path {metrics_path}",
-            repo_path="/tmp/my-repo",
-            setup_commands=["pip install -e ."],
-            metrics_output_format="json",
-            cleanup_commands=["rm -rf tmp/"],
-            timeout=600,
-        )
-        jsonschema.validate(instance, schema)
-
-    def test_execution_minimal_valid(self, load_schema):
-        schema = load_schema("campaign.schema.yaml")
-        instance = self._base_campaign(
-            run_command="./sim run --metrics-path {metrics_path}",
-        )
-        jsonschema.validate(instance, schema)
-
-    def test_execution_without_run_command_rejected(self, load_schema):
-        schema = load_schema("campaign.schema.yaml")
-        instance = self._base_campaign(repo_path="/tmp/repo")
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)
-
-    def test_execution_null_repo_path_valid(self, load_schema):
-        schema = load_schema("campaign.schema.yaml")
-        instance = self._base_campaign(
-            run_command="./sim run --metrics-path {metrics_path}",
-            repo_path=None,
-        )
-        jsonschema.validate(instance, schema)
-
-    def test_execution_invalid_timeout_rejected(self, load_schema):
-        schema = load_schema("campaign.schema.yaml")
-        instance = self._base_campaign(
-            run_command="./sim run --metrics-path {metrics_path}",
-            timeout=0,
-        )
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)
-
-    def test_execution_invalid_metrics_format_rejected(self, load_schema):
-        schema = load_schema("campaign.schema.yaml")
-        instance = self._base_campaign(
-            run_command="./sim run --metrics-path {metrics_path}",
-            metrics_output_format="csv",
-        )
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)
-
-
 class TestInvestigationSummarySchema:
     """Tests for investigation_summary.schema.json."""
 
@@ -975,75 +967,3 @@ class TestInvestigationSummarySchema:
             jsonschema.validate(instance, schema)
 
 
-class TestExperimentPlanSchema:
-    """Tests for experiment_plan.schema.json."""
-
-    def test_valid_plan(self, load_schema):
-        schema = load_schema("experiment_plan.schema.json")
-        instance = {
-            "baseline": {
-                "description": "Default config baseline",
-                "command": "./sim run --metrics-path baseline.json",
-            },
-            "experiments": [
-                {
-                    "arm_type": "h-main",
-                    "description": "Test admission control",
-                    "config_changes": "Add --admission-threshold 0.8",
-                    "command": "./sim run --admission-threshold 0.8 --metrics-path h-main.json",
-                },
-            ],
-        }
-        jsonschema.validate(instance, schema)
-
-    def test_multiple_arms_valid(self, load_schema):
-        schema = load_schema("experiment_plan.schema.json")
-        instance = {
-            "baseline": {
-                "description": "Baseline",
-                "command": "./sim run --metrics-path baseline.json",
-            },
-            "experiments": [
-                {
-                    "arm_type": "h-main",
-                    "description": "Main hypothesis",
-                    "command": "./sim run --flag-a --metrics-path h-main.json",
-                },
-                {
-                    "arm_type": "h-control-negative",
-                    "description": "Control",
-                    "command": "./sim run --metrics-path h-control.json",
-                },
-            ],
-        }
-        jsonschema.validate(instance, schema)
-
-    def test_missing_baseline_rejected(self, load_schema):
-        schema = load_schema("experiment_plan.schema.json")
-        instance = {
-            "experiments": [
-                {"arm_type": "h-main", "description": "x", "command": "x"},
-            ],
-        }
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)
-
-    def test_empty_experiments_rejected(self, load_schema):
-        schema = load_schema("experiment_plan.schema.json")
-        instance = {
-            "baseline": {"description": "x", "command": "x"},
-            "experiments": [],
-        }
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)
-
-    def test_missing_command_rejected(self, load_schema):
-        schema = load_schema("experiment_plan.schema.json")
-        instance = {
-            "baseline": {"description": "x", "command": "x"},
-            "experiments": [
-                {"arm_type": "h-main", "description": "x"},
-            ],
-        }
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)

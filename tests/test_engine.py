@@ -125,7 +125,7 @@ class TestEngine:
     def test_invalid_transition_rejected(self, work_dir):
         engine = Engine(work_dir)
         with pytest.raises(ValueError, match="Invalid transition"):
-            engine.transition("RUNNING")
+            engine.transition("PLAN_EXECUTION")
 
     def test_typo_in_transition_target_rejected(self, work_dir):
         """Typos are caught at the call site before checking TRANSITIONS."""
@@ -143,7 +143,8 @@ class TestEngine:
         engine = Engine(work_dir)
         path = [
             "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "TUNING", "EXTRACTION", "DONE",
         ]
         for next_state in path:
@@ -154,7 +155,8 @@ class TestEngine:
         engine = Engine(work_dir)
         for s in [
             "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
         ]:
             engine.transition(s)
         engine.transition("EXTRACTION")
@@ -181,7 +183,8 @@ class TestEngine:
         engine = Engine(work_dir)
         for s in [
             "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "EXTRACTION",
         ]:
             engine.transition(s)
@@ -201,27 +204,30 @@ class TestEngine:
         engine = Engine(work_dir)
         for s in [
             "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW",
         ]:
             engine.transition(s)
-        engine.transition("RUNNING")  # criticals found, loop back
-        assert engine.phase == "RUNNING"
+        engine.transition("PLAN_EXECUTION")  # criticals found, loop back
+        assert engine.phase == "PLAN_EXECUTION"
 
     def test_human_findings_gate_reject(self, work_dir):
         engine = Engine(work_dir)
         for s in [
             "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
         ]:
             engine.transition(s)
-        engine.transition("RUNNING")  # human rejects
-        assert engine.phase == "RUNNING"
+        engine.transition("PLAN_EXECUTION")  # human rejects
+        assert engine.phase == "PLAN_EXECUTION"
 
     def test_done_cannot_transition(self, work_dir):
         engine = Engine(work_dir)
         for s in [
             "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "EXTRACTION", "DONE",
         ]:
             engine.transition(s)
@@ -232,7 +238,8 @@ class TestEngine:
         engine = Engine(work_dir)
         for s in [
             "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "EXTRACTION",
         ]:
             engine.transition(s)
@@ -240,7 +247,8 @@ class TestEngine:
         assert engine.iteration == 1
         for s in [
             "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "RUNNING", "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "EXTRACTION",
         ]:
             engine.transition(s)

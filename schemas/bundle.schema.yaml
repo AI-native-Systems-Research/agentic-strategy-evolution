@@ -63,3 +63,23 @@ $defs:
       metadata:
         type: object
         description: "Optional domain-specific metadata for this arm."
+      code_changes:
+        type: array
+        description: "Optional code change intents. Planner says what and why, not how."
+        items:
+          type: object
+          required: [file, intent, rationale]
+          additionalProperties: false
+          properties:
+            file:
+              type: string
+              minLength: 1
+              description: "File path relative to repo root."
+            intent:
+              type: string
+              minLength: 1
+              description: "What change to make (plain English, not a patch)."
+            rationale:
+              type: string
+              minLength: 1
+              description: "Why this change tests the hypothesis."

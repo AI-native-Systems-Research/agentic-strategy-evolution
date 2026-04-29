@@ -60,6 +60,21 @@ SAMPLE_CAMPAIGN = {
     },
 }
 
+VALID_EXPERIMENT_PLAN_YAML = """\
+metadata:
+  iteration: 1
+  bundle_ref: runs/iter-1/bundle.yaml
+arms:
+  - arm_id: h-main
+    conditions:
+      - name: baseline
+        cmd: "echo baseline"
+  - arm_id: h-control-negative
+    conditions:
+      - name: control
+        cmd: "echo control"
+"""
+
 VALID_BUNDLE_YAML = """\
 metadata:
   iteration: 1
@@ -132,6 +147,18 @@ def work_dir(tmp_path: Path) -> Path:
     )
     (iter_dir / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
     (iter_dir / "findings.json").write_text(VALID_FINDINGS_JSON)
+    # Stub execution_results.json needed by _build_context for analyze route
+    exec_results = {
+        "plan_ref": "runs/iter-1/experiment_plan.yaml",
+        "setup_results": [],
+        "arms": [
+            {"arm_id": "h-main", "conditions": [
+                {"name": "baseline", "cmd": "echo baseline", "exit_code": 0,
+                 "stdout_tail": "baseline", "stderr_tail": "", "output_content": None},
+            ]},
+        ],
+    }
+    (iter_dir / "execution_results.json").write_text(json.dumps(exec_results, indent=2))
     (tmp_path / "principles.json").write_text(
         json.dumps({"principles": []}, indent=2)
     )
@@ -180,7 +207,7 @@ class TestLLMDispatcher:
         d = _make_dispatcher(work_dir, [resp])
         out = work_dir / "runs" / "iter-1" / "findings_out.json"
 
-        d.dispatch("executor", "run", output_path=out, iteration=1)
+        d.dispatch("executor", "analyze", output_path=out, iteration=1)
 
         findings = json.loads(out.read_text())
         schema = load_schema("findings.schema.json")
@@ -291,7 +318,7 @@ class TestLLMDispatcher:
 
         # Pass REFUTED but executor should still use its own analysis
         d.dispatch(
-            "executor", "run", output_path=out, iteration=1, h_main_result="REFUTED",
+            "executor", "analyze", output_path=out, iteration=1, h_main_result="REFUTED",
         )
 
         findings = json.loads(out.read_text())
@@ -304,7 +331,7 @@ class TestLLMDispatcher:
         out = work_dir / "runs" / "iter-1" / "findings_raw.json"
 
         with pytest.raises(RuntimeError, match="retry response could not be parsed"):
-            d.dispatch("executor", "run", output_path=out, iteration=1)
+            d.dispatch("executor", "analyze", output_path=out, iteration=1)
 
     def test_no_code_fence_retry_succeeds(self, work_dir: Path) -> None:
         # First response has no fence, retry returns a proper fenced response
@@ -312,7 +339,7 @@ class TestLLMDispatcher:
         d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON, fenced])
         out = work_dir / "runs" / "iter-1" / "findings_retry.json"
 
-        d.dispatch("executor", "run", output_path=out, iteration=1)
+        d.dispatch("executor", "analyze", output_path=out, iteration=1)
         findings = json.loads(out.read_text())
         assert "arms" in findings
 
@@ -325,7 +352,7 @@ class TestLLMDispatcher:
         d = _make_dispatcher(work_dir, [resp])
         out = work_dir / "runs" / "iter-1" / "findings_multi.json"
 
-        d.dispatch("executor", "run", output_path=out, iteration=1)
+        d.dispatch("executor", "analyze", output_path=out, iteration=1)
 
         findings = json.loads(out.read_text())
         assert "arms" in findings  # Used the valid last fence, not the bad first one
@@ -356,13 +383,13 @@ class TestLLMDispatcher:
                 completion_fn=make_mock_completion([]),
             )
 
-    def test_missing_bundle_for_run_raises(self, work_dir: Path) -> None:
-        # Remove the bundle so the run phase fails with a clear message
+    def test_missing_bundle_for_plan_execution_raises(self, work_dir: Path) -> None:
+        # Remove the bundle so the plan-execution phase fails with a clear message
         (work_dir / "runs" / "iter-1" / "bundle.yaml").unlink()
         d = _make_dispatcher(work_dir, ["unused"])
-        out = work_dir / "runs" / "iter-1" / "findings_fail.json"
+        out = work_dir / "runs" / "iter-1" / "experiment_plan.yaml"
         with pytest.raises(FileNotFoundError, match="design phase completed"):
-            d.dispatch("executor", "run", output_path=out, iteration=1)
+            d.dispatch("executor", "plan-execution", output_path=out, iteration=1)
 
     def test_missing_findings_for_review_raises(self, work_dir: Path) -> None:
         (work_dir / "runs" / "iter-1" / "findings.json").unlink()
@@ -375,152 +402,12 @@ class TestLLMDispatcher:
             )
 
 
-class TestBLISCampaign:
-    def test_blis_campaign_validates_against_schema(self) -> None:
-        blis_path = Path(__file__).resolve().parent.parent / "examples" / "blis" / "campaign.yaml"
-        campaign = yaml.safe_load(blis_path.read_text())
+class TestExampleCampaign:
+    def test_example_campaign_validates_against_schema(self) -> None:
+        example_path = Path(__file__).resolve().parent.parent / "examples" / "campaign.yaml"
+        campaign = yaml.safe_load(example_path.read_text())
         schema = load_schema("campaign.schema.yaml")
         jsonschema.validate(campaign, schema)
-
-
-# ------------------------------------------------------------------
-# Real execution routes (run-plan, run-analyze)
-# ------------------------------------------------------------------
-
-VALID_EXPERIMENT_PLAN_JSON = json.dumps({
-    "baseline": {
-        "description": "Default config baseline",
-        "command": "./sim run --metrics-path {metrics_path}",
-    },
-    "experiments": [
-        {
-            "arm_type": "h-main",
-            "description": "Test batch size doubling",
-            "config_changes": "Added --batch-size 64",
-            "command": "./sim run --batch-size 64 --metrics-path {metrics_path}",
-        },
-        {
-            "arm_type": "h-control-negative",
-            "description": "Single item batch",
-            "config_changes": "Set --batch-size 1",
-            "command": "./sim run --batch-size 1 --metrics-path {metrics_path}",
-        },
-    ],
-}, indent=2)
-
-SAMPLE_CAMPAIGN_WITH_EXECUTION = {
-    **SAMPLE_CAMPAIGN,
-    "target_system": {
-        **SAMPLE_CAMPAIGN["target_system"],
-        "execution": {
-            "run_command": "./sim run --metrics-path {metrics_path}",
-            "repo_path": None,
-            "timeout": 300,
-        },
-    },
-}
-
-
-class TestRunPlanDispatch:
-    def test_dispatch_run_plan_produces_valid_plan(self, work_dir: Path) -> None:
-        response = f"```json\n{VALID_EXPERIMENT_PLAN_JSON}\n```"
-        d = LLMDispatcher(
-            work_dir=work_dir,
-            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
-            completion_fn=make_mock_completion([response]),
-        )
-        out = work_dir / "runs" / "iter-1" / "experiment_plan.json"
-        d.dispatch("executor", "run-plan", output_path=out, iteration=1)
-        assert out.exists()
-        plan = json.loads(out.read_text())
-        schema = load_schema("experiment_plan.schema.json")
-        jsonschema.validate(plan, schema)
-        assert plan["baseline"]["command"]
-        assert len(plan["experiments"]) == 2
-
-    def test_run_plan_context_includes_execution_config(self, work_dir: Path) -> None:
-        response = f"```json\n{VALID_EXPERIMENT_PLAN_JSON}\n```"
-        mock = make_mock_completion([response])
-        d = LLMDispatcher(
-            work_dir=work_dir,
-            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
-            completion_fn=mock,
-        )
-        out = work_dir / "runs" / "iter-1" / "experiment_plan.json"
-        d.dispatch("executor", "run-plan", output_path=out, iteration=1)
-        # The prompt should contain the run_command_template
-        prompt = mock.call_log[0]["messages"][0]["content"]
-        assert "./sim run --metrics-path {metrics_path}" in prompt
-
-    def test_run_plan_missing_bundle_raises(self, work_dir: Path) -> None:
-        (work_dir / "runs" / "iter-1" / "bundle.yaml").unlink()
-        d = LLMDispatcher(
-            work_dir=work_dir,
-            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
-            completion_fn=make_mock_completion(["unused"]),
-        )
-        out = work_dir / "runs" / "iter-1" / "plan.json"
-        with pytest.raises(FileNotFoundError, match="design phase completed"):
-            d.dispatch("executor", "run-plan", output_path=out, iteration=1)
-
-
-class TestRunAnalyzeDispatch:
-    def test_dispatch_run_analyze_produces_valid_findings(self, work_dir: Path) -> None:
-        # Write experiment results to disk
-        results = {"baseline": {"latency_ms": 100}, "h-main": {"latency_ms": 80}}
-        results_path = work_dir / "runs" / "iter-1" / "experiment_results.json"
-        results_path.write_text(json.dumps(results, indent=2))
-
-        response = f"```json\n{VALID_FINDINGS_JSON}\n```"
-        d = LLMDispatcher(
-            work_dir=work_dir,
-            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
-            completion_fn=make_mock_completion([response]),
-        )
-        out = work_dir / "runs" / "iter-1" / "findings_real.json"
-        d.dispatch("executor", "run-analyze", output_path=out, iteration=1)
-        assert out.exists()
-        findings = json.loads(out.read_text())
-        schema = load_schema("findings.schema.json")
-        jsonschema.validate(findings, schema)
-
-    def test_run_analyze_context_includes_experiment_results(self, work_dir: Path) -> None:
-        results = {"baseline": {"latency_ms": 100}, "h-main": {"latency_ms": 80}}
-        results_path = work_dir / "runs" / "iter-1" / "experiment_results.json"
-        results_path.write_text(json.dumps(results, indent=2))
-
-        response = f"```json\n{VALID_FINDINGS_JSON}\n```"
-        mock = make_mock_completion([response])
-        d = LLMDispatcher(
-            work_dir=work_dir,
-            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
-            completion_fn=mock,
-        )
-        out = work_dir / "runs" / "iter-1" / "findings_real.json"
-        d.dispatch("executor", "run-analyze", output_path=out, iteration=1)
-        prompt = mock.call_log[0]["messages"][0]["content"]
-        assert "latency_ms" in prompt
-
-    def test_run_analyze_missing_results_raises(self, work_dir: Path) -> None:
-        d = LLMDispatcher(
-            work_dir=work_dir,
-            campaign=SAMPLE_CAMPAIGN_WITH_EXECUTION,
-            completion_fn=make_mock_completion(["unused"]),
-        )
-        out = work_dir / "runs" / "iter-1" / "findings_real.json"
-        with pytest.raises(FileNotFoundError, match="experiment_results.json"):
-            d.dispatch("executor", "run-analyze", output_path=out, iteration=1)
-
-    def test_analysis_mode_still_works(self, work_dir: Path) -> None:
-        """Existing (executor, run) route still works with no execution config."""
-        response = f"```json\n{VALID_FINDINGS_JSON}\n```"
-        d = _make_dispatcher(work_dir, [response])
-        out = work_dir / "runs" / "iter-1" / "findings_analysis.json"
-        d.dispatch("executor", "run", output_path=out, iteration=1)
-        assert out.exists()
-        findings = json.loads(out.read_text())
-        schema = load_schema("findings.schema.json")
-        jsonschema.validate(findings, schema)
 
 
 class TestInvestigationSummaryContext:
@@ -647,3 +534,107 @@ class TestSummarizeDispatch:
         # Should contain bundle and findings content
         assert "h-main" in prompt
         assert "CONFIRMED" in prompt
+
+
+# Minimal campaign without observable_metrics/controllable_knobs
+MINIMAL_CAMPAIGN = {
+    "research_question": "What drives latency in MySystem?",
+    "target_system": {
+        "name": "MySystem",
+        "description": "A system under test.",
+        "repo_path": "/tmp/fake-repo",
+    },
+    "review": {
+        "design_perspectives": ["rigor"],
+        "findings_perspectives": ["rigor"],
+        "max_review_rounds": 1,
+    },
+    "prompts": {
+        "methodology_layer": "prompts/methodology",
+        "domain_adapter_layer": None,
+    },
+}
+
+
+class TestSimplifiedCampaign:
+    """Campaigns without observable_metrics/controllable_knobs should be valid."""
+
+    def test_minimal_campaign_accepted_by_dispatcher(self, work_dir: Path) -> None:
+        """LLMDispatcher should accept a campaign without metrics/knobs."""
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=MINIMAL_CAMPAIGN,
+            completion_fn=make_mock_completion(["stub"]),
+        )
+        assert isinstance(d, Dispatcher)
+
+    def test_minimal_campaign_context_has_empty_metrics(self, work_dir: Path) -> None:
+        """Context should show 'Not specified' for missing metrics/knobs."""
+        md = "# Framing\n\nStub output."
+        mock_fn = make_mock_completion([md])
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=MINIMAL_CAMPAIGN,
+            completion_fn=mock_fn,
+        )
+        out = work_dir / "runs" / "iter-1" / "problem.md"
+        d.dispatch("planner", "frame", output_path=out, iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "Not specified" in prompt
+
+    def test_full_campaign_still_works(self, work_dir: Path) -> None:
+        """Existing full campaigns with metrics/knobs remain valid."""
+        md = "# Framing\n\nStub output."
+        mock_fn = make_mock_completion([md])
+        d = LLMDispatcher(
+            work_dir=work_dir,
+            campaign=SAMPLE_CAMPAIGN,
+            completion_fn=mock_fn,
+        )
+        out = work_dir / "runs" / "iter-1" / "problem.md"
+        d.dispatch("planner", "frame", output_path=out, iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "latency_ms" in prompt
+
+    def test_minimal_campaign_validates_against_schema(self) -> None:
+        """Schema should accept campaign without metrics/knobs."""
+        schema = load_schema("campaign.schema.yaml")
+        jsonschema.validate(MINIMAL_CAMPAIGN, schema)
+
+
+class TestGateSummaryDispatch:
+    """Verify the summarizer/summarize-gate route works."""
+
+    VALID_GATE_SUMMARY = json.dumps({
+        "gate_type": "design",
+        "summary": "Testing whether batch size amortizes overhead in TestSystem.",
+        "key_points": [
+            "H-main predicts 20% latency reduction when batch_size doubles",
+            "Control-negative checks no effect at batch_size=1",
+            "Confirms if fixed overhead is the bottleneck",
+        ],
+    }, indent=2)
+
+    def test_dispatch_summarize_gate_produces_valid_summary(self, work_dir: Path) -> None:
+        resp = f"```json\n{self.VALID_GATE_SUMMARY}\n```"
+        d = _make_dispatcher(work_dir, [resp])
+        out = work_dir / "runs" / "iter-1" / "gate_summary.json"
+        d.dispatch("summarizer", "summarize-gate", output_path=out, iteration=1)
+        assert out.exists()
+        summary = json.loads(out.read_text())
+        schema = load_schema("gate_summary.schema.json")
+        jsonschema.validate(summary, schema)
+
+    def test_summarize_gate_context_includes_bundle(self, work_dir: Path) -> None:
+        resp = f"```json\n{self.VALID_GATE_SUMMARY}\n```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(
+            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
+        )
+        out = work_dir / "runs" / "iter-1" / "gate_summary.json"
+        d.dispatch(
+            "summarizer", "summarize-gate", output_path=out, iteration=1,
+            perspective="design",
+        )
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "h-main" in prompt.lower() or "bundle" in prompt.lower()

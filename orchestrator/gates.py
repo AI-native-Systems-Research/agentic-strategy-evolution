@@ -3,6 +3,7 @@
 Pauses execution, surfaces artifact + review summary, prompts for decision.
 Supports auto-approve mode for testing.
 """
+import json
 import logging
 import os
 import warnings
@@ -63,10 +64,28 @@ class HumanGate:
         question: str,
         artifact_path: str | None = None,
         reviews: list[str] | None = None,
-    ) -> str:
+        summary_path: str | None = None,
+    ) -> tuple[str, str | None]:
+        # Show summary if available (before raw artifact and auto-response)
+        if summary_path:
+            spath = Path(summary_path)
+            if spath.exists():
+                try:
+                    summary = json.loads(spath.read_text())
+                    print(f"\n{'─'*60}")
+                    print(f"  SUMMARY")
+                    print(f"{'─'*60}")
+                    print(f"\n  {summary.get('summary', '')}\n")
+                    for point in summary.get("key_points", []):
+                        print(f"  * {point}")
+                    print(f"\n{'─'*60}")
+                except (json.JSONDecodeError, OSError) as exc:
+                    logger.warning("Could not display gate summary from %s: %s", spath, exc)
+                    print(f"  (Gate summary could not be read: {exc})")
+
         if self._response:
             logger.info("Gate auto-response: %s", self._response)
-            return Decision(self._response).value
+            return Decision(self._response).value, None
         # Interactive mode
         if artifact_path:
             print(f"\n--- Artifact: {artifact_path} ---")
@@ -104,6 +123,12 @@ class HumanGate:
                 logger.info("Gate aborted by KeyboardInterrupt")
                 raise
             if answer in VALID_DECISIONS:
-                logger.info("Gate decision: %s", answer)
-                return Decision(answer).value
+                reason = None
+                if answer == "reject":
+                    try:
+                        reason = input("  Reason (optional, Enter to skip): ").strip() or None
+                    except (EOFError, KeyboardInterrupt):
+                        pass
+                logger.info("Gate decision: %s (reason=%s)", answer, reason)
+                return Decision(answer).value, reason
             print(f"Invalid. Choose from: {VALID_DECISIONS}")

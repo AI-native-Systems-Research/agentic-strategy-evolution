@@ -23,9 +23,13 @@ This is iteration {{iteration}}.
 
 {{active_principles}}
 
-## Real Experiment Results
+## Problem Framing
 
-The following metrics were collected from running the experiments. Each entry contains the raw JSON metrics output from the simulator.
+{{problem_md}}
+
+## Experiment Execution Results
+
+The following results were collected by the orchestrator from running the experiment plan. Each entry contains the command that was run, its exit code, and the captured output.
 
 {{experiment_results}}
 
@@ -50,7 +54,8 @@ For each arm in the bundle, produce a finding with:
 - `diagnostic_note`: Explain your reasoning. Reference specific metric values from the results. What does the data tell us about the mechanism?
 
 Also produce:
-- `discrepancy_analysis`: Summary across all arms. What did we learn? Were there surprises? What should the next iteration investigate?
+- `experiment_valid`: `true` if the h-main arm executed correctly and its results can be trusted. `false` ONLY if h-main used wrong flags, parameters were misconfigured, or the setup didn't match the intended design (e.g., total input length wasn't held constant when it should have been). Other arms failing or not being executed does NOT make the experiment invalid — only h-main soundness matters.
+- `discrepancy_analysis`: Summary across all arms. What did we learn? Were there surprises? If `experiment_valid` is false, explain what went wrong with the h-main setup and how to fix it.
 - `dominant_component_pct`: If one component dominates the observed effect (>80%), set this to the percentage. Otherwise set to `null`.
 
 ## Output Format
@@ -71,6 +76,7 @@ Output the findings as JSON inside a code fence:
       "diagnostic_note": "..."
     }
   ],
+  "experiment_valid": true,
   "discrepancy_analysis": "...",
   "dominant_component_pct": null
 }

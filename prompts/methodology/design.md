@@ -72,4 +72,6 @@ arms:
     diagnostic: "..."
 ```
 
+{{human_feedback}}
+
 Output ONLY the YAML code fence. Do not include any explanation outside the code fence.
