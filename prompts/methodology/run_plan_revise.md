@@ -14,9 +14,12 @@ A command in the experiment plan failed during execution. Your task is to **diag
 
 ## Instructions
 
-1. **Read the error.** Understand what went wrong — wrong flags, missing files, build errors, wrong paths, missing dependencies.
-2. **Fix the plan.** Produce a corrected experiment plan that addresses the error. Change only what is necessary.
-3. **Keep the same structure.** The corrected plan must have the same `metadata` and the same arm IDs. You may change commands, add setup steps, or fix output paths.
+You have **shell access** to the target system repo. Use it.
+
+1. **Read the error.** Understand what went wrong — wrong flags, missing files, build errors, wrong format, missing dependencies.
+2. **Investigate.** If the error is about file format (YAML fields, JSON schema, config syntax), find and read an existing example in the repo (`ls examples/`, `find . -name '*.yaml'`, read source structs). Do not guess — look it up.
+3. **Fix the plan.** Produce a corrected experiment plan that addresses the error. Change only what is necessary.
+4. **Keep the same structure.** The corrected plan must have the same `metadata` and the same arm IDs. You may change commands, add setup steps, or fix output paths.
 
 ## Output Format
 

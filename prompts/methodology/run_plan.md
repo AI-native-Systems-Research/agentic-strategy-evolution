@@ -33,7 +33,9 @@ This is iteration {{iteration}}.
 
 ## Speed Constraint
 
-Be fast. Do NOT re-explore the repo — the context above plus problem.md give you everything. Your only job: translate the hypothesis bundle into exact shell commands. Build if needed (1 command), then write the YAML. Complete in under 4 tool uses.
+Be fast. Your job: translate the hypothesis bundle into exact shell commands. Complete in under 6 tool uses.
+
+**Important:** If the experiment requires creating data files (configs, workload specs, input YAML/JSON), find and read an existing example in the repo first to learn the exact field names and format. Do not guess file schemas — one `cat` of an example is faster than three failed retries.
 
 ## Instructions
 

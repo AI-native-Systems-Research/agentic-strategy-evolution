@@ -237,7 +237,7 @@ def _save_partial_results(plan: dict, iter_dir: Path, results_dir: Path, cwd: Pa
                 conditions.append({
                     "name": name,
                     "cmd": cond["cmd"],
-                    "exit_code": 0,
+                    "exit_code": None,  # unknown — partial results
                     "stdout_tail": _truncate(stdout_file.read_text()) if stdout_file.exists() else "",
                     "stderr_tail": _truncate(stderr_file.read_text()) if stderr_file.exists() else "",
                     "output_content": output_content,
