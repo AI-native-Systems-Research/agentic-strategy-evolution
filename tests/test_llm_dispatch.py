@@ -638,3 +638,55 @@ class TestGateSummaryDispatch:
         )
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "h-main" in prompt.lower() or "bundle" in prompt.lower()
+
+
+class TestHumanFeedbackContext:
+    """Verify human_feedback.json is read per-phase instead of feedback.md."""
+
+    def test_frame_phase_reads_framing_feedback(self, work_dir: Path) -> None:
+        fb = {"framing": [{"attempt": 1, "reason": "Too vague", "timestamp": "2026-01-01T00:00:00+00:00"}], "design": [], "findings": []}
+        (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text(json.dumps(fb))
+        md = "# Framing\n\nStub."
+        mock_fn = make_mock_completion([md])
+        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
+        d.dispatch("planner", "frame", output_path=work_dir / "runs" / "iter-1" / "problem.md", iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "Too vague" in prompt
+        assert "attempt 1" in prompt.lower()
+
+    def test_design_phase_reads_design_feedback(self, work_dir: Path) -> None:
+        fb = {
+            "framing": [{"attempt": 1, "reason": "Old framing note", "timestamp": "2026-01-01T00:00:00+00:00"}],
+            "design": [{"attempt": 1, "reason": "Control arm is trivial", "timestamp": "2026-01-01T00:01:00+00:00"}],
+            "findings": [],
+        }
+        (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text(json.dumps(fb))
+        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
+        d.dispatch("planner", "design", output_path=work_dir / "runs" / "iter-1" / "bundle_fb.yaml", iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "Control arm is trivial" in prompt
+        assert "Old framing note" not in prompt
+
+    def test_no_feedback_file_gives_empty_context(self, work_dir: Path) -> None:
+        # Ensure no feedback file exists
+        fb_path = work_dir / "runs" / "iter-1" / "human_feedback.json"
+        if fb_path.exists():
+            fb_path.unlink()
+        md = "# Framing\n\nStub."
+        mock_fn = make_mock_completion([md])
+        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
+        d.dispatch("planner", "frame", output_path=work_dir / "runs" / "iter-1" / "problem.md", iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "Human Feedback" not in prompt
+
+    def test_plan_execution_loads_findings_json_context(self, work_dir: Path) -> None:
+        """plan-execution phase should load findings.json into context dict."""
+        resp = f"```yaml\n{VALID_EXPERIMENT_PLAN_YAML}\n```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
+        # Verify _build_context includes findings_json for plan-execution
+        ctx = d._build_context("executor", "plan-execution", iteration=1, perspective=None)
+        assert "findings_json" in ctx
+        assert "CONFIRMED" in ctx["findings_json"]

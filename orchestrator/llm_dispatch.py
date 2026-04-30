@@ -229,12 +229,22 @@ class LLMDispatcher:
                 )
 
         if phase in ("frame", "design", "plan-execution"):
-            feedback_path = self.work_dir / "runs" / f"iter-{iteration}" / "feedback.md"
-            if feedback_path.exists():
-                content = feedback_path.read_text().strip()
-                ctx["human_feedback"] = (
-                    f"## Human Feedback (from previous rejection)\n\n{content}"
-                )
+            fb_path = self.work_dir / "runs" / f"iter-{iteration}" / "human_feedback.json"
+            if fb_path.exists():
+                try:
+                    store = json.loads(fb_path.read_text())
+                except json.JSONDecodeError:
+                    store = {}
+                phase_to_key = {"frame": "framing", "design": "design", "plan-execution": "findings"}
+                fb_key = phase_to_key.get(phase, "")
+                entries = store.get(fb_key, [])
+                if entries:
+                    latest = entries[-1]
+                    ctx["human_feedback"] = (
+                        f"## Human Feedback (attempt {latest['attempt']})\n\n{latest['reason']}"
+                    )
+                else:
+                    ctx["human_feedback"] = ""
             else:
                 ctx["human_feedback"] = ""
 
@@ -280,7 +290,7 @@ class LLMDispatcher:
                 )
             ctx["experiment_results"] = results_path.read_text()
 
-        if phase in ("review-findings", "extract", "summarize"):
+        if phase in ("review-findings", "extract", "summarize", "plan-execution"):
             findings_path = (
                 self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
             )
