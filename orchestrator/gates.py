@@ -65,6 +65,7 @@ class HumanGate:
         artifact_path: str | None = None,
         reviews: list[str] | None = None,
         summary_path: str | None = None,
+        files: list[str] | None = None,
     ) -> tuple[str, str | None]:
         # Show summary if available (before raw artifact and auto-response)
         if summary_path:
@@ -82,6 +83,11 @@ class HumanGate:
                 except (json.JSONDecodeError, OSError) as exc:
                     logger.warning("Could not display gate summary from %s: %s", spath, exc)
                     print(f"  (Gate summary could not be read: {exc})")
+
+        if files:
+            print(f"\n--- Files to review ---")
+            for f in files:
+                print(f"  * {f}")
 
         if self._response:
             logger.info("Gate auto-response: %s", self._response)
