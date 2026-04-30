@@ -233,15 +233,22 @@ class LLMDispatcher:
             if fb_path.exists():
                 try:
                     store = json.loads(fb_path.read_text())
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "Corrupt human_feedback.json at %s: %s. "
+                        "Human feedback will not be injected.",
+                        fb_path, exc,
+                    )
                     store = {}
                 phase_to_key = {"frame": "framing", "design": "design", "plan-execution": "findings"}
                 fb_key = phase_to_key.get(phase, "")
                 entries = store.get(fb_key, [])
                 if entries:
                     latest = entries[-1]
+                    attempt = latest.get("attempt", "?")
+                    reason = latest.get("reason", "(no reason recorded)")
                     ctx["human_feedback"] = (
-                        f"## Human Feedback (attempt {latest['attempt']})\n\n{latest['reason']}"
+                        f"## Human Feedback (attempt {attempt})\n\n{reason}"
                     )
                 else:
                     ctx["human_feedback"] = ""
@@ -295,11 +302,15 @@ class LLMDispatcher:
                 self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
             )
             if not findings_path.exists():
-                raise FileNotFoundError(
-                    f"Cannot run '{phase}' phase: {findings_path} not found. "
-                    f"Ensure the executor completed for iteration {iteration}."
-                )
-            ctx["findings_json"] = findings_path.read_text()
+                if phase == "plan-execution":
+                    pass  # Optional: findings.json only exists on retries
+                else:
+                    raise FileNotFoundError(
+                        f"Cannot run '{phase}' phase: {findings_path} not found. "
+                        f"Ensure the executor completed for iteration {iteration}."
+                    )
+            else:
+                ctx["findings_json"] = findings_path.read_text()
 
         if phase == "extract":
             principles_path = self.work_dir / "principles.json"

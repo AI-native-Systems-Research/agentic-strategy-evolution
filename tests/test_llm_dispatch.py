@@ -723,3 +723,11 @@ class TestHumanFeedbackContext:
         d.dispatch("planner", "frame", output_path=work_dir / "runs" / "iter-1" / "problem.md", iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "Human Feedback" not in prompt
+
+    def test_plan_execution_without_findings_does_not_crash(self, work_dir: Path) -> None:
+        """First run: plan-execution should not crash when findings.json is missing."""
+        (work_dir / "runs" / "iter-1" / "findings.json").unlink()
+        resp = f"```yaml\n{VALID_EXPERIMENT_PLAN_YAML}\n```"
+        mock_fn = make_mock_completion([resp])
+        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
+        d.dispatch("executor", "plan-execution", output_path=work_dir / "runs" / "iter-1" / "experiment_plan.yaml", iteration=1)

@@ -56,11 +56,17 @@ _PHASE_INDEX = {p: i for i, p in enumerate(_PHASE_ORDER)}
 
 def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
     """Append human gate feedback to structured human_feedback.json."""
+    logger = logging.getLogger(__name__)
     fb_path = iter_dir / "human_feedback.json"
     if fb_path.exists():
         try:
             store = json.loads(fb_path.read_text())
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "Corrupt human_feedback.json at %s: %s. "
+                "Prior feedback entries will be lost.",
+                fb_path, exc,
+            )
             store = {"framing": [], "design": [], "findings": []}
     else:
         store = {"framing": [], "design": [], "findings": []}
@@ -375,6 +381,12 @@ def run_iteration(
     # If experiment itself was flawed, retry from PLAN_EXECUTION
     if not findings.get("experiment_valid", True):
         print("  ** Experiment invalid — retrying with corrected plan")
+        analysis = findings.get("discrepancy_analysis", "")
+        if analysis:
+            _save_human_feedback(
+                iter_dir, "findings",
+                f"[System] Experiment was invalid. Discrepancy analysis:\n\n{analysis}",
+            )
         _enter_phase(engine, "FINDINGS_REVIEW")
         _enter_phase(engine, "HUMAN_FINDINGS_GATE")
         engine.transition("PLAN_EXECUTION")
