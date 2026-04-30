@@ -18,7 +18,7 @@ from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
 
-_MAX_OUTPUT_CHARS = 4000
+_MAX_OUTPUT_CHARS = 12000
 
 
 def execute_plan(

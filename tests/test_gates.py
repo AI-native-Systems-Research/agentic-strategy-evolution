@@ -144,3 +144,45 @@ class TestSummarizedGate:
         gate = HumanGate(auto_response="approve")
         decision, reason = gate.prompt("Approve?")
         assert decision == "approve"
+
+
+class TestGateFilesDisplay:
+    """Gates display file pointers when files parameter is provided."""
+
+    def test_gate_displays_files_list(self, monkeypatch):
+        gate = HumanGate(auto_response="approve")
+        printed = []
+        monkeypatch.setattr("builtins.print", lambda *a, **kw: printed.append(" ".join(str(x) for x in a)))
+
+        gate.prompt(
+            "Approve?",
+            files=["runs/iter-1/findings.json", "runs/iter-1/reviews/review-rigor.md"],
+        )
+
+        output = "\n".join(printed)
+        assert "findings.json" in output
+        assert "review-rigor.md" in output
+
+    def test_gate_works_without_files(self, monkeypatch):
+        gate = HumanGate(auto_response="approve")
+        decision, reason = gate.prompt("Approve?")
+        assert decision == "approve"
+
+    def test_gate_displays_files_with_summary(self, tmp_path, monkeypatch):
+        gate = HumanGate(auto_response="approve")
+        summary = {"gate_type": "findings", "summary": "Test summary", "key_points": ["Point 1"]}
+        summary_path = tmp_path / "summary.json"
+        summary_path.write_text(json.dumps(summary))
+
+        printed = []
+        monkeypatch.setattr("builtins.print", lambda *a, **kw: printed.append(" ".join(str(x) for x in a)))
+
+        gate.prompt(
+            "Approve?",
+            summary_path=str(summary_path),
+            files=["runs/iter-1/findings.json"],
+        )
+
+        output = "\n".join(printed)
+        assert "Test summary" in output
+        assert "findings.json" in output

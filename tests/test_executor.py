@@ -221,10 +221,10 @@ class TestTruncate:
         assert "truncated" in result
 
     def test_default_max_chars(self):
-        text = "a" * 10000
+        text = "a" * 20000
         result = _truncate(text)
         assert "truncated" in result
-        assert result.endswith("a" * 4000)
+        assert result.endswith("a" * 12000)
 
 
 class TestCommandError:

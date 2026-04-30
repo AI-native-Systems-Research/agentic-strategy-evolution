@@ -18,6 +18,7 @@ import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -51,6 +52,38 @@ _PHASE_ORDER = [
     "EXTRACTION", "DONE",
 ]
 _PHASE_INDEX = {p: i for i, p in enumerate(_PHASE_ORDER)}
+
+
+def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
+    """Append human gate feedback to structured human_feedback.json."""
+    logger = logging.getLogger(__name__)
+    fb_path = iter_dir / "human_feedback.json"
+    if fb_path.exists():
+        try:
+            store = json.loads(fb_path.read_text())
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "Corrupt human_feedback.json at %s: %s. "
+                "Prior feedback entries will be lost.",
+                fb_path, exc,
+            )
+            store = {"framing": [], "design": [], "findings": []}
+    else:
+        store = {"framing": [], "design": [], "findings": []}
+    if not isinstance(store, dict):
+        logger.warning(
+            "human_feedback.json at %s has unexpected type %s. "
+            "Prior feedback entries will be lost.",
+            fb_path, type(store).__name__,
+        )
+        store = {"framing": [], "design": [], "findings": []}
+    entries = store.setdefault(phase, [])
+    entries.append({
+        "attempt": len(entries) + 1,
+        "reason": reason,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    atomic_write(fb_path, json.dumps(store, indent=2) + "\n")
 
 
 def _enter_phase(engine, phase):
@@ -186,10 +219,10 @@ def run_iteration(
         decision, reason = gate.prompt(
             "Review the problem framing. Approve?",
             artifact_path=str(iter_dir / "problem.md"),
+            files=[str(iter_dir / "problem.md")],
         )
         if decision == "reject":
-            if reason:
-                atomic_write(iter_dir / "feedback.md", reason + "\n")
+            _save_human_feedback(iter_dir, "framing", reason or "(Rejected without specific feedback)")
             print("  Framing rejected. Re-running framing.")
             engine.transition("FRAMING")
             return IterationOutcome.REDESIGN
@@ -237,10 +270,13 @@ def run_iteration(
             artifact_path=str(iter_dir / "bundle.yaml"),
             reviews=[str(p) for p in sorted((iter_dir / "reviews").glob("review-*.md"))],
             summary_path=str(summary_path) if summary_path else None,
+            files=[
+                str(iter_dir / "bundle.yaml"),
+                *[str(p) for p in sorted((iter_dir / "reviews").glob("review-*.md"))],
+            ],
         )
         if decision == "reject":
-            if reason:
-                atomic_write(iter_dir / "feedback.md", reason + "\n")
+            _save_human_feedback(iter_dir, "design", reason or "(Rejected without specific feedback)")
             print("Design rejected. Re-run after revising the campaign config.")
             engine.transition("DESIGN")
             return IterationOutcome.REDESIGN
@@ -355,8 +391,11 @@ def run_iteration(
     if not findings.get("experiment_valid", True):
         print("  ** Experiment invalid — retrying with corrected plan")
         analysis = findings.get("discrepancy_analysis", "")
-        feedback_path = iter_dir / "feedback.md"
-        atomic_write(feedback_path, f"## Analysis (experiment invalid)\n\n{analysis}\n")
+        if analysis:
+            _save_human_feedback(
+                iter_dir, "findings",
+                f"[System] Experiment was invalid. Discrepancy analysis:\n\n{analysis}",
+            )
         _enter_phase(engine, "FINDINGS_REVIEW")
         _enter_phase(engine, "HUMAN_FINDINGS_GATE")
         engine.transition("PLAN_EXECUTION")
@@ -407,10 +446,13 @@ def run_iteration(
             decision, reason = gate.prompt(
                 "Review the findings and reviews. Approve?",
                 summary_path=str(summary_path) if summary_path else None,
+                files=[
+                    str(iter_dir / "findings.json"),
+                    *[str(p) for p in sorted((iter_dir / "reviews").glob("review-findings-*.md"))],
+                ],
             )
             if decision == "reject":
-                if reason:
-                    atomic_write(iter_dir / "feedback.md", reason + "\n")
+                _save_human_feedback(iter_dir, "findings", reason or "(Rejected without specific feedback)")
                 print("Findings rejected. Re-running executor.")
                 engine.transition("PLAN_EXECUTION")
                 return IterationOutcome.REDESIGN

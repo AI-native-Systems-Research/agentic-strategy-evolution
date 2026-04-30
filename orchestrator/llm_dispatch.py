@@ -229,12 +229,36 @@ class LLMDispatcher:
                 )
 
         if phase in ("frame", "design", "plan-execution"):
-            feedback_path = self.work_dir / "runs" / f"iter-{iteration}" / "feedback.md"
-            if feedback_path.exists():
-                content = feedback_path.read_text().strip()
-                ctx["human_feedback"] = (
-                    f"## Human Feedback (from previous rejection)\n\n{content}"
-                )
+            fb_path = self.work_dir / "runs" / f"iter-{iteration}" / "human_feedback.json"
+            if fb_path.exists():
+                try:
+                    store = json.loads(fb_path.read_text())
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "Corrupt human_feedback.json at %s: %s. "
+                        "Human feedback will not be injected.",
+                        fb_path, exc,
+                    )
+                    store = {}
+                if not isinstance(store, dict):
+                    logger.warning(
+                        "human_feedback.json at %s has unexpected type %s. "
+                        "Human feedback will not be injected.",
+                        fb_path, type(store).__name__,
+                    )
+                    store = {}
+                phase_to_key = {"frame": "framing", "design": "design", "plan-execution": "findings"}
+                fb_key = phase_to_key.get(phase, "")
+                entries = store.get(fb_key, [])
+                if entries:
+                    latest = entries[-1]
+                    attempt = latest.get("attempt", "?")
+                    reason = latest.get("reason", "(no reason recorded)")
+                    ctx["human_feedback"] = (
+                        f"## Human Feedback (attempt {attempt})\n\n{reason}"
+                    )
+                else:
+                    ctx["human_feedback"] = ""
             else:
                 ctx["human_feedback"] = ""
 
@@ -280,16 +304,24 @@ class LLMDispatcher:
                 )
             ctx["experiment_results"] = results_path.read_text()
 
-        if phase in ("review-findings", "extract", "summarize"):
+        if phase in ("review-findings", "extract", "summarize", "plan-execution"):
             findings_path = (
                 self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
             )
             if not findings_path.exists():
-                raise FileNotFoundError(
-                    f"Cannot run '{phase}' phase: {findings_path} not found. "
-                    f"Ensure the executor completed for iteration {iteration}."
-                )
-            ctx["findings_json"] = findings_path.read_text()
+                if phase == "plan-execution":
+                    logger.info(
+                        "findings.json not found at %s for plan-execution "
+                        "(expected on first run). Proceeding without prior findings.",
+                        findings_path,
+                    )
+                else:
+                    raise FileNotFoundError(
+                        f"Cannot run '{phase}' phase: {findings_path} not found. "
+                        f"Ensure the executor completed for iteration {iteration}."
+                    )
+            else:
+                ctx["findings_json"] = findings_path.read_text()
 
         if phase == "extract":
             principles_path = self.work_dir / "principles.json"
