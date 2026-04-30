@@ -206,6 +206,7 @@ def run_iteration(
         decision, reason = gate.prompt(
             "Review the problem framing. Approve?",
             artifact_path=str(iter_dir / "problem.md"),
+            files=[str(iter_dir / "problem.md")],
         )
         if decision == "reject":
             if reason:
@@ -424,6 +425,10 @@ def run_iteration(
             decision, reason = gate.prompt(
                 "Review the findings and reviews. Approve?",
                 summary_path=str(summary_path) if summary_path else None,
+                files=[
+                    str(iter_dir / "findings.json"),
+                    *[str(p) for p in sorted((iter_dir / "reviews").glob("review-findings-*.md"))],
+                ],
             )
             if decision == "reject":
                 if reason:
