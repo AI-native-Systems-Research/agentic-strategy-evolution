@@ -240,6 +240,13 @@ class LLMDispatcher:
                         fb_path, exc,
                     )
                     store = {}
+                if not isinstance(store, dict):
+                    logger.warning(
+                        "human_feedback.json at %s has unexpected type %s. "
+                        "Human feedback will not be injected.",
+                        fb_path, type(store).__name__,
+                    )
+                    store = {}
                 phase_to_key = {"frame": "framing", "design": "design", "plan-execution": "findings"}
                 fb_key = phase_to_key.get(phase, "")
                 entries = store.get(fb_key, [])
@@ -303,7 +310,11 @@ class LLMDispatcher:
             )
             if not findings_path.exists():
                 if phase == "plan-execution":
-                    pass  # Optional: findings.json only exists on retries
+                    logger.info(
+                        "findings.json not found at %s for plan-execution "
+                        "(expected on first run). Proceeding without prior findings.",
+                        findings_path,
+                    )
                 else:
                     raise FileNotFoundError(
                         f"Cannot run '{phase}' phase: {findings_path} not found. "

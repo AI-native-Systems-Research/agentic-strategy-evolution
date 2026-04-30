@@ -70,6 +70,13 @@ def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
             store = {"framing": [], "design": [], "findings": []}
     else:
         store = {"framing": [], "design": [], "findings": []}
+    if not isinstance(store, dict):
+        logger.warning(
+            "human_feedback.json at %s has unexpected type %s. "
+            "Prior feedback entries will be lost.",
+            fb_path, type(store).__name__,
+        )
+        store = {"framing": [], "design": [], "findings": []}
     entries = store.setdefault(phase, [])
     entries.append({
         "attempt": len(entries) + 1,
@@ -215,8 +222,7 @@ def run_iteration(
             files=[str(iter_dir / "problem.md")],
         )
         if decision == "reject":
-            if reason:
-                _save_human_feedback(iter_dir, "framing", reason)
+            _save_human_feedback(iter_dir, "framing", reason or "(Rejected without specific feedback)")
             print("  Framing rejected. Re-running framing.")
             engine.transition("FRAMING")
             return IterationOutcome.REDESIGN
@@ -264,10 +270,13 @@ def run_iteration(
             artifact_path=str(iter_dir / "bundle.yaml"),
             reviews=[str(p) for p in sorted((iter_dir / "reviews").glob("review-*.md"))],
             summary_path=str(summary_path) if summary_path else None,
+            files=[
+                str(iter_dir / "bundle.yaml"),
+                *[str(p) for p in sorted((iter_dir / "reviews").glob("review-*.md"))],
+            ],
         )
         if decision == "reject":
-            if reason:
-                _save_human_feedback(iter_dir, "design", reason)
+            _save_human_feedback(iter_dir, "design", reason or "(Rejected without specific feedback)")
             print("Design rejected. Re-run after revising the campaign config.")
             engine.transition("DESIGN")
             return IterationOutcome.REDESIGN
@@ -443,8 +452,7 @@ def run_iteration(
                 ],
             )
             if decision == "reject":
-                if reason:
-                    _save_human_feedback(iter_dir, "findings", reason)
+                _save_human_feedback(iter_dir, "findings", reason or "(Rejected without specific feedback)")
                 print("Findings rejected. Re-running executor.")
                 engine.transition("PLAN_EXECUTION")
                 return IterationOutcome.REDESIGN
