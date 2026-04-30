@@ -690,3 +690,36 @@ class TestHumanFeedbackContext:
         ctx = d._build_context("executor", "plan-execution", iteration=1, perspective=None)
         assert "findings_json" in ctx
         assert "CONFIRMED" in ctx["findings_json"]
+
+    def test_plan_execution_reads_findings_feedback(self, work_dir: Path) -> None:
+        """plan-execution maps to 'findings' key in human_feedback.json."""
+        fb = {"framing": [], "design": [], "findings": [
+            {"attempt": 1, "reason": "Results look suspicious", "timestamp": "2026-01-01T00:00:00+00:00"}
+        ]}
+        (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text(json.dumps(fb))
+        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=make_mock_completion(["stub"]))
+        ctx = d._build_context("executor", "plan-execution", iteration=1, perspective=None)
+        assert "Results look suspicious" in ctx["human_feedback"]
+
+    def test_multiple_rejections_uses_latest(self, work_dir: Path) -> None:
+        fb = {"framing": [
+            {"attempt": 1, "reason": "First issue", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"attempt": 2, "reason": "Still vague after revision", "timestamp": "2026-01-01T00:01:00+00:00"},
+        ], "design": [], "findings": []}
+        (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text(json.dumps(fb))
+        mock_fn = make_mock_completion(["# Framing\n\nStub."])
+        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
+        d.dispatch("planner", "frame", output_path=work_dir / "runs" / "iter-1" / "problem.md", iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "Still vague after revision" in prompt
+        assert "First issue" not in prompt
+        assert "attempt 2" in prompt.lower()
+
+    def test_corrupt_feedback_json_gives_empty_context(self, work_dir: Path) -> None:
+        (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text("not valid json{{{")
+        md = "# Framing\n\nStub."
+        mock_fn = make_mock_completion([md])
+        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
+        d.dispatch("planner", "frame", output_path=work_dir / "runs" / "iter-1" / "problem.md", iteration=1)
+        prompt = mock_fn.call_log[0]["messages"][0]["content"]
+        assert "Human Feedback" not in prompt

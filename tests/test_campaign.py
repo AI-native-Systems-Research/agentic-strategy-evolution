@@ -12,7 +12,7 @@ import yaml
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.engine import Engine
 from run_campaign import run_campaign
-from run_iteration import IterationOutcome
+from run_iteration import IterationOutcome, _save_human_feedback
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -198,3 +198,36 @@ class TestAbortDuringIteration:
         engine = Engine(work_dir)
         # Engine is at HUMAN_DESIGN_GATE (preserved for resume)
         assert engine.phase == "HUMAN_DESIGN_GATE"
+
+
+class TestSaveHumanFeedback:
+    """Tests for _save_human_feedback helper."""
+
+    def test_creates_new_file_with_first_entry(self, tmp_path):
+        _save_human_feedback(tmp_path, "framing", "Too vague")
+        fb = json.loads((tmp_path / "human_feedback.json").read_text())
+        assert fb["framing"][0]["reason"] == "Too vague"
+        assert fb["framing"][0]["attempt"] == 1
+        assert "timestamp" in fb["framing"][0]
+
+    def test_appends_to_existing_entries(self, tmp_path):
+        _save_human_feedback(tmp_path, "design", "First rejection")
+        _save_human_feedback(tmp_path, "design", "Second rejection")
+        fb = json.loads((tmp_path / "human_feedback.json").read_text())
+        assert len(fb["design"]) == 2
+        assert fb["design"][1]["attempt"] == 2
+        assert fb["design"][1]["reason"] == "Second rejection"
+
+    def test_corrupt_json_resets_store(self, tmp_path):
+        (tmp_path / "human_feedback.json").write_text("{invalid json!!")
+        _save_human_feedback(tmp_path, "findings", "After corruption")
+        fb = json.loads((tmp_path / "human_feedback.json").read_text())
+        assert fb["findings"][0]["reason"] == "After corruption"
+        assert fb["findings"][0]["attempt"] == 1
+
+    def test_multiple_phases_independent(self, tmp_path):
+        _save_human_feedback(tmp_path, "framing", "Framing issue")
+        _save_human_feedback(tmp_path, "design", "Design issue")
+        fb = json.loads((tmp_path / "human_feedback.json").read_text())
+        assert len(fb["framing"]) == 1
+        assert len(fb["design"]) == 1
