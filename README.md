@@ -84,7 +84,39 @@ export OPENAI_API_KEY=sk-...
 export OPENAI_BASE_URL=https://your-endpoint.example.com  # if using a proxy
 ```
 
-### 3. Create a campaign
+### 3. Configure models
+
+All phases default to `aws/claude-sonnet-4-5` via LiteLLM. See [`defaults.yaml`](defaults.yaml) for the full per-phase model config.
+
+**Per-phase override** — add a `models:` block to your `campaign.yaml`:
+
+```yaml
+models:
+  framing: "sonnet"
+  design: "gpt-4o"
+  plan_execution: "haiku"
+```
+
+**Global fallback** — the `--model` CLI flag applies to any phase not set in `campaign.yaml` or `defaults.yaml`:
+
+```bash
+python run_campaign.py campaign.yaml --model gpt-4o
+```
+
+Resolution order: `campaign.yaml models:` > `defaults.yaml` > `--model` flag > built-in default. Since the shipped `defaults.yaml` sets every phase, use per-phase overrides for targeted changes.
+
+**Common provider examples:**
+
+| Provider | Example model name |
+|----------|-------------------|
+| LiteLLM proxy | `aws/claude-sonnet-4-5` |
+| OpenAI direct | `gpt-4o` |
+| Anthropic direct | `claude-sonnet-4-5-20250514` |
+| Claude CLI (`claude -p` phases) | `sonnet`, `haiku`, `opus` |
+
+> **Two dispatch paths:** when `repo_path` is configured, framing and plan_execution run via `claude -p` (Claude CLI with code access); all other phases call the OpenAI-compatible API using `OPENAI_API_KEY`.
+
+### 4. Create a campaign
 
 Create a `campaign.yaml` pointing to your target repo:
 
@@ -103,7 +135,7 @@ target_system:
 
 The planner explores the codebase to discover metrics, knobs, and execution methods. You can optionally provide `observable_metrics` and `controllable_knobs` as hints — see [examples/campaign.yaml](examples/campaign.yaml) for all options.
 
-### 4. Run a campaign
+### 5. Run a campaign
 
 ```bash
 python run_campaign.py campaign.yaml --max-iterations 3
@@ -123,11 +155,10 @@ Options:
 
 ```bash
 python run_campaign.py campaign.yaml --max-iterations 5 -v   # verbose
-python run_campaign.py campaign.yaml --model gpt-4o          # different model
 python run_campaign.py campaign.yaml --auto-approve           # skip gates
 ```
 
-### 5. Try the BLIS example
+### 6. Try the BLIS example
 
 ```bash
 git clone https://github.com/inference-sim/inference-sim.git blis
