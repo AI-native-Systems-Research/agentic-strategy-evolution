@@ -63,6 +63,7 @@ arms:
 VALID_FINDINGS_JSON = json.dumps({
     "iteration": 1,
     "bundle_ref": "runs/iter-1/bundle.yaml",
+    "experiment_valid": True,
     "arms": [
         {
             "arm_type": "h-main",
@@ -125,9 +126,16 @@ class TestCLIDispatcherUnit:
     def test_dispatch_planner_design_produces_valid_bundle(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
+        cli_json_output = json.dumps({
+            "type": "result", "subtype": "success", "is_error": False,
+            "result": f"```yaml\n{VALID_BUNDLE_YAML}```",
+            "total_cost_usd": 0.03, "duration_ms": 5000, "num_turns": 1,
+            "usage": {"input_tokens": 1000, "output_tokens": 400,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        })
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = f"Here is the bundle:\n\n```yaml\n{VALID_BUNDLE_YAML}```\n"
+        mock_result.stdout = cli_json_output
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
@@ -169,9 +177,16 @@ class TestCLIDispatcherUnit:
     def test_dispatch_planner_frame_writes_markdown(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
+        cli_json_output = json.dumps({
+            "type": "result", "subtype": "success", "is_error": False,
+            "result": "# Problem Framing\n\n## Research Question\nWhy is it slow?\n",
+            "total_cost_usd": 0.02, "duration_ms": 3000, "num_turns": 1,
+            "usage": {"input_tokens": 800, "output_tokens": 200,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        })
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "# Problem Framing\n\n## Research Question\nWhy is it slow?\n"
+        mock_result.stdout = cli_json_output
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):

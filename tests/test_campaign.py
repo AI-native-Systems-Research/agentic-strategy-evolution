@@ -179,8 +179,8 @@ class TestThreeIterations:
 
 
 class TestAbortDuringIteration:
-    def test_abort_during_design_gate(self, tmp_path, monkeypatch):
-        """If the human aborts during iteration's design gate, campaign stops
+    def test_abort_during_gate(self, tmp_path, monkeypatch):
+        """If the human aborts during a gate, campaign stops
         and engine state is preserved for potential resume."""
         work_dir = _setup_work_dir(tmp_path)
         _patch_for_stub(monkeypatch)
@@ -196,8 +196,8 @@ class TestAbortDuringIteration:
         run_campaign(SAMPLE_CAMPAIGN, work_dir, max_iterations=5)
 
         engine = Engine(work_dir)
-        # Engine is at HUMAN_DESIGN_GATE (preserved for resume)
-        assert engine.phase == "HUMAN_DESIGN_GATE"
+        # Engine is at the first human gate (HUMAN_FRAMING_GATE) — preserved for resume
+        assert engine.phase == "HUMAN_FRAMING_GATE"
 
 
 class TestSaveHumanFeedback:

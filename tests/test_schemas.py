@@ -382,6 +382,7 @@ class TestFindingsSchema:
                 },
             ],
             "discrepancy_analysis": "Control-negative failure indicates mechanism threshold is higher than predicted.",
+            "experiment_valid": True,
         }
         jsonschema.validate(instance, schema)
 
@@ -401,6 +402,7 @@ class TestFindingsSchema:
                 }
             ],
             "discrepancy_analysis": "test",
+            "experiment_valid": True,
         }
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(instance, schema)
@@ -483,6 +485,7 @@ class TestAdditionalPropertiesRejected:
         instance = {
             "iteration": 1,
             "bundle_ref": "test",
+            "experiment_valid": True,
             "arms": [
                 {
                     "arm_type": "h-main",
@@ -860,6 +863,7 @@ class TestArmMetadata:
         schema = load_schema("findings.schema.json")
         instance = {
             "iteration": 1, "bundle_ref": "test",
+            "experiment_valid": True,
             "arms": [{
                 "arm_type": "h-main",
                 "predicted": "x", "observed": "y",

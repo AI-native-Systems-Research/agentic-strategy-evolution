@@ -15,6 +15,7 @@ Set your LLM API key before running:
     (or set OPENAI_BASE_URL for a proxy endpoint)
 """
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -26,6 +27,7 @@ from orchestrator.engine import Engine
 from orchestrator.gates import HumanGate
 from orchestrator.ledger import append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
+from orchestrator.metrics import summarize_metrics
 from run_iteration import (
     DEFAULTS_PATH,
     IterationOutcome,
@@ -48,6 +50,24 @@ def _resolve_model(campaign: dict, phase_key: str, cli_model: str | None) -> str
         if default_model:
             return default_model
     return cli_model or "aws/claude-sonnet-4-5"
+
+
+def _write_metrics_summary(work_dir: Path) -> None:
+    """Write llm_metrics_summary.json and print a one-liner. Never raises."""
+    try:
+        metrics_path = work_dir / "llm_metrics.jsonl"
+        summary = summarize_metrics(metrics_path)
+        summary_path = work_dir / "llm_metrics_summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+        cost = summary.get("total_cost_usd", 0) or 0
+        inp = summary.get("total_input_tokens", 0)
+        out = summary.get("total_output_tokens", 0)
+        calls = summary.get("total_calls", 0)
+        print(f"\n  LLM usage: {calls} calls, {inp + out} tokens (in:{inp} out:{out}), ${cost:.4f}")
+        print(f"  -> {summary_path}")
+    except Exception as exc:
+        logger.exception("Failed to write metrics summary")
+        print(f"\n  Warning: could not write metrics summary: {exc}")
 
 
 def _generate_report(campaign: dict, work_dir: Path, model: str | None) -> None:
@@ -115,6 +135,7 @@ def run_campaign(
                     continue
                 else:
                     print(f"\n  Max redesigns ({max_redesigns}) reached. Stopping.")
+                    _write_metrics_summary(work_dir)
                     return
             break  # any non-REDESIGN outcome exits the retry loop
 
@@ -122,11 +143,13 @@ def run_campaign(
             append_ledger_row(work_dir, i)
             print(f"\n  Campaign complete after {i} iteration(s).")
             _generate_report(campaign, work_dir, model)
+            _write_metrics_summary(work_dir)
             return
 
         if outcome == IterationOutcome.ABORTED:
             print(f"\n  Campaign aborted at iteration {i}.")
             print("  Engine state preserved for potential resume.")
+            _write_metrics_summary(work_dir)
             return
 
         # outcome == CONTINUE — non-final iteration completed extraction
@@ -174,6 +197,7 @@ def run_campaign(
             engine.transition("DONE")
             print(f"\n  Campaign stopped after {i} iteration(s).")
             _generate_report(campaign, work_dir, model)
+            _write_metrics_summary(work_dir)
             return
 
         # Advance engine from EXTRACTION → DESIGN (increments iteration)
@@ -183,6 +207,7 @@ def run_campaign(
 
     print(f"\n  Campaign reached max_iterations ({max_iterations}).")
     _generate_report(campaign, work_dir, model)
+    _write_metrics_summary(work_dir)
 
 
 def main() -> None:

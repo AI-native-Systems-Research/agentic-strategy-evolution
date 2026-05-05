@@ -32,6 +32,9 @@ def execute_plan(
 ) -> dict:
     """Execute an experiment plan and collect results.
 
+    Arms run independently — a failure in one arm does not block others.
+    On retry, only failed arms are re-run; successful arms are preserved.
+
     Args:
         plan: Parsed experiment_plan.yaml dict.
         cwd: Working directory for commands (typically the worktree).
@@ -49,69 +52,94 @@ def execute_plan(
     results_dir = iter_dir / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    revisions_used = 0
+    # Run setup (fails fast — prerequisite for all arms)
+    try:
+        setup_results = _run_setup(plan.get("setup", []), cwd, timeout)
+    except CommandError as exc:
+        logger.warning("Setup failed: %s", exc)
+        print(f"    Setup failed: {exc}. Continuing with empty results.", flush=True)
+        results = {"setup_results": [], "arms": []}
+        output = {"plan_ref": f"runs/{iter_dir.name}/experiment_plan.yaml", **results}
+        atomic_write(iter_dir / "execution_results.json", json.dumps(output, indent=2) + "\n")
+        return output
 
+    # Run all arms (failures recorded, not raised)
+    arm_results = _run_all_arms(plan["arms"], cwd, results_dir, timeout)
+
+    # Retry loop: only re-run failed arms
+    revisions_used = 0
     while True:
-        try:
-            results = _execute_plan_once(plan, cwd, results_dir, timeout)
-            break
-        except CommandError as exc:
-            if revision_fn is None or revisions_used >= max_revisions:
-                # Save partial results and continue to analysis instead of crashing
-                logger.warning(
-                    "Command failed, no more revisions (used %d/%d): %s",
-                    revisions_used, max_revisions, exc,
-                )
-                print(
-                    f"    Command failed — no more revisions available. "
-                    f"Continuing with partial results.",
-                    flush=True,
-                )
-                results = _collect_partial_results(plan, results_dir, cwd)
-                break
-            revisions_used += 1
+        failed_arms = _get_failed_arm_ids(arm_results)
+        if not failed_arms:
+            break  # all arms passed
+
+        if revision_fn is None or revisions_used >= max_revisions:
             logger.warning(
-                "Command failed (revision %d/%d): %s",
-                revisions_used, max_revisions, exc,
+                "Arms failed %s, no more revisions (used %d/%d).",
+                failed_arms, revisions_used, max_revisions,
             )
             print(
-                f"    Command failed — requesting revised plan "
-                f"(revision {revisions_used}/{max_revisions})...",
+                f"    {len(failed_arms)} arm(s) failed — no more revisions. "
+                f"Continuing with partial results.",
                 flush=True,
             )
-            error_info = {
-                "failed_step": exc.step,
-                "cmd": exc.cmd,
-                "exit_code": exc.exit_code,
-                "stderr_tail": _truncate(exc.stderr),
-                "stdout_tail": _truncate(exc.stdout),
-            }
-            # Persist error for debugging
-            error_path = iter_dir / f"execution_error_v{revisions_used}.json"
-            atomic_write(error_path, json.dumps(error_info, indent=2) + "\n")
-            logger.info("Saved error info to %s", error_path)
-            try:
-                plan = revision_fn(plan, error_info)
-            except (RuntimeError, OSError) as rev_exc:
-                logger.warning("Revision failed: %s. Continuing with partial results.", rev_exc)
-                print(f"    Revision failed. Continuing with partial results.", flush=True)
-                results = _collect_partial_results(plan, results_dir, cwd)
-                break
-            # Save revised plan for audit trail
-            revised_path = iter_dir / f"experiment_plan_v{revisions_used + 1}.yaml"
-            atomic_write(
-                revised_path,
-                yaml.safe_dump(plan, default_flow_style=False, sort_keys=False),
-            )
-            logger.info("Saved revised plan to %s", revised_path)
+            break
 
-    # Write execution_results.json
-    output = {
-        "plan_ref": f"runs/{iter_dir.name}/experiment_plan.yaml",
-        **results,
-    }
+        revisions_used += 1
+        # Build error info from first failure
+        first_failure = _first_failed_condition(arm_results)
+        error_info = {
+            "failed_step": first_failure["step"],
+            "cmd": first_failure["cmd"],
+            "exit_code": first_failure["exit_code"],
+            "stderr_tail": first_failure["stderr_tail"],
+            "stdout_tail": first_failure["stdout_tail"],
+        }
+        error_path = iter_dir / f"execution_error_v{revisions_used}.json"
+        atomic_write(error_path, json.dumps(error_info, indent=2) + "\n")
+
+        logger.warning(
+            "Arms failed %s (revision %d/%d).",
+            failed_arms, revisions_used, max_revisions,
+        )
+        print(
+            f"    {len(failed_arms)} arm(s) failed — requesting revised plan "
+            f"(revision {revisions_used}/{max_revisions})...",
+            flush=True,
+        )
+
+        try:
+            plan = revision_fn(plan, error_info)
+        except Exception as rev_exc:
+            logger.warning(
+                "Revision failed (%s): %s. Keeping partial results.",
+                type(rev_exc).__name__, rev_exc,
+            )
+            print(f"    Revision failed ({type(rev_exc).__name__}). Continuing with partial results.", flush=True)
+            break
+
+        # Save revised plan
+        revised_path = iter_dir / f"experiment_plan_v{revisions_used + 1}.yaml"
+        atomic_write(
+            revised_path,
+            yaml.safe_dump(plan, default_flow_style=False, sort_keys=False),
+        )
+
+        # Re-run only failed arms from the revised plan
+        retry_arms = [a for a in plan["arms"] if a["arm_id"] in failed_arms]
+        retry_results = _run_all_arms(retry_arms, cwd, results_dir, timeout)
+
+        # Merge: replace failed arms with retry results
+        retry_by_id = {r["arm_id"]: r for r in retry_results}
+        arm_results = [
+            retry_by_id[a["arm_id"]] if a["arm_id"] in retry_by_id else a
+            for a in arm_results
+        ]
+
+    results = {"setup_results": setup_results, "arms": arm_results}
+    output = {"plan_ref": f"runs/{iter_dir.name}/experiment_plan.yaml", **results}
     atomic_write(iter_dir / "execution_results.json", json.dumps(output, indent=2) + "\n")
-    logger.info("Wrote execution_results.json (%d arms)", len(results.get("arms", [])))
+    logger.info("Wrote execution_results.json (%d arms)", len(arm_results))
     return output
 
 
@@ -127,17 +155,44 @@ class CommandError(Exception):
         super().__init__(f"Step '{step}' failed: cmd={cmd!r}, exit_code={exit_code}")
 
 
-def _execute_plan_once(
-    plan: dict, cwd: Path, results_dir: Path, timeout: int,
-) -> dict:
-    """Execute the plan once, raising CommandError on first failure."""
-    setup_results = _run_setup(plan.get("setup", []), cwd, timeout)
+def _run_all_arms(
+    arms: list[dict], cwd: Path, results_dir: Path, timeout: int,
+) -> list[dict]:
+    """Run all arms, recording failures without stopping."""
     arm_results = []
-    for arm in plan["arms"]:
+    for arm in arms:
         arm_result = _run_arm(arm, cwd, results_dir, timeout)
         arm_results.append(arm_result)
+    return arm_results
 
-    return {"setup_results": setup_results, "arms": arm_results}
+
+def _get_failed_arm_ids(arm_results: list[dict]) -> list[str]:
+    """Return arm_ids that have any non-zero exit_code condition."""
+    failed = []
+    for arm in arm_results:
+        for cond in arm["conditions"]:
+            if cond["exit_code"] != 0:
+                failed.append(arm["arm_id"])
+                break
+    return failed
+
+
+def _first_failed_condition(arm_results: list[dict]) -> dict:
+    """Return info about the first failed condition (for error reporting)."""
+    for arm in arm_results:
+        for cond in arm["conditions"]:
+            if cond["exit_code"] != 0:
+                return {
+                    "step": f"{arm['arm_id']}/{cond['name']}",
+                    "cmd": cond["cmd"],
+                    "exit_code": cond["exit_code"],
+                    "stderr_tail": cond["stderr_tail"],
+                    "stdout_tail": cond["stdout_tail"],
+                }
+    raise AssertionError(
+        "_first_failed_condition called but no failed condition found. "
+        "This indicates a bug in _get_failed_arm_ids or arm_results mutation."
+    )
 
 
 def _run_setup(setup_cmds: list[dict], cwd: Path, timeout: int) -> list[dict]:
@@ -166,7 +221,7 @@ def _run_setup(setup_cmds: list[dict], cwd: Path, timeout: int) -> list[dict]:
 
 
 def _run_arm(arm: dict, cwd: Path, results_dir: Path, timeout: int) -> dict:
-    """Run all conditions in an arm."""
+    """Run all conditions in an arm. Records failures without raising."""
     arm_id = arm["arm_id"]
     arm_dir = results_dir / arm_id
     arm_dir.mkdir(parents=True, exist_ok=True)
@@ -185,13 +240,16 @@ def _run_arm(arm: dict, cwd: Path, results_dir: Path, timeout: int) -> dict:
         (arm_dir / f"{name}.stderr").write_text(result.stderr)
 
         if result.returncode != 0:
-            raise CommandError(
-                step=f"{arm_id}/{name}",
-                cmd=cmd,
-                exit_code=result.returncode,
-                stdout=result.stdout,
-                stderr=result.stderr,
-            )
+            logger.warning("Condition %s/%s failed (exit %d)", arm_id, name, result.returncode)
+            conditions.append({
+                "name": name,
+                "cmd": cmd,
+                "exit_code": result.returncode,
+                "stdout_tail": _truncate(result.stdout),
+                "stderr_tail": _truncate(result.stderr),
+                "output_content": None,
+            })
+            continue
 
         # Read output file if specified
         output_content = None
@@ -218,49 +276,18 @@ def _run_arm(arm: dict, cwd: Path, results_dir: Path, timeout: int) -> dict:
 
 
 def _run_cmd(cmd: str, cwd: Path, timeout: int) -> subprocess.CompletedProcess:
-    """Run a single shell command."""
+    """Run a single shell command. Timeouts return exit_code=-1 instead of raising."""
     try:
         return subprocess.run(
             cmd, shell=True, cwd=cwd,
             capture_output=True, text=True, timeout=timeout,
         )
-    except subprocess.TimeoutExpired:
-        raise CommandError(
-            step="timeout",
-            cmd=cmd,
-            exit_code=-1,
-            stdout="",
-            stderr=f"Command timed out after {timeout}s",
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=-1,
+            stdout=exc.stdout or "",
+            stderr=(exc.stderr or "") + f"\n[TIMEOUT] Command timed out after {timeout}s",
         )
-
-
-def _collect_partial_results(plan: dict, results_dir: Path, cwd: Path) -> dict:
-    """Collect whatever results exist from completed arms."""
-    arms = []
-    for arm in plan["arms"]:
-        arm_id = arm["arm_id"]
-        conditions = []
-        for cond in arm["conditions"]:
-            name = cond["name"]
-            stdout_file = results_dir / arm_id / f"{name}.stdout"
-            stderr_file = results_dir / arm_id / f"{name}.stderr"
-            output_content = None
-            if cond.get("output"):
-                out_file = cwd / cond["output"]
-                if out_file.exists():
-                    output_content = _truncate(out_file.read_text())
-            if stdout_file.exists() or stderr_file.exists():
-                conditions.append({
-                    "name": name,
-                    "cmd": cond["cmd"],
-                    "exit_code": None,
-                    "stdout_tail": _truncate(stdout_file.read_text()) if stdout_file.exists() else "",
-                    "stderr_tail": _truncate(stderr_file.read_text()) if stderr_file.exists() else "",
-                    "output_content": output_content,
-                })
-        if conditions:
-            arms.append({"arm_id": arm_id, "conditions": conditions})
-    return {"partial": True, "setup_results": [], "arms": arms}
 
 
 def _truncate(text: str, max_chars: int = _MAX_OUTPUT_CHARS) -> str:
