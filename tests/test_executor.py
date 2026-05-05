@@ -103,7 +103,7 @@ class TestExecutePlanHappyPath:
 
 
 class TestExecutePlanFailures:
-    def test_arm_failure_returns_partial_results(self, tmp_path):
+    def test_arm_failure_recorded_not_raised(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
         plan = {
@@ -116,10 +116,30 @@ class TestExecutePlanFailures:
             ],
         }
         results = execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir)
-        # Returns partial results instead of raising
         assert results is not None
+        assert results["arms"][0]["conditions"][0]["exit_code"] == 1
 
-    def test_setup_failure_returns_partial_results(self, tmp_path):
+    def test_failed_arm_does_not_block_other_arms(self, tmp_path):
+        """Arms are independent — failure in one doesn't stop others."""
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+        plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [
+                {"arm_id": "h-main", "conditions": [{"name": "bad", "cmd": "exit 1"}]},
+                {"arm_id": "h-robustness", "conditions": [{"name": "good", "cmd": "echo ok"}]},
+            ],
+        }
+        results = execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir)
+        # Both arms present in results
+        assert len(results["arms"]) == 2
+        assert results["arms"][0]["arm_id"] == "h-main"
+        assert results["arms"][0]["conditions"][0]["exit_code"] == 1
+        assert results["arms"][1]["arm_id"] == "h-robustness"
+        assert results["arms"][1]["conditions"][0]["exit_code"] == 0
+        assert "ok" in results["arms"][1]["conditions"][0]["stdout_tail"]
+
+    def test_setup_failure_returns_empty_results(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
         plan = {
@@ -131,21 +151,22 @@ class TestExecutePlanFailures:
         }
         results = execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir)
         assert results is not None
+        assert results["arms"] == []
 
-    def test_timeout_returns_partial_results(self, tmp_path):
+    def test_timeout_recorded_as_failure(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
         plan = {
             "metadata": {"iteration": 1, "bundle_ref": "x"},
             "arms": [
-                {
-                    "arm_id": "h-main",
-                    "conditions": [{"name": "slow", "cmd": "sleep 60"}],
-                },
+                {"arm_id": "h-main", "conditions": [{"name": "slow", "cmd": "sleep 60"}]},
+                {"arm_id": "h-other", "conditions": [{"name": "fast", "cmd": "echo done"}]},
             ],
         }
         results = execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir, timeout=1)
-        assert results is not None
+        # Timeout arm recorded with exit_code=-1, other arm still ran
+        assert results["arms"][0]["conditions"][0]["exit_code"] == -1
+        assert results["arms"][1]["conditions"][0]["exit_code"] == 0
 
 
 class TestExecutePlanRevisions:
@@ -173,8 +194,41 @@ class TestExecutePlanRevisions:
 
         revision_fn.assert_called_once()
         assert results["arms"][0]["conditions"][0]["name"] == "good"
+        assert results["arms"][0]["conditions"][0]["exit_code"] == 0
         # Revised plan saved
         assert (iter_dir / "experiment_plan_v2.yaml").exists()
+
+    def test_revision_only_retries_failed_arms(self, tmp_path):
+        """Successful arms are preserved; only failed arms are retried."""
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+
+        plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [
+                {"arm_id": "h-main", "conditions": [{"name": "ok", "cmd": "echo success"}]},
+                {"arm_id": "h-ablation", "conditions": [{"name": "bad", "cmd": "exit 1"}]},
+            ],
+        }
+        fixed_plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [
+                {"arm_id": "h-main", "conditions": [{"name": "ok", "cmd": "echo success"}]},
+                {"arm_id": "h-ablation", "conditions": [{"name": "fixed", "cmd": "echo fixed"}]},
+            ],
+        }
+
+        revision_fn = MagicMock(return_value=fixed_plan)
+        results = execute_plan(
+            plan, cwd=tmp_path, iter_dir=iter_dir, revision_fn=revision_fn,
+        )
+
+        # h-main succeeded on first run, h-ablation was retried
+        assert results["arms"][0]["arm_id"] == "h-main"
+        assert results["arms"][0]["conditions"][0]["exit_code"] == 0
+        assert results["arms"][1]["arm_id"] == "h-ablation"
+        assert results["arms"][1]["conditions"][0]["name"] == "fixed"
+        assert results["arms"][1]["conditions"][0]["exit_code"] == 0
 
     def test_max_revisions_exceeded_returns_partial(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
@@ -195,8 +249,9 @@ class TestExecutePlanRevisions:
 
         assert revision_fn.call_count == 2
         assert results is not None
+        assert results["arms"][0]["conditions"][0]["exit_code"] == 1
 
-    def test_no_revision_fn_returns_partial(self, tmp_path):
+    def test_no_revision_fn_returns_results_with_failures(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
 
@@ -208,6 +263,7 @@ class TestExecutePlanRevisions:
         }
         results = execute_plan(bad_plan, cwd=tmp_path, iter_dir=iter_dir, revision_fn=None)
         assert results is not None
+        assert results["arms"][0]["conditions"][0]["exit_code"] == 1
 
 
 class TestTruncate:
