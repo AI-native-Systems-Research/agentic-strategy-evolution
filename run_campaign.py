@@ -66,6 +66,7 @@ def _write_metrics_summary(work_dir: Path) -> None:
         print(f"\n  LLM usage: {calls} calls, {inp + out} tokens (in:{inp} out:{out}), ${cost:.4f}")
         print(f"  -> {summary_path}")
     except Exception as exc:
+        logger.exception("Failed to write metrics summary")
         print(f"\n  Warning: could not write metrics summary: {exc}")
 
 
@@ -134,6 +135,7 @@ def run_campaign(
                     continue
                 else:
                     print(f"\n  Max redesigns ({max_redesigns}) reached. Stopping.")
+                    _write_metrics_summary(work_dir)
                     return
             break  # any non-REDESIGN outcome exits the retry loop
 

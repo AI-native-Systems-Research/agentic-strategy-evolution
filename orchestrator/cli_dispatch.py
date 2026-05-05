@@ -285,7 +285,11 @@ class CLIDispatcher:
             response_json = json.loads(result.stdout)
         except json.JSONDecodeError:
             # Fallback: if JSON parsing fails, return raw stdout (no metrics)
-            logger.warning("claude -p output not valid JSON, skipping metrics capture")
+            logger.error(
+                "claude -p output not valid JSON; metrics will NOT be recorded. "
+                "First 200 chars: %s",
+                result.stdout[:200],
+            )
             return result.stdout
 
         # Log metrics (before error check — failed calls still consume tokens)

@@ -110,9 +110,12 @@ def execute_plan(
 
         try:
             plan = revision_fn(plan, error_info)
-        except (RuntimeError, OSError) as rev_exc:
-            logger.warning("Revision failed: %s. Keeping partial results.", rev_exc)
-            print(f"    Revision failed. Continuing with partial results.", flush=True)
+        except Exception as rev_exc:
+            logger.warning(
+                "Revision failed (%s): %s. Keeping partial results.",
+                type(rev_exc).__name__, rev_exc,
+            )
+            print(f"    Revision failed ({type(rev_exc).__name__}). Continuing with partial results.", flush=True)
             break
 
         # Save revised plan
@@ -186,7 +189,10 @@ def _first_failed_condition(arm_results: list[dict]) -> dict:
                     "stderr_tail": cond["stderr_tail"],
                     "stdout_tail": cond["stdout_tail"],
                 }
-    return {}
+    raise AssertionError(
+        "_first_failed_condition called but no failed condition found. "
+        "This indicates a bug in _get_failed_arm_ids or arm_results mutation."
+    )
 
 
 def _run_setup(setup_cmds: list[dict], cwd: Path, timeout: int) -> list[dict]:
@@ -276,10 +282,11 @@ def _run_cmd(cmd: str, cwd: Path, timeout: int) -> subprocess.CompletedProcess:
             cmd, shell=True, cwd=cwd,
             capture_output=True, text=True, timeout=timeout,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         return subprocess.CompletedProcess(
             args=cmd, returncode=-1,
-            stdout="", stderr=f"Command timed out after {timeout}s",
+            stdout=exc.stdout or "",
+            stderr=(exc.stderr or "") + f"\n[TIMEOUT] Command timed out after {timeout}s",
         )
 
 
