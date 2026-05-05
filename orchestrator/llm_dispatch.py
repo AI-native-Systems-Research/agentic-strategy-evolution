@@ -518,6 +518,7 @@ class LLMDispatcher:
             {"role": "assistant", "content": original_response},
             {"role": "user", "content": feedback},
         ]
+        t0 = time.time()
         try:
             response = self._completion(
                 model=self.model, messages=messages, max_tokens=16384,
@@ -527,6 +528,21 @@ class LLMDispatcher:
                 f"LLM API call failed during parse retry "
                 f"(model={self.model}): {type(exc).__name__}: {exc}"
             ) from exc
+        duration_ms = int((time.time() - t0) * 1000)
+        usage = getattr(response, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+        if isinstance(prompt_tokens, int):
+            log_metrics(self._metrics_path, {
+                "dispatcher": "llm",
+                "role": self._current_role,
+                "phase": f"{self._current_phase}/retry-parse",
+                "model": self.model,
+                "input_tokens": prompt_tokens,
+                "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                "cost_usd": None,
+                "duration_ms": duration_ms,
+                "num_turns": 1,
+            })
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list during parse retry.")
         retry_text = response.choices[0].message.content
@@ -559,6 +575,7 @@ class LLMDispatcher:
             {"role": "assistant", "content": first_response},
             {"role": "user", "content": feedback},
         ]
+        t0 = time.time()
         try:
             response = self._completion(
                 model=self.model, messages=messages, max_tokens=16384,
@@ -568,6 +585,21 @@ class LLMDispatcher:
                 f"LLM API call failed during schema-validation retry "
                 f"(model={self.model}): {type(exc).__name__}: {exc}"
             ) from exc
+        duration_ms = int((time.time() - t0) * 1000)
+        usage = getattr(response, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+        if isinstance(prompt_tokens, int):
+            log_metrics(self._metrics_path, {
+                "dispatcher": "llm",
+                "role": self._current_role,
+                "phase": f"{self._current_phase}/retry-validation",
+                "model": self.model,
+                "input_tokens": prompt_tokens,
+                "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                "cost_usd": None,
+                "duration_ms": duration_ms,
+                "num_turns": 1,
+            })
         if not response.choices:
             raise RuntimeError(
                 "LLM returned empty choices list during retry."

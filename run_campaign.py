@@ -53,17 +53,20 @@ def _resolve_model(campaign: dict, phase_key: str, cli_model: str | None) -> str
 
 
 def _write_metrics_summary(work_dir: Path) -> None:
-    """Write llm_metrics_summary.json and print a one-liner."""
-    metrics_path = work_dir / "llm_metrics.jsonl"
-    summary = summarize_metrics(metrics_path)
-    summary_path = work_dir / "llm_metrics_summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2) + "\n")
-    cost = summary.get("total_cost_usd", 0) or 0
-    inp = summary.get("total_input_tokens", 0)
-    out = summary.get("total_output_tokens", 0)
-    calls = summary.get("total_calls", 0)
-    print(f"\n  LLM usage: {calls} calls, {inp + out} tokens (in:{inp} out:{out}), ${cost:.4f}")
-    print(f"  -> {summary_path}")
+    """Write llm_metrics_summary.json and print a one-liner. Never raises."""
+    try:
+        metrics_path = work_dir / "llm_metrics.jsonl"
+        summary = summarize_metrics(metrics_path)
+        summary_path = work_dir / "llm_metrics_summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+        cost = summary.get("total_cost_usd", 0) or 0
+        inp = summary.get("total_input_tokens", 0)
+        out = summary.get("total_output_tokens", 0)
+        calls = summary.get("total_calls", 0)
+        print(f"\n  LLM usage: {calls} calls, {inp + out} tokens (in:{inp} out:{out}), ${cost:.4f}")
+        print(f"  -> {summary_path}")
+    except Exception as exc:
+        print(f"\n  Warning: could not write metrics summary: {exc}")
 
 
 def _generate_report(campaign: dict, work_dir: Path, model: str | None) -> None:

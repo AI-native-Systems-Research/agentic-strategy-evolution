@@ -3,24 +3,37 @@
 Appends per-call entries to a JSONL file and provides aggregation.
 """
 import json
-import time
+import logging
 from pathlib import Path
 from datetime import datetime, timezone
 
+logger = logging.getLogger(__name__)
+
 
 def log_metrics(metrics_path: Path, entry: dict) -> None:
-    """Append a single metrics entry to the JSONL file."""
-    entry.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
-    with open(metrics_path, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    """Append a single metrics entry to the JSONL file. Never raises."""
+    try:
+        record = {**entry}
+        record.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+        with open(metrics_path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as exc:
+        logger.warning("Failed to write metrics to %s: %s", metrics_path, exc)
 
 
 def summarize_metrics(metrics_path: Path) -> dict:
-    """Read JSONL and return aggregate summary."""
+    """Read JSONL and return aggregate summary. Skips corrupt lines."""
     if not metrics_path.exists():
         return {"total_calls": 0, "total_cost_usd": 0, "total_input_tokens": 0, "total_output_tokens": 0}
 
-    entries = [json.loads(line) for line in metrics_path.read_text().splitlines() if line.strip()]
+    entries = []
+    for line in metrics_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            logger.warning("Skipping corrupt metrics line: %s", line[:80])
 
     summary = {
         "total_calls": len(entries),

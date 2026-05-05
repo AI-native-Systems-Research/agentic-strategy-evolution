@@ -72,6 +72,32 @@ class TestSummarizeMetrics:
         assert summary["total_cost_usd"] == 0
 
 
+class TestLogMetricsResilience:
+    def test_never_raises_on_write_error(self, tmp_path):
+        """log_metrics must not crash even if the path is unwritable."""
+        bad_path = tmp_path / "no-such-dir" / "metrics.jsonl"
+        # Should not raise
+        log_metrics(bad_path, {"input_tokens": 100})
+
+    def test_does_not_mutate_caller_dict(self, metrics_path):
+        entry = {"input_tokens": 100}
+        log_metrics(metrics_path, entry)
+        assert "timestamp" not in entry
+
+
+class TestSummarizeMetricsResilience:
+    def test_skips_corrupt_lines(self, metrics_path):
+        """Corrupt lines should be skipped, not crash the summary."""
+        metrics_path.write_text(
+            '{"input_tokens": 100, "output_tokens": 50, "cost_usd": 0.01, "duration_ms": 1000, "dispatcher": "cli", "phase": "frame"}\n'
+            '{bad json!!\n'
+            '{"input_tokens": 200, "output_tokens": 100, "cost_usd": 0.02, "duration_ms": 2000, "dispatcher": "cli", "phase": "design"}\n'
+        )
+        summary = summarize_metrics(metrics_path)
+        assert summary["total_calls"] == 2
+        assert summary["total_input_tokens"] == 300
+
+
 class TestCLIDispatcherMetrics:
     """Test that CLIDispatcher correctly parses --output-format=json and logs metrics."""
 
@@ -151,6 +177,55 @@ class TestCLIDispatcherMetrics:
         assert entry["cache_creation_input_tokens"] == 28706
         assert entry["duration_ms"] == 15234
         assert entry["num_turns"] == 3
+
+
+    def test_is_error_still_logs_metrics(self, tmp_path):
+        """Even when claude -p returns is_error=True, tokens should be logged."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        (work_dir / "runs" / "iter-1").mkdir(parents=True)
+        (work_dir / "runs" / "iter-1" / "problem.md").write_text("# Problem\n")
+        (work_dir / "runs" / "iter-1" / "bundle.yaml").write_text(
+            "metadata:\n  iteration: 1\n  family: test\n  research_question: test\n"
+            "arms:\n  - type: h-main\n    prediction: p\n    mechanism: m\n    diagnostic: d\n"
+            "  - type: h-control-negative\n    prediction: p\n    mechanism: m\n    diagnostic: d\n"
+        )
+        (work_dir / "principles.json").write_text('{"principles": []}')
+
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        campaign = {
+            "research_question": "Test?",
+            "target_system": {"name": "T", "description": "D", "repo_path": str(repo_dir)},
+            "review": {"design_perspectives": ["rigor"], "findings_perspectives": ["rigor"], "max_review_rounds": 1},
+            "prompts": {"methodology_layer": "prompts/methodology", "domain_adapter_layer": None},
+        }
+
+        cli_json_output = json.dumps({
+            "type": "result", "subtype": "error", "is_error": True,
+            "result": "Something went wrong",
+            "total_cost_usd": 0.04, "duration_ms": 8000, "num_turns": 2,
+            "usage": {"input_tokens": 3000, "output_tokens": 500,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        })
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = cli_json_output
+        mock_result.stderr = ""
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with pytest.raises(RuntimeError, match="returned an error"):
+                d.dispatch("planner", "design", output_path=work_dir / "out.yaml", iteration=1)
+
+        # Metrics should still be logged despite the error
+        metrics_path = work_dir / "llm_metrics.jsonl"
+        assert metrics_path.exists()
+        entry = json.loads(metrics_path.read_text().strip())
+        assert entry["input_tokens"] == 3000
+        assert entry["cost_usd"] == 0.04
 
 
 class TestLLMDispatcherMetrics:

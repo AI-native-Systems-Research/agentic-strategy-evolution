@@ -288,13 +288,7 @@ class CLIDispatcher:
             logger.warning("claude -p output not valid JSON, skipping metrics capture")
             return result.stdout
 
-        # Check for error responses
-        if response_json.get("is_error"):
-            raise RuntimeError(
-                f"claude -p returned an error: {response_json.get('result', 'unknown error')}"
-            )
-
-        # Log metrics
+        # Log metrics (before error check — failed calls still consume tokens)
         usage = response_json.get("usage", {})
         log_metrics(self._metrics_path, {
             "dispatcher": "cli",
@@ -309,6 +303,12 @@ class CLIDispatcher:
             "duration_ms": response_json.get("duration_ms", 0),
             "num_turns": response_json.get("num_turns", 0),
         })
+
+        # Check for error responses
+        if response_json.get("is_error"):
+            raise RuntimeError(
+                f"claude -p returned an error: {response_json.get('result', 'unknown error')}"
+            )
 
         response_text = response_json.get("result", "")
         logger.info(
