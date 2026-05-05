@@ -71,6 +71,7 @@ arms:
 FINDINGS_JSON = json.dumps({
     "iteration": 1,
     "bundle_ref": "runs/iter-1/bundle.yaml",
+    "experiment_valid": True,
     "arms": [
         {
             "arm_type": "h-main",

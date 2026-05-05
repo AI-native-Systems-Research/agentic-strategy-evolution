@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -19,6 +20,7 @@ import jsonschema
 import openai
 import yaml
 
+from orchestrator.metrics import log_metrics
 from orchestrator.prompt_loader import PromptLoader
 from orchestrator.util import atomic_write
 
@@ -62,6 +64,9 @@ class LLMDispatcher:
                 base_url=api_base or os.environ.get("OPENAI_BASE_URL"),
             )
             self._completion = client.chat.completions.create
+        self._metrics_path = self.work_dir / "llm_metrics.jsonl"
+        self._current_role: str = "unknown"
+        self._current_phase: str = "unknown"
         dal = campaign.get("prompts", {}).get("domain_adapter_layer")
         if dal is not None:
             logger.warning(
@@ -115,6 +120,9 @@ class LLMDispatcher:
         """
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self._current_role = role
+        self._current_phase = phase
 
         template, fmt, schema_name = self._route(role, phase)
         context = self._build_context(role, phase, iteration, perspective)
@@ -448,6 +456,32 @@ class LLMDispatcher:
     # LLM interaction
     # ------------------------------------------------------------------
 
+    def _log_llm_metrics(self, response, t0: float, phase_suffix: str = "") -> None:
+        """Log token usage from an LLM API response. Silent no-op if usage absent."""
+        duration_ms = int((time.time() - t0) * 1000)
+        usage = getattr(response, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+        if not isinstance(prompt_tokens, int):
+            logger.debug(
+                "LLM response has no usable usage info (usage=%r); metrics not recorded.",
+                usage,
+            )
+            return
+        phase = self._current_phase
+        if phase_suffix:
+            phase = f"{phase}/{phase_suffix}"
+        log_metrics(self._metrics_path, {
+            "dispatcher": "llm",
+            "role": self._current_role,
+            "phase": phase,
+            "model": self.model,
+            "input_tokens": prompt_tokens,
+            "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+            "cost_usd": None,
+            "duration_ms": duration_ms,
+            "num_turns": 1,
+        })
+
     def _call_llm(
         self, system_prompt: str, user_message: str | None = None
     ) -> str:
@@ -455,6 +489,7 @@ class LLMDispatcher:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message or "Please proceed."},
         ]
+        t0 = time.time()
         try:
             response = self._completion(
                 model=self.model, messages=messages, max_tokens=16384,
@@ -464,11 +499,14 @@ class LLMDispatcher:
                 f"LLM API call failed (model={self.model}): "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
+        self._log_llm_metrics(response, t0)
+
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list.")
         content = response.choices[0].message.content
         if content is None:
             raise RuntimeError("LLM returned None content.")
+
         return content
 
     def _retry_parse(
@@ -490,6 +528,7 @@ class LLMDispatcher:
             {"role": "assistant", "content": original_response},
             {"role": "user", "content": feedback},
         ]
+        t0 = time.time()
         try:
             response = self._completion(
                 model=self.model, messages=messages, max_tokens=16384,
@@ -499,6 +538,7 @@ class LLMDispatcher:
                 f"LLM API call failed during parse retry "
                 f"(model={self.model}): {type(exc).__name__}: {exc}"
             ) from exc
+        self._log_llm_metrics(response, t0, "retry-parse")
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list during parse retry.")
         retry_text = response.choices[0].message.content
@@ -531,6 +571,7 @@ class LLMDispatcher:
             {"role": "assistant", "content": first_response},
             {"role": "user", "content": feedback},
         ]
+        t0 = time.time()
         try:
             response = self._completion(
                 model=self.model, messages=messages, max_tokens=16384,
@@ -540,6 +581,7 @@ class LLMDispatcher:
                 f"LLM API call failed during schema-validation retry "
                 f"(model={self.model}): {type(exc).__name__}: {exc}"
             ) from exc
+        self._log_llm_metrics(response, t0, "retry-validation")
         if not response.choices:
             raise RuntimeError(
                 "LLM returned empty choices list during retry."
