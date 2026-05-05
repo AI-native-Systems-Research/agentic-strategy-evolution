@@ -11,6 +11,7 @@
       "diagnostic_note": null
     }
   ],
+  "experiment_valid": true,
   "discrepancy_analysis": "TODO: analyze prediction vs outcome for each arm.",
   "dominant_component_pct": null
 }

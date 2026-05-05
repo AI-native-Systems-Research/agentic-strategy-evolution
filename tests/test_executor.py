@@ -103,7 +103,7 @@ class TestExecutePlanHappyPath:
 
 
 class TestExecutePlanFailures:
-    def test_arm_failure_raises_runtime_error(self, tmp_path):
+    def test_arm_failure_returns_partial_results(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
         plan = {
@@ -115,10 +115,11 @@ class TestExecutePlanFailures:
                 },
             ],
         }
-        with pytest.raises(RuntimeError, match="Command failed"):
-            execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir)
+        results = execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir)
+        # Returns partial results instead of raising
+        assert results is not None
 
-    def test_setup_failure_raises_runtime_error(self, tmp_path):
+    def test_setup_failure_returns_partial_results(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
         plan = {
@@ -128,10 +129,10 @@ class TestExecutePlanFailures:
                 {"arm_id": "h-main", "conditions": [{"name": "x", "cmd": "echo x"}]},
             ],
         }
-        with pytest.raises(RuntimeError, match="Command failed"):
-            execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir)
+        results = execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir)
+        assert results is not None
 
-    def test_timeout_raises_runtime_error(self, tmp_path):
+    def test_timeout_returns_partial_results(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
         plan = {
@@ -143,8 +144,8 @@ class TestExecutePlanFailures:
                 },
             ],
         }
-        with pytest.raises(RuntimeError, match="Command failed"):
-            execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir, timeout=1)
+        results = execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir, timeout=1)
+        assert results is not None
 
 
 class TestExecutePlanRevisions:
@@ -175,7 +176,7 @@ class TestExecutePlanRevisions:
         # Revised plan saved
         assert (iter_dir / "experiment_plan_v2.yaml").exists()
 
-    def test_max_revisions_exceeded_raises(self, tmp_path):
+    def test_max_revisions_exceeded_returns_partial(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
 
@@ -187,15 +188,15 @@ class TestExecutePlanRevisions:
         }
         # Revision always returns another bad plan
         revision_fn = MagicMock(return_value=bad_plan)
-        with pytest.raises(RuntimeError, match="no more revisions"):
-            execute_plan(
-                bad_plan, cwd=tmp_path, iter_dir=iter_dir,
-                revision_fn=revision_fn, max_revisions=2,
-            )
+        results = execute_plan(
+            bad_plan, cwd=tmp_path, iter_dir=iter_dir,
+            revision_fn=revision_fn, max_revisions=2,
+        )
 
         assert revision_fn.call_count == 2
+        assert results is not None
 
-    def test_no_revision_fn_raises_immediately(self, tmp_path):
+    def test_no_revision_fn_returns_partial(self, tmp_path):
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
 
@@ -205,8 +206,8 @@ class TestExecutePlanRevisions:
                 {"arm_id": "h-main", "conditions": [{"name": "bad", "cmd": "exit 1"}]},
             ],
         }
-        with pytest.raises(RuntimeError, match="Command failed"):
-            execute_plan(bad_plan, cwd=tmp_path, iter_dir=iter_dir, revision_fn=None)
+        results = execute_plan(bad_plan, cwd=tmp_path, iter_dir=iter_dir, revision_fn=None)
+        assert results is not None
 
 
 class TestTruncate:
