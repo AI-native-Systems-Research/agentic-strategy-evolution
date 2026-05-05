@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -19,6 +20,7 @@ import jsonschema
 import openai
 import yaml
 
+from orchestrator.metrics import log_metrics
 from orchestrator.prompt_loader import PromptLoader
 from orchestrator.util import atomic_write
 
@@ -62,6 +64,9 @@ class LLMDispatcher:
                 base_url=api_base or os.environ.get("OPENAI_BASE_URL"),
             )
             self._completion = client.chat.completions.create
+        self._metrics_path = self.work_dir / "llm_metrics.jsonl"
+        self._current_role: str = "unknown"
+        self._current_phase: str = "unknown"
         dal = campaign.get("prompts", {}).get("domain_adapter_layer")
         if dal is not None:
             logger.warning(
@@ -115,6 +120,9 @@ class LLMDispatcher:
         """
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self._current_role = role
+        self._current_phase = phase
 
         template, fmt, schema_name = self._route(role, phase)
         context = self._build_context(role, phase, iteration, perspective)
@@ -455,6 +463,7 @@ class LLMDispatcher:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message or "Please proceed."},
         ]
+        t0 = time.time()
         try:
             response = self._completion(
                 model=self.model, messages=messages, max_tokens=16384,
@@ -464,11 +473,30 @@ class LLMDispatcher:
                 f"LLM API call failed (model={self.model}): "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
+        duration_ms = int((time.time() - t0) * 1000)
+
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list.")
         content = response.choices[0].message.content
         if content is None:
             raise RuntimeError("LLM returned None content.")
+
+        # Log metrics from response usage
+        usage = getattr(response, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+        if isinstance(prompt_tokens, int):
+            log_metrics(self._metrics_path, {
+                "dispatcher": "llm",
+                "role": self._current_role,
+                "phase": self._current_phase,
+                "model": self.model,
+                "input_tokens": prompt_tokens,
+                "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                "cost_usd": None,  # Not available from API
+                "duration_ms": duration_ms,
+                "num_turns": 1,
+            })
+
         return content
 
     def _retry_parse(

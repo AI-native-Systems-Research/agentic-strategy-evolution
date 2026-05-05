@@ -20,6 +20,7 @@ import jsonschema
 import yaml
 
 from orchestrator.llm_dispatch import LLMDispatcher
+from orchestrator.metrics import log_metrics
 from orchestrator.prompt_loader import PromptLoader
 from orchestrator.util import atomic_write
 
@@ -72,6 +73,9 @@ class CLIDispatcher:
         )
         repo_path = campaign.get("target_system", {}).get("repo_path")
         self._cwd = Path(repo_path) if repo_path else None
+        self._metrics_path = self.work_dir / "llm_metrics.jsonl"
+        self._current_role: str = "unknown"
+        self._current_phase: str = "unknown"
 
     @contextmanager
     def override_cwd(self, cwd: Path):
@@ -89,6 +93,8 @@ class CLIDispatcher:
         Used by orchestrator/executor.py when a command fails during
         the EXECUTING phase.  Returns the corrected plan dict.
         """
+        self._current_role = "executor"
+        self._current_phase = "revise-plan"
         context = {
             "experiment_plan_yaml": yaml.safe_dump(
                 plan, default_flow_style=False, sort_keys=False,
@@ -114,6 +120,9 @@ class CLIDispatcher:
         """Dispatch via claude -p subprocess."""
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self._current_role = role
+        self._current_phase = phase
 
         template, fmt, schema_name = self._route(role, phase)
         context = self._build_context(role, phase, iteration, perspective)
@@ -225,8 +234,11 @@ class CLIDispatcher:
         return data
 
     def _call_claude(self, prompt: str, max_turns: int | None = None) -> str:
-        """Invoke `claude -p` with the prompt on stdin, return stdout."""
-        cmd = ["claude", "-p", "--model", self.model]
+        """Invoke `claude -p` with the prompt on stdin, return result text.
+
+        Uses --output-format=json to capture metrics (tokens, cost, duration).
+        """
+        cmd = ["claude", "-p", "--model", self.model, "--output-format", "json"]
         turns = max_turns or self.max_turns
         cmd += ["--max-turns", str(turns)]
         cwd = self._cwd
@@ -268,5 +280,42 @@ class CLIDispatcher:
                 f"stderr: {stderr_tail}"
             )
 
-        logger.info("claude -p returned (%d chars)", len(result.stdout))
-        return result.stdout
+        # Parse JSON output and extract metrics
+        try:
+            response_json = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            # Fallback: if JSON parsing fails, return raw stdout (no metrics)
+            logger.warning("claude -p output not valid JSON, skipping metrics capture")
+            return result.stdout
+
+        # Check for error responses
+        if response_json.get("is_error"):
+            raise RuntimeError(
+                f"claude -p returned an error: {response_json.get('result', 'unknown error')}"
+            )
+
+        # Log metrics
+        usage = response_json.get("usage", {})
+        log_metrics(self._metrics_path, {
+            "dispatcher": "cli",
+            "role": self._current_role,
+            "phase": self._current_phase,
+            "model": self.model,
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+            "cost_usd": response_json.get("total_cost_usd", 0),
+            "duration_ms": response_json.get("duration_ms", 0),
+            "num_turns": response_json.get("num_turns", 0),
+        })
+
+        response_text = response_json.get("result", "")
+        logger.info(
+            "claude -p returned (%d chars, $%.4f, %d input + %d output tokens)",
+            len(response_text),
+            response_json.get("total_cost_usd", 0),
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+        )
+        return response_text
