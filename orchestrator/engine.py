@@ -51,6 +51,7 @@ TRANSITIONS: MappingProxyType[str, frozenset[str]] = MappingProxyType({
     "HUMAN_FINDINGS_GATE": frozenset({"TUNING", "EXTRACTION", "PLAN_EXECUTION"}),
     "TUNING":              frozenset({"EXTRACTION"}),
     "EXTRACTION":          frozenset({"DESIGN", "DONE"}),
+    "DONE":                frozenset({"DESIGN"}),
 })
 
 # All recognized states (for validation)
@@ -115,8 +116,6 @@ class Engine:
                 f"Valid phases: {sorted(s.value for s in Phase)}"
             )
         current = self._state["phase"]
-        if current == "DONE":
-            raise ValueError("Campaign is already DONE")
         if current not in TRANSITIONS:
             raise ValueError(f"Unknown state: {current}")
         if to_state not in TRANSITIONS[current]:

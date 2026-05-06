@@ -45,12 +45,14 @@ Design a hypothesis bundle with the following structure:
    - `prediction`: A quantitative, falsifiable claim with a measurable success/failure threshold using the observable metrics.
    - `mechanism`: A causal explanation of how and why the predicted outcome occurs.
    - `diagnostic`: What to investigate if the prediction is wrong — what would the error tell us?
+   - `code_changes` *(optional)*: Include this field when the arm tests an algorithmic change rather than a flag/config variation. Each entry needs `file`, `intent` (plain English, not a patch), and `rationale` (why this change tests the hypothesis). The PLAN_EXECUTION agent will later turn each intent into a patch file. If the hypothesis only varies existing CLI flags, omit this field.
 
 ## Constraints
 
 - You MUST NOT violate any active principles. If a principle says mechanism X doesn't work under condition Y, do not propose X under condition Y.
 - Predictions must be quantitative and reference specific observable metrics.
 - The h-control-negative arm must test a regime where the mechanism should NOT apply.
+- If the research question asks whether an algorithm or code path can be improved (not just tuned via flags), you MUST include `code_changes` on the relevant arm(s). Framing should have already cited the target files; use those citations to populate `file`.
 
 ## Output Format
 
@@ -66,6 +68,10 @@ arms:
     prediction: "..."
     mechanism: "..."
     diagnostic: "..."
+    code_changes:
+      - file: "path/to/file.ext"
+        intent: "Plain-English description of the change"
+        rationale: "Why this change tests the hypothesis"
   - type: h-control-negative
     prediction: "..."
     mechanism: "..."

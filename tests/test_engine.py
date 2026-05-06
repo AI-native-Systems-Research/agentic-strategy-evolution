@@ -18,20 +18,20 @@ class TestPhaseEnum:
             for target in targets:
                 assert target in ALL_STATES
 
-    def test_done_is_terminal(self):
-        assert "DONE" not in TRANSITIONS
+    def test_done_can_only_reenter_design(self):
+        """DONE is terminal within a campaign, but may re-enter DESIGN so a
+        finished campaign can be resumed with a higher max_iterations."""
+        assert TRANSITIONS["DONE"] == frozenset({"DESIGN"})
 
     def test_transitions_are_immutable(self):
         with pytest.raises(TypeError):
             TRANSITIONS["NEW_STATE"] = frozenset({"INIT"})
 
-    def test_every_non_terminal_phase_has_transitions_entry(self):
-        """Every phase except DONE must have outgoing transitions."""
+    def test_every_phase_has_transitions_entry(self):
+        """Every phase must have outgoing transitions (DONE → DESIGN for resume)."""
         for phase in Phase:
-            if phase == Phase.DONE:
-                continue
             assert phase.value in TRANSITIONS, (
-                f"Non-terminal phase {phase.value} has no TRANSITIONS entry"
+                f"Phase {phase.value} has no TRANSITIONS entry"
             )
 
 
@@ -222,7 +222,7 @@ class TestEngine:
         engine.transition("PLAN_EXECUTION")  # human rejects
         assert engine.phase == "PLAN_EXECUTION"
 
-    def test_done_cannot_transition(self, work_dir):
+    def test_done_can_only_transition_to_design(self, work_dir):
         engine = Engine(work_dir)
         for s in [
             "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
@@ -231,8 +231,12 @@ class TestEngine:
             "EXTRACTION", "DONE",
         ]:
             engine.transition(s)
-        with pytest.raises(ValueError, match="already DONE"):
+        # DONE is effectively terminal: only DESIGN is reachable (for resuming
+        # a completed campaign with a higher max_iterations).
+        with pytest.raises(ValueError, match="Invalid transition"):
             engine.transition("INIT")
+        engine.transition("DESIGN")
+        assert engine.phase == "DESIGN"
 
     def test_multi_iteration(self, work_dir):
         engine = Engine(work_dir)

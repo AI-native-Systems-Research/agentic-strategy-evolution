@@ -354,6 +354,7 @@ def run_iteration(
                 cwd=experiment_dir or Path(repo_path) if repo_path else iter_dir,
                 iter_dir=iter_dir,
                 revision_fn=revision_fn,
+                reset_cmd="git checkout -- ." if experiment_dir else None,
             )
             print(f"  -> {iter_dir / 'execution_results.json'}")
         finally:
