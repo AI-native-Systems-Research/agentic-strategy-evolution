@@ -46,4 +46,16 @@ def gather_repo_context(repo_path: Path) -> str:
         except (subprocess.TimeoutExpired, OSError):
             continue
 
+    # 4. Example configs (list files in examples/ or similar dirs)
+    for examples_dir in ["examples", "configs", "testdata"]:
+        edir = repo_path / examples_dir
+        if edir.is_dir():
+            try:
+                files = sorted(str(p.relative_to(repo_path)) for p in edir.iterdir() if p.is_file())[:20]
+                if files:
+                    parts.append(f"## Example Files (`{examples_dir}/`)\n```\n{chr(10).join(files)}\n```")
+            except OSError:
+                pass
+            break
+
     return "\n\n".join(parts) if parts else "(no repo context gathered)"

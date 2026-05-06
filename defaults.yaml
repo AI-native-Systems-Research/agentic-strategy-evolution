@@ -30,5 +30,5 @@ models:
 
 # Max tool-use turns for claude -p phases.
 max_turns:
-  design: 25
-  plan_execution: 8
+  design: 40
+  plan_execution: 15

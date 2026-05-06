@@ -25,6 +25,10 @@ properties:
         type: string
         minLength: 1
 
+  arm_selection_rationale:
+    type: string
+    description: "Brief explanation of which arms were chosen and why."
+
   arms:
     type: array
     minItems: 1

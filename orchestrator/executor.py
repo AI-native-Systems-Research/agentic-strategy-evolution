@@ -135,6 +135,14 @@ def execute_plan(
             yaml.safe_dump(plan, default_flow_style=False, sort_keys=False),
         )
 
+        # Re-run setup (revised plan may have changed data files created in setup)
+        try:
+            setup_results = _run_setup(plan.get("setup", []), cwd, timeout)
+        except CommandError as exc:
+            logger.warning("Setup failed on revision %d: %s", revisions_used, exc)
+            print(f"    Setup failed on revision: {exc}. Continuing with partial results.", flush=True)
+            break
+
         # Re-run only failed arms from the revised plan
         retry_arms = [a for a in plan["arms"] if a["arm_id"] in failed_arms]
         retry_results = _run_all_arms(retry_arms, cwd, results_dir, timeout, reset_cmd)

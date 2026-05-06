@@ -33,6 +33,24 @@ This is iteration {{iteration}} of the investigation.
 
 You have {{max_turns}} tool uses. The repo context above gives you structure, build system, and CLI flags. Use your tool budget to verify details, probe the system, and ground your design in evidence — not to re-discover what's already provided.
 
+## Worked Example — Exploration Process
+
+```
+# Learn file format from an existing example — never guess
+$ cat examples/config-small.yaml
+# (now I know the exact fields and valid values)
+
+# Verify the baseline command works with minimal input
+$ ./bin/tool run --config examples/config-small.yaml --iterations 5
+✓ Exit 0, output produced
+
+# Read source to ground the mechanism
+$ grep -n "evict" src/cache.go
+87:  if usage > c.threshold {
+```
+
+Every command and file format in your design must come from something you observed — not assumed.
+
 ## Instructions — Phase 1: Explore and Validate
 
 Before designing anything, ground yourself in the real system:
@@ -41,13 +59,15 @@ Before designing anything, ground yourself in the real system:
 
 2. **Verify the system interface** — run `--help` or equivalent to discover real CLI flags and subcommands. Only use flags that actually exist. Prefer the simplest local invocation (e.g., "run", "simulate") over ones requiring external servers.
 
-3. **Run to learn** — execute quick commands to observe current behavior. Run a short baseline to check output format, validate that commands work, and probe system capacity or behavior bounds. For example, if your experiment depends on a capacity threshold, measure it now with a quick probe rather than guessing.
+3. **Read before creating** — if the experiment needs data files (workload specs, configs, input YAML/JSON), find and read an existing example in the repo first (`examples/` directory, test fixtures, or documentation). Learn the exact field names, required fields, and valid values. Do not guess file schemas — one `cat` of an example prevents all format errors.
 
-4. **Ground claims in code** — for each flag or mechanism relevant to your experiment, read the source where it's parsed/used and note the relevant lines. This proves semantics (e.g., are token counts additive? Does a flag replace or augment another?).
+4. **Run to learn** — execute quick commands to observe current behavior. Run a short baseline to check output format, validate that commands work, and probe system capacity or behavior bounds. For example, if your experiment depends on a capacity threshold, measure it now with a quick probe rather than guessing.
 
-5. **Identify key source files** — find the files implementing the mechanism under study.
+5. **Ground claims in code with `file:line`** — for each flag or mechanism relevant to your experiment, cite the exact source location as `file/path.ext:line_number`. Example: "Rejection threshold checked at `sim/admission.go:264`". Do not describe behavior without a file:line reference.
 
-6. **Smoke-test the baseline command** — before finalizing your design, run the exact baseline command you plan to propose (with minimal input, e.g., reduced iteration count or small dataset) and verify it exits successfully and produces output. If it fails, fix the command until it works. Do NOT propose commands you haven't validated.
+6. **Identify key source files** — find the files implementing the mechanism under study.
+
+7. **Smoke-test the baseline command** — before finalizing your design, run the exact baseline command you plan to propose (with minimal input, e.g., reduced iteration count or small dataset). Verify it exits successfully and produces output. Report what you observed: exit code, output file produced, and one key metric value if available. If it fails, fix the command until it works. Do NOT propose commands you haven't validated.
 
 ## Instructions — Phase 2: Write Problem Framing
 
@@ -59,11 +79,14 @@ Restate precisely. Reference specific source files implementing the mechanism.
 ### System Interface
 - Build command.
 - CLI flags relevant to the experiment with exact semantics.
-- **Code evidence:** For each relevant flag, quote the source line(s) defining its behavior.
+- **Code evidence:** For each relevant flag, cite `file:line` where it is defined or parsed.
 - The native output flag for collecting metrics (never use shell redirects like `> file`).
 
 ### Baseline Command
 A single, complete, copy-pasteable command that runs a baseline experiment. All parameters as CLI flags. Must use the system's native output mechanism.
+
+### Baseline Validation
+Report what you observed when you ran the baseline: exit code, output file path, and one example metric value. This proves the command works.
 
 ### Experimental Conditions
 List each condition with what changes from baseline. For code-change conditions, describe the modification intent (what to change and why) — do NOT write implementation commands like `sed` or inline edits. The executor agent will implement code changes properly. For flag/config-only conditions, include the exact command.
