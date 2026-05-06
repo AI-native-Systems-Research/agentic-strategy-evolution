@@ -57,7 +57,7 @@ Rules:
 - Include seeds in commands for reproducibility.
 - Only use CLI flags documented in the `--help` output above. Do not guess flag names.
 - **If an arm has a `code_changes` entry** in the bundle, turn each intent into a reusable patch file BEFORE emitting the plan:
-  1. Read the target file and implement the change in the worktree using proper file edits (e.g., reading the file, making structural changes, writing it back). **Do NOT use `sed`/`awk` in the emitted setup commands to construct patches** — inline shell regex is fragile for anything beyond single-line literal replacements and has been observed to produce malformed patches (wrong escape sequences, broken multi-line function bodies). Use real file edits, then capture the result via `git diff`.
+  1. Read the target file and implement the change in the worktree using proper file edits (reading the file, making structural changes, writing it back). **NEVER use `sed`, `awk`, or any inline shell regex to construct patches** — not even for single-line changes. This rule is absolute so the patch-creation mechanism is robust and consistent regardless of how the change looks. Edit the file with real tooling, build to verify, then capture the result via `git diff`.
   2. Build the system to verify the change compiles.
   3. Save the diff: `mkdir -p patches && git diff > patches/<arm_id>.patch`.
   4. Reset the worktree to clean state: `git checkout -- .`.
