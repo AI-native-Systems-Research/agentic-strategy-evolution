@@ -25,6 +25,12 @@ This is iteration {{iteration}} of the investigation.
 
 {{investigation_summary}}
 
+**When investigation_summary exists (iteration > 1), you MUST before designing:**
+1. List each failure or null result from the previous iteration and state what caused it.
+2. For each failed assumption (e.g., "assumed preemptions > 20% but observed 0"), probe to find parameters that DO produce the needed condition.
+3. Do NOT reuse parameter ranges that produced null results — escalate or change approach.
+4. Only after verifying new parameters satisfy the regime, proceed to Phase 2.
+
 ## Pre-gathered Repo Context
 
 {{repo_context}}
@@ -68,6 +74,8 @@ Before designing anything, ground yourself in the real system:
 6. **Identify key source files** — find the files implementing the mechanism under study.
 
 7. **Smoke-test the baseline command** — before finalizing your design, run the exact baseline command you plan to propose (with minimal input, e.g., reduced iteration count or small dataset). Verify it exits successfully and produces output. Report what you observed: exit code, output file produced, and one key metric value if available. If it fails, fix the command until it works. Do NOT propose commands you haven't validated.
+
+8. **Validate regime assumptions** — if your hypothesis depends on a specific system state (e.g., preemptions occurring, saturation > threshold, scheduling delays dominating TTFT, rejections happening), run a probe at your planned parameters and verify that state exists in the output. For example: if you assume preemption_rate > 0, run at your planned load and check `preemption_count` in stdout. If the condition isn't met, escalate parameters (increase load, reduce instances, use longer inputs) until it is. Do NOT design a bundle whose mechanism depends on conditions you haven't observed in a probe.
 
 ## Instructions — Phase 2: Write Problem Framing
 
@@ -119,7 +127,7 @@ Now design a hypothesis bundle based on what you actually observed and verified:
 
 3. Each arm must have:
    - `type`: One of h-main, h-ablation, h-super-additivity, h-control-negative, h-robustness.
-   - `prediction`: A quantitative, falsifiable claim referencing observable metrics. Base numbers on what you measured or observed, not guesses.
+   - `prediction`: A **directional**, falsifiable claim referencing observable metrics. State the expected direction and relative magnitude (e.g., "increasing X will decrease Y consistently across seeds"). Do NOT invent arbitrary numeric thresholds (e.g., ">10% improvement") unless the campaign.yaml specifies one. The hypothesis bundle's multi-seed design tests significance — your prediction tests direction and mechanism.
    - `mechanism`: A causal explanation grounded in the code you read.
    - `diagnostic`: What to investigate if the prediction is wrong.
    - `code_changes` *(optional)*: Include when the arm tests an algorithmic change rather than a flag/config variation. Each entry needs `file`, `intent` (plain English, not a patch), and `rationale`. The PLAN_EXECUTION agent will later turn each intent into a patch. If the hypothesis only varies existing CLI flags, omit this field.
@@ -127,7 +135,7 @@ Now design a hypothesis bundle based on what you actually observed and verified:
 ## Constraints
 
 - Do NOT violate active principles.
-- Predictions must be quantitative and reference specific observable metrics.
+- Predictions must be directional, falsifiable, and reference specific observable metrics. Do not invent arbitrary numeric thresholds unless campaign.yaml specifies them.
 - Base all experiment parameters on verified system behavior — if you didn't probe it, don't assume it.
 - **No `sed`/`awk` for code changes.** When describing code modifications in problem framing or bundle arms, describe the *intent* (what to change and why). The executor agent will implement changes properly via file edits, verify they compile, and create reusable `git diff` patches. Never suggest inline shell regex as an implementation strategy.
 - **Worktree isolation assumed.** The executor runs in a clean git worktree. Each condition starts from clean state (`git checkout -- .` runs between conditions). Design your experimental conditions assuming this — don't include manual cleanup steps.

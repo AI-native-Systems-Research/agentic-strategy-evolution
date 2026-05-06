@@ -192,40 +192,23 @@ class TestLLMDispatcher:
         assert out.exists()
         assert out.read_text() == raw_text
 
-    def test_dispatch_executor_produces_valid_findings(self, work_dir: Path) -> None:
-        resp = f"Analysis:\n\n```json\n{VALID_FINDINGS_JSON}\n```"
+    def test_dispatch_executor_execute_analyze(self, work_dir: Path) -> None:
+        execute_analyze_output = json.dumps({
+            "plan": {"metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+                     "arms": [{"arm_id": "h-main", "conditions": [{"name": "baseline", "cmd": "echo test"}]}]},
+            "findings": json.loads(VALID_FINDINGS_JSON),
+            "principle_updates": json.loads(VALID_PRINCIPLES_JSON)["principles"],
+        }, indent=2)
+        resp = f"```json\n{execute_analyze_output}\n```"
         d = _make_dispatcher(work_dir, [resp])
-        out = work_dir / "runs" / "iter-1" / "findings_out.json"
+        out = work_dir / "runs" / "iter-1" / "execute_analyze_output.json"
 
-        d.dispatch("executor", "analyze", output_path=out, iteration=1)
+        d.dispatch("executor", "execute-analyze", output_path=out, iteration=1)
 
-        findings = json.loads(out.read_text())
-        schema = load_schema("findings.schema.json")
-        jsonschema.validate(findings, schema)
-
-    def test_dispatch_reviewer_produces_markdown(self, work_dir: Path) -> None:
-        review_md = "# Review — rigor\n\n## CRITICAL\nNo CRITICAL findings.\n"
-        d = _make_dispatcher(work_dir, [review_md])
-        out = work_dir / "runs" / "iter-1" / "review-rigor.md"
-
-        d.dispatch(
-            "reviewer", "review-design",
-            output_path=out, iteration=1, perspective="rigor",
-        )
-
-        assert out.exists()
-        assert "rigor" in out.read_text()
-
-    def test_dispatch_extractor_writes_principles(self, work_dir: Path) -> None:
-        resp = f"Updated principles:\n\n```json\n{VALID_PRINCIPLES_JSON}\n```"
-        d = _make_dispatcher(work_dir, [resp])
-        out = work_dir / "principles.json"
-
-        d.dispatch("extractor", "extract", output_path=out, iteration=1)
-
-        store = json.loads(out.read_text())
-        assert len(store["principles"]) == 1
-        assert store["principles"][0]["id"] == "RP-1"
+        combined = json.loads(out.read_text())
+        assert "plan" in combined
+        assert "findings" in combined
+        assert "principle_updates" in combined
 
     def test_design_no_schema_validation_in_dispatcher(self, work_dir: Path) -> None:
         """Design route (fmt=None) writes raw text — no schema validation."""
@@ -285,53 +268,72 @@ class TestLLMDispatcher:
         assert "Batch size amortizes fixed overhead" in system_prompt
 
     def test_h_main_result_ignored(self, work_dir: Path) -> None:
-        resp = f"```json\n{VALID_FINDINGS_JSON}\n```"
+        execute_analyze_output = json.dumps({
+            "plan": {"metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+                     "arms": [{"arm_id": "h-main", "conditions": [{"name": "baseline", "cmd": "echo test"}]}]},
+            "findings": json.loads(VALID_FINDINGS_JSON),
+            "principle_updates": [],
+        }, indent=2)
+        resp = f"```json\n{execute_analyze_output}\n```"
         mock_fn = make_mock_completion([resp])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = work_dir / "runs" / "iter-1" / "findings_hmain.json"
+        out = work_dir / "runs" / "iter-1" / "ea_hmain.json"
 
         # Pass REFUTED but executor should still use its own analysis
         d.dispatch(
-            "executor", "analyze", output_path=out, iteration=1, h_main_result="REFUTED",
+            "executor", "execute-analyze", output_path=out, iteration=1, h_main_result="REFUTED",
         )
 
-        findings = json.loads(out.read_text())
+        combined = json.loads(out.read_text())
         # The mock response has CONFIRMED — proving h_main_result was ignored
-        assert findings["arms"][0]["status"] == "CONFIRMED"
+        assert combined["findings"]["arms"][0]["status"] == "CONFIRMED"
 
     def test_no_code_fence_retries_then_raises(self, work_dir: Path) -> None:
         # Raw JSON without code fence triggers retry; if retry also fails, raises
-        d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON, VALID_FINDINGS_JSON])
-        out = work_dir / "runs" / "iter-1" / "findings_raw.json"
+        raw_json = json.dumps({"plan": {}, "findings": {}, "principle_updates": []})
+        d = _make_dispatcher(work_dir, [raw_json, raw_json])
+        out = work_dir / "runs" / "iter-1" / "ea_raw.json"
 
         with pytest.raises(RuntimeError, match="retry response could not be parsed"):
-            d.dispatch("executor", "analyze", output_path=out, iteration=1)
+            d.dispatch("executor", "execute-analyze", output_path=out, iteration=1)
 
     def test_no_code_fence_retry_succeeds(self, work_dir: Path) -> None:
-        # First response has no fence, retry returns a proper fenced response
-        fenced = f"```json\n{VALID_FINDINGS_JSON}\n```"
-        d = _make_dispatcher(work_dir, [VALID_FINDINGS_JSON, fenced])
-        out = work_dir / "runs" / "iter-1" / "findings_retry.json"
+        execute_analyze_output = json.dumps({
+            "plan": {"metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+                     "arms": [{"arm_id": "h-main", "conditions": [{"name": "baseline", "cmd": "echo test"}]}]},
+            "findings": json.loads(VALID_FINDINGS_JSON),
+            "principle_updates": [],
+        }, indent=2)
+        fenced = f"```json\n{execute_analyze_output}\n```"
+        raw = json.dumps({"plan": {}, "findings": {}, "principle_updates": []})
+        d = _make_dispatcher(work_dir, [raw, fenced])
+        out = work_dir / "runs" / "iter-1" / "ea_retry.json"
 
-        d.dispatch("executor", "analyze", output_path=out, iteration=1)
-        findings = json.loads(out.read_text())
-        assert "arms" in findings
+        d.dispatch("executor", "execute-analyze", output_path=out, iteration=1)
+        combined = json.loads(out.read_text())
+        assert "findings" in combined
 
     def test_multiple_code_fences_uses_last(self, work_dir: Path) -> None:
         first_json = json.dumps({"bad": True})
+        execute_analyze_output = json.dumps({
+            "plan": {"metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+                     "arms": [{"arm_id": "h-main", "conditions": [{"name": "baseline", "cmd": "echo test"}]}]},
+            "findings": json.loads(VALID_FINDINGS_JSON),
+            "principle_updates": [],
+        }, indent=2)
         resp = (
             f"First attempt:\n```json\n{first_json}\n```\n\n"
-            f"Corrected:\n```json\n{VALID_FINDINGS_JSON}\n```"
+            f"Corrected:\n```json\n{execute_analyze_output}\n```"
         )
         d = _make_dispatcher(work_dir, [resp])
-        out = work_dir / "runs" / "iter-1" / "findings_multi.json"
+        out = work_dir / "runs" / "iter-1" / "ea_multi.json"
 
-        d.dispatch("executor", "analyze", output_path=out, iteration=1)
+        d.dispatch("executor", "execute-analyze", output_path=out, iteration=1)
 
-        findings = json.loads(out.read_text())
-        assert "arms" in findings  # Used the valid last fence, not the bad first one
+        combined = json.loads(out.read_text())
+        assert "findings" in combined
 
     def test_unknown_role_phase_raises(self, work_dir: Path) -> None:
         d = _make_dispatcher(work_dir, [])
@@ -359,23 +361,19 @@ class TestLLMDispatcher:
                 completion_fn=make_mock_completion([]),
             )
 
-    def test_missing_bundle_for_plan_execution_raises(self, work_dir: Path) -> None:
-        # Remove the bundle so the plan-execution phase fails with a clear message
+    def test_missing_bundle_for_execute_analyze_raises(self, work_dir: Path) -> None:
         (work_dir / "runs" / "iter-1" / "bundle.yaml").unlink()
         d = _make_dispatcher(work_dir, ["unused"])
-        out = work_dir / "runs" / "iter-1" / "experiment_plan.yaml"
+        out = work_dir / "runs" / "iter-1" / "ea_output.json"
         with pytest.raises(FileNotFoundError, match="design phase completed"):
-            d.dispatch("executor", "plan-execution", output_path=out, iteration=1)
+            d.dispatch("executor", "execute-analyze", output_path=out, iteration=1)
 
-    def test_missing_findings_for_review_raises(self, work_dir: Path) -> None:
+    def test_missing_findings_for_summarize_raises(self, work_dir: Path) -> None:
         (work_dir / "runs" / "iter-1" / "findings.json").unlink()
         d = _make_dispatcher(work_dir, ["unused"])
-        out = work_dir / "runs" / "iter-1" / "review-test.md"
-        with pytest.raises(FileNotFoundError, match="executor completed"):
-            d.dispatch(
-                "reviewer", "review-findings",
-                output_path=out, iteration=1, perspective="test",
-            )
+        out = work_dir / "runs" / "iter-1" / "summary.json"
+        with pytest.raises(FileNotFoundError, match="findings"):
+            d.dispatch("extractor", "summarize", output_path=out, iteration=1)
 
 
 class TestExampleCampaign:
@@ -625,24 +623,14 @@ class TestHumanFeedbackContext:
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "Human Feedback" not in prompt
 
-    def test_plan_execution_loads_findings_json_context(self, work_dir: Path) -> None:
-        """plan-execution phase should load findings.json into context dict."""
-        resp = f"```yaml\n{VALID_EXPERIMENT_PLAN_YAML}\n```"
-        mock_fn = make_mock_completion([resp])
-        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
-        # Verify _build_context includes findings_json for plan-execution
-        ctx = d._build_context("executor", "plan-execution", iteration=1, perspective=None)
-        assert "findings_json" in ctx
-        assert "CONFIRMED" in ctx["findings_json"]
-
-    def test_plan_execution_reads_findings_feedback(self, work_dir: Path) -> None:
-        """plan-execution maps to 'findings' key in human_feedback.json."""
+    def test_execute_analyze_reads_findings_feedback(self, work_dir: Path) -> None:
+        """execute-analyze maps to 'findings' key in human_feedback.json."""
         fb = {"design": [], "findings": [
             {"attempt": 1, "reason": "Results look suspicious", "timestamp": "2026-01-01T00:00:00+00:00"}
         ]}
         (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text(json.dumps(fb))
         d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=make_mock_completion(["stub"]))
-        ctx = d._build_context("executor", "plan-execution", iteration=1, perspective=None)
+        ctx = d._build_context("executor", "execute-analyze", iteration=1, perspective=None)
         assert "Results look suspicious" in ctx["human_feedback"]
 
     def test_multiple_rejections_uses_latest(self, work_dir: Path) -> None:
@@ -668,10 +656,11 @@ class TestHumanFeedbackContext:
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "Human Feedback" not in prompt
 
-    def test_plan_execution_without_findings_does_not_crash(self, work_dir: Path) -> None:
-        """First run: plan-execution should not crash when findings.json is missing."""
-        (work_dir / "runs" / "iter-1" / "findings.json").unlink()
-        resp = f"```yaml\n{VALID_EXPERIMENT_PLAN_YAML}\n```"
-        mock_fn = make_mock_completion([resp])
-        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
-        d.dispatch("executor", "plan-execution", output_path=work_dir / "runs" / "iter-1" / "experiment_plan.yaml", iteration=1)
+    def test_execute_analyze_without_feedback_does_not_crash(self, work_dir: Path) -> None:
+        """execute-analyze should not crash when human_feedback.json is missing."""
+        fb_path = work_dir / "runs" / "iter-1" / "human_feedback.json"
+        if fb_path.exists():
+            fb_path.unlink()
+        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=make_mock_completion(["stub"]))
+        ctx = d._build_context("executor", "execute-analyze", iteration=1, perspective=None)
+        assert ctx["human_feedback"] == ""

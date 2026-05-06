@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/execute_analyze.schema.json",
+  "title": "Execute + Analyze Output",
+  "description": "Combined output from the merged execute-analyze agent: experiment plan, findings, and principle updates.",
+  "type": "object",
+  "required": ["plan", "findings", "principle_updates"],
+  "additionalProperties": false,
+  "properties": {
+    "plan": {
+      "type": "object",
+      "required": ["metadata", "arms"],
+      "additionalProperties": false,
+      "properties": {
+        "metadata": {
+          "type": "object",
+          "required": ["iteration", "bundle_ref"],
+          "properties": {
+            "iteration": { "type": "integer", "minimum": 1 },
+            "bundle_ref": { "type": "string", "minLength": 1 },
+            "description": { "type": "string" }
+          }
+        },
+        "setup": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["cmd"],
+            "additionalProperties": false,
+            "properties": {
+              "cmd": { "type": "string", "minLength": 1 },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "arms": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["arm_id", "conditions"],
+            "additionalProperties": false,
+            "properties": {
+              "arm_id": { "type": "string", "minLength": 1 },
+              "conditions": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["name", "cmd"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": { "type": "string", "minLength": 1 },
+                    "cmd": { "type": "string", "minLength": 1 },
+                    "output": { "type": "string" },
+                    "description": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "object",
+      "required": ["iteration", "bundle_ref", "arms", "experiment_valid", "discrepancy_analysis"],
+      "additionalProperties": false,
+      "properties": {
+        "iteration": { "type": "integer", "minimum": 0 },
+        "bundle_ref": { "type": "string", "minLength": 1 },
+        "arms": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["arm_type", "predicted", "observed", "status", "error_type", "diagnostic_note"],
+            "additionalProperties": false,
+            "properties": {
+              "arm_type": { "type": "string" },
+              "predicted": { "type": "string", "minLength": 1 },
+              "observed": { "type": "string", "minLength": 1 },
+              "status": { "type": "string", "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED"] },
+              "error_type": { "type": ["string", "null"], "enum": ["direction", "mechanism", "regime", null] },
+              "diagnostic_note": { "type": ["string", "null"] },
+              "metadata": { "type": "object" }
+            }
+          }
+        },
+        "experiment_valid": { "type": "boolean" },
+        "discrepancy_analysis": { "type": "string" },
+        "dominant_component_pct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+      }
+    },
+    "principle_updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement", "confidence", "regime", "evidence", "contradicts", "extraction_iteration", "mechanism", "applicability_bounds", "superseded_by", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "statement": { "type": "string", "minLength": 1 },
+          "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+          "regime": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "contradicts": { "type": "array", "items": { "type": "string" } },
+          "extraction_iteration": { "type": "integer", "minimum": 0 },
+          "mechanism": { "type": "string" },
+          "applicability_bounds": { "type": "string" },
+          "superseded_by": { "type": ["string", "null"] },
+          "category": { "type": "string", "enum": ["domain", "meta"] },
+          "status": { "type": "string", "enum": ["active", "updated", "pruned"] }
+        }
+      }
+    }
+  }
+}

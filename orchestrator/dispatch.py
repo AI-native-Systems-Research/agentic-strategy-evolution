@@ -60,17 +60,17 @@ class StubDispatcher:
             case "planner":
                 self._write_design_output(output_path, iteration)
             case "executor":
-                if phase == "plan-execution":
-                    self._write_experiment_plan(output_path, iteration)
+                if phase == "execute-analyze":
+                    self._write_execute_analyze(output_path, iteration, h_main_result)
                 else:
-                    self._write_findings(output_path, iteration, h_main_result)
-            case "reviewer":
-                self._write_review(output_path, perspective or "general")
+                    raise ValueError(f"Unknown phase for executor: {phase}")
             case "extractor":
                 if phase == "summarize":
                     self._write_investigation_summary(output_path, iteration)
+                elif phase == "report":
+                    atomic_write(output_path, "# Stub Report\n\nNo real analysis performed.\n")
                 else:
-                    self._write_principles(output_path, iteration)
+                    raise ValueError(f"Unknown phase for extractor: {phase}")
             case "summarizer":
                 if phase != "summarize-gate":
                     raise ValueError(f"Unknown phase for summarizer: {phase}")
@@ -115,44 +115,95 @@ class StubDispatcher:
         raw = f"{problem_md}\n---\n\n```yaml\n{bundle_yaml}```\n"
         atomic_write(path, raw)
 
-    def _write_experiment_plan(self, path: Path, iteration: int) -> None:
-        plan = {
-            "metadata": {
+    def _write_execute_analyze(self, path: Path, iteration: int, h_main_result: str) -> None:
+        """Write combined execute+analyze output: plan, findings, principle_updates."""
+        combined = {
+            "plan": {
+                "metadata": {
+                    "iteration": iteration,
+                    "bundle_ref": f"runs/iter-{iteration}/bundle.yaml",
+                },
+                "setup": [
+                    {"cmd": "echo 'stub build'", "description": "Stub setup"},
+                ],
+                "arms": [
+                    {
+                        "arm_id": "h-main",
+                        "conditions": [
+                            {
+                                "name": "baseline",
+                                "cmd": "echo '{\"latency_ms\": 50}'",
+                                "output": "results/h-main/baseline.json",
+                            },
+                            {
+                                "name": "treatment",
+                                "cmd": "echo '{\"latency_ms\": 40}'",
+                                "output": "results/h-main/treatment.json",
+                            },
+                        ],
+                    },
+                    {
+                        "arm_id": "h-control-negative",
+                        "conditions": [
+                            {
+                                "name": "control",
+                                "cmd": "echo '{\"latency_ms\": 50}'",
+                                "output": "results/h-control-negative/control.json",
+                            },
+                        ],
+                    },
+                ],
+            },
+            "findings": {
                 "iteration": iteration,
                 "bundle_ref": f"runs/iter-{iteration}/bundle.yaml",
+                "arms": [
+                    {
+                        "arm_type": "h-main",
+                        "predicted": ">10% improvement",
+                        "observed": "12.3% improvement"
+                        if h_main_result == "CONFIRMED"
+                        else "-2.1% regression",
+                        "status": h_main_result,
+                        "error_type": None
+                        if h_main_result == "CONFIRMED"
+                        else "direction",
+                        "diagnostic_note": None
+                        if h_main_result == "CONFIRMED"
+                        else "Mechanism does not hold",
+                    },
+                    {
+                        "arm_type": "h-control-negative",
+                        "predicted": "no effect at low load",
+                        "observed": "no significant effect",
+                        "status": "CONFIRMED",
+                        "error_type": None,
+                        "diagnostic_note": None,
+                    },
+                ],
+                "experiment_valid": True,
+                "discrepancy_analysis": "Stub analysis: all predictions within expected range."
+                if h_main_result == "CONFIRMED"
+                else "Stub analysis: H-main refuted, mechanism does not hold.",
             },
-            "setup": [
-                {"cmd": "echo 'stub build'", "description": "Stub setup"},
-            ],
-            "arms": [
+            "principle_updates": [
                 {
-                    "arm_id": "h-main",
-                    "conditions": [
-                        {
-                            "name": "baseline",
-                            "cmd": "echo '{\"latency_ms\": 50}'",
-                            "output": "results/h-main/baseline.json",
-                        },
-                        {
-                            "name": "treatment",
-                            "cmd": "echo '{\"latency_ms\": 40}'",
-                            "output": "results/h-main/treatment.json",
-                        },
-                    ],
-                },
-                {
-                    "arm_id": "h-control-negative",
-                    "conditions": [
-                        {
-                            "name": "control",
-                            "cmd": "echo '{\"latency_ms\": 50}'",
-                            "output": "results/h-control-negative/control.json",
-                        },
-                    ],
+                    "id": f"stub-principle-{iteration}",
+                    "statement": f"Stub principle extracted from iteration {iteration}",
+                    "confidence": "medium",
+                    "regime": "all",
+                    "evidence": [f"iteration-{iteration}-h-main"],
+                    "contradicts": [],
+                    "extraction_iteration": iteration,
+                    "mechanism": "Stub mechanism",
+                    "applicability_bounds": "stub",
+                    "superseded_by": None,
+                    "category": "domain",
+                    "status": "active",
                 },
             ],
         }
-        atomic_write(path, yaml.safe_dump(plan, default_flow_style=False, sort_keys=False))
+        atomic_write(path, json.dumps(combined, indent=2) + "\n")
 
     def write_execution_results(self, path: Path, iteration: int) -> None:
         """Write stub execution results for integration tests."""
@@ -200,50 +251,6 @@ class StubDispatcher:
         }
         atomic_write(path, json.dumps(results, indent=2) + "\n")
 
-    def _write_findings(self, path: Path, iteration: int, h_main_result: str) -> None:
-        findings = {
-            "iteration": iteration,
-            "bundle_ref": f"runs/iter-{iteration}/bundle.yaml",
-            "arms": [
-                {
-                    "arm_type": "h-main",
-                    "predicted": ">10% improvement",
-                    "observed": "12.3% improvement"
-                    if h_main_result == "CONFIRMED"
-                    else "-2.1% regression",
-                    "status": h_main_result,
-                    "error_type": None
-                    if h_main_result == "CONFIRMED"
-                    else "direction",
-                    "diagnostic_note": None
-                    if h_main_result == "CONFIRMED"
-                    else "Mechanism does not hold",
-                },
-                {
-                    "arm_type": "h-control-negative",
-                    "predicted": "no effect at low load",
-                    "observed": "no significant effect",
-                    "status": "CONFIRMED",
-                    "error_type": None,
-                    "diagnostic_note": None,
-                },
-            ],
-            "experiment_valid": True,
-            "discrepancy_analysis": "Stub analysis: all predictions within expected range."
-            if h_main_result == "CONFIRMED"
-            else "Stub analysis: H-main refuted, mechanism does not hold.",
-        }
-        atomic_write(path, json.dumps(findings, indent=2) + "\n")
-
-    def _write_review(self, path: Path, perspective: str) -> None:
-        atomic_write(
-            path,
-            f"# Review — {perspective}\n\n"
-            f"**Severity:** SUGGESTION\n\n"
-            f"No CRITICAL or IMPORTANT findings.\n"
-            f"Stub review from {perspective} perspective.\n",
-        )
-
     def _write_investigation_summary(self, path: Path, iteration: int) -> None:
         summary = {
             "iteration": iteration,
@@ -254,40 +261,6 @@ class StubDispatcher:
             "suggested_next_direction": "Stub: Continue with next mechanism family.",
         }
         atomic_write(path, json.dumps(summary, indent=2) + "\n")
-
-    def _write_principles(self, path: Path, iteration: int) -> None:
-        if path.exists():
-            try:
-                store = json.loads(path.read_text())
-            except (json.JSONDecodeError, OSError) as e:
-                raise RuntimeError(
-                    f"Cannot read existing principles file at {path}: {e}. "
-                    f"The file may be corrupt from a previous failed write."
-                ) from e
-            if "principles" not in store:
-                raise RuntimeError(
-                    f"Principles file at {path} is missing 'principles' key. "
-                    f"Expected schema: {{'principles': [...]}}"
-                )
-        else:
-            store = {"principles": []}
-        store["principles"].append(
-            {
-                "id": f"stub-principle-{iteration}",
-                "statement": f"Stub principle extracted from iteration {iteration}",
-                "confidence": "medium",
-                "regime": "all",
-                "evidence": [f"iteration-{iteration}-h-main"],
-                "contradicts": [],
-                "extraction_iteration": iteration,
-                "mechanism": "Stub mechanism",
-                "applicability_bounds": "stub",
-                "superseded_by": None,
-                "category": "domain",
-                "status": "active",
-            }
-        )
-        atomic_write(path, json.dumps(store, indent=2) + "\n")
 
     def _write_gate_summary(self, path: Path, gate_type: str) -> None:
         summary = {

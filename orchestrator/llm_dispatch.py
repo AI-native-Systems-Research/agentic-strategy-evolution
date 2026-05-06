@@ -171,11 +171,7 @@ class LLMDispatcher:
     _ROUTES: dict[tuple[str, str], tuple[str, str | None, str | None]] = {
         # (role, phase) -> (template_name, output_format, schema_name)
         ("planner", "design"): ("design", None, None),
-        ("executor", "plan-execution"): ("run_plan", "yaml", "experiment_plan.schema.yaml"),
-        ("executor", "analyze"): ("run_analyze", "json", "findings.schema.json"),
-        ("reviewer", "review-design"): ("review_design", None, None),
-        ("reviewer", "review-findings"): ("review_findings", None, None),
-        ("extractor", "extract"): ("extract", "json", "principles.schema.json"),
+        ("executor", "execute-analyze"): ("execute_analyze", "json", "execute_analyze.schema.json"),
         ("extractor", "summarize"): ("summarize", "json", "investigation_summary.schema.json"),
         ("summarizer", "summarize-gate"): ("summarize_gate", "json", "gate_summary.schema.json"),
         ("extractor", "report"): ("report", None, None),
@@ -235,7 +231,7 @@ class LLMDispatcher:
                     "This is the first iteration. No prior investigation summary."
                 )
 
-        if phase in ("design", "plan-execution"):
+        if phase in ("design", "execute-analyze"):
             fb_path = self.work_dir / "runs" / f"iter-{iteration}" / "human_feedback.json"
             if fb_path.exists():
                 try:
@@ -254,7 +250,7 @@ class LLMDispatcher:
                         fb_path, type(store).__name__,
                     )
                     store = {}
-                phase_to_key = {"design": "design", "plan-execution": "findings"}
+                phase_to_key = {"design": "design", "execute-analyze": "findings"}
                 fb_key = phase_to_key.get(phase, "")
                 entries = store.get(fb_key, [])
                 if entries:
@@ -269,10 +265,10 @@ class LLMDispatcher:
             else:
                 ctx["human_feedback"] = ""
 
-        if phase in ("design", "review-design", "plan-execution", "analyze", "summarize"):
+        if phase in ("design", "execute-analyze", "summarize"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
-                pass  # bundle doesn't exist yet during design — template ignores it
+                pass
             elif not bundle_path.exists():
                 raise FileNotFoundError(
                     f"Cannot run '{phase}' phase: {bundle_path} not found. "
@@ -281,7 +277,7 @@ class LLMDispatcher:
             else:
                 ctx["bundle_yaml"] = bundle_path.read_text()
 
-        if phase in ("design", "plan-execution"):
+        if phase in ("design", "execute-analyze"):
             repo_path = self.campaign.get("target_system", {}).get("repo_path")
             if repo_path:
                 from orchestrator.repo_context import gather_repo_context
@@ -290,8 +286,7 @@ class LLMDispatcher:
                 ctx["repo_context"] = "(no repo_path configured)"
             ctx["max_turns"] = str(self._max_turns_for_phase(phase))
 
-        if phase in ("plan-execution", "analyze"):
-            # Inject problem.md so executor/analyzer has full framing context
+        if phase == "execute-analyze":
             problem_path = self.work_dir / "runs" / f"iter-{iteration}" / "problem.md"
             if not problem_path.exists() and iteration > 1:
                 problem_path = self.work_dir / "runs" / "iter-1" / "problem.md"
@@ -300,42 +295,15 @@ class LLMDispatcher:
             else:
                 ctx["problem_md"] = "No problem framing available."
 
-        if phase == "analyze":
-            results_path = (
-                self.work_dir / "runs" / f"iter-{iteration}" / "execution_results.json"
-            )
-            if not results_path.exists():
-                raise FileNotFoundError(
-                    f"Cannot run 'analyze' phase: {results_path} not found. "
-                    f"Ensure the EXECUTING phase completed for iteration {iteration}."
-                )
-            ctx["experiment_results"] = results_path.read_text()
-
-        if phase in ("review-findings", "extract", "summarize", "plan-execution"):
+        if phase == "summarize":
             findings_path = (
                 self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
             )
             if not findings_path.exists():
-                if phase == "plan-execution":
-                    logger.info(
-                        "findings.json not found at %s for plan-execution "
-                        "(expected on first run). Proceeding without prior findings.",
-                        findings_path,
-                    )
-                else:
-                    raise FileNotFoundError(
-                        f"Cannot run '{phase}' phase: {findings_path} not found. "
-                        f"Ensure the executor completed for iteration {iteration}."
-                    )
-            else:
-                ctx["findings_json"] = findings_path.read_text()
-
-        if phase == "extract":
-            principles_path = self.work_dir / "principles.json"
-            if principles_path.exists():
-                ctx["current_principles_json"] = principles_path.read_text()
-            else:
-                ctx["current_principles_json"] = json.dumps({"principles": []}, indent=2)
+                raise FileNotFoundError(
+                    f"Cannot run '{phase}' phase: {findings_path} not found."
+                )
+            ctx["findings_json"] = findings_path.read_text()
 
         if perspective is not None:
             ctx["perspective_name"] = perspective

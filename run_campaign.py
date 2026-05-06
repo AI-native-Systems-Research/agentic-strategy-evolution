@@ -5,10 +5,10 @@ Usage:
     python run_campaign.py examples/campaign.yaml --max-iterations 5
 
 Runs iterations in a loop: each iteration runs the full Nous loop
-(DESIGN → REVIEW → PLAN_EXECUTION → EXECUTING → ANALYSIS → EXTRACTION), then appends a
-ledger row, generates an investigation summary, and prompts whether to
-continue.  The investigation summary is injected into the next iteration's
-design prompt so that each hypothesis bundle is informed by all prior learning.
+(DESIGN → EXECUTE_ANALYZE → VALIDATE → DONE), then appends a ledger row,
+generates an investigation summary, and prompts whether to continue.
+The investigation summary is injected into the next iteration's design prompt
+so that each hypothesis bundle is informed by all prior learning.
 
 Set your LLM API key before running:
     export OPENAI_API_KEY=sk-...
@@ -215,7 +215,7 @@ def run_campaign(
 
         dispatcher = LLMDispatcher(
             work_dir=work_dir, campaign=campaign,
-            model=_resolve_model(campaign, "extraction", model),
+            model=_resolve_model(campaign, "report", model),
         )
         iter_dir = work_dir / "runs" / f"iter-{i}"
         dispatcher.dispatch(
@@ -254,8 +254,9 @@ def run_campaign(
             _write_metrics_summary(work_dir)
             return
 
-        # Advance engine from EXTRACTION → DESIGN (increments iteration)
+        # Advance: HUMAN_FINDINGS_GATE → DONE → DESIGN (increments iteration)
         engine = Engine(work_dir)
+        engine.transition("DONE")
         engine.transition("DESIGN")
         print(f"\n  Advancing to iteration {i + 1}...")
 

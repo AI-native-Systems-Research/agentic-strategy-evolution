@@ -12,7 +12,7 @@ from orchestrator.engine import Engine
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
-from run_iteration import _split_design_output
+from run_iteration import _split_design_output, _merge_principles
 
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
@@ -72,58 +72,43 @@ class TestSingleIterationHappyPath:
         bundle = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
         jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))
 
-        # DESIGN -> DESIGN_REVIEW
-        engine.transition("DESIGN_REVIEW")
-        for p in ["stats", "causal", "confound", "generalization", "clarity"]:
-            dispatcher.dispatch(
-                "reviewer", "review-design",
-                output_path=iter_dir / "reviews" / f"review-{p}.md",
-                iteration=1, perspective=p,
-            )
-
-        # DESIGN_REVIEW -> HUMAN_DESIGN_GATE (no criticals)
+        # DESIGN -> HUMAN_DESIGN_GATE
         engine.transition("HUMAN_DESIGN_GATE")
         assert gate.prompt("Approve?") == ("approve", None)
 
-        # HUMAN_DESIGN_GATE -> PLAN_EXECUTION
-        engine.transition("PLAN_EXECUTION")
+        # HUMAN_DESIGN_GATE -> EXECUTE_ANALYZE
+        engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
-            "executor", "plan-execution",
-            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
+            "executor", "execute-analyze",
+            output_path=iter_dir / "execute_analyze_output.json", iteration=1,
+        )
+        # Split combined output
+        combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
+        (iter_dir / "experiment_plan.yaml").write_text(
+            yaml.safe_dump(combined["plan"], default_flow_style=False, sort_keys=False)
+        )
+        (iter_dir / "findings.json").write_text(json.dumps(combined["findings"], indent=2))
+        (iter_dir / "principle_updates.json").write_text(
+            json.dumps(combined["principle_updates"], indent=2)
         )
 
-        # PLAN_EXECUTION -> EXECUTING
-        engine.transition("EXECUTING")
-        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
-
-        # EXECUTING -> ANALYSIS
-        engine.transition("ANALYSIS")
-        dispatcher.dispatch(
-            "executor", "analyze", output_path=iter_dir / "findings.json", iteration=1,
-        )
-        findings = json.loads((iter_dir / "findings.json").read_text())
+        findings = combined["findings"]
         jsonschema.validate(findings, load_schema("findings.schema.json"))
 
         # Check fast-fail
         ff = check_fast_fail(findings)
         assert ff == FastFailAction.CONTINUE
 
-        # ANALYSIS -> FINDINGS_REVIEW
-        engine.transition("FINDINGS_REVIEW")
+        # EXECUTE_ANALYZE -> VALIDATE
+        engine.transition("VALIDATE")
+        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
 
-        # FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
+        # VALIDATE -> HUMAN_FINDINGS_GATE
         engine.transition("HUMAN_FINDINGS_GATE")
         assert gate.prompt("Approve?") == ("approve", None)
 
-        # H-main confirmed -> TUNING
-        engine.transition("TUNING")
-
-        # TUNING -> EXTRACTION
-        engine.transition("EXTRACTION")
-        dispatcher.dispatch(
-            "extractor", "extract",
-            output_path=campaign_dir / "principles.json", iteration=1,
-        )
+        # Merge principles (Python, no LLM)
+        _merge_principles(campaign_dir, iter_dir)
         principles = json.loads((campaign_dir / "principles.json").read_text())
         jsonschema.validate(principles, load_schema("principles.schema.json"))
         assert len(principles["principles"]) == 1
@@ -144,36 +129,31 @@ class TestSingleIterationHappyPath:
         )
         _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
 
-        engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
 
-        # Three-phase execution
-        engine.transition("PLAN_EXECUTION")
+        # EXECUTE_ANALYZE with h-main refuted
+        engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
-            "executor", "plan-execution",
-            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
-        )
-        engine.transition("EXECUTING")
-        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
-        engine.transition("ANALYSIS")
-
-        # Executor produces refuted findings
-        dispatcher.dispatch(
-            "executor", "analyze",
-            output_path=iter_dir / "findings.json",
+            "executor", "execute-analyze",
+            output_path=iter_dir / "execute_analyze_output.json",
             iteration=1, h_main_result="REFUTED",
         )
-        findings = json.loads((iter_dir / "findings.json").read_text())
+        combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
+        (iter_dir / "findings.json").write_text(json.dumps(combined["findings"], indent=2))
+        (iter_dir / "principle_updates.json").write_text(
+            json.dumps(combined["principle_updates"], indent=2)
+        )
+
+        findings = combined["findings"]
 
         # Fast-fail triggers
         ff = check_fast_fail(findings)
         assert ff == FastFailAction.SKIP_TO_EXTRACTION
 
-        engine.transition("FINDINGS_REVIEW")
+        engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")
-        # Skip TUNING -> go to EXTRACTION
-        engine.transition("EXTRACTION")
-        assert engine.phase == "EXTRACTION"
+        engine.transition("DONE")
+        assert engine.phase == "DONE"
 
     def test_checkpoint_resume(self, campaign_dir):
         engine = Engine(campaign_dir)
@@ -182,8 +162,8 @@ class TestSingleIterationHappyPath:
         # Simulate crash: create new engine from same dir
         engine2 = Engine(campaign_dir)
         assert engine2.phase == "DESIGN"
-        engine2.transition("DESIGN_REVIEW")
-        assert engine2.phase == "DESIGN_REVIEW"
+        engine2.transition("HUMAN_DESIGN_GATE")
+        assert engine2.phase == "HUMAN_DESIGN_GATE"
 
     def test_multi_iteration_campaign(self, campaign_dir):
         """Two full iterations: first confirmed, second refuted."""
@@ -198,27 +178,21 @@ class TestSingleIterationHappyPath:
             "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
         )
         _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
-        engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
-        engine.transition("PLAN_EXECUTION")
+        engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
-            "executor", "plan-execution",
-            output_path=iter_dir / "experiment_plan.yaml", iteration=1,
+            "executor", "execute-analyze",
+            output_path=iter_dir / "execute_analyze_output.json", iteration=1,
         )
-        engine.transition("EXECUTING")
-        dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
-        engine.transition("ANALYSIS")
-        dispatcher.dispatch(
-            "executor", "analyze", output_path=iter_dir / "findings.json", iteration=1,
+        combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
+        (iter_dir / "findings.json").write_text(json.dumps(combined["findings"], indent=2))
+        (iter_dir / "principle_updates.json").write_text(
+            json.dumps(combined["principle_updates"], indent=2)
         )
-        engine.transition("FINDINGS_REVIEW")
+        engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")
-        engine.transition("TUNING")
-        engine.transition("EXTRACTION")
-        dispatcher.dispatch(
-            "extractor", "extract",
-            output_path=campaign_dir / "principles.json", iteration=1,
-        )
+        _merge_principles(campaign_dir, iter_dir)
+        engine.transition("DONE")
         assert engine.iteration == 0
 
         # Loop to next iteration
@@ -231,29 +205,21 @@ class TestSingleIterationHappyPath:
             "planner", "design", output_path=iter_dir2 / "design_raw.md", iteration=2
         )
         _split_design_output((iter_dir2 / "design_raw.md").read_text(), iter_dir2)
-        engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
-        engine.transition("PLAN_EXECUTION")
+        engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
-            "executor", "plan-execution",
-            output_path=iter_dir2 / "experiment_plan.yaml", iteration=2,
-        )
-        engine.transition("EXECUTING")
-        dispatcher.write_execution_results(iter_dir2 / "execution_results.json", iteration=2)
-        engine.transition("ANALYSIS")
-        dispatcher.dispatch(
-            "executor", "analyze",
-            output_path=iter_dir2 / "findings.json",
+            "executor", "execute-analyze",
+            output_path=iter_dir2 / "execute_analyze_output.json",
             iteration=2, h_main_result="REFUTED",
         )
-        engine.transition("FINDINGS_REVIEW")
-        engine.transition("HUMAN_FINDINGS_GATE")
-        engine.transition("EXTRACTION")  # Skip TUNING
-        dispatcher.dispatch(
-            "extractor", "extract",
-            output_path=campaign_dir / "principles.json", iteration=2,
+        combined2 = json.loads((iter_dir2 / "execute_analyze_output.json").read_text())
+        (iter_dir2 / "findings.json").write_text(json.dumps(combined2["findings"], indent=2))
+        (iter_dir2 / "principle_updates.json").write_text(
+            json.dumps(combined2["principle_updates"], indent=2)
         )
-
+        engine.transition("VALIDATE")
+        engine.transition("HUMAN_FINDINGS_GATE")
+        _merge_principles(campaign_dir, iter_dir2)
         engine.transition("DONE")
         assert engine.phase == "DONE"
         assert engine.iteration == 1
@@ -287,7 +253,6 @@ class TestGateSummaries:
             "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1,
         )
         _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
-        engine.transition("DESIGN_REVIEW")
 
         # Generate gate summary (what run_iteration.py would do before the gate)
         dispatcher.dispatch(

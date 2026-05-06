@@ -22,7 +22,7 @@ class TestEnterPhase:
     def test_skip_past_phase(self, tmp_path):
         """When engine is past a phase, _enter_phase returns False (skip)."""
         state = {
-            "phase": "EXECUTING", "iteration": 0,
+            "phase": "EXECUTE_ANALYZE", "iteration": 0,
             "run_id": "test", "family": None, "timestamp": "t",
         }
         (tmp_path / "state.json").write_text(json.dumps(state))
@@ -30,20 +30,19 @@ class TestEnterPhase:
 
         assert _enter_phase(engine, "DESIGN") is False
         assert _enter_phase(engine, "HUMAN_DESIGN_GATE") is False
-        assert _enter_phase(engine, "PLAN_EXECUTION") is False
-        assert engine.phase == "EXECUTING"  # unchanged
+        assert engine.phase == "EXECUTE_ANALYZE"  # unchanged
 
     def test_redo_current_phase(self, tmp_path):
         """When engine is at a phase, _enter_phase returns True without transition."""
         state = {
-            "phase": "EXECUTING", "iteration": 0,
+            "phase": "EXECUTE_ANALYZE", "iteration": 0,
             "run_id": "test", "family": None, "timestamp": "t",
         }
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "EXECUTING") is True
-        assert engine.phase == "EXECUTING"  # no transition happened
+        assert _enter_phase(engine, "EXECUTE_ANALYZE") is True
+        assert engine.phase == "EXECUTE_ANALYZE"  # no transition happened
 
     def test_advance_to_next_phase(self, tmp_path):
         """When engine is before a phase, _enter_phase transitions and returns True."""
@@ -78,20 +77,18 @@ class TestEnterPhase:
             f"_PHASE_ORDER has {order_phases - engine_phases}"
         )
 
-    def test_fast_fail_resume_from_findings_review(self, tmp_path):
-        """Resuming at FINDINGS_REVIEW skips execution phases and earlier."""
+    def test_resume_from_validate(self, tmp_path):
+        """Resuming at VALIDATE skips execution phases and earlier."""
         state = {
-            "phase": "FINDINGS_REVIEW", "iteration": 0,
+            "phase": "VALIDATE", "iteration": 0,
             "run_id": "test", "family": None, "timestamp": "t",
         }
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "PLAN_EXECUTION") is False
-        assert _enter_phase(engine, "EXECUTING") is False
-        assert _enter_phase(engine, "ANALYSIS") is False
-        assert _enter_phase(engine, "FINDINGS_REVIEW") is True
-        assert engine.phase == "FINDINGS_REVIEW"
+        assert _enter_phase(engine, "EXECUTE_ANALYZE") is False
+        assert _enter_phase(engine, "VALIDATE") is True
+        assert engine.phase == "VALIDATE"
         # Can advance to next
         assert _enter_phase(engine, "HUMAN_FINDINGS_GATE") is True
         assert engine.phase == "HUMAN_FINDINGS_GATE"
@@ -125,11 +122,6 @@ def _setup_stub_iteration(tmp_path, monkeypatch):
             "description": "Test system.",
             "observable_metrics": ["latency_ms"],
             "controllable_knobs": ["config"],
-        },
-        "review": {
-            "design_perspectives": ["rigor"],
-            "findings_perspectives": ["rigor"],
-            "max_review_rounds": 1,
         },
         "prompts": {
             "methodology_layer": "prompts/methodology",
@@ -171,7 +163,7 @@ class TestIterationOutcome:
 
         assert result == IterationOutcome.CONTINUE
         engine = Engine(work_dir)
-        assert engine.phase == "EXTRACTION"
+        assert engine.phase == "HUMAN_FINDINGS_GATE"
 
     def test_returns_aborted_on_design_gate_abort(self, tmp_path, monkeypatch):
         work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
@@ -193,7 +185,7 @@ class TestIterationOutcome:
 
 
 class TestExecutePlanResetCmdKwargs:
-    """run_iteration.py:357 — the reset_cmd kwarg must be 'git checkout -- .'
+    """run_iteration.py — the reset_cmd kwarg must be 'git checkout -- .'
     when running in a worktree and None otherwise. The exact string is
     load-bearing: e.g., 'git reset --hard' would also wipe untracked patches/.
     """
@@ -205,6 +197,24 @@ class TestExecutePlanResetCmdKwargs:
             ri, "HumanGate",
             lambda: MagicMock(prompt=MagicMock(return_value=("approve", None))),
         )
+
+        # Also patch CLIDispatcher so it doesn't call claude -p
+        from orchestrator import cli_dispatch as cli_mod
+        import contextlib
+        _work_dir = work_dir
+        class FakeCLI:
+            def __init__(self, **kw):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    self._stub = StubDispatcher(_work_dir)
+            def dispatch(self, *a, **kw):
+                return self._stub.dispatch(*a, **kw)
+            def override_cwd(self, cwd):
+                @contextlib.contextmanager
+                def noop():
+                    yield
+                return noop()
+        monkeypatch.setattr(cli_mod, "CLIDispatcher", FakeCLI)
 
         # Optionally point the campaign at a fake repo so run_iteration
         # creates an experiment worktree (which is what triggers reset_cmd).
@@ -231,8 +241,6 @@ class TestExecutePlanResetCmdKwargs:
         def fake_execute_plan(plan, cwd, iter_dir, **kwargs):
             captured.update(kwargs)
             captured["_cwd"] = cwd
-            # Write a plausible execution_results.json so downstream phases
-            # (analysis, extraction) don't blow up.
             (iter_dir / "execution_results.json").write_text(
                 json.dumps({"plan_ref": "x", "setup_results": [], "arms": []})
                 + "\n"
@@ -249,8 +257,6 @@ class TestExecutePlanResetCmdKwargs:
         captured = self._capture_execute_plan_kwargs(
             tmp_path, monkeypatch, with_repo_path=True,
         )
-        # Exact string, not a substring match — git reset --hard would also
-        # contain "git" and would wipe untracked patches/, so we pin it.
         assert captured["reset_cmd"] == "git checkout -- ."
 
     def test_reset_cmd_is_none_without_worktree(self, tmp_path, monkeypatch):
