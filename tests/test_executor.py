@@ -286,10 +286,18 @@ class TestTruncate:
 
 class TestResetBetweenConditions:
     def test_reset_cmd_runs_before_each_condition(self, tmp_path):
-        """reset_cmd should run before every condition in every arm."""
+        """reset_cmd must run before every user cmd, including between conditions
+        within the same arm (not just at arm boundaries)."""
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
-        marker = tmp_path / "marker.txt"
+
+        from orchestrator import executor as executor_mod
+        real_run = executor_mod._run_cmd
+        calls = []
+
+        def spy(cmd, cwd, timeout):
+            calls.append(cmd)
+            return real_run(cmd, cwd, timeout)
 
         plan = {
             "metadata": {"iteration": 1, "bundle_ref": "x"},
@@ -297,24 +305,30 @@ class TestResetBetweenConditions:
                 {
                     "arm_id": "h-main",
                     "conditions": [
-                        {"name": "a", "cmd": "echo a >> log.txt"},
-                        {"name": "b", "cmd": "echo b >> log.txt"},
+                        {"name": "a", "cmd": "echo user_a"},
+                        {"name": "b", "cmd": "echo user_b"},
                     ],
                 },
                 {
                     "arm_id": "h-other",
-                    "conditions": [{"name": "c", "cmd": "echo c >> log.txt"}],
+                    "conditions": [{"name": "c", "cmd": "echo user_c"}],
                 },
             ],
         }
 
-        results = execute_plan(
-            plan, cwd=tmp_path, iter_dir=iter_dir,
-            reset_cmd=f"echo tick >> {marker}",
-        )
+        with patch.object(executor_mod, "_run_cmd", side_effect=spy):
+            results = execute_plan(
+                plan, cwd=tmp_path, iter_dir=iter_dir,
+                reset_cmd="echo RESET",
+            )
 
-        # 3 conditions -> reset_cmd ran 3 times
-        assert marker.read_text().count("tick") == 3
+        # Every user cmd must be immediately preceded by a reset — this proves
+        # inter-condition order within the same arm, not just count.
+        assert calls == [
+            "echo RESET", "echo user_a",
+            "echo RESET", "echo user_b",
+            "echo RESET", "echo user_c",
+        ]
         for arm in results["arms"]:
             for cond in arm["conditions"]:
                 assert cond["exit_code"] == 0
@@ -324,13 +338,14 @@ class TestResetBetweenConditions:
         iter_dir = tmp_path / "iter-1"
         iter_dir.mkdir()
         sentinel = tmp_path / "should_not_exist.txt"
+        user_cmd = f"touch {sentinel}"
 
         plan = {
             "metadata": {"iteration": 1, "bundle_ref": "x"},
             "arms": [
                 {
                     "arm_id": "h-main",
-                    "conditions": [{"name": "a", "cmd": f"touch {sentinel}"}],
+                    "conditions": [{"name": "a", "cmd": user_cmd}],
                 },
             ],
         }
@@ -340,9 +355,13 @@ class TestResetBetweenConditions:
         )
 
         cond = results["arms"][0]["conditions"][0]
+        assert cond["name"] == "a"
+        assert cond["cmd"] == user_cmd  # recorded cmd is the user's, not the reset
         assert cond["exit_code"] == 7
+        assert cond["output_content"] is None
         assert not sentinel.exists()  # user cmd was skipped
         assert "RESET FAILED" in cond["stderr_tail"]
+        assert "exit 7" in cond["stderr_tail"]
 
     def test_no_reset_cmd_does_not_invoke_subprocess_for_reset(self, tmp_path):
         """Strong assertion: reset_cmd=None must not call _run_cmd with an empty/None cmd."""
@@ -428,8 +447,11 @@ class TestResetBetweenConditions:
         )
 
         check_cond = results["arms"][0]["conditions"][1]
-        assert "baseline" in check_cond["stdout_tail"]
-        assert "mutated" not in check_cond["stdout_tail"]
+        assert check_cond["exit_code"] == 0
+        assert check_cond["stdout_tail"].strip() == "baseline"
+        # Tracked file was reset on disk, not just in stdout
+        assert (tmp_path / "src.txt").read_text() == "baseline\n"
+        # Untracked patches/ survived the reset
         assert (tmp_path / "patches" / "note.txt").exists()
 
 

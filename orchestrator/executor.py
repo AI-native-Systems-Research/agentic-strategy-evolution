@@ -44,11 +44,14 @@ def execute_plan(
             If None, failures are terminal.
         max_revisions: Max number of plan revision rounds.
         timeout: Per-command timeout in seconds.
-        reset_cmd: Optional shell command run in ``cwd`` before every condition.
-            Used to restore a clean baseline between conditions (e.g.,
-            ``"git checkout -- ."`` in a git worktree). If the reset fails,
-            the condition is recorded as failed with the reset's exit code
-            and the condition's own cmd is skipped.
+        reset_cmd: Optional shell command run in ``cwd`` before every condition
+            (including on revision retries). Used to restore a clean baseline
+            between conditions (e.g., ``"git checkout -- ."`` in a git worktree).
+            If the reset fails, the condition is recorded as failed with the
+            reset's exit code and the condition's own cmd is skipped. The
+            recorded ``cmd`` is still the condition's cmd; only ``exit_code``,
+            ``stdout_tail``, and ``stderr_tail`` reflect the reset, with
+            ``[RESET FAILED] <reset_cmd>`` appended to stderr_tail.
 
     Returns:
         The execution_results dict (also written to iter_dir/execution_results.json).
@@ -248,6 +251,10 @@ def _run_arm(
                 logger.warning(
                     "Reset failed for %s/%s (exit %d)",
                     arm_id, name, reset_res.returncode,
+                )
+                print(
+                    f"    [{arm_id}] {name}: [reset failed, skipping] {reset_cmd}",
+                    flush=True,
                 )
                 (arm_dir / f"{name}.stdout").write_text(reset_res.stdout)
                 (arm_dir / f"{name}.stderr").write_text(reset_res.stderr)
