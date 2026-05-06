@@ -42,38 +42,49 @@ arms:
 
 ### Example B: Code evolution (with patches)
 
+Scenario: Testing whether changing a constant in source code affects a metric.
+
 Phase 1 — you create patches:
 ```
-$ make build                          # build succeeds
-$ cat src/policy.go                   # read the file
-# (edit the file: change the algorithm)
-$ make build                          # change compiles
-$ ./tool run --n 5                    # treatment runs
-$ mkdir -p patches && git diff > patches/h-main.patch
-$ git checkout -- .                   # reset
-$ git apply --check patches/h-main.patch   # patch is valid
+$ <build_cmd>                                     # build succeeds
+$ <run_cmd> --seed 42 --output /dev/null          # baseline works
+
+# Now create the treatment patch:
+# (use your file editing tool to change the source file — NOT sed/awk)
+
+$ <build_cmd>                                     # treatment compiles
+$ <run_cmd> --seed 42 --output /dev/null          # treatment runs
+
+$ mkdir -p patches
+$ git diff > patches/h-main.patch                 # save patch
+$ git checkout -- .                               # reset to clean
+$ git apply --check patches/h-main.patch          # verify patch applies
 ```
 
 Phase 2 — you emit:
 ```yaml
 setup:
   - cmd: |
-      make build
+      <build_cmd>
     description: "Build"
 arms:
   - arm_id: "h-main"
     conditions:
       - name: "baseline-seed42"
         cmd: |
-          ./tool run --seed 42 --output results/h-main/baseline.json
-        output: "results/h-main/baseline.json"
+          <run_cmd> --seed 42 --output results/h-main/baseline-42.json
+        output: "results/h-main/baseline-42.json"
       - name: "treatment-seed42"
         cmd: |
-          git apply patches/h-main.patch && make build && ./tool run --seed 42 --output results/h-main/treatment.json
-        output: "results/h-main/treatment.json"
+          git apply patches/h-main.patch && <build_cmd> && <run_cmd> --seed 42 --output results/h-main/treatment-42.json
+        output: "results/h-main/treatment-42.json"
 ```
 
-Key rules: validate before emitting; learn file formats from examples; patches via `git diff`, not inline `sed`.
+**CRITICAL RULES:**
+- NEVER use `sed` or `awk` to modify source code. Always create patches via file editing + `git diff`.
+- Each treatment command is: `git apply patches/<name>.patch && <build> && <run>`
+- The orchestrator runs `git checkout -- .` between conditions, so patches are always applied to clean state.
+- Patches are your primary artifact. They document exactly what changed and are reusable across seeds.
 
 ---
 
