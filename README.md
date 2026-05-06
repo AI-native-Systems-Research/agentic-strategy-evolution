@@ -28,6 +28,8 @@ Nous works on any software system that meets four preconditions:
 
 **Not a fit:** Systems where you cannot reproduce conditions or measure outcomes quantitatively.
 
+**Interventions can include source-code patches.** When the research question implies an algorithmic change (not just flag tuning), add a `code_changes` entry on the arm — Nous implements the change, captures it as a `git` patch, applies it during the treatment run, and resets the worktree between conditions.
+
 ## How It Works
 
 Each iteration follows five phases:

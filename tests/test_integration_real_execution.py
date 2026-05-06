@@ -191,3 +191,71 @@ class TestIterationOutcome:
         result = run_iteration(campaign, work_dir, iteration=1)
 
         assert result == IterationOutcome.REDESIGN
+
+
+class TestExecutePlanResetCmdKwargs:
+    """run_iteration.py:357 — the reset_cmd kwarg must be 'git checkout -- .'
+    when running in a worktree and None otherwise. The exact string is
+    load-bearing: e.g., 'git reset --hard' would also wipe untracked patches/.
+    """
+
+    def _capture_execute_plan_kwargs(self, tmp_path, monkeypatch, *, with_repo_path):
+        work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
+        import run_iteration as ri
+        monkeypatch.setattr(
+            ri, "HumanGate",
+            lambda: MagicMock(prompt=MagicMock(return_value=("approve", None))),
+        )
+
+        # Optionally point the campaign at a fake repo so run_iteration
+        # creates an experiment worktree (which is what triggers reset_cmd).
+        if with_repo_path:
+            fake_repo = tmp_path / "fake-repo"
+            fake_repo.mkdir()
+            campaign["target_system"]["repo_path"] = str(fake_repo)
+
+            # Stub out worktree create/remove so we don't need a real git repo.
+            from orchestrator import worktree as wt_mod
+            fake_exp_dir = tmp_path / "fake-exp-dir"
+            fake_exp_dir.mkdir()
+            monkeypatch.setattr(
+                wt_mod, "create_experiment_worktree",
+                lambda repo, iteration: (fake_exp_dir, "exp-id-1"),
+            )
+            monkeypatch.setattr(
+                wt_mod, "remove_experiment_worktree",
+                lambda repo, eid: None,
+            )
+
+        captured = {}
+
+        def fake_execute_plan(plan, cwd, iter_dir, **kwargs):
+            captured.update(kwargs)
+            captured["_cwd"] = cwd
+            # Write a plausible execution_results.json so downstream phases
+            # (analysis, extraction) don't blow up.
+            (iter_dir / "execution_results.json").write_text(
+                json.dumps({"plan_ref": "x", "setup_results": [], "arms": []})
+                + "\n"
+            )
+            return {"plan_ref": "x", "setup_results": [], "arms": []}
+
+        from orchestrator import executor as exec_mod
+        monkeypatch.setattr(exec_mod, "execute_plan", fake_execute_plan)
+
+        run_iteration(campaign, work_dir, iteration=1)
+        return captured
+
+    def test_reset_cmd_is_git_checkout_when_in_worktree(self, tmp_path, monkeypatch):
+        captured = self._capture_execute_plan_kwargs(
+            tmp_path, monkeypatch, with_repo_path=True,
+        )
+        # Exact string, not a substring match — git reset --hard would also
+        # contain "git" and would wipe untracked patches/, so we pin it.
+        assert captured["reset_cmd"] == "git checkout -- ."
+
+    def test_reset_cmd_is_none_without_worktree(self, tmp_path, monkeypatch):
+        captured = self._capture_execute_plan_kwargs(
+            tmp_path, monkeypatch, with_repo_path=False,
+        )
+        assert captured["reset_cmd"] is None

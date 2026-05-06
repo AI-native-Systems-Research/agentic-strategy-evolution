@@ -284,6 +284,177 @@ class TestTruncate:
         assert result.endswith("a" * 12000)
 
 
+class TestResetBetweenConditions:
+    def test_reset_cmd_runs_before_each_condition(self, tmp_path):
+        """reset_cmd must run before every user cmd, including between conditions
+        within the same arm (not just at arm boundaries)."""
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+
+        from orchestrator import executor as executor_mod
+        real_run = executor_mod._run_cmd
+        calls = []
+
+        def spy(cmd, cwd, timeout):
+            calls.append(cmd)
+            return real_run(cmd, cwd, timeout)
+
+        plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [
+                {
+                    "arm_id": "h-main",
+                    "conditions": [
+                        {"name": "a", "cmd": "echo user_a"},
+                        {"name": "b", "cmd": "echo user_b"},
+                    ],
+                },
+                {
+                    "arm_id": "h-other",
+                    "conditions": [{"name": "c", "cmd": "echo user_c"}],
+                },
+            ],
+        }
+
+        with patch.object(executor_mod, "_run_cmd", side_effect=spy):
+            results = execute_plan(
+                plan, cwd=tmp_path, iter_dir=iter_dir,
+                reset_cmd="echo RESET",
+            )
+
+        # Every user cmd must be immediately preceded by a reset — this proves
+        # inter-condition order within the same arm, not just count.
+        assert calls == [
+            "echo RESET", "echo user_a",
+            "echo RESET", "echo user_b",
+            "echo RESET", "echo user_c",
+        ]
+        for arm in results["arms"]:
+            for cond in arm["conditions"]:
+                assert cond["exit_code"] == 0
+
+    def test_reset_cmd_failure_records_condition_failure(self, tmp_path):
+        """If reset_cmd fails, condition is recorded as failed and user cmd is skipped."""
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+        sentinel = tmp_path / "should_not_exist.txt"
+        user_cmd = f"touch {sentinel}"
+
+        plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [
+                {
+                    "arm_id": "h-main",
+                    "conditions": [{"name": "a", "cmd": user_cmd}],
+                },
+            ],
+        }
+        results = execute_plan(
+            plan, cwd=tmp_path, iter_dir=iter_dir,
+            reset_cmd="exit 7",
+        )
+
+        cond = results["arms"][0]["conditions"][0]
+        assert cond["name"] == "a"
+        assert cond["cmd"] == user_cmd  # recorded cmd is the user's, not the reset
+        assert cond["exit_code"] == 7
+        assert cond["output_content"] is None
+        assert not sentinel.exists()  # user cmd was skipped
+        assert "RESET FAILED" in cond["stderr_tail"]
+        assert "exit 7" in cond["stderr_tail"]
+
+    def test_no_reset_cmd_does_not_invoke_subprocess_for_reset(self, tmp_path):
+        """Strong assertion: reset_cmd=None must not call _run_cmd with an empty/None cmd."""
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+        from orchestrator import executor as executor_mod
+        real_run = executor_mod._run_cmd
+        calls = []
+
+        def spy(cmd, cwd, timeout):
+            calls.append(cmd)
+            return real_run(cmd, cwd, timeout)
+
+        with patch.object(executor_mod, "_run_cmd", side_effect=spy):
+            execute_plan(SIMPLE_PLAN, cwd=tmp_path, iter_dir=iter_dir)
+
+        # Only the two user cmds ran, no reset_cmd invocation at all.
+        assert calls == ["echo hello", "echo world"]
+
+    def test_reset_cmd_applies_on_revision_retry(self, tmp_path):
+        """Regression guard: reset_cmd must also be honored on retry of a revised plan."""
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+        marker = tmp_path / "reset_count.txt"
+
+        bad_plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [
+                {"arm_id": "h-main", "conditions": [{"name": "bad", "cmd": "exit 1"}]},
+            ],
+        }
+        good_plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [
+                {"arm_id": "h-main", "conditions": [{"name": "good", "cmd": "echo ok"}]},
+            ],
+        }
+        revision_fn = MagicMock(return_value=good_plan)
+
+        execute_plan(
+            bad_plan, cwd=tmp_path, iter_dir=iter_dir,
+            revision_fn=revision_fn,
+            reset_cmd=f"echo tick >> {marker}",
+        )
+
+        # 1 reset for the bad run + 1 reset for the retry = 2
+        assert marker.read_text().count("tick") == 2
+
+    def test_reset_cmd_runs_in_real_git_worktree(self, tmp_path):
+        """End-to-end: git checkout -- . undoes a tracked edit and leaves untracked files."""
+        import shutil
+        import subprocess as sp
+        if shutil.which("git") is None:
+            pytest.skip("git not installed")
+
+        sp.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        sp.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+        sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+        (tmp_path / "src.txt").write_text("baseline\n")
+        sp.run(["git", "add", "."], cwd=tmp_path, check=True)
+        sp.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+        (tmp_path / "patches").mkdir()
+        (tmp_path / "patches" / "note.txt").write_text("keep me\n")
+
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+
+        plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [
+                {
+                    "arm_id": "h-main",
+                    "conditions": [
+                        {"name": "dirty", "cmd": "echo mutated > src.txt"},
+                        {"name": "check", "cmd": "cat src.txt"},
+                    ],
+                },
+            ],
+        }
+        results = execute_plan(
+            plan, cwd=tmp_path, iter_dir=iter_dir,
+            reset_cmd="git checkout -- .",
+        )
+
+        check_cond = results["arms"][0]["conditions"][1]
+        assert check_cond["exit_code"] == 0
+        assert check_cond["stdout_tail"].strip() == "baseline"
+        # Tracked file was reset on disk, not just in stdout
+        assert (tmp_path / "src.txt").read_text() == "baseline\n"
+        # Untracked patches/ survived the reset
+        assert (tmp_path / "patches" / "note.txt").exists()
+
+
 class TestCommandError:
     def test_attributes(self):
         err = CommandError(

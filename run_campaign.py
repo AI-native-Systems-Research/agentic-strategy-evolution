@@ -85,6 +85,58 @@ def _generate_report(campaign: dict, work_dir: Path, model: str | None) -> None:
         logger.warning("Report generation failed: %s", exc)
 
 
+def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
+    """Decide whether to resume a DONE campaign and, if so, advance it.
+
+    Resumes (transitions state DONE -> DESIGN and returns the next iteration
+    number) only when all of:
+      * state.phase == "DONE"
+      * ledger.json exists and parses
+      * the ledger has at least one real iteration row (iteration >= 1)
+      * completed iterations < max_iterations
+
+    In every other case — fresh campaign, mid-flight campaign, empty/corrupt
+    ledger, or already at max_iterations — returns 1 and leaves state
+    untouched. A corrupt ledger is logged at warning level so the user can
+    repair it; it never raises.
+    """
+    from orchestrator.engine import Engine
+
+    engine = Engine(work_dir)
+    if engine.phase != "DONE":
+        return 1
+
+    ledger_path = work_dir / "ledger.json"
+    if not ledger_path.exists():
+        return 1
+
+    try:
+        ledger = json.loads(ledger_path.read_text())
+        # iteration 0 is the synthetic baseline row; real iterations start at 1
+        completed = max(
+            (row["iteration"] for row in ledger.get("iterations", [])
+             if isinstance(row, dict) and isinstance(row.get("iteration"), int)
+             and row["iteration"] >= 1),
+            default=0,
+        )
+    except (json.JSONDecodeError, OSError, TypeError, KeyError) as exc:
+        logger.warning(
+            "Could not read ledger at %s (%s: %s); starting fresh instead of resuming.",
+            ledger_path, type(exc).__name__, exc,
+        )
+        return 1
+
+    if completed == 0 or completed >= max_iterations:
+        return 1
+
+    print(
+        f"  Resuming DONE campaign at iteration {completed + 1} "
+        f"(max_iterations={max_iterations})"
+    )
+    engine.transition("DESIGN")
+    return completed + 1
+
+
 def run_campaign(
     campaign: dict,
     work_dir: Path,
@@ -112,8 +164,10 @@ def run_campaign(
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
 
+    start_iter = _resume_completed_campaign(work_dir, max_iterations)
+
     max_redesigns = 3
-    for i in range(1, max_iterations + 1):
+    for i in range(start_iter, max_iterations + 1):
         is_last = (i == max_iterations)
 
         for redesign_attempt in range(max_redesigns + 1):
