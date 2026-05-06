@@ -29,6 +29,7 @@ def execute_plan(
     revision_fn: Callable[[dict, dict], dict] | None = None,
     max_revisions: int = 3,
     timeout: int = 300,
+    reset_cmd: str | None = None,
 ) -> dict:
     """Execute an experiment plan and collect results.
 
@@ -43,6 +44,11 @@ def execute_plan(
             If None, failures are terminal.
         max_revisions: Max number of plan revision rounds.
         timeout: Per-command timeout in seconds.
+        reset_cmd: Optional shell command run in ``cwd`` before every condition.
+            Used to restore a clean baseline between conditions (e.g.,
+            ``"git checkout -- ."`` in a git worktree). If the reset fails,
+            the condition is recorded as failed with the reset's exit code
+            and the condition's own cmd is skipped.
 
     Returns:
         The execution_results dict (also written to iter_dir/execution_results.json).
@@ -64,7 +70,7 @@ def execute_plan(
         return output
 
     # Run all arms (failures recorded, not raised)
-    arm_results = _run_all_arms(plan["arms"], cwd, results_dir, timeout)
+    arm_results = _run_all_arms(plan["arms"], cwd, results_dir, timeout, reset_cmd)
 
     # Retry loop: only re-run failed arms
     revisions_used = 0
@@ -127,7 +133,7 @@ def execute_plan(
 
         # Re-run only failed arms from the revised plan
         retry_arms = [a for a in plan["arms"] if a["arm_id"] in failed_arms]
-        retry_results = _run_all_arms(retry_arms, cwd, results_dir, timeout)
+        retry_results = _run_all_arms(retry_arms, cwd, results_dir, timeout, reset_cmd)
 
         # Merge: replace failed arms with retry results
         retry_by_id = {r["arm_id"]: r for r in retry_results}
@@ -157,11 +163,12 @@ class CommandError(Exception):
 
 def _run_all_arms(
     arms: list[dict], cwd: Path, results_dir: Path, timeout: int,
+    reset_cmd: str | None = None,
 ) -> list[dict]:
     """Run all arms, recording failures without stopping."""
     arm_results = []
     for arm in arms:
-        arm_result = _run_arm(arm, cwd, results_dir, timeout)
+        arm_result = _run_arm(arm, cwd, results_dir, timeout, reset_cmd)
         arm_results.append(arm_result)
     return arm_results
 
@@ -220,7 +227,10 @@ def _run_setup(setup_cmds: list[dict], cwd: Path, timeout: int) -> list[dict]:
     return results
 
 
-def _run_arm(arm: dict, cwd: Path, results_dir: Path, timeout: int) -> dict:
+def _run_arm(
+    arm: dict, cwd: Path, results_dir: Path, timeout: int,
+    reset_cmd: str | None = None,
+) -> dict:
     """Run all conditions in an arm. Records failures without raising."""
     arm_id = arm["arm_id"]
     arm_dir = results_dir / arm_id
@@ -231,6 +241,27 @@ def _run_arm(arm: dict, cwd: Path, results_dir: Path, timeout: int) -> dict:
         name = cond["name"]
         cmd = cond["cmd"]
         output_path = cond.get("output")
+
+        if reset_cmd is not None:
+            reset_res = _run_cmd(reset_cmd, cwd, timeout)
+            if reset_res.returncode != 0:
+                logger.warning(
+                    "Reset failed for %s/%s (exit %d)",
+                    arm_id, name, reset_res.returncode,
+                )
+                (arm_dir / f"{name}.stdout").write_text(reset_res.stdout)
+                (arm_dir / f"{name}.stderr").write_text(reset_res.stderr)
+                conditions.append({
+                    "name": name,
+                    "cmd": cmd,
+                    "exit_code": reset_res.returncode,
+                    "stdout_tail": _truncate(reset_res.stdout),
+                    "stderr_tail": _truncate(
+                        (reset_res.stderr or "") + f"\n[RESET FAILED] {reset_cmd}"
+                    ),
+                    "output_content": None,
+                })
+                continue
 
         print(f"    [{arm_id}] {name}: {cmd}", flush=True)
         result = _run_cmd(cmd, cwd, timeout)
