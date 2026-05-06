@@ -262,6 +262,40 @@ class TestResumeCompletedCampaign:
         assert _resume_completed_campaign(work_dir, max_iterations=5) == 1
         assert Engine(work_dir).phase == "DONE"
 
+    def test_corrupt_ledger_does_not_crash_resume(self, tmp_path, caplog):
+        """Garbage JSON in ledger.json must not take down the campaign."""
+        import logging
+        from run_campaign import _resume_completed_campaign
+        work_dir = _setup_work_dir(tmp_path)
+        state = json.loads((work_dir / "state.json").read_text())
+        state["phase"] = "DONE"
+        (work_dir / "state.json").write_text(json.dumps(state))
+        (work_dir / "ledger.json").write_text("{this is not valid json")
+
+        with caplog.at_level(logging.WARNING):
+            assert _resume_completed_campaign(work_dir, max_iterations=3) == 1
+        assert Engine(work_dir).phase == "DONE"  # state untouched
+        assert any("Could not read ledger" in r.message for r in caplog.records)
+
+    def test_ledger_with_malformed_rows_does_not_crash_resume(self, tmp_path):
+        """Rows missing 'iteration' or with wrong types get skipped, not crashed."""
+        from run_campaign import _resume_completed_campaign
+        work_dir = _setup_work_dir(tmp_path)
+        state = json.loads((work_dir / "state.json").read_text())
+        state["phase"] = "DONE"
+        (work_dir / "state.json").write_text(json.dumps(state))
+        ledger = {"iterations": [
+            {"iteration": 0, "family": "baseline"},
+            "not-a-dict",                       # garbage row
+            {"family": "no-iteration-key"},     # missing key
+            {"iteration": "1"},                 # wrong type
+            {"iteration": 1, "family": "real"}, # valid -> counts
+        ]}
+        (work_dir / "ledger.json").write_text(json.dumps(ledger))
+
+        assert _resume_completed_campaign(work_dir, max_iterations=2) == 2
+        assert Engine(work_dir).phase == "DESIGN"
+
 
 class TestSaveHumanFeedback:
     """Tests for _save_human_feedback helper."""

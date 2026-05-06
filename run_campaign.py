@@ -86,12 +86,19 @@ def _generate_report(campaign: dict, work_dir: Path, model: str | None) -> None:
 
 
 def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
-    """If work_dir holds a DONE campaign, advance state to DESIGN for the next
-    iteration. Returns the iteration number the campaign should resume from
-    (one past the last completed ledger row). Returns 1 for a fresh campaign.
+    """Decide whether to resume a DONE campaign and, if so, advance it.
 
-    Leaves state untouched if the campaign is already mid-flight (phase != DONE)
-    or if there is nothing to resume (ledger empty / max_iterations already met).
+    Resumes (transitions state DONE -> DESIGN and returns the next iteration
+    number) only when all of:
+      * state.phase == "DONE"
+      * ledger.json exists and parses
+      * the ledger has at least one real iteration row (iteration >= 1)
+      * completed iterations < max_iterations
+
+    In every other case — fresh campaign, mid-flight campaign, empty/corrupt
+    ledger, or already at max_iterations — returns 1 and leaves state
+    untouched. A corrupt ledger is logged at warning level so the user can
+    repair it; it never raises.
     """
     from orchestrator.engine import Engine
 
@@ -102,12 +109,23 @@ def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
     ledger_path = work_dir / "ledger.json"
     if not ledger_path.exists():
         return 1
-    ledger = json.loads(ledger_path.read_text())
-    # iteration 0 is the synthetic baseline row; real iterations start at 1
-    completed = max(
-        (row["iteration"] for row in ledger.get("iterations", []) if row["iteration"] >= 1),
-        default=0,
-    )
+
+    try:
+        ledger = json.loads(ledger_path.read_text())
+        # iteration 0 is the synthetic baseline row; real iterations start at 1
+        completed = max(
+            (row["iteration"] for row in ledger.get("iterations", [])
+             if isinstance(row, dict) and isinstance(row.get("iteration"), int)
+             and row["iteration"] >= 1),
+            default=0,
+        )
+    except (json.JSONDecodeError, OSError, TypeError, KeyError) as exc:
+        logger.warning(
+            "Could not read ledger at %s (%s: %s); starting fresh instead of resuming.",
+            ledger_path, type(exc).__name__, exc,
+        )
+        return 1
+
     if completed == 0 or completed >= max_iterations:
         return 1
 
