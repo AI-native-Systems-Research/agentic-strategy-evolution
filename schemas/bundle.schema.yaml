@@ -7,7 +7,7 @@ description: >
 
 type: object
 required: [metadata, arms]
-additionalProperties: false
+additionalProperties: true
 
 properties:
   metadata:
