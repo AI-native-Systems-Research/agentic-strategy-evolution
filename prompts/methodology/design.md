@@ -47,6 +47,8 @@ Before designing anything, ground yourself in the real system:
 
 5. **Identify key source files** — find the files implementing the mechanism under study.
 
+6. **Smoke-test the baseline command** — before finalizing your design, run the exact baseline command you plan to propose (with minimal input, e.g., reduced iteration count or small dataset) and verify it exits successfully and produces output. If it fails, fix the command until it works. Do NOT propose commands you haven't validated.
+
 ## Instructions — Phase 2: Write Problem Framing
 
 Based on what you observed and verified, write a problem framing document in markdown with these sections:
@@ -104,6 +106,8 @@ Now design a hypothesis bundle based on what you actually observed and verified:
 - Do NOT violate active principles.
 - Predictions must be quantitative and reference specific observable metrics.
 - Base all experiment parameters on verified system behavior — if you didn't probe it, don't assume it.
+- **No `sed`/`awk` for code changes.** When describing code modifications in problem framing or bundle arms, describe the *intent* (what to change and why). The executor agent will implement changes properly via file edits, verify they compile, and create reusable `git diff` patches. Never suggest inline shell regex as an implementation strategy.
+- **Worktree isolation assumed.** The executor runs in a clean git worktree. Each condition starts from clean state (`git checkout -- .` runs between conditions). Design your experimental conditions assuming this — don't include manual cleanup steps.
 
 ## Output Format
 
