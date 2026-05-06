@@ -56,7 +56,14 @@ Rules:
 - Use absolute or relative paths that work from the repo root.
 - Include seeds in commands for reproducibility.
 - Only use CLI flags documented in the `--help` output above. Do not guess flag names.
-- If an arm requires code changes, describe them in the condition's `description` field. The orchestrator does not apply code changes — include any needed patches as part of the command (e.g., `sed` or config file writes).
+- **If an arm has a `code_changes` entry** in the bundle, turn each intent into a reusable patch file BEFORE emitting the plan:
+  1. Read the target file and implement the change in the worktree.
+  2. Build the system to verify the change compiles.
+  3. Save the diff: `mkdir -p patches && git diff > patches/<arm_id>.patch`.
+  4. Reset the worktree to clean state: `git checkout -- .`.
+  5. In the emitted plan, treatment conditions must start with `git apply patches/<arm_id>.patch && <build_cmd> && <run_cmd>`. Baseline conditions run on clean code (no `git apply`).
+  The orchestrator runs `git checkout -- .` before every condition, so you do NOT need to append a reset command yourself.
+- **Emit every `cmd` as a YAML block scalar** (start the value with `|`). This keeps `&&`, `:`, `#`, quotes, and other shell punctuation verbatim and avoids YAML parse errors.
 
 ## Output Format
 
@@ -68,17 +75,20 @@ metadata:
   bundle_ref: "runs/iter-1/bundle.yaml"
 
 setup:
-  - cmd: "<build command from problem.md>"
+  - cmd: |
+      <build command from problem.md>
     description: "Build the system"
 
 arms:
   - arm_id: "h-main"
     conditions:
       - name: "baseline-seed42"
-        cmd: "<baseline command with --metrics-path results/h-main/baseline-42.json>"
+        cmd: |
+          <baseline command with --metrics-path results/h-main/baseline-42.json>
         output: "results/h-main/baseline-42.json"
       - name: "treatment-seed42"
-        cmd: "<treatment command with --metrics-path results/h-main/treatment-42.json>"
+        cmd: |
+          git apply patches/h-main.patch && <build cmd> && <treatment command with --metrics-path results/h-main/treatment-42.json>
         output: "results/h-main/treatment-42.json"
 ```
 
