@@ -238,7 +238,8 @@ class CLIDispatcher:
 
         Uses --output-format=json to capture metrics (tokens, cost, duration).
         """
-        cmd = ["claude", "-p", "--model", self.model, "--output-format", "json"]
+        cmd = ["claude", "-p", "--model", self.model, "--output-format", "json",
+               "--dangerously-skip-permissions"]
         turns = max_turns or self.max_turns
         cmd += ["--max-turns", str(turns)]
         cwd = self._cwd
