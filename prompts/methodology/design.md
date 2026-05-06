@@ -66,7 +66,7 @@ Restate precisely. Reference specific source files implementing the mechanism.
 A single, complete, copy-pasteable command that runs a baseline experiment. All parameters as CLI flags. Must use the system's native output mechanism.
 
 ### Experimental Conditions
-List each condition with what changes from baseline and the exact command.
+List each condition with what changes from baseline. For code-change conditions, describe the modification intent (what to change and why) — do NOT write implementation commands like `sed` or inline edits. The executor agent will implement code changes properly. For flag/config-only conditions, include the exact command.
 
 ### Success Criteria
 Quantitative thresholds using observable metrics.
