@@ -12,7 +12,7 @@ class TestFastFail:
                 {"arm_type": "h-control-negative", "status": "CONFIRMED"},
             ]
         }
-        assert check_fast_fail(findings) == FastFailAction.SKIP_TO_EXTRACTION
+        assert check_fast_fail(findings) == FastFailAction.SKIP_TO_MERGE
 
     def test_control_negative_refuted_but_main_confirmed_continues(self):
         """When h-main is confirmed but control-negative refuted, the mechanism
@@ -52,7 +52,7 @@ class TestFastFail:
                 {"arm_type": "h-control-negative", "status": "REFUTED"},
             ]
         }
-        assert check_fast_fail(findings) == FastFailAction.SKIP_TO_EXTRACTION
+        assert check_fast_fail(findings) == FastFailAction.SKIP_TO_MERGE
 
     def test_single_dominant_component_simplifies(self):
         findings = {
@@ -161,7 +161,7 @@ class TestFastFailValidation:
                 {"arm_type": "h-robustness", "status": "REFUTED"},
             ]
         }
-        assert check_fast_fail(findings) == FastFailAction.SKIP_TO_EXTRACTION
+        assert check_fast_fail(findings) == FastFailAction.SKIP_TO_MERGE
 
     def test_multiple_ablation_arms_allowed(self):
         findings = {

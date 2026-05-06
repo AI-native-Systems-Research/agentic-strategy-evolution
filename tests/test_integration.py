@@ -148,7 +148,7 @@ class TestSingleIterationHappyPath:
 
         # Fast-fail triggers
         ff = check_fast_fail(findings)
-        assert ff == FastFailAction.SKIP_TO_EXTRACTION
+        assert ff == FastFailAction.SKIP_TO_MERGE
 
         engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")

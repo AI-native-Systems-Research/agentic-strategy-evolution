@@ -28,11 +28,6 @@ def _make_campaign(repo_path: str = "/tmp/fake-repo") -> dict:
             "description": "A test system.",
             "repo_path": repo_path,
         },
-        "review": {
-            "design_perspectives": ["rigor"],
-            "findings_perspectives": ["rigor"],
-            "max_review_rounds": 1,
-        },
         "prompts": {
             "methodology_layer": "prompts/methodology",
             "domain_adapter_layer": None,

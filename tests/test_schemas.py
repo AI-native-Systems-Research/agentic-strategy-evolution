@@ -416,8 +416,8 @@ class TestTraceSchema:
             "event_type": "state_transition",
             "payload": {
                 "from_state": "DESIGN",
-                "to_state": "DESIGN_REVIEW",
-                "trigger": "hypothesis.md written",
+                "to_state": "HUMAN_DESIGN_GATE",
+                "trigger": "bundle.yaml written",
             },
         }
         jsonschema.validate(instance, schema)
@@ -524,8 +524,8 @@ class TestSummarySchema:
             "total_iterations": 12,
             "cost_by_phase": {
                 "DESIGN": 10.8,
-                "PLAN_EXECUTION": 6.0,
-                "ANALYSIS": 12.0,
+                "EXECUTE_ANALYZE": 18.0,
+                "VALIDATE": 0.5,
             },
             "per_iteration_stats": [
                 {
@@ -574,11 +574,6 @@ class TestCampaignSchema:
                 "observable_metrics": ["latency_p99", "throughput"],
                 "controllable_knobs": ["routing_algorithm", "batch_size"],
             },
-            "review": {
-                "design_perspectives": ["stats", "causal", "confound"],
-                "findings_perspectives": ["stats", "causal", "confound", "robustness"],
-                "max_review_rounds": 10,
-            },
             "prompts": {
                 "methodology_layer": "prompts/methodology/",
                 "domain_adapter_layer": "prompts/blis/",
@@ -596,11 +591,6 @@ class TestCampaignSchema:
                 "observable_metrics": ["latency"],
                 "controllable_knobs": ["config_a"],
             },
-            "review": {
-                "design_perspectives": ["general"],
-                "findings_perspectives": ["general"],
-                "max_review_rounds": 1,
-            },
             "prompts": {
                 "methodology_layer": "prompts/",
                 "domain_adapter_layer": None,
@@ -611,11 +601,6 @@ class TestCampaignSchema:
     def test_missing_target_system_rejected(self, load_schema):
         schema = load_schema("campaign.schema.yaml")
         instance = {
-            "review": {
-                "design_perspectives": ["general"],
-                "findings_perspectives": ["general"],
-                "max_review_rounds": 5,
-            },
             "prompts": {"methodology_layer": "prompts/"},
         }
         with pytest.raises(jsonschema.ValidationError):
@@ -630,17 +615,12 @@ class TestCampaignSchema:
                 "observable_metrics": [],
                 "controllable_knobs": ["a"],
             },
-            "review": {
-                "design_perspectives": ["general"],
-                "findings_perspectives": ["general"],
-                "max_review_rounds": 5,
-            },
             "prompts": {"methodology_layer": "prompts/"},
         }
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(instance, schema)
 
-    def test_zero_review_rounds_rejected(self, load_schema):
+    def test_missing_research_question_rejected(self, load_schema):
         schema = load_schema("campaign.schema.yaml")
         instance = {
             "target_system": {
@@ -648,11 +628,6 @@ class TestCampaignSchema:
                 "description": "x",
                 "observable_metrics": ["m"],
                 "controllable_knobs": ["k"],
-            },
-            "review": {
-                "design_perspectives": ["general"],
-                "findings_perspectives": ["general"],
-                "max_review_rounds": 0,
             },
             "prompts": {"methodology_layer": "prompts/"},
         }
@@ -668,11 +643,6 @@ class TestCampaignSchema:
                 "description": "x",
                 "observable_metrics": ["m"],
                 "controllable_knobs": ["k"],
-            },
-            "review": {
-                "design_perspectives": ["general"],
-                "findings_perspectives": ["general"],
-                "max_review_rounds": 5,
             },
             "prompts": {"methodology_layer": "prompts/"},
             "extra_field": "should fail",
@@ -691,11 +661,6 @@ class TestCampaignSchema:
                 "observable_metrics": ["m"],
                 "controllable_knobs": ["k"],
             },
-            "review": {
-                "design_perspectives": ["general"],
-                "findings_perspectives": ["general"],
-                "max_review_rounds": 1,
-            },
             "prompts": {"methodology_layer": "prompts/"},
         }
         jsonschema.validate(instance, schema)
@@ -711,11 +676,6 @@ class TestCampaignSchema:
                 "observable_metrics": ["m"],
                 "controllable_knobs": ["k"],
             },
-            "review": {
-                "design_perspectives": ["general"],
-                "findings_perspectives": ["general"],
-                "max_review_rounds": 1,
-            },
             "prompts": {"methodology_layer": "prompts/"},
         }
         with pytest.raises(jsonschema.ValidationError):
@@ -730,11 +690,6 @@ class TestCampaignSchema:
                 "name": "TestSys",
                 "description": "A test system.",
                 "repo_path": "/tmp/repo",
-            },
-            "review": {
-                "design_perspectives": ["rigor"],
-                "findings_perspectives": ["rigor"],
-                "max_review_rounds": 1,
             },
             "prompts": {
                 "methodology_layer": "prompts/methodology",

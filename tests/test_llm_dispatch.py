@@ -49,11 +49,6 @@ SAMPLE_CAMPAIGN = {
         "observable_metrics": ["latency_ms", "throughput_rps"],
         "controllable_knobs": ["batch_size", "worker_count"],
     },
-    "review": {
-        "design_perspectives": ["rigor"],
-        "findings_perspectives": ["rigor"],
-        "max_review_rounds": 1,
-    },
     "prompts": {
         "methodology_layer": "prompts/methodology",
         "domain_adapter_layer": None,
@@ -342,7 +337,7 @@ class TestLLMDispatcher:
 
 
     def test_invalid_campaign_missing_target_system_raises(self, work_dir: Path) -> None:
-        bad_campaign = {"review": {}, "prompts": {}}
+        bad_campaign = {"prompts": {}}
         with pytest.raises(ValueError, match="missing 'target_system'"):
             LLMDispatcher(
                 work_dir=work_dir, campaign=bad_campaign,
@@ -352,7 +347,6 @@ class TestLLMDispatcher:
     def test_invalid_campaign_missing_keys_raises(self, work_dir: Path) -> None:
         bad_campaign = {
             "target_system": {"name": "X"},
-            "review": {},
             "prompts": {},
         }
         with pytest.raises(ValueError, match="missing required keys"):
@@ -498,11 +492,6 @@ MINIMAL_CAMPAIGN = {
         "name": "MySystem",
         "description": "A system under test.",
         "repo_path": "/tmp/fake-repo",
-    },
-    "review": {
-        "design_perspectives": ["rigor"],
-        "findings_perspectives": ["rigor"],
-        "max_review_rounds": 1,
     },
     "prompts": {
         "methodology_layer": "prompts/methodology",

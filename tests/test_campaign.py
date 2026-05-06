@@ -33,11 +33,6 @@ SAMPLE_CAMPAIGN = {
         "observable_metrics": ["latency_ms"],
         "controllable_knobs": ["batch_size"],
     },
-    "review": {
-        "design_perspectives": ["rigor"],
-        "findings_perspectives": ["rigor"],
-        "max_review_rounds": 1,
-    },
     "prompts": {
         "methodology_layer": "prompts/methodology",
         "domain_adapter_layer": None,

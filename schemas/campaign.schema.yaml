@@ -7,7 +7,7 @@ description: >
   and referenced by state.json via config_ref.
 
 type: object
-required: [target_system, research_question, review, prompts]
+required: [target_system, research_question, prompts]
 additionalProperties: false
 
 properties:
@@ -53,26 +53,6 @@ properties:
         type: ["string", "null"]
         minLength: 1
         description: "Path to target system git repo. Used by CLIDispatcher for code-access agents. If set, experiments run in isolated worktrees."
-
-  review:
-    type: object
-    required: [design_perspectives, findings_perspectives, max_review_rounds]
-    additionalProperties: false
-    properties:
-      design_perspectives:
-        type: array
-        items: { type: string, minLength: 1 }
-        minItems: 1
-        description: "Reviewer perspectives for design review."
-      findings_perspectives:
-        type: array
-        items: { type: string, minLength: 1 }
-        minItems: 1
-        description: "Reviewer perspectives for findings review."
-      max_review_rounds:
-        type: integer
-        minimum: 1
-        description: "Maximum convergence rounds per review gate."
 
   models:
     type: object

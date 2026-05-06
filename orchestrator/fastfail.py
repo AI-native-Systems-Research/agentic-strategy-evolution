@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class FastFailAction(Enum):
     CONTINUE = "continue"
-    SKIP_TO_EXTRACTION = "skip_to_extraction"
+    SKIP_TO_MERGE = "skip_to_merge"
     REDESIGN = "redesign"
     SIMPLIFY = "simplify"
 
@@ -70,7 +70,7 @@ def check_fast_fail(findings: dict) -> FastFailAction:
     # Rule 1: H-main refuted -> skip to principle merge (highest priority)
     if h_main_status == "REFUTED":
         logger.info("Fast-fail: h-main REFUTED -> skip to principle merge, proceed to findings gate")
-        return FastFailAction.SKIP_TO_EXTRACTION
+        return FastFailAction.SKIP_TO_MERGE
 
     # Rule 2: H-control-negative fails -> redesign ONLY if h-main is not confirmed.
     # If h-main is confirmed but control-negative refuted, the mechanism is real

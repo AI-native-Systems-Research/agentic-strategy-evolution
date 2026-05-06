@@ -17,7 +17,7 @@ def metrics_path(tmp_path):
 class TestLogMetrics:
     def test_creates_file_and_appends(self, metrics_path):
         log_metrics(metrics_path, {"dispatcher": "cli", "role": "planner", "phase": "design", "input_tokens": 100})
-        log_metrics(metrics_path, {"dispatcher": "llm", "role": "reviewer", "phase": "review-design", "input_tokens": 50})
+        log_metrics(metrics_path, {"dispatcher": "llm", "role": "analyzer", "phase": "execute-analyze", "input_tokens": 50})
 
         lines = metrics_path.read_text().splitlines()
         assert len(lines) == 2
@@ -41,9 +41,9 @@ class TestSummarizeMetrics:
     def test_aggregates_correctly(self, metrics_path):
         entries = [
             {"dispatcher": "cli", "role": "planner", "phase": "design", "input_tokens": 1000, "output_tokens": 200, "cost_usd": 0.05, "duration_ms": 5000},
-            {"dispatcher": "cli", "role": "executor", "phase": "plan-execution", "input_tokens": 2000, "output_tokens": 500, "cost_usd": 0.10, "duration_ms": 8000},
-            {"dispatcher": "llm", "role": "reviewer", "phase": "review-design", "input_tokens": 800, "output_tokens": 300, "cost_usd": None, "duration_ms": 3000},
-            {"dispatcher": "llm", "role": "extractor", "phase": "extract", "input_tokens": 600, "output_tokens": 150, "cost_usd": None, "duration_ms": 2000},
+            {"dispatcher": "cli", "role": "executor", "phase": "execute-analyze", "input_tokens": 2000, "output_tokens": 500, "cost_usd": 0.10, "duration_ms": 8000},
+            {"dispatcher": "llm", "role": "validator", "phase": "validate", "input_tokens": 800, "output_tokens": 300, "cost_usd": None, "duration_ms": 3000},
+            {"dispatcher": "llm", "role": "reporter", "phase": "summarize", "input_tokens": 600, "output_tokens": 150, "cost_usd": None, "duration_ms": 2000},
         ]
         for e in entries:
             log_metrics(metrics_path, e)
@@ -57,8 +57,8 @@ class TestSummarizeMetrics:
 
         # by_phase
         assert summary["by_phase"]["design"]["calls"] == 1
-        assert summary["by_phase"]["plan-execution"]["cost_usd"] == 0.10
-        assert summary["by_phase"]["review-design"]["input_tokens"] == 800
+        assert summary["by_phase"]["execute-analyze"]["cost_usd"] == 0.10
+        assert summary["by_phase"]["validate"]["input_tokens"] == 800
 
         # by_dispatcher
         assert summary["by_dispatcher"]["cli"]["calls"] == 2
@@ -115,7 +115,6 @@ class TestCLIDispatcherMetrics:
         campaign = {
             "research_question": "Test?",
             "target_system": {"name": "T", "description": "D", "repo_path": str(repo_dir)},
-            "review": {"design_perspectives": ["rigor"], "findings_perspectives": ["rigor"], "max_review_rounds": 1},
             "prompts": {"methodology_layer": "prompts/methodology", "domain_adapter_layer": None},
         }
 
@@ -186,7 +185,6 @@ class TestCLIDispatcherMetrics:
         campaign = {
             "research_question": "Test?",
             "target_system": {"name": "T", "description": "D", "repo_path": str(repo_dir)},
-            "review": {"design_perspectives": ["rigor"], "findings_perspectives": ["rigor"], "max_review_rounds": 1},
             "prompts": {"methodology_layer": "prompts/methodology", "domain_adapter_layer": None},
         }
 
@@ -229,7 +227,6 @@ class TestLLMDispatcherMetrics:
         campaign = {
             "research_question": "Test?",
             "target_system": {"name": "T", "description": "D", "observable_metrics": ["x"], "controllable_knobs": ["y"]},
-            "review": {"design_perspectives": ["rigor"], "findings_perspectives": ["rigor"], "max_review_rounds": 1},
             "prompts": {"methodology_layer": "prompts/methodology", "domain_adapter_layer": None},
         }
 

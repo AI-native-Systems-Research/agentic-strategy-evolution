@@ -139,6 +139,14 @@ def _merge_principles(work_dir: Path, iter_dir: Path) -> None:
     updates = json.loads(updates_path.read_text())
     if not updates:
         return
+    if not isinstance(updates, list):
+        raise RuntimeError(
+            f"principle_updates.json should be a list, got {type(updates).__name__}. "
+            f"Check {updates_path}"
+        )
+    for i, p in enumerate(updates):
+        if not isinstance(p, dict) or "id" not in p:
+            raise RuntimeError(f"principle_updates.json entry {i} missing 'id': {p!r:.200}")
     principles_path = work_dir / "principles.json"
     if principles_path.exists():
         store = json.loads(principles_path.read_text())
@@ -314,6 +322,12 @@ def run_iteration(
                 )
             # Split combined output into separate artifacts
             combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
+            missing = {"plan", "findings", "principle_updates"} - set(combined.keys())
+            if missing:
+                raise RuntimeError(
+                    f"execute-analyze agent output missing keys: {sorted(missing)}. "
+                    f"Got: {sorted(combined.keys())}. See {iter_dir / 'execute_analyze_output.json'}"
+                )
             plan_data = combined["plan"]
             atomic_write(
                 iter_dir / "experiment_plan.yaml",
@@ -382,7 +396,7 @@ def run_iteration(
         print("     The experiment needs redesign.")
         engine.transition("EXECUTE_ANALYZE")
         return IterationOutcome.REDESIGN
-    if ff == FastFailAction.SKIP_TO_EXTRACTION:
+    if ff == FastFailAction.SKIP_TO_MERGE:
         print("  ** H-main REFUTED — skipping to principle merge")
     if ff == FastFailAction.SIMPLIFY:
         print("  ** Dominant component >80% — consider simplifying the model.")

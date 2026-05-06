@@ -221,7 +221,7 @@ Pure functions that examine findings and return a recommended action. The orches
 
 | Rule | Trigger | Action | Rationale |
 |---|---|---|---|
-| 1 | H-main refuted | `SKIP_TO_EXTRACTION` | Mechanism doesn't work — skip to principle merge, proceed to findings gate |
+| 1 | H-main refuted | `SKIP_TO_MERGE` | Mechanism doesn't work — skip to principle merge, proceed to findings gate |
 | 2 | H-control-negative refuted | `REDESIGN` | Mechanism is confounded — it produces effects where it shouldn't |
 | 3 | Dominant component >80% | `SIMPLIFY` | One component does all the work — drop the others |
 | — | None of the above | `CONTINUE` | Proceed normally |
