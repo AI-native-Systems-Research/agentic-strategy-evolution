@@ -46,7 +46,7 @@ _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Phase ordering for resume logic
 _PHASE_ORDER = [
-    "INIT", "FRAMING", "HUMAN_FRAMING_GATE", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+    "INIT", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
     "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
     "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE", "TUNING",
     "EXTRACTION", "DONE",
@@ -67,16 +67,16 @@ def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
                 "Prior feedback entries will be lost.",
                 fb_path, exc,
             )
-            store = {"framing": [], "design": [], "findings": []}
+            store = {"design": [], "findings": []}
     else:
-        store = {"framing": [], "design": [], "findings": []}
+        store = {"design": [], "findings": []}
     if not isinstance(store, dict):
         logger.warning(
             "human_feedback.json at %s has unexpected type %s. "
             "Prior feedback entries will be lost.",
             fb_path, type(store).__name__,
         )
-        store = {"framing": [], "design": [], "findings": []}
+        store = {"design": [], "findings": []}
     entries = store.setdefault(phase, [])
     entries.append({
         "attempt": len(entries) + 1,
@@ -84,6 +84,49 @@ def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
     atomic_write(fb_path, json.dumps(store, indent=2) + "\n")
+
+
+_YAML_FENCE_RE = re.compile(r"```yaml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def _split_design_output(raw: str, iter_dir: Path) -> None:
+    """Split merged design output into problem.md and bundle.yaml.
+
+    The design prompt produces markdown (problem framing) followed by a
+    ```yaml fence (hypothesis bundle). This function separates them,
+    validates the bundle against schema, and writes both files.
+    """
+    matches = _YAML_FENCE_RE.findall(raw)
+    if not matches:
+        raise RuntimeError(
+            "Design agent did not produce a ```yaml``` code fence. "
+            "Cannot extract hypothesis bundle from response."
+        )
+    bundle_yaml_str = matches[-1]
+    bundle = yaml.safe_load(bundle_yaml_str)
+    if not isinstance(bundle, dict):
+        raise RuntimeError(
+            f"Expected YAML object from design agent, got {type(bundle).__name__}"
+        )
+
+    schema = yaml.safe_load((SCHEMAS_DIR / "bundle.schema.yaml").read_text())
+    jsonschema.validate(bundle, schema)
+
+    # Everything before the last yaml fence is the problem framing
+    last_fence_start = raw.rfind("```yaml")
+    if last_fence_start == -1:
+        last_fence_start = raw.rfind("```YAML")
+    problem_md = raw[:last_fence_start].rstrip()
+    # Strip trailing --- separator if present
+    if problem_md.endswith("---"):
+        problem_md = problem_md[:-3].rstrip()
+
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write(iter_dir / "problem.md", problem_md + "\n")
+    atomic_write(
+        iter_dir / "bundle.yaml",
+        yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False),
+    )
 
 
 def _enter_phase(engine, phase):
@@ -178,13 +221,13 @@ def run_iteration(
     def _max_turns_for(phase_key: str) -> int:
         return default_max_turns.get(phase_key, 25)
 
-    # CLIDispatcher for code-access roles (framing, execution); LLMDispatcher for everything else
+    # CLIDispatcher for code-access roles (design, execution); LLMDispatcher for everything else
     from orchestrator.cli_dispatch import CLIDispatcher
     cli_dispatcher = (
         CLIDispatcher(
             work_dir=work_dir, campaign=campaign,
-            model=_model_for("framing"), timeout=timeout,
-            max_turns=_max_turns_for("framing"),
+            model=_model_for("design"), timeout=timeout,
+            max_turns=_max_turns_for("design"),
         ) if repo_path else None
     )
     llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("design"))
@@ -199,46 +242,21 @@ def run_iteration(
     if engine.phase != "INIT":
         print(f"\n  Resuming from {engine.phase}\n")
 
-    # FRAMING — uses CLI dispatcher if available (needs code access to discover metrics/knobs)
-    if _enter_phase(engine, "FRAMING"):
-        print(f"\n{'='*60}")
-        print(f"  FRAMING — defining the problem")
-        print(f"{'='*60}")
-        frame_dispatcher = cli_dispatcher or llm_dispatcher
-        frame_dispatcher.dispatch(
-            "planner", "frame",
-            output_path=iter_dir / "problem.md", iteration=iteration,
-        )
-        print(f"  -> {iter_dir / 'problem.md'}")
-
-    # HUMAN FRAMING GATE
-    if _enter_phase(engine, "HUMAN_FRAMING_GATE"):
-        print(f"\n{'='*60}")
-        print(f"  HUMAN FRAMING GATE")
-        print(f"{'='*60}")
-        decision, reason = gate.prompt(
-            "Review the problem framing. Approve?",
-            artifact_path=str(iter_dir / "problem.md"),
-            files=[str(iter_dir / "problem.md")],
-        )
-        if decision == "reject":
-            _save_human_feedback(iter_dir, "framing", reason or "(Rejected without specific feedback)")
-            print("  Framing rejected. Re-running framing.")
-            engine.transition("FRAMING")
-            return IterationOutcome.REDESIGN
-        if decision == "abort":
-            print("  Aborted.")
-            return IterationOutcome.ABORTED
-
-    # DESIGN — always LLM API (no code access needed, uses framing output)
+    # DESIGN — explores code, frames problem, and designs hypothesis bundle
     if _enter_phase(engine, "DESIGN"):
         print(f"\n{'='*60}")
-        print(f"  DESIGN — creating hypothesis bundle")
+        print(f"  DESIGN — exploring system and creating hypothesis bundle")
         print(f"{'='*60}")
-        llm_dispatcher.dispatch(
+        design_dispatcher = cli_dispatcher or llm_dispatcher
+        design_dispatcher.dispatch(
             "planner", "design",
-            output_path=iter_dir / "bundle.yaml", iteration=iteration,
+            output_path=iter_dir / "design_raw.md", iteration=iteration,
         )
+        # Split raw response into problem.md + bundle.yaml
+        raw_response = (iter_dir / "design_raw.md").read_text()
+        _split_design_output(raw_response, iter_dir)
+        (iter_dir / "design_raw.md").unlink()
+        print(f"  -> {iter_dir / 'problem.md'}")
         print(f"  -> {iter_dir / 'bundle.yaml'}")
 
     # DESIGN REVIEW
