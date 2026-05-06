@@ -87,26 +87,6 @@ class CLIDispatcher:
         finally:
             self._cwd = old
 
-    def revise_plan(self, plan: dict, error_info: dict) -> dict:
-        """Call claude -p to revise a failed experiment plan.
-
-        Used by orchestrator/executor.py when a command fails during
-        the EXECUTING phase.  Returns the corrected plan dict.
-        """
-        self._current_role = "executor"
-        self._current_phase = "revise-plan"
-        context = {
-            "experiment_plan_yaml": yaml.safe_dump(
-                plan, default_flow_style=False, sort_keys=False,
-            ),
-            "error_info": json.dumps(error_info, indent=2),
-        }
-        prompt = self.loader.load("run_plan_revise", context)
-        response = self._call_claude(prompt)
-        data = self._extract_fenced_content(response, "yaml")
-        LLMDispatcher._validate(data, "experiment_plan.schema.yaml")
-        return data
-
     def dispatch(
         self,
         role: str,

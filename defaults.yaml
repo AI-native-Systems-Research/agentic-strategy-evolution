@@ -13,7 +13,7 @@ models:
   # DESIGN — explores repo via claude -p, frames problem, designs hypothesis bundle.
   design: "aws/claude-sonnet-4-5"
 
-  # PLAN_EXECUTION — translates bundle into shell commands via claude -p. Mechanical.
+  # PLAN_EXECUTION — builds, tests, iterates in worktree until all commands work, then emits plan.
   plan_execution: "aws/claude-sonnet-4-5"
 
   # ANALYSIS — compares execution results to predictions. Needs careful reasoning.
@@ -31,4 +31,4 @@ models:
 # Max tool-use turns for claude -p phases.
 max_turns:
   design: 40
-  plan_execution: 30
+  plan_execution: 80

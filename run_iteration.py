@@ -345,10 +345,10 @@ def run_iteration(
                 remove_experiment_worktree(Path(repo_path), experiment_id)
             raise
 
-    # EXECUTING — orchestrator runs commands from plan (no LLM)
+    # EXECUTING — replay pre-validated commands across seeds (no LLM)
     if _enter_phase(engine, "EXECUTING"):
         print(f"\n{'='*60}")
-        print(f"  EXECUTING — running experiment commands")
+        print(f"  EXECUTING — replaying experiment commands")
         print(f"{'='*60}")
         # Recover worktree reference on resume
         if not experiment_dir and repo_path:
@@ -357,13 +357,6 @@ def run_iteration(
                 experiment_id = eid_path.read_text().strip()
                 experiment_dir = Path(repo_path) / ".nous-experiments" / experiment_id
 
-        revision_fn = None
-        if cli_dispatcher and experiment_dir:
-            def _revise(plan, error_info):
-                with cli_dispatcher.override_cwd(experiment_dir):
-                    return cli_dispatcher.revise_plan(plan, error_info)
-            revision_fn = _revise
-
         try:
             from orchestrator.executor import execute_plan
             plan = yaml.safe_load((iter_dir / "experiment_plan.yaml").read_text())
@@ -371,7 +364,6 @@ def run_iteration(
                 plan,
                 cwd=experiment_dir or Path(repo_path) if repo_path else iter_dir,
                 iter_dir=iter_dir,
-                revision_fn=revision_fn,
                 reset_cmd="git checkout -- ." if experiment_dir else None,
             )
             print(f"  -> {iter_dir / 'execution_results.json'}")

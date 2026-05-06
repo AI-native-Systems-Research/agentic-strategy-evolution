@@ -148,10 +148,10 @@ def _make_routing_completion(responses: dict[tuple[str, str], str]):
         # Order matters: check more specific conditions first.
         if "principle store" in system_msg.lower():
             text = responses[("extractor", "extract")]
-        elif "scientific executor" in system_msg.lower() and "experiment commands" in system_msg.lower():
-            text = responses[("executor", "plan-execution")]
         elif "scientific executor" in system_msg.lower() and "analyze real experiment" in system_msg.lower():
             text = responses[("executor", "analyze")]
+        elif "scientific executor" in system_msg.lower() and "emit the plan" in system_msg.lower():
+            text = responses[("executor", "plan-execution")]
         elif "scientific executor" in system_msg.lower():
             text = responses[("executor", "analyze")]
         elif "review" in system_msg.lower() and "experiment findings" in system_msg.lower():
