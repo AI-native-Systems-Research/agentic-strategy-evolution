@@ -5,12 +5,12 @@ This is NOT an LLM — it is a deterministic script.
 """
 import json
 import logging
-import os
-import tempfile
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
+
+from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -120,25 +120,4 @@ class Engine:
         logger.info("Transition: %s -> %s (iteration=%d)", current, to_state, new_state["iteration"])
 
     def _save_state(self, state: dict) -> None:
-        """Atomic write: write to temp file then rename."""
-        data = json.dumps(state, indent=2) + "\n"
-        fd, tmp = tempfile.mkstemp(dir=self.work_dir, suffix=".json.tmp")
-        fd_closed = False
-        try:
-            os.write(fd, data.encode())
-            os.fsync(fd)
-            os.close(fd)
-            fd_closed = True
-            os.replace(tmp, str(self.state_path))
-        except BaseException:
-            try:
-                if not fd_closed:
-                    os.close(fd)
-            except OSError:
-                pass
-            try:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        atomic_write(self.state_path, json.dumps(state, indent=2) + "\n")

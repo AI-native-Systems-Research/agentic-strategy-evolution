@@ -278,12 +278,7 @@ class LLMDispatcher:
                 ctx["bundle_yaml"] = bundle_path.read_text()
 
         if phase in ("design", "execute-analyze"):
-            repo_path = self.campaign.get("target_system", {}).get("repo_path")
-            if repo_path:
-                from orchestrator.repo_context import gather_repo_context
-                ctx["repo_context"] = gather_repo_context(Path(repo_path))
-            else:
-                ctx["repo_context"] = "(no repo_path configured)"
+            ctx["repo_context"] = "(You have full shell access — explore the repo directly.)"
             ctx["max_turns"] = str(self._max_turns_for_phase(phase))
 
         if phase == "execute-analyze":
