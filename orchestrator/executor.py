@@ -8,6 +8,7 @@ a corrected plan from an LLM agent (e.g., CLIDispatcher.revise_plan).
 """
 import json
 import logging
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -144,6 +145,15 @@ def execute_plan(
             retry_by_id[a["arm_id"]] if a["arm_id"] in retry_by_id else a
             for a in arm_results
         ]
+
+    # Persist patches from worktree into the experiment directory
+    patches_src = cwd / "patches"
+    if patches_src.is_dir():
+        patches_dst = iter_dir / "patches"
+        if patches_dst.exists():
+            shutil.rmtree(patches_dst)
+        shutil.copytree(patches_src, patches_dst)
+        logger.info("Copied patches/ to %s", patches_dst)
 
     results = {"setup_results": setup_results, "arms": arm_results}
     output = {"plan_ref": f"runs/{iter_dir.name}/experiment_plan.yaml", **results}
