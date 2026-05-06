@@ -53,7 +53,7 @@ Execution is split into three checkpointable sub-phases:
 
 **PLAN_EXECUTION** — The Executor agent (via `claude -p` with shell access) receives the approved hypothesis bundle and produces `experiment_plan.yaml` — a structured plan with exact shell commands per arm. The agent explores the target repo, discovers build commands, and designs reproducible experiment conditions.
 
-**EXECUTING** — The Python orchestrator runs the commands from `experiment_plan.yaml` deterministically via `subprocess.run()`. No LLM calls. Stdout/stderr are captured per condition. If a command fails, an optional revision callback asks the LLM to correct the plan (max 3 retries). Results are written to `execution_results.json`.
+**EXECUTING** — The Python orchestrator replays the pre-validated commands from `experiment_plan.yaml` deterministically via `subprocess.run()`. No LLM calls, no retries. Stdout/stderr are captured per condition. Failures are recorded and execution continues. Results are written to `execution_results.json`.
 
 **ANALYSIS** — The LLM API receives the execution results and compares observed metrics against predictions to produce `findings.json`.
 

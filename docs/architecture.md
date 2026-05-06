@@ -167,7 +167,7 @@ Execution is split into three checkpointable sub-phases:
 
 1. **PLAN_EXECUTION** — The executor agent (`claude -p` via `CLIDispatcher`) explores the target repo, discovers build commands, and produces `experiment_plan.yaml` with exact shell commands per arm. The plan is a first-class artifact, schema-validated and auditable.
 
-2. **EXECUTING** — The Python orchestrator (`orchestrator/executor.py`) runs the commands deterministically via `subprocess.run()`. No LLM calls. Stdout/stderr are captured per condition and written to `results/<arm_id>/<name>.{stdout,stderr}`. If a command fails, the optional `revision_fn` callback asks the LLM to correct the plan (max 3 retries). Results are written to `execution_results.json`.
+2. **EXECUTING** — The Python orchestrator (`orchestrator/executor.py`) replays the pre-validated commands deterministically via `subprocess.run()`. No LLM calls, no retries. Stdout/stderr are captured per condition and written to `results/<arm_id>/<name>.{stdout,stderr}`. Failures are recorded and execution continues. Results are written to `execution_results.json`.
 
 3. **ANALYSIS** — The LLM API (`LLMDispatcher`) receives the execution results alongside the bundle and problem framing, compares observed metrics against predictions, and produces `findings.json`.
 

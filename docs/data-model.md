@@ -156,7 +156,7 @@ The experiment plan. Produced by the executor agent during PLAN_EXECUTION. Conta
 | `arms[].conditions[].output` | Optional: path to output file to capture |
 | `arms[].conditions[].description` | Optional human description |
 
-Located at `runs/iter-N/experiment_plan.yaml`. If the plan is revised due to command failures, revised versions are saved as `experiment_plan_v2.yaml`, `experiment_plan_v3.yaml`, etc.
+Located at `runs/iter-N/experiment_plan.yaml`. Commands are pre-validated by the plan-execution agent before emission.
 
 ## 4c. execution_results.json — "What did the commands produce?"
 
