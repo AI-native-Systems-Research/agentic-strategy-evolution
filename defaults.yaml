@@ -10,10 +10,7 @@
 #   Claude CLI:       sonnet, haiku, opus
 
 models:
-  # FRAMING — explores repo via claude -p. Needs thorough exploration + flag semantics.
-  framing: "aws/claude-sonnet-4-5"
-
-  # DESIGN — creates hypothesis bundles. Core reasoning step.
+  # DESIGN — explores repo via claude -p, frames problem, designs hypothesis bundle.
   design: "aws/claude-sonnet-4-5"
 
   # PLAN_EXECUTION — translates bundle into shell commands via claude -p. Mechanical.
@@ -33,5 +30,5 @@ models:
 
 # Max tool-use turns for claude -p phases.
 max_turns:
-  framing: 20
+  design: 25
   plan_execution: 8
