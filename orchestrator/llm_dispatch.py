@@ -170,8 +170,7 @@ class LLMDispatcher:
 
     _ROUTES: dict[tuple[str, str], tuple[str, str | None, str | None]] = {
         # (role, phase) -> (template_name, output_format, schema_name)
-        ("planner", "frame"): ("frame", None, None),
-        ("planner", "design"): ("design", "yaml", "bundle.schema.yaml"),
+        ("planner", "design"): ("design", None, None),
         ("executor", "plan-execution"): ("run_plan", "yaml", "experiment_plan.schema.yaml"),
         ("executor", "analyze"): ("run_analyze", "json", "findings.schema.json"),
         ("reviewer", "review-design"): ("review_design", None, None),
@@ -211,8 +210,8 @@ class LLMDispatcher:
             "iteration": str(iteration),
         }
 
-        if phase in ("frame", "design"):
-            ctx["research_question"] = self._read_research_question(phase, iteration)
+        if phase == "design":
+            ctx["research_question"] = self.campaign["research_question"]
 
         if phase == "design":
             if iteration > 1:
@@ -236,7 +235,7 @@ class LLMDispatcher:
                     "This is the first iteration. No prior investigation summary."
                 )
 
-        if phase in ("frame", "design", "plan-execution"):
+        if phase in ("design", "plan-execution"):
             fb_path = self.work_dir / "runs" / f"iter-{iteration}" / "human_feedback.json"
             if fb_path.exists():
                 try:
@@ -255,7 +254,7 @@ class LLMDispatcher:
                         fb_path, type(store).__name__,
                     )
                     store = {}
-                phase_to_key = {"frame": "framing", "design": "design", "plan-execution": "findings"}
+                phase_to_key = {"design": "design", "plan-execution": "findings"}
                 fb_key = phase_to_key.get(phase, "")
                 entries = store.get(fb_key, [])
                 if entries:
@@ -282,14 +281,14 @@ class LLMDispatcher:
             else:
                 ctx["bundle_yaml"] = bundle_path.read_text()
 
-        if phase in ("frame", "plan-execution"):
-            # Pre-inject repo context so claude -p doesn't waste turns exploring
+        if phase in ("design", "plan-execution"):
             repo_path = self.campaign.get("target_system", {}).get("repo_path")
             if repo_path:
                 from orchestrator.repo_context import gather_repo_context
                 ctx["repo_context"] = gather_repo_context(Path(repo_path))
             else:
                 ctx["repo_context"] = "(no repo_path configured)"
+            ctx["max_turns"] = str(self._max_turns_for_phase(phase))
 
         if phase in ("plan-execution", "analyze"):
             # Inject problem.md so executor/analyzer has full framing context
@@ -386,40 +385,17 @@ class LLMDispatcher:
 
         return ctx
 
-    def _read_research_question(self, phase: str, iteration: int) -> str:
-        """Read the research question for frame/design phases."""
-        if phase == "frame":
-            return self.campaign["research_question"]
-        # For design, read from the problem.md produced by framing.
-        # In multi-iteration campaigns, framing only runs for iteration 1;
-        # subsequent iterations reuse iter-1's problem.md.
-        problem_path = self.work_dir / "runs" / f"iter-{iteration}" / "problem.md"
-        if not problem_path.exists() and iteration > 1:
-            problem_path = self.work_dir / "runs" / "iter-1" / "problem.md"
-        if not problem_path.exists():
-            raise FileNotFoundError(
-                f"Expected {problem_path} for design phase. "
-                f"Was the framing phase completed for iteration {iteration}?"
-            )
-        text = problem_path.read_text()
-        in_section = False
-        lines: list[str] = []
-        for line in text.splitlines():
-            if line.strip().startswith("## Research Question"):
-                in_section = True
-                continue
-            if in_section and line.strip().startswith("##"):
-                break
-            if in_section and line.strip():
-                lines.append(line.strip())
-        if lines:
-            return "\n".join(lines)
-        logger.warning(
-            "Could not extract research question from %s; "
-            "using full problem.md content as context.",
-            problem_path,
-        )
-        return text[:500]
+
+    def _max_turns_for_phase(self, phase: str) -> int:
+        """Return the max_turns limit for a CLI-dispatched phase."""
+        defaults_path = Path(__file__).parent.parent / "defaults.yaml"
+        if defaults_path.exists():
+            defaults = yaml.safe_load(defaults_path.read_text()) or {}
+            max_turns = defaults.get("max_turns", {})
+            phase_key = phase.replace("-", "_")
+            if phase_key in max_turns:
+                return max_turns[phase_key]
+        return 25
 
     def _format_principles(self) -> str:
         """Read principles.json and format active ones for prompt injection."""
