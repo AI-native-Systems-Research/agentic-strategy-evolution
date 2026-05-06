@@ -35,7 +35,8 @@ Explore the codebase to fill gaps not covered above. You must discover and docum
 2. **How to run experiments** — find the CLI entry point and discover its subcommands and flags via `--help`. If multiple subcommands exist, choose the one that runs **locally** (e.g., "run", "simulate", "test") over ones that connect to external servers (e.g., "observe", "client", "bench"). Only include CLI flags that actually exist in `--help` output — do not invent flags. Prefer the simplest possible invocation: use CLI flags directly rather than config files when the parameter space can be expressed that way.
 3. **Code evidence for flag semantics** — for each flag relevant to the experiment, read the source code where it is parsed/used and quote the relevant line(s). This proves the semantics (e.g., are token counts additive or overlapping? Does a flag replace or augment another?).
 4. **What metrics are emitted** — find where metrics are computed and output. Identify the exact metric names, the flag that controls output destination, and the output format.
-5. **Key source files** — identify the files implementing the mechanism under study (e.g., the scheduler, cache, router).
+5. **Code locations as intervention targets** — if the research question implies an algorithmic change (not just a flag tweak), identify the specific file(s) and line range(s) that implement the mechanism. Cite them as `path/to/file.ext:123-145`. These files become candidates for `code_changes` entries during DESIGN.
+6. **Key source files** — identify the files implementing the mechanism under study (e.g., the scheduler, cache, router).
 
 Write a problem framing document in markdown with exactly these sections:
 
