@@ -34,12 +34,20 @@ class TestStubDispatcher:
         (tmp_path / "runs" / "iter-1" / "reviews").mkdir(parents=True)
         return tmp_path
 
-    def test_dispatch_planner_produces_valid_bundle(self, work_dir):
+    def test_dispatch_planner_produces_valid_design_output(self, work_dir):
         dispatcher = _make_dispatcher(work_dir)
-        output_path = work_dir / "runs" / "iter-1" / "bundle.yaml"
+        output_path = work_dir / "runs" / "iter-1" / "design_raw.md"
         dispatcher.dispatch("planner", "design", output_path=output_path, iteration=1)
         assert output_path.exists()
-        bundle = yaml.safe_load(output_path.read_text())
+        raw = output_path.read_text()
+        # Should contain problem framing markdown and a yaml code fence
+        assert "## Research Question" in raw
+        assert "```yaml" in raw
+        # Extract and validate the bundle from the yaml fence
+        import re
+        match = re.search(r"```yaml\s*\n(.*?)```", raw, re.DOTALL)
+        assert match is not None
+        bundle = yaml.safe_load(match.group(1))
         jsonschema.validate(bundle, _load_schema("bundle.schema.yaml"))
 
     def test_dispatch_executor_produces_valid_findings(self, work_dir):

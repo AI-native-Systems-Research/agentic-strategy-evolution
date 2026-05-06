@@ -117,16 +117,7 @@ PRINCIPLES_JSON = json.dumps({
 def _mock_responses() -> dict[tuple[str, str], str]:
     """Map (role, phase) to canned LLM responses."""
     return {
-        ("planner", "frame"): (
-            "# Problem Framing\n\n"
-            "## Research Question\nDoes batch size affect latency?\n\n"
-            "## Baseline\nSingle-request latency is 50ms.\n\n"
-            "## Experimental Conditions\nVary batch_size from 1 to 64.\n\n"
-            "## Success Criteria\n20% latency reduction at batch_size=32.\n\n"
-            "## Constraints\nThroughput must not degrade.\n\n"
-            "## Prior Knowledge\nNo principles extracted yet.\n"
-        ),
-        ("planner", "design"): f"```yaml\n{BUNDLE_YAML}```",
+        ("planner", "design"): f"## Research Question\n\nDoes batch size affect latency?\n\n## System Interface\n\nStub system interface.\n\n---\n\n```yaml\n{BUNDLE_YAML}```",
         ("executor", "plan-execution"): f"```yaml\n{EXPERIMENT_PLAN_YAML}```",
         ("executor", "analyze"): f"```json\n{FINDINGS_JSON}\n```",
         ("reviewer", "review-design"): (
@@ -155,9 +146,7 @@ def _make_routing_completion(responses: dict[tuple[str, str], str]):
 
         # Determine which response to return based on prompt keywords.
         # Order matters: check more specific conditions first.
-        if "problem framing document" in system_msg:
-            text = responses[("planner", "frame")]
-        elif "principle store" in system_msg.lower():
+        if "principle store" in system_msg.lower():
             text = responses[("extractor", "extract")]
         elif "scientific executor" in system_msg.lower() and "experiment commands" in system_msg.lower():
             text = responses[("executor", "plan-execution")]
@@ -224,20 +213,14 @@ class TestSingleIterationWithMockedLLM:
         gate = _make_gate()
         iter_dir = campaign_dir / "runs" / "iter-1"
 
-        # INIT -> FRAMING
-        engine.transition("FRAMING")
-        dispatcher.dispatch(
-            "planner", "frame",
-            output_path=iter_dir / "problem.md", iteration=1,
-        )
-        assert (iter_dir / "problem.md").exists()
-
-        # FRAMING -> DESIGN
+        # INIT -> DESIGN
         engine.transition("DESIGN")
         dispatcher.dispatch(
             "planner", "design",
-            output_path=iter_dir / "bundle.yaml", iteration=1,
+            output_path=iter_dir / "design_raw.md", iteration=1,
         )
+        from run_iteration import _split_design_output
+        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
         bundle = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
         jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))
 
@@ -323,12 +306,11 @@ class TestSingleIterationWithMockedLLM:
         assert engine.phase == "DONE"
 
         # Verify all expected artifacts exist
-        assert (iter_dir / "problem.md").exists()
         assert (iter_dir / "bundle.yaml").exists()
         assert (iter_dir / "findings.json").exists()
         assert (iter_dir / "reviews").is_dir()
 
         # Verify LLM was called the expected number of times:
-        # 1 frame + 1 design + 2 design reviewers + 1 plan-execution +
-        # 1 analyze + 2 findings reviewers + 1 extractor = 9
-        assert len(mock_fn.call_log) == 9
+        # 1 design + 2 design reviewers + 1 plan-execution +
+        # 1 analyze + 2 findings reviewers + 1 extractor = 8
+        assert len(mock_fn.call_log) == 8

@@ -58,7 +58,7 @@ class StubDispatcher:
 
         match role:
             case "planner":
-                self._write_bundle(output_path, iteration)
+                self._write_design_output(output_path, iteration)
             case "executor":
                 if phase == "plan-execution":
                     self._write_experiment_plan(output_path, iteration)
@@ -80,7 +80,8 @@ class StubDispatcher:
 
         logger.info("Dispatched role=%s phase=%s -> %s", role, phase, output_path)
 
-    def _write_bundle(self, path: Path, iteration: int) -> None:
+    def _write_design_output(self, path: Path, iteration: int) -> None:
+        """Write merged design output: problem framing markdown + yaml bundle fence."""
         bundle = {
             "metadata": {
                 "iteration": iteration,
@@ -102,7 +103,17 @@ class StubDispatcher:
                 },
             ],
         }
-        atomic_write(path, yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False))
+        bundle_yaml = yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False)
+        problem_md = (
+            "## Research Question\n\n"
+            "Stub: does the mechanism work?\n\n"
+            "## System Interface\n\n"
+            "Stub: system interface details.\n\n"
+            "## Baseline Command\n\n"
+            "```\necho 'stub baseline'\n```\n"
+        )
+        raw = f"{problem_md}\n---\n\n```yaml\n{bundle_yaml}```\n"
+        atomic_write(path, raw)
 
     def _write_experiment_plan(self, path: Path, iteration: int) -> None:
         plan = {

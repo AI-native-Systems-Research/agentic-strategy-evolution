@@ -31,7 +31,7 @@ class TestStateSchema:
     def test_all_phases_accepted(self, load_schema):
         schema = load_schema("state.schema.json")
         phases = [
-            "INIT", "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+            "INIT", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
             "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
             "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "TUNING", "EXTRACTION", "DONE",
@@ -524,8 +524,7 @@ class TestSummarySchema:
             "total_tokens": {"input": 1250000, "output": 380000},
             "total_iterations": 12,
             "cost_by_phase": {
-                "FRAMING": 2.5,
-                "DESIGN": 8.3,
+                "DESIGN": 10.8,
                 "PLAN_EXECUTION": 6.0,
                 "ANALYSIS": 12.0,
             },

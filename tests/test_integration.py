@@ -12,6 +12,7 @@ from orchestrator.engine import Engine
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
+from run_iteration import _split_design_output
 
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
@@ -62,15 +63,12 @@ class TestSingleIterationHappyPath:
         gate = _make_gate()
         iter_dir = campaign_dir / "runs" / "iter-1"
 
-        # INIT -> FRAMING
-        engine.transition("FRAMING")
-        shutil.copy(TEMPLATES_DIR / "problem.md", campaign_dir / "problem.md")
-
-        # FRAMING -> DESIGN
+        # INIT -> DESIGN
         engine.transition("DESIGN")
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "bundle.yaml", iteration=1
+            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
         )
+        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
         bundle = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
         jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))
 
@@ -140,11 +138,11 @@ class TestSingleIterationHappyPath:
         gate = _make_gate()
         iter_dir = campaign_dir / "runs" / "iter-1"
 
-        for s in ["FRAMING", "DESIGN"]:
-            engine.transition(s)
+        engine.transition("DESIGN")
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "bundle.yaml", iteration=1
+            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
         )
+        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
 
         engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
@@ -179,7 +177,6 @@ class TestSingleIterationHappyPath:
 
     def test_checkpoint_resume(self, campaign_dir):
         engine = Engine(campaign_dir)
-        engine.transition("FRAMING")
         engine.transition("DESIGN")
 
         # Simulate crash: create new engine from same dir
@@ -195,12 +192,12 @@ class TestSingleIterationHappyPath:
         gate = _make_gate()
 
         # Iteration 1: confirmed
-        engine.transition("FRAMING")
         engine.transition("DESIGN")
         iter_dir = campaign_dir / "runs" / "iter-1"
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "bundle.yaml", iteration=1
+            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
         )
+        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
         engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
         engine.transition("PLAN_EXECUTION")
@@ -231,8 +228,9 @@ class TestSingleIterationHappyPath:
         # Iteration 2: refuted
         iter_dir2 = campaign_dir / "runs" / "iter-2"
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir2 / "bundle.yaml", iteration=2
+            "planner", "design", output_path=iter_dir2 / "design_raw.md", iteration=2
         )
+        _split_design_output((iter_dir2 / "design_raw.md").read_text(), iter_dir2)
         engine.transition("DESIGN_REVIEW")
         engine.transition("HUMAN_DESIGN_GATE")
         engine.transition("PLAN_EXECUTION")
@@ -284,11 +282,11 @@ class TestGateSummaries:
         dispatcher = _make_dispatcher(campaign_dir)
         iter_dir = campaign_dir / "runs" / "iter-1"
 
-        engine.transition("FRAMING")
         engine.transition("DESIGN")
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "bundle.yaml", iteration=1,
+            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1,
         )
+        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
         engine.transition("DESIGN_REVIEW")
 
         # Generate gate summary (what run_iteration.py would do before the gate)

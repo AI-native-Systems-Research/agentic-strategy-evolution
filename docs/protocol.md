@@ -9,7 +9,7 @@ Nous is a framework that runs the scientific method on software systems. Two pro
 1. **Hypothesis-driven experimentation** — the agent forms a falsifiable claim, designs a controlled experiment to test it, and learns from the outcome either way. Refuted hypotheses are as valuable as confirmed ones.
 2. **Compounding knowledge** — principles extracted from iteration N constrain the design space of iteration N+1. The system gets smarter over time.
 
-The framework consists of a deterministic orchestrator (not an LLM) that drives four AI agent roles through a structured 5-phase loop, producing schema-governed artifacts at each stage.
+The framework consists of a deterministic orchestrator (not an LLM) that drives four AI agent roles through a structured 4-phase loop, producing schema-governed artifacts at each stage.
 
 ## Preconditions
 
@@ -22,13 +22,15 @@ All four preconditions must hold for a system to be investigated with Nous:
 | **Reproducible execution** | A simulator, testbed, or staging environment exists with controlled conditions and multiple seeds. |
 | **Decomposable mechanisms** | System behavior arises from interacting components that can be reasoned about individually. |
 
-## The 5-Phase Loop
+## The 4-Phase Loop
 
-Each iteration follows five phases:
+Each iteration follows four phases:
 
-### Phase 1: Problem Framing
+### Phase 1: Design (Problem Framing + Hypothesis Bundle)
 
-The Planner agent writes `problem.md` containing:
+The Planner agent performs both problem framing and hypothesis design in a single step. It explores the target system, validates assumptions, then produces two artifacts:
+
+**Problem framing** (`problem.md`):
 - Research question — what mechanism or behavior is under investigation
 - Baseline — current system behavior without intervention, with metrics
 - Experimental conditions — input characteristics, scale parameters, environment configuration
@@ -36,9 +38,8 @@ The Planner agent writes `problem.md` containing:
 - Constraints — what cannot be changed (resource limits, SLOs, compatibility)
 - Prior knowledge — relevant principles from earlier iterations
 
-### Phase 2: Hypothesis Bundle Design
-
-The Planner agent generates 2–3 candidate strategies, selects a winner via multi-judge review, and decomposes it into a **hypothesis bundle** — a structured set of falsifiable predictions.
+**Hypothesis bundle** (`bundle.yaml`):
+The agent decomposes the investigation into a structured set of falsifiable predictions — a hypothesis bundle.
 
 A bundle passes through:
 1. AI Design Review (default: 5 independent perspectives, configurable per campaign via `campaign.yaml`)
@@ -46,7 +47,7 @@ A bundle passes through:
 
 If the human rejects, the Planner revises. If approved, the bundle advances to execution.
 
-### Phase 3: Plan, Execute, and Analyze
+### Phase 2: Plan, Execute, and Analyze
 
 Execution is split into three checkpointable sub-phases:
 
@@ -69,13 +70,13 @@ Findings pass through:
 
 The ledger records one row per completed iteration, including prediction accuracy.
 
-### Phase 4: Bayesian Parameter Optimization
+### Phase 3: Bayesian Parameter Optimization
 
 For confirmed mechanisms only. The protocol calls for Gaussian process optimization over the parameter space (e.g., 30-50 evaluations per strategy across 3+ seeds). This separates mechanism design (Phase 2) from parameter tuning, ensuring fair comparisons.
 
 If H-main was refuted, this phase is skipped entirely (fast-fail).
 
-### Phase 5: Principle Extraction and Iteration
+### Phase 4: Principle Extraction and Iteration
 
 The Extractor agent updates the principle store:
 - **Insert** — add a new principle from confirmed or refuted findings
@@ -196,7 +197,7 @@ A campaign stops when:
 ## Orchestrator
 
 The orchestrator is a Python state machine — NOT an LLM. It owns:
-- Phase transitions between 13 states
+- Phase transitions between 11 states
 - Checkpoint/resume via `state.json`
 - Agent dispatch (invoke LLM agents with structured prompts)
 - Gate logic (pause for human approval)
@@ -205,7 +206,7 @@ The orchestrator is a Python state machine — NOT an LLM. It owns:
 ### State Machine
 
 ```
-INIT -> FRAMING -> DESIGN -> DESIGN_REVIEW -> HUMAN_DESIGN_GATE
+INIT -> DESIGN -> DESIGN_REVIEW -> HUMAN_DESIGN_GATE
   -> PLAN_EXECUTION -> EXECUTING -> ANALYSIS
   -> FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
   -> TUNING (if H-main confirmed) or EXTRACTION (if refuted)
@@ -223,7 +224,7 @@ Backward/looping transitions:
 
 | Role | Phases | Reads | Writes | Shell |
 |---|---|---|---|---|
-| Planner | Frame, Design | all | `problem.md`, `bundle.yaml` | — |
+| Planner | Design | all | `problem.md`, `bundle.yaml` | yes (via CLI) |
 | Executor | Plan-Execution, Analyze | bundle, problem, exec results | `experiment_plan.yaml`, `findings.json` | yes (plan-execution) |
 | Reviewer | Design Review, Findings Review | all | `review-*.md` | — |
 | Extractor | Extract, Summarize | all | `principles.json`, `investigation_summary.json` | — |
@@ -236,9 +237,9 @@ campaign-dir/
   state.json          — investigation checkpoint
   ledger.json         — append-only iteration log
   principles.json     — living principle store
-  problem.md          — problem framing
   runs/
     iter-N/
+      problem.md      — problem framing
       bundle.yaml     — hypothesis bundle
       experiment_plan.yaml — exact commands per arm
       execution_results.json — stdout/stderr/metrics per condition

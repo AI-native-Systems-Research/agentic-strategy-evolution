@@ -39,9 +39,10 @@ This separation exists because:
                     │                                      │
                     │  campaign.yaml   state.json          │
                     │  ledger.json     principles.json     │
-                    │  problem.md      summary.json        │
+                    │  summary.json                        │
                     │  runs/iter-N/    trace.jsonl         │
-                    │    bundle.yaml   experiment_plan.yaml │
+                    │    problem.md    bundle.yaml          │
+                    │    experiment_plan.yaml               │
                     │    execution_results.json              │
                     │    findings.json                      │
                     │    investigation_summary.json         │
@@ -53,20 +54,20 @@ This separation exists because:
 
 ### Engine (`orchestrator/engine.py`)
 
-The engine owns the 13-state state machine and checkpoint/resume.
+The engine owns the 11-state state machine and checkpoint/resume.
 
 **State machine:**
 
 ```
-INIT ──▶ FRAMING ──▶ DESIGN ──▶ DESIGN_REVIEW ──▶ HUMAN_DESIGN_GATE
-                        ▲            │                    │
-                        │            │ (CRITICAL)         │ (reject)
-                        └────────────┘                    │
-                        ▲                                 │
-                        └─────────────────────────────────┘
-                                                          │ (approve)
-                                                          ▼
-         ┌─── PLAN_EXECUTION ◀────────────────────────────┘
+INIT ──▶ DESIGN ──▶ DESIGN_REVIEW ──▶ HUMAN_DESIGN_GATE
+            ▲            │                    │
+            │            │ (CRITICAL)         │ (reject)
+            └────────────┘                    │
+            ▲                                 │
+            └─────────────────────────────────┘
+                                              │ (approve)
+                                              ▼
+         ┌─── PLAN_EXECUTION ◀────────────────┘
          │         │
          │         ▼
          │     EXECUTING
@@ -104,7 +105,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 
 | Role | Invoked During | Produces |
 |---|---|---|
-| **Planner** | FRAMING, DESIGN | `problem.md`, `bundle.yaml` |
+| **Planner** | DESIGN | `problem.md`, `bundle.yaml` |
 | **Executor** | PLAN_EXECUTION, ANALYSIS | `experiment_plan.yaml`, `findings.json` |
 | **Orchestrator** | EXECUTING | `execution_results.json` (deterministic, no LLM) |
 | **Reviewer** | DESIGN_REVIEW, FINDINGS_REVIEW | `review-*.md` |
@@ -115,7 +116,7 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 
 - `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
 - `LLMDispatcher` (`llm_dispatch.py`) calls a real LLM via the OpenAI SDK, parses structured output from code fences, validates against schemas, and writes artifacts atomically. Works with any OpenAI-compatible endpoint. This is the production dispatcher.
-- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Used for the planner (framing) and executor roles when the campaign specifies a `repo_path`. Shares the same routing table and prompt templates as `LLMDispatcher`, but sends prompts via stdin to the Claude CLI instead of calling an API endpoint. The agent can read files, grep code, and run commands in the target repo. Supports `override_cwd()` context manager for temporarily pointing the executor at a git worktree.
+- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Used for the planner (design) and executor roles when the campaign specifies a `repo_path`. Shares the same routing table and prompt templates as `LLMDispatcher`, but sends prompts via stdin to the Claude CLI instead of calling an API endpoint. The agent can read files, grep code, and run commands in the target repo. Supports `override_cwd()` context manager for temporarily pointing the executor at a git worktree.
 
 **Dispatch interface:**
 ```python
@@ -142,7 +143,7 @@ Prompts have two layers:
 | **Methodology layer** | Ships with Nous (`prompts/methodology/`) | Generic scientific method: "check for confounds", "is the causal mechanism plausible?", "are 3 seeds enough?" |
 | **Domain adapter layer** | Generated per system from `campaign.yaml` | System-specific vocabulary, metrics, knobs, experiment commands |
 
-The methodology layer is 9 prompt templates (one per role+phase combination). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:
+The methodology layer is prompt templates (one per role+phase combination). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:
 
 - `{{target_system}}`, `{{system_description}}` — from `campaign.yaml`
 - `{{observable_metrics}}`, `{{controllable_knobs}}` — from `campaign.yaml`
@@ -191,10 +192,10 @@ Default model: `aws/claude-sonnet-4-5` (configurable per-phase via `defaults.yam
 
 | Dispatcher | Role | When |
 |---|---|---|
-| `CLIDispatcher` | Planner (framing), Executor | `repo_path` is set — agent needs code/shell access |
-| `LLMDispatcher` | Planner (design), Reviewer, Extractor, Summarizer | Always — operates on artifacts, no code access needed |
+| `CLIDispatcher` | Planner (design), Executor | `repo_path` is set — agent needs code/shell access |
+| `LLMDispatcher` | Reviewer, Extractor, Summarizer | Always — operates on artifacts, no code access needed |
 
-The entry points (`run_iteration.py`, `run_campaign.py`) auto-select: if `target_system.repo_path` is set, a `CLIDispatcher` is created alongside the `LLMDispatcher`. Framing uses CLI (to explore code), design uses LLM API (to reason from the framing output), and execution uses CLI (to run experiments in a worktree). Reviewer, extractor, and summarizer always use `LLMDispatcher`.
+The entry points (`run_iteration.py`, `run_campaign.py`) auto-select: if `target_system.repo_path` is set, a `CLIDispatcher` is created for design and execution (the agent explores code and runs experiments in a worktree). Reviewer, extractor, and summarizer always use `LLMDispatcher`.
 
 ### Simplified Campaign
 
@@ -310,9 +311,8 @@ Rule 1 takes priority: if H-main is refuted, the control-negative result doesn't
 ```
 Iteration 1                    Iteration 2                    Iteration N
 ┌──────────────────┐          ┌──────────────────┐          ┌──────────────┐
-│ Frame            │          │ Frame            │          │              │
-│ Design           │          │ Design           │          │   ...        │
-│ Execute          │   ───▶   │  (constrained by │   ───▶   │              │
+│ Design           │          │ Design           │          │              │
+│ Execute          │   ───▶   │  (constrained by │   ───▶   │   ...        │
 │ Extract          │          │   principles)    │          │              │
 │  → 2 principles  │          │ Execute          │          │              │
 │                  │          │ Extract          │          │              │
@@ -336,7 +336,7 @@ Principles are hard constraints: the Planner must not design bundles that contra
 for i in 1..max_iterations:
   ┌─────────────────────────────────────────────────────┐
   │  run_iteration(iteration=i, final=(i==max))                        │
-  │    FRAMING → DESIGN → REVIEW → PLAN_EXECUTION → EXECUTING → ANALYSIS → EXTRACTION │
+  │    DESIGN → REVIEW → PLAN_EXECUTION → EXECUTING → ANALYSIS → EXTRACTION            │
   └─────────────────────┬───────────────────────────────┘
                         │
                   (if not final)

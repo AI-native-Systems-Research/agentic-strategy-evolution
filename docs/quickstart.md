@@ -75,7 +75,7 @@ prompts:
 python run_campaign.py campaign.yaml --max-iterations 3
 ```
 
-This loops through iterations. Each iteration runs the full Nous loop (framing, design, review, execution, extraction) and pauses at human gates for your approval. After each iteration, a continue gate asks whether to proceed.
+This loops through iterations. Each iteration runs the full Nous loop (design, review, execution, extraction) and pauses at human gates for your approval. After each iteration, a continue gate asks whether to proceed.
 
 Options:
 

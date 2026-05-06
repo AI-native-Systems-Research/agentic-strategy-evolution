@@ -1,6 +1,5 @@
 """Tests for CLIDispatcher — claude -p subprocess invocation."""
 import json
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -123,29 +122,29 @@ class TestCLIDispatcherProtocol:
 class TestCLIDispatcherUnit:
     """Unit tests with mocked subprocess."""
 
-    def test_dispatch_planner_design_produces_valid_bundle(self, work_dir: Path, campaign: dict) -> None:
+    def test_dispatch_planner_design_writes_raw_output(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
-        cli_json_output = json.dumps({
-            "type": "result", "subtype": "success", "is_error": False,
-            "result": f"```yaml\n{VALID_BUNDLE_YAML}```",
-            "total_cost_usd": 0.03, "duration_ms": 5000, "num_turns": 1,
-            "usage": {"input_tokens": 1000, "output_tokens": 400,
-                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
-        })
+        raw_design_text = (
+            "# Experiment Design\n\n"
+            "## Research Question\nDoes batch size affect latency?\n\n"
+            "## Arms\n- h-main: larger batches amortize overhead\n"
+            "- h-control-negative: no effect at batch_size=1\n"
+        )
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = cli_json_output
+        mock_result.stdout = raw_design_text
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            out = work_dir / "runs" / "iter-1" / "bundle_cli.yaml"
+            out = work_dir / "runs" / "iter-1" / "design.md"
             d.dispatch("planner", "design", output_path=out, iteration=1)
 
         assert out.exists()
-        bundle = yaml.safe_load(out.read_text())
-        jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))
+        content = out.read_text()
+        assert "Experiment Design" in content
+        assert "Research Question" in content
 
     def test_dispatch_executor_plan_execution_produces_valid_plan(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
@@ -174,28 +173,22 @@ class TestCLIDispatcherUnit:
         plan = yaml.safe_load(out.read_text())
         jsonschema.validate(plan, load_schema("experiment_plan.schema.yaml"))
 
-    def test_dispatch_planner_frame_writes_markdown(self, work_dir: Path, campaign: dict) -> None:
+    def test_dispatch_planner_design_writes_response_text(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
-        cli_json_output = json.dumps({
-            "type": "result", "subtype": "success", "is_error": False,
-            "result": "# Problem Framing\n\n## Research Question\nWhy is it slow?\n",
-            "total_cost_usd": 0.02, "duration_ms": 3000, "num_turns": 1,
-            "usage": {"input_tokens": 800, "output_tokens": 200,
-                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
-        })
+        response_text = "# Design Output\n\nThis is the raw design response.\n"
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = cli_json_output
+        mock_result.stdout = response_text
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            out = work_dir / "runs" / "iter-1" / "problem_cli.md"
-            d.dispatch("planner", "frame", output_path=out, iteration=1)
+            out = work_dir / "runs" / "iter-1" / "design_out.md"
+            d.dispatch("planner", "design", output_path=out, iteration=1)
 
         assert out.exists()
-        assert "Research Question" in out.read_text()
+        assert out.read_text() == response_text
 
     def test_claude_not_found_raises(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
@@ -207,7 +200,7 @@ class TestCLIDispatcherUnit:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             with pytest.raises(RuntimeError, match="claude.*not found"):
                 d.dispatch(
-                    "planner", "frame",
+                    "planner", "design",
                     output_path=work_dir / "out.md", iteration=1,
                 )
 
@@ -223,7 +216,7 @@ class TestCLIDispatcherUnit:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             with pytest.raises(RuntimeError, match="claude.*exited.*1"):
                 d.dispatch(
-                    "planner", "frame",
+                    "planner", "design",
                     output_path=work_dir / "out.md", iteration=1,
                 )
 
@@ -233,13 +226,13 @@ class TestCLIDispatcherUnit:
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "# Framing\nStub."
+        mock_result.stdout = "# Design\nStub."
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result) as mock_run:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             d.dispatch(
-                "planner", "frame",
+                "planner", "design",
                 output_path=work_dir / "out.md", iteration=1,
             )
 
@@ -263,13 +256,13 @@ class TestCLIDispatcherUnit:
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "# Framing\nStub."
+        mock_result.stdout = "# Design\nStub."
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result) as mock_run:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             d.dispatch(
-                "planner", "frame",
+                "planner", "design",
                 output_path=work_dir / "out.md", iteration=1,
             )
 
@@ -308,13 +301,13 @@ class TestCLIDispatcherUnit:
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "# Framing\nStub."
+        mock_result.stdout = "# Design\nStub."
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result) as mock_run:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             with d.override_cwd(override_dir):
-                d.dispatch("planner", "frame", output_path=work_dir / "out.md", iteration=1)
+                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
 
         call_kwargs = mock_run.call_args
         cwd_used = call_kwargs.kwargs.get("cwd") or call_kwargs[1].get("cwd")

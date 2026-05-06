@@ -74,7 +74,7 @@ class TestEngineLoadErrors:
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
         old_ts = engine.state["timestamp"]
-        engine.transition("FRAMING")
+        engine.transition("DESIGN")
         assert engine.state["timestamp"] != old_ts
 
 
@@ -104,8 +104,8 @@ class TestEngine:
     def test_phase_property(self, work_dir):
         engine = Engine(work_dir)
         assert engine.phase == "INIT"
-        engine.transition("FRAMING")
-        assert engine.phase == "FRAMING"
+        engine.transition("DESIGN")
+        assert engine.phase == "DESIGN"
 
     def test_iteration_property(self, work_dir):
         engine = Engine(work_dir)
@@ -115,12 +115,12 @@ class TestEngine:
         engine = Engine(work_dir)
         assert engine.run_id == "test-001"
 
-    def test_transition_init_to_framing(self, work_dir):
+    def test_transition_init_to_design(self, work_dir):
         engine = Engine(work_dir)
-        engine.transition("FRAMING")
-        assert engine.phase == "FRAMING"
+        engine.transition("DESIGN")
+        assert engine.phase == "DESIGN"
         saved = json.loads((work_dir / "state.json").read_text())
-        assert saved["phase"] == "FRAMING"
+        assert saved["phase"] == "DESIGN"
 
     def test_invalid_transition_rejected(self, work_dir):
         engine = Engine(work_dir)
@@ -131,18 +131,18 @@ class TestEngine:
         """Typos are caught at the call site before checking TRANSITIONS."""
         engine = Engine(work_dir)
         with pytest.raises(ValueError, match="not a recognized phase"):
-            engine.transition("FRAMNG")
+            engine.transition("DESGN")
 
     def test_checkpoint_resume(self, work_dir):
         engine = Engine(work_dir)
-        engine.transition("FRAMING")
+        engine.transition("DESIGN")
         engine2 = Engine(work_dir)
-        assert engine2.phase == "FRAMING"
+        assert engine2.phase == "DESIGN"
 
     def test_full_happy_path(self, work_dir):
         engine = Engine(work_dir)
         path = [
-            "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+            "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
             "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
             "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "TUNING", "EXTRACTION", "DONE",
@@ -154,7 +154,7 @@ class TestEngine:
     def test_refuted_path_skips_tuning(self, work_dir):
         engine = Engine(work_dir)
         for s in [
-            "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+            "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
             "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
             "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
         ]:
@@ -166,23 +166,16 @@ class TestEngine:
     def test_human_design_gate_reject(self, work_dir):
         """Human rejects at design gate -> back to DESIGN without incrementing."""
         engine = Engine(work_dir)
-        for s in ["FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE"]:
+        for s in ["DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE"]:
             engine.transition(s)
         engine.transition("DESIGN")  # human rejects
         assert engine.phase == "DESIGN"
         assert engine.iteration == 0  # must NOT increment
 
-    def test_framing_to_design_does_not_increment(self, work_dir):
-        """Only EXTRACTION -> DESIGN increments, not FRAMING -> DESIGN."""
-        engine = Engine(work_dir)
-        engine.transition("FRAMING")
-        engine.transition("DESIGN")
-        assert engine.iteration == 0
-
     def test_iteration_increments_on_next_design(self, work_dir):
         engine = Engine(work_dir)
         for s in [
-            "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+            "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
             "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
             "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "EXTRACTION",
@@ -194,7 +187,7 @@ class TestEngine:
 
     def test_design_review_criticals_loop_back(self, work_dir):
         engine = Engine(work_dir)
-        for s in ["FRAMING", "DESIGN", "DESIGN_REVIEW"]:
+        for s in ["DESIGN", "DESIGN_REVIEW"]:
             engine.transition(s)
         engine.transition("DESIGN")  # criticals found, loop back
         assert engine.phase == "DESIGN"
@@ -203,7 +196,7 @@ class TestEngine:
     def test_findings_review_criticals_loop_back(self, work_dir):
         engine = Engine(work_dir)
         for s in [
-            "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+            "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
             "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
             "FINDINGS_REVIEW",
         ]:
@@ -214,7 +207,7 @@ class TestEngine:
     def test_human_findings_gate_reject(self, work_dir):
         engine = Engine(work_dir)
         for s in [
-            "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+            "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
             "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
             "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
         ]:
@@ -225,7 +218,7 @@ class TestEngine:
     def test_done_can_only_transition_to_design(self, work_dir):
         engine = Engine(work_dir)
         for s in [
-            "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+            "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
             "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
             "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "EXTRACTION", "DONE",
@@ -238,10 +231,24 @@ class TestEngine:
         engine.transition("DESIGN")
         assert engine.phase == "DESIGN"
 
+    def test_done_to_design_increments_iteration(self, work_dir):
+        """DONE -> DESIGN must increment iteration (resume a campaign)."""
+        engine = Engine(work_dir)
+        for s in [
+            "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
+            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
+            "EXTRACTION", "DONE",
+        ]:
+            engine.transition(s)
+        assert engine.iteration == 0
+        engine.transition("DESIGN")
+        assert engine.iteration == 1
+
     def test_multi_iteration(self, work_dir):
         engine = Engine(work_dir)
         for s in [
-            "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+            "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
             "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
             "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
             "EXTRACTION",
@@ -274,7 +281,7 @@ class TestSaveStateAtomicity:
 
         with patch("os.replace", side_effect=OSError("cross-device link")):
             with pytest.raises(OSError, match="cross-device link"):
-                engine.transition("FRAMING")
+                engine.transition("DESIGN")
 
         # Original state.json is unchanged
         saved = json.loads((tmp_path / "state.json").read_text())
@@ -309,7 +316,7 @@ class TestSaveStateAtomicity:
 
         with patch("os.write", side_effect=OSError("disk full")):
             with pytest.raises(OSError, match="disk full"):
-                engine.transition("FRAMING")
+                engine.transition("DESIGN")
 
         # State unchanged
         assert engine.phase == "INIT"

@@ -182,26 +182,15 @@ def _make_dispatcher(
 # ------------------------------------------------------------------
 
 class TestLLMDispatcher:
-    def test_dispatch_planner_frame_writes_problem_md(self, work_dir: Path) -> None:
-        md = "# Problem Framing\n\n## Research Question\nDoes batch size matter?"
-        d = _make_dispatcher(work_dir, [md])
-        out = work_dir / "runs" / "iter-1" / "problem.md"
-
-        d.dispatch("planner", "frame", output_path=out, iteration=1)
-
-        assert out.exists()
-        assert "Research Question" in out.read_text()
-
-    def test_dispatch_planner_design_produces_valid_bundle(self, work_dir: Path) -> None:
-        resp = f"Here is the bundle:\n\n```yaml\n{VALID_BUNDLE_YAML}```"
-        d = _make_dispatcher(work_dir, [resp])
-        out = work_dir / "runs" / "iter-1" / "bundle_out.yaml"
+    def test_dispatch_planner_design_writes_raw_text(self, work_dir: Path) -> None:
+        raw_text = "# Design\n\nHere is the experiment design with a bundle.\n\n```yaml\nmetadata:\n  iteration: 1\n```"
+        d = _make_dispatcher(work_dir, [raw_text])
+        out = work_dir / "runs" / "iter-1" / "design_out.md"
 
         d.dispatch("planner", "design", output_path=out, iteration=1)
 
-        bundle = yaml.safe_load(out.read_text())
-        schema = load_schema("bundle.schema.yaml")
-        jsonschema.validate(bundle, schema)
+        assert out.exists()
+        assert out.read_text() == raw_text
 
     def test_dispatch_executor_produces_valid_findings(self, work_dir: Path) -> None:
         resp = f"Analysis:\n\n```json\n{VALID_FINDINGS_JSON}\n```"
@@ -238,34 +227,20 @@ class TestLLMDispatcher:
         assert len(store["principles"]) == 1
         assert store["principles"][0]["id"] == "RP-1"
 
-    def test_schema_validation_failure_retries_once(self, work_dir: Path) -> None:
-        # First response: invalid bundle (missing research_question)
-        bad_yaml = "metadata:\n  iteration: 1\n  family: x\narms:\n  - type: h-main\n    prediction: p\n    mechanism: m\n    diagnostic: d\n"
-        bad_resp = f"```yaml\n{bad_yaml}```"
-        good_resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
-        mock_fn = make_mock_completion([bad_resp, good_resp])
+    def test_design_no_schema_validation_in_dispatcher(self, work_dir: Path) -> None:
+        """Design route (fmt=None) writes raw text — no schema validation."""
+        raw = "Some design text without any valid yaml"
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = work_dir / "runs" / "iter-1" / "bundle_retry.yaml"
+        out = work_dir / "runs" / "iter-1" / "design_raw.md"
 
         d.dispatch("planner", "design", output_path=out, iteration=1)
 
-        assert len(mock_fn.call_log) == 2
-        bundle = yaml.safe_load(out.read_text())
-        assert bundle["metadata"]["research_question"] is not None
-
-    def test_schema_validation_failure_after_retry_raises(self, work_dir: Path) -> None:
-        bad_yaml = "metadata:\n  iteration: 1\n  family: x\narms:\n  - type: h-main\n    prediction: p\n    mechanism: m\n    diagnostic: d\n"
-        bad_resp = f"```yaml\n{bad_yaml}```"
-        mock_fn = make_mock_completion([bad_resp, bad_resp])
-        d = LLMDispatcher(
-            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
-        )
-        out = work_dir / "runs" / "iter-1" / "bundle_fail.yaml"
-
-        with pytest.raises(RuntimeError, match="schema validation after retry"):
-            d.dispatch("planner", "design", output_path=out, iteration=1)
+        # Only one call — no retry, no schema validation
+        assert len(mock_fn.call_log) == 1
+        assert out.read_text() == raw
 
     def test_missing_prompt_template_raises(self, work_dir: Path, tmp_path: Path) -> None:
         empty_prompts = tmp_path / "empty_prompts"
@@ -274,21 +249,21 @@ class TestLLMDispatcher:
         out = work_dir / "out.md"
 
         with pytest.raises(FileNotFoundError):
-            d.dispatch("planner", "frame", output_path=out, iteration=1)
+            d.dispatch("planner", "design", output_path=out, iteration=1)
 
     def test_protocol_conformance(self, work_dir: Path) -> None:
         d = _make_dispatcher(work_dir, [])
         assert isinstance(d, Dispatcher)
 
     def test_context_includes_campaign_fields(self, work_dir: Path) -> None:
-        md = "# Framing\n\nStub output."
-        mock_fn = make_mock_completion([md])
+        raw = "Design output stub."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = work_dir / "runs" / "iter-1" / "problem.md"
+        out = work_dir / "runs" / "iter-1" / "design_ctx.md"
 
-        d.dispatch("planner", "frame", output_path=out, iteration=1)
+        d.dispatch("planner", "design", output_path=out, iteration=1)
 
         system_prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "TestSystem" in system_prompt
@@ -297,12 +272,12 @@ class TestLLMDispatcher:
 
     def test_context_includes_active_principles(self, work_dir: Path) -> None:
         (work_dir / "principles.json").write_text(VALID_PRINCIPLES_JSON)
-        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
-        mock_fn = make_mock_completion([resp])
+        raw = "Design with principles context."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = work_dir / "runs" / "iter-1" / "bundle_principles.yaml"
+        out = work_dir / "runs" / "iter-1" / "design_principles.md"
 
         d.dispatch("planner", "design", output_path=out, iteration=1)
 
@@ -415,24 +390,20 @@ class TestInvestigationSummaryContext:
     """Verify investigation_summary is injected into design prompts."""
 
     def test_design_iter1_gets_first_iteration_default(self, work_dir: Path) -> None:
-        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
-        mock_fn = make_mock_completion([resp])
+        raw = "Design output for iter 1."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = work_dir / "runs" / "iter-1" / "bundle_ctx.yaml"
+        out = work_dir / "runs" / "iter-1" / "design_ctx.md"
         d.dispatch("planner", "design", output_path=out, iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "first iteration" in prompt.lower()
 
     def test_design_iter2_includes_previous_summary(self, work_dir: Path) -> None:
-        # Set up iter-2 directory with bundle + problem.md
+        # Set up iter-2 directory with bundle
         iter2 = work_dir / "runs" / "iter-2"
         iter2.mkdir(parents=True)
-        (iter2 / "problem.md").write_text(
-            "# Problem Framing\n\n## Research Question\n"
-            "Does worker_count affect throughput?\n"
-        )
         (iter2 / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
         # Write investigation summary for iter-1
         summary = {
@@ -446,12 +417,12 @@ class TestInvestigationSummaryContext:
         summary_path = work_dir / "runs" / "iter-1" / "investigation_summary.json"
         summary_path.write_text(json.dumps(summary, indent=2))
 
-        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
-        mock_fn = make_mock_completion([resp])
+        raw = "Design output for iter 2."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = iter2 / "bundle_ctx.yaml"
+        out = iter2 / "design_ctx.md"
         d.dispatch("planner", "design", output_path=out, iteration=2)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "Batch size amortization" in prompt
@@ -461,44 +432,29 @@ class TestInvestigationSummaryContext:
         # Set up iter-2 without a summary for iter-1
         iter2 = work_dir / "runs" / "iter-2"
         iter2.mkdir(parents=True)
-        (iter2 / "problem.md").write_text(
-            "# Problem Framing\n\n## Research Question\n"
-            "Does worker_count affect throughput?\n"
-        )
         (iter2 / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
 
-        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
-        mock_fn = make_mock_completion([resp])
+        raw = "Design output without prior summary."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = iter2 / "bundle_ctx.yaml"
+        out = iter2 / "design_ctx.md"
         d.dispatch("planner", "design", output_path=out, iteration=2)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "No investigation summary available" in prompt
 
-    def test_design_iter2_falls_back_to_iter1_problem_md(self, work_dir: Path) -> None:
-        """Iteration 2+ skips framing, so design falls back to iter-1's problem.md."""
-        # Only iter-1 has problem.md (framing only runs once)
-        iter1 = work_dir / "runs" / "iter-1"
-        iter1.mkdir(parents=True, exist_ok=True)
-        (iter1 / "problem.md").write_text(
-            "# Problem Framing\n\n## Research Question\n"
-            "Does prefix caching reduce TTFT?\n"
-        )
-        # iter-2 exists but has no problem.md
-        iter2 = work_dir / "runs" / "iter-2"
-        iter2.mkdir(parents=True)
-
-        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
-        mock_fn = make_mock_completion([resp])
+    def test_design_gets_research_question_from_campaign(self, work_dir: Path) -> None:
+        """Design phase gets research_question from campaign config directly."""
+        raw = "Design output."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = iter2 / "bundle.yaml"
-        d.dispatch("planner", "design", output_path=out, iteration=2)
+        out = work_dir / "runs" / "iter-1" / "design_rq.md"
+        d.dispatch("planner", "design", output_path=out, iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
-        assert "prefix caching" in prompt.lower()
+        assert "Does batch size affect latency in TestSystem?" in prompt
 
 
 class TestSummarizeDispatch:
@@ -571,29 +527,29 @@ class TestSimplifiedCampaign:
 
     def test_minimal_campaign_context_has_empty_metrics(self, work_dir: Path) -> None:
         """Context should show 'Not specified' for missing metrics/knobs."""
-        md = "# Framing\n\nStub output."
-        mock_fn = make_mock_completion([md])
+        raw = "Design output stub."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir,
             campaign=MINIMAL_CAMPAIGN,
             completion_fn=mock_fn,
         )
-        out = work_dir / "runs" / "iter-1" / "problem.md"
-        d.dispatch("planner", "frame", output_path=out, iteration=1)
+        out = work_dir / "runs" / "iter-1" / "design_minimal.md"
+        d.dispatch("planner", "design", output_path=out, iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "Not specified" in prompt
 
     def test_full_campaign_still_works(self, work_dir: Path) -> None:
         """Existing full campaigns with metrics/knobs remain valid."""
-        md = "# Framing\n\nStub output."
-        mock_fn = make_mock_completion([md])
+        raw = "Design output stub."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir,
             campaign=SAMPLE_CAMPAIGN,
             completion_fn=mock_fn,
         )
-        out = work_dir / "runs" / "iter-1" / "problem.md"
-        d.dispatch("planner", "frame", output_path=out, iteration=1)
+        out = work_dir / "runs" / "iter-1" / "design_full.md"
+        d.dispatch("planner", "design", output_path=out, iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "latency_ms" in prompt
 
@@ -644,41 +600,28 @@ class TestGateSummaryDispatch:
 class TestHumanFeedbackContext:
     """Verify human_feedback.json is read per-phase instead of feedback.md."""
 
-    def test_frame_phase_reads_framing_feedback(self, work_dir: Path) -> None:
-        fb = {"framing": [{"attempt": 1, "reason": "Too vague", "timestamp": "2026-01-01T00:00:00+00:00"}], "design": [], "findings": []}
-        (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text(json.dumps(fb))
-        md = "# Framing\n\nStub."
-        mock_fn = make_mock_completion([md])
-        d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
-        d.dispatch("planner", "frame", output_path=work_dir / "runs" / "iter-1" / "problem.md", iteration=1)
-        prompt = mock_fn.call_log[0]["messages"][0]["content"]
-        assert "Too vague" in prompt
-        assert "attempt 1" in prompt.lower()
-
     def test_design_phase_reads_design_feedback(self, work_dir: Path) -> None:
         fb = {
-            "framing": [{"attempt": 1, "reason": "Old framing note", "timestamp": "2026-01-01T00:00:00+00:00"}],
             "design": [{"attempt": 1, "reason": "Control arm is trivial", "timestamp": "2026-01-01T00:01:00+00:00"}],
             "findings": [],
         }
         (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text(json.dumps(fb))
-        resp = f"```yaml\n{VALID_BUNDLE_YAML}```"
-        mock_fn = make_mock_completion([resp])
+        raw = "Design output with feedback."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
-        d.dispatch("planner", "design", output_path=work_dir / "runs" / "iter-1" / "bundle_fb.yaml", iteration=1)
+        d.dispatch("planner", "design", output_path=work_dir / "runs" / "iter-1" / "design_fb.md", iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "Control arm is trivial" in prompt
-        assert "Old framing note" not in prompt
 
     def test_no_feedback_file_gives_empty_context(self, work_dir: Path) -> None:
         # Ensure no feedback file exists
         fb_path = work_dir / "runs" / "iter-1" / "human_feedback.json"
         if fb_path.exists():
             fb_path.unlink()
-        md = "# Framing\n\nStub."
-        mock_fn = make_mock_completion([md])
+        raw = "Design stub."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
-        d.dispatch("planner", "frame", output_path=work_dir / "runs" / "iter-1" / "problem.md", iteration=1)
+        d.dispatch("planner", "design", output_path=work_dir / "runs" / "iter-1" / "design_nofb.md", iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "Human Feedback" not in prompt
 
@@ -703,25 +646,25 @@ class TestHumanFeedbackContext:
         assert "Results look suspicious" in ctx["human_feedback"]
 
     def test_multiple_rejections_uses_latest(self, work_dir: Path) -> None:
-        fb = {"framing": [
+        fb = {"design": [
             {"attempt": 1, "reason": "First issue", "timestamp": "2026-01-01T00:00:00+00:00"},
-            {"attempt": 2, "reason": "Still vague after revision", "timestamp": "2026-01-01T00:01:00+00:00"},
-        ], "design": [], "findings": []}
+            {"attempt": 2, "reason": "Still weak after revision", "timestamp": "2026-01-01T00:01:00+00:00"},
+        ], "findings": []}
         (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text(json.dumps(fb))
-        mock_fn = make_mock_completion(["# Framing\n\nStub."])
+        mock_fn = make_mock_completion(["Design stub."])
         d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
-        d.dispatch("planner", "frame", output_path=work_dir / "runs" / "iter-1" / "problem.md", iteration=1)
+        d.dispatch("planner", "design", output_path=work_dir / "runs" / "iter-1" / "design_multi_fb.md", iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
-        assert "Still vague after revision" in prompt
+        assert "Still weak after revision" in prompt
         assert "First issue" not in prompt
         assert "attempt 2" in prompt.lower()
 
     def test_corrupt_feedback_json_gives_empty_context(self, work_dir: Path) -> None:
         (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text("not valid json{{{")
-        md = "# Framing\n\nStub."
-        mock_fn = make_mock_completion([md])
+        raw = "Design stub."
+        mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn)
-        d.dispatch("planner", "frame", output_path=work_dir / "runs" / "iter-1" / "problem.md", iteration=1)
+        d.dispatch("planner", "design", output_path=work_dir / "runs" / "iter-1" / "design_corrupt_fb.md", iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "Human Feedback" not in prompt
 

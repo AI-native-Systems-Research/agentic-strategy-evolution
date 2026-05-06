@@ -10,7 +10,7 @@
     "phase": {
       "type": "string",
       "enum": [
-        "INIT", "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
+        "INIT", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
         "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
         "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
         "TUNING", "EXTRACTION", "DONE"

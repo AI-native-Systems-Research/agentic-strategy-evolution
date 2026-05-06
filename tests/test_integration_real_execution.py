@@ -28,7 +28,6 @@ class TestEnterPhase:
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "FRAMING") is False
         assert _enter_phase(engine, "DESIGN") is False
         assert _enter_phase(engine, "HUMAN_DESIGN_GATE") is False
         assert _enter_phase(engine, "PLAN_EXECUTION") is False
@@ -55,8 +54,8 @@ class TestEnterPhase:
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "FRAMING") is True
-        assert engine.phase == "FRAMING"
+        assert _enter_phase(engine, "DESIGN") is True
+        assert engine.phase == "DESIGN"
 
     def test_done_skips_everything(self, tmp_path):
         """When engine is DONE, all phases are skipped."""
