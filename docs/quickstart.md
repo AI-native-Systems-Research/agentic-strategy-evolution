@@ -6,7 +6,6 @@ Run Nous campaigns on any target system with a git repository.
 
 - **Python 3.11+**
 - **Claude Code CLI** (`claude`) — installed and authenticated
-- **An LLM API key** — `export OPENAI_API_KEY=...` (and `OPENAI_BASE_URL` if using a proxy). Required for reviewer, extractor, and summarizer agents.
 - **A target system** — a git repo the planner can explore
 
 ## Install
@@ -42,18 +41,6 @@ target_system:
   #   - algorithm
   #   - cache_size
 
-review:
-  design_perspectives:
-    - statistical-rigor
-    - causal-sufficiency
-    - confound-risk
-  findings_perspectives:
-    - statistical-rigor
-    - causal-sufficiency
-    - confound-risk
-    - reproducibility
-  max_review_rounds: 3
-
 prompts:
   methodology_layer: "prompts/methodology"
   domain_adapter_layer: null
@@ -75,7 +62,7 @@ prompts:
 python run_campaign.py campaign.yaml --max-iterations 3
 ```
 
-This loops through iterations. Each iteration runs the full Nous loop (design, review, execution, extraction) and pauses at human gates for your approval. After each iteration, a continue gate asks whether to proceed.
+This loops through iterations. Each iteration runs the full Nous loop (design, execute+analyze, validate) and pauses at two human gates for your approval.
 
 Options:
 
@@ -96,13 +83,12 @@ You can also set `max_iterations` in `campaign.yaml` (CLI `--max-iterations` ove
 
 ## Human gates
 
-Three gates per iteration cycle:
+Two gates per iteration:
 
 | Gate | When | Question |
 |------|------|----------|
-| Design gate | After design review | Approve the hypothesis bundle? |
-| Findings gate | After findings review | Approve the results? |
-| Continue gate | After extraction | Continue to the next iteration? |
+| Design gate | After DESIGN | Approve the hypothesis bundle? |
+| Findings gate | After VALIDATE | Approve the results and principle updates? |
 
 Each gate shows a formatted summary before asking for your decision. Type `approve` to continue, `reject` to loop back, `abort` to stop.
 
@@ -115,7 +101,7 @@ After a campaign, your working directory contains:
 - **`runs/iter-N/findings.json`** — Prediction vs. outcome analysis
 - **`runs/iter-N/gate_summary_*.json`** — Human-readable gate summaries
 - **`runs/iter-N/investigation_summary.json`** — Iteration summary (non-final)
-- **`runs/iter-N/reviews/`** — All reviewer perspectives
+- **`runs/iter-N/principle_updates.json`** — Proposed principle changes
 - **`ledger.json`** — One row per completed iteration
 - **`principles.json`** — Accumulated principles across all iterations
 

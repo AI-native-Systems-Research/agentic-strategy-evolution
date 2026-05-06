@@ -10,10 +10,9 @@
     "phase": {
       "type": "string",
       "enum": [
-        "INIT", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-        "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
-        "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
-        "TUNING", "EXTRACTION", "DONE"
+        "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
+        "EXECUTE_ANALYZE", "VALIDATE",
+        "HUMAN_FINDINGS_GATE", "DONE"
       ],
       "description": "Current state machine phase."
     },

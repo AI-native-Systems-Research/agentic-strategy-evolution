@@ -3,8 +3,8 @@ $id: "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/s
 title: Experiment Plan
 description: >
   Exact shell commands to execute for each hypothesis arm.
-  Produced by the executor during PLAN_EXECUTION, consumed by the
-  orchestrator during EXECUTING.
+  Produced by the executor during EXECUTE_ANALYZE, consumed by the
+  Python VALIDATE step for reproducibility verification.
 type: object
 required: [metadata, arms]
 additionalProperties: false

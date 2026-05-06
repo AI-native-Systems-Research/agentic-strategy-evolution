@@ -164,7 +164,7 @@ Output a single JSON code fence containing all three artifacts:
 - Emit `cmd` values as strings (not YAML block scalars — this is JSON).
 
 **Rules for findings:**
-- `error_type`: one of `direction`, `mechanism`, `regime`, or `null`.
+- `error_type`: one of `direction`, `magnitude`, `regime`, or `null`.
 - `experiment_valid`: false ONLY if h-main setup was misconfigured.
 - Cite specific metric values from your runs in `observed`.
 

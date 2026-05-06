@@ -17,10 +17,10 @@ class TestStateSchema:
         }
         jsonschema.validate(instance, schema)
 
-    def test_valid_plan_execution_state(self, load_schema):
+    def test_valid_execute_analyze_state(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "PLAN_EXECUTION",
+            "phase": "EXECUTE_ANALYZE",
             "iteration": 3,
             "run_id": "campaign-001",
             "family": "routing-signals",
@@ -31,10 +31,9 @@ class TestStateSchema:
     def test_all_phases_accepted(self, load_schema):
         schema = load_schema("state.schema.json")
         phases = [
-            "INIT", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-            "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
-            "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
-            "TUNING", "EXTRACTION", "DONE",
+            "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
+            "EXECUTE_ANALYZE", "VALIDATE",
+            "HUMAN_FINDINGS_GATE", "DONE",
         ]
         for phase in phases:
             instance = {

@@ -77,11 +77,11 @@
             "required": ["arm_type", "predicted", "observed", "status", "error_type", "diagnostic_note"],
             "additionalProperties": false,
             "properties": {
-              "arm_type": { "type": "string" },
+              "arm_type": { "type": "string", "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness"] },
               "predicted": { "type": "string", "minLength": 1 },
               "observed": { "type": "string", "minLength": 1 },
               "status": { "type": "string", "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED"] },
-              "error_type": { "type": ["string", "null"], "enum": ["direction", "mechanism", "regime", null] },
+              "error_type": { "type": ["string", "null"], "enum": ["direction", "magnitude", "regime", null] },
               "diagnostic_note": { "type": ["string", "null"] },
               "metadata": { "type": "object" }
             }

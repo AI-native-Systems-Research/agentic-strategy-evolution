@@ -7,7 +7,7 @@
   "required": ["iteration", "bundle_ref", "arms", "experiment_valid", "discrepancy_analysis"],
   "additionalProperties": false,
   "properties": {
-    "iteration": { "type": "integer", "minimum": 0, "description": "Iteration number (0 = first experiment, increments on each EXTRACTION -> DESIGN loop)." },
+    "iteration": { "type": "integer", "minimum": 0, "description": "Iteration number (0 = first experiment, increments on each DONE -> DESIGN transition)." },
     "bundle_ref": { "type": "string", "minLength": 1 },
     "arms": {
       "type": "array",

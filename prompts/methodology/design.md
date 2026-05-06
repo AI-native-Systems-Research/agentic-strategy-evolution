@@ -130,7 +130,7 @@ Now design a hypothesis bundle based on what you actually observed and verified:
    - `prediction`: A **directional**, falsifiable claim referencing observable metrics. State the expected direction and relative magnitude (e.g., "increasing X will decrease Y consistently across seeds"). Do NOT invent arbitrary numeric thresholds (e.g., ">10% improvement") unless the campaign.yaml specifies one. The hypothesis bundle's multi-seed design tests significance — your prediction tests direction and mechanism.
    - `mechanism`: A causal explanation grounded in the code you read.
    - `diagnostic`: What to investigate if the prediction is wrong.
-   - `code_changes` *(optional)*: Include when the arm tests an algorithmic change rather than a flag/config variation. Each entry needs `file`, `intent` (plain English, not a patch), and `rationale`. The PLAN_EXECUTION agent will later turn each intent into a patch. If the hypothesis only varies existing CLI flags, omit this field.
+   - `code_changes` *(optional)*: Include when the arm tests an algorithmic change rather than a flag/config variation. Each entry needs `file`, `intent` (plain English, not a patch), and `rationale`. The EXECUTE_ANALYZE agent will later turn each intent into a patch. If the hypothesis only varies existing CLI flags, omit this field.
 
 ## Constraints
 

@@ -4,7 +4,6 @@ research_question: >
 
 run_id: blis-fast
 max_iterations: 2
-skip_reviews: true
 
 target_system:
   name: "BLIS — LLM Inference Serving Simulator"

@@ -74,20 +74,14 @@ properties:
         minimum: 1
         description: "Maximum convergence rounds per review gate."
 
-  skip_reviews:
-    type: boolean
-    description: "Skip DESIGN_REVIEW and FINDINGS_REVIEW phases. Reviews are currently informational only. Default: false."
-
   models:
     type: object
     additionalProperties: false
     description: "Per-phase model selection. Omit to use --model default for all phases."
     properties:
-      design: { type: string, description: "Model for DESIGN phase (claude -p when repo_path set, LLM API otherwise). Default: --model value." }
-      plan_execution: { type: string, description: "Model for PLAN_EXECUTION phase (claude -p). Default: claude-haiku-4-5-20251001." }
-      analysis: { type: string, description: "Model for ANALYSIS phase (LLM API). Default: --model value." }
-      review: { type: string, description: "Model for REVIEW phases (LLM API). Default: --model value." }
-      extraction: { type: string, description: "Model for EXTRACTION phase (LLM API). Default: --model value." }
+      design: { type: string, description: "Model for DESIGN phase (claude -p). Default: aws/claude-opus-4-6." }
+      execute_analyze: { type: string, description: "Model for EXECUTE_ANALYZE phase (claude -p). Default: aws/claude-sonnet-4-5." }
+      report: { type: string, description: "Model for report generation (LLM API). Default: aws/claude-sonnet-4-5." }
 
   prompts:
     type: object

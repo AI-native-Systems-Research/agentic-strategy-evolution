@@ -2,7 +2,7 @@
 
 Nous is a framework that runs the scientific method on software systems. An AI agent forms a falsifiable hypothesis about system behavior, designs a controlled experiment, executes it, and extracts reusable principles from the outcome — whether the hypothesis was confirmed or refuted.
 
-A deterministic Python orchestrator (not an LLM) drives four AI agent roles through a structured loop, producing schema-governed artifacts at every step. Knowledge compounds: principles from iteration N constrain the design space of iteration N+1.
+A deterministic Python orchestrator (not an LLM) drives two AI agent roles through a structured loop, producing schema-governed artifacts at every step. Knowledge compounds: principles from iteration N constrain the design space of iteration N+1.
 
 ## Why Nous?
 
@@ -32,20 +32,19 @@ Nous works on any software system that meets four preconditions:
 
 ## How It Works
 
-Each iteration follows four phases:
+Each iteration follows a 7-phase loop with 2 LLM calls and 2 human gates:
 
 ```
-1. DESIGN           Planner explores system, frames problem, designs hypothesis bundle
-   DESIGN_REVIEW    AI multi-perspective review (blocks on CRITICAL findings)
-   HUMAN_GATE       Human approves, rejects, or aborts
-2. PLAN_EXECUTION   Executor designs exact shell commands per arm
-   EXECUTING        Orchestrator runs commands (partial results on failure)
-   ANALYSIS         LLM compares observed metrics to predictions
-   FINDINGS_REVIEW  AI review of prediction-vs-outcome results
-   HUMAN_GATE       Human approves findings
-3. TUNING           Bayesian parameter optimization (if H-main confirmed)
-4. EXTRACTION       Extractor updates principle store (insert/update/prune)
-   → next iteration or DONE
+INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → VALIDATE → HUMAN_FINDINGS_GATE → DONE
+
+1. DESIGN              Planner (Opus) explores system, frames problem, designs hypothesis bundle
+   HUMAN_DESIGN_GATE   Human approves, rejects (→ DESIGN), or aborts
+2. EXECUTE_ANALYZE     Executor (Sonnet) builds, patches, runs experiments, analyzes results,
+                       extracts principles — all in one session
+3. VALIDATE            Python-only: replays experiment_plan.yaml for reproducibility,
+                       merges principles by ID (no LLM)
+   HUMAN_FINDINGS_GATE Human approves findings, rejects (→ EXECUTE_ANALYZE), or aborts
+   DONE → DESIGN       Next iteration (increments counter)
 ```
 
 See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, and [docs/architecture.md](docs/architecture.md) for system internals.
@@ -68,7 +67,6 @@ Every experiment is structured as a bundle of falsifiable predictions:
 
 - **Python 3.11+**
 - **Claude Code CLI** (`claude`) — installed and authenticated
-- **An LLM API key** — `export OPENAI_API_KEY=...` (any OpenAI-compatible endpoint). Required for reviewer, extractor, and summarizer agents.
 
 ### 1. Install Nous
 
@@ -78,44 +76,16 @@ cd agentic-strategy-evolution
 pip install -e ".[dev]"
 ```
 
-### 2. Set up credentials
+### 2. Configure models
 
-```bash
-export OPENAI_API_KEY=sk-...
-export OPENAI_BASE_URL=https://your-endpoint.example.com  # if using a proxy
-```
+Two LLM calls per iteration, both via `claude -p`:
 
-### 3. Configure models
+| Phase | Default model | Role |
+|-------|---------------|------|
+| DESIGN | Opus | Planner — explores, frames, designs |
+| EXECUTE_ANALYZE | Sonnet | Executor — builds, patches, runs, analyzes |
 
-All phases default to `aws/claude-sonnet-4-5` via LiteLLM. See [`defaults.yaml`](defaults.yaml) for the full per-phase model config.
-
-**Per-phase override** — add a `models:` block to your `campaign.yaml`:
-
-```yaml
-models:
-  design: "sonnet"
-  plan_execution: "haiku"
-  review: "gpt-4o"
-```
-
-**Global fallback** — the `--model` CLI flag applies to any phase not set in `campaign.yaml` or `defaults.yaml`:
-
-```bash
-python run_campaign.py campaign.yaml --model gpt-4o
-```
-
-Resolution order: `campaign.yaml models:` > `defaults.yaml` > `--model` flag > built-in default. Since the shipped `defaults.yaml` sets every phase, use per-phase overrides for targeted changes.
-
-**Common provider examples:**
-
-| Provider | Example model name |
-|----------|-------------------|
-| LiteLLM proxy | `aws/claude-sonnet-4-5` |
-| OpenAI direct | `gpt-4o` |
-| Anthropic direct | `claude-sonnet-4-5-20250514` |
-| Claude CLI (`claude -p` phases) | `sonnet`, `haiku`, `opus` |
-
-> **Two dispatch paths:** when `repo_path` is configured, design and plan_execution run via `claude -p` (Claude CLI with code access); all other phases call the OpenAI-compatible API using `OPENAI_API_KEY`.
+VALIDATE and principle merge are Python-only (no LLM calls).
 
 ### 4. Create a campaign
 
@@ -142,13 +112,12 @@ The planner explores the codebase to discover metrics, knobs, and execution meth
 python run_campaign.py campaign.yaml --max-iterations 3
 ```
 
-Each iteration runs the full loop (design → review → execution → extraction), pausing at three human gates:
+Each iteration runs the full loop (design → execute+analyze → validate), pausing at two human gates:
 
 | Gate | When | You decide |
 |------|------|------------|
-| **Design gate** | After design review | Approve the hypothesis bundle? |
-| **Findings gate** | After findings review | Approve the results? |
-| **Continue gate** | After extraction | Continue to next iteration? |
+| **Design gate** | After DESIGN | Approve the hypothesis bundle? |
+| **Findings gate** | After VALIDATE | Approve the results and principles? |
 
 Each gate shows a formatted summary. Type `approve`, `reject`, or `abort`.
 
@@ -178,10 +147,11 @@ blis-run/
   runs/iter-N/
     problem.md            # problem framing
     bundle.yaml           # hypothesis bundle
+    experiment_plan.yaml  # exact commands per arm
+    execution_results.json # raw output per condition
     findings.json         # prediction vs outcome
+    principle_updates.json # proposed principle changes
     gate_summary_*.json   # human-readable summaries
-    investigation_summary.json  # iteration summary (non-final)
-    reviews/              # reviewer perspectives
 ```
 
 ### Run tests
@@ -198,7 +168,6 @@ templates/               Starter files for new campaigns
 orchestrator/            Python orchestrator (deterministic, not an LLM)
   engine.py                State machine with atomic checkpoint/resume
   dispatch.py              Stub agent dispatch (for testing without LLM)
-  llm_dispatch.py          LLM-based agent dispatch via OpenAI SDK
   cli_dispatch.py          Code-access agent dispatch via claude -p
   prompt_loader.py         Template loading with {{placeholder}} rendering
   gates.py                 Human approval gates with summaries
