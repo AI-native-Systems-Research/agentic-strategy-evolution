@@ -33,7 +33,7 @@ This is iteration {{iteration}}.
 
 ## Speed Constraint
 
-Be fast. Your job: translate the hypothesis bundle into exact shell commands. Complete in under 6 tool uses.
+Be fast. Your job: translate the hypothesis bundle into exact shell commands. Complete in under {{max_turns}} tool uses.
 
 **Important:** If the experiment requires creating data files (configs, workload specs, input YAML/JSON), find and read an existing example in the repo first to learn the exact field names and format. Do not guess file schemas — one `cat` of an example is faster than three failed retries.
 
