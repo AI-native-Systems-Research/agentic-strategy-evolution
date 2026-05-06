@@ -21,8 +21,6 @@ class Phase(str, Enum):
     """All valid orchestrator phases."""
 
     INIT = "INIT"
-    FRAMING = "FRAMING"
-    HUMAN_FRAMING_GATE = "HUMAN_FRAMING_GATE"
     DESIGN = "DESIGN"
     DESIGN_REVIEW = "DESIGN_REVIEW"
     HUMAN_DESIGN_GATE = "HUMAN_DESIGN_GATE"
@@ -38,9 +36,7 @@ class Phase(str, Enum):
 
 # Valid transitions: from_state -> set of valid to_states (immutable)
 TRANSITIONS: MappingProxyType[str, frozenset[str]] = MappingProxyType({
-    "INIT":                frozenset({"FRAMING"}),
-    "FRAMING":             frozenset({"HUMAN_FRAMING_GATE", "DESIGN"}),
-    "HUMAN_FRAMING_GATE":  frozenset({"DESIGN", "FRAMING"}),
+    "INIT":                frozenset({"DESIGN"}),
     "DESIGN":              frozenset({"DESIGN_REVIEW"}),
     "DESIGN_REVIEW":       frozenset({"HUMAN_DESIGN_GATE", "DESIGN"}),
     "HUMAN_DESIGN_GATE":   frozenset({"PLAN_EXECUTION", "DESIGN"}),
@@ -125,7 +121,7 @@ class Engine:
             )
         # Build candidate state before writing to disk
         new_state = dict(self._state)
-        if current == "EXTRACTION" and to_state == "DESIGN":
+        if current in ("EXTRACTION", "DONE") and to_state == "DESIGN":
             new_state["iteration"] += 1
         new_state["phase"] = to_state
         new_state["timestamp"] = datetime.now(timezone.utc).isoformat()
