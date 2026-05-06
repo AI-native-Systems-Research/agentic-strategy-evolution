@@ -32,19 +32,18 @@ Nous works on any software system that meets four preconditions:
 
 ## How It Works
 
-Each iteration follows five phases:
+Each iteration follows four phases:
 
 ```
-1. FRAMING          Planner defines research question, baseline, success criteria
-   HUMAN_GATE       Human approves or rejects framing (with feedback)
-2. DESIGN           Planner creates hypothesis bundle with multiple arms
+1. DESIGN           Planner explores system, frames problem, designs hypothesis bundle
    DESIGN_REVIEW    AI multi-perspective review (blocks on CRITICAL findings)
    HUMAN_GATE       Human approves, rejects, or aborts
-3. PLAN_EXECUTION   Executor designs exact shell commands per arm
+2. PLAN_EXECUTION   Executor designs exact shell commands per arm
    EXECUTING        Orchestrator runs commands (partial results on failure)
    ANALYSIS         LLM compares observed metrics to predictions
    FINDINGS_REVIEW  AI review of prediction-vs-outcome results
    HUMAN_GATE       Human approves findings
+3. TUNING           Bayesian parameter optimization (if H-main confirmed)
 4. EXTRACTION       Extractor updates principle store (insert/update/prune)
    → next iteration or DONE
 ```
@@ -94,9 +93,9 @@ All phases default to `aws/claude-sonnet-4-5` via LiteLLM. See [`defaults.yaml`]
 
 ```yaml
 models:
-  framing: "sonnet"
-  design: "gpt-4o"
+  design: "sonnet"
   plan_execution: "haiku"
+  review: "gpt-4o"
 ```
 
 **Global fallback** — the `--model` CLI flag applies to any phase not set in `campaign.yaml` or `defaults.yaml`:
@@ -116,7 +115,7 @@ Resolution order: `campaign.yaml models:` > `defaults.yaml` > `--model` flag > b
 | Anthropic direct | `claude-sonnet-4-5-20250514` |
 | Claude CLI (`claude -p` phases) | `sonnet`, `haiku`, `opus` |
 
-> **Two dispatch paths:** when `repo_path` is configured, framing and plan_execution run via `claude -p` (Claude CLI with code access); all other phases call the OpenAI-compatible API using `OPENAI_API_KEY`.
+> **Two dispatch paths:** when `repo_path` is configured, design and plan_execution run via `claude -p` (Claude CLI with code access); all other phases call the OpenAI-compatible API using `OPENAI_API_KEY`.
 
 ### 4. Create a campaign
 
@@ -143,7 +142,7 @@ The planner explores the codebase to discover metrics, knobs, and execution meth
 python run_campaign.py campaign.yaml --max-iterations 3
 ```
 
-Each iteration runs the full loop (framing → design → review → execution → extraction), pausing at three human gates:
+Each iteration runs the full loop (design → review → execution → extraction), pausing at three human gates:
 
 | Gate | When | You decide |
 |------|------|------------|

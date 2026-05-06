@@ -64,7 +64,7 @@ A bookmark. It tells the orchestrator what phase we're in, which iteration we're
 
 | Field | What it means |
 |---|---|
-| `phase` | Which step of the loop (INIT, FRAMING, DESIGN, DESIGN_REVIEW, HUMAN_DESIGN_GATE, PLAN_EXECUTION, EXECUTING, ANALYSIS, FINDINGS_REVIEW, HUMAN_FINDINGS_GATE, TUNING, EXTRACTION, DONE) |
+| `phase` | Which step of the loop (INIT, DESIGN, DESIGN_REVIEW, HUMAN_DESIGN_GATE, PLAN_EXECUTION, EXECUTING, ANALYSIS, FINDINGS_REVIEW, HUMAN_FINDINGS_GATE, TUNING, EXTRACTION, DONE) |
 | `iteration` | How many times we've gone around the loop (0 = haven't started yet) |
 | `run_id` | A name for this campaign |
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |
@@ -253,7 +253,7 @@ The orchestrator invokes agents through a dispatcher. Two implementations exist:
 - `StubDispatcher` (`orchestrator/dispatch.py`) — produces deterministic, schema-valid artifacts without LLM calls. Used for testing.
 - `LLMDispatcher` (`orchestrator/llm_dispatch.py`) — calls a real LLM via the OpenAI SDK, parses structured output, validates against schemas, and writes artifacts atomically.
 
-`LLMDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. For structured outputs (bundle, findings, principles), it extracts content from code fences and validates against the relevant schema before writing. The FRAMING phase dispatches `role="planner", phase="frame"` to produce `problem.md`.
+`LLMDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. For structured outputs (bundle, findings, principles), it extracts content from code fences and validates against the relevant schema before writing. The DESIGN phase produces both `problem.md` and `bundle.yaml` in a single dispatch — the raw output is split by `_split_design_output()` in `run_iteration.py`.
 
 ## 8. summary.json — "How did the whole campaign go?"
 

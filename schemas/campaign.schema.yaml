@@ -83,8 +83,7 @@ properties:
     additionalProperties: false
     description: "Per-phase model selection. Omit to use --model default for all phases."
     properties:
-      framing: { type: string, description: "Model for FRAMING phase (claude -p). Default: --model value." }
-      design: { type: string, description: "Model for DESIGN phase (LLM API). Default: --model value." }
+      design: { type: string, description: "Model for DESIGN phase (claude -p when repo_path set, LLM API otherwise). Default: --model value." }
       plan_execution: { type: string, description: "Model for PLAN_EXECUTION phase (claude -p). Default: claude-haiku-4-5-20251001." }
       analysis: { type: string, description: "Model for ANALYSIS phase (LLM API). Default: --model value." }
       review: { type: string, description: "Model for REVIEW phases (LLM API). Default: --model value." }

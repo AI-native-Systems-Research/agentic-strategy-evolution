@@ -637,7 +637,7 @@ class TestHumanFeedbackContext:
 
     def test_plan_execution_reads_findings_feedback(self, work_dir: Path) -> None:
         """plan-execution maps to 'findings' key in human_feedback.json."""
-        fb = {"framing": [], "design": [], "findings": [
+        fb = {"design": [], "findings": [
             {"attempt": 1, "reason": "Results look suspicious", "timestamp": "2026-01-01T00:00:00+00:00"}
         ]}
         (work_dir / "runs" / "iter-1" / "human_feedback.json").write_text(json.dumps(fb))

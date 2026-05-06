@@ -29,7 +29,7 @@
     },
     "family": {
       "type": ["string", "null"],
-      "description": "Current mechanism family under investigation, null before framing."
+      "description": "Current mechanism family under investigation, null before design."
     },
     "timestamp": {
       "type": "string",
