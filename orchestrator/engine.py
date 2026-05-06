@@ -5,12 +5,12 @@ This is NOT an LLM — it is a deterministic script.
 """
 import json
 import logging
-import os
-import tempfile
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
+
+from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -21,36 +21,22 @@ class Phase(str, Enum):
     """All valid orchestrator phases."""
 
     INIT = "INIT"
-    FRAMING = "FRAMING"
-    HUMAN_FRAMING_GATE = "HUMAN_FRAMING_GATE"
     DESIGN = "DESIGN"
-    DESIGN_REVIEW = "DESIGN_REVIEW"
     HUMAN_DESIGN_GATE = "HUMAN_DESIGN_GATE"
-    PLAN_EXECUTION = "PLAN_EXECUTION"
-    EXECUTING = "EXECUTING"
-    ANALYSIS = "ANALYSIS"
-    FINDINGS_REVIEW = "FINDINGS_REVIEW"
+    EXECUTE_ANALYZE = "EXECUTE_ANALYZE"
+    VALIDATE = "VALIDATE"
     HUMAN_FINDINGS_GATE = "HUMAN_FINDINGS_GATE"
-    TUNING = "TUNING"
-    EXTRACTION = "EXTRACTION"
     DONE = "DONE"
 
 
 # Valid transitions: from_state -> set of valid to_states (immutable)
 TRANSITIONS: MappingProxyType[str, frozenset[str]] = MappingProxyType({
-    "INIT":                frozenset({"FRAMING"}),
-    "FRAMING":             frozenset({"HUMAN_FRAMING_GATE", "DESIGN"}),
-    "HUMAN_FRAMING_GATE":  frozenset({"DESIGN", "FRAMING"}),
-    "DESIGN":              frozenset({"DESIGN_REVIEW"}),
-    "DESIGN_REVIEW":       frozenset({"HUMAN_DESIGN_GATE", "DESIGN"}),
-    "HUMAN_DESIGN_GATE":   frozenset({"PLAN_EXECUTION", "DESIGN"}),
-    "PLAN_EXECUTION":      frozenset({"EXECUTING"}),
-    "EXECUTING":           frozenset({"ANALYSIS"}),
-    "ANALYSIS":            frozenset({"FINDINGS_REVIEW", "EXTRACTION"}),
-    "FINDINGS_REVIEW":     frozenset({"HUMAN_FINDINGS_GATE", "PLAN_EXECUTION"}),
-    "HUMAN_FINDINGS_GATE": frozenset({"TUNING", "EXTRACTION", "PLAN_EXECUTION"}),
-    "TUNING":              frozenset({"EXTRACTION"}),
-    "EXTRACTION":          frozenset({"DESIGN", "DONE"}),
+    "INIT":                frozenset({"DESIGN"}),
+    "DESIGN":              frozenset({"HUMAN_DESIGN_GATE"}),
+    "HUMAN_DESIGN_GATE":   frozenset({"EXECUTE_ANALYZE", "DESIGN"}),
+    "EXECUTE_ANALYZE":     frozenset({"VALIDATE"}),
+    "VALIDATE":            frozenset({"HUMAN_FINDINGS_GATE", "EXECUTE_ANALYZE"}),
+    "HUMAN_FINDINGS_GATE": frozenset({"DONE", "EXECUTE_ANALYZE"}),
     "DONE":                frozenset({"DESIGN"}),
 })
 
@@ -125,38 +111,13 @@ class Engine:
             )
         # Build candidate state before writing to disk
         new_state = dict(self._state)
-        if current == "EXTRACTION" and to_state == "DESIGN":
+        if current == "DONE" and to_state == "DESIGN":
             new_state["iteration"] += 1
         new_state["phase"] = to_state
         new_state["timestamp"] = datetime.now(timezone.utc).isoformat()
-        # Write to disk BEFORE updating in-memory state. If _save_state
-        # fails, self._state remains unchanged (disk and memory stay consistent).
         self._save_state(new_state)
         self._state = new_state
         logger.info("Transition: %s -> %s (iteration=%d)", current, to_state, new_state["iteration"])
 
     def _save_state(self, state: dict) -> None:
-        """Atomic write: write to temp file then rename."""
-        data = json.dumps(state, indent=2) + "\n"
-        fd, tmp = tempfile.mkstemp(dir=self.work_dir, suffix=".json.tmp")
-        fd_closed = False
-        try:
-            os.write(fd, data.encode())
-            os.fsync(fd)
-            os.close(fd)
-            fd_closed = True
-            os.replace(tmp, str(self.state_path))
-        except BaseException:
-            # Guard cleanup individually so a cleanup failure never masks
-            # the original exception (e.g., bad fd after signal).
-            try:
-                if not fd_closed:
-                    os.close(fd)
-            except OSError:
-                pass
-            try:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        atomic_write(self.state_path, json.dumps(state, indent=2) + "\n")

@@ -4,10 +4,10 @@ Nous uses 11 schema-governed artifacts to drive the investigation loop. This gui
 
 ## How They Fit Together
 
-`campaign.yaml` describes the target system and configures the reviewer panel. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (hypothesis bundle), `experiment_plan.yaml` (exact commands), `execution_results.json` (raw output), and `findings.json` (analysis). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. After each non-final iteration, `investigation_summary.json` captures a bounded summary that feeds into the next iteration's design prompt. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
+`campaign.yaml` describes the target system. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (hypothesis bundle), `experiment_plan.yaml` (exact commands), `execution_results.json` (raw output), `findings.json` (analysis), and `principle_updates.json` (proposed principle changes). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
 
 ```
-campaign.yaml       "What system?"          Target system, reviewers, prompts
+campaign.yaml       "What system?"          Target system, prompts
     │
     ▼
 state.json          "Where are we?"         Drives the loop
@@ -39,7 +39,7 @@ findings.json       "What happened?"         │
 
 **Schema:** `schemas/campaign.schema.yaml`
 
-The campaign configuration. Describes the target system, configures the reviewer panel, and points to prompt layers. Created once during setup (with Claude assistance) and referenced by `state.json` via `config_ref`.
+The campaign configuration. Describes the target system and points to prompt layers. Created once during setup (with Claude assistance) and referenced by `state.json` via `config_ref`.
 
 | Section | What it configures |
 |---|---|
@@ -48,13 +48,10 @@ The campaign configuration. Describes the target system, configures the reviewer
 | `target_system.observable_metrics` | (Optional) What agents can measure — provided as hints, or discovered from code |
 | `target_system.controllable_knobs` | (Optional) What agents can change — provided as hints, or discovered from code |
 | `target_system.repo_path` | (Optional) Path to target system git repo — enables code-access agents and worktree isolation |
-| `review.design_perspectives` | Reviewer perspectives for design review (default: 5) |
-| `review.findings_perspectives` | Reviewer perspectives for findings review (default: 10) |
-| `review.max_review_rounds` | Maximum convergence rounds per gate |
+| `review` | (Legacy, unused) Automated review configuration |
 | `prompts.methodology_layer` | Path to generic Nous methodology prompts |
 | `prompts.domain_adapter_layer` | Path to domain-specific prompt overrides (null until generated) |
 
-The template ships with 5 design perspectives (statistical rigor, causal sufficiency, confound risk, generalization, mechanism clarity). Campaigns may use fewer or more depending on the domain — the schema requires at least 1.
 
 ## 1. state.json — "Where are we right now?"
 
@@ -64,7 +61,7 @@ A bookmark. It tells the orchestrator what phase we're in, which iteration we're
 
 | Field | What it means |
 |---|---|
-| `phase` | Which step of the loop (INIT, FRAMING, DESIGN, DESIGN_REVIEW, HUMAN_DESIGN_GATE, PLAN_EXECUTION, EXECUTING, ANALYSIS, FINDINGS_REVIEW, HUMAN_FINDINGS_GATE, TUNING, EXTRACTION, DONE) |
+| `phase` | Which step of the loop (INIT, DESIGN, HUMAN_DESIGN_GATE, EXECUTE_ANALYZE, VALIDATE, HUMAN_FINDINGS_GATE, DONE) |
 | `iteration` | How many times we've gone around the loop (0 = haven't started yet) |
 | `run_id` | A name for this campaign |
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |
@@ -143,7 +140,7 @@ Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal
 
 **Schema:** `schemas/experiment_plan.schema.yaml`
 
-The experiment plan. Produced by the executor agent during PLAN_EXECUTION. Contains exact shell commands to run for each arm, making experiments reproducible and auditable.
+The experiment plan. Produced by the executor during EXECUTE_ANALYZE. Contains exact shell commands to run for each arm, making experiments reproducible and auditable.
 
 | Section | What it means |
 |---|---|
@@ -156,13 +153,13 @@ The experiment plan. Produced by the executor agent during PLAN_EXECUTION. Conta
 | `arms[].conditions[].output` | Optional: path to output file to capture |
 | `arms[].conditions[].description` | Optional human description |
 
-Located at `runs/iter-N/experiment_plan.yaml`. If the plan is revised due to command failures, revised versions are saved as `experiment_plan_v2.yaml`, `experiment_plan_v3.yaml`, etc.
+Located at `runs/iter-N/experiment_plan.yaml`. Commands are validated by the executor agent before emission.
 
 ## 4c. execution_results.json — "What did the commands produce?"
 
-No schema — internal artifact written by the Python orchestrator during EXECUTING.
+No schema — internal artifact written during EXECUTE_ANALYZE.
 
-Contains the raw output of every command from the experiment plan. Used by the ANALYSIS phase to produce findings.
+Contains the raw output of every command from the experiment plan. Used within the same EXECUTE_ANALYZE session to produce findings.
 
 | Section | What it means |
 |---|---|
@@ -197,7 +194,7 @@ The experiment results. Compares what we predicted to what we observed, arm by a
 | `dominant_component_pct` | If one component accounts for >80% of the effect, triggers simplification |
 
 **Fast-fail rules** read this artifact:
-- H-main refuted → skip remaining arms, go to EXTRACTION
+- H-main refuted → skip remaining arms, proceed to findings gate
 - H-control-negative refuted → mechanism confounded, go back to DESIGN
 - Dominant component >80% → simplify the strategy
 
@@ -205,7 +202,7 @@ The experiment results. Compares what we predicted to what we observed, arm by a
 
 **Schema:** `schemas/investigation_summary.schema.json`
 
-A bounded summary produced after each non-final iteration by the Extractor agent. It captures the essential learnings from the iteration in a form that can be injected into the next iteration's design prompt. This is what enables cross-iteration learning without growing agent context proportionally to campaign depth.
+A bounded summary produced after each non-final iteration. It captures the essential learnings from the iteration in a form that can be injected into the next iteration's design prompt. This is what enables cross-iteration learning without growing agent context proportionally to campaign depth.
 
 | Field | What it means |
 |---|---|
@@ -222,11 +219,11 @@ Located at `runs/iter-N/investigation_summary.json`. The design prompt for itera
 
 **Schema:** `schemas/gate_summary.schema.json`
 
-A human-readable summary produced by the summarizer agent before each human gate. Designed to help the human make an approve/reject/abort decision without reading raw artifacts.
+A human-readable summary produced before each human gate. Designed to help the human make an approve/reject/abort decision without reading raw artifacts.
 
 | Field | What it means |
 |---|---|
-| `gate_type` | Which gate: `design`, `findings`, `continue`, or `end_of_campaign` |
+| `gate_type` | Which gate: `design` or `findings` |
 | `summary` | 1-3 sentence plain-language summary of what's being decided |
 | `key_points` | Bullet points with specific numbers, metrics, and hypothesis references |
 
@@ -251,9 +248,9 @@ Phase 1 defines the envelope; per-event-type payload schemas are planned for a f
 The orchestrator invokes agents through a dispatcher. Two implementations exist:
 
 - `StubDispatcher` (`orchestrator/dispatch.py`) — produces deterministic, schema-valid artifacts without LLM calls. Used for testing.
-- `LLMDispatcher` (`orchestrator/llm_dispatch.py`) — calls a real LLM via the OpenAI SDK, parses structured output, validates against schemas, and writes artifacts atomically.
+- `CLIDispatcher` (`orchestrator/cli_dispatch.py`) — invokes `claude -p` as a subprocess, giving agents code access and shell tools. Used for both the planner (DESIGN, Opus) and executor (EXECUTE_ANALYZE, Sonnet) roles.
 
-`LLMDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. For structured outputs (bundle, findings, principles), it extracts content from code fences and validates against the relevant schema before writing. The FRAMING phase dispatches `role="planner", phase="frame"` to produce `problem.md`.
+`CLIDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. The DESIGN phase produces both `problem.md` and `bundle.yaml` in a single dispatch — the raw output is split by `_split_design_output()` in `run_iteration.py`.
 
 ## 8. summary.json — "How did the whole campaign go?"
 
@@ -265,7 +262,7 @@ The final report card, generated at the end of a campaign. Rolls everything into
 |---|---|
 | `total_cost_usd` / `total_tokens` | How much it cost |
 | `total_iterations` | How many times around the loop |
-| `cost_by_phase` | Where the money went (DESIGN vs PLAN_EXECUTION vs ANALYSIS, etc.) |
+| `cost_by_phase` | Where the money went (DESIGN vs EXECUTE_ANALYZE, etc.) |
 | `per_iteration_stats` | Cost and result for each iteration |
 | `mechanism_families_investigated` | What areas were explored |
 | `principles_inserted` / `updated` / `pruned` | Knowledge base changes |

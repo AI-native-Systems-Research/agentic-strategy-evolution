@@ -16,8 +16,8 @@ def metrics_path(tmp_path):
 
 class TestLogMetrics:
     def test_creates_file_and_appends(self, metrics_path):
-        log_metrics(metrics_path, {"dispatcher": "cli", "role": "planner", "phase": "frame", "input_tokens": 100})
-        log_metrics(metrics_path, {"dispatcher": "llm", "role": "reviewer", "phase": "review-design", "input_tokens": 50})
+        log_metrics(metrics_path, {"dispatcher": "cli", "role": "planner", "phase": "design", "input_tokens": 100})
+        log_metrics(metrics_path, {"dispatcher": "llm", "role": "analyzer", "phase": "execute-analyze", "input_tokens": 50})
 
         lines = metrics_path.read_text().splitlines()
         assert len(lines) == 2
@@ -40,10 +40,10 @@ class TestSummarizeMetrics:
 
     def test_aggregates_correctly(self, metrics_path):
         entries = [
-            {"dispatcher": "cli", "role": "planner", "phase": "frame", "input_tokens": 1000, "output_tokens": 200, "cost_usd": 0.05, "duration_ms": 5000},
-            {"dispatcher": "cli", "role": "executor", "phase": "plan-execution", "input_tokens": 2000, "output_tokens": 500, "cost_usd": 0.10, "duration_ms": 8000},
-            {"dispatcher": "llm", "role": "reviewer", "phase": "review-design", "input_tokens": 800, "output_tokens": 300, "cost_usd": None, "duration_ms": 3000},
-            {"dispatcher": "llm", "role": "extractor", "phase": "extract", "input_tokens": 600, "output_tokens": 150, "cost_usd": None, "duration_ms": 2000},
+            {"dispatcher": "cli", "role": "planner", "phase": "design", "input_tokens": 1000, "output_tokens": 200, "cost_usd": 0.05, "duration_ms": 5000},
+            {"dispatcher": "cli", "role": "executor", "phase": "execute-analyze", "input_tokens": 2000, "output_tokens": 500, "cost_usd": 0.10, "duration_ms": 8000},
+            {"dispatcher": "llm", "role": "validator", "phase": "validate", "input_tokens": 800, "output_tokens": 300, "cost_usd": None, "duration_ms": 3000},
+            {"dispatcher": "llm", "role": "reporter", "phase": "summarize", "input_tokens": 600, "output_tokens": 150, "cost_usd": None, "duration_ms": 2000},
         ]
         for e in entries:
             log_metrics(metrics_path, e)
@@ -56,9 +56,9 @@ class TestSummarizeMetrics:
         assert summary["total_duration_ms"] == 18000
 
         # by_phase
-        assert summary["by_phase"]["frame"]["calls"] == 1
-        assert summary["by_phase"]["plan-execution"]["cost_usd"] == 0.10
-        assert summary["by_phase"]["review-design"]["input_tokens"] == 800
+        assert summary["by_phase"]["design"]["calls"] == 1
+        assert summary["by_phase"]["execute-analyze"]["cost_usd"] == 0.10
+        assert summary["by_phase"]["validate"]["input_tokens"] == 800
 
         # by_dispatcher
         assert summary["by_dispatcher"]["cli"]["calls"] == 2
@@ -89,7 +89,7 @@ class TestSummarizeMetricsResilience:
     def test_skips_corrupt_lines(self, metrics_path):
         """Corrupt lines should be skipped, not crash the summary."""
         metrics_path.write_text(
-            '{"input_tokens": 100, "output_tokens": 50, "cost_usd": 0.01, "duration_ms": 1000, "dispatcher": "cli", "phase": "frame"}\n'
+            '{"input_tokens": 100, "output_tokens": 50, "cost_usd": 0.01, "duration_ms": 1000, "dispatcher": "cli", "phase": "design"}\n'
             '{bad json!!\n'
             '{"input_tokens": 200, "output_tokens": 100, "cost_usd": 0.02, "duration_ms": 2000, "dispatcher": "cli", "phase": "design"}\n'
         )
@@ -107,14 +107,6 @@ class TestCLIDispatcherMetrics:
         work_dir = tmp_path / "work"
         work_dir.mkdir()
         (work_dir / "runs" / "iter-1").mkdir(parents=True)
-        (work_dir / "runs" / "iter-1" / "problem.md").write_text(
-            "# Problem\n\n## Research Question\nTest question\n"
-        )
-        (work_dir / "runs" / "iter-1" / "bundle.yaml").write_text(
-            "metadata:\n  iteration: 1\n  family: test\n  research_question: test\n"
-            "arms:\n  - type: h-main\n    prediction: test\n    mechanism: test\n    diagnostic: test\n"
-            "  - type: h-control-negative\n    prediction: test\n    mechanism: test\n    diagnostic: test\n"
-        )
         (work_dir / "principles.json").write_text('{"principles": []}')
 
         repo_dir = tmp_path / "repo"
@@ -123,21 +115,21 @@ class TestCLIDispatcherMetrics:
         campaign = {
             "research_question": "Test?",
             "target_system": {"name": "T", "description": "D", "repo_path": str(repo_dir)},
-            "review": {"design_perspectives": ["rigor"], "findings_perspectives": ["rigor"], "max_review_rounds": 1},
             "prompts": {"methodology_layer": "prompts/methodology", "domain_adapter_layer": None},
         }
 
-        # Simulate claude -p returning JSON with metrics
+        # Simulate claude -p returning merged design output (problem.md + bundle)
         bundle_yaml = (
             "metadata:\n  iteration: 1\n  family: test\n  research_question: test\n"
             "arms:\n  - type: h-main\n    prediction: p\n    mechanism: m\n    diagnostic: d\n"
             "  - type: h-control-negative\n    prediction: p\n    mechanism: m\n    diagnostic: d\n"
         )
+        design_raw = f"## Research Question\n\nTest question\n\n---\n\n```yaml\n{bundle_yaml}```"
         cli_json_output = json.dumps({
             "type": "result",
             "subtype": "success",
             "is_error": False,
-            "result": f"```yaml\n{bundle_yaml}```",
+            "result": design_raw,
             "total_cost_usd": 0.0523,
             "duration_ms": 15234,
             "num_turns": 3,
@@ -156,13 +148,13 @@ class TestCLIDispatcherMetrics:
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            out = work_dir / "runs" / "iter-1" / "bundle.yaml"
+            out = work_dir / "runs" / "iter-1" / "design_raw.md"
             d.dispatch("planner", "design", output_path=out, iteration=1)
 
-        # Check artifact was written
+        # Design route uses fmt=None — raw text written directly
         assert out.exists()
-        bundle = yaml.safe_load(out.read_text())
-        assert bundle["metadata"]["iteration"] == 1
+        assert "```yaml" in out.read_text()
+        assert "Research Question" in out.read_text()
 
         # Check metrics were logged
         metrics_path = work_dir / "llm_metrics.jsonl"
@@ -186,12 +178,6 @@ class TestCLIDispatcherMetrics:
         work_dir = tmp_path / "work"
         work_dir.mkdir()
         (work_dir / "runs" / "iter-1").mkdir(parents=True)
-        (work_dir / "runs" / "iter-1" / "problem.md").write_text("# Problem\n")
-        (work_dir / "runs" / "iter-1" / "bundle.yaml").write_text(
-            "metadata:\n  iteration: 1\n  family: test\n  research_question: test\n"
-            "arms:\n  - type: h-main\n    prediction: p\n    mechanism: m\n    diagnostic: d\n"
-            "  - type: h-control-negative\n    prediction: p\n    mechanism: m\n    diagnostic: d\n"
-        )
         (work_dir / "principles.json").write_text('{"principles": []}')
 
         repo_dir = tmp_path / "repo"
@@ -199,7 +185,6 @@ class TestCLIDispatcherMetrics:
         campaign = {
             "research_question": "Test?",
             "target_system": {"name": "T", "description": "D", "repo_path": str(repo_dir)},
-            "review": {"design_perspectives": ["rigor"], "findings_perspectives": ["rigor"], "max_review_rounds": 1},
             "prompts": {"methodology_layer": "prompts/methodology", "domain_adapter_layer": None},
         }
 
@@ -242,7 +227,6 @@ class TestLLMDispatcherMetrics:
         campaign = {
             "research_question": "Test?",
             "target_system": {"name": "T", "description": "D", "observable_metrics": ["x"], "controllable_knobs": ["y"]},
-            "review": {"design_perspectives": ["rigor"], "findings_perspectives": ["rigor"], "max_review_rounds": 1},
             "prompts": {"methodology_layer": "prompts/methodology", "domain_adapter_layer": None},
         }
 
@@ -256,8 +240,8 @@ class TestLLMDispatcherMetrics:
             return resp
 
         d = LLMDispatcher(work_dir=work_dir, campaign=campaign, completion_fn=mock_completion)
-        out = work_dir / "runs" / "iter-1" / "problem.md"
-        d.dispatch("planner", "frame", output_path=out, iteration=1)
+        out = work_dir / "runs" / "iter-1" / "design_raw.md"
+        d.dispatch("planner", "design", output_path=out, iteration=1)
 
         # Check metrics logged
         metrics_path = work_dir / "llm_metrics.jsonl"
@@ -265,7 +249,7 @@ class TestLLMDispatcherMetrics:
         entry = json.loads(metrics_path.read_text().strip())
         assert entry["dispatcher"] == "llm"
         assert entry["role"] == "planner"
-        assert entry["phase"] == "frame"
+        assert entry["phase"] == "design"
         assert entry["input_tokens"] == 5000
         assert entry["output_tokens"] == 800
         assert entry["cost_usd"] is None

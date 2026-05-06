@@ -4,7 +4,6 @@ research_question: >
 
 run_id: blis-fast
 max_iterations: 2
-skip_reviews: true
 
 target_system:
   name: "BLIS — LLM Inference Serving Simulator"
@@ -12,18 +11,6 @@ target_system:
     BLIS is a discrete-event simulator for LLM inference serving.
     It models request arrivals, scheduling, and KV-cache management.
   repo_path: /path/to/your/blis  # Set to your local checkout
-
-review:
-  design_perspectives:
-    - statistical-rigor
-    - causal-sufficiency
-    - confound-risk
-  findings_perspectives:
-    - statistical-rigor
-    - causal-sufficiency
-    - confound-risk
-    - measurement-validity
-  max_review_rounds: 3
 
 prompts:
   methodology_layer: "prompts/methodology"

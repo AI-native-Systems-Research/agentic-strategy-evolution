@@ -2,10 +2,9 @@
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-import yaml
 
 from orchestrator.executor import execute_plan, CommandError, _truncate
 
@@ -169,101 +168,6 @@ class TestExecutePlanFailures:
         assert results["arms"][1]["conditions"][0]["exit_code"] == 0
 
 
-class TestExecutePlanRevisions:
-    def test_revision_fn_called_on_failure(self, tmp_path):
-        iter_dir = tmp_path / "iter-1"
-        iter_dir.mkdir()
-
-        bad_plan = {
-            "metadata": {"iteration": 1, "bundle_ref": "x"},
-            "arms": [
-                {"arm_id": "h-main", "conditions": [{"name": "bad", "cmd": "exit 1"}]},
-            ],
-        }
-        good_plan = {
-            "metadata": {"iteration": 1, "bundle_ref": "x"},
-            "arms": [
-                {"arm_id": "h-main", "conditions": [{"name": "good", "cmd": "echo ok"}]},
-            ],
-        }
-
-        revision_fn = MagicMock(return_value=good_plan)
-        results = execute_plan(
-            bad_plan, cwd=tmp_path, iter_dir=iter_dir, revision_fn=revision_fn,
-        )
-
-        revision_fn.assert_called_once()
-        assert results["arms"][0]["conditions"][0]["name"] == "good"
-        assert results["arms"][0]["conditions"][0]["exit_code"] == 0
-        # Revised plan saved
-        assert (iter_dir / "experiment_plan_v2.yaml").exists()
-
-    def test_revision_only_retries_failed_arms(self, tmp_path):
-        """Successful arms are preserved; only failed arms are retried."""
-        iter_dir = tmp_path / "iter-1"
-        iter_dir.mkdir()
-
-        plan = {
-            "metadata": {"iteration": 1, "bundle_ref": "x"},
-            "arms": [
-                {"arm_id": "h-main", "conditions": [{"name": "ok", "cmd": "echo success"}]},
-                {"arm_id": "h-ablation", "conditions": [{"name": "bad", "cmd": "exit 1"}]},
-            ],
-        }
-        fixed_plan = {
-            "metadata": {"iteration": 1, "bundle_ref": "x"},
-            "arms": [
-                {"arm_id": "h-main", "conditions": [{"name": "ok", "cmd": "echo success"}]},
-                {"arm_id": "h-ablation", "conditions": [{"name": "fixed", "cmd": "echo fixed"}]},
-            ],
-        }
-
-        revision_fn = MagicMock(return_value=fixed_plan)
-        results = execute_plan(
-            plan, cwd=tmp_path, iter_dir=iter_dir, revision_fn=revision_fn,
-        )
-
-        # h-main succeeded on first run, h-ablation was retried
-        assert results["arms"][0]["arm_id"] == "h-main"
-        assert results["arms"][0]["conditions"][0]["exit_code"] == 0
-        assert results["arms"][1]["arm_id"] == "h-ablation"
-        assert results["arms"][1]["conditions"][0]["name"] == "fixed"
-        assert results["arms"][1]["conditions"][0]["exit_code"] == 0
-
-    def test_max_revisions_exceeded_returns_partial(self, tmp_path):
-        iter_dir = tmp_path / "iter-1"
-        iter_dir.mkdir()
-
-        bad_plan = {
-            "metadata": {"iteration": 1, "bundle_ref": "x"},
-            "arms": [
-                {"arm_id": "h-main", "conditions": [{"name": "bad", "cmd": "exit 1"}]},
-            ],
-        }
-        # Revision always returns another bad plan
-        revision_fn = MagicMock(return_value=bad_plan)
-        results = execute_plan(
-            bad_plan, cwd=tmp_path, iter_dir=iter_dir,
-            revision_fn=revision_fn, max_revisions=2,
-        )
-
-        assert revision_fn.call_count == 2
-        assert results is not None
-        assert results["arms"][0]["conditions"][0]["exit_code"] == 1
-
-    def test_no_revision_fn_returns_results_with_failures(self, tmp_path):
-        iter_dir = tmp_path / "iter-1"
-        iter_dir.mkdir()
-
-        bad_plan = {
-            "metadata": {"iteration": 1, "bundle_ref": "x"},
-            "arms": [
-                {"arm_id": "h-main", "conditions": [{"name": "bad", "cmd": "exit 1"}]},
-            ],
-        }
-        results = execute_plan(bad_plan, cwd=tmp_path, iter_dir=iter_dir, revision_fn=None)
-        assert results is not None
-        assert results["arms"][0]["conditions"][0]["exit_code"] == 1
 
 
 class TestTruncate:
@@ -380,35 +284,6 @@ class TestResetBetweenConditions:
 
         # Only the two user cmds ran, no reset_cmd invocation at all.
         assert calls == ["echo hello", "echo world"]
-
-    def test_reset_cmd_applies_on_revision_retry(self, tmp_path):
-        """Regression guard: reset_cmd must also be honored on retry of a revised plan."""
-        iter_dir = tmp_path / "iter-1"
-        iter_dir.mkdir()
-        marker = tmp_path / "reset_count.txt"
-
-        bad_plan = {
-            "metadata": {"iteration": 1, "bundle_ref": "x"},
-            "arms": [
-                {"arm_id": "h-main", "conditions": [{"name": "bad", "cmd": "exit 1"}]},
-            ],
-        }
-        good_plan = {
-            "metadata": {"iteration": 1, "bundle_ref": "x"},
-            "arms": [
-                {"arm_id": "h-main", "conditions": [{"name": "good", "cmd": "echo ok"}]},
-            ],
-        }
-        revision_fn = MagicMock(return_value=good_plan)
-
-        execute_plan(
-            bad_plan, cwd=tmp_path, iter_dir=iter_dir,
-            revision_fn=revision_fn,
-            reset_cmd=f"echo tick >> {marker}",
-        )
-
-        # 1 reset for the bad run + 1 reset for the retry = 2
-        assert marker.read_text().count("tick") == 2
 
     def test_reset_cmd_runs_in_real_git_worktree(self, tmp_path):
         """End-to-end: git checkout -- . undoes a tracked edit and leaves untracked files."""

@@ -10,28 +10,18 @@
 #   Claude CLI:       sonnet, haiku, opus
 
 models:
-  # FRAMING — explores repo via claude -p. Needs thorough exploration + flag semantics.
-  framing: "aws/claude-sonnet-4-5"
+  # DESIGN — explores repo via claude -p, frames problem, designs hypothesis bundle.
+  # Uses Opus for better regime validation, parameter selection, and hypothesis quality.
+  design: "aws/claude-opus-4-6"
 
-  # DESIGN — creates hypothesis bundles. Core reasoning step.
-  design: "aws/claude-sonnet-4-5"
-
-  # PLAN_EXECUTION — translates bundle into shell commands via claude -p. Mechanical.
-  plan_execution: "aws/claude-sonnet-4-5"
-
-  # ANALYSIS — compares execution results to predictions. Needs careful reasoning.
-  analysis: "aws/claude-sonnet-4-5"
-
-  # REVIEW — parallel reviewer perspectives. Informational only (for now).
-  review: "aws/claude-sonnet-4-5"
-
-  # EXTRACTION — updates principle store from findings.
-  extraction: "aws/claude-sonnet-4-5"
+  # EXECUTE_ANALYZE — builds, patches, runs experiments, analyzes results, extracts principles.
+  # All in one session with full context.
+  execute_analyze: "aws/claude-sonnet-4-5"
 
   # REPORT — generates final report.md at campaign end.
   report: "aws/claude-sonnet-4-5"
 
 # Max tool-use turns for claude -p phases.
 max_turns:
-  framing: 20
-  plan_execution: 8
+  design: 40
+  execute_analyze: 120

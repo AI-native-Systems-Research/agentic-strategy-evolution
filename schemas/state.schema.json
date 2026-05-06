@@ -10,10 +10,9 @@
     "phase": {
       "type": "string",
       "enum": [
-        "INIT", "FRAMING", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-        "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
-        "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE",
-        "TUNING", "EXTRACTION", "DONE"
+        "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
+        "EXECUTE_ANALYZE", "VALIDATE",
+        "HUMAN_FINDINGS_GATE", "DONE"
       ],
       "description": "Current state machine phase."
     },
@@ -29,7 +28,7 @@
     },
     "family": {
       "type": ["string", "null"],
-      "description": "Current mechanism family under investigation, null before framing."
+      "description": "Current mechanism family under investigation, null before design."
     },
     "timestamp": {
       "type": "string",

@@ -16,7 +16,6 @@ import json
 import logging
 import re
 import shutil
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
 from datetime import datetime, timezone
 from enum import Enum
@@ -35,9 +34,9 @@ from orchestrator.util import atomic_write
 class IterationOutcome(str, Enum):
     """Outcome of a single iteration — used by run_campaign to decide next step."""
     COMPLETED = "COMPLETED"    # Final iteration, transitioned to DONE
-    CONTINUE = "CONTINUE"      # Non-final iteration, stopped at EXTRACTION
+    CONTINUE = "CONTINUE"      # Non-final iteration, stopped before DONE
     ABORTED = "ABORTED"        # Human aborted at a gate
-    REDESIGN = "REDESIGN"      # Control-negative refuted, needs redesign
+    REDESIGN = "REDESIGN"      # Human rejected, needs redesign
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 SCHEMAS_DIR = Path(__file__).parent / "schemas"
@@ -46,10 +45,9 @@ _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Phase ordering for resume logic
 _PHASE_ORDER = [
-    "INIT", "FRAMING", "HUMAN_FRAMING_GATE", "DESIGN", "DESIGN_REVIEW", "HUMAN_DESIGN_GATE",
-    "PLAN_EXECUTION", "EXECUTING", "ANALYSIS",
-    "FINDINGS_REVIEW", "HUMAN_FINDINGS_GATE", "TUNING",
-    "EXTRACTION", "DONE",
+    "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
+    "EXECUTE_ANALYZE", "VALIDATE", "HUMAN_FINDINGS_GATE",
+    "DONE",
 ]
 _PHASE_INDEX = {p: i for i, p in enumerate(_PHASE_ORDER)}
 
@@ -67,16 +65,16 @@ def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
                 "Prior feedback entries will be lost.",
                 fb_path, exc,
             )
-            store = {"framing": [], "design": [], "findings": []}
+            store = {"design": [], "findings": []}
     else:
-        store = {"framing": [], "design": [], "findings": []}
+        store = {"design": [], "findings": []}
     if not isinstance(store, dict):
         logger.warning(
             "human_feedback.json at %s has unexpected type %s. "
             "Prior feedback entries will be lost.",
             fb_path, type(store).__name__,
         )
-        store = {"framing": [], "design": [], "findings": []}
+        store = {"design": [], "findings": []}
     entries = store.setdefault(phase, [])
     entries.append({
         "attempt": len(entries) + 1,
@@ -86,14 +84,44 @@ def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
     atomic_write(fb_path, json.dumps(store, indent=2) + "\n")
 
 
-def _enter_phase(engine, phase):
-    """Transition to phase if needed. Returns True if phase work should run.
+_YAML_FENCE_RE = re.compile(r"```yaml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
-    Handles resume by skipping already-completed phases:
-    - Past this phase: return False (skip)
-    - At this phase: return True (redo work, no transition needed)
-    - Before this phase: transition and return True
-    """
+
+def _split_design_output(raw: str, iter_dir: Path) -> None:
+    """Split merged design output into problem.md and bundle.yaml."""
+    matches = _YAML_FENCE_RE.findall(raw)
+    if not matches:
+        raise RuntimeError(
+            "Design agent did not produce a ```yaml``` code fence. "
+            "Cannot extract hypothesis bundle from response."
+        )
+    bundle_yaml_str = matches[-1]
+    bundle = yaml.safe_load(bundle_yaml_str)
+    if not isinstance(bundle, dict):
+        raise RuntimeError(
+            f"Expected YAML object from design agent, got {type(bundle).__name__}"
+        )
+
+    schema = yaml.safe_load((SCHEMAS_DIR / "bundle.schema.yaml").read_text())
+    jsonschema.validate(bundle, schema)
+
+    last_fence_start = raw.rfind("```yaml")
+    if last_fence_start == -1:
+        last_fence_start = raw.rfind("```YAML")
+    problem_md = raw[:last_fence_start].rstrip()
+    if problem_md.endswith("---"):
+        problem_md = problem_md[:-3].rstrip()
+
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write(iter_dir / "problem.md", problem_md + "\n")
+    atomic_write(
+        iter_dir / "bundle.yaml",
+        yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False),
+    )
+
+
+def _enter_phase(engine, phase):
+    """Transition to phase if needed. Returns True if phase work should run."""
     current_idx = _PHASE_INDEX[engine.phase]
     target_idx = _PHASE_INDEX[phase]
     if current_idx > target_idx:
@@ -101,6 +129,34 @@ def _enter_phase(engine, phase):
     if engine.phase != phase:
         engine.transition(phase)
     return True
+
+
+def _merge_principles(work_dir: Path, iter_dir: Path) -> None:
+    """Merge principle_updates.json into the shared principles.json store."""
+    updates_path = iter_dir / "principle_updates.json"
+    if not updates_path.exists():
+        return
+    updates = json.loads(updates_path.read_text())
+    if not updates:
+        return
+    if not isinstance(updates, list):
+        raise RuntimeError(
+            f"principle_updates.json should be a list, got {type(updates).__name__}. "
+            f"Check {updates_path}"
+        )
+    for i, p in enumerate(updates):
+        if not isinstance(p, dict) or "id" not in p:
+            raise RuntimeError(f"principle_updates.json entry {i} missing 'id': {p!r:.200}")
+    principles_path = work_dir / "principles.json"
+    if principles_path.exists():
+        store = json.loads(principles_path.read_text())
+    else:
+        store = {"principles": []}
+    existing = {p["id"]: p for p in store["principles"]}
+    for p in updates:
+        existing[p["id"]] = p
+    store["principles"] = list(existing.values())
+    atomic_write(principles_path, json.dumps(store, indent=2) + "\n")
 
 
 def setup_work_dir(run_id: str) -> Path:
@@ -147,21 +203,17 @@ def run_iteration(
 ) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
 
+    Phases: DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → VALIDATE → HUMAN_FINDINGS_GATE → DONE
+
     Args:
-        final: If True (default), transitions to DONE after extraction.
-            If False, stops at EXTRACTION so run_campaign can continue
-            with the next iteration.
+        final: If True (default), transitions to DONE after principle merge.
         auto_approve: If True, all human gates are automatically approved.
 
     Returns:
         An IterationOutcome value: COMPLETED, CONTINUE, ABORTED, or REDESIGN.
-
-    Supports resume: if the process crashes, re-running picks up from the
-    last committed phase in state.json. Phases already completed are skipped.
     """
     engine = Engine(work_dir)
     repo_path = campaign.get("target_system", {}).get("repo_path")
-    skip_reviews = campaign.get("skip_reviews", False)
 
     # Load defaults.yaml, then overlay campaign.models
     defaults = {}
@@ -172,19 +224,18 @@ def run_iteration(
     campaign_models = campaign.get("models", {})
 
     def _model_for(phase_key: str) -> str:
-        """Resolve model: campaign.models > defaults.yaml > --model flag."""
         return campaign_models.get(phase_key) or default_models.get(phase_key) or model or "aws/claude-sonnet-4-5"
 
     def _max_turns_for(phase_key: str) -> int:
         return default_max_turns.get(phase_key, 25)
 
-    # CLIDispatcher for code-access roles (framing, execution); LLMDispatcher for everything else
+    # CLIDispatcher for code-access roles; LLMDispatcher for API-only phases
     from orchestrator.cli_dispatch import CLIDispatcher
     cli_dispatcher = (
         CLIDispatcher(
             work_dir=work_dir, campaign=campaign,
-            model=_model_for("framing"), timeout=timeout,
-            max_turns=_max_turns_for("framing"),
+            model=_model_for("design"), timeout=timeout,
+            max_turns=_max_turns_for("design"),
         ) if repo_path else None
     )
     llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("design"))
@@ -199,102 +250,52 @@ def run_iteration(
     if engine.phase != "INIT":
         print(f"\n  Resuming from {engine.phase}\n")
 
-    # FRAMING — uses CLI dispatcher if available (needs code access to discover metrics/knobs)
-    if _enter_phase(engine, "FRAMING"):
-        print(f"\n{'='*60}")
-        print(f"  FRAMING — defining the problem")
-        print(f"{'='*60}")
-        frame_dispatcher = cli_dispatcher or llm_dispatcher
-        frame_dispatcher.dispatch(
-            "planner", "frame",
-            output_path=iter_dir / "problem.md", iteration=iteration,
-        )
-        print(f"  -> {iter_dir / 'problem.md'}")
-
-    # HUMAN FRAMING GATE
-    if _enter_phase(engine, "HUMAN_FRAMING_GATE"):
-        print(f"\n{'='*60}")
-        print(f"  HUMAN FRAMING GATE")
-        print(f"{'='*60}")
-        decision, reason = gate.prompt(
-            "Review the problem framing. Approve?",
-            artifact_path=str(iter_dir / "problem.md"),
-            files=[str(iter_dir / "problem.md")],
-        )
-        if decision == "reject":
-            _save_human_feedback(iter_dir, "framing", reason or "(Rejected without specific feedback)")
-            print("  Framing rejected. Re-running framing.")
-            engine.transition("FRAMING")
-            return IterationOutcome.REDESIGN
-        if decision == "abort":
-            print("  Aborted.")
-            return IterationOutcome.ABORTED
-
-    # DESIGN — always LLM API (no code access needed, uses framing output)
+    # ─── DESIGN ───────────────────────────────────────────────────────────
     if _enter_phase(engine, "DESIGN"):
         print(f"\n{'='*60}")
-        print(f"  DESIGN — creating hypothesis bundle")
+        print(f"  DESIGN — exploring system and creating hypothesis bundle")
         print(f"{'='*60}")
-        llm_dispatcher.dispatch(
+        design_dispatcher = cli_dispatcher or llm_dispatcher
+        design_dispatcher.dispatch(
             "planner", "design",
-            output_path=iter_dir / "bundle.yaml", iteration=iteration,
+            output_path=iter_dir / "design_raw.md", iteration=iteration,
         )
+        raw_response = (iter_dir / "design_raw.md").read_text()
+        _split_design_output(raw_response, iter_dir)
+        (iter_dir / "design_raw.md").unlink()
+        print(f"  -> {iter_dir / 'problem.md'}")
         print(f"  -> {iter_dir / 'bundle.yaml'}")
 
-    # DESIGN REVIEW
-    if _enter_phase(engine, "DESIGN_REVIEW") and not skip_reviews:
-        print(f"\n{'='*60}")
-        print(f"  DESIGN REVIEW — {len(campaign['review']['design_perspectives'])} reviewers")
-        print(f"{'='*60}")
-        perspectives = campaign["review"]["design_perspectives"]
-        def _run_design_review(p):
-            llm_dispatcher.dispatch(
-                "reviewer", "review-design",
-                output_path=iter_dir / "reviews" / f"review-{p}.md",
-                iteration=iteration, perspective=p,
-            )
-            return p
-        with ThreadPoolExecutor(max_workers=len(perspectives)) as pool:
-            futures = [pool.submit(_run_design_review, p) for p in perspectives]
-            for f in as_completed(futures):
-                print(f"  -> review-{f.result()}.md")
-
-    # HUMAN DESIGN GATE
+    # ─── HUMAN DESIGN GATE ────────────────────────────────────────────────
     if _enter_phase(engine, "HUMAN_DESIGN_GATE"):
         print(f"\n{'='*60}")
         print(f"  HUMAN DESIGN GATE")
         print(f"{'='*60}")
         summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "design")
         decision, reason = gate.prompt(
-            "Review the hypothesis bundle and reviews. Approve?",
-            artifact_path=str(iter_dir / "bundle.yaml"),
-            reviews=[str(p) for p in sorted((iter_dir / "reviews").glob("review-*.md"))],
+            "Review the hypothesis bundle. Approve?",
             summary_path=str(summary_path) if summary_path else None,
-            files=[
-                str(iter_dir / "bundle.yaml"),
-                *[str(p) for p in sorted((iter_dir / "reviews").glob("review-*.md"))],
-            ],
+            files=[str(iter_dir / "bundle.yaml"), str(iter_dir / "problem.md")],
         )
         if decision == "reject":
             _save_human_feedback(iter_dir, "design", reason or "(Rejected without specific feedback)")
-            print("Design rejected. Re-run after revising the campaign config.")
+            print("Design rejected. Re-run after revising.")
             engine.transition("DESIGN")
             return IterationOutcome.REDESIGN
         if decision == "abort":
             print("Aborted.")
             return IterationOutcome.ABORTED
 
-    # PLAN_EXECUTION — executor (claude -p) produces experiment_plan.yaml
+    # ─── EXECUTE + ANALYZE ────────────────────────────────────────────────
     experiment_dir = experiment_id = None
-    if _enter_phase(engine, "PLAN_EXECUTION"):
+    if _enter_phase(engine, "EXECUTE_ANALYZE"):
         print(f"\n{'='*60}")
-        print(f"  PLAN_EXECUTION — designing experiment commands")
+        print(f"  EXECUTE + ANALYZE — building, running, and analyzing")
         print(f"{'='*60}")
-        # Use per-phase model + turn limit for plan execution
         if cli_dispatcher:
-            cli_dispatcher.model = _model_for("plan_execution")
-            cli_dispatcher.max_turns = _max_turns_for("plan_execution")
-        plan_dispatcher = cli_dispatcher or llm_dispatcher
+            cli_dispatcher.model = _model_for("execute_analyze")
+            cli_dispatcher.max_turns = _max_turns_for("execute_analyze")
+        exec_dispatcher = cli_dispatcher or llm_dispatcher
         try:
             if repo_path:
                 from orchestrator.worktree import (
@@ -304,33 +305,55 @@ def run_iteration(
                 experiment_dir, experiment_id = create_experiment_worktree(
                     Path(repo_path), iteration,
                 )
-                # Persist for resume
                 (iter_dir / ".experiment_id").write_text(experiment_id)
                 print(f"  Experiment worktree: {experiment_dir}")
             if experiment_dir and cli_dispatcher:
                 with cli_dispatcher.override_cwd(experiment_dir):
-                    plan_dispatcher.dispatch(
-                        "executor", "plan-execution",
-                        output_path=iter_dir / "experiment_plan.yaml",
+                    exec_dispatcher.dispatch(
+                        "executor", "execute-analyze",
+                        output_path=iter_dir / "execute_analyze_output.json",
                         iteration=iteration,
                     )
             else:
-                plan_dispatcher.dispatch(
-                    "executor", "plan-execution",
-                    output_path=iter_dir / "experiment_plan.yaml",
+                exec_dispatcher.dispatch(
+                    "executor", "execute-analyze",
+                    output_path=iter_dir / "execute_analyze_output.json",
                     iteration=iteration,
                 )
+            # Split combined output into separate artifacts
+            combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
+            missing = {"plan", "findings", "principle_updates"} - set(combined.keys())
+            if missing:
+                raise RuntimeError(
+                    f"execute-analyze agent output missing keys: {sorted(missing)}. "
+                    f"Got: {sorted(combined.keys())}. See {iter_dir / 'execute_analyze_output.json'}"
+                )
+            plan_data = combined["plan"]
+            atomic_write(
+                iter_dir / "experiment_plan.yaml",
+                yaml.safe_dump(plan_data, default_flow_style=False, sort_keys=False),
+            )
+            atomic_write(
+                iter_dir / "findings.json",
+                json.dumps(combined["findings"], indent=2) + "\n",
+            )
+            atomic_write(
+                iter_dir / "principle_updates.json",
+                json.dumps(combined["principle_updates"], indent=2) + "\n",
+            )
             print(f"  -> {iter_dir / 'experiment_plan.yaml'}")
+            print(f"  -> {iter_dir / 'findings.json'}")
+            print(f"  -> {iter_dir / 'principle_updates.json'}")
         except BaseException:
             if repo_path and experiment_id:
                 from orchestrator.worktree import remove_experiment_worktree
                 remove_experiment_worktree(Path(repo_path), experiment_id)
             raise
 
-    # EXECUTING — orchestrator runs commands from plan (no LLM)
-    if _enter_phase(engine, "EXECUTING"):
+    # ─── VALIDATE ─────────────────────────────────────────────────────────
+    if _enter_phase(engine, "VALIDATE"):
         print(f"\n{'='*60}")
-        print(f"  EXECUTING — running experiment commands")
+        print(f"  VALIDATE — replaying plan for reproducibility")
         print(f"{'='*60}")
         # Recover worktree reference on resume
         if not experiment_dir and repo_path:
@@ -339,13 +362,6 @@ def run_iteration(
                 experiment_id = eid_path.read_text().strip()
                 experiment_dir = Path(repo_path) / ".nous-experiments" / experiment_id
 
-        revision_fn = None
-        if cli_dispatcher and experiment_dir:
-            def _revise(plan, error_info):
-                with cli_dispatcher.override_cwd(experiment_dir):
-                    return cli_dispatcher.revise_plan(plan, error_info)
-            revision_fn = _revise
-
         try:
             from orchestrator.executor import execute_plan
             plan = yaml.safe_load((iter_dir / "experiment_plan.yaml").read_text())
@@ -353,7 +369,6 @@ def run_iteration(
                 plan,
                 cwd=experiment_dir or Path(repo_path) if repo_path else iter_dir,
                 iter_dir=iter_dir,
-                revision_fn=revision_fn,
                 reset_cmd="git checkout -- ." if experiment_dir else None,
             )
             print(f"  -> {iter_dir / 'execution_results.json'}")
@@ -362,24 +377,10 @@ def run_iteration(
                 from orchestrator.worktree import remove_experiment_worktree
                 remove_experiment_worktree(Path(repo_path), experiment_id)
 
-    # ANALYSIS — LLM API compares observed metrics vs predictions
-    if _enter_phase(engine, "ANALYSIS"):
-        print(f"\n{'='*60}")
-        print(f"  ANALYSIS — comparing results to predictions")
-        print(f"{'='*60}")
-        llm_dispatcher.dispatch(
-            "executor", "analyze",
-            output_path=iter_dir / "findings.json", iteration=iteration,
-        )
-        print(f"  -> {iter_dir / 'findings.json'}")
-
-    # Validate findings against schema, then check fast-fail rules
+    # Validate findings and check fast-fail rules
     findings_path = iter_dir / "findings.json"
     if not findings_path.exists():
-        raise RuntimeError(
-            f"{findings_path} not found. "
-            f"The ANALYSIS phase may have failed to produce findings."
-        )
+        raise RuntimeError(f"{findings_path} not found.")
     findings = json.loads(findings_path.read_text())
     findings_schema = json.loads((SCHEMAS_DIR / "findings.schema.json").read_text())
     try:
@@ -388,91 +389,41 @@ def run_iteration(
         raise RuntimeError(
             f"findings.json failed schema validation: {exc.message}"
         ) from exc
-    # If experiment itself was flawed, retry from PLAN_EXECUTION
-    if not findings.get("experiment_valid", True):
-        print("  ** Experiment invalid — retrying with corrected plan")
-        analysis = findings.get("discrepancy_analysis", "")
-        if analysis:
-            _save_human_feedback(
-                iter_dir, "findings",
-                f"[System] Experiment was invalid. Discrepancy analysis:\n\n{analysis}",
-            )
-        _enter_phase(engine, "FINDINGS_REVIEW")
-        _enter_phase(engine, "HUMAN_FINDINGS_GATE")
-        engine.transition("PLAN_EXECUTION")
-        return IterationOutcome.REDESIGN
 
     ff = check_fast_fail(findings)
-    if ff == FastFailAction.SKIP_TO_EXTRACTION:
-        print("  ** H-main REFUTED — skipping to extraction")
-        _enter_phase(engine, "FINDINGS_REVIEW")
-        _enter_phase(engine, "HUMAN_FINDINGS_GATE")
-        _enter_phase(engine, "EXTRACTION")
-    elif ff == FastFailAction.REDESIGN:
+    if ff == FastFailAction.REDESIGN:
         print("  ** Control-negative REFUTED and h-main not confirmed — mechanism confounded.")
-        print("     The experiment needs redesign. Re-run after revising the campaign.")
-        _enter_phase(engine, "FINDINGS_REVIEW")
-        _enter_phase(engine, "HUMAN_FINDINGS_GATE")
-        engine.transition("PLAN_EXECUTION")
+        print("     The experiment needs redesign.")
+        engine.transition("EXECUTE_ANALYZE")
         return IterationOutcome.REDESIGN
-    else:
-        if ff == FastFailAction.SIMPLIFY:
-            print("  ** Dominant component >80% — consider simplifying the model.")
-            print("     Proceeding to findings review with this note.")
+    if ff == FastFailAction.SKIP_TO_MERGE:
+        print("  ** H-main REFUTED — skipping to principle merge")
+    if ff == FastFailAction.SIMPLIFY:
+        print("  ** Dominant component >80% — consider simplifying the model.")
 
-        # FINDINGS REVIEW (runs for both SIMPLIFY and CONTINUE)
-        if _enter_phase(engine, "FINDINGS_REVIEW") and not skip_reviews:
-            print(f"\n{'='*60}")
-            print(f"  FINDINGS REVIEW — {len(campaign['review']['findings_perspectives'])} reviewers")
-            print(f"{'='*60}")
-            perspectives = campaign["review"]["findings_perspectives"]
-            def _run_findings_review(p):
-                llm_dispatcher.dispatch(
-                    "reviewer", "review-findings",
-                    output_path=iter_dir / "reviews" / f"review-findings-{p}.md",
-                    iteration=iteration, perspective=p,
-                )
-                return p
-            with ThreadPoolExecutor(max_workers=len(perspectives)) as pool:
-                futures = [pool.submit(_run_findings_review, p) for p in perspectives]
-                for f in as_completed(futures):
-                    print(f"  -> review-findings-{f.result()}.md")
+    # ─── HUMAN FINDINGS GATE ──────────────────────────────────────────────
+    if _enter_phase(engine, "HUMAN_FINDINGS_GATE"):
+        print(f"\n{'='*60}")
+        print(f"  HUMAN FINDINGS GATE")
+        print(f"{'='*60}")
+        summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "findings")
+        decision, reason = gate.prompt(
+            "Review the findings. Approve?",
+            summary_path=str(summary_path) if summary_path else None,
+            files=[str(iter_dir / "findings.json")],
+        )
+        if decision == "reject":
+            _save_human_feedback(iter_dir, "findings", reason or "(Rejected without specific feedback)")
+            print("Findings rejected. Re-running execution.")
+            engine.transition("EXECUTE_ANALYZE")
+            return IterationOutcome.REDESIGN
+        if decision == "abort":
+            print("Aborted.")
+            return IterationOutcome.ABORTED
 
-        # HUMAN FINDINGS GATE
-        if _enter_phase(engine, "HUMAN_FINDINGS_GATE"):
-            print(f"\n{'='*60}")
-            print(f"  HUMAN FINDINGS GATE")
-            print(f"{'='*60}")
-            summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "findings")
-            decision, reason = gate.prompt(
-                "Review the findings and reviews. Approve?",
-                summary_path=str(summary_path) if summary_path else None,
-                files=[
-                    str(iter_dir / "findings.json"),
-                    *[str(p) for p in sorted((iter_dir / "reviews").glob("review-findings-*.md"))],
-                ],
-            )
-            if decision == "reject":
-                _save_human_feedback(iter_dir, "findings", reason or "(Rejected without specific feedback)")
-                print("Findings rejected. Re-running executor.")
-                engine.transition("PLAN_EXECUTION")
-                return IterationOutcome.REDESIGN
-            if decision == "abort":
-                print("Aborted.")
-                return IterationOutcome.ABORTED
-
-        _enter_phase(engine, "TUNING")
-        _enter_phase(engine, "EXTRACTION")
-
-    # EXTRACTION
-    print(f"\n{'='*60}")
-    print(f"  EXTRACTION — extracting principles")
-    print(f"{'='*60}")
-    llm_dispatcher.dispatch(
-        "extractor", "extract",
-        output_path=work_dir / "principles.json", iteration=iteration,
-    )
-    print(f"  -> {work_dir / 'principles.json'}")
+    # ─── PRINCIPLE MERGE (Python, no LLM) ─────────────────────────────────
+    _merge_principles(work_dir, iter_dir)
+    print(f"  -> Principles merged into {work_dir / 'principles.json'}")
 
     if final:
         engine.transition("DONE")
@@ -483,7 +434,7 @@ def run_iteration(
         print(f"Principles: {work_dir / 'principles.json'}")
         return IterationOutcome.COMPLETED
     else:
-        print(f"\n  Iteration {iteration} extraction complete — ready for next iteration.")
+        print(f"\n  Iteration {iteration} complete — ready for next iteration.")
         return IterationOutcome.CONTINUE
 
 
@@ -517,7 +468,6 @@ def main() -> None:
 
     campaign = yaml.safe_load(campaign_path.read_text())
 
-    # Validate campaign against schema for early, clear error messages
     schema = yaml.safe_load((SCHEMAS_DIR / "campaign.schema.yaml").read_text())
     try:
         jsonschema.validate(campaign, schema)

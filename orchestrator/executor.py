@@ -1,18 +1,14 @@
 """Deterministic experiment execution for the Nous orchestrator.
 
-Reads an experiment_plan.yaml and runs its commands via subprocess.
-No LLM calls — purely deterministic execution.
-
-On failure, an optional revision_fn callback can be used to request
-a corrected plan from an LLM agent (e.g., CLIDispatcher.revise_plan).
+Reads an experiment_plan.yaml and replays its commands via subprocess.
+No LLM calls — purely deterministic execution. Commands are expected
+to be pre-validated by the plan-execution agent.
 """
 import json
 import logging
+import shutil
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
-
-import yaml
 
 from orchestrator.util import atomic_write
 
@@ -26,32 +22,21 @@ def execute_plan(
     cwd: Path,
     iter_dir: Path,
     *,
-    revision_fn: Callable[[dict, dict], dict] | None = None,
-    max_revisions: int = 3,
     timeout: int = 300,
     reset_cmd: str | None = None,
 ) -> dict:
-    """Execute an experiment plan and collect results.
+    """Replay a pre-validated experiment plan and collect results.
 
     Arms run independently — a failure in one arm does not block others.
-    On retry, only failed arms are re-run; successful arms are preserved.
+    No retries — the plan-execution agent already validated all commands.
 
     Args:
         plan: Parsed experiment_plan.yaml dict.
         cwd: Working directory for commands (typically the worktree).
         iter_dir: Iteration directory — results are written here.
-        revision_fn: Called on failure with (plan, error_info) → revised plan.
-            If None, failures are terminal.
-        max_revisions: Max number of plan revision rounds.
         timeout: Per-command timeout in seconds.
-        reset_cmd: Optional shell command run in ``cwd`` before every condition
-            (including on revision retries). Used to restore a clean baseline
-            between conditions (e.g., ``"git checkout -- ."`` in a git worktree).
-            If the reset fails, the condition is recorded as failed with the
-            reset's exit code and the condition's own cmd is skipped. The
-            recorded ``cmd`` is still the condition's cmd; only ``exit_code``,
-            ``stdout_tail``, and ``stderr_tail`` reflect the reset, with
-            ``[RESET FAILED] <reset_cmd>`` appended to stderr_tail.
+        reset_cmd: Shell command run before every condition to restore clean
+            state (e.g., ``"git checkout -- ."``).
 
     Returns:
         The execution_results dict (also written to iter_dir/execution_results.json).
@@ -75,75 +60,14 @@ def execute_plan(
     # Run all arms (failures recorded, not raised)
     arm_results = _run_all_arms(plan["arms"], cwd, results_dir, timeout, reset_cmd)
 
-    # Retry loop: only re-run failed arms
-    revisions_used = 0
-    while True:
-        failed_arms = _get_failed_arm_ids(arm_results)
-        if not failed_arms:
-            break  # all arms passed
-
-        if revision_fn is None or revisions_used >= max_revisions:
-            logger.warning(
-                "Arms failed %s, no more revisions (used %d/%d).",
-                failed_arms, revisions_used, max_revisions,
-            )
-            print(
-                f"    {len(failed_arms)} arm(s) failed — no more revisions. "
-                f"Continuing with partial results.",
-                flush=True,
-            )
-            break
-
-        revisions_used += 1
-        # Build error info from first failure
-        first_failure = _first_failed_condition(arm_results)
-        error_info = {
-            "failed_step": first_failure["step"],
-            "cmd": first_failure["cmd"],
-            "exit_code": first_failure["exit_code"],
-            "stderr_tail": first_failure["stderr_tail"],
-            "stdout_tail": first_failure["stdout_tail"],
-        }
-        error_path = iter_dir / f"execution_error_v{revisions_used}.json"
-        atomic_write(error_path, json.dumps(error_info, indent=2) + "\n")
-
-        logger.warning(
-            "Arms failed %s (revision %d/%d).",
-            failed_arms, revisions_used, max_revisions,
-        )
-        print(
-            f"    {len(failed_arms)} arm(s) failed — requesting revised plan "
-            f"(revision {revisions_used}/{max_revisions})...",
-            flush=True,
-        )
-
-        try:
-            plan = revision_fn(plan, error_info)
-        except Exception as rev_exc:
-            logger.warning(
-                "Revision failed (%s): %s. Keeping partial results.",
-                type(rev_exc).__name__, rev_exc,
-            )
-            print(f"    Revision failed ({type(rev_exc).__name__}). Continuing with partial results.", flush=True)
-            break
-
-        # Save revised plan
-        revised_path = iter_dir / f"experiment_plan_v{revisions_used + 1}.yaml"
-        atomic_write(
-            revised_path,
-            yaml.safe_dump(plan, default_flow_style=False, sort_keys=False),
-        )
-
-        # Re-run only failed arms from the revised plan
-        retry_arms = [a for a in plan["arms"] if a["arm_id"] in failed_arms]
-        retry_results = _run_all_arms(retry_arms, cwd, results_dir, timeout, reset_cmd)
-
-        # Merge: replace failed arms with retry results
-        retry_by_id = {r["arm_id"]: r for r in retry_results}
-        arm_results = [
-            retry_by_id[a["arm_id"]] if a["arm_id"] in retry_by_id else a
-            for a in arm_results
-        ]
+    # Persist patches from worktree into the experiment directory
+    patches_src = cwd / "patches"
+    if patches_src.is_dir():
+        patches_dst = iter_dir / "patches"
+        if patches_dst.exists():
+            shutil.rmtree(patches_dst)
+        shutil.copytree(patches_src, patches_dst)
+        logger.info("Copied patches/ to %s", patches_dst)
 
     results = {"setup_results": setup_results, "arms": arm_results}
     output = {"plan_ref": f"runs/{iter_dir.name}/experiment_plan.yaml", **results}
@@ -175,34 +99,6 @@ def _run_all_arms(
         arm_results.append(arm_result)
     return arm_results
 
-
-def _get_failed_arm_ids(arm_results: list[dict]) -> list[str]:
-    """Return arm_ids that have any non-zero exit_code condition."""
-    failed = []
-    for arm in arm_results:
-        for cond in arm["conditions"]:
-            if cond["exit_code"] != 0:
-                failed.append(arm["arm_id"])
-                break
-    return failed
-
-
-def _first_failed_condition(arm_results: list[dict]) -> dict:
-    """Return info about the first failed condition (for error reporting)."""
-    for arm in arm_results:
-        for cond in arm["conditions"]:
-            if cond["exit_code"] != 0:
-                return {
-                    "step": f"{arm['arm_id']}/{cond['name']}",
-                    "cmd": cond["cmd"],
-                    "exit_code": cond["exit_code"],
-                    "stderr_tail": cond["stderr_tail"],
-                    "stdout_tail": cond["stdout_tail"],
-                }
-    raise AssertionError(
-        "_first_failed_condition called but no failed condition found. "
-        "This indicates a bug in _get_failed_arm_ids or arm_results mutation."
-    )
 
 
 def _run_setup(setup_cmds: list[dict], cwd: Path, timeout: int) -> list[dict]:

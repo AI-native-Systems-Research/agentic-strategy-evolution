@@ -7,7 +7,7 @@ description: >
   and referenced by state.json via config_ref.
 
 type: object
-required: [target_system, research_question, review, prompts]
+required: [target_system, research_question, prompts]
 additionalProperties: false
 
 properties:
@@ -54,41 +54,14 @@ properties:
         minLength: 1
         description: "Path to target system git repo. Used by CLIDispatcher for code-access agents. If set, experiments run in isolated worktrees."
 
-  review:
-    type: object
-    required: [design_perspectives, findings_perspectives, max_review_rounds]
-    additionalProperties: false
-    properties:
-      design_perspectives:
-        type: array
-        items: { type: string, minLength: 1 }
-        minItems: 1
-        description: "Reviewer perspectives for design review."
-      findings_perspectives:
-        type: array
-        items: { type: string, minLength: 1 }
-        minItems: 1
-        description: "Reviewer perspectives for findings review."
-      max_review_rounds:
-        type: integer
-        minimum: 1
-        description: "Maximum convergence rounds per review gate."
-
-  skip_reviews:
-    type: boolean
-    description: "Skip DESIGN_REVIEW and FINDINGS_REVIEW phases. Reviews are currently informational only. Default: false."
-
   models:
     type: object
     additionalProperties: false
     description: "Per-phase model selection. Omit to use --model default for all phases."
     properties:
-      framing: { type: string, description: "Model for FRAMING phase (claude -p). Default: --model value." }
-      design: { type: string, description: "Model for DESIGN phase (LLM API). Default: --model value." }
-      plan_execution: { type: string, description: "Model for PLAN_EXECUTION phase (claude -p). Default: claude-haiku-4-5-20251001." }
-      analysis: { type: string, description: "Model for ANALYSIS phase (LLM API). Default: --model value." }
-      review: { type: string, description: "Model for REVIEW phases (LLM API). Default: --model value." }
-      extraction: { type: string, description: "Model for EXTRACTION phase (LLM API). Default: --model value." }
+      design: { type: string, description: "Model for DESIGN phase (claude -p). Default: aws/claude-opus-4-6." }
+      execute_analyze: { type: string, description: "Model for EXECUTE_ANALYZE phase (claude -p). Default: aws/claude-sonnet-4-5." }
+      report: { type: string, description: "Model for report generation (LLM API). Default: aws/claude-sonnet-4-5." }
 
   prompts:
     type: object

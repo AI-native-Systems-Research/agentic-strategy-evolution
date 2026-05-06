@@ -4,7 +4,7 @@ Pure functions: take findings, return recommended action for the orchestrator.
 The caller is responsible for acting on the returned FastFailAction.
 
 Rules (in priority order):
-1. H-main refuted -> caller should skip remaining arms, go to EXTRACTION
+1. H-main refuted -> caller should skip remaining arms, proceed to findings gate
 2. H-control-negative fails AND h-main also not confirmed -> REDESIGN
    (If h-main is confirmed but control-negative refuted, the mechanism works
    but is broader than hypothesized — that's a learning, not a confound.)
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class FastFailAction(Enum):
     CONTINUE = "continue"
-    SKIP_TO_EXTRACTION = "skip_to_extraction"
+    SKIP_TO_MERGE = "skip_to_merge"
     REDESIGN = "redesign"
     SIMPLIFY = "simplify"
 
@@ -67,10 +67,10 @@ def check_fast_fail(findings: dict) -> FastFailAction:
             "Known statuses: %s", h_main_status, sorted(_KNOWN_STATUSES)
         )
 
-    # Rule 1: H-main refuted -> skip to extraction (highest priority)
+    # Rule 1: H-main refuted -> skip to principle merge (highest priority)
     if h_main_status == "REFUTED":
-        logger.info("Fast-fail: h-main REFUTED -> SKIP_TO_EXTRACTION")
-        return FastFailAction.SKIP_TO_EXTRACTION
+        logger.info("Fast-fail: h-main REFUTED -> skip to principle merge, proceed to findings gate")
+        return FastFailAction.SKIP_TO_MERGE
 
     # Rule 2: H-control-negative fails -> redesign ONLY if h-main is not confirmed.
     # If h-main is confirmed but control-negative refuted, the mechanism is real

@@ -33,11 +33,6 @@ SAMPLE_CAMPAIGN = {
         "observable_metrics": ["latency_ms"],
         "controllable_knobs": ["batch_size"],
     },
-    "review": {
-        "design_perspectives": ["rigor"],
-        "findings_perspectives": ["rigor"],
-        "max_review_rounds": 1,
-    },
     "prompts": {
         "methodology_layer": "prompts/methodology",
         "domain_adapter_layer": None,
@@ -196,8 +191,8 @@ class TestAbortDuringIteration:
         run_campaign(SAMPLE_CAMPAIGN, work_dir, max_iterations=5)
 
         engine = Engine(work_dir)
-        # Engine is at the first human gate (HUMAN_FRAMING_GATE) — preserved for resume
-        assert engine.phase == "HUMAN_FRAMING_GATE"
+        # Engine is at the first human gate (HUMAN_DESIGN_GATE) — preserved for resume
+        assert engine.phase == "HUMAN_DESIGN_GATE"
 
 
 class TestResumeCompletedCampaign:
@@ -301,11 +296,11 @@ class TestSaveHumanFeedback:
     """Tests for _save_human_feedback helper."""
 
     def test_creates_new_file_with_first_entry(self, tmp_path):
-        _save_human_feedback(tmp_path, "framing", "Too vague")
+        _save_human_feedback(tmp_path, "design", "Too vague")
         fb = json.loads((tmp_path / "human_feedback.json").read_text())
-        assert fb["framing"][0]["reason"] == "Too vague"
-        assert fb["framing"][0]["attempt"] == 1
-        assert "timestamp" in fb["framing"][0]
+        assert fb["design"][0]["reason"] == "Too vague"
+        assert fb["design"][0]["attempt"] == 1
+        assert "timestamp" in fb["design"][0]
 
     def test_appends_to_existing_entries(self, tmp_path):
         _save_human_feedback(tmp_path, "design", "First rejection")
@@ -323,8 +318,8 @@ class TestSaveHumanFeedback:
         assert fb["findings"][0]["attempt"] == 1
 
     def test_multiple_phases_independent(self, tmp_path):
-        _save_human_feedback(tmp_path, "framing", "Framing issue")
         _save_human_feedback(tmp_path, "design", "Design issue")
+        _save_human_feedback(tmp_path, "findings", "Findings issue")
         fb = json.loads((tmp_path / "human_feedback.json").read_text())
-        assert len(fb["framing"]) == 1
         assert len(fb["design"]) == 1
+        assert len(fb["findings"]) == 1
