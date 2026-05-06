@@ -59,10 +59,12 @@ Rules:
 - **If an arm has a `code_changes` entry** in the bundle, turn each intent into a reusable patch file BEFORE emitting the plan:
   1. Read the target file and implement the change in the worktree using proper file edits (reading the file, making structural changes, writing it back). **NEVER use `sed`, `awk`, or any inline shell regex to construct patches** — not even for single-line changes. This rule is absolute so the patch-creation mechanism is robust and consistent regardless of how the change looks. Edit the file with real tooling, build to verify, then capture the result via `git diff`.
   2. Build the system to verify the change compiles.
-  3. Save the diff: `mkdir -p patches && git diff > patches/<arm_id>.patch`.
-  4. Reset the worktree to clean state: `git checkout -- .`.
-  5. In the emitted plan, treatment conditions must start with `git apply patches/<arm_id>.patch && <build_cmd> && <run_cmd>`. Baseline conditions run on clean code (no `git apply`).
+  3. **Smoke-test the treatment:** run the experiment command once with minimal input to verify it exits successfully and produces output. If it fails, fix the issue before proceeding.
+  4. Save the diff: `mkdir -p patches && git diff > patches/<arm_id>.patch`.
+  5. Reset the worktree to clean state: `git checkout -- .`.
+  6. In the emitted plan, treatment conditions must start with `git apply patches/<arm_id>.patch && <build_cmd> && <run_cmd>`. Baseline conditions run on clean code (no `git apply`).
   The orchestrator runs `git checkout -- .` before every condition, so you do NOT need to append a reset command yourself.
+- **Smoke-test baseline too:** before emitting the final plan, run the baseline command once with minimal input. If it fails, fix the command. Do NOT emit a plan with commands you haven't verified.
 - **Emit every `cmd` as a YAML block scalar** (start the value with `|`). This keeps `&&`, `:`, `#`, quotes, and other shell punctuation verbatim and avoids YAML parse errors.
 
 ## Output Format
