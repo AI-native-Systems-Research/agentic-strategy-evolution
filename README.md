@@ -68,6 +68,17 @@ Every experiment is structured as a bundle of falsifiable predictions:
 - **Python 3.11+**
 - **Claude Code CLI** (`claude`) — installed and authenticated
 
+### Environment setup
+
+The `claude -p` subprocess handles its own authentication via Claude CLI config. However, gate summaries and report generation use the OpenAI-compatible LLM API, which needs:
+
+```bash
+export OPENAI_API_KEY=your-api-key
+export OPENAI_BASE_URL=https://your-litellm-proxy.example.com  # or any OpenAI-compatible endpoint
+```
+
+If you're using Anthropic directly via a LiteLLM proxy, point both vars at the proxy. If these aren't set, gate summaries are skipped (non-fatal warning) but reports won't generate.
+
 ### 1. Install Nous
 
 ```bash
@@ -125,7 +136,8 @@ Options:
 
 ```bash
 python run_campaign.py campaign.yaml --max-iterations 5 -v   # verbose
-python run_campaign.py campaign.yaml --auto-approve           # skip gates
+python run_campaign.py campaign.yaml --auto-approve           # skip gates (for CI/non-interactive)
+python run_campaign.py campaign.yaml --auto-approve --max-iterations 1  # quick unattended run
 ```
 
 ### 6. Try the BLIS example

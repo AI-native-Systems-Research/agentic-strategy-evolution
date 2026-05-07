@@ -42,7 +42,7 @@ class LLMDispatcher:
         self,
         work_dir: Path,
         campaign: dict,
-        model: str = "aws/claude-sonnet-4-5",
+        model: str = "claude-sonnet-4-6",
         api_base: str | None = None,
         api_key: str | None = None,
         prompts_dir: Path | None = None,

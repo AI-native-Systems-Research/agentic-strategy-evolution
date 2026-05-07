@@ -30,7 +30,7 @@ class CLIDispatcher(LLMDispatcher):
         self,
         work_dir: Path,
         campaign: dict,
-        model: str = "aws/claude-sonnet-4-5",
+        model: str = "claude-sonnet-4-6",
         prompts_dir: Path | None = None,
         timeout: int = 1800,
         max_turns: int = 25,

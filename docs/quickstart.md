@@ -16,6 +16,20 @@ cd agentic-strategy-evolution
 pip install -e ".[dev]"
 ```
 
+## Environment setup
+
+Nous uses two LLM paths:
+
+1. **`claude -p` (DESIGN, EXECUTE_ANALYZE)** — authenticates via Claude CLI config. Just ensure `claude` works in your terminal.
+2. **OpenAI-compatible API (gate summaries, reports)** — needs env vars:
+
+```bash
+export OPENAI_API_KEY=your-api-key
+export OPENAI_BASE_URL=https://your-proxy.example.com  # LiteLLM, vLLM, or any OpenAI-compatible endpoint
+```
+
+If these aren't set, gate summaries are skipped (non-fatal) but report generation will fail.
+
 ## Create a campaign configuration
 
 Create a `campaign.yaml` with your research question and target repo. See [examples/campaign.yaml](../examples/campaign.yaml) as a starting point.
@@ -107,7 +121,11 @@ After a campaign, your working directory contains:
 
 ## Choosing a model
 
-Default is `aws/claude-sonnet-4-5` (from `defaults.yaml`). Pass any model name via `--model`:
+Defaults (from `defaults.yaml`):
+- DESIGN: `claude-opus-4-6` (80 max turns)
+- EXECUTE_ANALYZE: `claude-sonnet-4-6` (120 max turns)
+
+Override via `--model` (applies to all phases) or per-phase in `campaign.yaml` under `models:`:
 
 ```bash
 python run_campaign.py campaign.yaml --model gpt-4o
