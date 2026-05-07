@@ -59,9 +59,9 @@ properties:
     additionalProperties: false
     description: "Per-phase model selection. Omit to use --model default for all phases."
     properties:
-      design: { type: string, description: "Model for DESIGN phase (claude -p). Default: aws/claude-opus-4-6." }
-      execute_analyze: { type: string, description: "Model for EXECUTE_ANALYZE phase (claude -p). Default: aws/claude-sonnet-4-5." }
-      report: { type: string, description: "Model for report generation (LLM API). Default: aws/claude-sonnet-4-5." }
+      design: { type: string, description: "Model for DESIGN phase (claude -p). Default: claude-opus-4-6." }
+      execute_analyze: { type: string, description: "Model for EXECUTE_ANALYZE phase (claude -p). Default: claude-sonnet-4-6." }
+      report: { type: string, description: "Model for report generation (LLM API). Default: claude-sonnet-4-6." }
 
   prompts:
     type: object

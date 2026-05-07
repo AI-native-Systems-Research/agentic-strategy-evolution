@@ -200,7 +200,6 @@ Nous was developed and validated through 30 iterations on [BLIS](https://github.
 
 Key insight: the breakthrough mechanism (SLO-gated admission control) was discovered through *refuted* predictions, not confirmed ones. A direction error in iteration 1 — where priority scheduling caused 62.4% cluster degradation instead of the predicted <10% — redirected the entire investigation toward admission control.
 
-See [docs/case-studies/blis.md](docs/case-studies/blis.md) for the full case study with all 30 extracted principles.
 
 ## Contributing
 
