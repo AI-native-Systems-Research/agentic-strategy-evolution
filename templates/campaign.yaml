@@ -9,26 +9,6 @@ target_system:
     - "TODO: algorithms, configurations, resource limits, etc."
   repo_path: null
 
-review:
-  design_perspectives:
-    - statistical-rigor
-    - causal-sufficiency
-    - confound-risk
-    - generalization
-    - mechanism-clarity
-  findings_perspectives:
-    - statistical-rigor
-    - causal-sufficiency
-    - confound-risk
-    - generalization
-    - mechanism-clarity
-    - reproducibility
-    - measurement-validity
-    - alternative-explanations
-    - practical-significance
-    - scope-boundaries
-  max_review_rounds: 10
-
 prompts:
   methodology_layer: "prompts/methodology/"
   domain_adapter_layer: null

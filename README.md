@@ -2,7 +2,7 @@
 
 Nous is a framework that runs the scientific method on software systems. An AI agent forms a falsifiable hypothesis about system behavior, designs a controlled experiment, executes it, and extracts reusable principles from the outcome — whether the hypothesis was confirmed or refuted.
 
-A deterministic Python orchestrator (not an LLM) drives four AI agent roles through a structured loop, producing schema-governed artifacts at every step. Knowledge compounds: principles from iteration N constrain the design space of iteration N+1.
+A deterministic Python orchestrator (not an LLM) drives two AI agent roles through a structured loop, producing schema-governed artifacts at every step. Knowledge compounds: principles from iteration N constrain the design space of iteration N+1.
 
 ## Why Nous?
 
@@ -32,21 +32,19 @@ Nous works on any software system that meets four preconditions:
 
 ## How It Works
 
-Each iteration follows five phases:
+Each iteration follows a 7-phase loop with 2 LLM calls and 2 human gates:
 
 ```
-1. FRAMING          Planner defines research question, baseline, success criteria
-   HUMAN_GATE       Human approves or rejects framing (with feedback)
-2. DESIGN           Planner creates hypothesis bundle with multiple arms
-   DESIGN_REVIEW    AI multi-perspective review (blocks on CRITICAL findings)
-   HUMAN_GATE       Human approves, rejects, or aborts
-3. PLAN_EXECUTION   Executor designs exact shell commands per arm
-   EXECUTING        Orchestrator runs commands (partial results on failure)
-   ANALYSIS         LLM compares observed metrics to predictions
-   FINDINGS_REVIEW  AI review of prediction-vs-outcome results
-   HUMAN_GATE       Human approves findings
-4. EXTRACTION       Extractor updates principle store (insert/update/prune)
-   → next iteration or DONE
+INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → VALIDATE → HUMAN_FINDINGS_GATE → DONE
+
+1. DESIGN              Planner (Opus) explores system, frames problem, designs hypothesis bundle
+   HUMAN_DESIGN_GATE   Human approves, rejects (→ DESIGN), or aborts
+2. EXECUTE_ANALYZE     Executor (Sonnet) builds, patches, runs experiments, analyzes results,
+                       extracts principles — all in one session
+3. VALIDATE            Python-only: replays experiment_plan.yaml for reproducibility,
+                       merges principles by ID (no LLM)
+   HUMAN_FINDINGS_GATE Human approves findings, rejects (→ EXECUTE_ANALYZE), or aborts
+   DONE → DESIGN       Next iteration (increments counter)
 ```
 
 See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, and [docs/architecture.md](docs/architecture.md) for system internals.
@@ -69,7 +67,17 @@ Every experiment is structured as a bundle of falsifiable predictions:
 
 - **Python 3.11+**
 - **Claude Code CLI** (`claude`) — installed and authenticated
-- **An LLM API key** — `export OPENAI_API_KEY=...` (any OpenAI-compatible endpoint). Required for reviewer, extractor, and summarizer agents.
+
+### Environment setup
+
+The `claude -p` subprocess handles its own authentication via Claude CLI config. However, gate summaries and report generation use the OpenAI-compatible LLM API, which needs:
+
+```bash
+export OPENAI_API_KEY=your-api-key
+export OPENAI_BASE_URL=https://your-litellm-proxy.example.com  # or any OpenAI-compatible endpoint
+```
+
+If you're using Anthropic directly via a LiteLLM proxy, point both vars at the proxy. If these aren't set, gate summaries are skipped (non-fatal warning) but reports won't generate.
 
 ### 1. Install Nous
 
@@ -79,44 +87,16 @@ cd agentic-strategy-evolution
 pip install -e ".[dev]"
 ```
 
-### 2. Set up credentials
+### 2. Configure models
 
-```bash
-export OPENAI_API_KEY=sk-...
-export OPENAI_BASE_URL=https://your-endpoint.example.com  # if using a proxy
-```
+Two LLM calls per iteration, both via `claude -p`:
 
-### 3. Configure models
+| Phase | Default model | Role |
+|-------|---------------|------|
+| DESIGN | Opus | Planner — explores, frames, designs |
+| EXECUTE_ANALYZE | Sonnet | Executor — builds, patches, runs, analyzes |
 
-All phases default to `aws/claude-sonnet-4-5` via LiteLLM. See [`defaults.yaml`](defaults.yaml) for the full per-phase model config.
-
-**Per-phase override** — add a `models:` block to your `campaign.yaml`:
-
-```yaml
-models:
-  framing: "sonnet"
-  design: "gpt-4o"
-  plan_execution: "haiku"
-```
-
-**Global fallback** — the `--model` CLI flag applies to any phase not set in `campaign.yaml` or `defaults.yaml`:
-
-```bash
-python run_campaign.py campaign.yaml --model gpt-4o
-```
-
-Resolution order: `campaign.yaml models:` > `defaults.yaml` > `--model` flag > built-in default. Since the shipped `defaults.yaml` sets every phase, use per-phase overrides for targeted changes.
-
-**Common provider examples:**
-
-| Provider | Example model name |
-|----------|-------------------|
-| LiteLLM proxy | `aws/claude-sonnet-4-5` |
-| OpenAI direct | `gpt-4o` |
-| Anthropic direct | `claude-sonnet-4-5-20250514` |
-| Claude CLI (`claude -p` phases) | `sonnet`, `haiku`, `opus` |
-
-> **Two dispatch paths:** when `repo_path` is configured, framing and plan_execution run via `claude -p` (Claude CLI with code access); all other phases call the OpenAI-compatible API using `OPENAI_API_KEY`.
+VALIDATE and principle merge are Python-only (no LLM calls).
 
 ### 4. Create a campaign
 
@@ -143,13 +123,12 @@ The planner explores the codebase to discover metrics, knobs, and execution meth
 python run_campaign.py campaign.yaml --max-iterations 3
 ```
 
-Each iteration runs the full loop (framing → design → review → execution → extraction), pausing at three human gates:
+Each iteration runs the full loop (design → execute+analyze → validate), pausing at two human gates:
 
 | Gate | When | You decide |
 |------|------|------------|
-| **Design gate** | After design review | Approve the hypothesis bundle? |
-| **Findings gate** | After findings review | Approve the results? |
-| **Continue gate** | After extraction | Continue to next iteration? |
+| **Design gate** | After DESIGN | Approve the hypothesis bundle? |
+| **Findings gate** | After VALIDATE | Approve the results and principles? |
 
 Each gate shows a formatted summary. Type `approve`, `reject`, or `abort`.
 
@@ -157,7 +136,8 @@ Options:
 
 ```bash
 python run_campaign.py campaign.yaml --max-iterations 5 -v   # verbose
-python run_campaign.py campaign.yaml --auto-approve           # skip gates
+python run_campaign.py campaign.yaml --auto-approve           # skip gates (for CI/non-interactive)
+python run_campaign.py campaign.yaml --auto-approve --max-iterations 1  # quick unattended run
 ```
 
 ### 6. Try the BLIS example
@@ -179,10 +159,11 @@ blis-run/
   runs/iter-N/
     problem.md            # problem framing
     bundle.yaml           # hypothesis bundle
+    experiment_plan.yaml  # exact commands per arm
+    execution_results.json # raw output per condition
     findings.json         # prediction vs outcome
+    principle_updates.json # proposed principle changes
     gate_summary_*.json   # human-readable summaries
-    investigation_summary.json  # iteration summary (non-final)
-    reviews/              # reviewer perspectives
 ```
 
 ### Run tests
@@ -199,7 +180,6 @@ templates/               Starter files for new campaigns
 orchestrator/            Python orchestrator (deterministic, not an LLM)
   engine.py                State machine with atomic checkpoint/resume
   dispatch.py              Stub agent dispatch (for testing without LLM)
-  llm_dispatch.py          LLM-based agent dispatch via OpenAI SDK
   cli_dispatch.py          Code-access agent dispatch via claude -p
   prompt_loader.py         Template loading with {{placeholder}} rendering
   gates.py                 Human approval gates with summaries
@@ -220,7 +200,6 @@ Nous was developed and validated through 30 iterations on [BLIS](https://github.
 
 Key insight: the breakthrough mechanism (SLO-gated admission control) was discovered through *refuted* predictions, not confirmed ones. A direction error in iteration 1 — where priority scheduling caused 62.4% cluster degradation instead of the predicted <10% — redirected the entire investigation toward admission control.
 
-See [docs/case-studies/blis.md](docs/case-studies/blis.md) for the full case study with all 30 extracted principles.
 
 ## Contributing
 

@@ -9,7 +9,7 @@ Nous is a framework that runs the scientific method on software systems. Two pro
 1. **Hypothesis-driven experimentation** — the agent forms a falsifiable claim, designs a controlled experiment to test it, and learns from the outcome either way. Refuted hypotheses are as valuable as confirmed ones.
 2. **Compounding knowledge** — principles extracted from iteration N constrain the design space of iteration N+1. The system gets smarter over time.
 
-The framework consists of a deterministic orchestrator (not an LLM) that drives four AI agent roles through a structured 5-phase loop, producing schema-governed artifacts at each stage.
+The framework consists of a deterministic orchestrator (not an LLM) that drives two AI agent roles through a structured 7-phase loop with 2 LLM calls and 2 human gates per iteration, producing schema-governed artifacts at each stage.
 
 ## Preconditions
 
@@ -22,13 +22,17 @@ All four preconditions must hold for a system to be investigated with Nous:
 | **Reproducible execution** | A simulator, testbed, or staging environment exists with controlled conditions and multiple seeds. |
 | **Decomposable mechanisms** | System behavior arises from interacting components that can be reasoned about individually. |
 
-## The 5-Phase Loop
+## The Iteration Loop
 
-Each iteration follows five phases:
+Each iteration follows 7 phases: INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → VALIDATE → HUMAN_FINDINGS_GATE → DONE.
 
-### Phase 1: Problem Framing
+Two LLM calls per iteration (both via `claude -p`): Opus for DESIGN, Sonnet for EXECUTE_ANALYZE. VALIDATE and principle merge are Python-only.
 
-The Planner agent writes `problem.md` containing:
+### DESIGN (Planner, Opus)
+
+The Planner agent explores the target system, validates assumptions, then produces two artifacts:
+
+**Problem framing** (`problem.md`):
 - Research question — what mechanism or behavior is under investigation
 - Baseline — current system behavior without intervention, with metrics
 - Experimental conditions — input characteristics, scale parameters, environment configuration
@@ -36,55 +40,49 @@ The Planner agent writes `problem.md` containing:
 - Constraints — what cannot be changed (resource limits, SLOs, compatibility)
 - Prior knowledge — relevant principles from earlier iterations
 
-### Phase 2: Hypothesis Bundle Design
+**Hypothesis bundle** (`bundle.yaml`):
+The agent decomposes the investigation into a structured set of falsifiable predictions — a hypothesis bundle.
 
-The Planner agent generates 2–3 candidate strategies, selects a winner via multi-judge review, and decomposes it into a **hypothesis bundle** — a structured set of falsifiable predictions.
+### HUMAN_DESIGN_GATE
 
-A bundle passes through:
-1. AI Design Review (default: 5 independent perspectives, configurable per campaign via `campaign.yaml`)
-2. Human Approval Gate (hard stop — human sees bundle + review summaries)
+Human approval gate (hard stop). The human sees the hypothesis bundle. If the human rejects, the Planner revises (loops back to DESIGN). If approved, the bundle advances to execution.
 
-If the human rejects, the Planner revises. If approved, the bundle advances to execution.
+### EXECUTE_ANALYZE (Executor, Sonnet)
 
-### Phase 3: Plan, Execute, and Analyze
+A single `claude -p` session handles the entire execution pipeline:
 
-Execution is split into three checkpointable sub-phases:
+1. Receives the approved hypothesis bundle
+2. Explores the target repo, discovers build commands
+3. Produces `experiment_plan.yaml` with exact shell commands per arm
+4. Runs the commands in an isolated git worktree, captures stdout/stderr per condition
+5. Compares observed metrics against predictions
+6. Produces `findings.json` and `principle_updates.json`
 
-**PLAN_EXECUTION** — The Executor agent (via `claude -p` with shell access) receives the approved hypothesis bundle and produces `experiment_plan.yaml` — a structured plan with exact shell commands per arm. The agent explores the target repo, discovers build commands, and designs reproducible experiment conditions.
-
-**EXECUTING** — The Python orchestrator runs the commands from `experiment_plan.yaml` deterministically via `subprocess.run()`. No LLM calls. Stdout/stderr are captured per condition. If a command fails, an optional revision callback asks the LLM to correct the plan (max 3 retries). Results are written to `execution_results.json`.
-
-**ANALYSIS** — The LLM API receives the execution results and compares observed metrics against predictions to produce `findings.json`.
-
-When `repo_path` is set, PLAN_EXECUTION and EXECUTING run in an isolated git worktree. The worktree ID is persisted to `.experiment_id` for crash recovery.
+When `repo_path` is set, execution runs in an isolated git worktree. The worktree ID is persisted to `.experiment_id` for crash recovery.
 
 **Key artifacts:**
-- `experiment_plan.yaml` — exact commands per arm (PLAN_EXECUTION output)
-- `execution_results.json` — stdout/stderr/metrics per condition (EXECUTING output)
-- `findings.json` — prediction vs outcome comparison (ANALYSIS output)
+- `experiment_plan.yaml` — exact commands per arm
+- `execution_results.json` — stdout/stderr/metrics per condition
+- `findings.json` — prediction vs outcome comparison
+- `principle_updates.json` — proposed principle inserts/updates/prunes
 
-Findings pass through:
-1. AI Findings Review (default: 10 independent perspectives, configurable per campaign via `campaign.yaml`)
-2. Human Approval Gate
+### VALIDATE (Python-only)
+
+The Python orchestrator:
+1. Replays `experiment_plan.yaml` for reproducibility verification
+2. Merges principle updates into `principles.json` by ID (upsert, no LLM)
 
 The ledger records one row per completed iteration, including prediction accuracy.
 
-### Phase 4: Bayesian Parameter Optimization
+### HUMAN_FINDINGS_GATE
 
-For confirmed mechanisms only. The protocol calls for Gaussian process optimization over the parameter space (e.g., 30-50 evaluations per strategy across 3+ seeds). This separates mechanism design (Phase 2) from parameter tuning, ensuring fair comparisons.
+Human approval gate. The human sees findings and principle updates. If the human rejects, execution loops back to EXECUTE_ANALYZE. If approved, the iteration completes.
 
-If H-main was refuted, this phase is skipped entirely (fast-fail).
+### DONE → Next Iteration
 
-### Phase 5: Principle Extraction and Iteration
-
-The Extractor agent updates the principle store:
-- **Insert** — add a new principle from confirmed or refuted findings
-- **Update** — refine an existing principle's scope, confidence, or parameters
-- **Prune** — mark a principle as superseded or refuted by new evidence
+After DONE, the orchestrator transitions to DESIGN (incrementing the iteration counter) for the next iteration. Principles from iteration N constrain the design space of iteration N+1.
 
 Refuted predictions are the most valuable source of principles — they reveal where the model of the system was wrong.
-
-After extraction, the human decides: continue to the next iteration or stop the campaign.
 
 ## Hypothesis Bundles
 
@@ -139,40 +137,12 @@ The principle store is a living knowledge base. Each principle records:
 
 Principles are hard constraints on subsequent iterations. The Planner must not design bundles that contradict active principles without explicit justification.
 
-## Review Protocol
-
-### Multi-Perspective Review
-
-Reviews run N independent perspectives in parallel. Each perspective examines the artifact from a different angle (e.g., statistical rigor, causal sufficiency, confound risk, generalization coverage, mechanism clarity).
-
-### Convergence Gating
-
-Reviews follow a convergence protocol:
-1. Run all perspectives in parallel
-2. Collect findings with severity levels: CRITICAL, IMPORTANT, SUGGESTION
-3. If zero CRITICAL findings: advance to the human gate
-4. If any CRITICAL findings: return to the authoring agent for revision
-5. Re-run the full review after revision
-6. Maximum 10 rounds per gate
-
-SUGGESTION-level items do not block advancement. Only CRITICAL findings block the gate. IMPORTANT findings are surfaced to the human reviewer but do not prevent advancement to the gate.
-
-> **Note:** The perspective counts (5 for design, 10 for findings) and the 10-round maximum are configurable defaults, set per campaign in `campaign.yaml`. The Phase 1 orchestrator skeleton dispatches reviews individually; enforcement of these counts is deferred to Phase 2 (agent prompts).
-
-### Review Gates
-
-| Gate | Perspectives | Reviews | Blocks on |
-|---|---|---|---|
-| Design Review | 5 (default) | After bundle design | Any CRITICAL finding |
-| Findings Review | 10 (default) | After experiment execution | Any CRITICAL finding |
-
 ## Human Gates
 
-Three hard stops require explicit human approval:
+Two hard stops require explicit human approval:
 
-1. **Design Approval** (after Design Review) — the human sees the hypothesis bundle and all review summaries, then approves, rejects, or aborts the campaign.
-2. **Findings Approval** (after Findings Review) — the human sees the findings and all review summaries, then approves, rejects, or aborts.
-3. **Continue Gate** (after Extraction, multi-iteration only) — the human decides whether to continue to the next iteration or stop the campaign. This gate only appears when using `run_campaign.py`.
+1. **HUMAN_DESIGN_GATE** (after DESIGN) — the human sees the hypothesis bundle, then approves, rejects (→ DESIGN), or aborts the campaign.
+2. **HUMAN_FINDINGS_GATE** (after VALIDATE) — the human sees findings and principle updates, then approves (→ DONE), rejects (→ EXECUTE_ANALYZE), or aborts.
 
 Human gates cannot be bypassed. They are the mechanism by which domain expertise enters the loop.
 
@@ -180,7 +150,7 @@ Human gates cannot be bypassed. They are the mechanism by which domain expertise
 
 The orchestrator enforces three rules to avoid wasted work:
 
-1. **H-main refuted** — skip remaining ablation/robustness arms, go directly to Principle Extraction. The mechanism does not work; running more arms is pointless.
+1. **H-main refuted** — skip remaining ablation/robustness arms, proceed to principle merge and findings gate. The mechanism does not work; running more arms is pointless.
 2. **H-control-negative fails** — the mechanism is confounded (it produces effects where it should not). Return to Design for a revised bundle.
 3. **Single dominant component (>80% of total effect)** — simplify the strategy by dropping minor components. The compound mechanism adds complexity without proportional benefit.
 
@@ -188,7 +158,7 @@ The orchestrator enforces three rules to avoid wasted work:
 
 A campaign stops when:
 - The `--max-iterations` limit is reached (default: 10, configurable via CLI flag or `max_iterations` in `campaign.yaml`)
-- The human chooses to stop at the continue gate after any iteration
+- The human aborts at any gate
 - Consecutive iterations produce null or marginal results (no new principles extracted)
 - The human decides the research question has been sufficiently answered
 - The principle store has stabilized (no inserts, updates, or prunes for N iterations)
@@ -196,63 +166,55 @@ A campaign stops when:
 ## Orchestrator
 
 The orchestrator is a Python state machine — NOT an LLM. It owns:
-- Phase transitions between 13 states
+- Phase transitions between 7 states
 - Checkpoint/resume via `state.json`
-- Agent dispatch (invoke LLM agents with structured prompts)
+- Agent dispatch (invoke `claude -p` agents with structured prompts)
 - Gate logic (pause for human approval)
 - Fast-fail enforcement
 
 ### State Machine
 
 ```
-INIT -> FRAMING -> DESIGN -> DESIGN_REVIEW -> HUMAN_DESIGN_GATE
-  -> PLAN_EXECUTION -> EXECUTING -> ANALYSIS
-  -> FINDINGS_REVIEW -> HUMAN_FINDINGS_GATE
-  -> TUNING (if H-main confirmed) or EXTRACTION (if refuted)
-  -> EXTRACTION -> DESIGN (next iteration) or DONE
+INIT -> DESIGN -> HUMAN_DESIGN_GATE -> EXECUTE_ANALYZE -> VALIDATE -> HUMAN_FINDINGS_GATE -> DONE
 
 Backward/looping transitions:
-  DESIGN_REVIEW -> DESIGN              (CRITICAL findings in review)
-  HUMAN_DESIGN_GATE -> DESIGN          (human rejects)
-  FINDINGS_REVIEW -> PLAN_EXECUTION    (CRITICAL findings in review)
-  HUMAN_FINDINGS_GATE -> PLAN_EXECUTION (human rejects)
-  EXTRACTION -> DESIGN                 (next iteration, increments counter)
+  HUMAN_DESIGN_GATE -> DESIGN           (human rejects)
+  HUMAN_FINDINGS_GATE -> EXECUTE_ANALYZE (human rejects)
+  DONE -> DESIGN                        (next iteration, increments counter)
 ```
 
 ### Agent Roles
 
-| Role | Phases | Reads | Writes | Shell |
+| Role | Phase | Reads | Writes | Model |
 |---|---|---|---|---|
-| Planner | Frame, Design | all | `problem.md`, `bundle.yaml` | — |
-| Executor | Plan-Execution, Analyze | bundle, problem, exec results | `experiment_plan.yaml`, `findings.json` | yes (plan-execution) |
-| Reviewer | Design Review, Findings Review | all | `review-*.md` | — |
-| Extractor | Extract, Summarize | all | `principles.json`, `investigation_summary.json` | — |
+| Planner | DESIGN | campaign, principles | `problem.md`, `bundle.yaml` | Opus |
+| Executor | EXECUTE_ANALYZE | bundle, problem | `experiment_plan.yaml`, `execution_results.json`, `findings.json`, `principle_updates.json` | Sonnet |
+| Python | VALIDATE | experiment_plan, principle_updates | `principles.json` | — |
 
 ### File Layout
 
 ```
 campaign-dir/
-  campaign.yaml       — campaign configuration (target system, reviewers, prompts)
+  campaign.yaml       — campaign configuration (target system, prompts)
   state.json          — investigation checkpoint
   ledger.json         — append-only iteration log
   principles.json     — living principle store
-  problem.md          — problem framing
   runs/
     iter-N/
+      problem.md      — problem framing
       bundle.yaml     — hypothesis bundle
       experiment_plan.yaml — exact commands per arm
       execution_results.json — stdout/stderr/metrics per condition
       findings.json    — prediction vs outcome
-      investigation_summary.json — bounded iteration summary
+      principle_updates.json — proposed principle changes
       gate_summary_*.json — human-readable gate summaries
-      reviews/        — multi-perspective reviews
   trace.jsonl         — observability log
   summary.json        — campaign rollup (generated at end)
 ```
 
 ## Investigation Summary
 
-After each non-final Extraction phase, the Extractor produces a bounded investigation summary (`investigation_summary.json`). This summary captures:
+After each non-final iteration, the orchestrator produces a bounded investigation summary (`investigation_summary.json`). This summary captures:
 
 - **What was tested** — the hypothesis family and arms
 - **Key findings** — what was confirmed, refuted, or unexpected

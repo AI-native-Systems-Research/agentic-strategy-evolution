@@ -4,34 +4,24 @@
 # Model names depend on your LLM backend (LiteLLM, OpenAI, Bedrock, etc.).
 #
 # Examples:
-#   LiteLLM proxy:    aws/claude-sonnet-4-5, aws/claude-haiku-4-5
+#   LiteLLM proxy:    claude-sonnet-4-6, aws/claude-haiku-4-5
 #   OpenAI direct:    gpt-4o, gpt-4o-mini
 #   Anthropic direct: claude-sonnet-4-5-20250514, claude-haiku-4-5-20251001
 #   Claude CLI:       sonnet, haiku, opus
 
 models:
-  # FRAMING — explores repo via claude -p. Needs thorough exploration + flag semantics.
-  framing: "aws/claude-sonnet-4-5"
+  # DESIGN — explores repo via claude -p, frames problem, designs hypothesis bundle.
+  # Uses Opus for better regime validation, parameter selection, and hypothesis quality.
+  design: "claude-opus-4-6"
 
-  # DESIGN — creates hypothesis bundles. Core reasoning step.
-  design: "aws/claude-sonnet-4-5"
-
-  # PLAN_EXECUTION — translates bundle into shell commands via claude -p. Mechanical.
-  plan_execution: "aws/claude-sonnet-4-5"
-
-  # ANALYSIS — compares execution results to predictions. Needs careful reasoning.
-  analysis: "aws/claude-sonnet-4-5"
-
-  # REVIEW — parallel reviewer perspectives. Informational only (for now).
-  review: "aws/claude-sonnet-4-5"
-
-  # EXTRACTION — updates principle store from findings.
-  extraction: "aws/claude-sonnet-4-5"
+  # EXECUTE_ANALYZE — builds, patches, runs experiments, analyzes results, extracts principles.
+  # All in one session with full context.
+  execute_analyze: "claude-sonnet-4-6"
 
   # REPORT — generates final report.md at campaign end.
-  report: "aws/claude-sonnet-4-5"
+  report: "claude-sonnet-4-6"
 
 # Max tool-use turns for claude -p phases.
 max_turns:
-  framing: 20
-  plan_execution: 8
+  design: 80
+  execute_analyze: 120
