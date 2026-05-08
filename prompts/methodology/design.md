@@ -170,25 +170,40 @@ arms:
 
 ## Handoff
 
-Write a concise handoff for the executor agent. The executor starts with NO prior context about this system — this handoff is all it gets besides the bundle. Be ruthlessly selective: only include what the executor cannot work without.
+Write a goal-focused handoff for the executor agent. The executor starts a FRESH session with NO memory of your exploration — this handoff is the only context it receives besides the bundle.
 
-Start the handoff with: "The designer explored the system and validated the context below. Use it — do not re-explore what's already documented here."
+Before writing the handoff, mentally review your exploration session:
+1. What did you discover that the executor MUST know to succeed?
+2. What commands did you validate, and what was surprising about them?
+3. What alternatives did you try that DIDN'T work (so the executor avoids them)?
+4. What assumptions did you verify, and what would break if they're wrong?
 
-### Executor Goal
-[One sentence: what the executor needs to test and why]
+Be ruthlessly selective — irrelevant context is worse than missing context. But be comprehensive on what you DO include: the executor should never need to re-run a command you already validated.
+
+### Goal
+[Restate as a clear, actionable directive for the executor]
+
+### Key Discoveries
+[3-7 bullets of technical context. Each must pass: "The executor cannot succeed without knowing this."
+Include: mechanism verified, parameter relationships discovered, capacity/threshold measurements observed.
+Use exact values from your probes — not assumptions.]
 
 ### System Interface
-- **Build:** [exact build command you validated]
-- **Run baseline:** [exact baseline command you validated, with all flags]
-- **Output format:** [how metrics are emitted — flag name, file path, or stdout format]
+- **Build:** [exact command, validated]
+- **Run baseline:** [exact command with all flags, validated]
+- **Output format:** [how metrics are emitted — flag, file path, or stdout format]
+- **Baseline result:** [one key metric value you observed, proving it works]
 
 ### Key File Paths
-[List only files the executor needs to read or patch — not every file you explored]
+[Only files the executor needs to read or patch. Include file:line and what's there.]
 
 ### Code Targets
-[For each arm with code_changes: file path, function/line, what to change. Be specific enough that the executor can make the edit without re-reading the whole file]
+[For each arm with code_changes: file path, function/line, what to change, and WHY this location (not another)]
 
-### Warnings
-[Gotchas discovered during exploration: commands that don't work as expected, flags that are misleading, edge cases in the build system, etc. Omit if none.]
+### What I Tried That Didn't Work
+[Commands that failed, flags that don't exist, parameter ranges that produced null results, paths that looked promising but weren't. This prevents the executor from repeating your dead ends.]
+
+### Warnings & Constraints
+[Gotchas: commands that behave unexpectedly, flags with misleading names, edge cases in the build system, parameter interactions that are non-obvious. Include the evidence — "I observed X when I expected Y".]
 
 {{human_feedback}}

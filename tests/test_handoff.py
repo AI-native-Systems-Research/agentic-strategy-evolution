@@ -27,10 +27,13 @@ def _make_raw_design(*, include_handoff: bool = True, handoff_heading: str = "##
         parts.append("\n---\n\n")
         parts.append(
             f"{handoff_heading}\n\n"
-            "### Executor Goal\nTest whether X improves latency.\n\n"
+            "### Goal\nTest whether X improves latency under contention.\n\n"
+            "### Key Discoveries\n- Mechanism at `src/engine.go:142` toggles batch mode\n"
+            "- Baseline latency: 50ms at default load\n\n"
             "### System Interface\n- **Build:** `make`\n- **Run baseline:** `./run --baseline`\n\n"
             "### Key File Paths\n- `src/engine.go:142`\n\n"
-            "### Warnings\nFlag --foo is deprecated.\n"
+            "### What I Tried That Didn't Work\n- `--turbo` flag doesn't exist\n\n"
+            "### Warnings & Constraints\nFlag --foo is deprecated.\n"
         )
     return "\n".join(parts)
 
@@ -42,7 +45,8 @@ class TestHandoffExtraction:
         handoff = tmp_path / "handoff.md"
         assert handoff.exists()
         content = handoff.read_text()
-        assert "### Executor Goal" in content
+        assert "### Goal" in content
+        assert "### Key Discoveries" in content
         assert "Test whether X improves latency" in content
         assert "Flag --foo is deprecated" in content
 
