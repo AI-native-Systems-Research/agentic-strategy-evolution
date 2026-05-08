@@ -87,9 +87,21 @@ def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
 _YAML_FENCE_RE = re.compile(r"```yaml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
+_HANDOFF_RE = re.compile(r"^## Handoff\b", re.MULTILINE)
+
+
 def _split_design_output(raw: str, iter_dir: Path) -> None:
-    """Split merged design output into problem.md and bundle.yaml."""
-    matches = _YAML_FENCE_RE.findall(raw)
+    """Split merged design output into problem.md, bundle.yaml, and handoff.md."""
+    # Extract handoff FIRST to avoid yaml fences in handoff confusing bundle parsing
+    handoff_md = ""
+    handoff_match = _HANDOFF_RE.search(raw)
+    if handoff_match:
+        handoff_md = raw[handoff_match.start():].strip()
+        raw_before_handoff = raw[:handoff_match.start()]
+    else:
+        raw_before_handoff = raw
+
+    matches = _YAML_FENCE_RE.findall(raw_before_handoff)
     if not matches:
         raise RuntimeError(
             "Design agent did not produce a ```yaml``` code fence. "
@@ -105,10 +117,11 @@ def _split_design_output(raw: str, iter_dir: Path) -> None:
     schema = yaml.safe_load((SCHEMAS_DIR / "bundle.schema.yaml").read_text())
     jsonschema.validate(bundle, schema)
 
-    last_fence_start = raw.rfind("```yaml")
+    last_fence_start = raw_before_handoff.rfind("```yaml")
     if last_fence_start == -1:
-        last_fence_start = raw.rfind("```YAML")
-    problem_md = raw[:last_fence_start].rstrip()
+        last_fence_start = raw_before_handoff.rfind("```YAML")
+
+    problem_md = raw_before_handoff[:last_fence_start].rstrip()
     if problem_md.endswith("---"):
         problem_md = problem_md[:-3].rstrip()
 
@@ -118,6 +131,8 @@ def _split_design_output(raw: str, iter_dir: Path) -> None:
         iter_dir / "bundle.yaml",
         yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False),
     )
+    if handoff_md:
+        atomic_write(iter_dir / "handoff.md", handoff_md + "\n")
 
 
 def _enter_phase(engine, phase):

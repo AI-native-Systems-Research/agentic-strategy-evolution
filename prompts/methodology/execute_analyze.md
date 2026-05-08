@@ -35,6 +35,12 @@ This is iteration {{iteration}}.
 
 {{active_principles}}
 
+## Designer Handoff
+
+The designer agent explored the system and produced the context below specifically for you. Use it — do not re-explore what's already documented here. The file paths, build commands, and code targets have been validated by the designer.
+
+{{design_handoff}}
+
 ## Pre-gathered Repo Context
 
 {{repo_context}}

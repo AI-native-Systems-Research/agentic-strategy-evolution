@@ -290,6 +290,14 @@ class LLMDispatcher:
             else:
                 ctx["problem_md"] = "No problem framing available."
 
+            handoff_path = self.work_dir / "runs" / f"iter-{iteration}" / "handoff.md"
+            if not handoff_path.exists() and iteration > 1:
+                handoff_path = self.work_dir / "runs" / "iter-1" / "handoff.md"
+            if handoff_path.exists():
+                ctx["design_handoff"] = handoff_path.read_text()
+            else:
+                ctx["design_handoff"] = ""
+
         if phase == "summarize":
             findings_path = (
                 self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"

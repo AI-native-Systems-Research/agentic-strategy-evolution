@@ -142,7 +142,7 @@ Now design a hypothesis bundle based on what you actually observed and verified:
 
 ## Output Format
 
-Output the problem framing markdown FIRST, then a `---` separator, then the hypothesis bundle as YAML in a code fence.
+Output the problem framing markdown FIRST, then a `---` separator, then the hypothesis bundle as YAML in a code fence, then a `---` separator, then the executor handoff.
 
 Structure your response as:
 
@@ -165,5 +165,28 @@ arms:
         intent: "Plain-English description of the change"
         rationale: "Why this change tests the hypothesis"
 ```
+
+---
+
+## Handoff
+
+Write a concise handoff for the executor agent. The executor starts with NO prior context about this system — this handoff is all it gets besides the bundle. Be ruthlessly selective: only include what the executor cannot work without.
+
+### Executor Goal
+[One sentence: what the executor needs to test and why]
+
+### System Interface
+- **Build:** [exact build command you validated]
+- **Run baseline:** [exact baseline command you validated, with all flags]
+- **Output format:** [how metrics are emitted — flag name, file path, or stdout format]
+
+### Key File Paths
+[List only files the executor needs to read or patch — not every file you explored]
+
+### Code Targets
+[For each arm with code_changes: file path, function/line, what to change. Be specific enough that the executor can make the edit without re-reading the whole file]
+
+### Warnings
+[Gotchas discovered during exploration: commands that don't work as expected, flags that are misleading, edge cases in the build system, etc. Omit if none.]
 
 {{human_feedback}}

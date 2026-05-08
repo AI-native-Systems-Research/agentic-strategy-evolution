@@ -112,7 +112,22 @@ class StubDispatcher:
             "## Baseline Command\n\n"
             "```\necho 'stub baseline'\n```\n"
         )
-        raw = f"{problem_md}\n---\n\n```yaml\n{bundle_yaml}```\n"
+        handoff_md = (
+            "## Handoff\n\n"
+            "### Executor Goal\n"
+            "Test whether the stub mechanism works under contention.\n\n"
+            "### System Interface\n"
+            "- **Build:** `echo 'stub build'`\n"
+            "- **Run baseline:** `echo 'stub baseline'`\n"
+            "- **Output format:** stdout JSON\n\n"
+            "### Key File Paths\n"
+            "- `src/stub.py`\n\n"
+            "### Code Targets\n"
+            "- h-main: modify `src/stub.py:42` to enable mechanism\n\n"
+            "### Warnings\n"
+            "None.\n"
+        )
+        raw = f"{problem_md}\n---\n\n```yaml\n{bundle_yaml}```\n\n---\n\n{handoff_md}"
         atomic_write(path, raw)
 
     def _write_execute_analyze(self, path: Path, iteration: int, h_main_result: str) -> None:
