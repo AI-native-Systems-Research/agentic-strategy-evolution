@@ -296,7 +296,14 @@ class LLMDispatcher:
             if handoff_path.exists():
                 ctx["design_handoff"] = handoff_path.read_text()
             else:
-                ctx["design_handoff"] = ""
+                logger.warning(
+                    "handoff.md not found for iteration %d. "
+                    "Executor will proceed without designer context.",
+                    iteration,
+                )
+                ctx["design_handoff"] = (
+                    "No design handoff available — explore the system directly."
+                )
 
         if phase == "summarize":
             findings_path = (

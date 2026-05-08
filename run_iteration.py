@@ -30,6 +30,8 @@ from orchestrator.gates import HumanGate
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.util import atomic_write
 
+logger = logging.getLogger(__name__)
+
 
 class IterationOutcome(str, Enum):
     """Outcome of a single iteration — used by run_campaign to decide next step."""
@@ -87,7 +89,7 @@ def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
 _YAML_FENCE_RE = re.compile(r"```yaml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
-_HANDOFF_RE = re.compile(r"^## Handoff\b", re.MULTILINE)
+_HANDOFF_RE = re.compile(r"^#{1,3}\s*Handoff\s*:?\s*$", re.MULTILINE | re.IGNORECASE)
 
 
 def _split_design_output(raw: str, iter_dir: Path) -> None:
@@ -99,6 +101,10 @@ def _split_design_output(raw: str, iter_dir: Path) -> None:
         handoff_md = raw[handoff_match.start():].strip()
         raw_before_handoff = raw[:handoff_match.start()]
     else:
+        logger.warning(
+            "Design output does not contain a '## Handoff' section. "
+            "Executor will run without designer context."
+        )
         raw_before_handoff = raw
 
     matches = _YAML_FENCE_RE.findall(raw_before_handoff)

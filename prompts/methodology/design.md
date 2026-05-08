@@ -172,6 +172,8 @@ arms:
 
 Write a concise handoff for the executor agent. The executor starts with NO prior context about this system — this handoff is all it gets besides the bundle. Be ruthlessly selective: only include what the executor cannot work without.
 
+Start the handoff with: "The designer explored the system and validated the context below. Use it — do not re-explore what's already documented here."
+
 ### Executor Goal
 [One sentence: what the executor needs to test and why]
 
