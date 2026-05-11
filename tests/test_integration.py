@@ -80,19 +80,10 @@ class TestSingleIterationHappyPath:
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
             "executor", "execute-analyze",
-            output_path=iter_dir / "execute_analyze_output.json", iteration=1,
+            output_path=iter_dir / "executor_log.md", iteration=1,
         )
-        # Split combined output
-        combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
-        (iter_dir / "experiment_plan.yaml").write_text(
-            yaml.safe_dump(combined["plan"], default_flow_style=False, sort_keys=False)
-        )
-        (iter_dir / "findings.json").write_text(json.dumps(combined["findings"], indent=2))
-        (iter_dir / "principle_updates.json").write_text(
-            json.dumps(combined["principle_updates"], indent=2)
-        )
-
-        findings = combined["findings"]
+        # Stub now writes files directly — just read them
+        findings = json.loads((iter_dir / "findings.json").read_text())
         jsonschema.validate(findings, load_schema("findings.schema.json"))
 
         # Check fast-fail
@@ -135,16 +126,10 @@ class TestSingleIterationHappyPath:
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
             "executor", "execute-analyze",
-            output_path=iter_dir / "execute_analyze_output.json",
+            output_path=iter_dir / "executor_log.md",
             iteration=1, h_main_result="REFUTED",
         )
-        combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
-        (iter_dir / "findings.json").write_text(json.dumps(combined["findings"], indent=2))
-        (iter_dir / "principle_updates.json").write_text(
-            json.dumps(combined["principle_updates"], indent=2)
-        )
-
-        findings = combined["findings"]
+        findings = json.loads((iter_dir / "findings.json").read_text())
 
         # Fast-fail triggers
         ff = check_fast_fail(findings)
@@ -182,12 +167,7 @@ class TestSingleIterationHappyPath:
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
             "executor", "execute-analyze",
-            output_path=iter_dir / "execute_analyze_output.json", iteration=1,
-        )
-        combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
-        (iter_dir / "findings.json").write_text(json.dumps(combined["findings"], indent=2))
-        (iter_dir / "principle_updates.json").write_text(
-            json.dumps(combined["principle_updates"], indent=2)
+            output_path=iter_dir / "executor_log.md", iteration=1,
         )
         engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")
@@ -209,13 +189,8 @@ class TestSingleIterationHappyPath:
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
             "executor", "execute-analyze",
-            output_path=iter_dir2 / "execute_analyze_output.json",
+            output_path=iter_dir2 / "executor_log.md",
             iteration=2, h_main_result="REFUTED",
-        )
-        combined2 = json.loads((iter_dir2 / "execute_analyze_output.json").read_text())
-        (iter_dir2 / "findings.json").write_text(json.dumps(combined2["findings"], indent=2))
-        (iter_dir2 / "principle_updates.json").write_text(
-            json.dumps(combined2["principle_updates"], indent=2)
         )
         engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")

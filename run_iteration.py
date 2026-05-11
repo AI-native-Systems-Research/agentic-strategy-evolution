@@ -183,10 +183,18 @@ def _merge_principles(work_dir: Path, iter_dir: Path) -> None:
     atomic_write(principles_path, json.dumps(store, indent=2) + "\n")
 
 
-def setup_work_dir(run_id: str) -> Path:
-    """Create and initialize a working directory from templates."""
-    work_dir = Path(run_id)
-    work_dir.mkdir(exist_ok=True)
+def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
+    """Create and initialize a working directory from templates.
+
+    If repo_path is provided, the campaign directory is created inside
+    the target repo at .nous/<run_id>/. Otherwise falls back to creating
+    <run_id>/ in the current directory.
+    """
+    if repo_path:
+        work_dir = Path(repo_path) / ".nous" / run_id
+    else:
+        work_dir = Path(run_id)
+    work_dir.mkdir(parents=True, exist_ok=True)
     for t in ["state.json", "ledger.json", "principles.json"]:
         dest = work_dir / t
         if not dest.exists():
@@ -289,6 +297,14 @@ def run_iteration(
         (iter_dir / "design_raw.md").unlink()
         print(f"  -> {iter_dir / 'problem.md'}")
         print(f"  -> {iter_dir / 'bundle.yaml'}")
+        # Post-check design artifacts
+        from orchestrator.validate import validate_design
+        result = validate_design(iter_dir)
+        if result["status"] == "fail":
+            raise RuntimeError(
+                f"Design artifacts failed validation:\n"
+                + "\n".join(f"  - {e}" for e in result["errors"])
+            )
 
     # ─── HUMAN DESIGN GATE ────────────────────────────────────────────────
     if _enter_phase(engine, "HUMAN_DESIGN_GATE"):
@@ -331,43 +347,57 @@ def run_iteration(
                 )
                 (iter_dir / ".experiment_id").write_text(experiment_id)
                 print(f"  Experiment worktree: {experiment_dir}")
-            if experiment_dir and cli_dispatcher:
+            if cli_dispatcher and experiment_dir:
+                # CLI path: agent writes files directly to iter_dir
                 with cli_dispatcher.override_cwd(experiment_dir):
                     exec_dispatcher.dispatch(
                         "executor", "execute-analyze",
-                        output_path=iter_dir / "execute_analyze_output.json",
+                        output_path=iter_dir / "executor_log.md",
                         iteration=iteration,
                     )
-            else:
+            elif cli_dispatcher:
                 exec_dispatcher.dispatch(
                     "executor", "execute-analyze",
-                    output_path=iter_dir / "execute_analyze_output.json",
+                    output_path=iter_dir / "executor_log.md",
                     iteration=iteration,
                 )
-            # Split combined output into separate artifacts
-            combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
-            missing = {"plan", "findings", "principle_updates"} - set(combined.keys())
-            if missing:
-                raise RuntimeError(
-                    f"execute-analyze agent output missing keys: {sorted(missing)}. "
-                    f"Got: {sorted(combined.keys())}. See {iter_dir / 'execute_analyze_output.json'}"
+            else:
+                # LLM API path or stub: dispatch and check if files were written directly
+                output_file = iter_dir / "execute_analyze_output.json"
+                exec_dispatcher.dispatch(
+                    "executor", "execute-analyze",
+                    output_path=output_file,
+                    iteration=iteration,
                 )
-            plan_data = combined["plan"]
-            atomic_write(
-                iter_dir / "experiment_plan.yaml",
-                yaml.safe_dump(plan_data, default_flow_style=False, sort_keys=False),
-            )
-            atomic_write(
-                iter_dir / "findings.json",
-                json.dumps(combined["findings"], indent=2) + "\n",
-            )
-            atomic_write(
-                iter_dir / "principle_updates.json",
-                json.dumps(combined["principle_updates"], indent=2) + "\n",
-            )
-            print(f"  -> {iter_dir / 'experiment_plan.yaml'}")
-            print(f"  -> {iter_dir / 'findings.json'}")
-            print(f"  -> {iter_dir / 'principle_updates.json'}")
+                # If the dispatcher wrote individual files (StubDispatcher),
+                # skip the JSON split. Otherwise parse the combined blob.
+                if not (iter_dir / "findings.json").exists():
+                    combined = json.loads(output_file.read_text())
+                    missing = {"plan", "findings", "principle_updates"} - set(combined.keys())
+                    if missing:
+                        raise RuntimeError(
+                            f"execute-analyze output missing keys: {sorted(missing)}"
+                        )
+                    atomic_write(
+                        iter_dir / "experiment_plan.yaml",
+                        yaml.safe_dump(combined["plan"], default_flow_style=False, sort_keys=False),
+                    )
+                    atomic_write(
+                        iter_dir / "findings.json",
+                        json.dumps(combined["findings"], indent=2) + "\n",
+                    )
+                    atomic_write(
+                        iter_dir / "principle_updates.json",
+                        json.dumps(combined["principle_updates"], indent=2) + "\n",
+                    )
+            # Validate artifacts regardless of dispatch path
+            from orchestrator.validate import validate_execution
+            result = validate_execution(iter_dir)
+            if result["status"] == "fail":
+                raise RuntimeError(
+                    f"Executor artifacts failed validation:\n"
+                    + "\n".join(f"  - {e}" for e in result["errors"])
+                )
         except BaseException:
             if repo_path and experiment_id:
                 from orchestrator.worktree import remove_experiment_worktree
@@ -377,29 +407,25 @@ def run_iteration(
     # ─── VALIDATE ─────────────────────────────────────────────────────────
     if _enter_phase(engine, "VALIDATE"):
         print(f"\n{'='*60}")
-        print(f"  VALIDATE — replaying plan for reproducibility")
+        print(f"  VALIDATE — post-check artifact validation")
         print(f"{'='*60}")
-        # Recover worktree reference on resume
+        # Clean up experiment worktree if it exists
         if not experiment_dir and repo_path:
             eid_path = iter_dir / ".experiment_id"
             if eid_path.exists():
                 experiment_id = eid_path.read_text().strip()
-                experiment_dir = Path(repo_path) / ".nous-experiments" / experiment_id
+        if repo_path and experiment_id:
+            from orchestrator.worktree import remove_experiment_worktree
+            remove_experiment_worktree(Path(repo_path), experiment_id)
 
-        try:
-            from orchestrator.executor import execute_plan
-            plan = yaml.safe_load((iter_dir / "experiment_plan.yaml").read_text())
-            execute_plan(
-                plan,
-                cwd=experiment_dir or Path(repo_path) if repo_path else iter_dir,
-                iter_dir=iter_dir,
-                reset_cmd="git checkout -- ." if experiment_dir else None,
-            )
-            print(f"  -> {iter_dir / 'execution_results.json'}")
-        finally:
-            if repo_path and experiment_id:
-                from orchestrator.worktree import remove_experiment_worktree
-                remove_experiment_worktree(Path(repo_path), experiment_id)
+        from orchestrator.validate import validate_execution
+        result = validate_execution(iter_dir)
+        if result["status"] == "pass":
+            print("  Validation passed.")
+        else:
+            for err in result["errors"]:
+                print(f"  [!] {err}")
+            print("  Validation completed with warnings.")
 
     # Validate findings and check fast-fail rules
     findings_path = iter_dir / "findings.json"

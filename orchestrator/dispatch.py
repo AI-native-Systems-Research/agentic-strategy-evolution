@@ -136,94 +136,109 @@ class StubDispatcher:
         atomic_write(path, raw)
 
     def _write_execute_analyze(self, path: Path, iteration: int, h_main_result: str) -> None:
-        """Write combined execute+analyze output: plan, findings, principle_updates."""
-        combined = {
-            "plan": {
-                "metadata": {
-                    "iteration": iteration,
-                    "bundle_ref": f"runs/iter-{iteration}/bundle.yaml",
-                },
-                "setup": [
-                    {"cmd": "echo 'stub build'", "description": "Stub setup"},
-                ],
-                "arms": [
-                    {
-                        "arm_id": "h-main",
-                        "conditions": [
-                            {
-                                "name": "baseline",
-                                "cmd": "echo '{\"latency_ms\": 50}'",
-                                "output": "results/h-main/baseline.json",
-                            },
-                            {
-                                "name": "treatment",
-                                "cmd": "echo '{\"latency_ms\": 40}'",
-                                "output": "results/h-main/treatment.json",
-                            },
-                        ],
-                    },
-                    {
-                        "arm_id": "h-control-negative",
-                        "conditions": [
-                            {
-                                "name": "control",
-                                "cmd": "echo '{\"latency_ms\": 50}'",
-                                "output": "results/h-control-negative/control.json",
-                            },
-                        ],
-                    },
-                ],
-            },
-            "findings": {
+        """Write executor artifacts directly to iter_dir (mimics agent writing files)."""
+        iter_dir = path.parent
+        iter_dir.mkdir(parents=True, exist_ok=True)
+
+        plan = {
+            "metadata": {
                 "iteration": iteration,
                 "bundle_ref": f"runs/iter-{iteration}/bundle.yaml",
-                "arms": [
-                    {
-                        "arm_type": "h-main",
-                        "predicted": ">10% improvement",
-                        "observed": "12.3% improvement"
-                        if h_main_result == "CONFIRMED"
-                        else "-2.1% regression",
-                        "status": h_main_result,
-                        "error_type": None
-                        if h_main_result == "CONFIRMED"
-                        else "direction",
-                        "diagnostic_note": None
-                        if h_main_result == "CONFIRMED"
-                        else "Mechanism does not hold",
-                    },
-                    {
-                        "arm_type": "h-control-negative",
-                        "predicted": "no effect at low load",
-                        "observed": "no significant effect",
-                        "status": "CONFIRMED",
-                        "error_type": None,
-                        "diagnostic_note": None,
-                    },
-                ],
-                "experiment_valid": True,
-                "discrepancy_analysis": "Stub analysis: all predictions within expected range."
-                if h_main_result == "CONFIRMED"
-                else "Stub analysis: H-main refuted, mechanism does not hold.",
             },
-            "principle_updates": [
+            "setup": [
+                {"cmd": "echo 'stub build'", "description": "Stub setup"},
+            ],
+            "arms": [
                 {
-                    "id": f"stub-principle-{iteration}",
-                    "statement": f"Stub principle extracted from iteration {iteration}",
-                    "confidence": "medium",
-                    "regime": "all",
-                    "evidence": [f"iteration-{iteration}-h-main"],
-                    "contradicts": [],
-                    "extraction_iteration": iteration,
-                    "mechanism": "Stub mechanism",
-                    "applicability_bounds": "stub",
-                    "superseded_by": None,
-                    "category": "domain",
-                    "status": "active",
+                    "arm_id": "h-main",
+                    "conditions": [
+                        {
+                            "name": "baseline",
+                            "cmd": "echo '{\"latency_ms\": 50}'",
+                            "output": "results/h-main/baseline.json",
+                        },
+                        {
+                            "name": "treatment",
+                            "cmd": "echo '{\"latency_ms\": 40}'",
+                            "output": "results/h-main/treatment.json",
+                        },
+                    ],
+                },
+                {
+                    "arm_id": "h-control-negative",
+                    "conditions": [
+                        {
+                            "name": "control",
+                            "cmd": "echo '{\"latency_ms\": 50}'",
+                            "output": "results/h-control-negative/control.json",
+                        },
+                    ],
                 },
             ],
         }
-        atomic_write(path, json.dumps(combined, indent=2) + "\n")
+        findings = {
+            "iteration": iteration,
+            "bundle_ref": f"runs/iter-{iteration}/bundle.yaml",
+            "arms": [
+                {
+                    "arm_type": "h-main",
+                    "predicted": ">10% improvement",
+                    "observed": "12.3% improvement"
+                    if h_main_result == "CONFIRMED"
+                    else "-2.1% regression",
+                    "status": h_main_result,
+                    "error_type": None
+                    if h_main_result == "CONFIRMED"
+                    else "direction",
+                    "diagnostic_note": None
+                    if h_main_result == "CONFIRMED"
+                    else "Mechanism does not hold",
+                },
+                {
+                    "arm_type": "h-control-negative",
+                    "predicted": "no effect at low load",
+                    "observed": "no significant effect",
+                    "status": "CONFIRMED",
+                    "error_type": None,
+                    "diagnostic_note": None,
+                },
+            ],
+            "experiment_valid": True,
+            "discrepancy_analysis": "Stub analysis: all predictions within expected range."
+            if h_main_result == "CONFIRMED"
+            else "Stub analysis: H-main refuted, mechanism does not hold.",
+        }
+        principle_updates = [
+            {
+                "id": f"stub-principle-{iteration}",
+                "statement": f"Stub principle extracted from iteration {iteration}",
+                "confidence": "medium",
+                "regime": "all",
+                "evidence": [f"iteration-{iteration}-h-main"],
+                "contradicts": [],
+                "extraction_iteration": iteration,
+                "mechanism": "Stub mechanism",
+                "applicability_bounds": "stub",
+                "superseded_by": None,
+                "category": "domain",
+                "status": "active",
+            },
+        ]
+
+        atomic_write(
+            iter_dir / "experiment_plan.yaml",
+            yaml.safe_dump(plan, default_flow_style=False, sort_keys=False),
+        )
+        atomic_write(
+            iter_dir / "findings.json",
+            json.dumps(findings, indent=2) + "\n",
+        )
+        atomic_write(
+            iter_dir / "principle_updates.json",
+            json.dumps(principle_updates, indent=2) + "\n",
+        )
+        # Write a log to the output_path (what the orchestrator captures)
+        atomic_write(path, "Stub executor: artifacts written directly to iter_dir.\n")
 
     def write_execution_results(self, path: Path, iteration: int) -> None:
         """Write stub execution results for integration tests."""

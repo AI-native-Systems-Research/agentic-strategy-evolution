@@ -50,33 +50,33 @@ class TestStubDispatcher:
         bundle = yaml.safe_load(match.group(1))
         jsonschema.validate(bundle, _load_schema("bundle.schema.yaml"))
 
-    def test_dispatch_executor_execute_analyze_produces_valid_output(self, work_dir):
+    def test_dispatch_executor_writes_individual_files(self, work_dir):
         dispatcher = _make_dispatcher(work_dir)
-        output_path = work_dir / "runs" / "iter-1" / "execute_analyze_output.json"
+        iter_dir = work_dir / "runs" / "iter-1"
+        output_path = iter_dir / "executor_log.md"
         dispatcher.dispatch("executor", "execute-analyze", output_path=output_path, iteration=1)
-        assert output_path.exists()
-        combined = json.loads(output_path.read_text())
-        assert "plan" in combined
-        assert "findings" in combined
-        assert "principle_updates" in combined
-        # Validate findings sub-schema
-        jsonschema.validate(combined["findings"], _load_schema("findings.schema.json"))
-        # Validate plan sub-schema
-        jsonschema.validate(combined["plan"], _load_schema("experiment_plan.schema.yaml"))
-        # Check principle_updates have expected fields
-        assert len(combined["principle_updates"]) >= 1
-        assert combined["principle_updates"][0]["category"] == "domain"
+        assert (iter_dir / "experiment_plan.yaml").exists()
+        assert (iter_dir / "findings.json").exists()
+        assert (iter_dir / "principle_updates.json").exists()
+        findings = json.loads((iter_dir / "findings.json").read_text())
+        jsonschema.validate(findings, _load_schema("findings.schema.json"))
+        plan = yaml.safe_load((iter_dir / "experiment_plan.yaml").read_text())
+        jsonschema.validate(plan, _load_schema("experiment_plan.schema.yaml"))
+        principles = json.loads((iter_dir / "principle_updates.json").read_text())
+        assert len(principles) >= 1
+        assert principles[0]["category"] == "domain"
 
     def test_dispatch_executor_refuted(self, work_dir):
         dispatcher = _make_dispatcher(work_dir)
-        output_path = work_dir / "runs" / "iter-1" / "execute_analyze_output.json"
+        iter_dir = work_dir / "runs" / "iter-1"
+        output_path = iter_dir / "executor_log.md"
         dispatcher.dispatch(
             "executor", "execute-analyze",
             output_path=output_path, iteration=1, h_main_result="REFUTED",
         )
-        combined = json.loads(output_path.read_text())
-        assert combined["findings"]["arms"][0]["status"] == "REFUTED"
-        jsonschema.validate(combined["findings"], _load_schema("findings.schema.json"))
+        findings = json.loads((iter_dir / "findings.json").read_text())
+        assert findings["arms"][0]["status"] == "REFUTED"
+        jsonschema.validate(findings, _load_schema("findings.schema.json"))
 
     def test_dispatch_unknown_role_rejected(self, work_dir):
         dispatcher = _make_dispatcher(work_dir)

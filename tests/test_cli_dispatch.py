@@ -141,31 +141,12 @@ class TestCLIDispatcherUnit:
         assert "Experiment Design" in content
         assert "Research Question" in content
 
-    def test_dispatch_executor_execute_analyze_produces_valid_output(self, work_dir: Path, campaign: dict) -> None:
+    def test_dispatch_executor_execute_analyze_saves_raw_output(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
-        valid_json = json.dumps({
-            "plan": {
-                "metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
-                "arms": [{"arm_id": "h-main", "conditions": [{"name": "baseline", "cmd": "echo baseline"}]}],
-            },
-            "findings": {
-                "iteration": 1,
-                "bundle_ref": "runs/iter-1/bundle.yaml",
-                "arms": [{"arm_type": "h-main", "predicted": "lower latency", "observed": "10ms reduction", "status": "CONFIRMED", "error_type": None, "diagnostic_note": None}],
-                "experiment_valid": True,
-                "discrepancy_analysis": "None.",
-            },
-            "principle_updates": [{
-                "id": "RP-1", "statement": "Test principle", "confidence": "medium",
-                "regime": "all", "evidence": ["iteration-1-h-main"], "contradicts": [],
-                "extraction_iteration": 1, "mechanism": "test", "applicability_bounds": "test",
-                "superseded_by": None, "category": "domain", "status": "active",
-            }],
-        })
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = f"```json\n{valid_json}\n```\n"
+        mock_result.stdout = "All experiments completed. Artifacts written to iter_dir."
         mock_result.stderr = ""
 
         # Create bundle.yaml (required by context builder)
@@ -174,14 +155,11 @@ class TestCLIDispatcherUnit:
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            out = work_dir / "runs" / "iter-1" / "execute_analyze_output.json"
+            out = work_dir / "runs" / "iter-1" / "executor_log.md"
             d.dispatch("executor", "execute-analyze", output_path=out, iteration=1)
 
         assert out.exists()
-        data = json.loads(out.read_text())
-        assert "plan" in data
-        assert "findings" in data
-        assert "principle_updates" in data
+        assert "Artifacts written" in out.read_text()
 
     def test_dispatch_planner_design_writes_response_text(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher

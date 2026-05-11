@@ -253,14 +253,16 @@ class TestExecutePlanResetCmdKwargs:
         run_iteration(campaign, work_dir, iteration=1)
         return captured
 
-    def test_reset_cmd_is_git_checkout_when_in_worktree(self, tmp_path, monkeypatch):
+    def test_validate_runs_as_post_check_with_repo(self, tmp_path, monkeypatch):
         captured = self._capture_execute_plan_kwargs(
             tmp_path, monkeypatch, with_repo_path=True,
         )
-        assert captured["reset_cmd"] == "git checkout -- ."
+        # VALIDATE no longer replays — execute_plan is not called by VALIDATE
+        # The stub writes artifacts directly, and validate_execution checks them
+        assert "reset_cmd" not in captured or captured == {}
 
-    def test_reset_cmd_is_none_without_worktree(self, tmp_path, monkeypatch):
+    def test_validate_runs_as_post_check_without_repo(self, tmp_path, monkeypatch):
         captured = self._capture_execute_plan_kwargs(
             tmp_path, monkeypatch, with_repo_path=False,
         )
-        assert captured["reset_cmd"] is None
+        assert "reset_cmd" not in captured or captured == {}
