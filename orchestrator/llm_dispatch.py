@@ -209,23 +209,16 @@ class LLMDispatcher:
             ctx["research_question"] = self.campaign["research_question"]
 
         if phase == "design":
-            if iteration > 1:
-                prev_handoff_path = (
-                    self.work_dir / "runs" / f"iter-{iteration - 1}"
-                    / "handoff.md"
+            # Campaign-level handoff — the living document updated each iteration
+            handoff_path = self.work_dir / "handoff.md"
+            if handoff_path.exists():
+                ctx["previous_handoff"] = handoff_path.read_text()
+            else:
+                ctx["previous_handoff"] = (
+                    "This is the first iteration. No prior handoff."
                 )
-                if prev_handoff_path.exists():
-                    ctx["previous_handoff"] = prev_handoff_path.read_text()
-                else:
-                    logger.warning(
-                        "handoff.md for iteration %d not found at %s. "
-                        "Design prompt will proceed without prior exploration context.",
-                        iteration - 1, prev_handoff_path,
-                    )
-                    ctx["previous_handoff"] = (
-                        "No handoff available from the previous iteration."
-                    )
 
+            if iteration > 1:
                 prev_findings_path = (
                     self.work_dir / "runs" / f"iter-{iteration - 1}"
                     / "findings.json"
@@ -241,9 +234,6 @@ class LLMDispatcher:
                         "No findings available from the previous iteration."
                     )
             else:
-                ctx["previous_handoff"] = (
-                    "This is the first iteration. No prior handoff."
-                )
                 ctx["previous_findings"] = (
                     "This is the first iteration. No prior findings."
                 )
@@ -307,16 +297,14 @@ class LLMDispatcher:
             else:
                 ctx["problem_md"] = "No problem framing available."
 
-            handoff_path = self.work_dir / "runs" / f"iter-{iteration}" / "handoff.md"
-            if not handoff_path.exists() and iteration > 1:
-                handoff_path = self.work_dir / "runs" / "iter-1" / "handoff.md"
+            # Campaign-level handoff — the living document
+            handoff_path = self.work_dir / "handoff.md"
             if handoff_path.exists():
                 ctx["design_handoff"] = handoff_path.read_text()
             else:
                 logger.warning(
-                    "handoff.md not found for iteration %d. "
+                    "handoff.md not found for campaign. "
                     "Executor will proceed without designer context.",
-                    iteration,
                 )
                 ctx["design_handoff"] = (
                     "No design handoff available — explore the system directly."
@@ -359,10 +347,7 @@ class LLMDispatcher:
                 )
                 if findings_path.exists():
                     parts.append(f"Findings:\n```json\n{findings_path.read_text()}\n```")
-                handoff_path = (
-                    self.work_dir / "runs" / f"iter-{iteration}"
-                    / "handoff.md"
-                )
+                handoff_path = self.work_dir / "handoff.md"
                 if handoff_path.exists():
                     parts.append(f"Designer handoff:\n{handoff_path.read_text()}")
                 ctx["gate_context"] = "\n\n".join(parts) if parts else "No context available."

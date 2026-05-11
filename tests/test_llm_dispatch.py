@@ -392,7 +392,8 @@ class TestPreviousIterationContext:
             "## Handoff\n\n### Goal\nTest batch amortization.\n\n"
             "### Key Discoveries\n- Mechanism at src/batch.go:42\n"
         )
-        (work_dir / "runs" / "iter-1" / "handoff.md").write_text(handoff)
+        # Campaign-level handoff (the living document)
+        (work_dir / "handoff.md").write_text(handoff)
         findings = json.dumps({
             "iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml",
             "arms": [{"arm_type": "h-main", "predicted": "+18%",
@@ -414,20 +415,16 @@ class TestPreviousIterationContext:
         assert "batch amortization" in prompt.lower()
         assert "18% improvement" in prompt
 
-    def test_design_iter2_missing_handoff_gets_default(self, work_dir: Path) -> None:
-        iter2 = work_dir / "runs" / "iter-2"
-        iter2.mkdir(parents=True)
-        (iter2 / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
-
+    def test_design_iter1_missing_handoff_gets_default(self, work_dir: Path) -> None:
         raw = "Design output without prior handoff."
         mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = iter2 / "design_ctx.md"
-        d.dispatch("planner", "design", output_path=out, iteration=2)
+        out = work_dir / "runs" / "iter-1" / "design_ctx.md"
+        d.dispatch("planner", "design", output_path=out, iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
-        assert "No handoff available" in prompt
+        assert "first iteration" in prompt.lower()
 
     def test_design_gets_research_question_from_campaign(self, work_dir: Path) -> None:
         """Design phase gets research_question from campaign config directly."""

@@ -23,7 +23,7 @@ This is iteration {{iteration}} of the investigation.
 
 ## Previous Iteration Context
 
-### Previous Handoff (exploration context from last designer)
+### Campaign Handoff (living exploration context — accumulated across iterations)
 
 {{previous_handoff}}
 
@@ -178,9 +178,16 @@ arms:
 
 ## Handoff
 
-Write a goal-focused handoff for the next agent. This handoff serves two audiences:
+This is a **living document** that accumulates across iterations. If a previous handoff exists (in the Campaign Handoff section above), READ it first, then produce an UPDATED version:
+- **Keep** entries that are still relevant (dead ends, warnings, code map entries)
+- **Remove** entries that are outdated or superseded by your new findings
+- **Add** your new discoveries, dead ends, exclusions, and status
+
+If no previous handoff exists, create one from scratch.
+
+This handoff serves two audiences:
 1. The **executor agent** in this iteration (starts a fresh session, needs to run your experiments)
-2. The **designer agent** in the next iteration (needs to understand what you explored, what you ruled out, and how your thinking evolved)
+2. The **designer agent** in the next iteration (needs your accumulated exploration context)
 
 Before writing the handoff, mentally review your exploration:
 1. What did you discover that the next agent MUST know to succeed?
