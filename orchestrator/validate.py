@@ -137,8 +137,10 @@ def validate_execution(iter_dir: Path) -> dict:
                             errors.append(f"patches/{arm_type}.patch not found")
                         elif patch_file.stat().st_size == 0:
                             errors.append(f"patches/{arm_type}.patch is empty")
-        except (yaml.YAMLError, KeyError):
-            pass  # bundle issues already caught above or by design validation
+        except yaml.YAMLError:
+            pass  # bundle parse issues already caught by design validation
+        except KeyError as exc:
+            errors.append(f"bundle.yaml arm missing required field: {exc}")
 
     if errors:
         return {"status": "fail", "errors": errors}

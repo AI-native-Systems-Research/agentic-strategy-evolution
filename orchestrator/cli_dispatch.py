@@ -77,8 +77,9 @@ class CLIDispatcher(LLMDispatcher):
         self._current_phase = phase
 
         template, fmt, schema_name = self._route(role, phase)
-        # For execute-analyze via CLI, the agent writes files directly.
-        # We just save the raw response as a log — no JSON parsing needed.
+        # For execute-analyze via CLI, the agent writes files directly to iter_dir.
+        # We save the raw response as a log. Caller MUST run validate_execution()
+        # after this dispatch — no artifact validation happens here.
         if phase == "execute-analyze":
             fmt = None
             schema_name = None

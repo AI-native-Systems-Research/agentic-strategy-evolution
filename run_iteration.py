@@ -423,9 +423,10 @@ def run_iteration(
         if result["status"] == "pass":
             print("  Validation passed.")
         else:
-            for err in result["errors"]:
-                print(f"  [!] {err}")
-            print("  Validation completed with warnings.")
+            raise RuntimeError(
+                f"Post-check validation failed:\n"
+                + "\n".join(f"  - {e}" for e in result["errors"])
+            )
 
     # Validate findings and check fast-fail rules
     findings_path = iter_dir / "findings.json"
@@ -531,7 +532,8 @@ def main() -> None:
         sys.exit(1)
 
     run_id = args.run_id or campaign.get("run_id") or campaign_path.parent.name + "-run"
-    work_dir = setup_work_dir(run_id)
+    repo_path = campaign.get("target_system", {}).get("repo_path")
+    work_dir = setup_work_dir(run_id, repo_path=repo_path)
     print(f"Working directory: {work_dir.resolve()}")
 
     run_iteration(
