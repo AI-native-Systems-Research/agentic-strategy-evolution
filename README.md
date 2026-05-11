@@ -194,13 +194,6 @@ docs/                    Quickstart, protocol, data model, architecture
 tests/                   Comprehensive test suite
 ```
 
-## Case Study: LLM Inference Serving
-
-Nous was developed and validated through 30 iterations on [BLIS](https://github.com/inference-sim/inference-sim), an LLM inference simulator. The campaign extracted 30 principles across scheduling and routing, achieving a 73.7% reduction in critical TTFT P99 latency.
-
-Key insight: the breakthrough mechanism (SLO-gated admission control) was discovered through *refuted* predictions, not confirmed ones. A direction error in iteration 1 — where priority scheduling caused 62.4% cluster degradation instead of the predicted <10% — redirected the entire investigation toward admission control.
-
-
 ## Contributing
 
 See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the Claude-based PR creation workflow.
