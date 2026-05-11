@@ -362,14 +362,6 @@ class TestLLMDispatcher:
         with pytest.raises(FileNotFoundError, match="design phase completed"):
             d.dispatch("executor", "execute-analyze", output_path=out, iteration=1)
 
-    def test_missing_findings_for_summarize_raises(self, work_dir: Path) -> None:
-        (work_dir / "runs" / "iter-1" / "findings.json").unlink()
-        d = _make_dispatcher(work_dir, ["unused"])
-        out = work_dir / "runs" / "iter-1" / "summary.json"
-        with pytest.raises(FileNotFoundError, match="findings"):
-            d.dispatch("extractor", "summarize", output_path=out, iteration=1)
-
-
 class TestExampleCampaign:
     def test_example_campaign_validates_against_schema(self) -> None:
         example_path = Path(__file__).resolve().parent.parent / "examples" / "campaign.yaml"
@@ -378,8 +370,8 @@ class TestExampleCampaign:
         jsonschema.validate(campaign, schema)
 
 
-class TestInvestigationSummaryContext:
-    """Verify investigation_summary is injected into design prompts."""
+class TestPreviousIterationContext:
+    """Verify previous handoff + findings are injected into design prompts."""
 
     def test_design_iter1_gets_first_iteration_default(self, work_dir: Path) -> None:
         raw = "Design output for iter 1."
@@ -392,22 +384,25 @@ class TestInvestigationSummaryContext:
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "first iteration" in prompt.lower()
 
-    def test_design_iter2_includes_previous_summary(self, work_dir: Path) -> None:
-        # Set up iter-2 directory with bundle
+    def test_design_iter2_includes_previous_handoff_and_findings(self, work_dir: Path) -> None:
         iter2 = work_dir / "runs" / "iter-2"
         iter2.mkdir(parents=True)
         (iter2 / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
-        # Write investigation summary for iter-1
-        summary = {
-            "iteration": 1,
-            "what_was_tested": "Batch size amortization",
-            "key_findings": "H-main confirmed at 18% improvement",
-            "principles_changed": "Inserted RP-1",
-            "open_questions": "Does this hold under high load?",
-            "suggested_next_direction": "Test with worker_count scaling",
-        }
-        summary_path = work_dir / "runs" / "iter-1" / "investigation_summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2))
+        handoff = (
+            "## Handoff\n\n### Goal\nTest batch amortization.\n\n"
+            "### Key Discoveries\n- Mechanism at src/batch.go:42\n"
+        )
+        # Campaign-level handoff (the living document)
+        (work_dir / "handoff.md").write_text(handoff)
+        findings = json.dumps({
+            "iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml",
+            "arms": [{"arm_type": "h-main", "predicted": "+18%",
+                       "observed": "+18.2%", "status": "CONFIRMED",
+                       "error_type": None, "diagnostic_note": None}],
+            "experiment_valid": True,
+            "discrepancy_analysis": "H-main confirmed at 18% improvement",
+        }, indent=2)
+        (work_dir / "runs" / "iter-1" / "findings.json").write_text(findings)
 
         raw = "Design output for iter 2."
         mock_fn = make_mock_completion([raw])
@@ -417,24 +412,19 @@ class TestInvestigationSummaryContext:
         out = iter2 / "design_ctx.md"
         d.dispatch("planner", "design", output_path=out, iteration=2)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
-        assert "Batch size amortization" in prompt
-        assert "H-main confirmed" in prompt
+        assert "batch amortization" in prompt.lower()
+        assert "18% improvement" in prompt
 
-    def test_design_iter2_missing_summary_gets_default(self, work_dir: Path) -> None:
-        # Set up iter-2 without a summary for iter-1
-        iter2 = work_dir / "runs" / "iter-2"
-        iter2.mkdir(parents=True)
-        (iter2 / "bundle.yaml").write_text(VALID_BUNDLE_YAML)
-
-        raw = "Design output without prior summary."
+    def test_design_iter1_missing_handoff_gets_default(self, work_dir: Path) -> None:
+        raw = "Design output without prior handoff."
         mock_fn = make_mock_completion([raw])
         d = LLMDispatcher(
             work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
         )
-        out = iter2 / "design_ctx.md"
-        d.dispatch("planner", "design", output_path=out, iteration=2)
+        out = work_dir / "runs" / "iter-1" / "design_ctx.md"
+        d.dispatch("planner", "design", output_path=out, iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
-        assert "No investigation summary available" in prompt
+        assert "first iteration" in prompt.lower()
 
     def test_design_gets_research_question_from_campaign(self, work_dir: Path) -> None:
         """Design phase gets research_question from campaign config directly."""
@@ -447,42 +437,6 @@ class TestInvestigationSummaryContext:
         d.dispatch("planner", "design", output_path=out, iteration=1)
         prompt = mock_fn.call_log[0]["messages"][0]["content"]
         assert "Does batch size affect latency in TestSystem?" in prompt
-
-
-class TestSummarizeDispatch:
-    """Verify the summarize route works end-to-end via LLMDispatcher."""
-
-    VALID_SUMMARY_JSON = json.dumps({
-        "iteration": 1,
-        "what_was_tested": "Batch size amortization hypothesis",
-        "key_findings": "H-main confirmed with 18% latency reduction",
-        "principles_changed": "Inserted RP-1: batch amortization",
-        "open_questions": "Does this hold under high contention?",
-        "suggested_next_direction": "Test with concurrent workers",
-    }, indent=2)
-
-    def test_dispatch_summarize_produces_valid_summary(self, work_dir: Path) -> None:
-        resp = f"```json\n{self.VALID_SUMMARY_JSON}\n```"
-        d = _make_dispatcher(work_dir, [resp])
-        out = work_dir / "runs" / "iter-1" / "investigation_summary.json"
-        d.dispatch("extractor", "summarize", output_path=out, iteration=1)
-        assert out.exists()
-        summary = json.loads(out.read_text())
-        schema = load_schema("investigation_summary.schema.json")
-        jsonschema.validate(summary, schema)
-
-    def test_summarize_context_includes_bundle_and_findings(self, work_dir: Path) -> None:
-        resp = f"```json\n{self.VALID_SUMMARY_JSON}\n```"
-        mock_fn = make_mock_completion([resp])
-        d = LLMDispatcher(
-            work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, completion_fn=mock_fn,
-        )
-        out = work_dir / "runs" / "iter-1" / "investigation_summary.json"
-        d.dispatch("extractor", "summarize", output_path=out, iteration=1)
-        prompt = mock_fn.call_log[0]["messages"][0]["content"]
-        # Should contain bundle and findings content
-        assert "h-main" in prompt
-        assert "CONFIRMED" in prompt
 
 
 # Minimal campaign without observable_metrics/controllable_knobs

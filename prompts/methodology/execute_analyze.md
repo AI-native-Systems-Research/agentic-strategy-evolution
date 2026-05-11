@@ -35,6 +35,10 @@ This is iteration {{iteration}}.
 
 {{active_principles}}
 
+## Designer Handoff
+
+{{design_handoff}}
+
 ## Pre-gathered Repo Context
 
 {{repo_context}}

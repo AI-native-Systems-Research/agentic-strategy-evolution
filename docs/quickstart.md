@@ -112,9 +112,10 @@ After a campaign, your working directory contains:
 
 - **`runs/iter-N/problem.md`** — How the problem was framed
 - **`runs/iter-N/bundle.yaml`** — The hypothesis bundle
+- **`handoff.md`** — Living exploration context (campaign-level, updated each iteration)
+- **`runs/iter-N/handoff_snapshot.md`** — Per-iteration handoff snapshot for audit
 - **`runs/iter-N/findings.json`** — Prediction vs. outcome analysis
 - **`runs/iter-N/gate_summary_*.json`** — Human-readable gate summaries
-- **`runs/iter-N/investigation_summary.json`** — Iteration summary (non-final)
 - **`runs/iter-N/principle_updates.json`** — Proposed principle changes
 - **`ledger.json`** — One row per completed iteration
 - **`principles.json`** — Accumulated principles across all iterations

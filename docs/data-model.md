@@ -24,9 +24,9 @@ execution_results.json "Raw output"          Stdout/stderr per condition
     ▼                                        │
 findings.json       "What happened?"         │
     │                                        │
-    ├──▶ ledger.json                 investigation_summary.json
-    │       "What happened each iteration?"  "What did we learn this round?"
-    │                                        Bounded summary for next iteration
+    ├──▶ ledger.json                 handoff.md
+    │       "What happened each iteration?"  "What does the next agent need?"
+    │                                        Exploration context for next iteration
     ├──▶ principles.json   "What have we learned?"   Living knowledge base
     └──▶ trace.jsonl       "What happened under the hood?"  Activity log
                                                              │
@@ -198,22 +198,24 @@ The experiment results. Compares what we predicted to what we observed, arm by a
 - H-control-negative refuted → mechanism confounded, go back to DESIGN
 - Dominant component >80% → simplify the strategy
 
-## 6. investigation_summary.json — "What did we learn this round?"
+## 6. handoff.md — "What does the next agent need to know?"
 
-**Schema:** `schemas/investigation_summary.schema.json`
+Produced by the designer agent as part of its output. A structured context transfer document that serves two audiences: the executor agent in the same iteration and the designer agent in the next iteration.
 
-A bounded summary produced after each non-final iteration. It captures the essential learnings from the iteration in a form that can be injected into the next iteration's design prompt. This is what enables cross-iteration learning without growing agent context proportionally to campaign depth.
-
-| Field | What it means |
+| Section | What it captures |
 |---|---|
-| `iteration` | Which iteration this summarizes |
-| `what_was_tested` | The hypothesis family and key arms tested |
-| `key_findings` | Main results — what was confirmed, refuted, or surprising |
-| `principles_changed` | Which principles were inserted, updated, or pruned |
-| `open_questions` | What remains unanswered — candidate questions for the next iteration |
-| `suggested_next_direction` | Recommended focus area for the next iteration |
+| Goal | Actionable directive for the executor |
+| Key Discoveries | 3-7 verified technical findings with measurements |
+| System Interface | Validated build/run commands and output format |
+| Code Map | Troubleshooting index: file:line, what's there, when to look |
+| Code Targets | Per-arm patch locations (if code changes needed) |
+| What I Tried That Didn't Work | Dead ends to avoid |
+| What I Excluded and Why | Scoping decisions and rationale |
+| Evolution of Thinking | How understanding shifted during exploration |
+| Current Status | Validated / uncertain / suggested next |
+| Warnings & Constraints | Gotchas with evidence |
 
-Located at `runs/iter-N/investigation_summary.json`. The design prompt for iteration N+1 receives this summary to inform hypothesis bundle creation.
+The living document is at `handoff.md` (campaign root). Per-iteration snapshots are saved at `runs/iter-N/handoff_snapshot.md` for audit. The executor and next iteration's designer both read the campaign-level file.
 
 ## 6b. gate_summary_*.json — "What should I know before deciding?"
 

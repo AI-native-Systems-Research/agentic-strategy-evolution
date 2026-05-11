@@ -319,7 +319,6 @@ Every artifact exchanged between components is validated against a JSON Schema (
 | `bundle.schema.yaml` | YAML | Hypothesis bundles (arms with predictions, mechanisms, diagnostics) |
 | `experiment_plan.schema.yaml` | YAML | Experiment plans (exact commands per arm/condition) |
 | `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |
-| `investigation_summary.schema.json` | JSON | Bounded iteration summary for cross-iteration context |
 | `principles.schema.json` | JSON | Principle store (statement, confidence, regime, evidence, category, status) |
 | `ledger.schema.json` | JSON | Append-only iteration log with prediction accuracy and domain metrics |
 | `summary.schema.json` | JSON | Campaign rollup (cost, tokens, principles extracted) |

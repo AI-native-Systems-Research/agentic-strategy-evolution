@@ -65,9 +65,7 @@ class StubDispatcher:
                 else:
                     raise ValueError(f"Unknown phase for executor: {phase}")
             case "extractor":
-                if phase == "summarize":
-                    self._write_investigation_summary(output_path, iteration)
-                elif phase == "report":
+                if phase == "report":
                     atomic_write(output_path, "# Stub Report\n\nNo real analysis performed.\n")
                 else:
                     raise ValueError(f"Unknown phase for extractor: {phase}")
@@ -112,7 +110,29 @@ class StubDispatcher:
             "## Baseline Command\n\n"
             "```\necho 'stub baseline'\n```\n"
         )
-        raw = f"{problem_md}\n---\n\n```yaml\n{bundle_yaml}```\n"
+        handoff_md = (
+            "## Handoff\n\n"
+            "### Goal\n"
+            "Test whether the stub mechanism reduces latency under contention.\n\n"
+            "### Key Discoveries\n"
+            "- Mechanism is implemented at `src/stub.py:42` — toggles batch amortization\n"
+            "- Baseline latency at default load: 50ms mean\n"
+            "- Effect only manifests above 80% saturation (verified via probe)\n\n"
+            "### System Interface\n"
+            "- **Build:** `echo 'stub build'`\n"
+            "- **Run baseline:** `echo 'stub baseline'`\n"
+            "- **Output format:** stdout JSON\n"
+            "- **Baseline result:** latency_ms=50\n\n"
+            "### Code Map\n"
+            "- `src/stub.py:42` — mechanism toggle. Check here if treatment has no effect.\n\n"
+            "### Code Targets\n"
+            "- h-main: modify `src/stub.py:42` to enable mechanism\n\n"
+            "### What I Tried That Didn't Work\n"
+            "- `--legacy-mode` flag does not exist despite docs mentioning it\n\n"
+            "### Warnings & Constraints\n"
+            "- First request always cold (cache empty) — use N>=50 for stable means\n"
+        )
+        raw = f"{problem_md}\n---\n\n```yaml\n{bundle_yaml}```\n\n---\n\n{handoff_md}"
         atomic_write(path, raw)
 
     def _write_execute_analyze(self, path: Path, iteration: int, h_main_result: str) -> None:
@@ -250,17 +270,6 @@ class StubDispatcher:
             ],
         }
         atomic_write(path, json.dumps(results, indent=2) + "\n")
-
-    def _write_investigation_summary(self, path: Path, iteration: int) -> None:
-        summary = {
-            "iteration": iteration,
-            "what_was_tested": f"Stub: hypothesis family tested in iteration {iteration}.",
-            "key_findings": "Stub: H-main confirmed. No significant discrepancies.",
-            "principles_changed": f"Stub: Inserted stub-principle-{iteration}.",
-            "open_questions": "Stub: No open questions from stub iteration.",
-            "suggested_next_direction": "Stub: Continue with next mechanism family.",
-        }
-        atomic_write(path, json.dumps(summary, indent=2) + "\n")
 
     def _write_gate_summary(self, path: Path, gate_type: str) -> None:
         summary = {

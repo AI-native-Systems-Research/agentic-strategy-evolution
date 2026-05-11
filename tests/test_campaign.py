@@ -96,11 +96,10 @@ class TestTwoIterationHappyPath:
         assert len(iter_rows) == 2  # both iter-1 and iter-2 (final) get ledger rows
         jsonschema.validate(ledger, _load_schema("ledger.schema.json"))
 
-        # Investigation summary should exist for iter-1
-        summary_path = work_dir / "runs" / "iter-1" / "investigation_summary.json"
-        assert summary_path.exists()
-        summary = json.loads(summary_path.read_text())
-        jsonschema.validate(summary, _load_schema("investigation_summary.schema.json"))
+        # Campaign-level handoff should exist (living document)
+        assert (work_dir / "handoff.md").exists()
+        # Per-iteration snapshot should also exist for audit
+        assert (work_dir / "runs" / "iter-1" / "handoff_snapshot.md").exists()
 
         # Principles should have accumulated across iterations
         principles = json.loads((work_dir / "principles.json").read_text())
@@ -168,9 +167,11 @@ class TestThreeIterations:
         iter_rows = [r for r in ledger["iterations"] if r["iteration"] > 0]
         assert len(iter_rows) == 3
 
-        # Summaries for iter 1 and 2 (not iter 3 since it's final)
-        assert (work_dir / "runs" / "iter-1" / "investigation_summary.json").exists()
-        assert (work_dir / "runs" / "iter-2" / "investigation_summary.json").exists()
+        # Campaign-level handoff should exist
+        assert (work_dir / "handoff.md").exists()
+        # Per-iteration snapshots for audit
+        assert (work_dir / "runs" / "iter-1" / "handoff_snapshot.md").exists()
+        assert (work_dir / "runs" / "iter-2" / "handoff_snapshot.md").exists()
 
 
 class TestAbortDuringIteration:

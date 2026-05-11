@@ -5,10 +5,10 @@ Usage:
     python run_campaign.py examples/campaign.yaml --max-iterations 5
 
 Runs iterations in a loop: each iteration runs the full Nous loop
-(DESIGN → EXECUTE_ANALYZE → VALIDATE → DONE), then appends a ledger row,
-generates an investigation summary, and prompts whether to continue.
-The investigation summary is injected into the next iteration's design prompt
-so that each hypothesis bundle is informed by all prior learning.
+(DESIGN → EXECUTE_ANALYZE → VALIDATE → DONE), then appends a ledger row
+and prompts whether to continue. The designer's handoff.md (a living
+campaign-level document) and previous findings feed the next iteration's
+design prompt so that each hypothesis bundle is informed by all prior learning.
 
 Set your LLM API key before running:
     export OPENAI_API_KEY=sk-...
@@ -149,8 +149,8 @@ def run_campaign(
     """Run a multi-iteration Nous campaign.
 
     Loops through iterations, calling run_iteration() for each one.
-    After each non-final iteration: appends a ledger row, generates an
-    investigation summary, and prompts the human to continue or stop.
+    After each non-final iteration: appends a ledger row and prompts
+    the human to continue or stop.
 
     Args:
         campaign: Parsed campaign.yaml dict.
@@ -210,24 +210,18 @@ def run_campaign(
         if outcome != IterationOutcome.CONTINUE:
             raise ValueError(f"Unexpected outcome: {outcome}")
 
-        # Post-iteration: ledger + investigation summary
+        # Post-iteration: ledger
         append_ledger_row(work_dir, i)
 
-        dispatcher = LLMDispatcher(
-            work_dir=work_dir, campaign=campaign,
-            model=_resolve_model(campaign, "report", model),
-        )
         iter_dir = work_dir / "runs" / f"iter-{i}"
-        dispatcher.dispatch(
-            "extractor", "summarize",
-            output_path=iter_dir / "investigation_summary.json",
-            iteration=i,
-        )
-        print(f"  -> {iter_dir / 'investigation_summary.json'}")
 
         # Generate continue gate summary
         gate_summary_path = iter_dir / "gate_summary_continue.json"
         try:
+            dispatcher = LLMDispatcher(
+                work_dir=work_dir, campaign=campaign,
+                model=_resolve_model(campaign, "report", model),
+            )
             dispatcher.dispatch(
                 "summarizer", "summarize-gate",
                 output_path=gate_summary_path,
