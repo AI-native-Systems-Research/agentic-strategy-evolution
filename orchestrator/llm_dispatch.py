@@ -272,7 +272,7 @@ class LLMDispatcher:
             else:
                 ctx["human_feedback"] = ""
 
-        if phase in ("design", "execute-analyze", "summarize"):
+        if phase in ("design", "execute-analyze"):
             bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"
             if phase == "design" and not bundle_path.exists():
                 pass
@@ -309,16 +309,6 @@ class LLMDispatcher:
                 ctx["design_handoff"] = (
                     "No design handoff available — explore the system directly."
                 )
-
-        if phase == "summarize":
-            findings_path = (
-                self.work_dir / "runs" / f"iter-{iteration}" / "findings.json"
-            )
-            if not findings_path.exists():
-                raise FileNotFoundError(
-                    f"Cannot run '{phase}' phase: {findings_path} not found."
-                )
-            ctx["findings_json"] = findings_path.read_text()
 
         if perspective is not None:
             ctx["perspective_name"] = perspective

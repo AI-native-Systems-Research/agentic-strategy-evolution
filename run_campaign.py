@@ -5,10 +5,10 @@ Usage:
     python run_campaign.py examples/campaign.yaml --max-iterations 5
 
 Runs iterations in a loop: each iteration runs the full Nous loop
-(DESIGN → EXECUTE_ANALYZE → VALIDATE → DONE), then appends a ledger row,
-generates an investigation summary, and prompts whether to continue.
-The investigation summary is injected into the next iteration's design prompt
-so that each hypothesis bundle is informed by all prior learning.
+(DESIGN → EXECUTE_ANALYZE → VALIDATE → DONE), then appends a ledger row
+and prompts whether to continue. The designer's handoff.md (a living
+campaign-level document) and previous findings feed the next iteration's
+design prompt so that each hypothesis bundle is informed by all prior learning.
 
 Set your LLM API key before running:
     export OPENAI_API_KEY=sk-...
@@ -149,8 +149,8 @@ def run_campaign(
     """Run a multi-iteration Nous campaign.
 
     Loops through iterations, calling run_iteration() for each one.
-    After each non-final iteration: appends a ledger row, generates an
-    investigation summary, and prompts the human to continue or stop.
+    After each non-final iteration: appends a ledger row and prompts
+    the human to continue or stop.
 
     Args:
         campaign: Parsed campaign.yaml dict.
