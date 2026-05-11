@@ -172,7 +172,6 @@ class LLMDispatcher:
         # (role, phase) -> (template_name, output_format, schema_name)
         ("planner", "design"): ("design", None, None),
         ("executor", "execute-analyze"): ("execute_analyze", "json", "execute_analyze.schema.json"),
-        ("extractor", "summarize"): ("summarize", "json", "investigation_summary.schema.json"),
         ("summarizer", "summarize-gate"): ("summarize_gate", "json", "gate_summary.schema.json"),
         ("extractor", "report"): ("report", None, None),
     }
@@ -211,24 +210,42 @@ class LLMDispatcher:
 
         if phase == "design":
             if iteration > 1:
-                prev_summary_path = (
+                prev_handoff_path = (
                     self.work_dir / "runs" / f"iter-{iteration - 1}"
-                    / "investigation_summary.json"
+                    / "handoff.md"
                 )
-                if prev_summary_path.exists():
-                    ctx["investigation_summary"] = prev_summary_path.read_text()
+                if prev_handoff_path.exists():
+                    ctx["previous_handoff"] = prev_handoff_path.read_text()
                 else:
                     logger.warning(
-                        "Investigation summary for iteration %d not found at %s. "
-                        "Design prompt will proceed without prior learning context.",
-                        iteration - 1, prev_summary_path,
+                        "handoff.md for iteration %d not found at %s. "
+                        "Design prompt will proceed without prior exploration context.",
+                        iteration - 1, prev_handoff_path,
                     )
-                    ctx["investigation_summary"] = (
-                        "No investigation summary available from the previous iteration."
+                    ctx["previous_handoff"] = (
+                        "No handoff available from the previous iteration."
+                    )
+
+                prev_findings_path = (
+                    self.work_dir / "runs" / f"iter-{iteration - 1}"
+                    / "findings.json"
+                )
+                if prev_findings_path.exists():
+                    ctx["previous_findings"] = prev_findings_path.read_text()
+                else:
+                    logger.warning(
+                        "findings.json for iteration %d not found at %s.",
+                        iteration - 1, prev_findings_path,
+                    )
+                    ctx["previous_findings"] = (
+                        "No findings available from the previous iteration."
                     )
             else:
-                ctx["investigation_summary"] = (
-                    "This is the first iteration. No prior investigation summary."
+                ctx["previous_handoff"] = (
+                    "This is the first iteration. No prior handoff."
+                )
+                ctx["previous_findings"] = (
+                    "This is the first iteration. No prior findings."
                 )
 
         if phase in ("design", "execute-analyze"):
@@ -335,14 +352,20 @@ class LLMDispatcher:
                 else:
                     ctx["gate_context"] = "Findings not available."
             elif gate_type in ("continue", "end_of_campaign"):
-                summary_path = (
+                parts = []
+                findings_path = (
                     self.work_dir / "runs" / f"iter-{iteration}"
-                    / "investigation_summary.json"
+                    / "findings.json"
                 )
-                if summary_path.exists():
-                    ctx["gate_context"] = f"Investigation summary:\n```json\n{summary_path.read_text()}\n```"
-                else:
-                    ctx["gate_context"] = "Investigation summary not available."
+                if findings_path.exists():
+                    parts.append(f"Findings:\n```json\n{findings_path.read_text()}\n```")
+                handoff_path = (
+                    self.work_dir / "runs" / f"iter-{iteration}"
+                    / "handoff.md"
+                )
+                if handoff_path.exists():
+                    parts.append(f"Designer handoff:\n{handoff_path.read_text()}")
+                ctx["gate_context"] = "\n\n".join(parts) if parts else "No context available."
             else:
                 ctx["gate_context"] = "No additional context."
 

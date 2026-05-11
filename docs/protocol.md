@@ -212,16 +212,13 @@ campaign-dir/
   summary.json        — campaign rollup (generated at end)
 ```
 
-## Investigation Summary
+## Cross-Iteration Context
 
-After each non-final iteration, the orchestrator produces a bounded investigation summary (`investigation_summary.json`). This summary captures:
+Each iteration's designer produces a `handoff.md` that captures the exploration context: key discoveries, code map, dead ends, exclusion reasoning, evolution of thinking, and current status. This handoff serves two audiences:
 
-- **What was tested** — the hypothesis family and arms
-- **Key findings** — what was confirmed, refuted, or unexpected
-- **Principles changed** — which principles were inserted, updated, or pruned
-- **Open questions** — what remains unanswered
-- **Suggested next direction** — where the next iteration should focus
+1. The **executor agent** in the same iteration — operational context for running experiments
+2. The **designer agent** in the next iteration — exploration context to avoid re-discovering what's already known
 
-The next iteration's Design prompt receives this summary alongside the active principles and campaign context. This keeps agent context at O(summary) regardless of campaign depth — the Planner does not need to read the full history of all prior iterations.
+The next iteration's Design prompt receives the previous `handoff.md` and `findings.json` directly — no intermediate summarization step. This gives the designer raw access to what was learned rather than a lossy summary.
 
 The full ledger (`ledger.json`) remains on disk for audit and analysis but is not passed to agents. The deterministic ledger module (`orchestrator/ledger.py`) appends one row per iteration with prediction accuracy and principle changes, without any LLM calls.

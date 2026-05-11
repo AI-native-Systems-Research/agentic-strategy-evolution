@@ -65,9 +65,7 @@ class StubDispatcher:
                 else:
                     raise ValueError(f"Unknown phase for executor: {phase}")
             case "extractor":
-                if phase == "summarize":
-                    self._write_investigation_summary(output_path, iteration)
-                elif phase == "report":
+                if phase == "report":
                     atomic_write(output_path, "# Stub Report\n\nNo real analysis performed.\n")
                 else:
                     raise ValueError(f"Unknown phase for extractor: {phase}")
@@ -272,17 +270,6 @@ class StubDispatcher:
             ],
         }
         atomic_write(path, json.dumps(results, indent=2) + "\n")
-
-    def _write_investigation_summary(self, path: Path, iteration: int) -> None:
-        summary = {
-            "iteration": iteration,
-            "what_was_tested": f"Stub: hypothesis family tested in iteration {iteration}.",
-            "key_findings": "Stub: H-main confirmed. No significant discrepancies.",
-            "principles_changed": f"Stub: Inserted stub-principle-{iteration}.",
-            "open_questions": "Stub: No open questions from stub iteration.",
-            "suggested_next_direction": "Stub: Continue with next mechanism family.",
-        }
-        atomic_write(path, json.dumps(summary, indent=2) + "\n")
 
     def _write_gate_summary(self, path: Path, gate_type: str) -> None:
         summary = {

@@ -21,15 +21,23 @@ This is iteration {{iteration}} of the investigation.
 
 {{active_principles}}
 
-## Investigation Summary (Previous Iteration)
+## Previous Iteration Context
 
-{{investigation_summary}}
+### Previous Handoff (exploration context from last designer)
 
-**When investigation_summary exists (iteration > 1), you MUST before designing:**
-1. List each failure or null result from the previous iteration and state what caused it.
-2. For each failed assumption (e.g., "assumed preemptions > 20% but observed 0"), probe to find parameters that DO produce the needed condition.
-3. Do NOT reuse parameter ranges that produced null results — escalate or change approach.
-4. Only after verifying new parameters satisfy the regime, proceed to Phase 2.
+{{previous_handoff}}
+
+### Previous Findings (experiment results)
+
+{{previous_findings}}
+
+**When previous context exists (iteration > 1), you MUST before designing:**
+1. Read the previous handoff carefully — it contains the code map, dead ends, exclusion reasoning, and warnings from the last designer. Do NOT repeat their dead ends.
+2. List each failure or null result from the previous findings and state what caused it.
+3. For each failed assumption (e.g., "assumed preemptions > 20% but observed 0"), probe to find parameters that DO produce the needed condition.
+4. Do NOT reuse parameter ranges that produced null results — escalate or change approach.
+5. Build on the "Suggested next" from the previous handoff's Current Status section.
+6. Only after verifying new parameters satisfy the regime, proceed to Phase 2.
 
 ## Pre-gathered Repo Context
 
@@ -170,21 +178,24 @@ arms:
 
 ## Handoff
 
-Write a goal-focused handoff for the executor agent. The executor starts a FRESH session with NO memory of your exploration — this handoff is the only context it receives besides the bundle.
+Write a goal-focused handoff for the next agent. This handoff serves two audiences:
+1. The **executor agent** in this iteration (starts a fresh session, needs to run your experiments)
+2. The **designer agent** in the next iteration (needs to understand what you explored, what you ruled out, and how your thinking evolved)
 
-Before writing the handoff, mentally review your exploration session:
-1. What did you discover that the executor MUST know to succeed?
+Before writing the handoff, mentally review your exploration:
+1. What did you discover that the next agent MUST know to succeed?
 2. What commands did you validate, and what was surprising about them?
-3. What alternatives did you try that DIDN'T work (so the executor avoids them)?
-4. What assumptions did you verify, and what would break if they're wrong?
+3. What alternatives did you try that DIDN'T work?
+4. What did you deliberately EXCLUDE from the experiment, and why?
+5. How did your understanding of the system change during exploration?
 
-Be ruthlessly selective — irrelevant context is worse than missing context. But be comprehensive on what you DO include: the executor should never need to re-run a command you already validated.
+Be ruthlessly selective — irrelevant context is worse than missing context. But be comprehensive on what you DO include.
 
 ### Goal
 [Restate as a clear, actionable directive for the executor]
 
 ### Key Discoveries
-[3-7 bullets of technical context. Each must pass: "The executor cannot succeed without knowing this."
+[3-7 bullets of technical context. Each must pass: "The next agent cannot succeed without knowing this."
 Include: mechanism verified, parameter relationships discovered, capacity/threshold measurements observed.
 Use exact values from your probes — not assumptions.]
 
@@ -195,14 +206,25 @@ Use exact values from your probes — not assumptions.]
 - **Baseline result:** [one key metric value you observed, proving it works]
 
 ### Code Map
-[A troubleshooting index — not every file you explored, only the ones the executor might need to read or debug. For each entry include file:line, what's there, and WHEN the executor would need it.
+[A troubleshooting index — not every file you explored, only the ones the next agent might need to read or debug. For each entry include file:line, what's there, and WHEN to look at it.
 Example: `sim/cache.go:126` — GetCachedBlocks hash lookup. Check here if cache hits are lower than expected.]
 
 ### Code Targets
 [For each arm with code_changes: file path, function/line, what to change, and WHY this location (not another)]
 
 ### What I Tried That Didn't Work
-[Commands that failed, flags that don't exist, parameter ranges that produced null results, paths that looked promising but weren't. This prevents the executor from repeating your dead ends.]
+[Commands that failed, flags that don't exist, parameter ranges that produced null results, paths that looked promising but weren't. This prevents the next agent from repeating your dead ends.]
+
+### What I Excluded and Why
+[Areas you explored but deliberately left out of the experiment. Example: "Looked at multi-instance routing but excluded because the research question focuses on single-instance KV cache behavior." This helps the next iteration's designer decide where to expand.]
+
+### Evolution of Thinking
+[How your understanding shifted during exploration. Example: "Initially assumed preemption was the bottleneck, but probes showed scheduling delay < 1ms — the real bottleneck is prefill compute." This prevents the next designer from starting with the same wrong assumption.]
+
+### Current Status
+- **Validated:** [what's confirmed and working]
+- **Uncertain:** [what you suspect but couldn't fully verify]
+- **Suggested next:** [what the next iteration should investigate based on what you learned]
 
 ### Warnings & Constraints
 [Gotchas: commands that behave unexpectedly, flags with misleading names, edge cases in the build system, parameter interactions that are non-obvious. Include the evidence — "I observed X when I expected Y".]

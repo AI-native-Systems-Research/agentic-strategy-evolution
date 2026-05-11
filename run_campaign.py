@@ -210,24 +210,18 @@ def run_campaign(
         if outcome != IterationOutcome.CONTINUE:
             raise ValueError(f"Unexpected outcome: {outcome}")
 
-        # Post-iteration: ledger + investigation summary
+        # Post-iteration: ledger
         append_ledger_row(work_dir, i)
 
-        dispatcher = LLMDispatcher(
-            work_dir=work_dir, campaign=campaign,
-            model=_resolve_model(campaign, "report", model),
-        )
         iter_dir = work_dir / "runs" / f"iter-{i}"
-        dispatcher.dispatch(
-            "extractor", "summarize",
-            output_path=iter_dir / "investigation_summary.json",
-            iteration=i,
-        )
-        print(f"  -> {iter_dir / 'investigation_summary.json'}")
 
         # Generate continue gate summary
         gate_summary_path = iter_dir / "gate_summary_continue.json"
         try:
+            dispatcher = LLMDispatcher(
+                work_dir=work_dir, campaign=campaign,
+                model=_resolve_model(campaign, "report", model),
+            )
             dispatcher.dispatch(
                 "summarizer", "summarize-gate",
                 output_path=gate_summary_path,

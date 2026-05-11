@@ -96,11 +96,9 @@ class TestTwoIterationHappyPath:
         assert len(iter_rows) == 2  # both iter-1 and iter-2 (final) get ledger rows
         jsonschema.validate(ledger, _load_schema("ledger.schema.json"))
 
-        # Investigation summary should exist for iter-1
-        summary_path = work_dir / "runs" / "iter-1" / "investigation_summary.json"
-        assert summary_path.exists()
-        summary = json.loads(summary_path.read_text())
-        jsonschema.validate(summary, _load_schema("investigation_summary.schema.json"))
+        # Handoff should exist for iter-1 (context for iter-2 designer)
+        handoff_path = work_dir / "runs" / "iter-1" / "handoff.md"
+        assert handoff_path.exists()
 
         # Principles should have accumulated across iterations
         principles = json.loads((work_dir / "principles.json").read_text())
@@ -168,9 +166,9 @@ class TestThreeIterations:
         iter_rows = [r for r in ledger["iterations"] if r["iteration"] > 0]
         assert len(iter_rows) == 3
 
-        # Summaries for iter 1 and 2 (not iter 3 since it's final)
-        assert (work_dir / "runs" / "iter-1" / "investigation_summary.json").exists()
-        assert (work_dir / "runs" / "iter-2" / "investigation_summary.json").exists()
+        # Handoffs for iter 1 and 2 (not iter 3 since it's final)
+        assert (work_dir / "runs" / "iter-1" / "handoff.md").exists()
+        assert (work_dir / "runs" / "iter-2" / "handoff.md").exists()
 
 
 class TestAbortDuringIteration:
