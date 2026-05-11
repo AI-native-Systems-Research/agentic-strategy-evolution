@@ -215,7 +215,7 @@ Produced by the designer agent as part of its output. A structured context trans
 | Current Status | Validated / uncertain / suggested next |
 | Warnings & Constraints | Gotchas with evidence |
 
-Located at `runs/iter-N/handoff.md`. The executor receives it as context. The iteration N+1 designer receives it alongside `findings.json` to inherit exploration knowledge without re-discovering it.
+The living document is at `handoff.md` (campaign root). Per-iteration snapshots are saved at `runs/iter-N/handoff_snapshot.md` for audit. The executor and next iteration's designer both read the campaign-level file.
 
 ## 6b. gate_summary_*.json — "What should I know before deciding?"
 

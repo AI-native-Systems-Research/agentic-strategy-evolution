@@ -138,8 +138,8 @@ def _split_design_output(raw: str, iter_dir: Path) -> None:
         yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False),
     )
     if handoff_md:
-        # Save per-iteration copy for audit
-        atomic_write(iter_dir / "handoff.md", handoff_md + "\n")
+        # Save per-iteration snapshot for audit
+        atomic_write(iter_dir / "handoff_snapshot.md", handoff_md + "\n")
         # Update campaign-level handoff (the living document)
         atomic_write(iter_dir.parent.parent / "handoff.md", handoff_md + "\n")
 

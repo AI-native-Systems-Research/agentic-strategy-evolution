@@ -98,8 +98,8 @@ class TestTwoIterationHappyPath:
 
         # Campaign-level handoff should exist (living document)
         assert (work_dir / "handoff.md").exists()
-        # Per-iteration copy should also exist for audit
-        assert (work_dir / "runs" / "iter-1" / "handoff.md").exists()
+        # Per-iteration snapshot should also exist for audit
+        assert (work_dir / "runs" / "iter-1" / "handoff_snapshot.md").exists()
 
         # Principles should have accumulated across iterations
         principles = json.loads((work_dir / "principles.json").read_text())
@@ -169,9 +169,9 @@ class TestThreeIterations:
 
         # Campaign-level handoff should exist
         assert (work_dir / "handoff.md").exists()
-        # Per-iteration copies for audit
-        assert (work_dir / "runs" / "iter-1" / "handoff.md").exists()
-        assert (work_dir / "runs" / "iter-2" / "handoff.md").exists()
+        # Per-iteration snapshots for audit
+        assert (work_dir / "runs" / "iter-1" / "handoff_snapshot.md").exists()
+        assert (work_dir / "runs" / "iter-2" / "handoff_snapshot.md").exists()
 
 
 class TestAbortDuringIteration:

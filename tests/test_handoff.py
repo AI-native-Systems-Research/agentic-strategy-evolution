@@ -49,9 +49,9 @@ class TestHandoffExtraction:
     def test_handoff_md_created_when_present(self, tmp_path: Path, iter_dir: Path) -> None:
         raw = _make_raw_design(include_handoff=True)
         _split_design_output(raw, iter_dir)
-        # Per-iteration copy
-        assert (iter_dir / "handoff.md").exists()
-        content = (iter_dir / "handoff.md").read_text()
+        # Per-iteration snapshot
+        assert (iter_dir / "handoff_snapshot.md").exists()
+        content = (iter_dir / "handoff_snapshot.md").read_text()
         assert "### Goal" in content
         assert "### Key Discoveries" in content
         assert "Test whether X improves latency" in content
@@ -62,7 +62,7 @@ class TestHandoffExtraction:
     def test_handoff_md_not_created_when_absent(self, tmp_path: Path, iter_dir: Path) -> None:
         raw = _make_raw_design(include_handoff=False)
         _split_design_output(raw, iter_dir)
-        assert not (iter_dir / "handoff.md").exists()
+        assert not (iter_dir / "handoff_snapshot.md").exists()
         assert not (tmp_path / "handoff.md").exists()
         assert (iter_dir / "problem.md").exists()
         assert (iter_dir / "bundle.yaml").exists()
@@ -102,7 +102,7 @@ class TestHandoffExtraction:
         _split_design_output(raw, iter_dir)
         parsed_bundle = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
         assert parsed_bundle["metadata"]["family"] == "test"
-        handoff = (iter_dir / "handoff.md").read_text()
+        handoff = (iter_dir / "handoff_snapshot.md").read_text()
         assert "some_config" in handoff
 
 
@@ -116,12 +116,12 @@ class TestHandoffRegexTolerance:
     def test_heading_case_insensitive(self, iter_dir: Path) -> None:
         raw = _make_raw_design(include_handoff=True, handoff_heading="## HANDOFF")
         _split_design_output(raw, iter_dir)
-        assert (iter_dir / "handoff.md").exists()
+        assert (iter_dir / "handoff_snapshot.md").exists()
 
     def test_heading_level_3(self, iter_dir: Path) -> None:
         raw = _make_raw_design(include_handoff=True, handoff_heading="### Handoff")
         _split_design_output(raw, iter_dir)
-        assert (iter_dir / "handoff.md").exists()
+        assert (iter_dir / "handoff_snapshot.md").exists()
 
     def test_no_false_positive_on_handoff_notes(self, iter_dir: Path) -> None:
         """'## Handoff Notes' should NOT match — only bare '## Handoff' heading."""
@@ -139,4 +139,4 @@ class TestHandoffRegexTolerance:
             f"```yaml\n{bundle_yaml}```\n"
         )
         _split_design_output(raw, iter_dir)
-        assert not (iter_dir / "handoff.md").exists()
+        assert not (iter_dir / "handoff_snapshot.md").exists()
