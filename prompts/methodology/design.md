@@ -194,8 +194,9 @@ Use exact values from your probes — not assumptions.]
 - **Output format:** [how metrics are emitted — flag, file path, or stdout format]
 - **Baseline result:** [one key metric value you observed, proving it works]
 
-### Key File Paths
-[Only files the executor needs to read or patch. Include file:line and what's there.]
+### Code Map
+[A troubleshooting index — not every file you explored, only the ones the executor might need to read or debug. For each entry include file:line, what's there, and WHEN the executor would need it.
+Example: `sim/cache.go:126` — GetCachedBlocks hash lookup. Check here if cache hits are lower than expected.]
 
 ### Code Targets
 [For each arm with code_changes: file path, function/line, what to change, and WHY this location (not another)]
