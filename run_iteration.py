@@ -347,20 +347,15 @@ def run_iteration(
                 )
                 (iter_dir / ".experiment_id").write_text(experiment_id)
                 print(f"  Experiment worktree: {experiment_dir}")
-            if cli_dispatcher and experiment_dir:
-                # CLI path: agent writes files directly to iter_dir
-                with cli_dispatcher.override_cwd(experiment_dir):
+            if cli_dispatcher:
+                import contextlib
+                ctx = cli_dispatcher.override_cwd(experiment_dir) if experiment_dir else contextlib.nullcontext()
+                with ctx:
                     exec_dispatcher.dispatch(
                         "executor", "execute-analyze",
                         output_path=iter_dir / "executor_log.md",
                         iteration=iteration,
                     )
-            elif cli_dispatcher:
-                exec_dispatcher.dispatch(
-                    "executor", "execute-analyze",
-                    output_path=iter_dir / "executor_log.md",
-                    iteration=iteration,
-                )
             else:
                 # LLM API path or stub: dispatch and check if files were written directly
                 output_file = iter_dir / "execute_analyze_output.json"
@@ -405,28 +400,33 @@ def run_iteration(
             raise
 
     # ─── VALIDATE ─────────────────────────────────────────────────────────
+    # This re-runs validation for the resume-from-checkpoint path.
+    # In normal flow, EXECUTE_ANALYZE already validated.
     if _enter_phase(engine, "VALIDATE"):
         print(f"\n{'='*60}")
         print(f"  VALIDATE — post-check artifact validation")
         print(f"{'='*60}")
-        # Clean up experiment worktree if it exists
+        # Recover worktree reference on resume
         if not experiment_dir and repo_path:
             eid_path = iter_dir / ".experiment_id"
             if eid_path.exists():
                 experiment_id = eid_path.read_text().strip()
-        if repo_path and experiment_id:
-            from orchestrator.worktree import remove_experiment_worktree
-            remove_experiment_worktree(Path(repo_path), experiment_id)
 
-        from orchestrator.validate import validate_execution
-        result = validate_execution(iter_dir)
-        if result["status"] == "pass":
-            print("  Validation passed.")
-        else:
-            raise RuntimeError(
-                f"Post-check validation failed:\n"
-                + "\n".join(f"  - {e}" for e in result["errors"])
-            )
+        # Validate first, then clean up worktree (so it's available for debugging on failure)
+        try:
+            from orchestrator.validate import validate_execution
+            result = validate_execution(iter_dir)
+            if result["status"] == "pass":
+                print("  Validation passed.")
+            else:
+                raise RuntimeError(
+                    f"Post-check validation failed:\n"
+                    + "\n".join(f"  - {e}" for e in result["errors"])
+                )
+        finally:
+            if repo_path and experiment_id:
+                from orchestrator.worktree import remove_experiment_worktree
+                remove_experiment_worktree(Path(repo_path), experiment_id)
 
     # Validate findings and check fast-fail rules
     findings_path = iter_dir / "findings.json"
