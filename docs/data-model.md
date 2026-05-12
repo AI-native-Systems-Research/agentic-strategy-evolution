@@ -153,7 +153,15 @@ The experiment plan. Produced by the executor during EXECUTE_ANALYZE. Contains e
 | `arms[].conditions[].output` | Optional: path to output file to capture |
 | `arms[].conditions[].description` | Optional human description |
 
-Located at `runs/iter-N/experiment_plan.yaml`. Commands are validated by the executor agent before emission.
+Located at `runs/iter-N/experiment_plan.yaml`. The agent writes the plan first, then executes it. All output paths use absolute paths to `runs/iter-N/results/` so files persist after worktree cleanup.
+
+## 4b2. patches/ — "What code changes were made?"
+
+Directory at `runs/iter-N/patches/`. Only present in evolve mode (when bundle arms have `code_changes`). Each file is a git diff named by arm type (e.g., `h-main.patch`). The agent creates patches, saves them here, and references them in the experiment plan.
+
+## 4b3. results/ — "What did the experiments produce?"
+
+Directory at `runs/iter-N/results/`. Contains experiment output files organized by arm (e.g., `results/h-main/baseline-s42.json`). The agent writes results here using absolute paths so they survive worktree cleanup.
 
 ## 4c. execution_results.json — "What did the commands produce?"
 
