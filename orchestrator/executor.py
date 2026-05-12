@@ -45,6 +45,7 @@ def execute_plan(
     iter_dir = Path(iter_dir)
     results_dir = iter_dir / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
+    (iter_dir / "inputs").mkdir(parents=True, exist_ok=True)
 
     # Run setup (fails fast — prerequisite for all arms)
     try:
@@ -165,6 +166,28 @@ def _run_arm(
                     "output_content": None,
                 })
                 continue
+
+        # Verify declared input files exist before running
+        input_paths = cond.get("inputs", [])
+        missing = [
+            p for p in input_paths
+            if not (Path(p) if Path(p).is_absolute() else cwd / p).exists()
+        ]
+        if missing:
+            msg = f"Missing input files: {missing}"
+            logger.warning("Condition %s/%s skipped: %s", arm_id, name, msg)
+            print(f"    [{arm_id}] {name}: [missing inputs, skipping]", flush=True)
+            (arm_dir / f"{name}.stdout").write_text("")
+            (arm_dir / f"{name}.stderr").write_text(msg)
+            conditions.append({
+                "name": name,
+                "cmd": cmd,
+                "exit_code": -2,
+                "stdout_tail": "",
+                "stderr_tail": msg,
+                "output_content": None,
+            })
+            continue
 
         print(f"    [{arm_id}] {name}: {cmd}", flush=True)
         result = _run_cmd(cmd, cwd, timeout)

@@ -108,7 +108,7 @@ Both agents write artifacts directly to the campaign directory (`iter_dir`) and 
 
 **Validation CLI** (`orchestrator/validate.py`):
 - `nous validate design --dir <iter_dir>` — checks problem.md, bundle.yaml (schema), handoff_snapshot.md
-- `nous validate execution --dir <iter_dir>` — checks experiment_plan.yaml (schema), findings.json (schema), principle_updates.json, patches (when code_changes exist), output files referenced in plan
+- `nous validate execution --dir <iter_dir>` — checks experiment_plan.yaml (schema), findings.json (schema), principle_updates.json, patches (when code_changes exist), input and output files referenced in plan
 
 **Implementations:**
 
