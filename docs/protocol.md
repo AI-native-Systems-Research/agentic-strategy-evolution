@@ -57,14 +57,15 @@ Human approval gate (hard stop). The human sees the hypothesis bundle. If the hu
 A single `claude -p` session handles the entire execution pipeline:
 
 1. Reads the designer's handoff — uses validated commands and code map instead of re-exploring
-2. Writes `experiment_plan.yaml` with exact commands per arm (plan first, execute second)
-3. Creates patches for code-change arms (evolve mode), saves to `patches/`
-4. Runs the plan in an isolated git worktree, writes results to `results/`
-5. Compares observed metrics against predictions
-6. Writes `findings.json` and `principle_updates.json`
-7. Runs `nous validate execution` — retries until all artifacts pass
+2. Creates any input files needed by commands (configs, workloads) in `inputs/`
+3. Writes `experiment_plan.yaml` with exact commands per arm (plan first, execute second)
+4. Creates patches for code-change arms (evolve mode), saves to `patches/`
+5. Runs the plan in an isolated git worktree, writes results to `results/`
+6. Compares observed metrics against predictions
+7. Writes `findings.json` and `principle_updates.json`
+8. Runs `nous validate execution` — retries until all artifacts pass
 
-All output files use absolute paths to the campaign directory so they persist after worktree cleanup.
+All file paths (inputs, outputs) use absolute paths to the campaign directory so they persist after worktree cleanup.
 
 **Key artifacts:**
 - `experiment_plan.yaml` — exact commands per arm

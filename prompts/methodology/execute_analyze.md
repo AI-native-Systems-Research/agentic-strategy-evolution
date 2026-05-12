@@ -89,15 +89,21 @@ arms:
       - name: "baseline-seed42"
         cmd: "<baseline command with --seed 42 --output {{iter_dir}}/results/h-main/baseline-s42.json>"
         output: "{{iter_dir}}/results/h-main/baseline-s42.json"
+        inputs:
+          - "{{iter_dir}}/inputs/workload.yaml"
       - name: "treatment-seed42"
         cmd: "git apply {{iter_dir}}/patches/h-main.patch && <build> && <run with --output {{iter_dir}}/results/h-main/treatment-s42.json>"
         output: "{{iter_dir}}/results/h-main/treatment-s42.json"
+        inputs:
+          - "{{iter_dir}}/inputs/workload.yaml"
 ```
 
-**Important:** All output paths MUST use absolute paths under `{{iter_dir}}/results/`. Do NOT use relative paths — the experiment runs in a worktree that gets cleaned up.
+**Important:**
+- All output paths MUST use absolute paths under `{{iter_dir}}/results/`. Do NOT use relative paths — the experiment runs in a worktree that gets cleaned up.
+- If you create ANY input files for the experiment (config files, workload specs, policy definitions, parameter files), write them to `{{iter_dir}}/inputs/` and list them in the condition's `inputs` array. Do NOT write input files to `/tmp/` or other temporary locations — they will be lost and the experiment will not be reproducible.
 
-### Step 5: Create output directories
-For every output path in your plan, ensure the parent directory exists (`mkdir -p {{iter_dir}}/results/<arm_id>`).
+### Step 5: Create output and input directories
+For every output path in your plan, ensure the parent directory exists (`mkdir -p {{iter_dir}}/results/<arm_id>`). Also create the inputs directory: `mkdir -p {{iter_dir}}/inputs`.
 
 ## Phase 2: Execute the plan
 

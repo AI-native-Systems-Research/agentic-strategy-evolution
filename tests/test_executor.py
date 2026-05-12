@@ -101,6 +101,54 @@ class TestExecutePlanHappyPath:
         assert results["plan_ref"] == "runs/iter-1/experiment_plan.yaml"
 
 
+    def test_inputs_directory_created(self, tmp_path):
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+        execute_plan(SIMPLE_PLAN, cwd=tmp_path, iter_dir=iter_dir)
+        assert (iter_dir / "inputs").is_dir()
+
+    def test_missing_input_file_skips_condition(self, tmp_path):
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+        plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [{
+                "arm_id": "h-main",
+                "conditions": [{
+                    "name": "needs-input",
+                    "cmd": "echo should-not-run",
+                    "inputs": [str(tmp_path / "nonexistent.yaml")],
+                }],
+            }],
+        }
+        results = execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir)
+        cond = results["arms"][0]["conditions"][0]
+        assert cond["exit_code"] == -2
+        assert "Missing input" in cond["stderr_tail"]
+
+    def test_existing_input_file_allows_run(self, tmp_path):
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+        input_file = iter_dir / "inputs" / "config.yaml"
+        input_file.parent.mkdir(parents=True)
+        input_file.write_text("key: value")
+        plan = {
+            "metadata": {"iteration": 1, "bundle_ref": "x"},
+            "arms": [{
+                "arm_id": "h-main",
+                "conditions": [{
+                    "name": "has-input",
+                    "cmd": "echo ok",
+                    "inputs": [str(input_file)],
+                }],
+            }],
+        }
+        results = execute_plan(plan, cwd=tmp_path, iter_dir=iter_dir)
+        cond = results["arms"][0]["conditions"][0]
+        assert cond["exit_code"] == 0
+        assert "ok" in cond["stdout_tail"]
+
+
 class TestExecutePlanFailures:
     def test_arm_failure_recorded_not_raised(self, tmp_path):
         iter_dir = tmp_path / "iter-1"

@@ -246,3 +246,73 @@ class TestValidateExecution:
         _setup_execution(d)
         result = validate_execution(d)
         assert result["status"] == "pass"
+
+    def test_missing_input_file_referenced_in_plan(self, tmp_path: Path) -> None:
+        """Plan references input files that don't exist."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        plan_with_inputs = {
+            "metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+            "arms": [{"arm_id": "h-main", "conditions": [
+                {"name": "baseline", "cmd": "echo test",
+                 "inputs": [str(d / "inputs" / "workload.yaml")]},
+            ]}],
+        }
+        (d / "experiment_plan.yaml").write_text(yaml.safe_dump(plan_with_inputs))
+        result = validate_execution(d)
+        assert result["status"] == "fail"
+        assert any("input file" in e for e in result["errors"])
+
+    def test_input_file_exists_passes(self, tmp_path: Path) -> None:
+        """Plan references input files that exist — should pass."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        inputs_dir = d / "inputs"
+        inputs_dir.mkdir()
+        (inputs_dir / "workload.yaml").write_text("rate: 80")
+        plan_with_inputs = {
+            "metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+            "arms": [{"arm_id": "h-main", "conditions": [
+                {"name": "baseline", "cmd": "echo test",
+                 "inputs": [str(inputs_dir / "workload.yaml")]},
+            ]}],
+        }
+        (d / "experiment_plan.yaml").write_text(yaml.safe_dump(plan_with_inputs))
+        result = validate_execution(d)
+        assert result["status"] == "pass"
+
+    def test_relative_input_path_resolved(self, tmp_path: Path) -> None:
+        """Relative input paths are resolved against iter_dir."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        inputs_dir = d / "inputs"
+        inputs_dir.mkdir()
+        (inputs_dir / "config.json").write_text("{}")
+        plan_with_inputs = {
+            "metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+            "arms": [{"arm_id": "h-main", "conditions": [
+                {"name": "baseline", "cmd": "echo test",
+                 "inputs": ["inputs/config.json"]},
+            ]}],
+        }
+        (d / "experiment_plan.yaml").write_text(yaml.safe_dump(plan_with_inputs))
+        result = validate_execution(d)
+        assert result["status"] == "pass"
+
+    def test_input_check_runs_despite_other_errors(self, tmp_path: Path) -> None:
+        """Input file check runs even when other validation errors exist."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        (d / "findings.json").unlink()  # cause a prior error
+        plan_with_inputs = {
+            "metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+            "arms": [{"arm_id": "h-main", "conditions": [
+                {"name": "baseline", "cmd": "echo test",
+                 "inputs": [str(d / "inputs" / "missing.yaml")]},
+            ]}],
+        }
+        (d / "experiment_plan.yaml").write_text(yaml.safe_dump(plan_with_inputs))
+        result = validate_execution(d)
+        assert result["status"] == "fail"
+        assert any("input file" in e for e in result["errors"])
+        assert any("findings" in e for e in result["errors"])

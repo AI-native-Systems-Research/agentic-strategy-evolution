@@ -114,8 +114,8 @@ def validate_execution(iter_dir: Path) -> dict:
         except json.JSONDecodeError as exc:
             errors.append(f"principle_updates.json is not valid JSON: {exc}")
 
-    # output files — check that files referenced in plan conditions exist
-    if plan_path.exists() and not errors:
+    # file references — check that output and input files in plan conditions exist
+    if plan_path.exists():
         try:
             plan = yaml.safe_load(plan_path.read_text())
             for arm in plan.get("arms", []):
@@ -128,6 +128,15 @@ def validate_execution(iter_dir: Path) -> dict:
                         if not output_file.exists():
                             errors.append(
                                 f"output file {cond['output']} referenced in "
+                                f"{arm['arm_id']}/{cond['name']} not found"
+                            )
+                    for input_path in cond.get("inputs", []):
+                        input_file = Path(input_path)
+                        if not input_file.is_absolute():
+                            input_file = iter_dir / input_path
+                        if not input_file.exists():
+                            errors.append(
+                                f"input file {input_path} referenced in "
                                 f"{arm['arm_id']}/{cond['name']} not found"
                             )
         except (yaml.YAMLError, KeyError):

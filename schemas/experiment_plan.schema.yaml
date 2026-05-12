@@ -60,5 +60,9 @@ properties:
                 minLength: 1
               output:
                 type: string
+              inputs:
+                type: array
+                items:
+                  type: string
               description:
                 type: string

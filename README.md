@@ -170,6 +170,7 @@ your-repo/.nous/<run_id>/
     findings.json         # prediction vs outcome
     principle_updates.json # proposed principle changes
     patches/              # code diffs (evolve mode only)
+    inputs/               # agent-created input files (configs, workloads)
     results/              # experiment output files
 ```
 

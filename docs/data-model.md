@@ -151,6 +151,7 @@ The experiment plan. Produced by the executor during EXECUTE_ANALYZE. Contains e
 | `arms[].conditions[].name` | Condition name (e.g., "baseline-seed42") |
 | `arms[].conditions[].cmd` | Exact shell command to execute |
 | `arms[].conditions[].output` | Optional: path to output file to capture |
+| `arms[].conditions[].inputs` | Optional: array of input file paths created by the agent |
 | `arms[].conditions[].description` | Optional human description |
 
 Located at `runs/iter-N/experiment_plan.yaml`. The agent writes the plan first, then executes it. All output paths use absolute paths to `runs/iter-N/results/` so files persist after worktree cleanup.
@@ -159,7 +160,11 @@ Located at `runs/iter-N/experiment_plan.yaml`. The agent writes the plan first, 
 
 Directory at `runs/iter-N/patches/`. Only present in evolve mode (when bundle arms have `code_changes`). Each file is a git diff named by arm type (e.g., `h-main.patch`). The agent creates patches, saves them here, and references them in the experiment plan.
 
-## 4b3. results/ — "What did the experiments produce?"
+## 4b3. inputs/ — "What input files did the agent create?"
+
+Directory at `runs/iter-N/inputs/`. Contains agent-created input files needed by experiment commands (config files, workload specs, policy definitions). The agent writes these here instead of `/tmp/` so the experiment is reproducible. Referenced in the plan's `inputs` array per condition.
+
+## 4b4. results/ — "What did the experiments produce?"
 
 Directory at `runs/iter-N/results/`. Contains experiment output files organized by arm (e.g., `results/h-main/baseline-s42.json`). The agent writes results here using absolute paths so they survive worktree cleanup.
 

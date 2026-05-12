@@ -122,6 +122,7 @@ After a campaign, your working directory contains:
 - **`runs/iter-N/findings.json`** — Prediction vs. outcome analysis
 - **`runs/iter-N/principle_updates.json`** — Proposed principle changes
 - **`runs/iter-N/patches/`** — Code diffs (evolve mode only)
+- **`runs/iter-N/inputs/`** — Agent-created input files (configs, workloads)
 - **`runs/iter-N/results/`** — Experiment output files
 
 ## Choosing a model
