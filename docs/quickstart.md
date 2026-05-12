@@ -76,7 +76,9 @@ prompts:
 python run_campaign.py campaign.yaml --max-iterations 3
 ```
 
-This loops through iterations. Each iteration runs the full Nous loop (design, execute+analyze, validate) and pauses at two human gates for your approval.
+When `repo_path` is set in `campaign.yaml`, the campaign directory is created inside the target repo at `.nous/<run_id>/`.
+
+Each iteration runs the full Nous loop (design → execute+analyze → validate) and pauses at two human gates. Both agents write artifacts directly to disk and run `nous validate` before claiming done — if validation fails, the agent fixes and retries.
 
 Options:
 
@@ -110,15 +112,17 @@ Each gate shows a formatted summary before asking for your decision. Type `appro
 
 After a campaign, your working directory contains:
 
+- **`handoff.md`** — Living exploration context (updated each iteration)
+- **`principles.json`** — Accumulated principles across all iterations
+- **`ledger.json`** — One row per completed iteration
 - **`runs/iter-N/problem.md`** — How the problem was framed
 - **`runs/iter-N/bundle.yaml`** — The hypothesis bundle
-- **`handoff.md`** — Living exploration context (campaign-level, updated each iteration)
-- **`runs/iter-N/handoff_snapshot.md`** — Per-iteration handoff snapshot for audit
+- **`runs/iter-N/handoff_snapshot.md`** — Iteration snapshot of handoff for audit
+- **`runs/iter-N/experiment_plan.yaml`** — Exact commands per arm
 - **`runs/iter-N/findings.json`** — Prediction vs. outcome analysis
-- **`runs/iter-N/gate_summary_*.json`** — Human-readable gate summaries
 - **`runs/iter-N/principle_updates.json`** — Proposed principle changes
-- **`ledger.json`** — One row per completed iteration
-- **`principles.json`** — Accumulated principles across all iterations
+- **`runs/iter-N/patches/`** — Code diffs (evolve mode only)
+- **`runs/iter-N/results/`** — Experiment output files
 
 ## Choosing a model
 

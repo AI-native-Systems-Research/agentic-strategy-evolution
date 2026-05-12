@@ -100,14 +100,20 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 
 | Role | Invoked During | Produces |
 |---|---|---|
-| **Planner** (Opus, `claude -p`) | DESIGN | `problem.md`, `bundle.yaml` |
-| **Executor** (Sonnet, `claude -p`) | EXECUTE_ANALYZE | `experiment_plan.yaml`, `execution_results.json`, `findings.json`, `principle_updates.json` |
-| **Python orchestrator** | VALIDATE | Replays `experiment_plan.yaml`, merges principles by ID into `principles.json` (no LLM) |
+| **Planner** (Opus, `claude -p`) | DESIGN | `problem.md`, `bundle.yaml`, `handoff_snapshot.md` |
+| **Executor** (Sonnet, `claude -p`) | EXECUTE_ANALYZE | `experiment_plan.yaml`, `findings.json`, `principle_updates.json`, `patches/`, `results/` |
+| **Python orchestrator** | VALIDATE | Post-check: validates artifacts exist and pass schemas, merges principles (no LLM) |
+
+Both agents write artifacts directly to the campaign directory (`iter_dir`) and run `nous validate` before claiming done. If validation fails, the agent reads the errors, fixes the artifacts, and retries. The orchestrator runs a post-check as a safety net.
+
+**Validation CLI** (`orchestrator/validate.py`):
+- `nous validate design --dir <iter_dir>` — checks problem.md, bundle.yaml (schema), handoff_snapshot.md
+- `nous validate execution --dir <iter_dir>` — checks experiment_plan.yaml (schema), findings.json (schema), principle_updates.json, patches (when code_changes exist), output files referenced in plan
 
 **Implementations:**
 
 - `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
-- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Used for both the planner (DESIGN, Opus) and executor (EXECUTE_ANALYZE, Sonnet) roles. Sends prompts via stdin to the Claude CLI. The agent can read files, grep code, and run commands in the target repo. Supports `override_cwd()` context manager for temporarily pointing the executor at a git worktree.
+- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Agents write files directly to `iter_dir`. Supports `override_cwd()` context manager for pointing the executor at a git worktree.
 
 **Dispatch interface:**
 ```python

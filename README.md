@@ -96,7 +96,9 @@ Two LLM calls per iteration, both via `claude -p`:
 | DESIGN | Opus | Planner — explores, frames, designs |
 | EXECUTE_ANALYZE | Sonnet | Executor — builds, patches, runs, analyzes |
 
-VALIDATE and principle merge are Python-only (no LLM calls).
+VALIDATE is a lightweight post-check (no LLM calls). Principle merge is Python-only.
+
+Both agents write their artifacts directly to disk and run `nous validate` before claiming done. If validation fails, the agent reads the errors, fixes the artifacts, and retries.
 
 ### 4. Create a campaign
 
@@ -114,6 +116,8 @@ target_system:
     What the system does and its architecture.
   repo_path: /path/to/your/repo
 ```
+
+When `repo_path` is set, the campaign directory is created inside the target repo at `.nous/<run_id>/`. All artifacts live there.
 
 The planner explores the codebase to discover metrics, knobs, and execution methods. You can optionally provide `observable_metrics` and `controllable_knobs` as hints — see [examples/campaign.yaml](examples/campaign.yaml) for all options.
 
@@ -144,26 +148,29 @@ python run_campaign.py campaign.yaml --auto-approve --max-iterations 1  # quick 
 
 ```bash
 git clone https://github.com/inference-sim/inference-sim.git blis
-cd blis && go build -o blis . && cd ..
 # Edit examples/campaign.yaml: set repo_path to your blis/ path
 python run_campaign.py examples/campaign.yaml --max-iterations 3
 ```
 
+Campaign artifacts will be created at `blis/.nous/<run_id>/`.
+
 ### Output
 
 ```
-blis-run/
+your-repo/.nous/<run_id>/
   state.json              # orchestrator checkpoint
   principles.json         # accumulated principles
   ledger.json             # one row per iteration
+  handoff.md              # living exploration context (updated each iteration)
   runs/iter-N/
     problem.md            # problem framing
     bundle.yaml           # hypothesis bundle
+    handoff_snapshot.md   # iteration snapshot of handoff
     experiment_plan.yaml  # exact commands per arm
-    execution_results.json # raw output per condition
     findings.json         # prediction vs outcome
     principle_updates.json # proposed principle changes
-    gate_summary_*.json   # human-readable summaries
+    patches/              # code diffs (evolve mode only)
+    results/              # experiment output files
 ```
 
 ### Run tests
@@ -179,6 +186,7 @@ schemas/                 JSON Schema definitions (Draft 2020-12)
 templates/               Starter files for new campaigns
 orchestrator/            Python orchestrator (deterministic, not an LLM)
   engine.py                State machine with atomic checkpoint/resume
+  validate.py              Artifact validation CLI (nous validate design/execution)
   dispatch.py              Stub agent dispatch (for testing without LLM)
   cli_dispatch.py          Code-access agent dispatch via claude -p
   prompt_loader.py         Template loading with {{placeholder}} rendering

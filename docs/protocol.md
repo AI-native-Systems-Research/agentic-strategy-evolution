@@ -26,11 +26,11 @@ All four preconditions must hold for a system to be investigated with Nous:
 
 Each iteration follows 7 phases: INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → VALIDATE → HUMAN_FINDINGS_GATE → DONE.
 
-Two LLM calls per iteration (both via `claude -p`): Opus for DESIGN, Sonnet for EXECUTE_ANALYZE. VALIDATE and principle merge are Python-only.
+Two LLM calls per iteration (both via `claude -p`): Opus for DESIGN, Sonnet for EXECUTE_ANALYZE. Both agents write artifacts directly to the campaign directory and run `nous validate` before claiming done. VALIDATE is a lightweight post-check (no LLM).
 
 ### DESIGN (Planner, Opus)
 
-The Planner agent explores the target system, validates assumptions, then produces two artifacts:
+The Planner agent explores the target system, validates assumptions, then produces three artifacts:
 
 **Problem framing** (`problem.md`):
 - Research question — what mechanism or behavior is under investigation
@@ -43,6 +43,11 @@ The Planner agent explores the target system, validates assumptions, then produc
 **Hypothesis bundle** (`bundle.yaml`):
 The agent decomposes the investigation into a structured set of falsifiable predictions — a hypothesis bundle.
 
+**Handoff** (`handoff_snapshot.md`):
+A structured context document for the executor and the next iteration's designer. Contains key discoveries, code map, dead ends, exclusion reasoning, and current status. This is a living document — each iteration's designer reads the previous handoff and curates it (keeps relevant entries, removes outdated ones, adds new findings).
+
+The agent runs `nous validate design` before finishing. If validation fails, it reads the errors and fixes the artifacts.
+
 ### HUMAN_DESIGN_GATE
 
 Human approval gate (hard stop). The human sees the hypothesis bundle. If the human rejects, the Planner revises (loops back to DESIGN). If approved, the bundle advances to execution.
@@ -51,14 +56,15 @@ Human approval gate (hard stop). The human sees the hypothesis bundle. If the hu
 
 A single `claude -p` session handles the entire execution pipeline:
 
-1. Receives the approved hypothesis bundle
-2. Explores the target repo, discovers build commands
-3. Produces `experiment_plan.yaml` with exact shell commands per arm
-4. Runs the commands in an isolated git worktree, captures stdout/stderr per condition
+1. Reads the designer's handoff — uses validated commands and code map instead of re-exploring
+2. Writes `experiment_plan.yaml` with exact commands per arm (plan first, execute second)
+3. Creates patches for code-change arms (evolve mode), saves to `patches/`
+4. Runs the plan in an isolated git worktree, writes results to `results/`
 5. Compares observed metrics against predictions
-6. Produces `findings.json` and `principle_updates.json`
+6. Writes `findings.json` and `principle_updates.json`
+7. Runs `nous validate execution` — retries until all artifacts pass
 
-When `repo_path` is set, execution runs in an isolated git worktree. The worktree ID is persisted to `.experiment_id` for crash recovery.
+All output files use absolute paths to the campaign directory so they persist after worktree cleanup.
 
 **Key artifacts:**
 - `experiment_plan.yaml` — exact commands per arm
