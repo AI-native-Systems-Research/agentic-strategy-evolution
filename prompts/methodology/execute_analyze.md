@@ -99,15 +99,18 @@ arms:
 ### Step 5: Create output directories
 For every output path in your plan, ensure the parent directory exists (`mkdir -p {{iter_dir}}/results/<arm_id>`).
 
-## Phase 2: Execute
+## Phase 2: Execute the plan
 
-Run ALL conditions for ALL arms across ALL seeds. For each condition:
+Run the experiment plan you wrote in Step 4 — execute every command exactly as written. The plan is the source of truth.
+
+For each condition:
 1. Reset worktree: `git checkout -- .`
-2. For treatment: `git apply {{iter_dir}}/patches/<arm_type>.patch && <build> && <run>`
-3. For baseline: just `<run>`
-4. Record stdout metrics for each run.
+2. Run the `cmd` from the plan
+3. Verify the `output` file was created at the expected path
 
 After each baseline+treatment pair with the same seed, compare key metrics. If they are byte-identical, STOP and investigate — the patch may not be affecting the code path.
+
+**All results must land in `{{iter_dir}}/results/`.** The worktree is temporary — anything written there will be lost.
 
 ## Phase 3: Analyze and Write Findings
 
