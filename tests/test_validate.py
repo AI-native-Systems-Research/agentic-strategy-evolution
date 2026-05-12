@@ -205,3 +205,44 @@ class TestValidateExecution:
         result = validate_execution(d)
         assert result["status"] == "fail"
         assert any("id" in e for e in result["errors"])
+
+    def test_missing_output_file_referenced_in_plan(self, tmp_path: Path) -> None:
+        """Plan references output files that don't exist."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        plan_with_output = {
+            "metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+            "arms": [{"arm_id": "h-main", "conditions": [
+                {"name": "baseline", "cmd": "echo test",
+                 "output": str(d / "results" / "baseline.json")},
+            ]}],
+        }
+        (d / "experiment_plan.yaml").write_text(yaml.safe_dump(plan_with_output))
+        result = validate_execution(d)
+        assert result["status"] == "fail"
+        assert any("output file" in e for e in result["errors"])
+
+    def test_output_file_exists_passes(self, tmp_path: Path) -> None:
+        """Plan references output files that exist — should pass."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        results_dir = d / "results"
+        results_dir.mkdir()
+        (results_dir / "baseline.json").write_text('{"metric": 42}')
+        plan_with_output = {
+            "metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+            "arms": [{"arm_id": "h-main", "conditions": [
+                {"name": "baseline", "cmd": "echo test",
+                 "output": str(results_dir / "baseline.json")},
+            ]}],
+        }
+        (d / "experiment_plan.yaml").write_text(yaml.safe_dump(plan_with_output))
+        result = validate_execution(d)
+        assert result["status"] == "pass"
+
+    def test_no_output_field_skips_check(self, tmp_path: Path) -> None:
+        """Conditions without output field — no check needed."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        result = validate_execution(d)
+        assert result["status"] == "pass"

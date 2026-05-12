@@ -114,6 +114,25 @@ def validate_execution(iter_dir: Path) -> dict:
         except json.JSONDecodeError as exc:
             errors.append(f"principle_updates.json is not valid JSON: {exc}")
 
+    # output files — check that files referenced in plan conditions exist
+    if plan_path.exists() and not errors:
+        try:
+            plan = yaml.safe_load(plan_path.read_text())
+            for arm in plan.get("arms", []):
+                for cond in arm.get("conditions", []):
+                    output = cond.get("output")
+                    if output:
+                        output_file = Path(output)
+                        if not output_file.is_absolute():
+                            output_file = iter_dir / output
+                        if not output_file.exists():
+                            errors.append(
+                                f"output file {cond['output']} referenced in "
+                                f"{arm['arm_id']}/{cond['name']} not found"
+                            )
+        except (yaml.YAMLError, KeyError):
+            pass  # plan parse issues already caught above
+
     # patches — only required when bundle has code_changes
     bundle_path = iter_dir / "bundle.yaml"
     if bundle_path.exists():

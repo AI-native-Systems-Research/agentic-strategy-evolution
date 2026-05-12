@@ -159,12 +159,10 @@ class StubDispatcher:
                         {
                             "name": "baseline",
                             "cmd": "echo '{\"latency_ms\": 50}'",
-                            "output": "results/h-main/baseline.json",
                         },
                         {
                             "name": "treatment",
                             "cmd": "echo '{\"latency_ms\": 40}'",
-                            "output": "results/h-main/treatment.json",
                         },
                     ],
                 },
@@ -174,7 +172,6 @@ class StubDispatcher:
                         {
                             "name": "control",
                             "cmd": "echo '{\"latency_ms\": 50}'",
-                            "output": "results/h-control-negative/control.json",
                         },
                     ],
                 },
