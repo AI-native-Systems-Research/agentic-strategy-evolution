@@ -77,6 +77,12 @@ class CLIDispatcher(LLMDispatcher):
         self._current_phase = phase
 
         template, fmt, schema_name = self._route(role, phase)
+        # For design and execute-analyze via CLI, the agent writes files directly
+        # to iter_dir. We save the raw response as a log. Caller MUST run
+        # validate_design() or validate_execution() after dispatch.
+        if phase in ("design", "execute-analyze"):
+            fmt = None
+            schema_name = None
         context = self._build_context(role, phase, iteration, perspective)
         prompt = self.loader.load(template, context)
 

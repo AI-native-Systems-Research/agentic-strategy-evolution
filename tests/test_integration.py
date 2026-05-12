@@ -12,7 +12,7 @@ from orchestrator.engine import Engine
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
-from run_iteration import _split_design_output, _merge_principles
+from run_iteration import _merge_principles
 
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
@@ -66,9 +66,9 @@ class TestSingleIterationHappyPath:
         # INIT -> DESIGN
         engine.transition("DESIGN")
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
+            "planner", "design", output_path=iter_dir / "design_log.md", iteration=1
         )
-        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
+        # Stub writes files directly — just validate them
         bundle = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
         jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))
 
@@ -80,19 +80,10 @@ class TestSingleIterationHappyPath:
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
             "executor", "execute-analyze",
-            output_path=iter_dir / "execute_analyze_output.json", iteration=1,
+            output_path=iter_dir / "executor_log.md", iteration=1,
         )
-        # Split combined output
-        combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
-        (iter_dir / "experiment_plan.yaml").write_text(
-            yaml.safe_dump(combined["plan"], default_flow_style=False, sort_keys=False)
-        )
-        (iter_dir / "findings.json").write_text(json.dumps(combined["findings"], indent=2))
-        (iter_dir / "principle_updates.json").write_text(
-            json.dumps(combined["principle_updates"], indent=2)
-        )
-
-        findings = combined["findings"]
+        # Stub now writes files directly — just read them
+        findings = json.loads((iter_dir / "findings.json").read_text())
         jsonschema.validate(findings, load_schema("findings.schema.json"))
 
         # Check fast-fail
@@ -125,9 +116,9 @@ class TestSingleIterationHappyPath:
 
         engine.transition("DESIGN")
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
+            "planner", "design", output_path=iter_dir / "design_log.md", iteration=1
         )
-        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
+
 
         engine.transition("HUMAN_DESIGN_GATE")
 
@@ -135,16 +126,10 @@ class TestSingleIterationHappyPath:
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
             "executor", "execute-analyze",
-            output_path=iter_dir / "execute_analyze_output.json",
+            output_path=iter_dir / "executor_log.md",
             iteration=1, h_main_result="REFUTED",
         )
-        combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
-        (iter_dir / "findings.json").write_text(json.dumps(combined["findings"], indent=2))
-        (iter_dir / "principle_updates.json").write_text(
-            json.dumps(combined["principle_updates"], indent=2)
-        )
-
-        findings = combined["findings"]
+        findings = json.loads((iter_dir / "findings.json").read_text())
 
         # Fast-fail triggers
         ff = check_fast_fail(findings)
@@ -175,19 +160,14 @@ class TestSingleIterationHappyPath:
         engine.transition("DESIGN")
         iter_dir = campaign_dir / "runs" / "iter-1"
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
+            "planner", "design", output_path=iter_dir / "design_log.md", iteration=1
         )
-        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
+
         engine.transition("HUMAN_DESIGN_GATE")
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
             "executor", "execute-analyze",
-            output_path=iter_dir / "execute_analyze_output.json", iteration=1,
-        )
-        combined = json.loads((iter_dir / "execute_analyze_output.json").read_text())
-        (iter_dir / "findings.json").write_text(json.dumps(combined["findings"], indent=2))
-        (iter_dir / "principle_updates.json").write_text(
-            json.dumps(combined["principle_updates"], indent=2)
+            output_path=iter_dir / "executor_log.md", iteration=1,
         )
         engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")
@@ -202,20 +182,15 @@ class TestSingleIterationHappyPath:
         # Iteration 2: refuted
         iter_dir2 = campaign_dir / "runs" / "iter-2"
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir2 / "design_raw.md", iteration=2
+            "planner", "design", output_path=iter_dir2 / "design_log.md", iteration=2
         )
-        _split_design_output((iter_dir2 / "design_raw.md").read_text(), iter_dir2)
+
         engine.transition("HUMAN_DESIGN_GATE")
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
             "executor", "execute-analyze",
-            output_path=iter_dir2 / "execute_analyze_output.json",
+            output_path=iter_dir2 / "executor_log.md",
             iteration=2, h_main_result="REFUTED",
-        )
-        combined2 = json.loads((iter_dir2 / "execute_analyze_output.json").read_text())
-        (iter_dir2 / "findings.json").write_text(json.dumps(combined2["findings"], indent=2))
-        (iter_dir2 / "principle_updates.json").write_text(
-            json.dumps(combined2["principle_updates"], indent=2)
         )
         engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")
@@ -250,9 +225,9 @@ class TestGateSummaries:
 
         engine.transition("DESIGN")
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1,
+            "planner", "design", output_path=iter_dir / "design_log.md", iteration=1,
         )
-        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
+
 
         # Generate gate summary (what run_iteration.py would do before the gate)
         dispatcher.dispatch(
