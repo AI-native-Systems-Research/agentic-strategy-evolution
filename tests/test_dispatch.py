@@ -34,21 +34,20 @@ class TestStubDispatcher:
         (tmp_path / "runs" / "iter-1" / "reviews").mkdir(parents=True)
         return tmp_path
 
-    def test_dispatch_planner_produces_valid_design_output(self, work_dir):
+    def test_dispatch_planner_writes_individual_files(self, work_dir):
         dispatcher = _make_dispatcher(work_dir)
-        output_path = work_dir / "runs" / "iter-1" / "design_raw.md"
+        iter_dir = work_dir / "runs" / "iter-1"
+        output_path = iter_dir / "design_log.md"
         dispatcher.dispatch("planner", "design", output_path=output_path, iteration=1)
-        assert output_path.exists()
-        raw = output_path.read_text()
-        # Should contain problem framing markdown and a yaml code fence
-        assert "## Research Question" in raw
-        assert "```yaml" in raw
-        # Extract and validate the bundle from the yaml fence
-        import re
-        match = re.search(r"```yaml\s*\n(.*?)```", raw, re.DOTALL)
-        assert match is not None
-        bundle = yaml.safe_load(match.group(1))
+        # Stub writes files directly
+        assert (iter_dir / "problem.md").exists()
+        assert "## Research Question" in (iter_dir / "problem.md").read_text()
+        assert (iter_dir / "bundle.yaml").exists()
+        bundle = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
         jsonschema.validate(bundle, _load_schema("bundle.schema.yaml"))
+        assert (iter_dir / "handoff_snapshot.md").exists()
+        # Campaign-level handoff
+        assert (work_dir / "handoff.md").exists()
 
     def test_dispatch_executor_writes_individual_files(self, work_dir):
         dispatcher = _make_dispatcher(work_dir)

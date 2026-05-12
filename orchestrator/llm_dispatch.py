@@ -207,6 +207,9 @@ class LLMDispatcher:
 
         if phase == "design":
             ctx["research_question"] = self.campaign["research_question"]
+            iter_dir = self.work_dir / "runs" / f"iter-{iteration}"
+            ctx["iter_dir"] = str(iter_dir.resolve())
+            ctx["nous_dir"] = str(Path(__file__).resolve().parent.parent)
 
         if phase == "design":
             # Campaign-level handoff — the living document updated each iteration

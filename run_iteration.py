@@ -288,16 +288,26 @@ def run_iteration(
         print(f"  DESIGN — exploring system and creating hypothesis bundle")
         print(f"{'='*60}")
         design_dispatcher = cli_dispatcher or llm_dispatcher
-        design_dispatcher.dispatch(
-            "planner", "design",
-            output_path=iter_dir / "design_raw.md", iteration=iteration,
-        )
-        raw_response = (iter_dir / "design_raw.md").read_text()
-        _split_design_output(raw_response, iter_dir)
-        (iter_dir / "design_raw.md").unlink()
-        print(f"  -> {iter_dir / 'problem.md'}")
-        print(f"  -> {iter_dir / 'bundle.yaml'}")
-        # Post-check design artifacts
+        if cli_dispatcher:
+            # CLI path: agent writes files directly to iter_dir
+            design_dispatcher.dispatch(
+                "planner", "design",
+                output_path=iter_dir / "design_log.md", iteration=iteration,
+            )
+        else:
+            # LLM API path or stub: dispatch and check if files were written directly
+            output_file = iter_dir / "design_raw.md"
+            design_dispatcher.dispatch(
+                "planner", "design",
+                output_path=output_file, iteration=iteration,
+            )
+            # If the dispatcher wrote individual files (StubDispatcher),
+            # skip the text split. Otherwise parse the merged output.
+            if not (iter_dir / "bundle.yaml").exists():
+                raw_response = output_file.read_text()
+                _split_design_output(raw_response, iter_dir)
+                output_file.unlink()
+        # Validate design artifacts regardless of dispatch path
         from orchestrator.validate import validate_design
         result = validate_design(iter_dir)
         if result["status"] == "fail":
@@ -305,6 +315,8 @@ def run_iteration(
                 f"Design artifacts failed validation:\n"
                 + "\n".join(f"  - {e}" for e in result["errors"])
             )
+        print(f"  -> {iter_dir / 'problem.md'}")
+        print(f"  -> {iter_dir / 'bundle.yaml'}")
 
     # ─── HUMAN DESIGN GATE ────────────────────────────────────────────────
     if _enter_phase(engine, "HUMAN_DESIGN_GATE"):

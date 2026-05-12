@@ -79,7 +79,10 @@ class StubDispatcher:
         logger.info("Dispatched role=%s phase=%s -> %s", role, phase, output_path)
 
     def _write_design_output(self, path: Path, iteration: int) -> None:
-        """Write merged design output: problem framing markdown + yaml bundle fence."""
+        """Write design artifacts directly to iter_dir (mimics agent writing files)."""
+        iter_dir = path.parent
+        iter_dir.mkdir(parents=True, exist_ok=True)
+
         bundle = {
             "metadata": {
                 "iteration": iteration,
@@ -101,7 +104,6 @@ class StubDispatcher:
                 },
             ],
         }
-        bundle_yaml = yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False)
         problem_md = (
             "## Research Question\n\n"
             "Stub: does the mechanism work?\n\n"
@@ -116,24 +118,26 @@ class StubDispatcher:
             "Test whether the stub mechanism reduces latency under contention.\n\n"
             "### Key Discoveries\n"
             "- Mechanism is implemented at `src/stub.py:42` — toggles batch amortization\n"
-            "- Baseline latency at default load: 50ms mean\n"
-            "- Effect only manifests above 80% saturation (verified via probe)\n\n"
+            "- Baseline latency at default load: 50ms mean\n\n"
             "### System Interface\n"
             "- **Build:** `echo 'stub build'`\n"
-            "- **Run baseline:** `echo 'stub baseline'`\n"
-            "- **Output format:** stdout JSON\n"
-            "- **Baseline result:** latency_ms=50\n\n"
+            "- **Run baseline:** `echo 'stub baseline'`\n\n"
             "### Code Map\n"
-            "- `src/stub.py:42` — mechanism toggle. Check here if treatment has no effect.\n\n"
-            "### Code Targets\n"
-            "- h-main: modify `src/stub.py:42` to enable mechanism\n\n"
-            "### What I Tried That Didn't Work\n"
-            "- `--legacy-mode` flag does not exist despite docs mentioning it\n\n"
+            "- `src/stub.py:42` — mechanism toggle.\n\n"
             "### Warnings & Constraints\n"
-            "- First request always cold (cache empty) — use N>=50 for stable means\n"
+            "- First request always cold.\n"
         )
-        raw = f"{problem_md}\n---\n\n```yaml\n{bundle_yaml}```\n\n---\n\n{handoff_md}"
-        atomic_write(path, raw)
+        atomic_write(iter_dir / "problem.md", problem_md)
+        atomic_write(
+            iter_dir / "bundle.yaml",
+            yaml.safe_dump(bundle, default_flow_style=False, sort_keys=False),
+        )
+        atomic_write(iter_dir / "handoff_snapshot.md", handoff_md)
+        # Campaign-level handoff
+        campaign_dir = iter_dir.parent.parent
+        atomic_write(campaign_dir / "handoff.md", handoff_md)
+        # Write a log to output_path
+        atomic_write(path, "Stub designer: artifacts written directly to iter_dir.\n")
 
     def _write_execute_analyze(self, path: Path, iteration: int, h_main_result: str) -> None:
         """Write executor artifacts directly to iter_dir (mimics agent writing files)."""

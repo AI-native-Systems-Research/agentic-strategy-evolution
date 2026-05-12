@@ -12,7 +12,7 @@ from orchestrator.engine import Engine
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
-from run_iteration import _split_design_output, _merge_principles
+from run_iteration import _merge_principles
 
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
@@ -66,9 +66,9 @@ class TestSingleIterationHappyPath:
         # INIT -> DESIGN
         engine.transition("DESIGN")
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
+            "planner", "design", output_path=iter_dir / "design_log.md", iteration=1
         )
-        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
+        # Stub writes files directly — just validate them
         bundle = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
         jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))
 
@@ -116,9 +116,9 @@ class TestSingleIterationHappyPath:
 
         engine.transition("DESIGN")
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
+            "planner", "design", output_path=iter_dir / "design_log.md", iteration=1
         )
-        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
+
 
         engine.transition("HUMAN_DESIGN_GATE")
 
@@ -160,9 +160,9 @@ class TestSingleIterationHappyPath:
         engine.transition("DESIGN")
         iter_dir = campaign_dir / "runs" / "iter-1"
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1
+            "planner", "design", output_path=iter_dir / "design_log.md", iteration=1
         )
-        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
+
         engine.transition("HUMAN_DESIGN_GATE")
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
@@ -182,9 +182,9 @@ class TestSingleIterationHappyPath:
         # Iteration 2: refuted
         iter_dir2 = campaign_dir / "runs" / "iter-2"
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir2 / "design_raw.md", iteration=2
+            "planner", "design", output_path=iter_dir2 / "design_log.md", iteration=2
         )
-        _split_design_output((iter_dir2 / "design_raw.md").read_text(), iter_dir2)
+
         engine.transition("HUMAN_DESIGN_GATE")
         engine.transition("EXECUTE_ANALYZE")
         dispatcher.dispatch(
@@ -225,9 +225,9 @@ class TestGateSummaries:
 
         engine.transition("DESIGN")
         dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "design_raw.md", iteration=1,
+            "planner", "design", output_path=iter_dir / "design_log.md", iteration=1,
         )
-        _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
+
 
         # Generate gate summary (what run_iteration.py would do before the gate)
         dispatcher.dispatch(
