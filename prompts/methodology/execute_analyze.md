@@ -81,21 +81,23 @@ metadata:
   iteration: 1
   bundle_ref: "runs/iter-1/bundle.yaml"
 setup:
-  - cmd: "go build -o blis main.go"
+  - cmd: "<build command from handoff>"
     description: "Build the system"
 arms:
   - arm_id: "h-main"
     conditions:
       - name: "baseline-seed42"
-        cmd: "./blis run --seed 42 --prefix-tokens 0 --metrics-path results/h-main/baseline-s42.json"
-        output: "results/h-main/baseline-s42.json"
+        cmd: "<baseline command with --seed 42 --output {{iter_dir}}/results/h-main/baseline-s42.json>"
+        output: "{{iter_dir}}/results/h-main/baseline-s42.json"
       - name: "treatment-seed42"
-        cmd: "git apply patches/h-main.patch && go build -o blis main.go && ./blis run --seed 42 --metrics-path results/h-main/treatment-s42.json"
-        output: "results/h-main/treatment-s42.json"
+        cmd: "git apply {{iter_dir}}/patches/h-main.patch && <build> && <run with --output {{iter_dir}}/results/h-main/treatment-s42.json>"
+        output: "{{iter_dir}}/results/h-main/treatment-s42.json"
 ```
 
+**Important:** All output paths MUST use absolute paths under `{{iter_dir}}/results/`. Do NOT use relative paths — the experiment runs in a worktree that gets cleaned up.
+
 ### Step 5: Create output directories
-For every output path in your plan, ensure the parent directory exists.
+For every output path in your plan, ensure the parent directory exists (`mkdir -p {{iter_dir}}/results/<arm_id>`).
 
 ## Phase 2: Execute
 
@@ -127,8 +129,8 @@ Write findings to `{{iter_dir}}/findings.json`:
   "arms": [
     {
       "arm_type": "h-main",
-      "predicted": "Increasing prefix fraction reduces TTFT by >20%",
-      "observed": "TTFT reduced by 43.5% (26.59ms → 15.03ms)",
+      "predicted": "<your directional prediction from the bundle>",
+      "observed": "<actual metric values from your runs>",
       "status": "CONFIRMED",
       "error_type": null,
       "diagnostic_note": null
@@ -153,14 +155,14 @@ Based on your findings, identify principle updates and write to `{{iter_dir}}/pr
 [
   {
     "id": "RP-1",
-    "statement": "Prefix caching reduces TTFT linearly with cache fraction",
+    "statement": "<concise principle discovered from this experiment>",
     "confidence": "high",
-    "regime": "single-instance, roofline model, rate=15",
+    "regime": "<conditions under which this holds>",
     "evidence": ["iteration-1-h-main"],
     "contradicts": [],
     "extraction_iteration": 1,
-    "mechanism": "Cached prefix blocks reduce NumNewPrefillTokens in FormBatch",
-    "applicability_bounds": "Applies when N_new > 128 tokens",
+    "mechanism": "<causal explanation grounded in code>",
+    "applicability_bounds": "<when this applies and when it doesn't>",
     "superseded_by": null,
     "category": "domain",
     "status": "active"

@@ -83,7 +83,7 @@ Before designing anything, ground yourself in the real system:
 
 4. **Run to learn** — execute quick commands to observe current behavior. Run a short baseline to check output format, validate that commands work, and probe system capacity or behavior bounds. For example, if your experiment depends on a capacity threshold, measure it now with a quick probe rather than guessing.
 
-5. **Ground claims in code with `file:line`** — for each flag or mechanism relevant to your experiment, cite the exact source location as `file/path.ext:line_number`. Example: "Rejection threshold checked at `sim/admission.go:264`". Do not describe behavior without a file:line reference.
+5. **Ground claims in code with `file:line`** — for each flag or mechanism relevant to your experiment, cite the exact source location as `file/path.ext:line_number`. Do not describe behavior without a file:line reference.
 
 6. **Identify key source files** — find the files implementing the mechanism under study.
 
@@ -244,10 +244,10 @@ Example: `sim/cache.go:126` — GetCachedBlocks hash lookup. Check here if cache
 [Commands that failed, flags that don't exist, parameter ranges that produced null results, paths that looked promising but weren't. This prevents the next agent from repeating your dead ends.]
 
 ### What I Excluded and Why
-[Areas you explored but deliberately left out of the experiment. Example: "Looked at multi-instance routing but excluded because the research question focuses on single-instance KV cache behavior." This helps the next iteration's designer decide where to expand.]
+[Areas you explored but deliberately left out of the experiment, and why. This helps the next iteration's designer decide where to expand.]
 
 ### Evolution of Thinking
-[How your understanding shifted during exploration. Example: "Initially assumed preemption was the bottleneck, but probes showed scheduling delay < 1ms — the real bottleneck is prefill compute." This prevents the next designer from starting with the same wrong assumption.]
+[How your understanding shifted during exploration. This prevents the next designer from starting with the same wrong assumption.]
 
 ### Current Status
 - **Validated:** [what's confirmed and working]
