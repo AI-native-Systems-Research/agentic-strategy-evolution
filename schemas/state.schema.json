@@ -11,8 +11,7 @@
       "type": "string",
       "enum": [
         "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
-        "EXECUTE_ANALYZE", "VALIDATE",
-        "HUMAN_FINDINGS_GATE", "DONE"
+        "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE", "DONE"
       ],
       "description": "Current state machine phase."
     },

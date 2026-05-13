@@ -9,7 +9,6 @@ import yaml
 
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.gates import HumanGate
-from orchestrator.protocols import Dispatcher, Gate
 
 
 SCHEMAS_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent / "schemas"
@@ -119,18 +118,3 @@ class TestDispatchErrorHandling:
 
 
 
-class TestProtocolConformance:
-    def test_stub_dispatcher_satisfies_dispatcher_protocol(self, tmp_path):
-        dispatcher = _make_dispatcher(tmp_path)
-        assert isinstance(dispatcher, Dispatcher)
-
-    def test_human_gate_satisfies_gate_protocol(self, monkeypatch):
-        monkeypatch.setenv("NOUS_ALLOW_AUTO_APPROVE", "1")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            gate = HumanGate(auto_approve=True)
-        assert isinstance(gate, Gate)
-
-    def test_human_gate_auto_response_satisfies_gate_protocol(self):
-        gate = HumanGate(auto_response="approve")
-        assert isinstance(gate, Gate)

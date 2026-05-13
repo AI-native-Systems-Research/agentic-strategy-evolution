@@ -104,7 +104,7 @@ Two gates per iteration:
 | Gate | When | Question |
 |------|------|----------|
 | Design gate | After DESIGN | Approve the hypothesis bundle? |
-| Findings gate | After VALIDATE | Approve the results and principle updates? |
+| Findings gate | After EXECUTE_ANALYZE | Approve the results and principle updates? |
 
 Each gate shows a formatted summary before asking for your decision. Type `approve` to continue, `reject` to loop back, `abort` to stop.
 

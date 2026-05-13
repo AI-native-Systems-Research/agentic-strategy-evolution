@@ -32,19 +32,17 @@ Nous works on any software system that meets four preconditions:
 
 ## How It Works
 
-Each iteration follows a 7-phase loop with 2 LLM calls and 2 human gates:
+Each iteration follows a 6-phase loop with 2 LLM calls and 2 human gates:
 
 ```
-INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → VALIDATE → HUMAN_FINDINGS_GATE → DONE
+INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → HUMAN_FINDINGS_GATE → DONE
 
 1. DESIGN              Planner (Opus) explores system, frames problem, designs hypothesis bundle
    HUMAN_DESIGN_GATE   Human approves, rejects (→ DESIGN), or aborts
 2. EXECUTE_ANALYZE     Executor (Sonnet) builds, patches, runs experiments, analyzes results,
                        extracts principles — all in one session
-3. VALIDATE            Python-only: replays experiment_plan.yaml for reproducibility,
-                       merges principles by ID (no LLM)
    HUMAN_FINDINGS_GATE Human approves findings, rejects (→ EXECUTE_ANALYZE), or aborts
-   DONE → DESIGN       Next iteration (increments counter)
+   DONE → DESIGN       Next iteration (increments counter, merges principles)
 ```
 
 See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, and [docs/architecture.md](docs/architecture.md) for system internals.
@@ -96,9 +94,7 @@ Two LLM calls per iteration, both via `claude -p`:
 | DESIGN | Opus | Planner — explores, frames, designs |
 | EXECUTE_ANALYZE | Sonnet | Executor — builds, patches, runs, analyzes |
 
-VALIDATE is a lightweight post-check (no LLM calls). Principle merge is Python-only.
-
-Both agents write their artifacts directly to disk and run `nous validate` before claiming done. If validation fails, the agent reads the errors, fixes the artifacts, and retries.
+Both agents write their artifacts directly to disk and run `nous validate` before claiming done. If validation fails, the agent reads the errors, fixes the artifacts, and retries. Principle merge is Python-only (no LLM).
 
 ### 4. Create a campaign
 
@@ -132,7 +128,7 @@ Each iteration runs the full loop (design → execute+analyze → validate), pau
 | Gate | When | You decide |
 |------|------|------------|
 | **Design gate** | After DESIGN | Approve the hypothesis bundle? |
-| **Findings gate** | After VALIDATE | Approve the results and principles? |
+| **Findings gate** | After EXECUTE_ANALYZE | Approve the results and principles? |
 
 Each gate shows a formatted summary. Type `approve`, `reject`, or `abort`.
 
@@ -192,10 +188,8 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   cli_dispatch.py          Code-access agent dispatch via claude -p
   prompt_loader.py         Template loading with {{placeholder}} rendering
   gates.py                 Human approval gates with summaries
-  fastfail.py              Fast-fail rule evaluation
   ledger.py                Deterministic ledger append (no LLM)
   worktree.py              Git worktree isolation for experiments
-  protocols.py             Dispatcher and Gate interface contracts
   util.py                  Shared utilities (atomic_write)
 prompts/methodology/     Methodology prompt templates
 examples/                Example campaigns
@@ -206,20 +200,6 @@ tests/                   Comprehensive test suite
 ## Contributing
 
 See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the Claude-based PR creation workflow.
-
-## Current Status
-
-**Phase 1 (complete):** Schemas, templates, orchestrator skeleton, and protocol documentation.
-
-**Phase 2 (complete):** Agent prompts and real LLM dispatch via OpenAI SDK.
-
-**Phase 3 (complete):** Real experiment execution with git worktree isolation.
-
-**Phase 4 (complete):** Multi-iteration campaigns with compounding knowledge.
-
-**Phase 4.5 (complete):** Code-access agents via CLIDispatcher (`claude -p`), simplified campaigns, and gate summaries for human UX.
-
-**Phase 5 (next):** Plugin UX — `/nous:init`, `/nous:investigate`, `/nous:status`.
 
 ## License
 

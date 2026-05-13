@@ -24,7 +24,6 @@ class Phase(str, Enum):
     DESIGN = "DESIGN"
     HUMAN_DESIGN_GATE = "HUMAN_DESIGN_GATE"
     EXECUTE_ANALYZE = "EXECUTE_ANALYZE"
-    VALIDATE = "VALIDATE"
     HUMAN_FINDINGS_GATE = "HUMAN_FINDINGS_GATE"
     DONE = "DONE"
 
@@ -34,8 +33,7 @@ TRANSITIONS: MappingProxyType[str, frozenset[str]] = MappingProxyType({
     "INIT":                frozenset({"DESIGN"}),
     "DESIGN":              frozenset({"HUMAN_DESIGN_GATE"}),
     "HUMAN_DESIGN_GATE":   frozenset({"EXECUTE_ANALYZE", "DESIGN"}),
-    "EXECUTE_ANALYZE":     frozenset({"VALIDATE"}),
-    "VALIDATE":            frozenset({"HUMAN_FINDINGS_GATE", "EXECUTE_ANALYZE"}),
+    "EXECUTE_ANALYZE":     frozenset({"HUMAN_FINDINGS_GATE"}),
     "HUMAN_FINDINGS_GATE": frozenset({"DONE", "EXECUTE_ANALYZE"}),
     "DONE":                frozenset({"DESIGN"}),
 })

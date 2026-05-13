@@ -25,7 +25,6 @@ import jsonschema
 import yaml
 
 from orchestrator.engine import Engine
-from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.util import atomic_write
@@ -48,7 +47,7 @@ _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 # Phase ordering for resume logic
 _PHASE_ORDER = [
     "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
-    "EXECUTE_ANALYZE", "VALIDATE", "HUMAN_FINDINGS_GATE",
+    "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE",
     "DONE",
 ]
 _PHASE_INDEX = {p: i for i, p in enumerate(_PHASE_ORDER)}
@@ -235,7 +234,7 @@ def run_iteration(
 ) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
 
-    Phases: DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → VALIDATE → HUMAN_FINDINGS_GATE → DONE
+    Phases: DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → HUMAN_FINDINGS_GATE → DONE
 
     Args:
         final: If True (default), transitions to DONE after principle merge.
@@ -405,42 +404,12 @@ def run_iteration(
                     f"Executor artifacts failed validation:\n"
                     + "\n".join(f"  - {e}" for e in result["errors"])
                 )
-        except BaseException:
-            if repo_path and experiment_id:
-                from orchestrator.worktree import remove_experiment_worktree
-                remove_experiment_worktree(Path(repo_path), experiment_id)
-            raise
-
-    # ─── VALIDATE ─────────────────────────────────────────────────────────
-    # This re-runs validation for the resume-from-checkpoint path.
-    # In normal flow, EXECUTE_ANALYZE already validated.
-    if _enter_phase(engine, "VALIDATE"):
-        print(f"\n{'='*60}")
-        print(f"  VALIDATE — post-check artifact validation")
-        print(f"{'='*60}")
-        # Recover worktree reference on resume
-        if not experiment_dir and repo_path:
-            eid_path = iter_dir / ".experiment_id"
-            if eid_path.exists():
-                experiment_id = eid_path.read_text().strip()
-
-        # Validate first, then clean up worktree (so it's available for debugging on failure)
-        try:
-            from orchestrator.validate import validate_execution
-            result = validate_execution(iter_dir)
-            if result["status"] == "pass":
-                print("  Validation passed.")
-            else:
-                raise RuntimeError(
-                    f"Post-check validation failed:\n"
-                    + "\n".join(f"  - {e}" for e in result["errors"])
-                )
         finally:
             if repo_path and experiment_id:
                 from orchestrator.worktree import remove_experiment_worktree
                 remove_experiment_worktree(Path(repo_path), experiment_id)
 
-    # Validate findings and check fast-fail rules
+    # Validate findings schema
     findings_path = iter_dir / "findings.json"
     if not findings_path.exists():
         raise RuntimeError(f"{findings_path} not found.")
@@ -452,17 +421,6 @@ def run_iteration(
         raise RuntimeError(
             f"findings.json failed schema validation: {exc.message}"
         ) from exc
-
-    ff = check_fast_fail(findings)
-    if ff == FastFailAction.REDESIGN:
-        print("  ** Control-negative REFUTED and h-main not confirmed — mechanism confounded.")
-        print("     The experiment needs redesign.")
-        engine.transition("EXECUTE_ANALYZE")
-        return IterationOutcome.REDESIGN
-    if ff == FastFailAction.SKIP_TO_MERGE:
-        print("  ** H-main REFUTED — skipping to principle merge")
-    if ff == FastFailAction.SIMPLIFY:
-        print("  ** Dominant component >80% — consider simplifying the model.")
 
     # ─── HUMAN FINDINGS GATE ──────────────────────────────────────────────
     if _enter_phase(engine, "HUMAN_FINDINGS_GATE"):

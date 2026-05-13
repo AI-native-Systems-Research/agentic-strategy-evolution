@@ -77,18 +77,18 @@ class TestEnterPhase:
             f"_PHASE_ORDER has {order_phases - engine_phases}"
         )
 
-    def test_resume_from_validate(self, tmp_path):
-        """Resuming at VALIDATE skips execution phases and earlier."""
+    def test_resume_from_execute_analyze(self, tmp_path):
+        """Resuming at EXECUTE_ANALYZE skips design phases."""
         state = {
-            "phase": "VALIDATE", "iteration": 0,
+            "phase": "EXECUTE_ANALYZE", "iteration": 0,
             "run_id": "test", "family": None, "timestamp": "t",
         }
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "EXECUTE_ANALYZE") is False
-        assert _enter_phase(engine, "VALIDATE") is True
-        assert engine.phase == "VALIDATE"
+        assert _enter_phase(engine, "DESIGN") is False
+        assert _enter_phase(engine, "EXECUTE_ANALYZE") is True
+        assert engine.phase == "EXECUTE_ANALYZE"
         # Can advance to next
         assert _enter_phase(engine, "HUMAN_FINDINGS_GATE") is True
         assert engine.phase == "HUMAN_FINDINGS_GATE"
@@ -184,85 +184,3 @@ class TestIterationOutcome:
         assert result == IterationOutcome.REDESIGN
 
 
-class TestExecutePlanResetCmdKwargs:
-    """run_iteration.py — the reset_cmd kwarg must be 'git checkout -- .'
-    when running in a worktree and None otherwise. The exact string is
-    load-bearing: e.g., 'git reset --hard' would also wipe untracked patches/.
-    """
-
-    def _capture_execute_plan_kwargs(self, tmp_path, monkeypatch, *, with_repo_path):
-        work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
-        import run_iteration as ri
-        monkeypatch.setattr(
-            ri, "HumanGate",
-            lambda: MagicMock(prompt=MagicMock(return_value=("approve", None))),
-        )
-
-        # Also patch CLIDispatcher so it doesn't call claude -p
-        from orchestrator import cli_dispatch as cli_mod
-        import contextlib
-        _work_dir = work_dir
-        class FakeCLI:
-            def __init__(self, **kw):
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    self._stub = StubDispatcher(_work_dir)
-            def dispatch(self, *a, **kw):
-                return self._stub.dispatch(*a, **kw)
-            def override_cwd(self, cwd):
-                @contextlib.contextmanager
-                def noop():
-                    yield
-                return noop()
-        monkeypatch.setattr(cli_mod, "CLIDispatcher", FakeCLI)
-
-        # Optionally point the campaign at a fake repo so run_iteration
-        # creates an experiment worktree (which is what triggers reset_cmd).
-        if with_repo_path:
-            fake_repo = tmp_path / "fake-repo"
-            fake_repo.mkdir()
-            campaign["target_system"]["repo_path"] = str(fake_repo)
-
-            # Stub out worktree create/remove so we don't need a real git repo.
-            from orchestrator import worktree as wt_mod
-            fake_exp_dir = tmp_path / "fake-exp-dir"
-            fake_exp_dir.mkdir()
-            monkeypatch.setattr(
-                wt_mod, "create_experiment_worktree",
-                lambda repo, iteration: (fake_exp_dir, "exp-id-1"),
-            )
-            monkeypatch.setattr(
-                wt_mod, "remove_experiment_worktree",
-                lambda repo, eid: None,
-            )
-
-        captured = {}
-
-        def fake_execute_plan(plan, cwd, iter_dir, **kwargs):
-            captured.update(kwargs)
-            captured["_cwd"] = cwd
-            (iter_dir / "execution_results.json").write_text(
-                json.dumps({"plan_ref": "x", "setup_results": [], "arms": []})
-                + "\n"
-            )
-            return {"plan_ref": "x", "setup_results": [], "arms": []}
-
-        from orchestrator import executor as exec_mod
-        monkeypatch.setattr(exec_mod, "execute_plan", fake_execute_plan)
-
-        run_iteration(campaign, work_dir, iteration=1)
-        return captured
-
-    def test_validate_runs_as_post_check_with_repo(self, tmp_path, monkeypatch):
-        captured = self._capture_execute_plan_kwargs(
-            tmp_path, monkeypatch, with_repo_path=True,
-        )
-        # VALIDATE no longer replays — execute_plan is not called by VALIDATE
-        # The stub writes artifacts directly, and validate_execution checks them
-        assert "reset_cmd" not in captured or captured == {}
-
-    def test_validate_runs_as_post_check_without_repo(self, tmp_path, monkeypatch):
-        captured = self._capture_execute_plan_kwargs(
-            tmp_path, monkeypatch, with_repo_path=False,
-        )
-        assert "reset_cmd" not in captured or captured == {}

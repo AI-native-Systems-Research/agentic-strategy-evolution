@@ -24,9 +24,9 @@ All four preconditions must hold for a system to be investigated with Nous:
 
 ## The Iteration Loop
 
-Each iteration follows 7 phases: INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → VALIDATE → HUMAN_FINDINGS_GATE → DONE.
+Each iteration follows 6 phases: INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → HUMAN_FINDINGS_GATE → DONE.
 
-Two LLM calls per iteration (both via `claude -p`): Opus for DESIGN, Sonnet for EXECUTE_ANALYZE. Both agents write artifacts directly to the campaign directory and run `nous validate` before claiming done. VALIDATE is a lightweight post-check (no LLM).
+Two LLM calls per iteration (both via `claude -p`): Opus for DESIGN, Sonnet for EXECUTE_ANALYZE. Both agents write artifacts directly to the campaign directory and run `nous validate` before claiming done. The orchestrator runs a post-check after each agent as a safety net.
 
 ### DESIGN (Planner, Opus)
 
@@ -72,14 +72,6 @@ All file paths (inputs, outputs) use absolute paths to the campaign directory so
 - `execution_results.json` — stdout/stderr/metrics per condition
 - `findings.json` — prediction vs outcome comparison
 - `principle_updates.json` — proposed principle inserts/updates/prunes
-
-### VALIDATE (Python-only)
-
-The Python orchestrator:
-1. Replays `experiment_plan.yaml` for reproducibility verification
-2. Merges principle updates into `principles.json` by ID (upsert, no LLM)
-
-The ledger records one row per completed iteration, including prediction accuracy.
 
 ### HUMAN_FINDINGS_GATE
 
@@ -149,17 +141,9 @@ Principles are hard constraints on subsequent iterations. The Planner must not d
 Two hard stops require explicit human approval:
 
 1. **HUMAN_DESIGN_GATE** (after DESIGN) — the human sees the hypothesis bundle, then approves, rejects (→ DESIGN), or aborts the campaign.
-2. **HUMAN_FINDINGS_GATE** (after VALIDATE) — the human sees findings and principle updates, then approves (→ DONE), rejects (→ EXECUTE_ANALYZE), or aborts.
+2. **HUMAN_FINDINGS_GATE** (after EXECUTE_ANALYZE) — the human sees findings and principle updates, then approves (→ DONE), rejects (→ EXECUTE_ANALYZE), or aborts.
 
 Human gates cannot be bypassed. They are the mechanism by which domain expertise enters the loop.
-
-## Fast-Fail Rules
-
-The orchestrator enforces three rules to avoid wasted work:
-
-1. **H-main refuted** — skip remaining ablation/robustness arms, proceed to principle merge and findings gate. The mechanism does not work; running more arms is pointless.
-2. **H-control-negative fails** — the mechanism is confounded (it produces effects where it should not). Return to Design for a revised bundle.
-3. **Single dominant component (>80% of total effect)** — simplify the strategy by dropping minor components. The compound mechanism adds complexity without proportional benefit.
 
 ## Stopping Criteria
 
@@ -173,16 +157,15 @@ A campaign stops when:
 ## Orchestrator
 
 The orchestrator is a Python state machine — NOT an LLM. It owns:
-- Phase transitions between 7 states
+- Phase transitions between 6 states
 - Checkpoint/resume via `state.json`
 - Agent dispatch (invoke `claude -p` agents with structured prompts)
 - Gate logic (pause for human approval)
-- Fast-fail enforcement
 
 ### State Machine
 
 ```
-INIT -> DESIGN -> HUMAN_DESIGN_GATE -> EXECUTE_ANALYZE -> VALIDATE -> HUMAN_FINDINGS_GATE -> DONE
+INIT -> DESIGN -> HUMAN_DESIGN_GATE -> EXECUTE_ANALYZE -> HUMAN_FINDINGS_GATE -> DONE
 
 Backward/looping transitions:
   HUMAN_DESIGN_GATE -> DESIGN           (human rejects)
@@ -196,7 +179,6 @@ Backward/looping transitions:
 |---|---|---|---|---|
 | Planner | DESIGN | campaign, principles | `problem.md`, `bundle.yaml` | Opus |
 | Executor | EXECUTE_ANALYZE | bundle, problem | `experiment_plan.yaml`, `execution_results.json`, `findings.json`, `principle_updates.json` | Sonnet |
-| Python | VALIDATE | experiment_plan, principle_updates | `principles.json` | — |
 
 ### File Layout
 
@@ -215,8 +197,6 @@ campaign-dir/
       findings.json    — prediction vs outcome
       principle_updates.json — proposed principle changes
       gate_summary_*.json — human-readable gate summaries
-  trace.jsonl         — observability log
-  summary.json        — campaign rollup (generated at end)
 ```
 
 ## Cross-Iteration Context

@@ -10,7 +10,6 @@ import yaml
 
 from orchestrator.engine import Engine
 from orchestrator.dispatch import StubDispatcher
-from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
 from run_iteration import _merge_principles
 
@@ -86,15 +85,8 @@ class TestSingleIterationHappyPath:
         findings = json.loads((iter_dir / "findings.json").read_text())
         jsonschema.validate(findings, load_schema("findings.schema.json"))
 
-        # Check fast-fail
-        ff = check_fast_fail(findings)
-        assert ff == FastFailAction.CONTINUE
-
-        # EXECUTE_ANALYZE -> VALIDATE
-        engine.transition("VALIDATE")
+        # EXECUTE_ANALYZE -> HUMAN_FINDINGS_GATE
         dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
-
-        # VALIDATE -> HUMAN_FINDINGS_GATE
         engine.transition("HUMAN_FINDINGS_GATE")
         assert gate.prompt("Approve?") == ("approve", None)
 
@@ -105,38 +97,6 @@ class TestSingleIterationHappyPath:
         assert len(principles["principles"]) == 1
 
         # Campaign done
-        engine.transition("DONE")
-        assert engine.phase == "DONE"
-
-    def test_fast_fail_h_main_refuted(self, campaign_dir):
-        engine = Engine(campaign_dir)
-        dispatcher = _make_dispatcher(campaign_dir)
-        gate = _make_gate()
-        iter_dir = campaign_dir / "runs" / "iter-1"
-
-        engine.transition("DESIGN")
-        dispatcher.dispatch(
-            "planner", "design", output_path=iter_dir / "design_log.md", iteration=1
-        )
-
-
-        engine.transition("HUMAN_DESIGN_GATE")
-
-        # EXECUTE_ANALYZE with h-main refuted
-        engine.transition("EXECUTE_ANALYZE")
-        dispatcher.dispatch(
-            "executor", "execute-analyze",
-            output_path=iter_dir / "executor_log.md",
-            iteration=1, h_main_result="REFUTED",
-        )
-        findings = json.loads((iter_dir / "findings.json").read_text())
-
-        # Fast-fail triggers
-        ff = check_fast_fail(findings)
-        assert ff == FastFailAction.SKIP_TO_MERGE
-
-        engine.transition("VALIDATE")
-        engine.transition("HUMAN_FINDINGS_GATE")
         engine.transition("DONE")
         assert engine.phase == "DONE"
 
@@ -169,7 +129,6 @@ class TestSingleIterationHappyPath:
             "executor", "execute-analyze",
             output_path=iter_dir / "executor_log.md", iteration=1,
         )
-        engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")
         _merge_principles(campaign_dir, iter_dir)
         engine.transition("DONE")
@@ -192,7 +151,6 @@ class TestSingleIterationHappyPath:
             output_path=iter_dir2 / "executor_log.md",
             iteration=2, h_main_result="REFUTED",
         )
-        engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")
         _merge_principles(campaign_dir, iter_dir2)
         engine.transition("DONE")

@@ -4,7 +4,7 @@ Nous uses 11 schema-governed artifacts to drive the investigation loop. This gui
 
 ## How They Fit Together
 
-`campaign.yaml` describes the target system. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (hypothesis bundle), `experiment_plan.yaml` (exact commands), `execution_results.json` (raw output), `findings.json` (analysis), and `principle_updates.json` (proposed principle changes). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations. `trace.jsonl` logs everything. `summary.json` wraps it all up at the end.
+`campaign.yaml` describes the target system. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (hypothesis bundle), `experiment_plan.yaml` (exact commands), `execution_results.json` (raw output), `findings.json` (analysis), and `principle_updates.json` (proposed principle changes). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations.
 
 ```
 campaign.yaml       "What system?"          Target system, prompts
@@ -27,12 +27,7 @@ findings.json       "What happened?"         │
     ├──▶ ledger.json                 handoff.md
     │       "What happened each iteration?"  "What does the next agent need?"
     │                                        Exploration context for next iteration
-    ├──▶ principles.json   "What have we learned?"   Living knowledge base
-    └──▶ trace.jsonl       "What happened under the hood?"  Activity log
-                                                             │
-                                                             ▼
-                                              summary.json   "How did the campaign go?"
-                                                             Final report card
+    └──▶ principles.json   "What have we learned?"   Living knowledge base
 ```
 
 ## 0. campaign.yaml — "What system are we investigating?"
@@ -61,7 +56,7 @@ A bookmark. It tells the orchestrator what phase we're in, which iteration we're
 
 | Field | What it means |
 |---|---|
-| `phase` | Which step of the loop (INIT, DESIGN, HUMAN_DESIGN_GATE, EXECUTE_ANALYZE, VALIDATE, HUMAN_FINDINGS_GATE, DONE) |
+| `phase` | Which step of the loop (INIT, DESIGN, HUMAN_DESIGN_GATE, EXECUTE_ANALYZE, HUMAN_FINDINGS_GATE, DONE) |
 | `iteration` | How many times we've gone around the loop (0 = haven't started yet) |
 | `run_id` | A name for this campaign |
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |
@@ -192,7 +187,7 @@ Located at `runs/iter-N/execution_results.json`. Full stdout/stderr are also sav
 
 **Schema:** `schemas/findings.schema.json`
 
-The experiment results. Compares what we predicted to what we observed, arm by arm. This is what the fast-fail logic reads to decide whether to stop early.
+The experiment results. Compares what we predicted to what we observed, arm by arm.
 
 | Field | What it means |
 |---|---|
@@ -206,10 +201,6 @@ The experiment results. Compares what we predicted to what we observed, arm by a
 | `arms[].metadata` | Optional domain-specific data attached to the arm result |
 | `dominant_component_pct` | If one component accounts for >80% of the effect, triggers simplification |
 
-**Fast-fail rules** read this artifact:
-- H-main refuted → skip remaining arms, proceed to findings gate
-- H-control-negative refuted → mechanism confounded, go back to DESIGN
-- Dominant component >80% → simplify the strategy
 
 ## 6. handoff.md — "What does the next agent need to know?"
 
@@ -244,20 +235,6 @@ A human-readable summary produced before each human gate. Designed to help the h
 
 Located at `runs/iter-N/gate_summary_<type>.json`. Generated on the fly before each gate — not persisted across sessions.
 
-## 7. trace.jsonl — "What happened under the hood?"
-
-**Schema:** `schemas/trace.schema.json`
-
-An activity log. One JSON line per event — every LLM call, tool invocation, state transition, and gate decision. Used for debugging and cost tracking after a campaign.
-
-| Field | What it means |
-|---|---|
-| `timestamp` / `run_id` | When and which campaign |
-| `event_type` | `llm_call`, `tool_call`, `state_transition`, or `gate_decision` |
-| `payload` | Event-specific details (tokens used, from/to state, approval decision, etc.) |
-
-Phase 1 defines the envelope; per-event-type payload schemas are planned for a future phase.
-
 ## Dispatch and Prompt Templates
 
 The orchestrator invokes agents through a dispatcher. Two implementations exist:
@@ -267,18 +244,3 @@ The orchestrator invokes agents through a dispatcher. Two implementations exist:
 
 `CLIDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. The DESIGN phase produces both `problem.md` and `bundle.yaml` in a single dispatch — the raw output is split by `_split_design_output()` in `run_iteration.py`.
 
-## 8. summary.json — "How did the whole campaign go?"
-
-**Schema:** `schemas/summary.schema.json`
-
-The final report card, generated at the end of a campaign. Rolls everything into top-level stats.
-
-| Field | What it means |
-|---|---|
-| `total_cost_usd` / `total_tokens` | How much it cost |
-| `total_iterations` | How many times around the loop |
-| `cost_by_phase` | Where the money went (DESIGN vs EXECUTE_ANALYZE, etc.) |
-| `per_iteration_stats` | Cost and result for each iteration |
-| `mechanism_families_investigated` | What areas were explored |
-| `principles_inserted` / `updated` / `pruned` | Knowledge base changes |
-| `final_principle_count` | How many active principles at the end |

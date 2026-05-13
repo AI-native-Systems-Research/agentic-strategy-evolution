@@ -11,7 +11,6 @@ import yaml
 
 from orchestrator.engine import Engine
 from orchestrator.llm_dispatch import LLMDispatcher
-from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
 
 
@@ -216,14 +215,7 @@ class TestSingleIterationWithMockedLLM:
         findings = combined["findings"]
         jsonschema.validate(findings, load_schema("findings.schema.json"))
 
-        # Check fast-fail
-        ff = check_fast_fail(findings)
-        assert ff == FastFailAction.CONTINUE
-
-        # EXECUTE_ANALYZE -> VALIDATE
-        engine.transition("VALIDATE")
-
-        # VALIDATE -> HUMAN_FINDINGS_GATE
+        # EXECUTE_ANALYZE -> HUMAN_FINDINGS_GATE
         engine.transition("HUMAN_FINDINGS_GATE")
         assert gate.prompt("Approve findings?") == ("approve", None)
 

@@ -23,7 +23,7 @@
       "type": ["number", "null"],
       "minimum": 0,
       "maximum": 100,
-      "description": "Percentage of total effect from single dominant component, if detected. Triggers SIMPLIFY fast-fail when >80%."
+      "description": "Percentage of total effect from single dominant component, if detected."
     }
   },
   "$defs": {

@@ -32,8 +32,7 @@ class TestStateSchema:
         schema = load_schema("state.schema.json")
         phases = [
             "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
-            "EXECUTE_ANALYZE", "VALIDATE",
-            "HUMAN_FINDINGS_GATE", "DONE",
+            "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE", "DONE",
         ]
         for phase in phases:
             instance = {
@@ -407,62 +406,6 @@ class TestFindingsSchema:
             jsonschema.validate(instance, schema)
 
 
-class TestTraceSchema:
-    def test_valid_state_transition(self, load_schema):
-        schema = load_schema("trace.schema.json")
-        instance = {
-            "timestamp": "2026-04-01T12:00:00Z",
-            "run_id": "campaign-001",
-            "event_type": "state_transition",
-            "payload": {
-                "from_state": "DESIGN",
-                "to_state": "HUMAN_DESIGN_GATE",
-                "trigger": "bundle.yaml written",
-            },
-        }
-        jsonschema.validate(instance, schema)
-
-    def test_valid_llm_call(self, load_schema):
-        schema = load_schema("trace.schema.json")
-        instance = {
-            "timestamp": "2026-04-01T12:01:00Z",
-            "run_id": "campaign-001",
-            "event_type": "llm_call",
-            "payload": {
-                "role": "planner",
-                "prompt_tokens": 5000,
-                "completion_tokens": 2000,
-                "cost_usd": 0.035,
-            },
-        }
-        jsonschema.validate(instance, schema)
-
-    def test_valid_gate_decision(self, load_schema):
-        schema = load_schema("trace.schema.json")
-        instance = {
-            "timestamp": "2026-04-01T12:03:00Z",
-            "run_id": "campaign-001",
-            "event_type": "gate_decision",
-            "payload": {
-                "gate": "HUMAN_DESIGN_GATE",
-                "decision": "approve",
-                "artifact": "runs/iter-1/hypothesis.md",
-            },
-        }
-        jsonschema.validate(instance, schema)
-
-    def test_invalid_event_type_rejected(self, load_schema):
-        schema = load_schema("trace.schema.json")
-        instance = {
-            "timestamp": "2026-04-01T12:00:00Z",
-            "run_id": "test",
-            "event_type": "invalid_type",
-            "payload": {},
-        }
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)
-
-
 class TestAdditionalPropertiesRejected:
     """Verify additionalProperties: false is enforced across schemas."""
 
@@ -501,66 +444,6 @@ class TestAdditionalPropertiesRejected:
         with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
             jsonschema.validate(instance, schema)
 
-    def test_trace_rejects_extra_field(self, load_schema):
-        schema = load_schema("trace.schema.json")
-        instance = {
-            "timestamp": "2026-04-01T12:00:00Z",
-            "run_id": "test",
-            "event_type": "state_transition",
-            "payload": {},
-            "extra": "nope",
-        }
-        with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
-            jsonschema.validate(instance, schema)
-
-
-class TestSummarySchema:
-    def test_valid_summary(self, load_schema):
-        schema = load_schema("summary.schema.json")
-        instance = {
-            "run_id": "campaign-001",
-            "total_cost_usd": 42.15,
-            "total_tokens": {"input": 1250000, "output": 380000},
-            "total_iterations": 12,
-            "cost_by_phase": {
-                "DESIGN": 10.8,
-                "EXECUTE_ANALYZE": 18.0,
-                "VALIDATE": 0.5,
-            },
-            "per_iteration_stats": [
-                {
-                    "iteration": 1,
-                    "family": "routing",
-                    "cost_usd": 3.2,
-                    "tokens": 95000,
-                    "h_main_result": "CONFIRMED",
-                }
-            ],
-            "mechanism_families_investigated": ["routing-signals", "scheduling"],
-            "principles_inserted": 14,
-            "principles_updated": 3,
-            "principles_pruned": 2,
-            "final_principle_count": 15,
-        }
-        jsonschema.validate(instance, schema)
-
-    def test_negative_cost_rejected(self, load_schema):
-        schema = load_schema("summary.schema.json")
-        instance = {
-            "run_id": "test",
-            "total_cost_usd": -1.0,
-            "total_tokens": {"input": 0, "output": 0},
-            "total_iterations": 0,
-            "cost_by_phase": {},
-            "per_iteration_stats": [],
-            "mechanism_families_investigated": [],
-            "principles_inserted": 0,
-            "principles_updated": 0,
-            "principles_pruned": 0,
-            "final_principle_count": 0,
-        }
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)
 
 
 class TestCampaignSchema:

@@ -5,7 +5,7 @@ Usage:
     python run_campaign.py examples/campaign.yaml --max-iterations 5
 
 Runs iterations in a loop: each iteration runs the full Nous loop
-(DESIGN → EXECUTE_ANALYZE → VALIDATE → DONE), then appends a ledger row
+(DESIGN → EXECUTE_ANALYZE → DONE), then appends a ledger row
 and prompts whether to continue. The designer's handoff.md (a living
 campaign-level document) and previous findings feed the next iteration's
 design prompt so that each hypothesis bundle is informed by all prior learning.
