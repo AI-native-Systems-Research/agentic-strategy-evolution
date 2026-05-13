@@ -192,10 +192,8 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   cli_dispatch.py          Code-access agent dispatch via claude -p
   prompt_loader.py         Template loading with {{placeholder}} rendering
   gates.py                 Human approval gates with summaries
-  fastfail.py              Fast-fail rule evaluation
   ledger.py                Deterministic ledger append (no LLM)
   worktree.py              Git worktree isolation for experiments
-  protocols.py             Dispatcher and Gate interface contracts
   util.py                  Shared utilities (atomic_write)
 prompts/methodology/     Methodology prompt templates
 examples/                Example campaigns
