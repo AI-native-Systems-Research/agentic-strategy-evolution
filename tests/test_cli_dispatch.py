@@ -7,7 +7,6 @@ import jsonschema
 import pytest
 import yaml
 
-from orchestrator.protocols import Dispatcher
 
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
@@ -105,13 +104,6 @@ def work_dir(tmp_path: Path) -> Path:
 def campaign(work_dir: Path) -> dict:
     """Campaign with repo_path pointing to a real directory."""
     return _make_campaign(repo_path=str(work_dir / "repo"))
-
-
-class TestCLIDispatcherProtocol:
-    def test_satisfies_dispatcher_protocol(self, work_dir: Path) -> None:
-        from orchestrator.cli_dispatch import CLIDispatcher
-        d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN)
-        assert isinstance(d, Dispatcher)
 
 
 class TestCLIDispatcherUnit:

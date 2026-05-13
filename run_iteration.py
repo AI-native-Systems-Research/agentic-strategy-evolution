@@ -25,7 +25,6 @@ import jsonschema
 import yaml
 
 from orchestrator.engine import Engine
-from orchestrator.fastfail import check_fast_fail, FastFailAction
 from orchestrator.gates import HumanGate
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.util import atomic_write
@@ -412,35 +411,19 @@ def run_iteration(
             raise
 
     # ─── VALIDATE ─────────────────────────────────────────────────────────
-    # This re-runs validation for the resume-from-checkpoint path.
-    # In normal flow, EXECUTE_ANALYZE already validated.
+    # Worktree cleanup. Validation already passed inside EXECUTE_ANALYZE.
     if _enter_phase(engine, "VALIDATE"):
-        print(f"\n{'='*60}")
-        print(f"  VALIDATE — post-check artifact validation")
-        print(f"{'='*60}")
         # Recover worktree reference on resume
         if not experiment_dir and repo_path:
             eid_path = iter_dir / ".experiment_id"
             if eid_path.exists():
                 experiment_id = eid_path.read_text().strip()
 
-        # Validate first, then clean up worktree (so it's available for debugging on failure)
-        try:
-            from orchestrator.validate import validate_execution
-            result = validate_execution(iter_dir)
-            if result["status"] == "pass":
-                print("  Validation passed.")
-            else:
-                raise RuntimeError(
-                    f"Post-check validation failed:\n"
-                    + "\n".join(f"  - {e}" for e in result["errors"])
-                )
-        finally:
-            if repo_path and experiment_id:
-                from orchestrator.worktree import remove_experiment_worktree
-                remove_experiment_worktree(Path(repo_path), experiment_id)
+        if repo_path and experiment_id:
+            from orchestrator.worktree import remove_experiment_worktree
+            remove_experiment_worktree(Path(repo_path), experiment_id)
 
-    # Validate findings and check fast-fail rules
+    # Validate findings schema
     findings_path = iter_dir / "findings.json"
     if not findings_path.exists():
         raise RuntimeError(f"{findings_path} not found.")
@@ -452,17 +435,6 @@ def run_iteration(
         raise RuntimeError(
             f"findings.json failed schema validation: {exc.message}"
         ) from exc
-
-    ff = check_fast_fail(findings)
-    if ff == FastFailAction.REDESIGN:
-        print("  ** Control-negative REFUTED and h-main not confirmed — mechanism confounded.")
-        print("     The experiment needs redesign.")
-        engine.transition("EXECUTE_ANALYZE")
-        return IterationOutcome.REDESIGN
-    if ff == FastFailAction.SKIP_TO_MERGE:
-        print("  ** H-main REFUTED — skipping to principle merge")
-    if ff == FastFailAction.SIMPLIFY:
-        print("  ** Dominant component >80% — consider simplifying the model.")
 
     # ─── HUMAN FINDINGS GATE ──────────────────────────────────────────────
     if _enter_phase(engine, "HUMAN_FINDINGS_GATE"):

@@ -215,8 +215,6 @@ campaign-dir/
       findings.json    — prediction vs outcome
       principle_updates.json — proposed principle changes
       gate_summary_*.json — human-readable gate summaries
-  trace.jsonl         — observability log
-  summary.json        — campaign rollup (generated at end)
 ```
 
 ## Cross-Iteration Context

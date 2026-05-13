@@ -8,7 +8,6 @@ import pytest
 import yaml
 
 from orchestrator.llm_dispatch import LLMDispatcher
-from orchestrator.protocols import Dispatcher
 
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
@@ -229,9 +228,9 @@ class TestLLMDispatcher:
         with pytest.raises(FileNotFoundError):
             d.dispatch("planner", "design", output_path=out, iteration=1)
 
-    def test_protocol_conformance(self, work_dir: Path) -> None:
+    def test_instantiation(self, work_dir: Path) -> None:
         d = _make_dispatcher(work_dir, [])
-        assert isinstance(d, Dispatcher)
+        assert d is not None
 
     def test_context_includes_campaign_fields(self, work_dir: Path) -> None:
         raw = "Design output stub."
@@ -464,7 +463,7 @@ class TestSimplifiedCampaign:
             campaign=MINIMAL_CAMPAIGN,
             completion_fn=make_mock_completion(["stub"]),
         )
-        assert isinstance(d, Dispatcher)
+        assert d is not None
 
     def test_minimal_campaign_context_has_empty_metrics(self, work_dir: Path) -> None:
         """Context should show 'Not specified' for missing metrics/knobs."""

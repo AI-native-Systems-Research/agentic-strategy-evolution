@@ -4,10 +4,10 @@ This document describes the internal architecture of the Nous framework: what ea
 
 ## Design Philosophy
 
-Nous separates **deterministic orchestration** from **AI reasoning**. The orchestrator is a Python state machine — it never calls an LLM. It owns phase transitions, checkpointing, gate enforcement, and fast-fail rules. AI agents are external processes invoked by the orchestrator with structured prompts and schema-governed outputs.
+Nous separates **deterministic orchestration** from **AI reasoning**. The orchestrator is a Python state machine — it never calls an LLM. It owns phase transitions, checkpointing, gate enforcement, and artifact validation. AI agents are external processes invoked by the orchestrator with structured prompts and schema-governed outputs.
 
 This separation exists because:
-- The orchestrator must be auditable and predictable — you need to trust that gates cannot be bypassed, fast-fail rules fire correctly, and state is always recoverable.
+- The orchestrator must be auditable and predictable — you need to trust that gates cannot be bypassed, validation runs correctly, and state is always recoverable.
 - AI agents are stochastic and expensive — isolating them makes the system testable without LLM calls and lets you swap agent implementations without touching control flow.
 
 ## System Overview
@@ -39,8 +39,7 @@ This separation exists because:
                     │                                      │
                     │  campaign.yaml   state.json          │
                     │  ledger.json     principles.json     │
-                    │  summary.json                        │
-                    │  runs/iter-N/    trace.jsonl         │
+                    │  runs/iter-N/                        │
                     │    problem.md    bundle.yaml          │
                     │    experiment_plan.yaml               │
                     │    execution_results.json              │
@@ -125,11 +124,11 @@ dispatcher.dispatch(
 )
 ```
 
-Both dispatchers satisfy the `Dispatcher` protocol (`protocols.py`).
+Both dispatchers share the same interface — `CLIDispatcher` extends `LLMDispatcher`.
 
 ## CLI Dispatch
 
-`CLIDispatcher` invokes `claude -p` for both agent roles. It satisfies the `Dispatcher` protocol from `orchestrator/protocols.py`.
+`CLIDispatcher` invokes `claude -p` for both agent roles.
 
 ### Prompt System
 
@@ -219,20 +218,6 @@ Before each human gate, a formatted summary (`gate_summary_*.json`) is produced.
 
 Gates display the summary first, then the raw artifact (for those who want full detail).
 
-### Fast-Fail Rules (`orchestrator/fastfail.py`)
-
-Pure functions that examine findings and return a recommended action. The orchestrator decides how to act on the recommendation.
-
-**Rules in priority order:**
-
-| Rule | Trigger | Action | Rationale |
-|---|---|---|---|
-| 1 | H-main refuted | `SKIP_TO_MERGE` | Mechanism doesn't work — skip to principle merge, proceed to findings gate |
-| 2 | H-control-negative refuted | `REDESIGN` | Mechanism is confounded — it produces effects where it shouldn't |
-| 3 | Dominant component >80% | `SIMPLIFY` | One component does all the work — drop the others |
-| — | None of the above | `CONTINUE` | Proceed normally |
-
-Rule 1 takes priority: if H-main is refuted, the control-negative result doesn't matter.
 
 ## Data Flow
 
@@ -327,8 +312,6 @@ Every artifact exchanged between components is validated against a JSON Schema (
 | `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |
 | `principles.schema.json` | JSON | Principle store (statement, confidence, regime, evidence, category, status) |
 | `ledger.schema.json` | JSON | Append-only iteration log with prediction accuracy and domain metrics |
-| `summary.schema.json` | JSON | Campaign rollup (cost, tokens, principles extracted) |
-| `trace.schema.json` | JSON | Observability events (LLM calls, state transitions, gate decisions) |
 
 The bundle and campaign schemas use YAML format because they contain free-text fields that are more readable in YAML. All other schemas use JSON.
 
@@ -371,16 +354,9 @@ Nous ships with two dispatchers:
 - `StubDispatcher` — deterministic stubs for testing
 - `CLIDispatcher` — real agent calls via `claude -p`
 
-To create a custom dispatcher, implement the `Dispatcher` protocol from `orchestrator/protocols.py`. Your dispatcher must produce artifacts that pass schema validation — the orchestrator trusts the schema contract, not the content.
+To create a custom dispatcher, extend `LLMDispatcher`. Your dispatcher must produce artifacts that pass schema validation — the orchestrator trusts the schema contract, not the content.
 
 ### Adding a New Arm Type
 
 1. Add the type to the `enum` in `schemas/bundle.schema.yaml` (arm type) and `schemas/findings.schema.json` (arm_type)
-2. Update `orchestrator/fastfail.py` if the new arm type has fast-fail implications
-3. Add test cases to `tests/test_schemas.py` and `tests/test_fastfail.py`
-
-### Adding a New Fast-Fail Rule
-
-1. Add a new `FastFailAction` enum value
-2. Add the rule to `check_fast_fail()` with appropriate priority ordering
-3. Add test cases covering the rule and its interaction with existing rules
+2. Add test cases to `tests/test_schemas.py`
