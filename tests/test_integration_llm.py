@@ -215,10 +215,7 @@ class TestSingleIterationWithMockedLLM:
         findings = combined["findings"]
         jsonschema.validate(findings, load_schema("findings.schema.json"))
 
-        # EXECUTE_ANALYZE -> VALIDATE
-        engine.transition("VALIDATE")
-
-        # VALIDATE -> HUMAN_FINDINGS_GATE
+        # EXECUTE_ANALYZE -> HUMAN_FINDINGS_GATE
         engine.transition("HUMAN_FINDINGS_GATE")
         assert gate.prompt("Approve findings?") == ("approve", None)
 

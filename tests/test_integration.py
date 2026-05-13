@@ -85,11 +85,8 @@ class TestSingleIterationHappyPath:
         findings = json.loads((iter_dir / "findings.json").read_text())
         jsonschema.validate(findings, load_schema("findings.schema.json"))
 
-        # EXECUTE_ANALYZE -> VALIDATE
-        engine.transition("VALIDATE")
+        # EXECUTE_ANALYZE -> HUMAN_FINDINGS_GATE
         dispatcher.write_execution_results(iter_dir / "execution_results.json", iteration=1)
-
-        # VALIDATE -> HUMAN_FINDINGS_GATE
         engine.transition("HUMAN_FINDINGS_GATE")
         assert gate.prompt("Approve?") == ("approve", None)
 
@@ -132,7 +129,6 @@ class TestSingleIterationHappyPath:
             "executor", "execute-analyze",
             output_path=iter_dir / "executor_log.md", iteration=1,
         )
-        engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")
         _merge_principles(campaign_dir, iter_dir)
         engine.transition("DONE")
@@ -155,7 +151,6 @@ class TestSingleIterationHappyPath:
             output_path=iter_dir2 / "executor_log.md",
             iteration=2, h_main_result="REFUTED",
         )
-        engine.transition("VALIDATE")
         engine.transition("HUMAN_FINDINGS_GATE")
         _merge_principles(campaign_dir, iter_dir2)
         engine.transition("DONE")

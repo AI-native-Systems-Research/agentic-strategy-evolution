@@ -32,8 +32,7 @@ class TestStateSchema:
         schema = load_schema("state.schema.json")
         phases = [
             "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
-            "EXECUTE_ANALYZE", "VALIDATE",
-            "HUMAN_FINDINGS_GATE", "DONE",
+            "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE", "DONE",
         ]
         for phase in phases:
             instance = {

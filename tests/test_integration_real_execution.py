@@ -77,18 +77,18 @@ class TestEnterPhase:
             f"_PHASE_ORDER has {order_phases - engine_phases}"
         )
 
-    def test_resume_from_validate(self, tmp_path):
-        """Resuming at VALIDATE skips execution phases and earlier."""
+    def test_resume_from_execute_analyze(self, tmp_path):
+        """Resuming at EXECUTE_ANALYZE skips design phases."""
         state = {
-            "phase": "VALIDATE", "iteration": 0,
+            "phase": "EXECUTE_ANALYZE", "iteration": 0,
             "run_id": "test", "family": None, "timestamp": "t",
         }
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "EXECUTE_ANALYZE") is False
-        assert _enter_phase(engine, "VALIDATE") is True
-        assert engine.phase == "VALIDATE"
+        assert _enter_phase(engine, "DESIGN") is False
+        assert _enter_phase(engine, "EXECUTE_ANALYZE") is True
+        assert engine.phase == "EXECUTE_ANALYZE"
         # Can advance to next
         assert _enter_phase(engine, "HUMAN_FINDINGS_GATE") is True
         assert engine.phase == "HUMAN_FINDINGS_GATE"

@@ -56,7 +56,7 @@ A bookmark. It tells the orchestrator what phase we're in, which iteration we're
 
 | Field | What it means |
 |---|---|
-| `phase` | Which step of the loop (INIT, DESIGN, HUMAN_DESIGN_GATE, EXECUTE_ANALYZE, VALIDATE, HUMAN_FINDINGS_GATE, DONE) |
+| `phase` | Which step of the loop (INIT, DESIGN, HUMAN_DESIGN_GATE, EXECUTE_ANALYZE, HUMAN_FINDINGS_GATE, DONE) |
 | `iteration` | How many times we've gone around the loop (0 = haven't started yet) |
 | `run_id` | A name for this campaign |
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |

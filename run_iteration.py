@@ -47,7 +47,7 @@ _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 # Phase ordering for resume logic
 _PHASE_ORDER = [
     "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
-    "EXECUTE_ANALYZE", "VALIDATE", "HUMAN_FINDINGS_GATE",
+    "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE",
     "DONE",
 ]
 _PHASE_INDEX = {p: i for i, p in enumerate(_PHASE_ORDER)}
@@ -234,7 +234,7 @@ def run_iteration(
 ) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
 
-    Phases: DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → VALIDATE → HUMAN_FINDINGS_GATE → DONE
+    Phases: DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → HUMAN_FINDINGS_GATE → DONE
 
     Args:
         final: If True (default), transitions to DONE after principle merge.
@@ -404,24 +404,10 @@ def run_iteration(
                     f"Executor artifacts failed validation:\n"
                     + "\n".join(f"  - {e}" for e in result["errors"])
                 )
-        except BaseException:
+        finally:
             if repo_path and experiment_id:
                 from orchestrator.worktree import remove_experiment_worktree
                 remove_experiment_worktree(Path(repo_path), experiment_id)
-            raise
-
-    # ─── VALIDATE ─────────────────────────────────────────────────────────
-    # Worktree cleanup. Validation already passed inside EXECUTE_ANALYZE.
-    if _enter_phase(engine, "VALIDATE"):
-        # Recover worktree reference on resume
-        if not experiment_dir and repo_path:
-            eid_path = iter_dir / ".experiment_id"
-            if eid_path.exists():
-                experiment_id = eid_path.read_text().strip()
-
-        if repo_path and experiment_id:
-            from orchestrator.worktree import remove_experiment_worktree
-            remove_experiment_worktree(Path(repo_path), experiment_id)
 
     # Validate findings schema
     findings_path = iter_dir / "findings.json"

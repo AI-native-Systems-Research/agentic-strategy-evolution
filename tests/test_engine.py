@@ -143,7 +143,7 @@ class TestEngine:
         engine = Engine(work_dir)
         path = [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
-            "VALIDATE", "HUMAN_FINDINGS_GATE", "DONE",
+            "HUMAN_FINDINGS_GATE", "DONE",
         ]
         for next_state in path:
             engine.transition(next_state)
@@ -162,7 +162,7 @@ class TestEngine:
         engine = Engine(work_dir)
         for s in [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
-            "VALIDATE", "HUMAN_FINDINGS_GATE", "DONE",
+            "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
         assert engine.iteration == 0
@@ -173,7 +173,7 @@ class TestEngine:
         engine = Engine(work_dir)
         for s in [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
-            "VALIDATE", "HUMAN_FINDINGS_GATE",
+            "HUMAN_FINDINGS_GATE",
         ]:
             engine.transition(s)
         engine.transition("EXECUTE_ANALYZE")  # human rejects, re-run
@@ -183,7 +183,7 @@ class TestEngine:
         engine = Engine(work_dir)
         for s in [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
-            "VALIDATE", "HUMAN_FINDINGS_GATE", "DONE",
+            "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
         with pytest.raises(ValueError, match="Invalid transition"):
@@ -196,7 +196,7 @@ class TestEngine:
         engine = Engine(work_dir)
         for s in [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
-            "VALIDATE", "HUMAN_FINDINGS_GATE", "DONE",
+            "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
         assert engine.iteration == 0
@@ -207,14 +207,14 @@ class TestEngine:
         engine = Engine(work_dir)
         for s in [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
-            "VALIDATE", "HUMAN_FINDINGS_GATE", "DONE",
+            "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
         engine.transition("DESIGN")  # iter 0 -> 1
         assert engine.iteration == 1
         for s in [
             "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
-            "VALIDATE", "HUMAN_FINDINGS_GATE", "DONE",
+            "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
         engine.transition("DESIGN")  # iter 1 -> 2

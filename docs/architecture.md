@@ -64,7 +64,7 @@ INIT ──▶ DESIGN ──▶ HUMAN_DESIGN_GATE
             └──────────────┘
                            │
                            ▼
-                    EXECUTE_ANALYZE ──▶ VALIDATE ──▶ HUMAN_FINDINGS_GATE
+                    EXECUTE_ANALYZE ──▶ HUMAN_FINDINGS_GATE
                            ▲                              │
                            │ (reject)                     │ (approve)
                            └──────────────────────────────┘
@@ -79,8 +79,7 @@ INIT ──▶ DESIGN ──▶ HUMAN_DESIGN_GATE
 - INIT → DESIGN
 - DESIGN → HUMAN_DESIGN_GATE
 - HUMAN_DESIGN_GATE → EXECUTE_ANALYZE (approve) | DESIGN (reject)
-- EXECUTE_ANALYZE → VALIDATE
-- VALIDATE → HUMAN_FINDINGS_GATE
+- EXECUTE_ANALYZE → HUMAN_FINDINGS_GATE
 - HUMAN_FINDINGS_GATE → DONE (approve) | EXECUTE_ANALYZE (reject)
 - DONE → DESIGN (next iteration, increments counter)
 
@@ -101,7 +100,6 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 |---|---|---|
 | **Planner** (Opus, `claude -p`) | DESIGN | `problem.md`, `bundle.yaml`, `handoff_snapshot.md` |
 | **Executor** (Sonnet, `claude -p`) | EXECUTE_ANALYZE | `experiment_plan.yaml`, `findings.json`, `principle_updates.json`, `patches/`, `results/` |
-| **Python orchestrator** | VALIDATE | Post-check: validates artifacts exist and pass schemas, merges principles (no LLM) |
 
 Both agents write artifacts directly to the campaign directory (`iter_dir`) and run `nous validate` before claiming done. If validation fails, the agent reads the errors, fixes the artifacts, and retries. The orchestrator runs a post-check as a safety net.
 
@@ -150,7 +148,7 @@ The executor agent (Sonnet, `claude -p`) handles the entire execution pipeline i
 5. Compares observed metrics against predictions
 6. Produces `findings.json` and `principle_updates.json`
 
-The VALIDATE phase (Python-only) then replays `experiment_plan.yaml` for reproducibility verification and merges principles by ID into `principles.json`.
+After execution, the orchestrator validates artifacts (schema check) and merges principles by ID into `principles.json`.
 
 ### Model Configuration
 
@@ -210,7 +208,7 @@ Human gates are hard stops that cannot be bypassed. They surface the artifact an
 
 **Where gates appear:**
 1. HUMAN_DESIGN_GATE — after DESIGN, human sees the hypothesis bundle
-2. HUMAN_FINDINGS_GATE — after VALIDATE, human sees findings and principle updates
+2. HUMAN_FINDINGS_GATE — after EXECUTE_ANALYZE, human sees findings and principle updates
 
 ### Gate Summaries
 
@@ -240,13 +238,10 @@ Gates display the summary first, then the raw artifact (for those who want full 
          + findings.json + principle_updates.json
                        │
                        ▼
-                  VALIDATE (Python)
+              HUMAN_FINDINGS_GATE (approve/reject/abort)
                        │
                        ▼
               principles.json (upsert by ID)
-                       │
-                       ▼
-              HUMAN_FINDINGS_GATE (approve/reject/abort)
                        │
                        ▼
                      DONE
@@ -283,7 +278,7 @@ for i in 1..max_iterations:
   ┌───────────────────────────────────────────────────────────┐
   │  run_iteration(iteration=i)                               │
   │    DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE           │
-  │    → VALIDATE → HUMAN_FINDINGS_GATE → DONE                │
+  │    → HUMAN_FINDINGS_GATE → DONE                           │
   └─────────────────────┬─────────────────────────────────────┘
                         │
                   (if not final)
@@ -320,7 +315,7 @@ The bundle and campaign schemas use YAML format because they contain free-text f
 Automated AI reviews (DESIGN_REVIEW, FINDINGS_REVIEW) have been removed. Quality control is now handled by:
 
 1. **HUMAN_DESIGN_GATE** — the human reviews the hypothesis bundle directly after DESIGN
-2. **HUMAN_FINDINGS_GATE** — the human reviews findings and principle updates after VALIDATE
+2. **HUMAN_FINDINGS_GATE** — the human reviews findings and principle updates after EXECUTE_ANALYZE
 
 This removes the multi-perspective automated review overhead while keeping humans in the loop at both decision points.
 
@@ -343,7 +338,7 @@ The orchestrator is designed for crash-safe operation:
 - **Atomic state writes:** `state.json` is written to a temp file, fsynced, then renamed. A crash during write leaves the previous valid state intact.
 - **Checkpoint/resume:** The engine loads state from `state.json` on construction. Kill the process at any point and restart — it resumes from the last committed state.
 - **Append-only ledger:** `ledger.json` is logically append-only — rows are never modified or deleted. Implementation reads, appends, and atomically rewrites the file.
-- **Idempotent principle merge:** The VALIDATE step reads the existing `principles.json`, upserts principles by ID, and writes back. Re-running for the same iteration produces a duplicate (detectable by ID) rather than corruption.
+- **Idempotent principle merge:** The principle merge step reads the existing `principles.json`, upserts principles by ID, and writes back. Re-running for the same iteration produces a duplicate (detectable by ID) rather than corruption.
 
 ## Extending Nous
 
