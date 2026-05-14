@@ -35,6 +35,8 @@ _TRANSIENT_PATTERNS = (
     "service unavailable",
     "gateway timeout",
     "overloaded_error",
+    "rate_limit_error",
+    "too many requests",
 )
 
 # Exponential backoff delays (seconds) between retry attempts.
@@ -53,13 +55,16 @@ def _is_transient(response_json: dict | None, stderr: str = "") -> bool:
         api_status = response_json.get("api_error_status")
         if isinstance(api_status, int) and 500 <= api_status < 600:
             return True
-        if response_json.get("is_error"):
-            result = str(response_json.get("result", "")).lower()
-            if any(p in result for p in _TRANSIENT_PATTERNS):
-                return True
-            # is_error with no transient signal -> agent-side failure, do not retry
+        if not response_json.get("is_error"):
+            # Parseable envelope with is_error=False alongside a nonzero exit is
+            # not a transport failure; treat as permanent so we don't retry.
             return False
-    # No parseable JSON; fall back to stderr inspection.
+        result = str(response_json.get("result", "")).lower()
+        if any(p in result for p in _TRANSIENT_PATTERNS):
+            return True
+        # is_error=True with no transient signal -> agent-side failure, do not retry
+        return False
+    # No parseable JSON envelope; fall back to stderr inspection.
     if stderr:
         s = stderr.lower()
         if any(p in s for p in _TRANSIENT_PATTERNS):
@@ -250,7 +255,7 @@ class CLIDispatcher(LLMDispatcher):
                 )
                 time.sleep(delay)
 
-    def _call_claude_once(self, cmd: list, prompt: str, cwd: Path | None) -> str:
+    def _call_claude_once(self, cmd: list[str], prompt: str, cwd: Path | None) -> str:
         """Run one `claude -p` subprocess attempt.
 
         Raises _TransientCLIError for transport/API errors so the retry loop can

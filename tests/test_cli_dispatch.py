@@ -629,3 +629,31 @@ class TestIsTransientClassifier:
     def test_no_json_no_stderr_not_transient(self) -> None:
         from orchestrator.cli_dispatch import _is_transient
         assert not _is_transient(None, stderr="")
+
+    def test_rate_limit_error_is_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert _is_transient({
+            "is_error": True, "api_error_status": None,
+            "result": "rate_limit_error: Too many requests",
+        })
+
+    def test_too_many_requests_string_is_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert _is_transient({
+            "is_error": True, "api_error_status": None,
+            "result": "Error: Too many requests, please slow down.",
+        })
+
+    def test_parseable_json_is_error_false_not_transient(self) -> None:
+        """A parseable envelope with is_error=False alongside a nonzero exit is permanent."""
+        from orchestrator.cli_dispatch import _is_transient
+        # Even with transient-looking stderr, the parseable non-error envelope wins.
+        assert not _is_transient(
+            {"is_error": False, "api_error_status": None, "result": ""},
+            stderr="ECONNRESET: connection reset",
+        )
+
+    def test_5xx_overrides_is_error_false(self) -> None:
+        """api_error_status 5xx is transient even if is_error is absent/False."""
+        from orchestrator.cli_dispatch import _is_transient
+        assert _is_transient({"is_error": False, "api_error_status": 503, "result": ""})

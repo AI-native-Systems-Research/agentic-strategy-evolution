@@ -476,7 +476,7 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=None,
-                        help="Max retries for transient claude -p failures (default: unbounded)")
+                        help="Max retries for transient claude -p failures (default: unbounded; set to 0 to disable)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
