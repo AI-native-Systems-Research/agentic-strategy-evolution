@@ -278,8 +278,8 @@ def main() -> None:
                         help="Auto-approve all human gates (skip interactive prompts)")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
-    parser.add_argument("--max-cli-retries", type=int, default=None,
-                        help="Max retries for transient claude -p failures (default: unbounded; set to 0 to disable)")
+    parser.add_argument("--max-cli-retries", type=int, default=10,
+                        help="Max retries for transient claude -p failures (default: 10; 0 to disable; -1 for unlimited)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -324,7 +324,7 @@ def main() -> None:
         campaign, work_dir,
         max_iterations=max_iter, model=args.model,
         auto_approve=args.auto_approve, timeout=args.timeout,
-        max_cli_retries=args.max_cli_retries,
+        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
     )
 
 

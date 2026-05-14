@@ -93,7 +93,7 @@ class CLIDispatcher(LLMDispatcher):
         prompts_dir: Path | None = None,
         timeout: int = 1800,
         max_turns: int = 25,
-        max_retries: int | None = None,
+        max_retries: int | None = 10,
     ) -> None:
         super().__init__(
             work_dir=work_dir,

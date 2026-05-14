@@ -263,6 +263,24 @@ class TestCLIDispatcherUnit:
         d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, timeout=120)
         assert d.timeout == 120
 
+    def test_default_max_retries_is_10(self, work_dir: Path) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN)
+        assert d.max_retries == 10
+
+    def test_max_retries_none_means_unlimited(self, work_dir: Path) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, max_retries=None)
+        assert d.max_retries is None
+
+    def test_max_retries_zero_means_disabled(self, work_dir: Path) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, max_retries=0)
+        assert d.max_retries == 0
+
     def test_override_cwd_changes_subprocess_cwd(self, work_dir: Path, tmp_path: Path) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
@@ -502,6 +520,23 @@ class TestCLIDispatcherRetry:
         ) as mock_run:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
             with pytest.raises(RuntimeError, match="exited with code 1"):
+                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 1
+        fast_sleep.assert_not_called()
+
+    def test_max_retries_zero_disables_retries(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """max_retries=0 means no retries — the first transient failure raises immediately."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            return_value=_transient_socket_result(),
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign, max_retries=0)
+            with pytest.raises(RuntimeError, match="still failing after 1 attempt"):
                 d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
 
         assert mock_run.call_count == 1
