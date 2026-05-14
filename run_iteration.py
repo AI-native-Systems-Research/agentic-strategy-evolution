@@ -4,12 +4,16 @@
 Usage:
     python run_iteration.py examples/campaign.yaml
 
+    # Use CLI agent instead of LLM API (no API key needed):
+    python run_iteration.py examples/campaign.yaml --agent cli
+
 Creates a working directory named after the target system, copies templates,
 and runs one full iteration with human gates for approval.
 
-Set your LLM API key before running:
-    export OPENAI_API_KEY=sk-...
-    (or set OPENAI_BASE_URL for a proxy endpoint)
+Dispatch backends:
+    --agent api (default): Requires OPENAI_API_KEY.
+    --agent cli: All phases dispatched via `claude -p`. No API key needed.
+    --agent inline: Prompts emitted to stdout for the calling agent.
 """
 import argparse
 import json
@@ -232,7 +236,7 @@ def run_iteration(
     final: bool = True,
     auto_approve: bool = False,
     timeout: int = 1800,
-    max_cli_retries: int | None = None,
+    agent: str = "api",
 ) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
 
@@ -241,6 +245,9 @@ def run_iteration(
     Args:
         final: If True (default), transitions to DONE after principle merge.
         auto_approve: If True, all human gates are automatically approved.
+        agent: Dispatch backend — "cli" uses CLIDispatcher for all phases,
+            "api" uses LLMDispatcher (with CLIDispatcher for code phases
+            when repo_path is set).
 
     Returns:
         An IterationOutcome value: COMPLETED, CONTINUE, ABORTED, or REDESIGN.
@@ -262,17 +269,33 @@ def run_iteration(
     def _max_turns_for(phase_key: str) -> int:
         return default_max_turns.get(phase_key, 25)
 
-    # CLIDispatcher for code-access roles; LLMDispatcher for API-only phases
     from orchestrator.cli_dispatch import CLIDispatcher
-    cli_dispatcher = (
-        CLIDispatcher(
+    from orchestrator.inline_dispatch import InlineDispatcher
+    if agent == "inline":
+        # Inline mode: emit prompts to stdout, agent reasons directly
+        inline_dispatcher = InlineDispatcher(
+            work_dir=work_dir, campaign=campaign, timeout=timeout,
+        )
+        cli_dispatcher = inline_dispatcher
+        llm_dispatcher = inline_dispatcher
+    elif agent == "cli":
+        # CLI mode: use CLIDispatcher for ALL phases — no LLM API needed
+        cli_dispatcher = CLIDispatcher(
             work_dir=work_dir, campaign=campaign,
             model=_model_for("design"), timeout=timeout,
             max_turns=_max_turns_for("design"),
-            max_retries=max_cli_retries,
-        ) if repo_path else None
-    )
-    llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("design"))
+        )
+        llm_dispatcher = cli_dispatcher
+    else:
+        # API mode: CLIDispatcher for code-access roles only (when repo_path is set)
+        cli_dispatcher = (
+            CLIDispatcher(
+                work_dir=work_dir, campaign=campaign,
+                model=_model_for("design"), timeout=timeout,
+                max_turns=_max_turns_for("design"),
+            ) if repo_path else None
+        )
+        llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("design"))
     gate = HumanGate(auto_response="approve") if auto_approve else HumanGate()
 
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
@@ -476,8 +499,10 @@ def main() -> None:
                         help="Auto-approve all human gates (skip interactive prompts)")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
-    parser.add_argument("--max-cli-retries", type=int, default=10,
-                        help="Max retries for transient claude -p failures (default: 10; 0 to disable; -1 for unlimited)")
+    parser.add_argument("--agent", choices=["inline", "cli", "api"], default="api",
+                        help="Dispatch backend: 'inline' emits prompts to stdout for the "
+                             "calling agent, 'cli' spawns claude -p subprocesses, "
+                             "'api' calls an OpenAI-compatible LLM API (default: api)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -514,7 +539,7 @@ def main() -> None:
     run_iteration(
         campaign, work_dir, model=args.model,
         auto_approve=args.auto_approve, timeout=args.timeout,
-        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
+        agent=args.agent,
     )
 
 
