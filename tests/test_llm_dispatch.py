@@ -621,7 +621,18 @@ class TestNoApiKey:
     ) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN)
-        with pytest.raises(RuntimeError, match="no OPENAI_API_KEY set"):
+        with pytest.raises(RuntimeError, match="no API key available"):
+            d.dispatch(
+                "summarizer", "summarize-gate",
+                output_path=tmp_path / "out.json", iteration=1,
+            )
+
+    def test_dispatch_error_includes_role_and_phase(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN)
+        with pytest.raises(RuntimeError, match="summarizer/summarize-gate"):
             d.dispatch(
                 "summarizer", "summarize-gate",
                 output_path=tmp_path / "out.json", iteration=1,
@@ -631,3 +642,14 @@ class TestNoApiKey:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
         d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN)
         assert d._completion is not None
+
+    def test_init_with_direct_api_key_param(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN, api_key="sk-direct")
+        assert d._completion is not None
+
+    def test_base_url_without_key_still_disabled(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8000/v1")
+        d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN)
+        assert d._completion is None

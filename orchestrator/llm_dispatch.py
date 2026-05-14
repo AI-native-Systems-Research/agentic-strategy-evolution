@@ -5,8 +5,9 @@ structured output from code fences, validates against JSON Schema,
 and writes artifacts atomically.
 
 Works with any OpenAI-compatible endpoint (OpenAI, Anthropic via proxy,
-LiteLLM proxy, etc.).  Set OPENAI_API_KEY and OPENAI_BASE_URL environment
-variables to configure.
+LiteLLM proxy, etc.).  Optionally set OPENAI_API_KEY and OPENAI_BASE_URL
+environment variables.  If no API key is available, the dispatcher is
+created in disabled mode and dispatch() raises RuntimeError when called.
 """
 import json
 import logging
@@ -67,9 +68,9 @@ class LLMDispatcher:
                 )
                 self._completion = client.chat.completions.create
             else:
-                logger.info(
-                    "No OPENAI_API_KEY found. LLM-based summaries and "
-                    "reports will be skipped. Set OPENAI_API_KEY to enable them."
+                logger.warning(
+                    "No OPENAI_API_KEY found. LLM dispatch will fail at "
+                    "call time. Set OPENAI_API_KEY to enable LLM features."
                 )
                 self._completion = None
         self._metrics_path = self.work_dir / "llm_metrics.jsonl"
@@ -128,9 +129,9 @@ class LLMDispatcher:
         """
         if self._completion is None:
             raise RuntimeError(
-                f"Cannot dispatch {role}/{phase}: no OPENAI_API_KEY set. "
-                f"Set the OPENAI_API_KEY environment variable to enable "
-                f"LLM-based summaries and reports."
+                f"Cannot dispatch {role}/{phase}: no API key available. "
+                f"Pass api_key= to LLMDispatcher or set the "
+                f"OPENAI_API_KEY environment variable."
             )
 
         output_path = Path(output_path)
