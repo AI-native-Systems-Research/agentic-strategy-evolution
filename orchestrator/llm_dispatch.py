@@ -59,11 +59,19 @@ class LLMDispatcher:
         if completion_fn:
             self._completion = completion_fn
         else:
-            client = openai.OpenAI(
-                api_key=api_key or os.environ.get("OPENAI_API_KEY"),
-                base_url=api_base or os.environ.get("OPENAI_BASE_URL"),
-            )
-            self._completion = client.chat.completions.create
+            resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
+            resolved_base = api_base or os.environ.get("OPENAI_BASE_URL")
+            if resolved_key:
+                client = openai.OpenAI(
+                    api_key=resolved_key, base_url=resolved_base,
+                )
+                self._completion = client.chat.completions.create
+            else:
+                logger.info(
+                    "No OPENAI_API_KEY found. LLM-based summaries and "
+                    "reports will be skipped. Set OPENAI_API_KEY to enable them."
+                )
+                self._completion = None
         self._metrics_path = self.work_dir / "llm_metrics.jsonl"
         self._current_role: str = "unknown"
         self._current_phase: str = "unknown"
@@ -118,6 +126,13 @@ class LLMDispatcher:
         *h_main_result* is ignored — kept for protocol compatibility with
         StubDispatcher.  The executor determines results from its own analysis.
         """
+        if self._completion is None:
+            raise RuntimeError(
+                f"Cannot dispatch {role}/{phase}: no OPENAI_API_KEY set. "
+                f"Set the OPENAI_API_KEY environment variable to enable "
+                f"LLM-based summaries and reports."
+            )
+
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
