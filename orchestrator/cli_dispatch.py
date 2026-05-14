@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 _TRANSIENT_PATTERNS = (
     "socket connection was closed",
     "connection reset",
-    "connection refused",
     "request timed out",
     "fetch failed",
     "econnreset",

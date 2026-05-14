@@ -587,7 +587,8 @@ class TestCLIDispatcherRetry:
         metrics_path = work_dir / "llm_metrics.jsonl"
         assert metrics_path.exists()
         lines = [l for l in metrics_path.read_text().strip().splitlines() if l]
-        # 2 transient attempts (each log metrics before raising) + 1 successful attempt
+        # _transient_is_error_result uses returncode=0 so log_metrics fires before the
+        # is_error raise; 2 transient attempts + 1 success = 3 entries.
         assert len(lines) == 3
 
 
