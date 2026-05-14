@@ -263,6 +263,24 @@ class TestCLIDispatcherUnit:
         d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, timeout=120)
         assert d.timeout == 120
 
+    def test_default_max_retries_is_10(self, work_dir: Path) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN)
+        assert d.max_retries == 10
+
+    def test_max_retries_none_means_unlimited(self, work_dir: Path) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, max_retries=None)
+        assert d.max_retries is None
+
+    def test_max_retries_zero_means_disabled(self, work_dir: Path) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        d = CLIDispatcher(work_dir=work_dir, campaign=SAMPLE_CAMPAIGN, max_retries=0)
+        assert d.max_retries == 0
+
     def test_override_cwd_changes_subprocess_cwd(self, work_dir: Path, tmp_path: Path) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
@@ -316,3 +334,361 @@ class TestCLIDispatcherUnit:
             assert d._cwd == override_dir
 
         assert d._cwd == original_cwd
+
+
+def _make_result(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
+    """Helper: build a subprocess.CompletedProcess mock."""
+    r = MagicMock()
+    r.returncode = returncode
+    r.stdout = stdout
+    r.stderr = stderr
+    return r
+
+
+def _success_result(text: str = "agent output") -> MagicMock:
+    """Successful claude -p output (raw text, not JSON envelope)."""
+    return _make_result(returncode=0, stdout=text)
+
+
+def _transient_socket_result() -> MagicMock:
+    """Non-zero exit with a transient socket error in stdout JSON."""
+    payload = json.dumps({
+        "type": "result", "subtype": "error", "is_error": True,
+        "api_error_status": None,
+        "result": "API Error: The socket connection was closed unexpectedly.",
+        "total_cost_usd": 0.01, "duration_ms": 500, "num_turns": 1,
+        "usage": {"input_tokens": 100, "output_tokens": 0,
+                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+    })
+    return _make_result(returncode=1, stdout=payload, stderr="")
+
+
+def _transient_5xx_result() -> MagicMock:
+    """Non-zero exit with api_error_status=503 in JSON."""
+    payload = json.dumps({
+        "type": "result", "subtype": "error", "is_error": True,
+        "api_error_status": 503,
+        "result": "Service unavailable",
+        "total_cost_usd": 0.0, "duration_ms": 200, "num_turns": 0,
+        "usage": {"input_tokens": 0, "output_tokens": 0,
+                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+    })
+    return _make_result(returncode=1, stdout=payload, stderr="")
+
+
+def _transient_is_error_result() -> MagicMock:
+    """Zero exit, is_error=True with transient socket text."""
+    payload = json.dumps({
+        "type": "result", "subtype": "error", "is_error": True,
+        "api_error_status": None,
+        "result": "API Error: The socket connection was closed unexpectedly.",
+        "total_cost_usd": 0.01, "duration_ms": 500, "num_turns": 1,
+        "usage": {"input_tokens": 100, "output_tokens": 0,
+                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+    })
+    return _make_result(returncode=0, stdout=payload, stderr="")
+
+
+def _non_transient_is_error_result() -> MagicMock:
+    """Zero exit, is_error=True with an agent-side (non-transient) error."""
+    payload = json.dumps({
+        "type": "result", "subtype": "error", "is_error": True,
+        "api_error_status": None,
+        "result": "invalid YAML in bundle: mapping values are not allowed here",
+        "total_cost_usd": 0.02, "duration_ms": 600, "num_turns": 2,
+        "usage": {"input_tokens": 200, "output_tokens": 50,
+                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+    })
+    return _make_result(returncode=0, stdout=payload, stderr="")
+
+
+def _non_transient_nonzero_result() -> MagicMock:
+    """Non-zero exit with a non-transient stderr message."""
+    return _make_result(returncode=1, stdout="", stderr="Error: API key not set")
+
+
+def _transient_stderr_nonzero_result() -> MagicMock:
+    """Non-zero exit with a transient error in stderr (no parseable JSON stdout)."""
+    return _make_result(returncode=1, stdout="not json", stderr="ECONNRESET: connection reset")
+
+
+class TestCLIDispatcherRetry:
+    """Tests for transient-error retry logic in CLIDispatcher."""
+
+    @pytest.fixture()
+    def fast_sleep(self):
+        with patch("orchestrator.cli_dispatch.time.sleep") as m:
+            yield m
+
+    def test_transient_socket_error_retries_then_succeeds(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        success = _success_result("# Design\nStub.")
+        side_effects = [
+            _transient_socket_result(),
+            _transient_socket_result(),
+            success,
+        ]
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", side_effect=side_effects) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            out = work_dir / "runs" / "iter-1" / "design.md"
+            d.dispatch("planner", "design", output_path=out, iteration=1)
+
+        assert mock_run.call_count == 3
+        assert out.exists()
+        # First sleep: after failure 1 → 5s; second: after failure 2 → 30s
+        assert fast_sleep.call_count == 2
+        assert fast_sleep.call_args_list[0][0][0] == 5
+        assert fast_sleep.call_args_list[1][0][0] == 30
+
+    def test_transient_5xx_retries_then_succeeds(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        side_effects = [_transient_5xx_result(), _success_result("# Design\nStub.")]
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", side_effect=side_effects) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            out = work_dir / "runs" / "iter-1" / "design.md"
+            d.dispatch("planner", "design", output_path=out, iteration=1)
+
+        assert mock_run.call_count == 2
+        fast_sleep.assert_called_once_with(5)
+
+    def test_transient_is_error_retries(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """is_error=True with a transient message should also be retried."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        side_effects = [_transient_is_error_result(), _success_result("# Design\nStub.")]
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", side_effect=side_effects) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            out = work_dir / "runs" / "iter-1" / "design.md"
+            d.dispatch("planner", "design", output_path=out, iteration=1)
+
+        assert mock_run.call_count == 2
+        fast_sleep.assert_called_once_with(5)
+
+    def test_transient_stderr_nonzero_retries(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """Non-zero exit with a transient string in stderr (no parseable JSON) retries."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        side_effects = [_transient_stderr_nonzero_result(), _success_result("# Design\nStub.")]
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", side_effect=side_effects) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            out = work_dir / "runs" / "iter-1" / "design.md"
+            d.dispatch("planner", "design", output_path=out, iteration=1)
+
+        assert mock_run.call_count == 2
+        fast_sleep.assert_called_once_with(5)
+
+    def test_non_transient_is_error_does_not_retry(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """Agent-side is_error (non-transient message) must not be retried."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            return_value=_non_transient_is_error_result(),
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with pytest.raises(RuntimeError, match="returned an error"):
+                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 1
+        fast_sleep.assert_not_called()
+
+    def test_non_transient_nonzero_exit_does_not_retry(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """Non-transient stderr (e.g. missing API key) must not be retried."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            return_value=_non_transient_nonzero_result(),
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with pytest.raises(RuntimeError, match="exited with code 1"):
+                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 1
+        fast_sleep.assert_not_called()
+
+    def test_max_retries_zero_disables_retries(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """max_retries=0 means no retries — the first transient failure raises immediately."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            return_value=_transient_socket_result(),
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign, max_retries=0)
+            with pytest.raises(RuntimeError, match="still failing after 1 attempt"):
+                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 1
+        fast_sleep.assert_not_called()
+
+    def test_max_retries_bound_raises(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """When max_retries is set, exhaust the budget and raise RuntimeError."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        # max_retries=2 means: 1 original + 2 retries = 3 total attempts before giving up
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            return_value=_transient_socket_result(),
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign, max_retries=2)
+            with pytest.raises(RuntimeError, match="still failing after 3 attempt"):
+                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 3
+        assert fast_sleep.call_count == 2
+
+    def test_timeout_does_not_retry(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """subprocess.TimeoutExpired is NOT retried — it means the session exceeded self.timeout."""
+        import subprocess
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["claude"], timeout=1800),
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with pytest.raises(RuntimeError, match="timed out"):
+                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 1
+        fast_sleep.assert_not_called()
+
+    def test_file_not_found_does_not_retry(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """FileNotFoundError (missing claude CLI) is NOT retried."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            side_effect=FileNotFoundError("claude not found"),
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with pytest.raises(RuntimeError, match="claude.*not found"):
+                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 1
+        fast_sleep.assert_not_called()
+
+    def test_metrics_logged_per_attempt(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """Metrics are recorded for every attempt, including transient-failure ones."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        success_payload = json.dumps({
+            "type": "result", "subtype": "success", "is_error": False,
+            "result": "# Design\nStub.",
+            "total_cost_usd": 0.05, "duration_ms": 1000, "num_turns": 2,
+            "usage": {"input_tokens": 500, "output_tokens": 100,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        })
+        side_effects = [
+            _transient_is_error_result(),
+            _transient_is_error_result(),
+            _make_result(returncode=0, stdout=success_payload),
+        ]
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", side_effect=side_effects):
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            out = work_dir / "runs" / "iter-1" / "design.md"
+            d.dispatch("planner", "design", output_path=out, iteration=1)
+
+        metrics_path = work_dir / "llm_metrics.jsonl"
+        assert metrics_path.exists()
+        lines = [l for l in metrics_path.read_text().strip().splitlines() if l]
+        # _transient_is_error_result uses returncode=0 so log_metrics fires before the
+        # is_error raise; 2 transient attempts + 1 success = 3 entries.
+        assert len(lines) == 3
+
+
+class TestIsTransientClassifier:
+    """Unit tests for the _is_transient module-level helper."""
+
+    def test_5xx_api_status_is_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert _is_transient({"is_error": True, "api_error_status": 503, "result": ""})
+        assert _is_transient({"is_error": True, "api_error_status": 500, "result": ""})
+
+    def test_4xx_api_status_not_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert not _is_transient({"is_error": True, "api_error_status": 400, "result": ""})
+
+    def test_socket_string_in_result_is_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert _is_transient({
+            "is_error": True, "api_error_status": None,
+            "result": "API Error: The socket connection was closed unexpectedly.",
+        })
+
+    def test_agent_error_string_not_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert not _is_transient({
+            "is_error": True, "api_error_status": None,
+            "result": "Something went wrong with the YAML",
+        })
+
+    def test_stderr_econnreset_is_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert _is_transient(None, stderr="ECONNRESET: connection reset by peer")
+
+    def test_stderr_api_key_not_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert not _is_transient(None, stderr="Error: API key not set")
+
+    def test_no_json_no_stderr_not_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert not _is_transient(None, stderr="")
+
+    def test_rate_limit_error_is_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert _is_transient({
+            "is_error": True, "api_error_status": None,
+            "result": "rate_limit_error: Too many requests",
+        })
+
+    def test_too_many_requests_string_is_transient(self) -> None:
+        from orchestrator.cli_dispatch import _is_transient
+        assert _is_transient({
+            "is_error": True, "api_error_status": None,
+            "result": "Error: Too many requests, please slow down.",
+        })
+
+    def test_parseable_json_is_error_false_not_transient(self) -> None:
+        """A parseable envelope with is_error=False alongside a nonzero exit is permanent."""
+        from orchestrator.cli_dispatch import _is_transient
+        # Even with transient-looking stderr, the parseable non-error envelope wins.
+        assert not _is_transient(
+            {"is_error": False, "api_error_status": None, "result": ""},
+            stderr="ECONNRESET: connection reset",
+        )
+
+    def test_5xx_overrides_is_error_false(self) -> None:
+        """api_error_status 5xx is transient even if is_error is absent/False."""
+        from orchestrator.cli_dispatch import _is_transient
+        assert _is_transient({"is_error": False, "api_error_status": 503, "result": ""})

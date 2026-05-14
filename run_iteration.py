@@ -231,6 +231,7 @@ def run_iteration(
     final: bool = True,
     auto_approve: bool = False,
     timeout: int = 1800,
+    max_cli_retries: int | None = None,
 ) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
 
@@ -267,6 +268,7 @@ def run_iteration(
             work_dir=work_dir, campaign=campaign,
             model=_model_for("design"), timeout=timeout,
             max_turns=_max_turns_for("design"),
+            max_retries=max_cli_retries,
         ) if repo_path else None
     )
     llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("design"))
@@ -473,6 +475,8 @@ def main() -> None:
                         help="Auto-approve all human gates (skip interactive prompts)")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
+    parser.add_argument("--max-cli-retries", type=int, default=10,
+                        help="Max retries for transient claude -p failures (default: 10; 0 to disable; -1 for unlimited)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -509,6 +513,7 @@ def main() -> None:
     run_iteration(
         campaign, work_dir, model=args.model,
         auto_approve=args.auto_approve, timeout=args.timeout,
+        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
     )
 
 

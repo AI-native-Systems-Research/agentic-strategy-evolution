@@ -6,6 +6,7 @@ and shell tools (planner, executor).
 import json
 import logging
 import subprocess
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -17,6 +18,64 @@ from orchestrator.metrics import log_metrics
 from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
+
+# Substrings (case-insensitive) that indicate a transient transport/API failure
+# rather than an agent-side problem. Matched against the JSON envelope's `result`
+# field when `is_error` is True, or stderr when the exit was non-zero.
+_TRANSIENT_PATTERNS = (
+    "socket connection was closed",
+    "connection reset",
+    "request timed out",
+    "fetch failed",
+    "econnreset",
+    "etimedout",
+    "ehostunreach",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "overloaded_error",
+    "rate_limit_error",
+    "too many requests",
+)
+
+# Exponential backoff delays (seconds) between retry attempts.
+# Index 0 is the wait before the 2nd attempt (after the 1st failure).
+# All attempts beyond the last index use the final value.
+_BACKOFF_SECONDS = (5, 30, 120, 300, 600)
+
+
+class _TransientCLIError(RuntimeError):
+    """Raised internally by _call_claude_once when the failure is transient."""
+
+
+def _is_transient(response_json: dict | None, stderr: str = "") -> bool:
+    """Return True if the claude -p failure looks like a transient transport error."""
+    if response_json is not None:
+        api_status = response_json.get("api_error_status")
+        if isinstance(api_status, int) and 500 <= api_status < 600:
+            return True
+        if not response_json.get("is_error"):
+            # Parseable envelope with is_error=False alongside a nonzero exit is
+            # not a transport failure; treat as permanent so we don't retry.
+            return False
+        result = str(response_json.get("result", "")).lower()
+        if any(p in result for p in _TRANSIENT_PATTERNS):
+            return True
+        # is_error=True with no transient signal -> agent-side failure, do not retry
+        return False
+    # No parseable JSON envelope; fall back to stderr inspection.
+    if stderr:
+        s = stderr.lower()
+        if any(p in s for p in _TRANSIENT_PATTERNS):
+            return True
+    return False
+
+
+def _backoff_for(failure_count: int) -> float:
+    """Return the sleep duration (seconds) after `failure_count` consecutive failures."""
+    idx = min(failure_count - 1, len(_BACKOFF_SECONDS) - 1)
+    return _BACKOFF_SECONDS[idx]
 
 
 class CLIDispatcher(LLMDispatcher):
@@ -34,6 +93,7 @@ class CLIDispatcher(LLMDispatcher):
         prompts_dir: Path | None = None,
         timeout: int = 1800,
         max_turns: int = 25,
+        max_retries: int | None = 10,
     ) -> None:
         super().__init__(
             work_dir=work_dir,
@@ -46,6 +106,7 @@ class CLIDispatcher(LLMDispatcher):
         )
         self.timeout = timeout
         self.max_turns = max_turns
+        self.max_retries = max_retries
         repo_path = campaign.get("target_system", {}).get("repo_path")
         self._cwd = Path(repo_path) if repo_path else None
 
@@ -155,7 +216,7 @@ class CLIDispatcher(LLMDispatcher):
         return data
 
     def _call_claude(self, prompt: str, max_turns: int | None = None) -> str:
-        """Invoke `claude -p` with the prompt on stdin."""
+        """Invoke `claude -p` with the prompt on stdin, retrying transient failures."""
         cmd = ["claude", "-p", "--model", self.model, "--output-format", "json",
                "--dangerously-skip-permissions"]
         turns = max_turns or self.max_turns
@@ -171,6 +232,35 @@ class CLIDispatcher(LLMDispatcher):
             self.model, cwd, self.timeout, turns,
         )
         print(f"    Waiting for claude -p ({self.model}, max_turns={turns})...", flush=True)
+
+        failure_count = 0
+        while True:
+            try:
+                return self._call_claude_once(cmd, prompt, cwd)
+            except _TransientCLIError as exc:
+                failure_count += 1
+                if self.max_retries is not None and failure_count > self.max_retries:
+                    raise RuntimeError(
+                        f"claude -p still failing after {failure_count} attempt(s): {exc}"
+                    ) from exc
+                delay = _backoff_for(failure_count)
+                logger.warning(
+                    "claude -p transient failure (attempt %d): %s — retrying in %.0fs",
+                    failure_count, exc, delay,
+                )
+                print(
+                    f"    claude -p transient failure (attempt {failure_count}); "
+                    f"retrying in {delay:.0f}s...",
+                    flush=True,
+                )
+                time.sleep(delay)
+
+    def _call_claude_once(self, cmd: list[str], prompt: str, cwd: Path | None) -> str:
+        """Run one `claude -p` subprocess attempt.
+
+        Raises _TransientCLIError for transport/API errors so the retry loop can
+        back off and retry. Raises RuntimeError for permanent failures.
+        """
         try:
             result = subprocess.run(
                 cmd, input=prompt, capture_output=True, text=True,
@@ -189,10 +279,19 @@ class CLIDispatcher(LLMDispatcher):
         if result.returncode != 0:
             stderr_tail = result.stderr[-2000:] if result.stderr else "(no stderr)"
             stdout_tail = result.stdout[-2000:] if result.stdout else "(no stdout)"
-            raise RuntimeError(
+            # Try to parse stdout as JSON for richer transience signal.
+            parsed: dict | None = None
+            try:
+                parsed = json.loads(result.stdout)
+            except (json.JSONDecodeError, ValueError):
+                pass
+            msg = (
                 f"claude -p exited with code {result.returncode}.\n"
                 f"stderr: {stderr_tail}\nstdout: {stdout_tail}"
             )
+            if _is_transient(parsed, result.stderr):
+                raise _TransientCLIError(msg)
+            raise RuntimeError(msg)
 
         try:
             response_json = json.loads(result.stdout)
@@ -219,8 +318,13 @@ class CLIDispatcher(LLMDispatcher):
         })
 
         if response_json.get("is_error"):
+            error_msg = response_json.get("result", "unknown")
+            if _is_transient(response_json):
+                raise _TransientCLIError(
+                    f"claude -p returned an error: {error_msg}"
+                )
             raise RuntimeError(
-                f"claude -p returned an error: {response_json.get('result', 'unknown')}"
+                f"claude -p returned an error: {error_msg}"
             )
 
         response_text = response_json.get("result", "")

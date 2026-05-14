@@ -145,6 +145,7 @@ def run_campaign(
     model: str | None = None,
     auto_approve: bool = False,
     timeout: int = 1800,
+    max_cli_retries: int | None = None,
 ) -> None:
     """Run a multi-iteration Nous campaign.
 
@@ -159,6 +160,7 @@ def run_campaign(
         model: LLM model name.
         auto_approve: If True, all human gates (including continue gate)
             are automatically approved.
+        max_cli_retries: Max retries for transient claude -p failures (None = unbounded).
     """
     continue_gate = (
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
@@ -181,6 +183,7 @@ def run_campaign(
             outcome = run_iteration(
                 campaign, work_dir, iteration=i, model=model, final=is_last,
                 auto_approve=auto_approve, timeout=timeout,
+                max_cli_retries=max_cli_retries,
             )
 
             if outcome == IterationOutcome.REDESIGN:
@@ -275,6 +278,8 @@ def main() -> None:
                         help="Auto-approve all human gates (skip interactive prompts)")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
+    parser.add_argument("--max-cli-retries", type=int, default=10,
+                        help="Max retries for transient claude -p failures (default: 10; 0 to disable; -1 for unlimited)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -319,6 +324,7 @@ def main() -> None:
         campaign, work_dir,
         max_iterations=max_iter, model=args.model,
         auto_approve=args.auto_approve, timeout=args.timeout,
+        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
     )
 
 
