@@ -75,7 +75,7 @@ export OPENAI_API_KEY=your-api-key
 export OPENAI_BASE_URL=https://your-litellm-proxy.example.com  # or any OpenAI-compatible endpoint
 ```
 
-If you're using Anthropic directly via a LiteLLM proxy, point both vars at the proxy. If these aren't set, gate summaries are skipped (non-fatal warning) but reports won't generate.
+If you're using Anthropic directly via a LiteLLM proxy, point both vars at the proxy. If these aren't set, gate summaries and report generation are skipped (non-fatal). The campaign still runs — you just won't get LLM-generated summaries at the gates or a final report.
 
 ### 1. Install Nous
 

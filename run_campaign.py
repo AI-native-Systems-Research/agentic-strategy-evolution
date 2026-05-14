@@ -83,6 +83,7 @@ def _generate_report(campaign: dict, work_dir: Path, model: str | None) -> None:
         print(f"  -> {work_dir / 'report.md'}")
     except (RuntimeError, FileNotFoundError, OSError) as exc:
         logger.warning("Report generation failed: %s", exc)
+        print(f"  Report generation skipped: {exc}")
 
 
 def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
@@ -233,6 +234,7 @@ def run_campaign(
             )
         except (RuntimeError, FileNotFoundError, OSError) as exc:
             logger.warning("Continue gate summary generation failed: %s", exc)
+            print(f"  (Continue gate summary skipped: {exc})")
             gate_summary_path = None
 
         # Human gate: continue?

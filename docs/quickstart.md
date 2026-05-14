@@ -28,7 +28,7 @@ export OPENAI_API_KEY=your-api-key
 export OPENAI_BASE_URL=https://your-proxy.example.com  # LiteLLM, vLLM, or any OpenAI-compatible endpoint
 ```
 
-If these aren't set, gate summaries are skipped (non-fatal) but report generation will fail.
+If these aren't set, gate summaries and report generation are skipped (non-fatal). The campaign still runs — you just won't get LLM-generated summaries at the gates or a final report.
 
 ## Create a campaign configuration
 

@@ -5,8 +5,9 @@ structured output from code fences, validates against JSON Schema,
 and writes artifacts atomically.
 
 Works with any OpenAI-compatible endpoint (OpenAI, Anthropic via proxy,
-LiteLLM proxy, etc.).  Set OPENAI_API_KEY and OPENAI_BASE_URL environment
-variables to configure.
+LiteLLM proxy, etc.).  Optionally set OPENAI_API_KEY and OPENAI_BASE_URL
+environment variables.  If no API key is available, the dispatcher is
+created in disabled mode and dispatch() raises RuntimeError when called.
 """
 import json
 import logging
@@ -59,11 +60,19 @@ class LLMDispatcher:
         if completion_fn:
             self._completion = completion_fn
         else:
-            client = openai.OpenAI(
-                api_key=api_key or os.environ.get("OPENAI_API_KEY"),
-                base_url=api_base or os.environ.get("OPENAI_BASE_URL"),
-            )
-            self._completion = client.chat.completions.create
+            resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
+            resolved_base = api_base or os.environ.get("OPENAI_BASE_URL")
+            if resolved_key:
+                client = openai.OpenAI(
+                    api_key=resolved_key, base_url=resolved_base,
+                )
+                self._completion = client.chat.completions.create
+            else:
+                logger.warning(
+                    "No OPENAI_API_KEY found. LLM dispatch will fail at "
+                    "call time. Set OPENAI_API_KEY to enable LLM features."
+                )
+                self._completion = None
         self._metrics_path = self.work_dir / "llm_metrics.jsonl"
         self._current_role: str = "unknown"
         self._current_phase: str = "unknown"
@@ -118,6 +127,13 @@ class LLMDispatcher:
         *h_main_result* is ignored — kept for protocol compatibility with
         StubDispatcher.  The executor determines results from its own analysis.
         """
+        if self._completion is None:
+            raise RuntimeError(
+                f"Cannot dispatch {role}/{phase}: no API key available. "
+                f"Pass api_key= to LLMDispatcher or set the "
+                f"OPENAI_API_KEY environment variable."
+            )
+
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 

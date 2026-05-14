@@ -220,6 +220,7 @@ def _generate_gate_summary(
     except (RuntimeError, FileNotFoundError, OSError) as exc:
         logger = logging.getLogger(__name__)
         logger.warning("Gate summary generation failed: %s", exc)
+        print(f"  (Gate summary skipped: {exc})")
         return None
 
 
