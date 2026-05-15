@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestrator.validate import validate_design, validate_execution
+from orchestrator.validate import validate_design, validate_execution, _check_unexpected_files
 
 
 VALID_BUNDLE = {
@@ -120,6 +120,14 @@ class TestValidateDesign:
         result = validate_design(d)
         assert result["status"] == "fail"
         assert any("handoff" in e for e in result["errors"])
+
+    def test_unexpected_file_at_root(self, tmp_path: Path) -> None:
+        d = tmp_path / "iter-1"
+        _setup_design(d)
+        (d / "stray_probe.json").write_text("{}")
+        result = validate_design(d)
+        assert result["status"] == "fail"
+        assert any("unexpected file" in e for e in result["errors"])
 
 
 class TestValidateExecution:
@@ -316,3 +324,37 @@ class TestValidateExecution:
         assert result["status"] == "fail"
         assert any("input file" in e for e in result["errors"])
         assert any("findings" in e for e in result["errors"])
+
+    def test_unexpected_file_at_root(self, tmp_path: Path) -> None:
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        (d / "workload.yaml").write_text("rate: 80")
+        result = validate_execution(d)
+        assert result["status"] == "fail"
+        assert any("unexpected file" in e for e in result["errors"])
+
+
+class TestCheckUnexpectedFiles:
+    def test_known_files_no_errors(self, tmp_path: Path) -> None:
+        d = tmp_path / "iter-1"
+        d.mkdir()
+        (d / "problem.md").write_text("content")
+        (d / "bundle.yaml").write_text("content")
+        assert _check_unexpected_files(d) == []
+
+    def test_unknown_file_produces_error(self, tmp_path: Path) -> None:
+        d = tmp_path / "iter-1"
+        d.mkdir()
+        (d / "problem.md").write_text("content")
+        (d / "stray_probe.json").write_text("{}")
+        errors = _check_unexpected_files(d)
+        assert len(errors) == 1
+        assert "unexpected file" in errors[0]
+        assert "stray_probe.json" in errors[0]
+
+    def test_subdirectories_ignored(self, tmp_path: Path) -> None:
+        d = tmp_path / "iter-1"
+        d.mkdir()
+        (d / "results").mkdir()
+        (d / "inputs").mkdir()
+        assert _check_unexpected_files(d) == []
