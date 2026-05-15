@@ -40,6 +40,8 @@ _KNOWN_ROOT_FILES = {
 
 def _check_unexpected_files(iter_dir: Path) -> list[str]:
     """Flag files at iter root that aren't known protocol artifacts."""
+    if not iter_dir.is_dir():
+        return []
     errors = []
     for f in iter_dir.iterdir():
         if f.is_dir():
@@ -170,8 +172,10 @@ def validate_execution(iter_dir: Path) -> dict:
                                 f"input file {input_path} referenced in "
                                 f"{arm['arm_id']}/{cond['name']} not found"
                             )
-        except (yaml.YAMLError, KeyError):
+        except yaml.YAMLError:
             pass  # plan parse issues already caught above
+        except KeyError as exc:
+            errors.append(f"experiment_plan.yaml arm/condition missing key: {exc}")
 
     # patches — only required when bundle has code_changes
     bundle_path = iter_dir / "bundle.yaml"
@@ -196,8 +200,8 @@ def validate_execution(iter_dir: Path) -> dict:
                             errors.append(f"patches/{arm_type}.patch not found")
                         elif patch_file.stat().st_size == 0:
                             errors.append(f"patches/{arm_type}.patch is empty")
-        except yaml.YAMLError:
-            pass  # bundle parse issues already caught by design validation
+        except yaml.YAMLError as exc:
+            errors.append(f"bundle.yaml is not valid YAML (patches check skipped): {exc}")
         except KeyError as exc:
             errors.append(f"bundle.yaml arm missing required field: {exc}")
 
