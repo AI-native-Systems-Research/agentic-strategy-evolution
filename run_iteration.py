@@ -4,15 +4,16 @@
 Usage:
     python run_iteration.py examples/campaign.yaml
 
-    # Use CLI agent instead of LLM API (no API key needed):
-    python run_iteration.py examples/campaign.yaml --agent cli
+    # Inline mode — embed inside an agent framework:
+    python run_iteration.py examples/campaign.yaml --agent inline
 
 Creates a working directory named after the target system, copies templates,
 and runs one full iteration with human gates for approval.
 
 Dispatch backends:
-    --agent api (default): Requires OPENAI_API_KEY.
-    --agent cli: All phases dispatched via `claude -p`. No API key needed.
+    --agent api (default): Uses CLIDispatcher for code phases (when repo_path
+        is set) and LLMDispatcher for structured phases. OPENAI_API_KEY is
+        optional — gate summaries are skipped if not set.
     --agent inline: Prompts emitted to stdout for the calling agent.
 """
 import argparse
@@ -237,6 +238,7 @@ def run_iteration(
     auto_approve: bool = False,
     timeout: int = 1800,
     agent: str = "api",
+    max_cli_retries: int | None = None,
 ) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
 
@@ -245,9 +247,10 @@ def run_iteration(
     Args:
         final: If True (default), transitions to DONE after principle merge.
         auto_approve: If True, all human gates are automatically approved.
-        agent: Dispatch backend — "cli" uses CLIDispatcher for all phases,
+        agent: Dispatch backend — "inline" emits prompts to stdout,
             "api" uses LLMDispatcher (with CLIDispatcher for code phases
             when repo_path is set).
+        max_cli_retries: Max retries for transient claude -p failures (None = unbounded).
 
     Returns:
         An IterationOutcome value: COMPLETED, CONTINUE, ABORTED, or REDESIGN.
@@ -272,20 +275,11 @@ def run_iteration(
     from orchestrator.cli_dispatch import CLIDispatcher
     from orchestrator.inline_dispatch import InlineDispatcher
     if agent == "inline":
-        # Inline mode: emit prompts to stdout, agent reasons directly
         inline_dispatcher = InlineDispatcher(
             work_dir=work_dir, campaign=campaign, timeout=timeout,
         )
         cli_dispatcher = inline_dispatcher
         llm_dispatcher = inline_dispatcher
-    elif agent == "cli":
-        # CLI mode: use CLIDispatcher for ALL phases — no LLM API needed
-        cli_dispatcher = CLIDispatcher(
-            work_dir=work_dir, campaign=campaign,
-            model=_model_for("design"), timeout=timeout,
-            max_turns=_max_turns_for("design"),
-        )
-        llm_dispatcher = cli_dispatcher
     else:
         # API mode: CLIDispatcher for code-access roles only (when repo_path is set)
         cli_dispatcher = (
@@ -293,6 +287,7 @@ def run_iteration(
                 work_dir=work_dir, campaign=campaign,
                 model=_model_for("design"), timeout=timeout,
                 max_turns=_max_turns_for("design"),
+                max_retries=max_cli_retries,
             ) if repo_path else None
         )
         llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("design"))
@@ -499,10 +494,11 @@ def main() -> None:
                         help="Auto-approve all human gates (skip interactive prompts)")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
-    parser.add_argument("--agent", choices=["inline", "cli", "api"], default="api",
+    parser.add_argument("--max-cli-retries", type=int, default=10,
+                        help="Max retries for transient claude -p failures (-1 = unbounded, default: 10)")
+    parser.add_argument("--agent", choices=["inline", "api"], default="api",
                         help="Dispatch backend: 'inline' emits prompts to stdout for the "
-                             "calling agent, 'cli' spawns claude -p subprocesses, "
-                             "'api' calls an OpenAI-compatible LLM API (default: api)")
+                             "calling agent, 'api' uses the LLM API (default: api)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -540,6 +536,7 @@ def main() -> None:
         campaign, work_dir, model=args.model,
         auto_approve=args.auto_approve, timeout=args.timeout,
         agent=args.agent,
+        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
     )
 
 

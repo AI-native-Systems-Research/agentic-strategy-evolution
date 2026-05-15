@@ -87,6 +87,7 @@ class InlineDispatcher(LLMDispatcher):
         iter_dir = output_path.parent
         response_path = iter_dir / f".nous_response_{role}_{phase.replace('-', '_')}"
         response_path.unlink(missing_ok=True)
+        self._clean_stale_artifacts(iter_dir, phase)
 
         if phase in ("design", "execute-analyze"):
             fmt = None
@@ -203,28 +204,38 @@ class InlineDispatcher(LLMDispatcher):
         phase: str,
         t0: float,
     ) -> str:
-        """Poll for agent response file."""
+        """Poll for the signal file, then verify required artifacts exist."""
         deadline = t0 + self.timeout
 
         while time.time() < deadline:
             if phase == "design":
-                bundle_path = iter_dir / "bundle.yaml"
-                problem_path = iter_dir / "problem.md"
-                if bundle_path.exists() and problem_path.exists():
-                    return f"Design artifacts written to {iter_dir}"
                 if response_path.exists():
+                    missing = self._check_design_artifacts(iter_dir)
+                    if missing:
+                        raise RuntimeError(
+                            f"Signal file exists but required design artifacts are missing: "
+                            f"{', '.join(missing)}. The agent must write all files before "
+                            f"touching {response_path}."
+                        )
                     return f"Design artifacts written to {iter_dir}"
 
             elif phase == "execute-analyze":
-                findings_path = iter_dir / "findings.json"
-                plan_path = iter_dir / "experiment_plan.yaml"
-                if findings_path.exists() and plan_path.exists():
-                    return f"Execution artifacts written to {iter_dir}"
                 if response_path.exists():
+                    missing = self._check_execute_artifacts(iter_dir)
+                    if missing:
+                        raise RuntimeError(
+                            f"Signal file exists but required execution artifacts are missing: "
+                            f"{', '.join(missing)}. The agent must write all files before "
+                            f"touching {response_path}."
+                        )
                     return f"Execution artifacts written to {iter_dir}"
 
             elif response_path.exists():
-                return response_path.read_text()
+                content = response_path.read_text()
+                if not content.strip():
+                    time.sleep(RESPONSE_POLL_INTERVAL_SEC)
+                    continue
+                return content
 
             time.sleep(RESPONSE_POLL_INTERVAL_SEC)
 
@@ -232,6 +243,32 @@ class InlineDispatcher(LLMDispatcher):
             f"Timed out after {self.timeout}s waiting for agent response at {response_path}. "
             f"The agent should write its response and then touch {response_path}."
         )
+
+    @staticmethod
+    def _clean_stale_artifacts(iter_dir: Path, phase: str) -> None:
+        """Remove artifacts from previous runs so polling starts clean."""
+        if phase == "design":
+            for name in ("problem.md", "bundle.yaml", "handoff.md"):
+                (iter_dir / name).unlink(missing_ok=True)
+        elif phase == "execute-analyze":
+            for name in ("experiment_plan.yaml", "findings.json", "principle_updates.json"):
+                (iter_dir / name).unlink(missing_ok=True)
+
+    @staticmethod
+    def _check_design_artifacts(iter_dir: Path) -> list[str]:
+        """Return list of missing required design artifact names."""
+        required = {"problem.md": iter_dir / "problem.md", "bundle.yaml": iter_dir / "bundle.yaml"}
+        return [name for name, path in required.items() if not path.exists()]
+
+    @staticmethod
+    def _check_execute_artifacts(iter_dir: Path) -> list[str]:
+        """Return list of missing required execution artifact names."""
+        required = {
+            "experiment_plan.yaml": iter_dir / "experiment_plan.yaml",
+            "findings.json": iter_dir / "findings.json",
+            "principle_updates.json": iter_dir / "principle_updates.json",
+        }
+        return [name for name, path in required.items() if not path.exists()]
 
     def _log_inline_metrics(self, role: str, phase: str, t0: float) -> None:
         """Log basic timing metrics for inline dispatch."""

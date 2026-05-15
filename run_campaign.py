@@ -4,8 +4,8 @@
 Usage:
     python run_campaign.py examples/campaign.yaml --max-iterations 5
 
-    # Use CLI agent instead of LLM API (no API key needed):
-    python run_campaign.py examples/campaign.yaml --agent cli
+    # Inline mode — embed inside an agent framework:
+    python run_campaign.py examples/campaign.yaml --agent inline
 
 Runs iterations in a loop: each iteration runs the full Nous loop
 (DESIGN → EXECUTE_ANALYZE → DONE), then appends a ledger row
@@ -14,10 +14,9 @@ campaign-level document) and previous findings feed the next iteration's
 design prompt so that each hypothesis bundle is informed by all prior learning.
 
 Dispatch backends:
-    --agent api (default): Requires OPENAI_API_KEY. Uses the OpenAI-compatible
-        LLM API for all non-code phases (gate summaries, reports).
-    --agent cli: All phases dispatched via `claude -p` subprocess. No API key
-        needed — runs within whatever CLI/model pair is available.
+    --agent api (default): Uses CLIDispatcher for code phases (when repo_path
+        is set) and LLMDispatcher for structured phases. OPENAI_API_KEY is
+        optional — gate summaries are skipped if not set.
     --agent inline: Emits prompts to stdout for the calling agent to reason
         about. No subprocess, no API key — the agent that invoked run_campaign.py
         sees the prompt and writes artifacts directly. Ideal for embedded use
@@ -32,7 +31,6 @@ from pathlib import Path
 import jsonschema
 import yaml
 
-from orchestrator.cli_dispatch import CLIDispatcher
 from orchestrator.engine import Engine
 from orchestrator.gates import HumanGate
 from orchestrator.inline_dispatch import InlineDispatcher
@@ -91,10 +89,6 @@ def _generate_report(
         if agent == "inline":
             dispatcher = InlineDispatcher(
                 work_dir=work_dir, campaign=campaign, timeout=timeout,
-            )
-        elif agent == "cli":
-            dispatcher = CLIDispatcher(
-                work_dir=work_dir, campaign=campaign, model=resolved, timeout=timeout,
             )
         else:
             dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=resolved)
@@ -170,6 +164,7 @@ def run_campaign(
     auto_approve: bool = False,
     timeout: int = 1800,
     agent: str = "api",
+    max_cli_retries: int | None = None,
 ) -> None:
     """Run a multi-iteration Nous campaign.
 
@@ -184,8 +179,9 @@ def run_campaign(
         model: LLM model name.
         auto_approve: If True, all human gates (including continue gate)
             are automatically approved.
-        agent: Dispatch backend — "cli" to use the calling CLI agent,
-            "api" to use the OpenAI-compatible LLM API.
+        agent: Dispatch backend — "inline" emits prompts to stdout,
+            "api" uses the OpenAI-compatible LLM API.
+        max_cli_retries: Max retries for transient claude -p failures (None = unbounded).
     """
     continue_gate = (
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
@@ -208,6 +204,7 @@ def run_campaign(
             outcome = run_iteration(
                 campaign, work_dir, iteration=i, model=model, final=is_last,
                 auto_approve=auto_approve, timeout=timeout, agent=agent,
+                max_cli_retries=max_cli_retries,
             )
 
             if outcome == IterationOutcome.REDESIGN:
@@ -249,11 +246,6 @@ def run_campaign(
             if agent == "inline":
                 dispatcher = InlineDispatcher(
                     work_dir=work_dir, campaign=campaign, timeout=timeout,
-                )
-            elif agent == "cli":
-                dispatcher = CLIDispatcher(
-                    work_dir=work_dir, campaign=campaign,
-                    model=resolved, timeout=timeout,
                 )
             else:
                 dispatcher = LLMDispatcher(
@@ -314,11 +306,12 @@ def main() -> None:
                         help="Auto-approve all human gates (skip interactive prompts)")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
-    parser.add_argument("--agent", choices=["inline", "cli", "api"], default="api",
+    parser.add_argument("--max-cli-retries", type=int, default=10,
+                        help="Max retries for transient claude -p failures (-1 = unbounded, default: 10)")
+    parser.add_argument("--agent", choices=["inline", "api"], default="api",
                         help="Dispatch backend: 'inline' emits prompts to stdout for the "
-                             "calling agent to reason about (no subprocess, no API key), "
-                             "'cli' spawns claude -p subprocesses, "
-                             "'api' calls an OpenAI-compatible LLM API (default: api)")
+                             "calling agent (no subprocess, no API key), "
+                             "'api' uses the LLM API (default: api)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -364,6 +357,7 @@ def main() -> None:
         max_iterations=max_iter, model=args.model,
         auto_approve=args.auto_approve, timeout=args.timeout,
         agent=args.agent,
+        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
     )
 
 
