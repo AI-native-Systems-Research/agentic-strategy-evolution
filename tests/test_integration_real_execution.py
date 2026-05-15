@@ -153,6 +153,9 @@ class TestIterationOutcome:
         assert result == IterationOutcome.COMPLETED
         engine = Engine(work_dir)
         assert engine.phase == "DONE"
+        iter_dir = work_dir / "runs" / "iter-1"
+        for sub in ("inputs", "results", "patches"):
+            assert (iter_dir / sub).is_dir(), f"{sub}/ not pre-created"
 
     def test_returns_continue_when_not_final(self, tmp_path, monkeypatch):
         work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)

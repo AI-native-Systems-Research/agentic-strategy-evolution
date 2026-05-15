@@ -23,6 +23,37 @@ def _load_json_schema(name: str) -> dict:
     return json.loads((SCHEMAS_DIR / name).read_text())
 
 
+# Files that the orchestrator or agents are expected to write at iter_dir root.
+# If you add a new root-level artifact, add it here — otherwise validation
+# will flag it as an unexpected file.
+_KNOWN_ROOT_FILES = {
+    ".experiment_id",
+    "problem.md", "bundle.yaml", "handoff_snapshot.md",
+    "experiment_plan.yaml", "findings.json", "principle_updates.json",
+    "design_log.md", "executor_log.md", "design_raw.md",
+    "execute_analyze_output.json",
+    "gate_summary_design.json", "gate_summary_findings.json",
+    "gate_summary_continue.json",
+    "human_feedback.json",
+}
+
+
+def _check_unexpected_files(iter_dir: Path) -> list[str]:
+    """Flag files at iter root that aren't known protocol artifacts."""
+    if not iter_dir.is_dir():
+        return []
+    errors = []
+    for f in iter_dir.iterdir():
+        if f.is_dir():
+            continue
+        if f.name not in _KNOWN_ROOT_FILES:
+            errors.append(
+                f"unexpected file at iter root: {f.name} "
+                f"(should be in inputs/ or results/)"
+            )
+    return errors
+
+
 def validate_design(iter_dir: Path) -> dict:
     """Check design artifacts exist and conform to schemas."""
     iter_dir = Path(iter_dir)
@@ -55,6 +86,8 @@ def validate_design(iter_dir: Path) -> dict:
         errors.append("handoff_snapshot.md not found")
     elif handoff_path.stat().st_size == 0:
         errors.append("handoff_snapshot.md is empty")
+
+    errors.extend(_check_unexpected_files(iter_dir))
 
     if errors:
         return {"status": "fail", "errors": errors}
@@ -139,8 +172,10 @@ def validate_execution(iter_dir: Path) -> dict:
                                 f"input file {input_path} referenced in "
                                 f"{arm['arm_id']}/{cond['name']} not found"
                             )
-        except (yaml.YAMLError, KeyError):
+        except yaml.YAMLError:
             pass  # plan parse issues already caught above
+        except KeyError as exc:
+            errors.append(f"experiment_plan.yaml arm/condition missing key: {exc}")
 
     # patches — only required when bundle has code_changes
     bundle_path = iter_dir / "bundle.yaml"
@@ -165,10 +200,12 @@ def validate_execution(iter_dir: Path) -> dict:
                             errors.append(f"patches/{arm_type}.patch not found")
                         elif patch_file.stat().st_size == 0:
                             errors.append(f"patches/{arm_type}.patch is empty")
-        except yaml.YAMLError:
-            pass  # bundle parse issues already caught by design validation
+        except yaml.YAMLError as exc:
+            errors.append(f"bundle.yaml is not valid YAML (patches check skipped): {exc}")
         except KeyError as exc:
             errors.append(f"bundle.yaml arm missing required field: {exc}")
+
+    errors.extend(_check_unexpected_files(iter_dir))
 
     if errors:
         return {"status": "fail", "errors": errors}

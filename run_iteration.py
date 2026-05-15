@@ -276,6 +276,8 @@ def run_iteration(
     gate = HumanGate(auto_response="approve") if auto_approve else HumanGate()
 
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
+    for sub in ("inputs", "results", "patches"):
+        (iter_dir / sub).mkdir(parents=True, exist_ok=True)
 
     if engine.phase == "DONE":
         print(f"Iteration {iteration} already complete.")

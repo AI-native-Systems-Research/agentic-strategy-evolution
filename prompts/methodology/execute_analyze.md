@@ -48,6 +48,12 @@ Write all artifacts to: `{{iter_dir}}`
 
 The Nous project is at: `{{nous_dir}}`
 
+**Directory layout** (pre-created, ready to use):
+- `{{iter_dir}}/` — only protocol artifacts here (`experiment_plan.yaml`, `findings.json`, `principle_updates.json`)
+- `{{iter_dir}}/inputs/` — any files you create as experiment inputs (configs, workloads, policies, parameter files)
+- `{{iter_dir}}/results/` — all experiment output (metrics, logs, simulation results)
+- `{{iter_dir}}/patches/` — git diff patches for code-change arms
+
 ## Pre-gathered Repo Context
 
 {{repo_context}}
@@ -67,7 +73,7 @@ For each arm with `code_changes` in the bundle:
 1. Edit the file — make the change described in `intent`. Use file editing tools, NOT `sed`/`awk`.
 2. Build — verify it compiles.
 3. Smoke-test — run treatment command once. Verify it exits 0.
-4. Save patch — `mkdir -p {{iter_dir}}/patches && git diff > {{iter_dir}}/patches/<arm_type>.patch`
+4. Save patch — `git diff > {{iter_dir}}/patches/<arm_type>.patch`
 5. Reset — `git checkout -- .`
 6. Verify — `git apply --check {{iter_dir}}/patches/<arm_type>.patch`
 
@@ -100,10 +106,8 @@ arms:
 
 **Important:**
 - All output paths MUST use absolute paths under `{{iter_dir}}/results/`. Do NOT use relative paths — the experiment runs in a worktree that gets cleaned up.
+- Create per-arm result subdirectories before writing output: `mkdir -p {{iter_dir}}/results/<arm_id>` (the top-level `results/` already exists, but per-arm subdirectories like `results/h-main/` do not).
 - If you create ANY input files for the experiment (config files, workload specs, policy definitions, parameter files), write them to `{{iter_dir}}/inputs/` and list them in the condition's `inputs` array. Do NOT write input files to `/tmp/` or other temporary locations — they will be lost and the experiment will not be reproducible.
-
-### Step 5: Create output and input directories
-For every output path in your plan, ensure the parent directory exists (`mkdir -p {{iter_dir}}/results/<arm_id>`). Also create the inputs directory: `mkdir -p {{iter_dir}}/inputs`.
 
 ## Phase 2: Execute the plan
 
