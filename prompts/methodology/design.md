@@ -8,6 +8,12 @@ Write all artifacts to: `{{iter_dir}}`
 
 The Nous project is at: `{{nous_dir}}`
 
+**Directory layout** (pre-created, ready to use):
+- `{{iter_dir}}/` — only protocol artifacts here (`problem.md`, `bundle.yaml`, `handoff_snapshot.md`)
+- `{{iter_dir}}/inputs/` — any files you create during exploration or as experiment inputs (test configs, workload YAMLs, probe output JSONs, policy definitions)
+- `{{iter_dir}}/results/` — all experiment output (metrics, logs, simulation results)
+- `{{iter_dir}}/patches/` — git diff patches for code-change arms
+
 ## Target System
 
 - **Name:** {{target_system}}
