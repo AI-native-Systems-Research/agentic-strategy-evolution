@@ -4,15 +4,23 @@
 Usage:
     python run_campaign.py examples/campaign.yaml --max-iterations 5
 
+    # Inline mode — embed inside an agent framework:
+    python run_campaign.py examples/campaign.yaml --agent inline
+
 Runs iterations in a loop: each iteration runs the full Nous loop
 (DESIGN → EXECUTE_ANALYZE → DONE), then appends a ledger row
 and prompts whether to continue. The designer's handoff.md (a living
 campaign-level document) and previous findings feed the next iteration's
 design prompt so that each hypothesis bundle is informed by all prior learning.
 
-Set your LLM API key before running:
-    export OPENAI_API_KEY=sk-...
-    (or set OPENAI_BASE_URL for a proxy endpoint)
+Dispatch backends:
+    --agent api (default): Uses CLIDispatcher for code phases (when repo_path
+        is set) and LLMDispatcher for structured phases. OPENAI_API_KEY is
+        optional — gate summaries are skipped if not set.
+    --agent inline: Emits prompts to stdout for the calling agent to reason
+        about. No subprocess, no API key — the agent that invoked run_campaign.py
+        sees the prompt and writes artifacts directly. Ideal for embedded use
+        inside agent frameworks (e.g., Hive strategist).
 """
 import argparse
 import json
@@ -25,6 +33,7 @@ import yaml
 
 from orchestrator.engine import Engine
 from orchestrator.gates import HumanGate
+from orchestrator.inline_dispatch import InlineDispatcher
 from orchestrator.ledger import append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.metrics import summarize_metrics
@@ -70,11 +79,19 @@ def _write_metrics_summary(work_dir: Path) -> None:
         print(f"\n  Warning: could not write metrics summary: {exc}")
 
 
-def _generate_report(campaign: dict, work_dir: Path, model: str | None) -> None:
+def _generate_report(
+    campaign: dict, work_dir: Path, model: str | None,
+    agent: str = "api", timeout: int = 1800,
+) -> None:
     """Generate report.md summarizing the campaign."""
     try:
         resolved = _resolve_model(campaign, "report", model)
-        dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=resolved)
+        if agent == "inline":
+            dispatcher = InlineDispatcher(
+                work_dir=work_dir, campaign=campaign, timeout=timeout,
+            )
+        else:
+            dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=resolved)
         dispatcher.dispatch(
             "extractor", "report",
             output_path=work_dir / "report.md",
@@ -146,6 +163,7 @@ def run_campaign(
     model: str | None = None,
     auto_approve: bool = False,
     timeout: int = 1800,
+    agent: str = "api",
     max_cli_retries: int | None = None,
 ) -> None:
     """Run a multi-iteration Nous campaign.
@@ -161,6 +179,8 @@ def run_campaign(
         model: LLM model name.
         auto_approve: If True, all human gates (including continue gate)
             are automatically approved.
+        agent: Dispatch backend — "inline" emits prompts to stdout,
+            "api" uses the OpenAI-compatible LLM API.
         max_cli_retries: Max retries for transient claude -p failures (None = unbounded).
     """
     continue_gate = (
@@ -183,7 +203,7 @@ def run_campaign(
 
             outcome = run_iteration(
                 campaign, work_dir, iteration=i, model=model, final=is_last,
-                auto_approve=auto_approve, timeout=timeout,
+                auto_approve=auto_approve, timeout=timeout, agent=agent,
                 max_cli_retries=max_cli_retries,
             )
 
@@ -200,7 +220,7 @@ def run_campaign(
         if outcome == IterationOutcome.COMPLETED:
             append_ledger_row(work_dir, i)
             print(f"\n  Campaign complete after {i} iteration(s).")
-            _generate_report(campaign, work_dir, model)
+            _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
             _write_metrics_summary(work_dir)
             return
 
@@ -222,10 +242,16 @@ def run_campaign(
         # Generate continue gate summary
         gate_summary_path = iter_dir / "gate_summary_continue.json"
         try:
-            dispatcher = LLMDispatcher(
-                work_dir=work_dir, campaign=campaign,
-                model=_resolve_model(campaign, "report", model),
-            )
+            resolved = _resolve_model(campaign, "report", model)
+            if agent == "inline":
+                dispatcher = InlineDispatcher(
+                    work_dir=work_dir, campaign=campaign, timeout=timeout,
+                )
+            else:
+                dispatcher = LLMDispatcher(
+                    work_dir=work_dir, campaign=campaign,
+                    model=resolved,
+                )
             dispatcher.dispatch(
                 "summarizer", "summarize-gate",
                 output_path=gate_summary_path,
@@ -249,7 +275,7 @@ def run_campaign(
             engine = Engine(work_dir)
             engine.transition("DONE")
             print(f"\n  Campaign stopped after {i} iteration(s).")
-            _generate_report(campaign, work_dir, model)
+            _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
             _write_metrics_summary(work_dir)
             return
 
@@ -260,7 +286,7 @@ def run_campaign(
         print(f"\n  Advancing to iteration {i + 1}...")
 
     print(f"\n  Campaign reached max_iterations ({max_iterations}).")
-    _generate_report(campaign, work_dir, model)
+    _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
     _write_metrics_summary(work_dir)
 
 
@@ -281,7 +307,11 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
-                        help="Max retries for transient claude -p failures (default: 10; 0 to disable; -1 for unlimited)")
+                        help="Max retries for transient claude -p failures (-1 = unbounded, default: 10)")
+    parser.add_argument("--agent", choices=["inline", "api"], default="api",
+                        help="Dispatch backend: 'inline' emits prompts to stdout for the "
+                             "calling agent (no subprocess, no API key), "
+                             "'api' uses the LLM API (default: api)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -326,6 +356,7 @@ def main() -> None:
         campaign, work_dir,
         max_iterations=max_iter, model=args.model,
         auto_approve=args.auto_approve, timeout=args.timeout,
+        agent=args.agent,
         max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
     )
 
