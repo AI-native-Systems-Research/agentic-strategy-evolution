@@ -106,6 +106,7 @@ arms:
 
 **Important:**
 - All output paths MUST use absolute paths under `{{iter_dir}}/results/`. Do NOT use relative paths — the experiment runs in a worktree that gets cleaned up.
+- Create per-arm result subdirectories before writing output: `mkdir -p {{iter_dir}}/results/<arm_id>` (the top-level `results/` already exists, but per-arm subdirectories like `results/h-main/` do not).
 - If you create ANY input files for the experiment (config files, workload specs, policy definitions, parameter files), write them to `{{iter_dir}}/inputs/` and list them in the condition's `inputs` array. Do NOT write input files to `/tmp/` or other temporary locations — they will be lost and the experiment will not be reproducible.
 
 ## Phase 2: Execute the plan
