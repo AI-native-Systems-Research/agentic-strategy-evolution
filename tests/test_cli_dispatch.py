@@ -699,6 +699,32 @@ class TestCLIDispatcherRetry:
         assert "previous attempt was interrupted" in prompt_sent
         assert "continue from where you left off" in prompt_sent
 
+    def test_prompt_enriched_on_max_turns_retry(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """Retry after max_turns enriches the prompt with continuation note."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        max_turns_resp = _make_result(
+            returncode=0,
+            stdout=json.dumps({
+                "result": "error_max_turns: Turn limit reached",
+                "is_error": True,
+                "usage": {},
+                "total_cost_usd": 0, "duration_ms": 0, "num_turns": 0,
+            }),
+        )
+        success = _success_result("# Design\nStub.")
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", side_effect=[max_turns_resp, success]) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        second_call_kwargs = mock_run.call_args_list[1]
+        prompt_sent = second_call_kwargs.kwargs.get("input", "")
+        assert "previous attempt was interrupted" in prompt_sent
+        assert "continue from where you left off" in prompt_sent
+
     def test_metrics_logged_per_attempt(
         self, work_dir: Path, campaign: dict, fast_sleep,
     ) -> None:
@@ -744,7 +770,15 @@ class TestIsPermanentClassifier:
 
     def test_unauthorized_is_permanent(self) -> None:
         from orchestrator.cli_dispatch import _is_permanent
-        assert _is_permanent("401 Unauthorized")
+        assert _is_permanent("401 unauthorized")
+
+    def test_authentication_failed_is_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert _is_permanent("authentication failed: invalid token")
+
+    def test_authentication_server_timeout_is_not_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert not _is_permanent("failed to connect to authentication server")
 
     def test_permission_denied_is_permanent(self) -> None:
         from orchestrator.cli_dispatch import _is_permanent

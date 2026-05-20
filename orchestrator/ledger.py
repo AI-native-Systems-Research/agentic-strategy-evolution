@@ -45,7 +45,7 @@ def append_failed_row(work_dir: Path, iteration: int, error: str) -> None:
         atomic_write(ledger_path, json.dumps(ledger, indent=2) + "\n")
         logger.info("Appended FAILED ledger row for iteration %d.", iteration)
     except Exception as exc:
-        logger.warning("Could not record failed iteration %d: %s", iteration, exc)
+        logger.error("Could not record failed iteration %d: %s", iteration, exc)
 
 
 def append_ledger_row(work_dir: Path, iteration: int) -> None:

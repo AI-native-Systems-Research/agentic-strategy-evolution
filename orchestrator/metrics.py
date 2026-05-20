@@ -19,7 +19,7 @@ def log_retry_event(metrics_path: Path, entry: dict) -> None:
         with open(retry_log, "a") as f:
             f.write(json.dumps(record) + "\n")
     except Exception as exc:
-        logger.warning("Failed to write retry event: %s", exc)
+        logger.error("Failed to write retry event to %s: %s", retry_log, exc)
 
 
 def log_metrics(metrics_path: Path, entry: dict) -> None:

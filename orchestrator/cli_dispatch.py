@@ -25,8 +25,9 @@ logger = logging.getLogger(__name__)
 _PERMANENT_ERROR_PATTERNS = (
     "invalid_api_key",
     "api key not set",
-    "authentication",
-    "unauthorized",
+    "authentication failed",
+    "authentication_error",
+    "401 unauthorized",
     "permission denied",
     "invalid credentials",
 )
@@ -242,7 +243,7 @@ class CLIDispatcher(LLMDispatcher):
                     f"retrying in {delay:.0f}s...",
                     flush=True,
                 )
-                if failure_type in ("timeout", "max_turns"):
+                if failure_type in ("timeout", "max_turns") and "\nNote: Your previous attempt was interrupted" not in prompt:
                     prompt = (
                         f"{prompt}\n\n---\n"
                         f"Note: Your previous attempt was interrupted ({failure_type}). "
