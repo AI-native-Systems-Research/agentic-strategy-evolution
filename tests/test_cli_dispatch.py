@@ -602,6 +602,29 @@ class TestCLIDispatcherRetry:
         assert mock_run.call_count == 1
         fast_sleep.assert_not_called()
 
+    def test_agent_output_with_permanent_keyword_still_retries(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """Agent stdout mentioning 'unauthorized' should NOT trigger permanent classification."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        agent_output_with_keyword = _make_result(
+            returncode=1,
+            stdout="the user is unauthorized to access this resource",
+            stderr="some transient network blip",
+        )
+        success = _success_result("# Design\nStub.")
+
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            side_effect=[agent_output_with_keyword, success],
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 2
+        fast_sleep.assert_called_once_with(5)
+
     def test_auth_is_error_does_not_retry(
         self, work_dir: Path, campaign: dict, fast_sleep,
     ) -> None:

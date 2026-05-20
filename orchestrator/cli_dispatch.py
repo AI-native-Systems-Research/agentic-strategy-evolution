@@ -280,7 +280,7 @@ class CLIDispatcher(LLMDispatcher):
                 f"claude -p exited with code {result.returncode}.\n"
                 f"stderr: {stderr_tail}\nstdout: {stdout_tail}"
             )
-            if _is_permanent(msg):
+            if _is_permanent(stderr_tail):
                 raise RuntimeError(msg)
             raise _TransientCLIError(msg)
 
