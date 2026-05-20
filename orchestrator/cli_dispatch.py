@@ -19,24 +19,16 @@ from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
 
-# Substrings (case-insensitive) that indicate a transient transport/API failure
-# rather than an agent-side problem. Matched against the JSON envelope's `result`
-# field when `is_error` is True, or stderr when the exit was non-zero.
-_TRANSIENT_PATTERNS = (
-    "socket connection was closed",
-    "connection reset",
-    "request timed out",
-    "fetch failed",
-    "econnreset",
-    "etimedout",
-    "ehostunreach",
-    "internal server error",
-    "bad gateway",
-    "service unavailable",
-    "gateway timeout",
-    "overloaded_error",
-    "rate_limit_error",
-    "too many requests",
+# Substrings (case-insensitive) that indicate a permanent environment failure.
+# These are never retried — add new patterns here as they are discovered.
+# Everything else is retried with exponential backoff.
+_PERMANENT_ERROR_PATTERNS = (
+    "invalid_api_key",
+    "api key not set",
+    "authentication",
+    "unauthorized",
+    "permission denied",
+    "invalid credentials",
 )
 
 # Exponential backoff delays (seconds) between retry attempts.
@@ -46,30 +38,13 @@ _BACKOFF_SECONDS = (5, 30, 120, 300, 600)
 
 
 class _TransientCLIError(RuntimeError):
-    """Raised internally by _call_claude_once when the failure is transient."""
+    """Raised internally by _call_claude_once for retryable failures."""
 
 
-def _is_transient(response_json: dict | None, stderr: str = "") -> bool:
-    """Return True if the claude -p failure looks like a transient transport error."""
-    if response_json is not None:
-        api_status = response_json.get("api_error_status")
-        if isinstance(api_status, int) and 500 <= api_status < 600:
-            return True
-        if not response_json.get("is_error"):
-            # Parseable envelope with is_error=False alongside a nonzero exit is
-            # not a transport failure; treat as permanent so we don't retry.
-            return False
-        result = str(response_json.get("result", "")).lower()
-        if any(p in result for p in _TRANSIENT_PATTERNS):
-            return True
-        # is_error=True with no transient signal -> agent-side failure, do not retry
-        return False
-    # No parseable JSON envelope; fall back to stderr inspection.
-    if stderr:
-        s = stderr.lower()
-        if any(p in s for p in _TRANSIENT_PATTERNS):
-            return True
-    return False
+def _is_permanent(error_msg: str) -> bool:
+    """Return True if the error is a permanent environment failure (never retry)."""
+    lower = error_msg.lower()
+    return any(p in lower for p in _PERMANENT_ERROR_PATTERNS)
 
 
 def _backoff_for(failure_count: int) -> float:
@@ -272,26 +247,20 @@ class CLIDispatcher(LLMDispatcher):
                 "https://docs.anthropic.com/en/docs/claude-code"
             )
         except subprocess.TimeoutExpired:
-            raise RuntimeError(
+            raise _TransientCLIError(
                 f"claude -p timed out after {self.timeout}s."
             )
 
         if result.returncode != 0:
             stderr_tail = result.stderr[-2000:] if result.stderr else "(no stderr)"
             stdout_tail = result.stdout[-2000:] if result.stdout else "(no stdout)"
-            # Try to parse stdout as JSON for richer transience signal.
-            parsed: dict | None = None
-            try:
-                parsed = json.loads(result.stdout)
-            except (json.JSONDecodeError, ValueError):
-                pass
             msg = (
                 f"claude -p exited with code {result.returncode}.\n"
                 f"stderr: {stderr_tail}\nstdout: {stdout_tail}"
             )
-            if _is_transient(parsed, result.stderr):
-                raise _TransientCLIError(msg)
-            raise RuntimeError(msg)
+            if _is_permanent(msg):
+                raise RuntimeError(msg)
+            raise _TransientCLIError(msg)
 
         try:
             response_json = json.loads(result.stdout)
@@ -319,11 +288,11 @@ class CLIDispatcher(LLMDispatcher):
 
         if response_json.get("is_error"):
             error_msg = response_json.get("result", "unknown")
-            if _is_transient(response_json):
-                raise _TransientCLIError(
-                    f"claude -p returned an error: {error_msg}"
+            if _is_permanent(str(error_msg)):
+                raise RuntimeError(
+                    f"claude -p permanent failure: {error_msg}"
                 )
-            raise RuntimeError(
+            raise _TransientCLIError(
                 f"claude -p returned an error: {error_msg}"
             )
 

@@ -491,27 +491,29 @@ class TestCLIDispatcherRetry:
         assert mock_run.call_count == 2
         fast_sleep.assert_called_once_with(5)
 
-    def test_non_transient_is_error_does_not_retry(
+    def test_unknown_is_error_retries(
         self, work_dir: Path, campaign: dict, fast_sleep,
     ) -> None:
-        """Agent-side is_error (non-transient message) must not be retried."""
+        """Unknown is_error (not a permanent pattern) is retried."""
         from orchestrator.cli_dispatch import CLIDispatcher
+
+        success = _success_result("# Design\nStub.")
+        side_effects = [_non_transient_is_error_result(), success]
 
         with patch(
             "orchestrator.cli_dispatch.subprocess.run",
-            return_value=_non_transient_is_error_result(),
+            side_effect=side_effects,
         ) as mock_run:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            with pytest.raises(RuntimeError, match="returned an error"):
-                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
 
-        assert mock_run.call_count == 1
-        fast_sleep.assert_not_called()
+        assert mock_run.call_count == 2
+        fast_sleep.assert_called_once_with(5)
 
-    def test_non_transient_nonzero_exit_does_not_retry(
+    def test_permanent_nonzero_exit_does_not_retry(
         self, work_dir: Path, campaign: dict, fast_sleep,
     ) -> None:
-        """Non-transient stderr (e.g. missing API key) must not be retried."""
+        """Permanent error (e.g. missing API key) must not be retried."""
         from orchestrator.cli_dispatch import CLIDispatcher
 
         with patch(
@@ -560,23 +562,28 @@ class TestCLIDispatcherRetry:
         assert mock_run.call_count == 3
         assert fast_sleep.call_count == 2
 
-    def test_timeout_does_not_retry(
+    def test_timeout_retries_with_backoff(
         self, work_dir: Path, campaign: dict, fast_sleep,
     ) -> None:
-        """subprocess.TimeoutExpired is NOT retried — it means the session exceeded self.timeout."""
-        import subprocess
+        """subprocess.TimeoutExpired enters the retry loop."""
+        import subprocess as _subprocess
         from orchestrator.cli_dispatch import CLIDispatcher
+
+        timeout_exc = _subprocess.TimeoutExpired(cmd=["claude"], timeout=1800)
+        success = _make_result(
+            returncode=0,
+            stdout=json.dumps({"result": "# Design\nStub.", "is_error": False, "usage": {}}),
+        )
 
         with patch(
             "orchestrator.cli_dispatch.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd=["claude"], timeout=1800),
+            side_effect=[timeout_exc, success],
         ) as mock_run:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            with pytest.raises(RuntimeError, match="timed out"):
-                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
 
-        assert mock_run.call_count == 1
-        fast_sleep.assert_not_called()
+        assert mock_run.call_count == 2
+        fast_sleep.assert_called_once_with(5)
 
     def test_file_not_found_does_not_retry(
         self, work_dir: Path, campaign: dict, fast_sleep,
@@ -594,6 +601,60 @@ class TestCLIDispatcherRetry:
 
         assert mock_run.call_count == 1
         fast_sleep.assert_not_called()
+
+    def test_auth_is_error_does_not_retry(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """Authentication failure via is_error is permanent — no retry."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        auth_resp = _make_result(
+            returncode=0,
+            stdout=json.dumps({
+                "result": "invalid_api_key: Your API key is invalid",
+                "is_error": True,
+                "usage": {},
+                "total_cost_usd": 0, "duration_ms": 0, "num_turns": 0,
+            }),
+        )
+
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            return_value=auth_resp,
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with pytest.raises(RuntimeError, match="permanent failure"):
+                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 1
+        fast_sleep.assert_not_called()
+
+    def test_max_turns_error_retries(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """error_max_turns response enters the retry loop (not permanent)."""
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        max_turns_resp = _make_result(
+            returncode=0,
+            stdout=json.dumps({
+                "result": "error_max_turns: Turn limit reached",
+                "is_error": True,
+                "usage": {},
+                "total_cost_usd": 0, "duration_ms": 0, "num_turns": 0,
+            }),
+        )
+        success = _success_result("# Design\nStub.")
+
+        with patch(
+            "orchestrator.cli_dispatch.subprocess.run",
+            side_effect=[max_turns_resp, success],
+        ) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        assert mock_run.call_count == 2
+        fast_sleep.assert_called_once_with(5)
 
     def test_metrics_logged_per_attempt(
         self, work_dir: Path, campaign: dict, fast_sleep,
@@ -627,68 +688,41 @@ class TestCLIDispatcherRetry:
         assert len(lines) == 3
 
 
-class TestIsTransientClassifier:
-    """Unit tests for the _is_transient module-level helper."""
+class TestIsPermanentClassifier:
+    """Unit tests for the _is_permanent module-level helper."""
 
-    def test_5xx_api_status_is_transient(self) -> None:
-        from orchestrator.cli_dispatch import _is_transient
-        assert _is_transient({"is_error": True, "api_error_status": 503, "result": ""})
-        assert _is_transient({"is_error": True, "api_error_status": 500, "result": ""})
+    def test_invalid_api_key_is_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert _is_permanent("invalid_api_key: Your API key is invalid")
 
-    def test_4xx_api_status_not_transient(self) -> None:
-        from orchestrator.cli_dispatch import _is_transient
-        assert not _is_transient({"is_error": True, "api_error_status": 400, "result": ""})
+    def test_api_key_not_set_is_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert _is_permanent("Error: API key not set")
 
-    def test_socket_string_in_result_is_transient(self) -> None:
-        from orchestrator.cli_dispatch import _is_transient
-        assert _is_transient({
-            "is_error": True, "api_error_status": None,
-            "result": "API Error: The socket connection was closed unexpectedly.",
-        })
+    def test_unauthorized_is_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert _is_permanent("401 Unauthorized")
 
-    def test_agent_error_string_not_transient(self) -> None:
-        from orchestrator.cli_dispatch import _is_transient
-        assert not _is_transient({
-            "is_error": True, "api_error_status": None,
-            "result": "Something went wrong with the YAML",
-        })
+    def test_permission_denied_is_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert _is_permanent("permission denied for resource X")
 
-    def test_stderr_econnreset_is_transient(self) -> None:
-        from orchestrator.cli_dispatch import _is_transient
-        assert _is_transient(None, stderr="ECONNRESET: connection reset by peer")
+    def test_socket_error_is_not_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert not _is_permanent("socket connection was closed unexpectedly")
 
-    def test_stderr_api_key_not_transient(self) -> None:
-        from orchestrator.cli_dispatch import _is_transient
-        assert not _is_transient(None, stderr="Error: API key not set")
+    def test_rate_limit_is_not_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert not _is_permanent("rate_limit_error: Too many requests")
 
-    def test_no_json_no_stderr_not_transient(self) -> None:
-        from orchestrator.cli_dispatch import _is_transient
-        assert not _is_transient(None, stderr="")
+    def test_unknown_error_is_not_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert not _is_permanent("Something went wrong with the YAML")
 
-    def test_rate_limit_error_is_transient(self) -> None:
-        from orchestrator.cli_dispatch import _is_transient
-        assert _is_transient({
-            "is_error": True, "api_error_status": None,
-            "result": "rate_limit_error: Too many requests",
-        })
+    def test_empty_string_is_not_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert not _is_permanent("")
 
-    def test_too_many_requests_string_is_transient(self) -> None:
-        from orchestrator.cli_dispatch import _is_transient
-        assert _is_transient({
-            "is_error": True, "api_error_status": None,
-            "result": "Error: Too many requests, please slow down.",
-        })
-
-    def test_parseable_json_is_error_false_not_transient(self) -> None:
-        """A parseable envelope with is_error=False alongside a nonzero exit is permanent."""
-        from orchestrator.cli_dispatch import _is_transient
-        # Even with transient-looking stderr, the parseable non-error envelope wins.
-        assert not _is_transient(
-            {"is_error": False, "api_error_status": None, "result": ""},
-            stderr="ECONNRESET: connection reset",
-        )
-
-    def test_5xx_overrides_is_error_false(self) -> None:
-        """api_error_status 5xx is transient even if is_error is absent/False."""
-        from orchestrator.cli_dispatch import _is_transient
-        assert _is_transient({"is_error": False, "api_error_status": 503, "result": ""})
+    def test_max_turns_is_not_permanent(self) -> None:
+        from orchestrator.cli_dispatch import _is_permanent
+        assert not _is_permanent("error_max_turns: Turn limit reached")
