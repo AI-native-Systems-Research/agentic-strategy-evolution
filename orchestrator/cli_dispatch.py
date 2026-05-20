@@ -14,7 +14,7 @@ import jsonschema
 import yaml
 
 from orchestrator.llm_dispatch import LLMDispatcher
-from orchestrator.metrics import log_metrics
+from orchestrator.metrics import log_metrics, log_retry_event
 from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
@@ -214,20 +214,41 @@ class CLIDispatcher(LLMDispatcher):
                 return self._call_claude_once(cmd, prompt, cwd)
             except _TransientCLIError as exc:
                 failure_count += 1
+                exc_str = str(exc).lower()
+                if "timed out" in exc_str:
+                    failure_type = "timeout"
+                elif "resource exhausted" in exc_str or "max_turns" in exc_str:
+                    failure_type = "max_turns"
+                else:
+                    failure_type = "transient"
+                log_retry_event(self._metrics_path, {
+                    "role": self._current_role,
+                    "phase": self._current_phase,
+                    "failure_type": failure_type,
+                    "attempt": failure_count,
+                    "error": str(exc)[:500],
+                })
                 if self.max_retries is not None and failure_count > self.max_retries:
                     raise RuntimeError(
                         f"claude -p still failing after {failure_count} attempt(s): {exc}"
                     ) from exc
                 delay = _backoff_for(failure_count)
                 logger.warning(
-                    "claude -p transient failure (attempt %d): %s — retrying in %.0fs",
-                    failure_count, exc, delay,
+                    "claude -p failure (attempt %d, %s): %s — retrying in %.0fs",
+                    failure_count, failure_type, exc, delay,
                 )
                 print(
-                    f"    claude -p transient failure (attempt {failure_count}); "
+                    f"    claude -p {failure_type} failure (attempt {failure_count}); "
                     f"retrying in {delay:.0f}s...",
                     flush=True,
                 )
+                if failure_type in ("timeout", "max_turns"):
+                    prompt = (
+                        f"{prompt}\n\n---\n"
+                        f"Note: Your previous attempt was interrupted ({failure_type}). "
+                        f"Check the working directory for artifacts from your prior "
+                        f"attempt and continue from where you left off."
+                    )
                 time.sleep(delay)
 
     def _call_claude_once(self, cmd: list[str], prompt: str, cwd: Path | None) -> str:

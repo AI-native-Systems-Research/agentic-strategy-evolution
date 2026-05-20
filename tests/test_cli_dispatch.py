@@ -656,6 +656,49 @@ class TestCLIDispatcherRetry:
         assert mock_run.call_count == 2
         fast_sleep.assert_called_once_with(5)
 
+    def test_retry_events_logged_to_retry_log(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """Each failure is recorded in retry_log.jsonl."""
+        import subprocess as _subprocess
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        timeout_exc = _subprocess.TimeoutExpired(cmd=["claude"], timeout=1800)
+        success = _success_result("# Design\nStub.")
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", side_effect=[timeout_exc, success]):
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        log_path = work_dir / "retry_log.jsonl"
+        assert log_path.exists()
+        entries = [json.loads(line) for line in log_path.read_text().splitlines()]
+        assert len(entries) == 1
+        assert entries[0]["failure_type"] == "timeout"
+        assert entries[0]["phase"] == "design"
+        assert entries[0]["attempt"] == 1
+        assert "timestamp" in entries[0]
+
+    def test_prompt_enriched_on_timeout_retry(
+        self, work_dir: Path, campaign: dict, fast_sleep,
+    ) -> None:
+        """Retry after timeout enriches the prompt with continuation note."""
+        import subprocess as _subprocess
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        timeout_exc = _subprocess.TimeoutExpired(cmd=["claude"], timeout=1800)
+        success = _success_result("# Design\nStub.")
+
+        with patch("orchestrator.cli_dispatch.subprocess.run", side_effect=[timeout_exc, success]) as mock_run:
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+
+        # Second call should have enriched prompt
+        second_call_kwargs = mock_run.call_args_list[1]
+        prompt_sent = second_call_kwargs.kwargs.get("input") or second_call_kwargs[1].get("input", "")
+        assert "previous attempt was interrupted" in prompt_sent
+        assert "continue from where you left off" in prompt_sent
+
     def test_metrics_logged_per_attempt(
         self, work_dir: Path, campaign: dict, fast_sleep,
     ) -> None:
