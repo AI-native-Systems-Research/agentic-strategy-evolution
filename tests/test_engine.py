@@ -278,3 +278,47 @@ class TestSaveStateAtomicity:
         assert saved["phase"] == "INIT"
         # No temp files
         assert list(tmp_path.glob("*.json.tmp")) == []
+
+
+class TestForcePhase:
+    def test_force_phase_sets_phase_and_increments_iteration(self, tmp_path):
+        state = {
+            "phase": "EXECUTE_ANALYZE",
+            "iteration": 1,
+            "run_id": "test",
+            "family": None,
+            "timestamp": "2026-04-01T00:00:00Z",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+        engine.force_phase("DESIGN")
+        assert engine.phase == "DESIGN"
+        assert engine.iteration == 2
+
+    def test_force_phase_rejects_invalid_phase(self, tmp_path):
+        state = {
+            "phase": "INIT",
+            "iteration": 0,
+            "run_id": "test",
+            "family": None,
+            "timestamp": "2026-04-01T00:00:00Z",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+        with pytest.raises(ValueError, match="not a recognized phase"):
+            engine.force_phase("INVALID")
+
+    def test_force_phase_persists_to_disk(self, tmp_path):
+        state = {
+            "phase": "HUMAN_DESIGN_GATE",
+            "iteration": 3,
+            "run_id": "test",
+            "family": None,
+            "timestamp": "2026-04-01T00:00:00Z",
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        engine = Engine(tmp_path)
+        engine.force_phase("DESIGN")
+        saved = json.loads((tmp_path / "state.json").read_text())
+        assert saved["phase"] == "DESIGN"
+        assert saved["iteration"] == 4

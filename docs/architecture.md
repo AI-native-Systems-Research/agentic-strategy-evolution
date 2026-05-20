@@ -128,6 +128,18 @@ Both dispatchers share the same interface — `CLIDispatcher` extends `LLMDispat
 
 `CLIDispatcher` invokes `claude -p` for both agent roles.
 
+### Retry and Resilience
+
+**Pre-flight check:** At campaign start, Nous validates that the CLI is installed and credentials work via a quick `claude -p` test call. Environment problems are caught in seconds, not hours into an overnight run.
+
+**All failures are retried** with exponential backoff (5s → 30s → 120s → 300s → 600s). There is no permanent/transient classification — the only hard failures are CLI-not-found and repo-path-missing, which are caught before the retry loop. Configurable via `--max-cli-retries` (default 10) and `--timeout` (default 1800s).
+
+On timeout/max-turns retries, the prompt is enriched with a continuation note so the agent checks for existing artifacts and picks up where it left off. The experiment worktree and `iter_dir` artifacts are preserved across retries.
+
+**Failure persistence:** Each retry event is appended to `retry_log.jsonl` in the campaign directory (timestamp, phase, failure_type, attempt, error).
+
+**Campaign-level resilience:** If an iteration fails after retries are exhausted, it is recorded as FAILED in `ledger.json` and the campaign continues to the next iteration.
+
 ### Prompt System
 
 Prompts are templates in `prompts/methodology/` (one per role). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:

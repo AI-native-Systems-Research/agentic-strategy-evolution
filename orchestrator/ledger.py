@@ -15,6 +15,39 @@ from orchestrator.util import atomic_write
 logger = logging.getLogger(__name__)
 
 
+def append_failed_row(work_dir: Path, iteration: int, error: str) -> None:
+    """Append a FAILED row to ledger.json. Never raises."""
+    work_dir = Path(work_dir)
+    ledger_path = work_dir / "ledger.json"
+    try:
+        if ledger_path.exists():
+            ledger = json.loads(ledger_path.read_text())
+        else:
+            ledger = {"iterations": []}
+        if any(r.get("iteration") == iteration for r in ledger["iterations"]):
+            return
+        row = {
+            "iteration": iteration,
+            "family": "unknown",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "candidate_id": f"iter-{iteration}",
+            "status": "FAILED",
+            "error": error[:500],
+            "h_main_result": None,
+            "ablation_results": {},
+            "control_result": None,
+            "robustness_result": None,
+            "prediction_accuracy": None,
+            "principles_extracted": [],
+            "frontier_update": None,
+        }
+        ledger["iterations"].append(row)
+        atomic_write(ledger_path, json.dumps(ledger, indent=2) + "\n")
+        logger.info("Appended FAILED ledger row for iteration %d.", iteration)
+    except Exception as exc:
+        logger.error("Could not record failed iteration %d: %s", iteration, exc)
+
+
 def append_ledger_row(work_dir: Path, iteration: int) -> None:
     """Append a ledger row for the given iteration.
 

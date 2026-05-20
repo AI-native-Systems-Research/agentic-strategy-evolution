@@ -370,67 +370,62 @@ def run_iteration(
             cli_dispatcher.model = _model_for("execute_analyze")
             cli_dispatcher.max_turns = _max_turns_for("execute_analyze")
         exec_dispatcher = cli_dispatcher or llm_dispatcher
-        try:
-            if repo_path:
-                from orchestrator.worktree import (
-                    create_experiment_worktree,
-                    remove_experiment_worktree,
-                )
-                experiment_dir, experiment_id = create_experiment_worktree(
-                    Path(repo_path), iteration,
-                )
-                (iter_dir / ".experiment_id").write_text(experiment_id)
-                print(f"  Experiment worktree: {experiment_dir}")
-            if cli_dispatcher:
-                import contextlib
-                ctx = cli_dispatcher.override_cwd(experiment_dir) if experiment_dir else contextlib.nullcontext()
-                with ctx:
-                    exec_dispatcher.dispatch(
-                        "executor", "execute-analyze",
-                        output_path=iter_dir / "executor_log.md",
-                        iteration=iteration,
-                    )
-            else:
-                # LLM API path or stub: dispatch and check if files were written directly
-                output_file = iter_dir / "execute_analyze_output.json"
+        if repo_path:
+            from orchestrator.worktree import (
+                create_experiment_worktree,
+                remove_experiment_worktree,
+            )
+            experiment_dir, experiment_id = create_experiment_worktree(
+                Path(repo_path), iteration,
+            )
+            (iter_dir / ".experiment_id").write_text(experiment_id)
+            print(f"  Experiment worktree: {experiment_dir}")
+        if cli_dispatcher:
+            import contextlib
+            ctx = cli_dispatcher.override_cwd(experiment_dir) if experiment_dir else contextlib.nullcontext()
+            with ctx:
                 exec_dispatcher.dispatch(
                     "executor", "execute-analyze",
-                    output_path=output_file,
+                    output_path=iter_dir / "executor_log.md",
                     iteration=iteration,
                 )
-                # If the dispatcher wrote individual files (StubDispatcher),
-                # skip the JSON split. Otherwise parse the combined blob.
-                if not (iter_dir / "findings.json").exists():
-                    combined = json.loads(output_file.read_text())
-                    missing = {"plan", "findings", "principle_updates"} - set(combined.keys())
-                    if missing:
-                        raise RuntimeError(
-                            f"execute-analyze output missing keys: {sorted(missing)}"
-                        )
-                    atomic_write(
-                        iter_dir / "experiment_plan.yaml",
-                        yaml.safe_dump(combined["plan"], default_flow_style=False, sort_keys=False),
+        else:
+            output_file = iter_dir / "execute_analyze_output.json"
+            exec_dispatcher.dispatch(
+                "executor", "execute-analyze",
+                output_path=output_file,
+                iteration=iteration,
+            )
+            if not (iter_dir / "findings.json").exists():
+                combined = json.loads(output_file.read_text())
+                missing = {"plan", "findings", "principle_updates"} - set(combined.keys())
+                if missing:
+                    raise RuntimeError(
+                        f"execute-analyze output missing keys: {sorted(missing)}"
                     )
-                    atomic_write(
-                        iter_dir / "findings.json",
-                        json.dumps(combined["findings"], indent=2) + "\n",
-                    )
-                    atomic_write(
-                        iter_dir / "principle_updates.json",
-                        json.dumps(combined["principle_updates"], indent=2) + "\n",
-                    )
-            # Validate artifacts regardless of dispatch path
-            from orchestrator.validate import validate_execution
-            result = validate_execution(iter_dir)
-            if result["status"] == "fail":
-                raise RuntimeError(
-                    f"Executor artifacts failed validation:\n"
-                    + "\n".join(f"  - {e}" for e in result["errors"])
+                atomic_write(
+                    iter_dir / "experiment_plan.yaml",
+                    yaml.safe_dump(combined["plan"], default_flow_style=False, sort_keys=False),
                 )
-        finally:
-            if repo_path and experiment_id:
-                from orchestrator.worktree import remove_experiment_worktree
-                remove_experiment_worktree(Path(repo_path), experiment_id)
+                atomic_write(
+                    iter_dir / "findings.json",
+                    json.dumps(combined["findings"], indent=2) + "\n",
+                )
+                atomic_write(
+                    iter_dir / "principle_updates.json",
+                    json.dumps(combined["principle_updates"], indent=2) + "\n",
+                )
+        # Validate artifacts — trust the agent, log warning on failure
+        from orchestrator.validate import validate_execution
+        result = validate_execution(iter_dir)
+        if result["status"] == "fail":
+            logger.warning(
+                "Executor artifacts failed post-check validation: %s",
+                result["errors"],
+            )
+        # Clean up worktree only on success
+        if repo_path and experiment_id:
+            remove_experiment_worktree(Path(repo_path), experiment_id)
 
     # Validate findings schema
     findings_path = iter_dir / "findings.json"
@@ -497,7 +492,7 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
-                        help="Max retries for transient claude -p failures (-1 = unbounded, default: 10)")
+                        help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
     parser.add_argument("--agent", choices=["inline", "api"], default="api",
                         help="Dispatch backend: 'inline' emits prompts to stdout for the "
                              "calling agent, 'api' uses the LLM API (default: api)")

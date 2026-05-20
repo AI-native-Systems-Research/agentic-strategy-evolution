@@ -14,30 +14,10 @@ import jsonschema
 import yaml
 
 from orchestrator.llm_dispatch import LLMDispatcher
-from orchestrator.metrics import log_metrics
+from orchestrator.metrics import log_metrics, log_retry_event
 from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
-
-# Substrings (case-insensitive) that indicate a transient transport/API failure
-# rather than an agent-side problem. Matched against the JSON envelope's `result`
-# field when `is_error` is True, or stderr when the exit was non-zero.
-_TRANSIENT_PATTERNS = (
-    "socket connection was closed",
-    "connection reset",
-    "request timed out",
-    "fetch failed",
-    "econnreset",
-    "etimedout",
-    "ehostunreach",
-    "internal server error",
-    "bad gateway",
-    "service unavailable",
-    "gateway timeout",
-    "overloaded_error",
-    "rate_limit_error",
-    "too many requests",
-)
 
 # Exponential backoff delays (seconds) between retry attempts.
 # Index 0 is the wait before the 2nd attempt (after the 1st failure).
@@ -46,30 +26,7 @@ _BACKOFF_SECONDS = (5, 30, 120, 300, 600)
 
 
 class _TransientCLIError(RuntimeError):
-    """Raised internally by _call_claude_once when the failure is transient."""
-
-
-def _is_transient(response_json: dict | None, stderr: str = "") -> bool:
-    """Return True if the claude -p failure looks like a transient transport error."""
-    if response_json is not None:
-        api_status = response_json.get("api_error_status")
-        if isinstance(api_status, int) and 500 <= api_status < 600:
-            return True
-        if not response_json.get("is_error"):
-            # Parseable envelope with is_error=False alongside a nonzero exit is
-            # not a transport failure; treat as permanent so we don't retry.
-            return False
-        result = str(response_json.get("result", "")).lower()
-        if any(p in result for p in _TRANSIENT_PATTERNS):
-            return True
-        # is_error=True with no transient signal -> agent-side failure, do not retry
-        return False
-    # No parseable JSON envelope; fall back to stderr inspection.
-    if stderr:
-        s = stderr.lower()
-        if any(p in s for p in _TRANSIENT_PATTERNS):
-            return True
-    return False
+    """Raised internally by _call_claude_once for retryable failures."""
 
 
 def _backoff_for(failure_count: int) -> float:
@@ -119,6 +76,48 @@ class CLIDispatcher(LLMDispatcher):
             yield
         finally:
             self._cwd = old
+
+    def preflight_check(self) -> None:
+        """Validate that claude CLI is installed, accessible, and credentials work.
+
+        Call once at campaign start to fail fast on environment issues.
+        Raises RuntimeError with a clear message if the environment is broken.
+        """
+        cmd = ["claude", "-p", "--model", self.model, "--output-format", "json",
+               "--max-turns", "1"]
+        try:
+            result = subprocess.run(
+                cmd, input="Respond with OK", capture_output=True, text=True,
+                timeout=60,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Pre-flight check failed: claude CLI not found. "
+                "Install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                "Pre-flight check failed: claude -p timed out after 60s. "
+                "Check your network connection and API endpoint."
+            )
+        if result.returncode != 0:
+            stderr = result.stderr[-500:] if result.stderr else "(no stderr)"
+            raise RuntimeError(
+                f"Pre-flight check failed: claude -p exited with code {result.returncode}.\n"
+                f"stderr: {stderr}\n"
+                f"Check your API credentials and endpoint configuration."
+            )
+        try:
+            response = json.loads(result.stdout)
+            if response.get("is_error"):
+                raise RuntimeError(
+                    f"Pre-flight check failed: {response.get('result', 'unknown error')}\n"
+                    f"Check your API credentials and endpoint configuration."
+                )
+        except json.JSONDecodeError:
+            pass  # Non-JSON response but exit code 0 — close enough
+        logger.info("Pre-flight check passed (model=%s)", self.model)
+        print(f"    Pre-flight check passed ({self.model})", flush=True)
 
     def dispatch(
         self,
@@ -239,20 +238,41 @@ class CLIDispatcher(LLMDispatcher):
                 return self._call_claude_once(cmd, prompt, cwd)
             except _TransientCLIError as exc:
                 failure_count += 1
+                exc_str = str(exc).lower()
+                if "timed out" in exc_str:
+                    failure_type = "timeout"
+                elif "resource exhausted" in exc_str or "max_turns" in exc_str:
+                    failure_type = "max_turns"
+                else:
+                    failure_type = "transient"
+                log_retry_event(self._metrics_path, {
+                    "role": self._current_role,
+                    "phase": self._current_phase,
+                    "failure_type": failure_type,
+                    "attempt": failure_count,
+                    "error": str(exc)[:500],
+                })
                 if self.max_retries is not None and failure_count > self.max_retries:
                     raise RuntimeError(
                         f"claude -p still failing after {failure_count} attempt(s): {exc}"
                     ) from exc
                 delay = _backoff_for(failure_count)
                 logger.warning(
-                    "claude -p transient failure (attempt %d): %s — retrying in %.0fs",
-                    failure_count, exc, delay,
+                    "claude -p failure (attempt %d, %s): %s — retrying in %.0fs",
+                    failure_count, failure_type, exc, delay,
                 )
                 print(
-                    f"    claude -p transient failure (attempt {failure_count}); "
+                    f"    claude -p {failure_type} failure (attempt {failure_count}); "
                     f"retrying in {delay:.0f}s...",
                     flush=True,
                 )
+                if failure_type in ("timeout", "max_turns") and "\nNote: Your previous attempt was interrupted" not in prompt:
+                    prompt = (
+                        f"{prompt}\n\n---\n"
+                        f"Note: Your previous attempt was interrupted ({failure_type}). "
+                        f"Check the working directory for artifacts from your prior "
+                        f"attempt and continue from where you left off."
+                    )
                 time.sleep(delay)
 
     def _call_claude_once(self, cmd: list[str], prompt: str, cwd: Path | None) -> str:
@@ -272,35 +292,29 @@ class CLIDispatcher(LLMDispatcher):
                 "https://docs.anthropic.com/en/docs/claude-code"
             )
         except subprocess.TimeoutExpired:
-            raise RuntimeError(
+            raise _TransientCLIError(
                 f"claude -p timed out after {self.timeout}s."
             )
 
         if result.returncode != 0:
             stderr_tail = result.stderr[-2000:] if result.stderr else "(no stderr)"
             stdout_tail = result.stdout[-2000:] if result.stdout else "(no stdout)"
-            # Try to parse stdout as JSON for richer transience signal.
-            parsed: dict | None = None
-            try:
-                parsed = json.loads(result.stdout)
-            except (json.JSONDecodeError, ValueError):
-                pass
-            msg = (
+            raise _TransientCLIError(
                 f"claude -p exited with code {result.returncode}.\n"
                 f"stderr: {stderr_tail}\nstdout: {stdout_tail}"
             )
-            if _is_transient(parsed, result.stderr):
-                raise _TransientCLIError(msg)
-            raise RuntimeError(msg)
 
         try:
             response_json = json.loads(result.stdout)
         except json.JSONDecodeError:
             logger.error(
-                "claude -p output not valid JSON; metrics not recorded. "
+                "claude -p output not valid JSON (exit 0). "
                 "First 500 chars: %s", result.stdout[:500]
             )
-            return result.stdout
+            raise _TransientCLIError(
+                f"claude -p exited successfully but output is not valid JSON. "
+                f"First 200 chars: {result.stdout[:200]}"
+            )
 
         usage = response_json.get("usage", {})
         log_metrics(self._metrics_path, {
@@ -319,11 +333,7 @@ class CLIDispatcher(LLMDispatcher):
 
         if response_json.get("is_error"):
             error_msg = response_json.get("result", "unknown")
-            if _is_transient(response_json):
-                raise _TransientCLIError(
-                    f"claude -p returned an error: {error_msg}"
-                )
-            raise RuntimeError(
+            raise _TransientCLIError(
                 f"claude -p returned an error: {error_msg}"
             )
 

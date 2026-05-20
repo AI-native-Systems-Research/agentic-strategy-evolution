@@ -34,7 +34,7 @@ import yaml
 from orchestrator.engine import Engine
 from orchestrator.gates import HumanGate
 from orchestrator.inline_dispatch import InlineDispatcher
-from orchestrator.ledger import append_ledger_row
+from orchestrator.ledger import append_failed_row, append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.metrics import summarize_metrics
 from run_iteration import (
@@ -206,6 +206,17 @@ def run_campaign(
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
 
+    # Pre-flight: validate CLI + credentials before starting the campaign
+    repo_path = campaign.get("target_system", {}).get("repo_path")
+    if agent != "inline" and repo_path:
+        from orchestrator.cli_dispatch import CLIDispatcher
+        preflight_dispatcher = CLIDispatcher(
+            work_dir=work_dir, campaign=campaign,
+            model=_resolve_model(campaign, "design", model),
+            max_retries=max_cli_retries,
+        )
+        preflight_dispatcher.preflight_check()
+
     start_iter = _resume_completed_campaign(work_dir, max_iterations)
 
     max_redesigns = 3
@@ -220,11 +231,18 @@ def run_campaign(
                 print(f"  CAMPAIGN — Iteration {i} of {max_iterations}")
             print(f"{'#'*60}")
 
-            outcome = run_iteration(
-                campaign, work_dir, iteration=i, model=model, final=is_last,
-                auto_approve=auto_approve, timeout=timeout, agent=agent,
-                max_cli_retries=max_cli_retries,
-            )
+            try:
+                outcome = run_iteration(
+                    campaign, work_dir, iteration=i, model=model, final=is_last,
+                    auto_approve=auto_approve, timeout=timeout, agent=agent,
+                    max_cli_retries=max_cli_retries,
+                )
+            except Exception as exc:
+                logger.error("Iteration %d failed permanently: %s", i, exc)
+                print(f"\n  Iteration {i} FAILED: {exc}")
+                append_failed_row(work_dir, i, str(exc))
+                outcome = None
+                break
 
             if outcome == IterationOutcome.REDESIGN:
                 if redesign_attempt < max_redesigns:
@@ -235,6 +253,14 @@ def run_campaign(
                     _write_metrics_summary(work_dir)
                     return
             break  # any non-REDESIGN outcome exits the retry loop
+
+        if outcome is None:
+            # Iteration failed permanently — advance to next
+            if is_last:
+                break
+            engine = Engine(work_dir)
+            engine.force_phase("DESIGN")
+            continue
 
         if outcome == IterationOutcome.COMPLETED:
             append_ledger_row(work_dir, i)
@@ -326,7 +352,7 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
-                        help="Max retries for transient claude -p failures (-1 = unbounded, default: 10)")
+                        help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
     parser.add_argument("--agent", choices=["inline", "api"], default="api",
                         help="Dispatch backend: 'inline' emits prompts to stdout for the "
                              "calling agent (no subprocess, no API key), "

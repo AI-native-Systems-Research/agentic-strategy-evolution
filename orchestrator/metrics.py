@@ -10,6 +10,18 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+def log_retry_event(metrics_path: Path, entry: dict) -> None:
+    """Append a retry failure event to retry_log.jsonl. Never raises."""
+    try:
+        retry_log = metrics_path.parent / "retry_log.jsonl"
+        record = {**entry}
+        record.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+        with open(retry_log, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as exc:
+        logger.error("Failed to write retry event to %s: %s", retry_log, exc)
+
+
 def log_metrics(metrics_path: Path, entry: dict) -> None:
     """Append a single metrics entry to the JSONL file. Never raises."""
     try:
