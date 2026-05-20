@@ -128,6 +128,20 @@ Both dispatchers share the same interface — `CLIDispatcher` extends `LLMDispat
 
 `CLIDispatcher` invokes `claude -p` for both agent roles.
 
+### Retry and Resilience
+
+`CLIDispatcher` retries all failures except permanent environment errors:
+
+**Never retried (permanent):** CLI binary not found, target repo doesn't exist, authentication/credential failure. Matched by `_PERMANENT_ERROR_PATTERNS` in `cli_dispatch.py` — developers add new patterns to this tuple.
+
+**Always retried (with exponential backoff 5s → 600s):** Timeout, max-turns exhausted, transient network/API errors, and any other unknown failure. Configurable via `max_retries` (default 10) and `timeout` (default 1800s).
+
+On timeout/max-turns retries, the prompt is enriched with a continuation note so the agent checks for existing artifacts and picks up where it left off. The experiment worktree and `iter_dir` artifacts are preserved across retries.
+
+**Failure persistence:** Each retry event is appended to `retry_log.jsonl` in the campaign directory (timestamp, phase, failure_type, attempt, error).
+
+**Campaign-level resilience:** If an iteration fails permanently (retries exhausted), it is recorded as FAILED in `ledger.json` and the campaign continues to the next iteration.
+
 ### Prompt System
 
 Prompts are templates in `prompts/methodology/` (one per role). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:
