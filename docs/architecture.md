@@ -130,17 +130,15 @@ Both dispatchers share the same interface — `CLIDispatcher` extends `LLMDispat
 
 ### Retry and Resilience
 
-`CLIDispatcher` retries all failures except permanent environment errors:
+**Pre-flight check:** At campaign start, Nous validates that the CLI is installed and credentials work via a quick `claude -p` test call. Environment problems are caught in seconds, not hours into an overnight run.
 
-**Never retried (permanent):** CLI binary not found, target repo doesn't exist, authentication/credential failure. Matched by `_PERMANENT_ERROR_PATTERNS` in `cli_dispatch.py` — developers add new patterns to this tuple.
-
-**Always retried (with exponential backoff 5s → 600s):** Timeout, max-turns exhausted, transient network/API errors, and any other unknown failure. Configurable via `max_retries` (default 10) and `timeout` (default 1800s).
+**All failures are retried** with exponential backoff (5s → 30s → 120s → 300s → 600s). There is no permanent/transient classification — the only hard failures are CLI-not-found and repo-path-missing, which are caught before the retry loop. Configurable via `--max-cli-retries` (default 10) and `--timeout` (default 1800s).
 
 On timeout/max-turns retries, the prompt is enriched with a continuation note so the agent checks for existing artifacts and picks up where it left off. The experiment worktree and `iter_dir` artifacts are preserved across retries.
 
 **Failure persistence:** Each retry event is appended to `retry_log.jsonl` in the campaign directory (timestamp, phase, failure_type, attempt, error).
 
-**Campaign-level resilience:** If an iteration fails permanently (retries exhausted), it is recorded as FAILED in `ledger.json` and the campaign continues to the next iteration.
+**Campaign-level resilience:** If an iteration fails after retries are exhausted, it is recorded as FAILED in `ledger.json` and the campaign continues to the next iteration.
 
 ### Prompt System
 

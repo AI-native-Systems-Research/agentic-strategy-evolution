@@ -206,6 +206,17 @@ def run_campaign(
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
 
+    # Pre-flight: validate CLI + credentials before starting the campaign
+    repo_path = campaign.get("target_system", {}).get("repo_path")
+    if agent != "inline" and repo_path:
+        from orchestrator.cli_dispatch import CLIDispatcher
+        preflight_dispatcher = CLIDispatcher(
+            work_dir=work_dir, campaign=campaign,
+            model=_resolve_model(campaign, "design", model),
+            max_retries=max_cli_retries,
+        )
+        preflight_dispatcher.preflight_check()
+
     start_iter = _resume_completed_campaign(work_dir, max_iterations)
 
     max_redesigns = 3
@@ -341,7 +352,7 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
-                        help="Max retries for transient claude -p failures (-1 = unbounded, default: 10)")
+                        help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
     parser.add_argument("--agent", choices=["inline", "api"], default="api",
                         help="Dispatch backend: 'inline' emits prompts to stdout for the "
                              "calling agent (no subprocess, no API key), "

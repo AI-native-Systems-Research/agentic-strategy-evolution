@@ -492,7 +492,7 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
-                        help="Max retries for transient claude -p failures (-1 = unbounded, default: 10)")
+                        help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
     parser.add_argument("--agent", choices=["inline", "api"], default="api",
                         help="Dispatch backend: 'inline' emits prompts to stdout for the "
                              "calling agent, 'api' uses the LLM API (default: api)")

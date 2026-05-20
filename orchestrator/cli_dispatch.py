@@ -19,19 +19,6 @@ from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
 
-# Substrings (case-insensitive) that indicate a permanent environment failure.
-# These are never retried — add new patterns here as they are discovered.
-# Everything else is retried with exponential backoff.
-_PERMANENT_ERROR_PATTERNS = (
-    "invalid_api_key",
-    "api key not set",
-    "authentication failed",
-    "authentication_error",
-    "401 unauthorized",
-    "permission denied",
-    "invalid credentials",
-)
-
 # Exponential backoff delays (seconds) between retry attempts.
 # Index 0 is the wait before the 2nd attempt (after the 1st failure).
 # All attempts beyond the last index use the final value.
@@ -40,12 +27,6 @@ _BACKOFF_SECONDS = (5, 30, 120, 300, 600)
 
 class _TransientCLIError(RuntimeError):
     """Raised internally by _call_claude_once for retryable failures."""
-
-
-def _is_permanent(error_msg: str) -> bool:
-    """Return True if the error is a permanent environment failure (never retry)."""
-    lower = error_msg.lower()
-    return any(p in lower for p in _PERMANENT_ERROR_PATTERNS)
 
 
 def _backoff_for(failure_count: int) -> float:
@@ -95,6 +76,48 @@ class CLIDispatcher(LLMDispatcher):
             yield
         finally:
             self._cwd = old
+
+    def preflight_check(self) -> None:
+        """Validate that claude CLI is installed, accessible, and credentials work.
+
+        Call once at campaign start to fail fast on environment issues.
+        Raises RuntimeError with a clear message if the environment is broken.
+        """
+        cmd = ["claude", "-p", "--model", self.model, "--output-format", "json",
+               "--max-turns", "1"]
+        try:
+            result = subprocess.run(
+                cmd, input="Respond with OK", capture_output=True, text=True,
+                timeout=60,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Pre-flight check failed: claude CLI not found. "
+                "Install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                "Pre-flight check failed: claude -p timed out after 60s. "
+                "Check your network connection and API endpoint."
+            )
+        if result.returncode != 0:
+            stderr = result.stderr[-500:] if result.stderr else "(no stderr)"
+            raise RuntimeError(
+                f"Pre-flight check failed: claude -p exited with code {result.returncode}.\n"
+                f"stderr: {stderr}\n"
+                f"Check your API credentials and endpoint configuration."
+            )
+        try:
+            response = json.loads(result.stdout)
+            if response.get("is_error"):
+                raise RuntimeError(
+                    f"Pre-flight check failed: {response.get('result', 'unknown error')}\n"
+                    f"Check your API credentials and endpoint configuration."
+                )
+        except json.JSONDecodeError:
+            pass  # Non-JSON response but exit code 0 — close enough
+        logger.info("Pre-flight check passed (model=%s)", self.model)
+        print(f"    Pre-flight check passed ({self.model})", flush=True)
 
     def dispatch(
         self,
@@ -276,13 +299,10 @@ class CLIDispatcher(LLMDispatcher):
         if result.returncode != 0:
             stderr_tail = result.stderr[-2000:] if result.stderr else "(no stderr)"
             stdout_tail = result.stdout[-2000:] if result.stdout else "(no stdout)"
-            msg = (
+            raise _TransientCLIError(
                 f"claude -p exited with code {result.returncode}.\n"
                 f"stderr: {stderr_tail}\nstdout: {stdout_tail}"
             )
-            if _is_permanent(stderr_tail):
-                raise RuntimeError(msg)
-            raise _TransientCLIError(msg)
 
         try:
             response_json = json.loads(result.stdout)
@@ -310,10 +330,6 @@ class CLIDispatcher(LLMDispatcher):
 
         if response_json.get("is_error"):
             error_msg = response_json.get("result", "unknown")
-            if _is_permanent(str(error_msg)):
-                raise RuntimeError(
-                    f"claude -p permanent failure: {error_msg}"
-                )
             raise _TransientCLIError(
                 f"claude -p returned an error: {error_msg}"
             )

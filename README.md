@@ -140,6 +140,34 @@ python run_campaign.py campaign.yaml --auto-approve           # skip gates (for 
 python run_campaign.py campaign.yaml --auto-approve --max-iterations 1  # quick unattended run
 ```
 
+### Overnight / long-running campaigns
+
+For unattended runs, increase retries and timeout so transient failures don't kill the campaign:
+
+```bash
+# High-resilience overnight run: 60-min timeout, 50 retries, 10 iterations
+python run_campaign.py campaign.yaml \
+  --auto-approve \
+  --max-iterations 10 \
+  --timeout 3600 \
+  --max-cli-retries 50
+
+# Unlimited retries (never give up on transient failures)
+python run_campaign.py campaign.yaml \
+  --auto-approve \
+  --max-cli-retries -1
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--timeout` | 1800 (30 min) | Per-phase time limit for `claude -p` |
+| `--max-cli-retries` | 10 | Retries per phase before giving up |
+| `--max-iterations` | 10 | Total experiment iterations |
+
+Nous retries all failures with exponential backoff (5s → 600s). A pre-flight check at campaign start validates that the CLI is installed and credentials work — if your key is wrong, you'll know in seconds, not hours.
+
+After a run, check `retry_log.jsonl` in the campaign directory to see what failed and when.
+
 ### 6. Try the BLIS example
 
 ```bash

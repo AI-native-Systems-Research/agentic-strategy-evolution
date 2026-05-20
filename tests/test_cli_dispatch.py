@@ -184,21 +184,22 @@ class TestCLIDispatcherUnit:
                     output_path=work_dir / "out.md", iteration=1,
                 )
 
-    def test_claude_nonzero_exit_raises(self, work_dir: Path, campaign: dict) -> None:
+    def test_claude_nonzero_exit_raises_after_retries(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
         mock_result = MagicMock()
         mock_result.returncode = 1
         mock_result.stdout = ""
-        mock_result.stderr = "Error: API key not set"
+        mock_result.stderr = "Error: something went wrong"
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
-            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            with pytest.raises(RuntimeError, match="claude.*exited.*1"):
-                d.dispatch(
-                    "planner", "design",
-                    output_path=work_dir / "out.md", iteration=1,
-                )
+            with patch("orchestrator.cli_dispatch.time.sleep"):
+                d = CLIDispatcher(work_dir=work_dir, campaign=campaign, max_retries=0)
+                with pytest.raises(RuntimeError, match="still failing"):
+                    d.dispatch(
+                        "planner", "design",
+                        output_path=work_dir / "out.md", iteration=1,
+                    )
 
     def test_prompt_includes_campaign_context(self, work_dir: Path, campaign: dict) -> None:
         """The system prompt passed to claude -p should include campaign info."""
@@ -510,22 +511,22 @@ class TestCLIDispatcherRetry:
         assert mock_run.call_count == 2
         fast_sleep.assert_called_once_with(5)
 
-    def test_permanent_nonzero_exit_does_not_retry(
+    def test_nonzero_exit_retries(
         self, work_dir: Path, campaign: dict, fast_sleep,
     ) -> None:
-        """Permanent error (e.g. missing API key) must not be retried."""
+        """All non-zero exits are retried (no permanent classification)."""
         from orchestrator.cli_dispatch import CLIDispatcher
 
+        success = _success_result("# Design\nStub.")
         with patch(
             "orchestrator.cli_dispatch.subprocess.run",
-            return_value=_non_transient_nonzero_result(),
+            side_effect=[_non_transient_nonzero_result(), success],
         ) as mock_run:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            with pytest.raises(RuntimeError, match="exited with code 1"):
-                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
 
-        assert mock_run.call_count == 1
-        fast_sleep.assert_not_called()
+        assert mock_run.call_count == 2
+        fast_sleep.assert_called_once_with(5)
 
     def test_max_retries_zero_disables_retries(
         self, work_dir: Path, campaign: dict, fast_sleep,
@@ -602,33 +603,10 @@ class TestCLIDispatcherRetry:
         assert mock_run.call_count == 1
         fast_sleep.assert_not_called()
 
-    def test_agent_output_with_permanent_keyword_still_retries(
+    def test_auth_error_retries(
         self, work_dir: Path, campaign: dict, fast_sleep,
     ) -> None:
-        """Agent stdout mentioning 'unauthorized' should NOT trigger permanent classification."""
-        from orchestrator.cli_dispatch import CLIDispatcher
-
-        agent_output_with_keyword = _make_result(
-            returncode=1,
-            stdout="the user is unauthorized to access this resource",
-            stderr="some transient network blip",
-        )
-        success = _success_result("# Design\nStub.")
-
-        with patch(
-            "orchestrator.cli_dispatch.subprocess.run",
-            side_effect=[agent_output_with_keyword, success],
-        ) as mock_run:
-            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
-
-        assert mock_run.call_count == 2
-        fast_sleep.assert_called_once_with(5)
-
-    def test_auth_is_error_does_not_retry(
-        self, work_dir: Path, campaign: dict, fast_sleep,
-    ) -> None:
-        """Authentication failure via is_error is permanent — no retry."""
+        """Auth errors are retried (LiteLLM can produce transient auth failures)."""
         from orchestrator.cli_dispatch import CLIDispatcher
 
         auth_resp = _make_result(
@@ -640,17 +618,17 @@ class TestCLIDispatcherRetry:
                 "total_cost_usd": 0, "duration_ms": 0, "num_turns": 0,
             }),
         )
+        success = _success_result("# Design\nStub.")
 
         with patch(
             "orchestrator.cli_dispatch.subprocess.run",
-            return_value=auth_resp,
+            side_effect=[auth_resp, success],
         ) as mock_run:
             d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
-            with pytest.raises(RuntimeError, match="permanent failure"):
-                d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
+            d.dispatch("planner", "design", output_path=work_dir / "out.md", iteration=1)
 
-        assert mock_run.call_count == 1
-        fast_sleep.assert_not_called()
+        assert mock_run.call_count == 2
+        fast_sleep.assert_called_once_with(5)
 
     def test_max_turns_error_retries(
         self, work_dir: Path, campaign: dict, fast_sleep,
@@ -780,49 +758,42 @@ class TestCLIDispatcherRetry:
         assert len(lines) == 3
 
 
-class TestIsPermanentClassifier:
-    """Unit tests for the _is_permanent module-level helper."""
+class TestPreflightCheck:
+    """Tests for CLIDispatcher.preflight_check()."""
 
-    def test_invalid_api_key_is_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert _is_permanent("invalid_api_key: Your API key is invalid")
+    def test_preflight_passes_on_success(self, work_dir: Path, campaign: dict) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
 
-    def test_api_key_not_set_is_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert _is_permanent("Error: API key not set")
+        success = _success_result("OK")
+        with patch("orchestrator.cli_dispatch.subprocess.run", return_value=success):
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            d.preflight_check()
 
-    def test_unauthorized_is_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert _is_permanent("401 unauthorized")
+    def test_preflight_fails_on_missing_cli(self, work_dir: Path, campaign: dict) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
 
-    def test_authentication_failed_is_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert _is_permanent("authentication failed: invalid token")
+        with patch("orchestrator.cli_dispatch.subprocess.run", side_effect=FileNotFoundError):
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with pytest.raises(RuntimeError, match="Pre-flight.*not found"):
+                d.preflight_check()
 
-    def test_authentication_server_timeout_is_not_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert not _is_permanent("failed to connect to authentication server")
+    def test_preflight_fails_on_auth_error(self, work_dir: Path, campaign: dict) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
 
-    def test_permission_denied_is_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert _is_permanent("permission denied for resource X")
+        auth_resp = _make_result(
+            returncode=0,
+            stdout=json.dumps({"result": "invalid_api_key", "is_error": True, "usage": {}}),
+        )
+        with patch("orchestrator.cli_dispatch.subprocess.run", return_value=auth_resp):
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with pytest.raises(RuntimeError, match="Pre-flight.*invalid_api_key"):
+                d.preflight_check()
 
-    def test_socket_error_is_not_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert not _is_permanent("socket connection was closed unexpectedly")
+    def test_preflight_fails_on_nonzero_exit(self, work_dir: Path, campaign: dict) -> None:
+        from orchestrator.cli_dispatch import CLIDispatcher
 
-    def test_rate_limit_is_not_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert not _is_permanent("rate_limit_error: Too many requests")
-
-    def test_unknown_error_is_not_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert not _is_permanent("Something went wrong with the YAML")
-
-    def test_empty_string_is_not_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert not _is_permanent("")
-
-    def test_max_turns_is_not_permanent(self) -> None:
-        from orchestrator.cli_dispatch import _is_permanent
-        assert not _is_permanent("error_max_turns: Turn limit reached")
+        fail_resp = _make_result(returncode=1, stderr="connection refused")
+        with patch("orchestrator.cli_dispatch.subprocess.run", return_value=fail_resp):
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            with pytest.raises(RuntimeError, match="Pre-flight.*exited with code 1"):
+                d.preflight_check()
