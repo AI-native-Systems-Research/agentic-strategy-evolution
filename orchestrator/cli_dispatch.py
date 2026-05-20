@@ -308,10 +308,13 @@ class CLIDispatcher(LLMDispatcher):
             response_json = json.loads(result.stdout)
         except json.JSONDecodeError:
             logger.error(
-                "claude -p output not valid JSON; metrics not recorded. "
+                "claude -p output not valid JSON (exit 0). "
                 "First 500 chars: %s", result.stdout[:500]
             )
-            return result.stdout
+            raise _TransientCLIError(
+                f"claude -p exited successfully but output is not valid JSON. "
+                f"First 200 chars: {result.stdout[:200]}"
+            )
 
         usage = response_json.get("usage", {})
         log_metrics(self._metrics_path, {

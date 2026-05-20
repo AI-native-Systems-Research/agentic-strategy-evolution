@@ -120,7 +120,10 @@ class TestCLIDispatcherUnit:
         )
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = raw_design_text
+        mock_result.stdout = json.dumps({
+            "result": raw_design_text, "is_error": False, "usage": {},
+            "total_cost_usd": 0, "duration_ms": 100, "num_turns": 1,
+        })
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
@@ -136,9 +139,13 @@ class TestCLIDispatcherUnit:
     def test_dispatch_executor_execute_analyze_saves_raw_output(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 
+        executor_text = "All experiments completed. Artifacts written to iter_dir."
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "All experiments completed. Artifacts written to iter_dir."
+        mock_result.stdout = json.dumps({
+            "result": executor_text, "is_error": False, "usage": {},
+            "total_cost_usd": 0, "duration_ms": 100, "num_turns": 1,
+        })
         mock_result.stderr = ""
 
         # Create bundle.yaml (required by context builder)
@@ -159,7 +166,10 @@ class TestCLIDispatcherUnit:
         response_text = "# Design Output\n\nThis is the raw design response.\n"
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = response_text
+        mock_result.stdout = json.dumps({
+            "result": response_text, "is_error": False, "usage": {},
+            "total_cost_usd": 0, "duration_ms": 100, "num_turns": 1,
+        })
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
@@ -207,7 +217,7 @@ class TestCLIDispatcherUnit:
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "# Design\nStub."
+        mock_result.stdout = json.dumps({"result": "# Design\nStub.", "is_error": False, "usage": {}, "total_cost_usd": 0, "duration_ms": 100, "num_turns": 1})
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result) as mock_run:
@@ -237,7 +247,7 @@ class TestCLIDispatcherUnit:
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "# Design\nStub."
+        mock_result.stdout = json.dumps({"result": "# Design\nStub.", "is_error": False, "usage": {}, "total_cost_usd": 0, "duration_ms": 100, "num_turns": 1})
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result) as mock_run:
@@ -300,7 +310,7 @@ class TestCLIDispatcherUnit:
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "# Design\nStub."
+        mock_result.stdout = json.dumps({"result": "# Design\nStub.", "is_error": False, "usage": {}, "total_cost_usd": 0, "duration_ms": 100, "num_turns": 1})
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result) as mock_run:
@@ -347,8 +357,12 @@ def _make_result(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mag
 
 
 def _success_result(text: str = "agent output") -> MagicMock:
-    """Successful claude -p output (raw text, not JSON envelope)."""
-    return _make_result(returncode=0, stdout=text)
+    """Successful claude -p output as JSON envelope."""
+    payload = json.dumps({
+        "result": text, "is_error": False, "usage": {},
+        "total_cost_usd": 0, "duration_ms": 100, "num_turns": 1,
+    })
+    return _make_result(returncode=0, stdout=payload)
 
 
 def _transient_socket_result() -> MagicMock:

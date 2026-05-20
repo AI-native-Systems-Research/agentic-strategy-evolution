@@ -237,7 +237,7 @@ def run_campaign(
                     auto_approve=auto_approve, timeout=timeout, agent=agent,
                     max_cli_retries=max_cli_retries,
                 )
-            except RuntimeError as exc:
+            except Exception as exc:
                 logger.error("Iteration %d failed permanently: %s", i, exc)
                 print(f"\n  Iteration {i} FAILED: {exc}")
                 append_failed_row(work_dir, i, str(exc))
