@@ -117,5 +117,24 @@ class Engine:
         self._state = new_state
         logger.info("Transition: %s -> %s (iteration=%d)", current, to_state, new_state["iteration"])
 
+    def force_phase(self, phase: str) -> None:
+        """Force the engine to a specific phase, bypassing transition validation.
+
+        Used for recovery after a failed iteration where the engine may be
+        in any intermediate state.
+        """
+        if phase not in ALL_STATES:
+            raise ValueError(
+                f"'{phase}' is not a recognized phase. "
+                f"Valid phases: {sorted(s.value for s in Phase)}"
+            )
+        new_state = dict(self._state)
+        new_state["iteration"] += 1
+        new_state["phase"] = phase
+        new_state["timestamp"] = datetime.now(timezone.utc).isoformat()
+        self._save_state(new_state)
+        self._state = new_state
+        logger.info("Force phase: -> %s (iteration=%d)", phase, new_state["iteration"])
+
     def _save_state(self, state: dict) -> None:
         atomic_write(self.state_path, json.dumps(state, indent=2) + "\n")

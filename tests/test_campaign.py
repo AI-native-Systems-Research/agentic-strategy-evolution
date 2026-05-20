@@ -367,6 +367,57 @@ class TestResumeCompletedCampaign:
         assert Engine(work_dir).phase == "DESIGN"
 
 
+class TestCampaignFailureResilience:
+    """Campaign continues after an iteration fails permanently."""
+
+    def test_campaign_continues_after_iteration_failure(self, tmp_path, monkeypatch):
+        """A RuntimeError from run_iteration does not kill the campaign."""
+        work_dir = _setup_work_dir(tmp_path)
+
+        call_count = {"n": 0}
+
+        def failing_then_complete(campaign, work_dir, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("claude -p timed out after 10 attempts")
+            return IterationOutcome.COMPLETED
+
+        import run_campaign as rc
+        monkeypatch.setattr(rc, "run_iteration", failing_then_complete)
+
+        run_campaign(SAMPLE_CAMPAIGN, work_dir, max_iterations=2, auto_approve=True)
+
+        assert call_count["n"] == 2
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        failed_rows = [r for r in ledger["iterations"] if r.get("status") == "FAILED"]
+        assert len(failed_rows) == 1
+        assert failed_rows[0]["iteration"] == 1
+        assert "timed out" in failed_rows[0]["error"]
+
+    def test_failed_iteration_recorded_in_ledger(self, tmp_path):
+        """append_failed_row writes a FAILED row to ledger.json."""
+        from orchestrator.ledger import append_failed_row
+        work_dir = _setup_work_dir(tmp_path)
+        append_failed_row(work_dir, 3, "timeout after 10 retries")
+
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        failed_rows = [r for r in ledger["iterations"] if r.get("status") == "FAILED"]
+        assert len(failed_rows) == 1
+        assert failed_rows[0]["iteration"] == 3
+        assert "timeout" in failed_rows[0]["error"]
+
+    def test_failed_row_idempotent(self, tmp_path):
+        """Calling append_failed_row twice for same iteration writes only one row."""
+        from orchestrator.ledger import append_failed_row
+        work_dir = _setup_work_dir(tmp_path)
+        append_failed_row(work_dir, 1, "first error")
+        append_failed_row(work_dir, 1, "second error")
+
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        iter1_rows = [r for r in ledger["iterations"] if r.get("iteration") == 1]
+        assert len(iter1_rows) == 1
+
+
 class TestSaveHumanFeedback:
     """Tests for _save_human_feedback helper."""
 

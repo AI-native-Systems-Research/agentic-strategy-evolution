@@ -34,7 +34,7 @@ import yaml
 from orchestrator.engine import Engine
 from orchestrator.gates import HumanGate
 from orchestrator.inline_dispatch import InlineDispatcher
-from orchestrator.ledger import append_ledger_row
+from orchestrator.ledger import append_failed_row, append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.metrics import summarize_metrics
 from run_iteration import (
@@ -220,11 +220,18 @@ def run_campaign(
                 print(f"  CAMPAIGN — Iteration {i} of {max_iterations}")
             print(f"{'#'*60}")
 
-            outcome = run_iteration(
-                campaign, work_dir, iteration=i, model=model, final=is_last,
-                auto_approve=auto_approve, timeout=timeout, agent=agent,
-                max_cli_retries=max_cli_retries,
-            )
+            try:
+                outcome = run_iteration(
+                    campaign, work_dir, iteration=i, model=model, final=is_last,
+                    auto_approve=auto_approve, timeout=timeout, agent=agent,
+                    max_cli_retries=max_cli_retries,
+                )
+            except RuntimeError as exc:
+                logger.error("Iteration %d failed permanently: %s", i, exc)
+                print(f"\n  Iteration {i} FAILED: {exc}")
+                append_failed_row(work_dir, i, str(exc))
+                outcome = None
+                break
 
             if outcome == IterationOutcome.REDESIGN:
                 if redesign_attempt < max_redesigns:
@@ -235,6 +242,14 @@ def run_campaign(
                     _write_metrics_summary(work_dir)
                     return
             break  # any non-REDESIGN outcome exits the retry loop
+
+        if outcome is None:
+            # Iteration failed permanently — advance to next
+            if is_last:
+                break
+            engine = Engine(work_dir)
+            engine.force_phase("DESIGN")
+            continue
 
         if outcome == IterationOutcome.COMPLETED:
             append_ledger_row(work_dir, i)
