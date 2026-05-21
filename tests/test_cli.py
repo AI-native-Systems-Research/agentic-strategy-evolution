@@ -1,10 +1,11 @@
-"""Tests for orchestrator.cli — run-dir resolution."""
+"""Tests for orchestrator.cli — run-dir resolution and commands."""
+import argparse
 import json
 import pytest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
-from orchestrator.cli import resolve_work_dir
+from orchestrator.cli import resolve_work_dir, _cmd_run, _cmd_resume, _cmd_validate
 
 
 class TestResolveWorkDir:
@@ -44,3 +45,112 @@ class TestResolveWorkDir:
     def test_campaign_yaml_not_found_raises(self):
         with pytest.raises(SystemExit):
             resolve_work_dir("/no/such/campaign.yaml")
+
+
+class TestCmdRun:
+    def test_run_errors_if_state_beyond_init(self, tmp_path):
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        work_dir = repo / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps({"phase": "DESIGN", "iteration": 1, "run_id": "exp1"}))
+
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            f"run_id: exp1\nmax_iterations: 3\n"
+            f"research_question: test question\n"
+            f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
+            f"prompts:\n  methodology_layer: prompts/methodology.md\n"
+        )
+        args = argparse.Namespace(
+            campaign=str(campaign_file), max_iterations=None, model=None,
+            run_id=None, auto_approve=False, timeout=1800, max_cli_retries=10,
+            agent="api", verbose=False,
+        )
+        with pytest.raises(SystemExit):
+            _cmd_run(args)
+
+    def test_run_proceeds_if_fresh(self, tmp_path):
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            f"run_id: newexp\nmax_iterations: 3\n"
+            f"research_question: test question\n"
+            f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
+            f"prompts:\n  methodology_layer: prompts/methodology.md\n"
+        )
+        args = argparse.Namespace(
+            campaign=str(campaign_file), max_iterations=None, model=None,
+            run_id=None, auto_approve=False, timeout=1800, max_cli_retries=10,
+            agent="api", verbose=False,
+        )
+        with patch("orchestrator.cli.run_campaign") as mock_run, \
+             patch("orchestrator.cli.setup_work_dir", return_value=tmp_path / "work") as mock_setup:
+            (tmp_path / "work").mkdir()
+            _cmd_run(args)
+            mock_setup.assert_called_once()
+            mock_run.assert_called_once()
+
+
+class TestCmdResume:
+    def test_resume_errors_if_no_state(self, tmp_path):
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            f"run_id: ghost\nmax_iterations: 3\n"
+            f"target_system:\n  name: test\n  description: t\n  repo_path: {tmp_path}\n"
+        )
+        args = argparse.Namespace(
+            target=str(campaign_file), max_iterations=None, model=None,
+            auto_approve=False, timeout=1800, max_cli_retries=10,
+            agent="api", verbose=False,
+        )
+        with pytest.raises(SystemExit):
+            _cmd_resume(args)
+
+    def test_resume_calls_run_campaign(self, tmp_path):
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        work_dir = repo / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "DESIGN", "iteration": 2, "run_id": "exp1"
+        }))
+
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            f"run_id: exp1\nmax_iterations: 5\n"
+            f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
+        )
+        args = argparse.Namespace(
+            target=str(campaign_file), max_iterations=None, model=None,
+            auto_approve=False, timeout=1800, max_cli_retries=10,
+            agent="api", verbose=False,
+        )
+        with patch("orchestrator.cli.run_campaign") as mock_run:
+            _cmd_resume(args)
+            mock_run.assert_called_once()
+
+
+class TestCmdValidate:
+    def test_validate_design_passes(self, tmp_path):
+        import yaml as _yaml
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+        (iter_dir / "problem.md").write_text("problem")
+        (iter_dir / "handoff_snapshot.md").write_text("snapshot")
+        bundle = {
+            "metadata": {"iteration": 1, "family": "test", "research_question": "q"},
+            "arms": [{"type": "h-main", "prediction": "p", "mechanism": "m", "diagnostic": "d"}],
+        }
+        (iter_dir / "bundle.yaml").write_text(_yaml.dump(bundle))
+
+        args = argparse.Namespace(phase="design", dir=iter_dir)
+        _cmd_validate(args)
+
+    def test_validate_execution_fails_missing_artifacts(self, tmp_path):
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir()
+        args = argparse.Namespace(phase="execution", dir=iter_dir)
+        with pytest.raises(SystemExit):
+            _cmd_validate(args)

@@ -1,8 +1,14 @@
 import argparse
+import json
+import logging
 import sys
 from pathlib import Path
 
+import jsonschema
 import yaml
+
+from run_campaign import run_campaign
+from run_iteration import setup_work_dir
 
 
 def _find_repo_root(start=None):
@@ -45,15 +51,101 @@ def resolve_work_dir(target):
 
 
 def _cmd_run(args):
-    pass
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+    campaign_path = Path(args.campaign)
+    if not campaign_path.exists():
+        print(f"Campaign file not found: {campaign_path}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(campaign_path) as f:
+        campaign = yaml.safe_load(f)
+
+    schemas_dir = Path(__file__).resolve().parent.parent / "schemas"
+    schema = yaml.safe_load((schemas_dir / "campaign.schema.yaml").read_text())
+    try:
+        jsonschema.validate(campaign, schema)
+    except jsonschema.ValidationError as exc:
+        print(f"Campaign validation error: {exc.message}", file=sys.stderr)
+        sys.exit(1)
+
+    run_id = args.run_id or campaign.get("run_id") or (campaign_path.parent.name + "-run")
+    repo_path = campaign["target_system"].get("repo_path")
+
+    if repo_path:
+        state_path = Path(repo_path) / ".nous" / run_id / "state.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text())
+            if state.get("phase") != "INIT":
+                print(
+                    f"Run '{run_id}' already in progress (phase={state['phase']}). "
+                    f"Use 'nous resume' to continue.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+    work_dir = setup_work_dir(run_id, repo_path=repo_path)
+
+    max_iterations = args.max_iterations or campaign.get("max_iterations") or 10
+    run_campaign(
+        campaign,
+        work_dir,
+        max_iterations=max_iterations,
+        model=args.model,
+        auto_approve=args.auto_approve,
+        timeout=args.timeout,
+        agent=args.agent,
+        max_cli_retries=args.max_cli_retries,
+    )
 
 
 def _cmd_resume(args):
-    pass
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+    work_dir = resolve_work_dir(args.target)
+
+    state_path = work_dir / "state.json"
+    if not state_path.exists():
+        print(f"No state.json found in {work_dir}. Nothing to resume.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.target.endswith(".yaml") or args.target.endswith(".yml"):
+        with open(args.target) as f:
+            campaign = yaml.safe_load(f)
+    else:
+        print("resume requires campaign.yaml", file=sys.stderr)
+        sys.exit(1)
+
+    max_iterations = args.max_iterations or campaign.get("max_iterations") or 10
+    run_campaign(
+        campaign,
+        work_dir,
+        max_iterations=max_iterations,
+        model=args.model,
+        auto_approve=args.auto_approve,
+        timeout=args.timeout,
+        agent=args.agent,
+        max_cli_retries=args.max_cli_retries,
+    )
 
 
 def _cmd_validate(args):
-    pass
+    from orchestrator.validate import validate_design, validate_execution
+
+    if args.phase == "design":
+        result = validate_design(args.dir)
+    else:
+        result = validate_execution(args.dir)
+
+    print(json.dumps(result, indent=2))
+    if result["status"] != "pass":
+        sys.exit(1)
 
 
 def _cmd_status(args):
