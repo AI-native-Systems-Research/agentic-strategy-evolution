@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from orchestrator.cli import resolve_work_dir, _cmd_run, _cmd_resume, _cmd_validate, _cmd_status, _cmd_cost
+from orchestrator.cli import resolve_work_dir, _cmd_run, _cmd_resume, _cmd_validate, _cmd_status, _cmd_cost, _cmd_report, _cmd_replay
 
 
 class TestResolveWorkDir:
@@ -212,3 +212,92 @@ class TestCmdCost:
         _cmd_cost(args)
         out = capsys.readouterr().out
         assert "No metrics" in out
+
+
+class TestCmdReport:
+    def test_report_requires_yaml(self, tmp_path):
+        work_dir = tmp_path / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text('{"phase":"DONE","iteration":2,"run_id":"exp1"}')
+
+        args = argparse.Namespace(
+            target=str(work_dir), model=None, timeout=1800, agent="api", verbose=False,
+        )
+        with pytest.raises(SystemExit):
+            _cmd_report(args)
+
+    def test_report_delegates_to_generate_report(self, tmp_path):
+        import json
+        repo = tmp_path / "myrepo"
+        work_dir = repo / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "DONE", "iteration": 2, "run_id": "exp1"
+        }))
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            f"run_id: exp1\nmax_iterations: 3\n"
+            f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
+        )
+        args = argparse.Namespace(
+            target=str(campaign_file), model=None, timeout=1800, agent="api", verbose=False,
+        )
+        with patch("run_campaign._generate_report") as mock_report:
+            _cmd_report(args)
+            mock_report.assert_called_once()
+
+
+class TestCmdReplay:
+    def test_replay_errors_if_iter_dir_missing(self, tmp_path):
+        import json
+        repo = tmp_path / "myrepo"
+        work_dir = repo / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "DONE", "iteration": 2, "run_id": "exp1"
+        }))
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            f"run_id: exp1\nmax_iterations: 3\n"
+            f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
+        )
+        args = argparse.Namespace(
+            target=str(campaign_file), iter=5, model=None,
+            timeout=1800, agent="api", verbose=False,
+        )
+        with pytest.raises(SystemExit):
+            _cmd_replay(args)
+
+    def test_replay_creates_worktree_and_dispatches(self, tmp_path):
+        import json
+        import yaml as _yaml
+        repo = tmp_path / "myrepo"
+        (repo / ".git").mkdir(parents=True)
+        work_dir = repo / ".nous" / "exp1"
+        iter_dir = work_dir / "runs" / "iter-1"
+        iter_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "DONE", "iteration": 1, "run_id": "exp1"
+        }))
+        (iter_dir / "experiment_plan.yaml").write_text(_yaml.dump({"arms": []}))
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            f"run_id: exp1\nmax_iterations: 3\n"
+            f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
+        )
+        args = argparse.Namespace(
+            target=str(campaign_file), iter=1, model=None,
+            timeout=1800, agent="api", verbose=False,
+        )
+        with patch("orchestrator.worktree.create_experiment_worktree", return_value=(tmp_path / "wt", "exp-id")) as mock_create, \
+             patch("orchestrator.worktree.remove_experiment_worktree") as mock_remove, \
+             patch("orchestrator.cli_dispatch.CLIDispatcher") as mock_cls:
+            mock_dispatcher = MagicMock()
+            mock_cls.return_value = mock_dispatcher
+            mock_dispatcher.override_cwd.return_value.__enter__ = MagicMock()
+            mock_dispatcher.override_cwd.return_value.__exit__ = MagicMock(return_value=False)
+            (tmp_path / "wt").mkdir()
+            _cmd_replay(args)
+            mock_create.assert_called_once()
+            mock_dispatcher.dispatch.assert_called_once()
+            mock_remove.assert_called_once()

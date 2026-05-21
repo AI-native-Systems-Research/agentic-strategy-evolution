@@ -196,11 +196,79 @@ def _cmd_cost(args):
 
 
 def _cmd_report(args):
-    pass
+    import logging
+    import yaml
+    from run_campaign import _generate_report
+
+    logging.basicConfig(
+        level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
+
+    work_dir = resolve_work_dir(args.target)
+
+    if not args.target.endswith((".yaml", ".yml")):
+        print(
+            "Error: report requires campaign.yaml for LLM configuration.\n"
+            "Use: nous report <campaign.yaml>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    campaign = yaml.safe_load(Path(args.target).read_text())
+    _generate_report(campaign, work_dir, args.model, agent=args.agent, timeout=args.timeout)
 
 
 def _cmd_replay(args):
-    pass
+    import logging
+    import yaml
+    from orchestrator.worktree import create_experiment_worktree, remove_experiment_worktree
+    from orchestrator.cli_dispatch import CLIDispatcher
+
+    logging.basicConfig(
+        level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
+
+    work_dir = resolve_work_dir(args.target)
+    iteration = args.iter
+    iter_dir = work_dir / "runs" / f"iter-{iteration}"
+
+    if not iter_dir.is_dir():
+        print(f"Error: {iter_dir} does not exist.", file=sys.stderr)
+        sys.exit(1)
+
+    plan_path = iter_dir / "experiment_plan.yaml"
+    if not plan_path.exists():
+        print(f"Error: no experiment_plan.yaml in {iter_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    if not args.target.endswith((".yaml", ".yml")):
+        print("Error: replay requires campaign.yaml.\nUse: nous replay <campaign.yaml> --iter N", file=sys.stderr)
+        sys.exit(1)
+
+    campaign = yaml.safe_load(Path(args.target).read_text())
+    repo_path = Path(campaign["target_system"]["repo_path"])
+
+    print(f"Replaying iteration {iteration} from {iter_dir}")
+    experiment_dir, experiment_id = create_experiment_worktree(repo_path, iteration)
+    print(f"  Worktree: {experiment_dir}")
+
+    try:
+        model = args.model or campaign.get("models", {}).get("execute_analyze") or "claude-sonnet-4-6"
+        dispatcher = CLIDispatcher(
+            work_dir=work_dir, campaign=campaign,
+            model=model, timeout=args.timeout,
+        )
+        with dispatcher.override_cwd(experiment_dir):
+            dispatcher.dispatch(
+                "executor", "execute-analyze",
+                output_path=iter_dir / "executor_log.md",
+                iteration=iteration,
+            )
+    finally:
+        remove_experiment_worktree(repo_path, experiment_id)
+        print("  Worktree cleaned up.")
 
 
 def main():
