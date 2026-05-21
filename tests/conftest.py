@@ -5,8 +5,8 @@ import pytest
 import yaml
 
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "templates"
 
 
 @pytest.fixture

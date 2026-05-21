@@ -14,8 +14,8 @@ from orchestrator.engine import Engine
 from orchestrator.campaign import run_campaign
 from orchestrator.iteration import IterationOutcome, _save_human_feedback
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "templates"
 
 
 def _load_schema(name: str) -> dict:

@@ -12,7 +12,7 @@ from pathlib import Path
 import jsonschema
 import yaml
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 
 
 def _load_yaml_schema(name: str) -> dict:

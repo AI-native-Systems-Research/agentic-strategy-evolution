@@ -73,7 +73,7 @@ def _cmd_run(args):
     with open(campaign_path) as f:
         campaign = yaml.safe_load(f)
 
-    schemas_dir = Path(__file__).resolve().parent.parent / "schemas"
+    schemas_dir = Path(__file__).resolve().parent / "schemas"
     schema = yaml.safe_load((schemas_dir / "campaign.schema.yaml").read_text())
     try:
         jsonschema.validate(campaign, schema)

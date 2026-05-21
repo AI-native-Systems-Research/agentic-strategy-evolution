@@ -11,7 +11,7 @@ import yaml
 from orchestrator.inline_dispatch import InlineDispatcher
 
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
 
 
 def _make_campaign(repo_path: str = "/tmp/fake-repo") -> dict:

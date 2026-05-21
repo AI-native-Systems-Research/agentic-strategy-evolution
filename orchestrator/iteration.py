@@ -44,9 +44,9 @@ class IterationOutcome(str, Enum):
     ABORTED = "ABORTED"        # Human aborted at a gate
     REDESIGN = "REDESIGN"      # Human rejected, needs redesign
 
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
-DEFAULTS_PATH = Path(__file__).resolve().parent.parent / "defaults.yaml"
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
+DEFAULTS_PATH = Path(__file__).resolve().parent / "defaults.yaml"
 _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Phase ordering for resume logic

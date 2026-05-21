@@ -108,7 +108,7 @@ def _setup_stub_iteration(tmp_path, monkeypatch):
     work_dir.mkdir()
     # Copy templates
     import shutil
-    templates_dir = Path(__file__).resolve().parent.parent / "templates"
+    templates_dir = Path(__file__).resolve().parent.parent / "orchestrator" / "templates"
     for t in ["state.json", "ledger.json", "principles.json"]:
         shutil.copy(templates_dir / t, work_dir / t)
     state = json.loads((work_dir / "state.json").read_text())

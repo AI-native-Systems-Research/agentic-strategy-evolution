@@ -387,7 +387,7 @@ class LLMDispatcher:
 
     def _max_turns_for_phase(self, phase: str) -> int:
         """Return the max_turns limit for a CLI-dispatched phase."""
-        defaults_path = Path(__file__).parent.parent / "defaults.yaml"
+        defaults_path = Path(__file__).parent / "defaults.yaml"
         if defaults_path.exists():
             defaults = yaml.safe_load(defaults_path.read_text()) or {}
             max_turns = defaults.get("max_turns", {})
@@ -616,7 +616,7 @@ class LLMDispatcher:
     def _validate(data: dict, schema_name: str) -> None:
         """Validate *data* against the named schema file."""
         if schema_name not in _schema_cache:
-            schema_path = Path(__file__).parent.parent / "schemas" / schema_name
+            schema_path = Path(__file__).parent / "schemas" / schema_name
             raw = schema_path.read_text()
             if schema_name.endswith(".yaml"):
                 _schema_cache[schema_name] = yaml.safe_load(raw)

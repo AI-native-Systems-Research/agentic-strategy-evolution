@@ -185,7 +185,7 @@ class InlineDispatcher(LLMDispatcher):
                 flush=True,
             )
             if schema_name:
-                schema_path = Path(__file__).parent.parent / "schemas" / schema_name
+                schema_path = Path(__file__).parent / "schemas" / schema_name
                 if schema_path.exists():
                     print(f"Schema: {schema_path}\n", flush=True)
         else:
