@@ -193,7 +193,7 @@ Also write a copy to `{{iter_dir}}/../../handoff.md` (the campaign-level living 
 ### Step 4: Validate
 Run:
 ```bash
-python {{nous_dir}}/orchestrator/validate.py design --dir {{iter_dir}}
+nous validate design --dir {{iter_dir}}
 ```
 
 - If it returns `{"status": "pass"}` — you are done. Output a brief summary.
