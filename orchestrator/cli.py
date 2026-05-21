@@ -260,6 +260,9 @@ def _cmd_replay(args):
     repo_path = Path(raw_repo)
 
     plan = yaml.safe_load(plan_path.read_text())
+    if not isinstance(plan, dict):
+        print(f"Error: experiment_plan.yaml is empty or malformed in {iter_dir}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Replaying iteration {iteration} from {iter_dir}")
     experiment_id = None
