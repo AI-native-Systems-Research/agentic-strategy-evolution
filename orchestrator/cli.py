@@ -231,15 +231,9 @@ def _cmd_report(args):
 
 
 def _cmd_replay(args):
-    import logging
+    import subprocess
     import yaml
     from orchestrator.worktree import create_experiment_worktree, remove_experiment_worktree
-    from orchestrator.cli_dispatch import CLIDispatcher
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    )
 
     if not args.target.endswith((".yaml", ".yml")):
         print("Error: replay requires campaign.yaml.\nUse: nous replay <campaign.yaml> --iter N", file=sys.stderr)
@@ -265,23 +259,38 @@ def _cmd_replay(args):
         sys.exit(1)
     repo_path = Path(raw_repo)
 
+    plan = yaml.safe_load(plan_path.read_text())
+    if not isinstance(plan, dict):
+        print(f"Error: experiment_plan.yaml is empty or malformed in {iter_dir}", file=sys.stderr)
+        sys.exit(1)
+
     print(f"Replaying iteration {iteration} from {iter_dir}")
     experiment_id = None
     experiment_dir, experiment_id = create_experiment_worktree(repo_path, iteration)
     print(f"  Worktree: {experiment_dir}")
 
     try:
-        model = args.model or campaign.get("models", {}).get("execute_analyze") or "claude-sonnet-4-6"
-        dispatcher = CLIDispatcher(
-            work_dir=work_dir, campaign=campaign,
-            model=model, timeout=args.timeout,
-        )
-        with dispatcher.override_cwd(experiment_dir):
-            dispatcher.dispatch(
-                "executor", "execute-analyze",
-                output_path=iter_dir / "executor_log.md",
-                iteration=iteration,
-            )
+        for step in plan.get("setup", []):
+            print(f"  [setup] {step.get('description', step['cmd'][:60])}")
+            result = subprocess.run(step["cmd"], shell=True, cwd=experiment_dir)
+            if result.returncode != 0:
+                print(f"Error: setup command failed (exit {result.returncode})", file=sys.stderr)
+                sys.exit(1)
+
+        total = sum(len(arm.get("conditions", [])) for arm in plan.get("arms", []))
+        done = 0
+        for arm in plan.get("arms", []):
+            arm_id = arm.get("arm_id", "unknown")
+            for cond in arm.get("conditions", []):
+                done += 1
+                name = cond.get("name", "unnamed")
+                print(f"  [{done}/{total}] {arm_id}/{name}")
+                result = subprocess.run(cond["cmd"], shell=True, cwd=experiment_dir)
+                if result.returncode != 0:
+                    print(f"Error: {arm_id}/{name} failed (exit {result.returncode})", file=sys.stderr)
+                    sys.exit(1)
+
+        print(f"  Replay complete: {done}/{total} conditions passed.")
     finally:
         if experiment_id:
             remove_experiment_worktree(repo_path, experiment_id)
@@ -337,8 +346,6 @@ def main():
     p_replay = subparsers.add_parser("replay")
     p_replay.add_argument("target")
     p_replay.add_argument("--iter", required=True, type=int)
-    p_replay.add_argument("--model")
-    p_replay.add_argument("--timeout", type=int, default=1800)
     p_replay.set_defaults(func=_cmd_replay)
 
     args = parser.parse_args()
