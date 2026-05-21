@@ -188,7 +188,7 @@ Based on your findings, identify principle updates and write to `{{iter_dir}}/pr
 Run the validation command to confirm all artifacts are correct:
 
 ```bash
-python {{nous_dir}}/orchestrator/validate.py execution --dir {{iter_dir}}
+nous validate execution --dir {{iter_dir}}
 ```
 
 - If it returns `{"status": "pass"}` — you are done. Output a brief summary of your findings.

@@ -7,7 +7,7 @@ import yaml
 from orchestrator.ledger import append_ledger_row
 
 
-SCHEMAS_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent / "schemas"
+SCHEMAS_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
 
 
 def _load_schema(name: str) -> dict:

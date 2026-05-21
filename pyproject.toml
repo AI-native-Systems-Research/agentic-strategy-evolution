@@ -16,8 +16,15 @@ dev = [
     "pytest-cov>=4.0",
 ]
 
+[project.scripts]
+nous = "orchestrator.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["orchestrator*", "prompts*"]
+
+[tool.setuptools.package-data]
+orchestrator = ["schemas/*.yaml", "schemas/*.json", "templates/*.json", "templates/*.yaml", "templates/*.md", "defaults.yaml"]
+prompts = ["**/*.md"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

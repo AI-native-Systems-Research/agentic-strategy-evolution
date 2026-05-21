@@ -11,7 +11,7 @@ import yaml
 from orchestrator.inline_dispatch import InlineDispatcher
 
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
 
 
 def _make_campaign(repo_path: str = "/tmp/fake-repo") -> dict:
@@ -400,10 +400,10 @@ class TestDispatchEndToEnd:
 class TestAgentRouting:
     """Test that --agent flag correctly routes to the right dispatcher type."""
 
-    @patch("run_iteration.Engine")
-    @patch("run_iteration.HumanGate")
+    @patch("orchestrator.iteration.Engine")
+    @patch("orchestrator.iteration.HumanGate")
     def test_inline_mode_uses_inline_dispatcher(self, mock_gate, mock_engine, tmp_path):
-        from run_iteration import run_iteration
+        from orchestrator.iteration import run_iteration
 
         mock_engine_inst = MagicMock()
         mock_engine_inst.phase = "DONE"
@@ -419,10 +419,10 @@ class TestAgentRouting:
         assert result is not None
 
     @patch("orchestrator.llm_dispatch.openai")
-    @patch("run_iteration.Engine")
-    @patch("run_iteration.HumanGate")
+    @patch("orchestrator.iteration.Engine")
+    @patch("orchestrator.iteration.HumanGate")
     def test_api_mode_uses_llm_dispatcher(self, mock_gate, mock_engine, mock_openai, tmp_path):
-        from run_iteration import run_iteration
+        from orchestrator.iteration import run_iteration
 
         mock_engine_inst = MagicMock()
         mock_engine_inst.phase = "DONE"
@@ -438,10 +438,10 @@ class TestAgentRouting:
         assert result is not None
 
     @patch("orchestrator.llm_dispatch.openai")
-    @patch("run_iteration.Engine")
-    @patch("run_iteration.HumanGate")
+    @patch("orchestrator.iteration.Engine")
+    @patch("orchestrator.iteration.HumanGate")
     def test_api_mode_accepts_max_cli_retries(self, mock_gate, mock_engine, mock_openai, tmp_path):
-        from run_iteration import run_iteration
+        from orchestrator.iteration import run_iteration
 
         mock_engine_inst = MagicMock()
         mock_engine_inst.phase = "DONE"
@@ -461,15 +461,15 @@ class TestAgentRouting:
 class TestRunCampaignRouting:
     """Test that run_campaign.py correctly routes --agent and --max-cli-retries."""
 
-    @patch("run_campaign.run_iteration")
-    @patch("run_campaign._resume_completed_campaign", return_value=1)
-    @patch("run_campaign.append_ledger_row")
-    @patch("run_campaign._generate_report")
+    @patch("orchestrator.campaign.run_iteration")
+    @patch("orchestrator.campaign._resume_completed_campaign", return_value=1)
+    @patch("orchestrator.campaign.append_ledger_row")
+    @patch("orchestrator.campaign._generate_report")
     def test_campaign_passes_agent_and_retries(
         self, mock_report, mock_ledger, mock_resume, mock_run_iter, tmp_path,
     ):
-        from run_campaign import run_campaign
-        from run_iteration import IterationOutcome
+        from orchestrator.campaign import run_campaign
+        from orchestrator.iteration import IterationOutcome
 
         mock_run_iter.return_value = IterationOutcome.COMPLETED
 

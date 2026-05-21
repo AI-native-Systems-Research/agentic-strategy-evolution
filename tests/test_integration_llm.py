@@ -14,8 +14,8 @@ from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.gates import HumanGate
 
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "templates"
 
 SAMPLE_CAMPAIGN = {
     "research_question": "Does batch size affect latency in TestSystem?",
@@ -192,7 +192,7 @@ class TestSingleIterationWithMockedLLM:
             "planner", "design",
             output_path=iter_dir / "design_raw.md", iteration=1,
         )
-        from run_iteration import _split_design_output, _merge_principles
+        from orchestrator.iteration import _split_design_output, _merge_principles
         _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
         bundle = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
         jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))

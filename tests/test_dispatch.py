@@ -11,7 +11,7 @@ from orchestrator.dispatch import StubDispatcher
 from orchestrator.gates import HumanGate
 
 
-SCHEMAS_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent / "schemas"
+SCHEMAS_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
 
 
 def _load_schema(name: str) -> dict:

@@ -11,11 +11,11 @@ import yaml
 
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.engine import Engine
-from run_campaign import run_campaign
-from run_iteration import IterationOutcome, _save_human_feedback
+from orchestrator.campaign import run_campaign
+from orchestrator.iteration import IterationOutcome, _save_human_feedback
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "templates"
 
 
 def _load_schema(name: str) -> dict:
@@ -54,8 +54,8 @@ def _setup_work_dir(tmp_path):
 
 def _patch_for_stub(monkeypatch):
     """Monkeypatch LLMDispatcher and HumanGate for stub-based testing."""
-    import run_iteration as ri
-    import run_campaign as rc
+    import orchestrator.iteration as ri
+    import orchestrator.campaign as rc
 
     def stub_factory(work_dir, campaign, model=None):
         with warnings.catch_warnings():
@@ -70,8 +70,8 @@ def _patch_for_stub(monkeypatch):
 
 def _patch_gates_approve(monkeypatch):
     """All gates auto-approve."""
-    import run_iteration as ri
-    import run_campaign as rc
+    import orchestrator.iteration as ri
+    import orchestrator.campaign as rc
     gate = MagicMock(prompt=MagicMock(return_value=("approve", None)))
     monkeypatch.setattr(ri, "HumanGate", lambda: gate)
     monkeypatch.setattr(rc, "HumanGate", lambda: gate)
@@ -115,8 +115,8 @@ class TestStopsOnHumanAbort:
         work_dir = _setup_work_dir(tmp_path)
         _patch_for_stub(monkeypatch)
 
-        import run_iteration as ri
-        import run_campaign as rc
+        import orchestrator.iteration as ri
+        import orchestrator.campaign as rc
 
         # Iteration gates approve, but continue gate aborts
         iter_gate = MagicMock(prompt=MagicMock(return_value=("approve", None)))
@@ -181,8 +181,8 @@ class TestAbortDuringIteration:
         work_dir = _setup_work_dir(tmp_path)
         _patch_for_stub(monkeypatch)
 
-        import run_iteration as ri
-        import run_campaign as rc
+        import orchestrator.iteration as ri
+        import orchestrator.campaign as rc
 
         # Iteration gate aborts
         gate = MagicMock(prompt=MagicMock(return_value=("abort", None)))
@@ -202,7 +202,7 @@ class TestResumeCompletedCampaign:
 
     def test_fresh_campaign_returns_iteration_1(self, tmp_path):
         """Phase INIT (fresh) returns 1, state untouched."""
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         # Default state.json phase is INIT
         assert _resume_completed_campaign(work_dir, max_iterations=5) == 1
@@ -210,7 +210,7 @@ class TestResumeCompletedCampaign:
 
     def test_mid_flight_design_resumes_at_correct_iteration(self, tmp_path):
         """Mid-flight DESIGN phase returns engine.iteration without touching state."""
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
         state["phase"] = "DESIGN"
@@ -225,7 +225,7 @@ class TestResumeCompletedCampaign:
 
     def test_mid_flight_execute_analyze_resumes_at_correct_iteration(self, tmp_path):
         """Mid-flight EXECUTE_ANALYZE phase returns engine.iteration without touching state."""
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
         state["phase"] = "EXECUTE_ANALYZE"
@@ -240,7 +240,7 @@ class TestResumeCompletedCampaign:
 
     def test_mid_flight_iteration_1_boundary(self, tmp_path):
         """Mid-flight at iteration=1 returns 1 (boundary where old and new code agree)."""
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
         state["phase"] = "DESIGN"
@@ -255,7 +255,7 @@ class TestResumeCompletedCampaign:
     def test_mid_flight_corrupt_iteration_falls_back_to_1(self, tmp_path, caplog):
         """Mid-flight with iteration < 1 in state.json falls back to 1 with a warning."""
         import logging
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
         state["phase"] = "DESIGN"
@@ -270,7 +270,7 @@ class TestResumeCompletedCampaign:
     def test_mid_flight_exceeds_max_iterations_warns(self, tmp_path, caplog):
         """Mid-flight iteration > max_iterations logs a warning and returns start."""
         import logging
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
         state["phase"] = "DESIGN"
@@ -285,7 +285,7 @@ class TestResumeCompletedCampaign:
     def test_done_with_more_iterations_configured_resumes(self, tmp_path):
         """Phase DONE + ledger shows iter 1 + max_iterations=2 -> transition to
         DESIGN and return 2."""
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
 
         # Simulate a completed single-iteration campaign.
@@ -303,7 +303,7 @@ class TestResumeCompletedCampaign:
 
     def test_done_at_max_iterations_does_not_resume(self, tmp_path):
         """If the ledger already has max_iterations rows, stay DONE."""
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
         state["phase"] = "DONE"
@@ -321,7 +321,7 @@ class TestResumeCompletedCampaign:
     def test_done_but_no_real_iterations_does_not_resume(self, tmp_path):
         """Edge case: DONE with only the synthetic iter-0 row. Nothing to
         resume from, so we don't transition."""
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
         state["phase"] = "DONE"
@@ -335,7 +335,7 @@ class TestResumeCompletedCampaign:
     def test_corrupt_ledger_does_not_crash_resume(self, tmp_path, caplog):
         """Garbage JSON in ledger.json must not take down the campaign."""
         import logging
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
         state["phase"] = "DONE"
@@ -349,7 +349,7 @@ class TestResumeCompletedCampaign:
 
     def test_ledger_with_malformed_rows_does_not_crash_resume(self, tmp_path):
         """Rows missing 'iteration' or with wrong types get skipped, not crashed."""
-        from run_campaign import _resume_completed_campaign
+        from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
         state["phase"] = "DONE"
@@ -382,7 +382,7 @@ class TestCampaignFailureResilience:
                 raise RuntimeError("claude -p timed out after 10 attempts")
             return IterationOutcome.COMPLETED
 
-        import run_campaign as rc
+        import orchestrator.campaign as rc
         monkeypatch.setattr(rc, "run_iteration", failing_then_complete)
 
         run_campaign(SAMPLE_CAMPAIGN, work_dir, max_iterations=2, auto_approve=True)

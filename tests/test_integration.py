@@ -11,11 +11,11 @@ import yaml
 from orchestrator.engine import Engine
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.gates import HumanGate
-from run_iteration import _merge_principles
+from orchestrator.iteration import _merge_principles
 
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "templates"
 
 
 def load_schema(name: str) -> dict:

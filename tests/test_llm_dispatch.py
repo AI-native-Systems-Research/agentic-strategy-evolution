@@ -10,7 +10,7 @@ import yaml
 from orchestrator.llm_dispatch import LLMDispatcher
 
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
 
 
 def load_schema(name: str) -> dict:

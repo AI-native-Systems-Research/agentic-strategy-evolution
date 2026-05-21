@@ -120,7 +120,7 @@ The planner explores the codebase to discover metrics, knobs, and execution meth
 ### 5. Run a campaign
 
 ```bash
-python run_campaign.py campaign.yaml --max-iterations 3
+nous run campaign.yaml --max-iterations 3
 ```
 
 Each iteration runs the full loop (design → execute+analyze → validate), pausing at two human gates:
@@ -135,9 +135,9 @@ Each gate shows a formatted summary. Type `approve`, `reject`, or `abort`.
 Options:
 
 ```bash
-python run_campaign.py campaign.yaml --max-iterations 5 -v   # verbose
-python run_campaign.py campaign.yaml --auto-approve           # skip gates (for CI/non-interactive)
-python run_campaign.py campaign.yaml --auto-approve --max-iterations 1  # quick unattended run
+nous run campaign.yaml --max-iterations 5 -v   # verbose
+nous run campaign.yaml --auto-approve           # skip gates (for CI/non-interactive)
+nous run campaign.yaml --auto-approve --max-iterations 1  # quick unattended run
 ```
 
 ### Overnight / long-running campaigns
@@ -146,14 +146,14 @@ For unattended runs, increase retries and timeout so transient failures don't ki
 
 ```bash
 # High-resilience overnight run: 60-min timeout, 50 retries, 10 iterations
-python run_campaign.py campaign.yaml \
+nous run campaign.yaml \
   --auto-approve \
   --max-iterations 10 \
   --timeout 3600 \
   --max-cli-retries 50
 
 # Unlimited retries (never give up on transient failures)
-python run_campaign.py campaign.yaml \
+nous run campaign.yaml \
   --auto-approve \
   --max-cli-retries -1
 ```
@@ -173,7 +173,7 @@ After a run, check `retry_log.jsonl` in the campaign directory to see what faile
 ```bash
 git clone https://github.com/inference-sim/inference-sim.git blis
 # Edit examples/campaign.yaml: set repo_path to your blis/ path
-python run_campaign.py examples/campaign.yaml --max-iterations 3
+nous run examples/campaign.yaml --max-iterations 3
 ```
 
 Campaign artifacts will be created at `blis/.nous/<run_id>/`.
@@ -196,6 +196,16 @@ your-repo/.nous/<run_id>/
     patches/              # code diffs (evolve mode only)
     inputs/               # agent-created input files (configs, workloads)
     results/              # experiment output files
+```
+
+### Other CLI commands
+
+```bash
+nous status campaign.yaml        # show campaign phase, iteration, principles
+nous cost campaign.yaml          # token/cost summary from llm_metrics.jsonl
+nous report campaign.yaml        # generate report.md (uses LLM)
+nous resume campaign.yaml        # resume a paused/interrupted campaign
+nous validate design --dir .nous/run/runs/iter-1/   # validate artifacts (agent-facing)
 ```
 
 ### Run tests
