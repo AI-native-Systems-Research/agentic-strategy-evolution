@@ -16,6 +16,9 @@ dev = [
     "pytest-cov>=4.0",
 ]
 
+[project.scripts]
+nous = "orchestrator.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["orchestrator*", "prompts*"]
 
