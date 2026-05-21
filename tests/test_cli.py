@@ -301,3 +301,37 @@ class TestCmdReplay:
             mock_create.assert_called_once()
             mock_dispatcher.dispatch.assert_called_once()
             mock_remove.assert_called_once()
+
+    def test_replay_cleans_up_worktree_on_dispatch_failure(self, tmp_path):
+        import json
+        import yaml as _yaml
+        repo = tmp_path / "myrepo"
+        (repo / ".git").mkdir(parents=True)
+        work_dir = repo / ".nous" / "exp1"
+        iter_dir = work_dir / "runs" / "iter-1"
+        iter_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "DONE", "iteration": 1, "run_id": "exp1"
+        }))
+        (iter_dir / "experiment_plan.yaml").write_text(_yaml.dump({"arms": []}))
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            f"run_id: exp1\nmax_iterations: 3\n"
+            f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
+        )
+        args = argparse.Namespace(
+            target=str(campaign_file), iter=1, model=None,
+            timeout=1800, agent="api", verbose=False,
+        )
+        with patch("orchestrator.worktree.create_experiment_worktree", return_value=(tmp_path / "wt", "exp-id")), \
+             patch("orchestrator.worktree.remove_experiment_worktree") as mock_remove, \
+             patch("orchestrator.cli_dispatch.CLIDispatcher") as mock_cls:
+            mock_dispatcher = MagicMock()
+            mock_cls.return_value = mock_dispatcher
+            mock_dispatcher.override_cwd.return_value.__enter__ = MagicMock()
+            mock_dispatcher.override_cwd.return_value.__exit__ = MagicMock(return_value=False)
+            mock_dispatcher.dispatch.side_effect = RuntimeError("agent crashed")
+            (tmp_path / "wt").mkdir()
+            with pytest.raises(RuntimeError):
+                _cmd_replay(args)
+            mock_remove.assert_called_once()

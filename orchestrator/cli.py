@@ -24,10 +24,20 @@ def resolve_work_dir(target):
         if not p.exists():
             print(f"Campaign file not found: {target}", file=sys.stderr)
             sys.exit(1)
-        with open(p) as f:
-            data = yaml.safe_load(f)
-        repo_path = Path(data["target_system"]["repo_path"])
-        run_id = data["run_id"]
+        try:
+            data = yaml.safe_load(p.read_text())
+        except yaml.YAMLError as exc:
+            print(f"Failed to parse {target}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(data, dict):
+            print(f"Campaign file {target} is empty or not a YAML mapping", file=sys.stderr)
+            sys.exit(1)
+        try:
+            repo_path = Path(data["target_system"]["repo_path"])
+            run_id = data["run_id"]
+        except (KeyError, TypeError) as exc:
+            print(f"Campaign file {target} missing required field: {exc}", file=sys.stderr)
+            sys.exit(1)
         work_dir = repo_path / ".nous" / run_id
         return work_dir
 
@@ -88,7 +98,7 @@ def _cmd_run(args):
 
     work_dir = setup_work_dir(run_id, repo_path=repo_path)
 
-    max_iterations = args.max_iterations or campaign.get("max_iterations") or 10
+    max_iterations = args.max_iterations if args.max_iterations is not None else campaign.get("max_iterations", 10)
     run_campaign(
         campaign,
         work_dir,
@@ -122,7 +132,7 @@ def _cmd_resume(args):
         print("resume requires campaign.yaml", file=sys.stderr)
         sys.exit(1)
 
-    max_iterations = args.max_iterations or campaign.get("max_iterations") or 10
+    max_iterations = args.max_iterations if args.max_iterations is not None else campaign.get("max_iterations", 10)
     run_campaign(
         campaign,
         work_dir,
@@ -232,6 +242,10 @@ def _cmd_replay(args):
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
+    if not args.target.endswith((".yaml", ".yml")):
+        print("Error: replay requires campaign.yaml.\nUse: nous replay <campaign.yaml> --iter N", file=sys.stderr)
+        sys.exit(1)
+
     work_dir = resolve_work_dir(args.target)
     iteration = args.iter
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
@@ -243,10 +257,6 @@ def _cmd_replay(args):
     plan_path = iter_dir / "experiment_plan.yaml"
     if not plan_path.exists():
         print(f"Error: no experiment_plan.yaml in {iter_dir}", file=sys.stderr)
-        sys.exit(1)
-
-    if not args.target.endswith((".yaml", ".yml")):
-        print("Error: replay requires campaign.yaml.\nUse: nous replay <campaign.yaml> --iter N", file=sys.stderr)
         sys.exit(1)
 
     campaign = yaml.safe_load(Path(args.target).read_text())
@@ -332,7 +342,14 @@ def main():
         parser.print_help(sys.stderr)
         sys.exit(1)
 
-    args.func(args)
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        sys.exit(130)
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
