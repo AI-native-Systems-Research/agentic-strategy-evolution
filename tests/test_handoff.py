@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from run_iteration import _split_design_output
+from orchestrator.iteration import _split_design_output
 
 
 def _make_raw_design(*, include_handoff: bool = True, handoff_heading: str = "## Handoff") -> str:

@@ -60,8 +60,8 @@ def _cmd_run(args):
 
     import jsonschema
 
-    from run_campaign import run_campaign
-    from run_iteration import setup_work_dir
+    from orchestrator.campaign import run_campaign
+    from orchestrator.iteration import setup_work_dir
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
@@ -114,7 +114,7 @@ def _cmd_run(args):
 def _cmd_resume(args):
     import logging
 
-    from run_campaign import run_campaign
+    from orchestrator.campaign import run_campaign
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
@@ -210,7 +210,7 @@ def _cmd_cost(args):
 def _cmd_report(args):
     import logging
     import yaml
-    from run_campaign import _generate_report
+    from orchestrator.campaign import _generate_report
 
     logging.basicConfig(
         level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,

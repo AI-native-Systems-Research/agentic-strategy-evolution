@@ -192,7 +192,7 @@ class TestSingleIterationWithMockedLLM:
             "planner", "design",
             output_path=iter_dir / "design_raw.md", iteration=1,
         )
-        from run_iteration import _split_design_output, _merge_principles
+        from orchestrator.iteration import _split_design_output, _merge_principles
         _split_design_output((iter_dir / "design_raw.md").read_text(), iter_dir)
         bundle = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
         jsonschema.validate(bundle, load_schema("bundle.schema.yaml"))

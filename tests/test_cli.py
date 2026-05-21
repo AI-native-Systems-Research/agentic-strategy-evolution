@@ -85,8 +85,8 @@ class TestCmdRun:
             run_id=None, auto_approve=False, timeout=1800, max_cli_retries=10,
             agent="api", verbose=False,
         )
-        with patch("run_campaign.run_campaign") as mock_run, \
-             patch("run_iteration.setup_work_dir", return_value=tmp_path / "work") as mock_setup:
+        with patch("orchestrator.campaign.run_campaign") as mock_run, \
+             patch("orchestrator.iteration.setup_work_dir", return_value=tmp_path / "work") as mock_setup:
             (tmp_path / "work").mkdir()
             _cmd_run(args)
             mock_setup.assert_called_once()
@@ -127,7 +127,7 @@ class TestCmdResume:
             auto_approve=False, timeout=1800, max_cli_retries=10,
             agent="api", verbose=False,
         )
-        with patch("run_campaign.run_campaign") as mock_run:
+        with patch("orchestrator.campaign.run_campaign") as mock_run:
             _cmd_resume(args)
             mock_run.assert_called_once()
 
@@ -242,7 +242,7 @@ class TestCmdReport:
         args = argparse.Namespace(
             target=str(campaign_file), model=None, timeout=1800, agent="api", verbose=False,
         )
-        with patch("run_campaign._generate_report") as mock_report:
+        with patch("orchestrator.campaign._generate_report") as mock_report:
             _cmd_report(args)
             mock_report.assert_called_once()
 

@@ -9,7 +9,7 @@ import pytest
 # Resume logic tests
 # ---------------------------------------------------------------------------
 
-from run_iteration import (
+from orchestrator.iteration import (
     _enter_phase, _PHASE_ORDER, _PHASE_INDEX,
     run_iteration, IterationOutcome, setup_work_dir,
 )
@@ -130,7 +130,7 @@ def _setup_stub_iteration(tmp_path, monkeypatch):
     }
 
     # Monkeypatch LLMDispatcher -> StubDispatcher in run_iteration module
-    import run_iteration as ri
+    import orchestrator.iteration as ri
     def stub_factory(work_dir, campaign, model=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -145,7 +145,7 @@ class TestIterationOutcome:
 
     def test_returns_completed_by_default(self, tmp_path, monkeypatch):
         work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
-        import run_iteration as ri
+        import orchestrator.iteration as ri
         monkeypatch.setattr(ri, "HumanGate", lambda: MagicMock(prompt=MagicMock(return_value=("approve", None))))
 
         result = run_iteration(campaign, work_dir, iteration=1)
@@ -159,7 +159,7 @@ class TestIterationOutcome:
 
     def test_returns_continue_when_not_final(self, tmp_path, monkeypatch):
         work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
-        import run_iteration as ri
+        import orchestrator.iteration as ri
         monkeypatch.setattr(ri, "HumanGate", lambda: MagicMock(prompt=MagicMock(return_value=("approve", None))))
 
         result = run_iteration(campaign, work_dir, iteration=1, final=False)
@@ -170,7 +170,7 @@ class TestIterationOutcome:
 
     def test_returns_aborted_on_design_gate_abort(self, tmp_path, monkeypatch):
         work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
-        import run_iteration as ri
+        import orchestrator.iteration as ri
         monkeypatch.setattr(ri, "HumanGate", lambda: MagicMock(prompt=MagicMock(return_value=("abort", None))))
 
         result = run_iteration(campaign, work_dir, iteration=1)
@@ -179,7 +179,7 @@ class TestIterationOutcome:
 
     def test_returns_redesign_on_design_gate_reject(self, tmp_path, monkeypatch):
         work_dir, campaign = _setup_stub_iteration(tmp_path, monkeypatch)
-        import run_iteration as ri
+        import orchestrator.iteration as ri
         monkeypatch.setattr(ri, "HumanGate", lambda: MagicMock(prompt=MagicMock(return_value=("reject", None))))
 
         result = run_iteration(campaign, work_dir, iteration=1)

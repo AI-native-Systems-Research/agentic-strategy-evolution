@@ -11,7 +11,7 @@ import yaml
 from orchestrator.engine import Engine
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.gates import HumanGate
-from run_iteration import _merge_principles
+from orchestrator.iteration import _merge_principles
 
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
