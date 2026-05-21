@@ -261,14 +261,11 @@ class TestCmdReplay:
             f"run_id: exp1\nmax_iterations: 3\n"
             f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
         )
-        args = argparse.Namespace(
-            target=str(campaign_file), iter=5, model=None,
-            timeout=1800, agent="api", verbose=False,
-        )
+        args = argparse.Namespace(target=str(campaign_file), iter=5, verbose=False)
         with pytest.raises(SystemExit):
             _cmd_replay(args)
 
-    def test_replay_creates_worktree_and_dispatches(self, tmp_path):
+    def test_replay_runs_commands_mechanically(self, tmp_path):
         import json
         import yaml as _yaml
         repo = tmp_path / "myrepo"
@@ -276,33 +273,39 @@ class TestCmdReplay:
         work_dir = repo / ".nous" / "exp1"
         iter_dir = work_dir / "runs" / "iter-1"
         iter_dir.mkdir(parents=True)
+        results_dir = iter_dir / "results" / "h-main"
+        results_dir.mkdir(parents=True)
         (work_dir / "state.json").write_text(json.dumps({
             "phase": "DONE", "iteration": 1, "run_id": "exp1"
         }))
-        (iter_dir / "experiment_plan.yaml").write_text(_yaml.dump({"arms": []}))
+        plan = {
+            "metadata": {"iteration": 1},
+            "setup": [{"cmd": "echo setup", "description": "build"}],
+            "arms": [{
+                "arm_id": "h-main",
+                "conditions": [{
+                    "name": "baseline",
+                    "cmd": f"echo ok > {results_dir}/baseline.json",
+                    "output": str(results_dir / "baseline.json"),
+                    "inputs": [],
+                }],
+            }],
+        }
+        (iter_dir / "experiment_plan.yaml").write_text(_yaml.dump(plan))
         campaign_file = tmp_path / "campaign.yaml"
         campaign_file.write_text(
             f"run_id: exp1\nmax_iterations: 3\n"
             f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
         )
-        args = argparse.Namespace(
-            target=str(campaign_file), iter=1, model=None,
-            timeout=1800, agent="api", verbose=False,
-        )
-        with patch("orchestrator.worktree.create_experiment_worktree", return_value=(tmp_path / "wt", "exp-id")) as mock_create, \
-             patch("orchestrator.worktree.remove_experiment_worktree") as mock_remove, \
-             patch("orchestrator.cli_dispatch.CLIDispatcher") as mock_cls:
-            mock_dispatcher = MagicMock()
-            mock_cls.return_value = mock_dispatcher
-            mock_dispatcher.override_cwd.return_value.__enter__ = MagicMock()
-            mock_dispatcher.override_cwd.return_value.__exit__ = MagicMock(return_value=False)
+        args = argparse.Namespace(target=str(campaign_file), iter=1, verbose=False)
+        with patch("orchestrator.worktree.create_experiment_worktree", return_value=(tmp_path / "wt", "exp-id")), \
+             patch("orchestrator.worktree.remove_experiment_worktree") as mock_remove:
             (tmp_path / "wt").mkdir()
             _cmd_replay(args)
-            mock_create.assert_called_once()
-            mock_dispatcher.dispatch.assert_called_once()
             mock_remove.assert_called_once()
+        assert (results_dir / "baseline.json").exists()
 
-    def test_replay_cleans_up_worktree_on_dispatch_failure(self, tmp_path):
+    def test_replay_reports_failed_command(self, tmp_path, capsys):
         import json
         import yaml as _yaml
         repo = tmp_path / "myrepo"
@@ -313,25 +316,25 @@ class TestCmdReplay:
         (work_dir / "state.json").write_text(json.dumps({
             "phase": "DONE", "iteration": 1, "run_id": "exp1"
         }))
-        (iter_dir / "experiment_plan.yaml").write_text(_yaml.dump({"arms": []}))
+        plan = {
+            "metadata": {"iteration": 1},
+            "setup": [],
+            "arms": [{
+                "arm_id": "h-main",
+                "conditions": [{"name": "bad", "cmd": "exit 1", "output": "", "inputs": []}],
+            }],
+        }
+        (iter_dir / "experiment_plan.yaml").write_text(_yaml.dump(plan))
         campaign_file = tmp_path / "campaign.yaml"
         campaign_file.write_text(
             f"run_id: exp1\nmax_iterations: 3\n"
             f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
         )
-        args = argparse.Namespace(
-            target=str(campaign_file), iter=1, model=None,
-            timeout=1800, agent="api", verbose=False,
-        )
+        args = argparse.Namespace(target=str(campaign_file), iter=1, verbose=False)
         with patch("orchestrator.worktree.create_experiment_worktree", return_value=(tmp_path / "wt", "exp-id")), \
-             patch("orchestrator.worktree.remove_experiment_worktree") as mock_remove, \
-             patch("orchestrator.cli_dispatch.CLIDispatcher") as mock_cls:
-            mock_dispatcher = MagicMock()
-            mock_cls.return_value = mock_dispatcher
-            mock_dispatcher.override_cwd.return_value.__enter__ = MagicMock()
-            mock_dispatcher.override_cwd.return_value.__exit__ = MagicMock(return_value=False)
-            mock_dispatcher.dispatch.side_effect = RuntimeError("agent crashed")
+             patch("orchestrator.worktree.remove_experiment_worktree"):
             (tmp_path / "wt").mkdir()
-            with pytest.raises(RuntimeError):
+            with pytest.raises(SystemExit):
                 _cmd_replay(args)
-            mock_remove.assert_called_once()
+        err = capsys.readouterr().err
+        assert "h-main/bad" in err
