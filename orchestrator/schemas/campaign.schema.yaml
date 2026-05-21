@@ -54,6 +54,11 @@ properties:
         minLength: 1
         description: "Path to target system git repo. Used by CLIDispatcher for code-access agents. If set, experiments run in isolated worktrees."
 
+  metadata:
+    type: object
+    additionalProperties: true
+    description: "User-defined metadata (tags, goal, etc.). Copied to work dir at init."
+
   models:
     type: object
     additionalProperties: false

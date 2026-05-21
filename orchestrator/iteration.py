@@ -17,10 +17,12 @@ Dispatch backends:
     --agent inline: Prompts emitted to stdout for the calling agent.
 """
 import argparse
+import importlib.metadata as importlib_metadata
 import json
 import logging
 import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from enum import Enum
@@ -187,12 +189,79 @@ def _merge_principles(work_dir: Path, iter_dir: Path) -> None:
     atomic_write(principles_path, json.dumps(store, indent=2) + "\n")
 
 
-def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
+def _capture_runtime_meta(repo_path: str | None) -> dict:
+    """Capture runtime metadata at campaign init time.
+
+    Returns a dict with target_repo, target_commit, nous_version, started_at.
+    Each git/importlib call is wrapped individually — failures log a warning
+    and yield null for that field.
+    """
+    meta: dict = {
+        "target_repo": None,
+        "target_commit": None,
+        "nous_version": None,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Target repo commit
+    if repo_path:
+        try:
+            meta["target_commit"] = subprocess.check_output(
+                ["git", "-C", repo_path, "rev-parse", "HEAD"],
+                text=True, stderr=subprocess.DEVNULL,
+            ).strip() or None
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            logger.warning("Could not capture target_commit from %s", repo_path)
+
+        # Target repo remote (org/repo identifier)
+        try:
+            remote = subprocess.check_output(
+                ["git", "-C", repo_path, "remote", "get-url", "origin"],
+                text=True, stderr=subprocess.DEVNULL,
+            ).strip()
+            if remote.startswith("git@github.com:"):
+                # SSH: git@github.com:org/repo.git
+                meta["target_repo"] = remote.split(":")[-1].removesuffix(".git")
+            elif "github.com/" in remote:
+                # HTTPS: https://github.com/org/repo.git
+                meta["target_repo"] = remote.split("github.com/")[-1].removesuffix(".git")
+            else:
+                meta["target_repo"] = remote or None
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            logger.warning("Could not capture target_repo from %s", repo_path)
+
+    # Nous version: prefer package metadata, fall back to git SHA
+    try:
+        meta["nous_version"] = importlib_metadata.version("nous")
+    except importlib_metadata.PackageNotFoundError:
+        nous_dir = Path(__file__).resolve().parent
+        try:
+            meta["nous_version"] = subprocess.check_output(
+                ["git", "-C", str(nous_dir), "rev-parse", "HEAD"],
+                text=True, stderr=subprocess.DEVNULL,
+            ).strip() or None
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            logger.warning("Could not determine nous_version")
+
+    return meta
+
+
+def setup_work_dir(
+    run_id: str,
+    repo_path: str | None = None,
+    campaign_path: Path | None = None,
+    campaign: dict | None = None,
+) -> Path:
     """Create and initialize a working directory from templates.
 
     If repo_path is provided, the campaign directory is created inside
     the target repo at .nous/<run_id>/. Otherwise falls back to creating
     <run_id>/ in the current directory.
+
+    If campaign_path is provided, writes an enriched copy of campaign.yaml
+    into the work directory with a runtime: block (target_repo, target_commit,
+    nous_version, started_at). Only written on fresh init to avoid clobbering
+    on resume.
     """
     if repo_path:
         work_dir = Path(repo_path) / ".nous" / run_id
@@ -206,6 +275,21 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     state = json.loads((work_dir / "state.json").read_text())
     state["run_id"] = run_id
     atomic_write(work_dir / "state.json", json.dumps(state, indent=2) + "\n")
+
+    # Write enriched campaign.yaml copy on fresh init only
+    enriched_path = work_dir / "campaign.yaml"
+    if campaign_path and campaign and not enriched_path.exists():
+        try:
+            runtime_meta = _capture_runtime_meta(repo_path)
+            enriched = dict(campaign)
+            enriched["runtime"] = runtime_meta
+            atomic_write(
+                enriched_path,
+                yaml.safe_dump(enriched, default_flow_style=False, sort_keys=False),
+            )
+        except (OSError, yaml.YAMLError) as exc:
+            logger.warning("Could not write enriched campaign.yaml: %s", exc)
+
     return work_dir
 
 
@@ -526,7 +610,10 @@ def main() -> None:
 
     run_id = args.run_id or campaign.get("run_id") or campaign_path.parent.name + "-run"
     repo_path = campaign.get("target_system", {}).get("repo_path")
-    work_dir = setup_work_dir(run_id, repo_path=repo_path)
+    work_dir = setup_work_dir(
+        run_id, repo_path=repo_path,
+        campaign_path=campaign_path, campaign=campaign,
+    )
     print(f"Working directory: {work_dir.resolve()}")
 
     run_iteration(
