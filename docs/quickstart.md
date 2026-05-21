@@ -73,7 +73,7 @@ prompts:
 ## Run a campaign
 
 ```bash
-python run_campaign.py campaign.yaml --max-iterations 3
+nous run campaign.yaml --max-iterations 3
 ```
 
 When `repo_path` is set in `campaign.yaml`, the campaign directory is created inside the target repo at `.nous/<run_id>/`.
@@ -83,16 +83,16 @@ Each iteration runs the full Nous loop (design → execute+analyze → validate)
 Options:
 
 ```bash
-python run_campaign.py campaign.yaml --max-iterations 5 -v   # verbose
-python run_campaign.py campaign.yaml --model gpt-4o          # different model
-python run_campaign.py campaign.yaml --run-id my-campaign     # custom work dir
-python run_campaign.py campaign.yaml --auto-approve           # skip gates
+nous run campaign.yaml --max-iterations 5 -v   # verbose
+nous run campaign.yaml --model gpt-4o          # different model
+nous run campaign.yaml --run-id my-campaign     # custom work dir
+nous run campaign.yaml --auto-approve           # skip gates
 ```
 
 Or try the BLIS example directly:
 
 ```bash
-python run_campaign.py examples/campaign.yaml --max-iterations 3
+nous run examples/campaign.yaml --max-iterations 3
 ```
 
 You can also set `max_iterations` in `campaign.yaml` (CLI `--max-iterations` overrides it).
@@ -134,7 +134,7 @@ Defaults (from `defaults.yaml`):
 Override via `--model` (applies to all phases) or per-phase in `campaign.yaml` under `models:`:
 
 ```bash
-python run_campaign.py campaign.yaml --model gpt-4o
+nous run campaign.yaml --model gpt-4o
 ```
 
 ## Single iteration (advanced)
@@ -142,7 +142,7 @@ python run_campaign.py campaign.yaml --model gpt-4o
 For running just one iteration (useful for debugging):
 
 ```bash
-python run_iteration.py campaign.yaml --run-id test-run -v
+nous run campaign.yaml --run-id test-run --max-iterations 1 -v
 ```
 
 ## Next steps
