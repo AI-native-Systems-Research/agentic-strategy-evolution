@@ -201,7 +201,7 @@ class TestCLIDispatcherMetrics:
         mock_result.stderr = ""
 
         with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
-            d = CLIDispatcher(work_dir=work_dir, campaign=campaign)
+            d = CLIDispatcher(work_dir=work_dir, campaign=campaign, max_retries=0)
             with pytest.raises(RuntimeError, match="returned an error"):
                 d.dispatch("planner", "design", output_path=work_dir / "out.yaml", iteration=1)
 
