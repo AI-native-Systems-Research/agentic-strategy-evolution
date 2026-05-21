@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from orchestrator.cli import resolve_work_dir, _cmd_run, _cmd_resume, _cmd_validate
+from orchestrator.cli import resolve_work_dir, _cmd_run, _cmd_resume, _cmd_validate, _cmd_status, _cmd_cost
 
 
 class TestResolveWorkDir:
@@ -154,3 +154,61 @@ class TestCmdValidate:
         args = argparse.Namespace(phase="execution", dir=iter_dir)
         with pytest.raises(SystemExit):
             _cmd_validate(args)
+
+
+class TestCmdStatus:
+    def test_status_prints_campaign_state(self, tmp_path, capsys):
+        import json
+        work_dir = tmp_path / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "EXECUTE_ANALYZE", "iteration": 3, "run_id": "exp1"
+        }))
+        (work_dir / "ledger.json").write_text(json.dumps({
+            "iterations": [
+                {"iteration": 1, "family": "routing"},
+                {"iteration": 2, "family": "admission"},
+            ]
+        }))
+        (work_dir / "principles.json").write_text(json.dumps({
+            "principles": [{"id": "P-1", "statement": "X", "status": "active"}]
+        }))
+
+        args = argparse.Namespace(target=str(work_dir))
+        _cmd_status(args)
+        out = capsys.readouterr().out
+        assert "exp1" in out
+        assert "EXECUTE_ANALYZE" in out
+        assert "3" in out
+        assert "2 iteration(s)" in out
+        assert "1 active" in out
+
+
+class TestCmdCost:
+    def test_cost_prints_summary(self, tmp_path, capsys):
+        import json
+        work_dir = tmp_path / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text('{"phase":"DONE","iteration":2,"run_id":"exp1"}')
+        metrics = [
+            {"phase": "design", "cost_usd": 0.05, "input_tokens": 1000, "output_tokens": 500, "duration_ms": 3000},
+            {"phase": "execute-analyze", "cost_usd": 0.10, "input_tokens": 2000, "output_tokens": 800, "duration_ms": 5000},
+        ]
+        (work_dir / "llm_metrics.jsonl").write_text("\n".join(json.dumps(m) for m in metrics) + "\n")
+
+        args = argparse.Namespace(target=str(work_dir))
+        _cmd_cost(args)
+        out = capsys.readouterr().out
+        assert "2" in out
+        assert "$0.1500" in out
+        assert "design" in out
+
+    def test_cost_no_metrics_file(self, tmp_path, capsys):
+        work_dir = tmp_path / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text('{"phase":"INIT","iteration":0,"run_id":"exp1"}')
+
+        args = argparse.Namespace(target=str(work_dir))
+        _cmd_cost(args)
+        out = capsys.readouterr().out
+        assert "No metrics" in out

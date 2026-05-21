@@ -149,11 +149,50 @@ def _cmd_validate(args):
 
 
 def _cmd_status(args):
-    pass
+    import json
+
+    work_dir = resolve_work_dir(args.target)
+    state_file = work_dir / "state.json"
+    if not state_file.exists():
+        print(f"Error: no state.json at {work_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    state = json.loads(state_file.read_text())
+    ledger = json.loads((work_dir / "ledger.json").read_text()) if (work_dir / "ledger.json").exists() else {"iterations": []}
+    principles = json.loads((work_dir / "principles.json").read_text()) if (work_dir / "principles.json").exists() else {"principles": []}
+
+    active_principles = [p for p in principles.get("principles", []) if p.get("status") == "active"]
+    completed = [it for it in ledger.get("iterations", []) if it.get("iteration", 0) > 0]
+
+    print(f"Campaign:    {state.get('run_id', '?')}")
+    print(f"Phase:       {state.get('phase', '?')}")
+    print(f"Iteration:   {state.get('iteration', '?')}")
+    print(f"Completed:   {len(completed)} iteration(s)")
+    print(f"Principles:  {len(active_principles)} active")
 
 
 def _cmd_cost(args):
-    pass
+    from orchestrator.metrics import summarize_metrics
+
+    work_dir = resolve_work_dir(args.target)
+    metrics_path = work_dir / "llm_metrics.jsonl"
+    if not metrics_path.exists():
+        print("No metrics recorded yet.")
+        return
+
+    s = summarize_metrics(metrics_path)
+    total_tokens = s["total_input_tokens"] + s["total_output_tokens"]
+    duration_min = s.get("total_duration_ms", 0) / 60000
+
+    print(f"Total calls:   {s['total_calls']}")
+    print(f"Total cost:    ${s['total_cost_usd']:.4f}")
+    print(f"Total tokens:  {total_tokens} (in: {s['total_input_tokens']}, out: {s['total_output_tokens']})")
+    print(f"Total time:    {duration_min:.1f} min")
+
+    if s.get("by_phase"):
+        print(f"\nBy phase:")
+        for phase, b in s["by_phase"].items():
+            print(f"  {phase:20s}  {b['calls']} calls  ${b['cost_usd']:.4f}  {b['input_tokens']+b['output_tokens']} tok")
 
 
 def _cmd_report(args):
