@@ -80,6 +80,12 @@ If you're using Anthropic directly via a LiteLLM proxy, point both vars at the p
 ### 1. Install Nous
 
 ```bash
+pip install "git+https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git"
+```
+
+For development (editable install with test dependencies):
+
+```bash
 git clone https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git
 cd agentic-strategy-evolution
 pip install -e ".[dev]"
