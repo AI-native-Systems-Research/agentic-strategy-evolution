@@ -217,8 +217,6 @@ def _cmd_report(args):
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
-    work_dir = resolve_work_dir(args.target)
-
     if not args.target.endswith((".yaml", ".yml")):
         print(
             "Error: report requires campaign.yaml for LLM configuration.\n"
@@ -227,6 +225,7 @@ def _cmd_report(args):
         )
         sys.exit(1)
 
+    work_dir = resolve_work_dir(args.target)
     campaign = yaml.safe_load(Path(args.target).read_text())
     _generate_report(campaign, work_dir, args.model, agent=args.agent, timeout=args.timeout)
 
@@ -340,7 +339,6 @@ def main():
     p_replay.add_argument("--iter", required=True, type=int)
     p_replay.add_argument("--model")
     p_replay.add_argument("--timeout", type=int, default=1800)
-    p_replay.add_argument("--agent", choices=["inline", "api"], default="api")
     p_replay.set_defaults(func=_cmd_replay)
 
     args = parser.parse_args()
@@ -357,6 +355,8 @@ def main():
         if args.verbose:
             import traceback
             traceback.print_exc()
+        else:
+            print("  (use -v for full traceback)", file=sys.stderr)
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 

@@ -1,4 +1,4 @@
-recursive-include schemas *.yaml *.json
-recursive-include templates *.json
+recursive-include orchestrator/schemas *.yaml *.json
+recursive-include orchestrator/templates *.json *.yaml *.md
 recursive-include prompts *.md
-include defaults.yaml
+include orchestrator/defaults.yaml
