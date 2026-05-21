@@ -107,7 +107,7 @@ def _cmd_run(args):
         auto_approve=args.auto_approve,
         timeout=args.timeout,
         agent=args.agent,
-        max_cli_retries=args.max_cli_retries,
+        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
     )
 
 
@@ -141,7 +141,7 @@ def _cmd_resume(args):
         auto_approve=args.auto_approve,
         timeout=args.timeout,
         agent=args.agent,
-        max_cli_retries=args.max_cli_retries,
+        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
     )
 
 
@@ -213,7 +213,7 @@ def _cmd_report(args):
     from orchestrator.campaign import _generate_report
 
     logging.basicConfig(
-        level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
@@ -238,7 +238,7 @@ def _cmd_replay(args):
     from orchestrator.cli_dispatch import CLIDispatcher
 
     logging.basicConfig(
-        level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
@@ -260,9 +260,14 @@ def _cmd_replay(args):
         sys.exit(1)
 
     campaign = yaml.safe_load(Path(args.target).read_text())
-    repo_path = Path(campaign["target_system"]["repo_path"])
+    raw_repo = campaign.get("target_system", {}).get("repo_path")
+    if not raw_repo:
+        print("Error: replay requires target_system.repo_path in campaign.yaml", file=sys.stderr)
+        sys.exit(1)
+    repo_path = Path(raw_repo)
 
     print(f"Replaying iteration {iteration} from {iter_dir}")
+    experiment_id = None
     experiment_dir, experiment_id = create_experiment_worktree(repo_path, iteration)
     print(f"  Worktree: {experiment_dir}")
 
@@ -279,8 +284,9 @@ def _cmd_replay(args):
                 iteration=iteration,
             )
     finally:
-        remove_experiment_worktree(repo_path, experiment_id)
-        print("  Worktree cleaned up.")
+        if experiment_id:
+            remove_experiment_worktree(repo_path, experiment_id)
+            print("  Worktree cleaned up.")
 
 
 def main():
@@ -348,6 +354,9 @@ def main():
         print("\nInterrupted.", file=sys.stderr)
         sys.exit(130)
     except Exception as exc:
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
