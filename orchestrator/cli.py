@@ -1,14 +1,8 @@
 import argparse
-import json
-import logging
 import sys
 from pathlib import Path
 
-import jsonschema
 import yaml
-
-from run_campaign import run_campaign
-from run_iteration import setup_work_dir
 
 
 def _find_repo_root(start=None):
@@ -51,10 +45,15 @@ def resolve_work_dir(target):
 
 
 def _cmd_run(args):
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
+    import json
+    import logging
+
+    import jsonschema
+
+    from run_campaign import run_campaign
+    from run_iteration import setup_work_dir
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
     campaign_path = Path(args.campaign)
     if not campaign_path.exists():
@@ -103,10 +102,11 @@ def _cmd_run(args):
 
 
 def _cmd_resume(args):
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
+    import logging
+
+    from run_campaign import run_campaign
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
     work_dir = resolve_work_dir(args.target)
 
@@ -136,6 +136,8 @@ def _cmd_resume(args):
 
 
 def _cmd_validate(args):
+    import json
+
     from orchestrator.validate import validate_design, validate_execution
 
     if args.phase == "design":

@@ -85,8 +85,8 @@ class TestCmdRun:
             run_id=None, auto_approve=False, timeout=1800, max_cli_retries=10,
             agent="api", verbose=False,
         )
-        with patch("orchestrator.cli.run_campaign") as mock_run, \
-             patch("orchestrator.cli.setup_work_dir", return_value=tmp_path / "work") as mock_setup:
+        with patch("run_campaign.run_campaign") as mock_run, \
+             patch("run_iteration.setup_work_dir", return_value=tmp_path / "work") as mock_setup:
             (tmp_path / "work").mkdir()
             _cmd_run(args)
             mock_setup.assert_called_once()
@@ -127,7 +127,7 @@ class TestCmdResume:
             auto_approve=False, timeout=1800, max_cli_retries=10,
             agent="api", verbose=False,
         )
-        with patch("orchestrator.cli.run_campaign") as mock_run:
+        with patch("run_campaign.run_campaign") as mock_run:
             _cmd_resume(args)
             mock_run.assert_called_once()
 
