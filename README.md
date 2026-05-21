@@ -205,7 +205,6 @@ nous status campaign.yaml        # show campaign phase, iteration, principles
 nous cost campaign.yaml          # token/cost summary from llm_metrics.jsonl
 nous report campaign.yaml        # generate report.md (uses LLM)
 nous resume campaign.yaml        # resume a paused/interrupted campaign
-nous replay campaign.yaml --iter 2  # re-run iteration 2 in a fresh worktree
 nous validate design --dir .nous/run/runs/iter-1/   # validate artifacts (agent-facing)
 ```
 
