@@ -310,7 +310,7 @@ def main():
     p_run.add_argument("--auto-approve", action="store_true")
     p_run.add_argument("--timeout", type=int, default=1800)
     p_run.add_argument("--max-cli-retries", type=int, default=10)
-    p_run.add_argument("--agent", choices=["inline", "api"], default="api")
+    p_run.add_argument("--agent", choices=["inline", "api", "sdk"], default="api")
     p_run.set_defaults(func=_cmd_run)
 
     p_resume = subparsers.add_parser("resume")
@@ -320,7 +320,7 @@ def main():
     p_resume.add_argument("--auto-approve", action="store_true")
     p_resume.add_argument("--timeout", type=int, default=1800)
     p_resume.add_argument("--max-cli-retries", type=int, default=10)
-    p_resume.add_argument("--agent", choices=["inline", "api"], default="api")
+    p_resume.add_argument("--agent", choices=["inline", "api", "sdk"], default="api")
     p_resume.set_defaults(func=_cmd_resume)
 
     p_validate = subparsers.add_parser("validate")
@@ -340,7 +340,7 @@ def main():
     p_report.add_argument("target")
     p_report.add_argument("--model")
     p_report.add_argument("--timeout", type=int, default=1800)
-    p_report.add_argument("--agent", choices=["inline", "api"], default="api")
+    p_report.add_argument("--agent", choices=["inline", "api", "sdk"], default="api")
     p_report.set_defaults(func=_cmd_report)
 
     p_replay = subparsers.add_parser("replay")
