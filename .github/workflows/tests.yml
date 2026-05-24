@@ -3,8 +3,10 @@ name: Tests
 on:
   push:
     branches: [main, reflective]
+  # Trigger on every PR regardless of base branch so contributors get
+  # CI feedback on long-running integration branches (e.g. tracking-N)
+  # in addition to PRs targeting main/reflective.
   pull_request:
-    branches: [main, reflective]
 
 # Cancel in-flight runs on the same PR/branch when a new push lands.
 # Only safe context expressions used here: github.workflow, github.ref,
