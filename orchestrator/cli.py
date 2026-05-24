@@ -206,6 +206,11 @@ def _cmd_cost(args):
         for phase, b in s["by_phase"].items():
             print(f"  {phase:20s}  {b['calls']} calls  ${b['cost_usd']:.4f}  {b['input_tokens']+b['output_tokens']} tok")
 
+    if getattr(args, "cache_stats", False):
+        from orchestrator.cache_stats import cache_stats, format_cache_stats
+        print("\nCache stats:")
+        print(format_cache_stats(cache_stats(metrics_path)))
+
 
 def _cmd_report(args):
     import logging
@@ -334,6 +339,10 @@ def main():
 
     p_cost = subparsers.add_parser("cost")
     p_cost.add_argument("target")
+    p_cost.add_argument(
+        "--cache-stats", action="store_true",
+        help="Include prompt-cache hit-rate stats (#122).",
+    )
     p_cost.set_defaults(func=_cmd_cost)
 
     p_report = subparsers.add_parser("report")
