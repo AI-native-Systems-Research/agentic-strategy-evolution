@@ -496,6 +496,16 @@ def run_iteration(
     _merge_principles(work_dir, iter_dir)
     print(f"  -> Principles merged into {work_dir / 'principles.json'}")
 
+    # ─── CLAUDE.md REGENERATE (Python, no LLM) — issue #131 ───────────────
+    # Refresh per-campaign CLAUDE.md so the next iteration's session loads
+    # the updated principles + handoff via Claude Code's auto-context loading.
+    try:
+        from orchestrator.claude_md import regenerate_from_disk
+        regenerate_from_disk(work_dir, campaign, iteration=iteration)
+    except (OSError, RuntimeError) as exc:
+        # Best-effort: a CLAUDE.md write failure shouldn't abort the iteration.
+        logger.warning("Failed to regenerate CLAUDE.md: %s", exc)
+
     if final:
         engine.transition("DONE")
         print(f"\n{'='*60}")

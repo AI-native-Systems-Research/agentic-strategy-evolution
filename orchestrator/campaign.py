@@ -406,6 +406,14 @@ def main() -> None:
     print(f"Working directory: {work_dir.resolve()}")
     print(f"Max iterations: {max_iter}")
 
+    # Initial CLAUDE.md so iter 1 has campaign brief + (empty) principles
+    # in scope from session start (#131).
+    try:
+        from orchestrator.claude_md import regenerate_from_disk
+        regenerate_from_disk(work_dir, campaign, iteration=0)
+    except (OSError, RuntimeError) as exc:
+        logger.warning("Failed to write initial CLAUDE.md: %s", exc)
+
     run_campaign(
         campaign, work_dir,
         max_iterations=max_iter, model=args.model,
