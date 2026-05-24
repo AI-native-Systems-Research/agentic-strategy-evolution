@@ -103,3 +103,66 @@ def _routine_command(campaign_path: Path | None) -> list[str]:
         "--auto-approve",
         "--agent", "sdk",
     ]
+
+
+# ─── Phase B: actual API submission ────────────────────────────────────────
+
+
+import json as _json
+import os as _os
+import urllib.request as _urlreq
+from typing import Callable as _Callable
+
+
+_DEFAULT_ROUTINES_API_BASE = "https://api.anthropic.com/v1/routines"
+
+
+def submit_routine(
+    payload: dict,
+    *,
+    api_base: str | None = None,
+    api_key: str | None = None,
+    poster: _Callable[[str, bytes, dict, float], dict] | None = None,
+    timeout: float = 30.0,
+) -> dict:
+    """Register the payload with the Routines API and return the response.
+
+    Args:
+      payload: result of build_routine_payload.
+      api_base: override the default Routines API endpoint.
+      api_key: override ANTHROPIC_API_KEY env var. Required for real calls.
+      poster: dependency-injection seam for tests. Signature:
+        ``(url, body_bytes, headers, timeout) -> response_dict``. When set,
+        used instead of urllib.request.urlopen so tests don't touch the
+        network. See tests/CLAUDE.md.
+      timeout: per-request timeout in seconds.
+
+    Returns:
+      Response dict — typically contains a ``routine_id`` field that
+      callers store for later management.
+    """
+    url = api_base or _os.environ.get("ROUTINES_API_BASE", _DEFAULT_ROUTINES_API_BASE)
+    key = api_key or _os.environ.get("ANTHROPIC_API_KEY")
+    if poster is None and not key:
+        raise RuntimeError(
+            "submit_routine requires ANTHROPIC_API_KEY (or pass api_key=). "
+            "Tests must inject a poster — see tests/CLAUDE.md."
+        )
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "X-Nous-Source": "orchestrator.routines",
+    }
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    body = _json.dumps(payload).encode("utf-8")
+
+    if poster is not None:
+        return poster(url, body, headers, timeout)
+
+    req = _urlreq.Request(url, data=body, headers=headers, method="POST")
+    with _urlreq.urlopen(req, timeout=timeout) as resp:
+        text = resp.read().decode("utf-8")
+    try:
+        return _json.loads(text)
+    except _json.JSONDecodeError:
+        return {"raw_response": text, "status": resp.status}

@@ -93,3 +93,72 @@ class TestCampaignReference:
         assert "campaign_inline" in out
         assert out["campaign_inline"]["run_id"] == "saturation-run"
         assert "campaign_path" not in out
+
+
+# ─── Phase B: API submission with injected poster (no live HTTP) ───────────
+
+
+class _RecordingPoster:
+    def __init__(self, response: dict | None = None):
+        self.calls: list[dict] = []
+        self.response = response or {"routine_id": "rt_test_123"}
+
+    def __call__(self, url, body, headers, timeout):
+        import json as _json
+        self.calls.append({
+            "url": url,
+            "body_json": _json.loads(body),
+            "headers": dict(headers),
+            "timeout": timeout,
+        })
+        return self.response
+
+
+class TestSubmitRoutine:
+    """submit_routine posts the payload via an injected poster (no live
+    HTTP). Tests assert what was sent over the wire and what came back —
+    never that internal helpers were called."""
+
+    def test_posts_payload_with_auth_header(self):
+        from orchestrator.routines import submit_routine
+
+        payload = build_routine_payload(_campaign(), schedule="0 2 * * *")
+        poster = _RecordingPoster()
+
+        result = submit_routine(payload, api_key="sk-test", poster=poster)
+
+        assert len(poster.calls) == 1
+        call = poster.calls[0]
+        assert call["headers"]["Authorization"] == "Bearer sk-test"
+        assert call["headers"]["Content-Type"] == "application/json"
+        assert call["body_json"]["trigger"] == {"type": "cron", "expression": "0 2 * * *"}
+        assert result == {"routine_id": "rt_test_123"}
+
+    def test_uses_custom_api_base(self):
+        from orchestrator.routines import submit_routine
+
+        poster = _RecordingPoster()
+        submit_routine(
+            build_routine_payload(_campaign(), schedule="0 2 * * *"),
+            api_base="https://custom.example/v2/routines",
+            api_key="sk-test", poster=poster,
+        )
+        assert poster.calls[0]["url"] == "https://custom.example/v2/routines"
+
+    def test_returns_routine_id(self):
+        from orchestrator.routines import submit_routine
+
+        poster = _RecordingPoster(response={"routine_id": "rt_abc", "status": "active"})
+        result = submit_routine(
+            build_routine_payload(_campaign(), schedule="0 2 * * *"),
+            api_key="sk-test", poster=poster,
+        )
+        assert result == {"routine_id": "rt_abc", "status": "active"}
+
+    def test_raises_without_api_key_when_no_poster(self):
+        """Real-world misconfig protection: no key + no env + no poster
+        must fail loudly, not fall back to anonymous."""
+        from orchestrator.routines import submit_routine
+
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+            submit_routine(build_routine_payload(_campaign(), schedule="0 2 * * *"))
