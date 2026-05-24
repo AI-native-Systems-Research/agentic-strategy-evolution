@@ -1,7 +1,9 @@
-"""Behavioral tests for the parallel-arm orchestration (#123 Phase A)."""
+"""Behavioral tests for the parallel-arm orchestration (#123 Phase A + B)."""
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +15,16 @@ from orchestrator.parallel_arms import (
     partition_plan,
     run_units,
 )
+
+
+@dataclass
+class _LocalSDKResult:
+    """Local stand-in for SDKResult so this branch doesn't depend on
+    sdk_dispatch.py landing first. The real SDKResult is duck-compatible."""
+    text: str = ""
+    duration_ms: int = 0
+    is_error: bool = False
+    error_message: str = ""
 
 
 # ─── Plan partitioning ─────────────────────────────────────────────────────
@@ -190,3 +202,122 @@ class TestFailedUnits:
         failed = failed_units(results)
         assert len(failed) == 2
         assert all(r.arm_id != "h-main" or r.seed == "s2" for r in failed)
+
+
+# ─── Phase B: end-to-end with the harness-isolated SDK runner ─────────────
+
+
+class TestEndToEndWithIsolatedRunner:
+    """The full chain: partition_plan -> make_isolated_arm_runner ->
+    run_units -> merge_unit_results. The SDK side is injected via a
+    fake; per the no-live-LLM policy (CLAUDE.md), no real subagent is
+    spawned. The test asserts the orchestration contract — every unit
+    is dispatched with isolation=worktree to a non-overlapping results
+    dir, failures are isolated, and the merged output is deterministic.
+    """
+
+    def _plan(self):
+        return {"arms": [
+            {"arm_id": "h-main", "conditions": [
+                {"name": "x", "command": "./run --arm main"},
+            ]},
+            {"arm_id": "h-ablation", "conditions": [
+                {"name": "y", "command": "./run --arm ablation",
+                 "seeds": ["s1", "s2"]},
+            ]},
+        ]}
+
+    def _success_runner(self):
+        SDKResult = _LocalSDKResult  # noqa: N806
+
+        sdk_calls: list[dict] = []
+
+        def sdk_runner(**kwargs):
+            sdk_calls.append(kwargs)
+            prompt = kwargs.get("prompt", "")
+            # Simulate the subagent writing a file in its results dir.
+            for line in prompt.splitlines():
+                if line.startswith("Write all output files to:"):
+                    target = line.split("`", 1)[1].rstrip("`")
+                    Path(target).mkdir(parents=True, exist_ok=True)
+                    (Path(target) / "out.json").write_text("{}")
+            return SDKResult(text="done", duration_ms=120)
+
+        return sdk_runner, sdk_calls
+
+    def test_three_units_dispatched_with_isolation_kwarg(self, tmp_path):
+        from orchestrator.worktree import make_isolated_arm_runner
+
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir(parents=True)
+        sdk_runner, sdk_calls = self._success_runner()
+
+        runner = make_isolated_arm_runner(
+            sdk_runner=sdk_runner, repo_path=tmp_path, iter_dir=iter_dir,
+        )
+        units = partition_plan(self._plan())
+        assert len(units) == 3
+
+        results = run_units(units, runner=runner)
+        assert len(sdk_calls) == 3
+        assert all(c.get("isolation") == "worktree" for c in sdk_calls)
+
+        merged = merge_unit_results(results)
+        assert [a["arm_id"] for a in merged["arms"]] == ["h-ablation", "h-main"]
+        assert all(a["status"] == "complete" for a in merged["arms"])
+
+    def test_partial_failure_isolated_to_one_arm(self, tmp_path):
+        from orchestrator.worktree import make_isolated_arm_runner
+        SDKResult = _LocalSDKResult  # noqa: N806
+
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir(parents=True)
+
+        def sdk_runner(**kwargs):
+            prompt = kwargs.get("prompt", "")
+            if "h-ablation" in prompt:
+                return SDKResult(
+                    text="", is_error=True, error_message="exit 1",
+                )
+            for line in prompt.splitlines():
+                if line.startswith("Write all output files to:"):
+                    target = line.split("`", 1)[1].rstrip("`")
+                    Path(target).mkdir(parents=True, exist_ok=True)
+                    (Path(target) / "out.json").write_text("{}")
+            return SDKResult(text="ok")
+
+        runner = make_isolated_arm_runner(
+            sdk_runner=sdk_runner, repo_path=tmp_path, iter_dir=iter_dir,
+        )
+        merged = merge_unit_results(
+            run_units(partition_plan(self._plan()), runner=runner)
+        )
+        by_arm = {a["arm_id"]: a for a in merged["arms"]}
+        assert by_arm["h-main"]["status"] == "complete"
+        assert by_arm["h-ablation"]["status"] == "failed"
+        assert merged["failed_unit_count"] == 2
+        assert merged["total_unit_count"] == 3
+
+    def test_no_two_units_share_results_dir(self, tmp_path):
+        from orchestrator.worktree import make_isolated_arm_runner
+
+        iter_dir = tmp_path / "iter-1"
+        iter_dir.mkdir(parents=True)
+        sdk_runner, _ = self._success_runner()
+        seen_dirs: list[str] = []
+
+        def capturing(**kwargs):
+            for line in kwargs.get("prompt", "").splitlines():
+                if line.startswith("Write all output files to:"):
+                    seen_dirs.append(line.split("`", 1)[1].rstrip("`"))
+            return sdk_runner(**kwargs)
+
+        runner = make_isolated_arm_runner(
+            sdk_runner=capturing, repo_path=tmp_path, iter_dir=iter_dir,
+        )
+        run_units(partition_plan(self._plan()), runner=runner)
+
+        # Acceptance criterion: no two subagents ever write to the same
+        # results path.
+        assert len(seen_dirs) == 3
+        assert len(set(seen_dirs)) == 3
