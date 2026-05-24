@@ -41,6 +41,35 @@ class SDKTransientError(RuntimeError):
     """Runner raises this for retryable transport-level failures."""
 
 
+def _load_methodology_preamble(methodology_dir: Path) -> str | None:
+    """Load the static methodology text as a single cached system block.
+
+    Concatenates the design + execute_analyze methodology files, stripping
+    Jinja-style {{placeholders}} (the dynamic portions go in the user
+    message instead, where they bust the cache appropriately). The result
+    is what ``ClaudeAgentOptions.system_prompt`` ships to the API with
+    cache_control: ephemeral so it's paid for once per 5-minute window
+    instead of once per turn — the win this issue is named for.
+    """
+    methodology_dir = Path(methodology_dir)
+    if not methodology_dir.is_dir():
+        return None
+    blocks: list[str] = []
+    import re as _re
+    for name in ("design.md", "execute_analyze.md"):
+        path = methodology_dir / name
+        if not path.exists():
+            continue
+        text = path.read_text()
+        # Strip {{placeholder}} markers — the dynamic content lives in
+        # the user message and changes each call.
+        text = _re.sub(r"\{\{[^}]+\}\}", "", text)
+        blocks.append(f"# Methodology: {path.stem}\n\n{text}")
+    if not blocks:
+        return None
+    return "\n\n---\n\n".join(blocks)
+
+
 @dataclass
 class SDKResult:
     """One SDK call's outcome.
@@ -222,7 +251,9 @@ class SDKDispatcher(CLIDispatcher):
             max_retries=max_retries,
         )
         self._sdk_runner = sdk_runner or _default_sdk_runner_factory()
-        self._system_prompt = system_prompt
+        self._system_prompt = system_prompt or _load_methodology_preamble(
+            prompts_dir or Path(__file__).parent.parent / "prompts" / "methodology",
+        )
         self._settings_path = settings_path
 
     # ------------------------------------------------------------------
