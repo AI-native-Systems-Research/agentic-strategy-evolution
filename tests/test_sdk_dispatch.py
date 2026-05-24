@@ -237,6 +237,87 @@ class TestSDKDispatchTransientRetry:
         assert len(retry_log) == 3
 
 
+# ─── #122 Phase B: methodology preamble cached as system_prompt ────────────
+
+class TestMethodologyPreambleCached:
+    """When the methodology files are on disk, SDKDispatcher loads them as
+    a single ``system_prompt`` so the Anthropic API marks them cached.
+    Tests assert the wiring contract: same system_prompt across calls,
+    placeholders stripped (otherwise dynamic content in system_prompt
+    would bust the cache)."""
+
+    def test_runner_receives_preamble_in_system_prompt(self, tmp_path):
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        # Use a placeholder that IS in the dispatcher's context so the
+        # regular template-load path doesn't reject it; the preamble
+        # loader still strips them before placing in system_prompt.
+        (prompts_dir / "design.md").write_text(
+            "# Design methodology\n\nStable text for {{target_system}}.\n"
+        )
+        (prompts_dir / "execute_analyze.md").write_text(
+            "# Execute methodology\n\nMore stable text for {{target_system}}.\n"
+        )
+
+        captured: list[dict] = []
+
+        def runner(**kwargs):
+            captured.append(kwargs)
+            return SDKResult(text="ok")
+
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_make_campaign(tmp_path),
+            sdk_runner=runner,
+            prompts_dir=prompts_dir,
+        )
+        dispatcher.dispatch(
+            "planner", "design",
+            output_path=tmp_path / "runs" / "iter-1" / "design_log.md",
+            iteration=1,
+        )
+
+        assert len(captured) == 1
+        sp = captured[0]["system_prompt"]
+        assert sp is not None
+        assert "Design methodology" in sp
+        assert "Execute methodology" in sp
+        # Placeholders are stripped — dynamic content lives in the user
+        # message; otherwise the cache would never hit.
+        assert "{{target_system}}" not in sp
+        assert "{{" not in sp
+
+    def test_two_calls_reuse_same_system_prompt(self, tmp_path):
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "design.md").write_text(
+            "# Design methodology\n\nText for {{target_system}}.\n"
+        )
+
+        captured: list[dict] = []
+
+        def runner(**kwargs):
+            captured.append(kwargs)
+            return SDKResult(text="ok")
+
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_make_campaign(tmp_path),
+            sdk_runner=runner,
+            prompts_dir=prompts_dir,
+        )
+        for i in range(1, 3):
+            dispatcher.dispatch(
+                "planner", "design",
+                output_path=tmp_path / "runs" / f"iter-{i}" / "design_log.md",
+                iteration=i,
+            )
+
+        # Same system_prompt across both calls — the property the cache
+        # relies on.
+        assert captured[0]["system_prompt"] == captured[1]["system_prompt"]
+
+
 # ─── Error result path ──────────────────────────────────────────────────────
 
 class TestSDKDispatchErrorResult:
