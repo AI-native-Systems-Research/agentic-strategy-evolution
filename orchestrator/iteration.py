@@ -237,8 +237,14 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
 
 def _generate_gate_summary(
     dispatcher, iter_dir: Path, iteration: int, gate_type: str,
+    *, campaign: dict | None = None,
 ) -> Path | None:
-    """Generate a gate summary file. Returns the path, or None on failure."""
+    """Generate a gate summary file. Returns the path, or None on failure.
+
+    When ``campaign`` is provided and contains a non-empty ``channels`` list,
+    also fires off a per-channel notification (#130) with the rendered
+    summary. Channel failures are logged at warning and never block the gate.
+    """
     summary_path = iter_dir / f"gate_summary_{gate_type}.json"
     try:
         dispatcher.dispatch(
@@ -247,12 +253,32 @@ def _generate_gate_summary(
             iteration=iteration,
             perspective=gate_type,
         )
-        return summary_path
     except (RuntimeError, FileNotFoundError, OSError) as exc:
         logger = logging.getLogger(__name__)
         logger.warning("Gate summary generation failed: %s", exc)
         print(f"  (Gate summary skipped: {exc})")
         return None
+
+    # Channel notification (#130 Phase A): outbound only; the campaign still
+    # blocks on terminal input for the actual decision.
+    if campaign:
+        channels = campaign.get("channels")
+        if channels:
+            try:
+                from orchestrator.channels import notify_gate
+                summary = json.loads(summary_path.read_text())
+                results = notify_gate(
+                    channels, summary=summary, gate_type=gate_type,
+                    iter_dir=iter_dir,
+                )
+                ok = sum(1 for r in results if r.get("ok"))
+                if ok:
+                    print(f"  (notified {ok}/{len(results)} channel(s))")
+            except (json.JSONDecodeError, OSError, RuntimeError) as exc:
+                logger = logging.getLogger(__name__)
+                logger.warning("Channel notification failed: %s", exc)
+
+    return summary_path
 
 
 def run_iteration(
@@ -377,7 +403,7 @@ def run_iteration(
         print(f"\n{'='*60}")
         print(f"  HUMAN DESIGN GATE")
         print(f"{'='*60}")
-        summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "design")
+        summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "design", campaign=campaign)
         decision, reason = gate.prompt(
             "Review the hypothesis bundle. Approve?",
             summary_path=str(summary_path) if summary_path else None,
@@ -477,7 +503,7 @@ def run_iteration(
         print(f"\n{'='*60}")
         print(f"  HUMAN FINDINGS GATE")
         print(f"{'='*60}")
-        summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "findings")
+        summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "findings", campaign=campaign)
         decision, reason = gate.prompt(
             "Review the findings. Approve?",
             summary_path=str(summary_path) if summary_path else None,
