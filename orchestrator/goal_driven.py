@@ -131,3 +131,45 @@ def build_goal_driven_session_prompt(
 
     text = "\n".join(sections)
     return text.replace("{iter}", str(iteration))
+
+
+# ─── Phase B: dispatcher wire-up ────────────────────────────────────────────
+
+
+def run_goal_driven_iteration(
+    *,
+    dispatcher,
+    campaign: dict,
+    iteration: int,
+    work_dir: Path,
+    timeout_hours: int = _DEFAULT_GOAL_DRIVEN_TIMEOUT_HOURS,
+) -> Path:
+    """Mode A — drive iteration N entirely inside a single SDK session.
+
+    Bypasses the engine.py phase machine. The agent receives the
+    goal-driven prompt (with its embedded ``/goal`` directive) and
+    drives DESIGN → EXECUTE_ANALYZE → DONE itself. The orchestrator
+    persists the conversation transcript as ``design_log.md``; the
+    artifacts (problem.md, bundle.yaml, findings.json, etc.) are
+    written by the agent's own tool calls inside the session.
+
+    Args:
+      dispatcher: any object exposing ``_call_claude(prompt) -> str``.
+        ``SDKDispatcher`` is the canonical caller; tests inject a fake.
+      campaign: parsed campaign config.
+      iteration: iteration number to drive.
+      work_dir: campaign work-dir.
+      timeout_hours: bound on the goal predicate's OR clause.
+
+    Returns:
+      Path to the conversation log on disk.
+    """
+    iter_dir = Path(work_dir) / "runs" / f"iter-{iteration}"
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    prompt = build_goal_driven_session_prompt(
+        campaign, iteration=iteration, timeout_hours=timeout_hours,
+    )
+    transcript = dispatcher._call_claude(prompt)
+    log_path = iter_dir / "design_log.md"
+    log_path.write_text(transcript)
+    return log_path

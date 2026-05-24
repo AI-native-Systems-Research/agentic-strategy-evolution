@@ -88,3 +88,50 @@ class TestGoalDrivenSessionPrompt:
     def test_goal_directive_appears_in_prompt(self):
         out = build_goal_driven_session_prompt(_campaign(), iteration=1)
         assert "/goal" in out
+
+
+# ─── Phase B: end-to-end goal-driven iteration runner ──────────────────────
+
+
+class _FakeDispatcher:
+    def __init__(self):
+        self.prompts: list[str] = []
+
+    def _call_claude(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return "design log content from the agent"
+
+
+class TestRunGoalDrivenIteration:
+    """Phase B contract: runner takes a campaign + dispatcher, dispatches
+    the goal-driven prompt, and persists the transcript as design_log.md.
+    The agent produces artifacts via tool calls inside the session; the
+    orchestrator only persists the conversation log."""
+
+    def test_dispatches_goal_prompt_and_writes_log(self, tmp_path):
+        from orchestrator.goal_driven import run_goal_driven_iteration
+
+        dispatcher = _FakeDispatcher()
+        log_path = run_goal_driven_iteration(
+            dispatcher=dispatcher, campaign=_campaign(), iteration=2,
+            work_dir=tmp_path,
+        )
+
+        assert len(dispatcher.prompts) == 1
+        prompt = dispatcher.prompts[0]
+        assert "/goal" in prompt
+        assert "iter-2" in prompt
+
+        assert log_path == tmp_path / "runs" / "iter-2" / "design_log.md"
+        assert log_path.read_text() == "design log content from the agent"
+
+    def test_creates_iter_dir_if_missing(self, tmp_path):
+        from orchestrator.goal_driven import run_goal_driven_iteration
+
+        run_goal_driven_iteration(
+            dispatcher=_FakeDispatcher(), campaign=_campaign(),
+            iteration=5, work_dir=tmp_path,
+        )
+
+        assert (tmp_path / "runs" / "iter-5").is_dir()
+        assert (tmp_path / "runs" / "iter-5" / "design_log.md").exists()
