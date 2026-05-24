@@ -53,9 +53,14 @@ class LLMDispatcher:
         self._validate_campaign(campaign)
         self.campaign = campaign
         self.model = model
+        # PromptLoader prefers <template>_thin.md when CLAUDE.md exists
+        # at work_dir/CLAUDE.md (#131 Phase B): the thin variants carry
+        # only per-iteration context and reference CLAUDE.md for the
+        # methodology, dropping ~400 lines per call when warm.
         self.loader = PromptLoader(
             prompts_dir
-            or Path(__file__).parent.parent / "prompts" / "methodology"
+            or Path(__file__).parent.parent / "prompts" / "methodology",
+            claude_md_at=Path(work_dir) / "CLAUDE.md",
         )
         if completion_fn:
             self._completion = completion_fn
