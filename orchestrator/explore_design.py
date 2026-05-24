@@ -159,6 +159,57 @@ def run_explore_stage(
     return ExploreStageResult(reports=reports)
 
 
+def make_sdk_explore_runner(
+    *,
+    sdk_runner: Callable,
+    cwd: Path | None = None,
+    model: str = "claude-haiku-4-5",
+    max_turns: int = 8,
+) -> ExploreRunner:
+    """Build an ExploreRunner backed by an SDK subagent (#132 Phase B).
+
+    Each scope spawns a read-only subagent (``subagent_type="Explore"``)
+    so the orchestrator gets parallel mapping without a giant Opus
+    session doing both walking and synthesis. Per the no-live-LLM
+    project principle (CLAUDE.md), this factory takes an injected
+    ``sdk_runner`` — production wiring constructs the real Anthropic
+    SDK runner; tests inject a recording fake.
+
+    Defaults model to Haiku because read-only mapping is cheap and
+    benefits from speed over depth; deep synthesis happens in Stage B
+    (the single Opus call), not in Stage A.
+    """
+    def _run(scope: str, prompt: str, campaign: dict) -> ExploreReport:
+        try:
+            result = sdk_runner(
+                prompt=prompt,
+                model=model,
+                cwd=cwd,
+                max_turns=max_turns,
+                system_prompt=None,
+                settings_path=None,
+                event_log_path=None,
+                subagent_type="Explore",
+            )
+        except TypeError:
+            # Older runners without subagent_type — fall back to the
+            # base signature so the factory stays compatible across
+            # SDK API evolution.
+            result = sdk_runner(
+                prompt=prompt, model=model, cwd=cwd, max_turns=max_turns,
+            )
+
+        return ExploreReport(
+            scope=scope,
+            text=getattr(result, "text", "") or "",
+            duration_ms=int(getattr(result, "duration_ms", 0) or 0),
+            input_tokens=int(getattr(result, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(result, "output_tokens", 0) or 0),
+        )
+
+    return _run
+
+
 def build_synthesis_prompt(
     stage_a: ExploreStageResult,
     *,

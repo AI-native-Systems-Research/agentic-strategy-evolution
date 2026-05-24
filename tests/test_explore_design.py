@@ -147,3 +147,83 @@ class TestBuildSynthesisPrompt:
             iter_dir=tmp_path / "runs" / "iter-1",
         )
         assert "What drives saturation?" in out
+
+
+# ─── Phase B: SDK explore runner factory ───────────────────────────────────
+
+
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass
+class _LocalSDKResult:
+    """Local stand-in for SDKResult; the real one is duck-compatible."""
+    text: str = ""
+    duration_ms: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class TestMakeSdkExploreRunner:
+    """The factory wraps an injected sdk_runner so each Stage A scope
+    spawns a read-only Explore subagent. Tests assert what the runner
+    sends to the SDK and how it maps the response back to ExploreReport.
+    No live SDK call happens (no-live-LLM policy, see CLAUDE.md)."""
+
+    def test_dispatches_each_scope_with_explore_subagent_type(self):
+        from orchestrator.explore_design import make_sdk_explore_runner
+
+        sdk_calls: list[dict] = []
+
+        def sdk_runner(**kwargs):
+            sdk_calls.append(kwargs)
+            return _LocalSDKResult(
+                text="report", duration_ms=80,
+                input_tokens=300, output_tokens=120,
+            )
+
+        explore_runner = make_sdk_explore_runner(
+            sdk_runner=sdk_runner, cwd=None, model="claude-haiku-4-5",
+            max_turns=8,
+        )
+        result = run_explore_stage(_campaign(), runner=explore_runner)
+
+        assert len(sdk_calls) == len(DEFAULT_EXPLORE_SCOPES)
+        # Every call passes subagent_type=Explore — the harness signal
+        # for read-only mapping.
+        assert all(c.get("subagent_type") == "Explore" for c in sdk_calls)
+        assert all(r.text and r.input_tokens == 300 for r in result.reports)
+        assert result.total_input_tokens == 300 * len(DEFAULT_EXPLORE_SCOPES)
+
+    def test_falls_back_when_sdk_runner_lacks_subagent_kwarg(self):
+        """Forward/backward compatibility: older sdk_runners without
+        subagent_type still work; the factory drops the kwarg on
+        TypeError and retries with the base signature."""
+        from orchestrator.explore_design import make_sdk_explore_runner
+
+        seen: list[dict] = []
+
+        def old_signature_runner(*, prompt, model, cwd, max_turns):
+            seen.append({"prompt": prompt, "max_turns": max_turns})
+            return _LocalSDKResult(text="ok")
+
+        explore_runner = make_sdk_explore_runner(sdk_runner=old_signature_runner)
+        run_explore_stage(_campaign(), scopes=["metrics"], runner=explore_runner)
+
+        assert len(seen) == 1
+        assert seen[0]["prompt"]
+
+    def test_uses_haiku_by_default(self):
+        """Read-only mapping should be cheap — default model is Haiku."""
+        from orchestrator.explore_design import make_sdk_explore_runner
+
+        models: list[str] = []
+
+        def sdk_runner(**kwargs):
+            models.append(kwargs.get("model", ""))
+            return _LocalSDKResult()
+
+        explore_runner = make_sdk_explore_runner(sdk_runner=sdk_runner)
+        run_explore_stage(_campaign(), scopes=["metrics"], runner=explore_runner)
+
+        assert models[0].lower().startswith("claude-haiku")
