@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Stop hook for the Nous executor session (issue #129).
+
+Runs after every Claude Code agent turn. Returns:
+    exit 0 → allow the agent to stop (its work is done).
+    exit 2 → block stopping; the structured reason on stderr is fed back
+             into the agent's conversation so it can react.
+
+A "stop is allowed" decision needs two pieces of evidence on disk:
+    1. ``$NOUS_ITER_DIR/principle_updates.json`` exists.
+    2. ``nous validate execution --dir $NOUS_ITER_DIR`` returns ``status: pass``.
+
+Both are deterministic — no LLM judgment, no agent self-assessment. The
+hook pairs with the ``/goal``-driven loop (#124) but is preferred wherever
+the success criterion is a schema check, because it's cheaper and more
+reliable than a Haiku evaluator.
+
+Configured per-campaign in ``.claude/settings.json`` (see #135). The
+orchestrator sets ``NOUS_ITER_DIR`` before launching the executor session.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+# When invoked as a Claude Code hook, the script's directory may not be
+# on PYTHONPATH. Add the repo root so `orchestrator.validate` imports.
+_HERE = Path(__file__).resolve().parent
+_REPO_ROOT = _HERE.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from orchestrator.validate import validate_execution  # noqa: E402
+
+
+_OK = 0
+_BLOCK = 2
+
+
+def main() -> int:
+    iter_dir_str = os.environ.get("NOUS_ITER_DIR")
+    if not iter_dir_str:
+        print(
+            "NOUS_ITER_DIR is not set. The orchestrator should export this "
+            "variable before launching the executor session.",
+            file=sys.stderr,
+        )
+        return _BLOCK
+
+    iter_dir = Path(iter_dir_str)
+    if not iter_dir.is_dir():
+        print(
+            f"iter_dir does not exist: {iter_dir}. NOUS_ITER_DIR is "
+            f"misconfigured or the executor was launched before init.",
+            file=sys.stderr,
+        )
+        return _BLOCK
+
+    principles = iter_dir / "principle_updates.json"
+    if not principles.exists():
+        print(
+            f"principle_updates.json is missing from {iter_dir}. "
+            f"Write the file (a JSON list, possibly empty: []) before stopping.",
+            file=sys.stderr,
+        )
+        return _BLOCK
+
+    result = validate_execution(iter_dir)
+    if result.get("status") != "pass":
+        errors = result.get("errors", [])
+        print(
+            f"validation failed for {iter_dir} ({len(errors)} error(s)). "
+            f"Fix these before stopping:",
+            file=sys.stderr,
+        )
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return _BLOCK
+
+    return _OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

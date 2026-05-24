@@ -124,6 +124,17 @@ dispatcher.dispatch(
 
 Both dispatchers share the same interface — `CLIDispatcher` extends `LLMDispatcher`.
 
+### Stop Hook (`bin/nous-execute-stop`)
+
+Claude Code Stop hooks fire after every agent turn and decide whether the agent is allowed to terminate. `bin/nous-execute-stop` is Nous's deterministic completion check: the executor is allowed to stop only when both conditions hold on disk, no LLM judgment involved:
+
+1. `principle_updates.json` exists in the iteration directory.
+2. `nous validate execution --dir $NOUS_ITER_DIR` returns `status: pass`.
+
+If either fails, the hook exits with code 2 and writes a structured reason to stderr; Claude Code feeds that reason back into the agent's conversation so it can fix the artifact and try again. Wire-up lives in the per-campaign `.claude/settings.json` (see #135) — the orchestrator exports `NOUS_ITER_DIR` before launching the executor session.
+
+This is preferred over a probabilistic Haiku evaluator anywhere the success criterion is a schema check: cheaper, faster, and immune to evaluator drift.
+
 ## CLI Dispatch
 
 `CLIDispatcher` invokes `claude -p` for both agent roles.
