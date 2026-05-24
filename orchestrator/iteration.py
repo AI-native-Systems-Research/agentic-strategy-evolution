@@ -193,7 +193,17 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     If repo_path is provided, the campaign directory is created inside
     the target repo at .nous/<run_id>/. Otherwise falls back to creating
     <run_id>/ in the current directory.
+
+    Also writes a per-campaign ``.claude/settings.json`` permission policy
+    (issue #135) so dispatchers can pass ``--settings <path>`` instead of
+    ``--dangerously-skip-permissions``.
     """
+    from orchestrator.settings_template import (
+        render_campaign_settings,
+        settings_path_for,
+        write_campaign_settings,
+    )
+
     if repo_path:
         work_dir = Path(repo_path) / ".nous" / run_id
     else:
@@ -206,6 +216,19 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     state = json.loads((work_dir / "state.json").read_text())
     state["run_id"] = run_id
     atomic_write(work_dir / "state.json", json.dumps(state, indent=2) + "\n")
+
+    # Per-campaign permission policy. Idempotent: don't overwrite a settings
+    # file the user has hand-edited.
+    settings_path = settings_path_for(work_dir)
+    if not settings_path.exists():
+        stop_hook = Path(__file__).resolve().parent.parent / "bin" / "nous-execute-stop"
+        settings = render_campaign_settings(
+            work_dir=work_dir,
+            repo_path=Path(repo_path) if repo_path else None,
+            stop_hook_path=stop_hook if stop_hook.exists() else None,
+        )
+        write_campaign_settings(settings_path, settings)
+
     return work_dir
 
 
