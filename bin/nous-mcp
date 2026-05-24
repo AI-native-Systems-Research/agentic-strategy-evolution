@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""nous-mcp: stdio MCP server exposing Nous campaigns (#126 Phase B).
+
+Wraps the pure functions in ``orchestrator.campaign_index`` as MCP
+resources and tools so any Claude Code session — terminal, IDE, web —
+can ``@``-reference a campaign or call ``nous.search_principles(...)``
+without bash plumbing.
+
+Protocol: JSON-RPC 2.0 over stdio (line-delimited JSON, one request /
+response per line). Compatible with Claude Code's MCP transport when
+registered in ``~/.claude.json`` under ``mcpServers``:
+
+    {
+      "mcpServers": {
+        "nous": {
+          "command": "python",
+          "args": ["-u", "/path/to/repo/bin/nous-mcp"],
+          "env": {"NOUS_SEARCH_ROOT": "/path/to/parent/of/.nous/"}
+        }
+      }
+    }
+
+The server is stateless: campaigns live on disk; every request re-walks
+``$NOUS_SEARCH_ROOT`` (or the path passed in the request).
+
+Methods:
+  initialize / shutdown          -- MCP handshake
+  resources/list                 -- nous://campaigns and per-campaign URIs
+  resources/read                 -- read a specific resource
+  tools/list                     -- list_campaigns / search_principles /
+                                    get_arm_results / compare_iterations
+  tools/call                     -- invoke a tool by name with arguments
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+_REPO_ROOT = _HERE.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from orchestrator.campaign_index import (  # noqa: E402
+    compare_iterations,
+    get_arm_results,
+    list_campaigns,
+    search_principles,
+)
+
+
+_SERVER_INFO = {
+    "name": "nous-mcp",
+    "version": "0.2.0",
+    "description": "Read-only access to Nous campaigns on disk.",
+}
+
+_CAPABILITIES = {
+    "resources": {"list": True, "read": True},
+    "tools": {"list": True, "call": True},
+}
+
+
+_TOOLS = [
+    {
+        "name": "nous.list_campaigns",
+        "description": (
+            "List all Nous campaigns under the search root. "
+            "Optional filters: query (substring on run_id), status (phase), repo."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "search_root": {"type": "string"},
+                "query": {"type": "string"},
+                "status": {"type": "string"},
+                "repo": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "nous.search_principles",
+        "description": (
+            "Search principles across all campaigns by substring. "
+            "Hits include the source campaign run_id and path."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "search_root": {"type": "string"},
+                "text": {"type": "string"},
+                "only_active": {"type": "boolean"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "nous.get_arm_results",
+        "description": (
+            "Aggregate per-seed result files for one arm of one iteration."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "campaign_root": {"type": "string"},
+                "iteration": {"type": "integer"},
+                "arm": {"type": "string"},
+            },
+            "required": ["campaign_root", "iteration", "arm"],
+        },
+    },
+    {
+        "name": "nous.compare_iterations",
+        "description": (
+            "Deterministic diff between two iterations of one campaign — "
+            "arm-status changes and added principles."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "campaign_root": {"type": "string"},
+                "iter_a": {"type": "integer"},
+                "iter_b": {"type": "integer"},
+            },
+            "required": ["campaign_root", "iter_a", "iter_b"],
+        },
+    },
+]
+
+
+def _default_search_root() -> str:
+    return os.environ.get("NOUS_SEARCH_ROOT", str(Path.cwd()))
+
+
+def _resource_list(search_root: str) -> list[dict]:
+    """Build the MCP resources/list payload from disk state."""
+    out: list[dict] = [{
+        "uri": "nous://campaigns",
+        "name": "All campaigns",
+        "description": "Index of every Nous campaign under the search root.",
+        "mimeType": "application/json",
+    }]
+    for campaign in list_campaigns(Path(search_root)):
+        run_id = campaign["run_id"]
+        out.append({
+            "uri": f"nous://campaigns/{run_id}/state",
+            "name": f"{run_id} — state",
+            "description": f"Phase + iteration of campaign {run_id}.",
+            "mimeType": "application/json",
+        })
+        out.append({
+            "uri": f"nous://campaigns/{run_id}/principles",
+            "name": f"{run_id} — principles",
+            "description": f"Active principles accumulated in {run_id}.",
+            "mimeType": "application/json",
+        })
+    return out
+
+
+def _read_resource(uri: str, search_root: str) -> dict:
+    """Resolve a nous:// URI to its JSON contents."""
+    if uri == "nous://campaigns":
+        return {"campaigns": list_campaigns(Path(search_root))}
+
+    if not uri.startswith("nous://campaigns/"):
+        raise ValueError(f"unknown URI scheme: {uri!r}")
+    parts = uri[len("nous://campaigns/"):].split("/")
+    if len(parts) < 2:
+        raise ValueError(f"malformed campaign URI: {uri!r}")
+    run_id, leaf = parts[0], "/".join(parts[1:])
+
+    # Find campaign root by run_id under search_root.
+    matching = [c for c in list_campaigns(Path(search_root)) if c["run_id"] == run_id]
+    if not matching:
+        raise ValueError(f"unknown campaign: {run_id!r}")
+    root = Path(matching[0]["path"])
+
+    if leaf == "state":
+        return json.loads((root / "state.json").read_text())
+    if leaf == "principles":
+        return json.loads((root / "principles.json").read_text())
+    if leaf.startswith("iter/") and leaf.endswith("/findings"):
+        n = int(leaf.split("/")[1])
+        return json.loads((root / "runs" / f"iter-{n}" / "findings.json").read_text())
+    raise ValueError(f"unsupported leaf: {leaf!r}")
+
+
+def _call_tool(name: str, args: dict) -> dict:
+    """Dispatch a tools/call request to campaign_index."""
+    if name == "nous.list_campaigns":
+        return {
+            "campaigns": list_campaigns(
+                Path(args.get("search_root", _default_search_root())),
+                query=args.get("query"),
+                status=args.get("status"),
+                repo=args.get("repo"),
+            ),
+        }
+    if name == "nous.search_principles":
+        return {
+            "hits": search_principles(
+                Path(args.get("search_root", _default_search_root())),
+                args["text"],
+                only_active=args.get("only_active", True),
+            ),
+        }
+    if name == "nous.get_arm_results":
+        return get_arm_results(
+            Path(args["campaign_root"]),
+            int(args["iteration"]),
+            args["arm"],
+        )
+    if name == "nous.compare_iterations":
+        return compare_iterations(
+            Path(args["campaign_root"]),
+            int(args["iter_a"]),
+            int(args["iter_b"]),
+        )
+    raise ValueError(f"unknown tool: {name!r}")
+
+
+def handle_request(request: dict, *, search_root: str | None = None) -> dict:
+    """Process one JSON-RPC request and return the response dict.
+
+    Pure function — testable without stdio. The main loop calls this
+    for each line and writes the result back.
+    """
+    rid = request.get("id")
+    method = request.get("method", "")
+    params = request.get("params") or {}
+    root = search_root or _default_search_root()
+
+    try:
+        if method == "initialize":
+            result: dict = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": _CAPABILITIES,
+                "serverInfo": _SERVER_INFO,
+            }
+        elif method == "shutdown":
+            result = {}
+        elif method == "resources/list":
+            result = {"resources": _resource_list(root)}
+        elif method == "resources/read":
+            uri = params.get("uri", "")
+            payload = _read_resource(uri, root)
+            result = {
+                "contents": [{
+                    "uri": uri,
+                    "mimeType": "application/json",
+                    "text": json.dumps(payload, indent=2),
+                }],
+            }
+        elif method == "tools/list":
+            result = {"tools": _TOOLS}
+        elif method == "tools/call":
+            name = params.get("name", "")
+            args = params.get("arguments", {}) or {}
+            payload = _call_tool(name, args)
+            result = {
+                "content": [{
+                    "type": "text",
+                    "text": json.dumps(payload, indent=2),
+                }],
+            }
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "id": rid,
+                "error": {"code": -32601, "message": f"method not found: {method}"},
+            }
+    except Exception as exc:
+        return {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "error": {"code": -32603, "message": f"{type(exc).__name__}: {exc}"},
+        }
+
+    return {"jsonrpc": "2.0", "id": rid, "result": result}
+
+
+def main() -> int:
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError as exc:
+            sys.stdout.write(json.dumps({
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32700, "message": f"parse error: {exc}"},
+            }) + "\n")
+            sys.stdout.flush()
+            continue
+        response = handle_request(request)
+        sys.stdout.write(json.dumps(response) + "\n")
+        sys.stdout.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
