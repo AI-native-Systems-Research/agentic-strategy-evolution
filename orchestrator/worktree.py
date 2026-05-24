@@ -181,3 +181,101 @@ def _pid_alive_default(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+# ─── Phase B: harness-isolated subagent runner (#133 + #123 bridge) ────────
+
+
+def make_isolated_arm_runner(
+    *,
+    sdk_runner: Callable,
+    repo_path: Path,
+    iter_dir: Path,
+    model: str = "claude-sonnet-4-6",
+    max_turns: int = 25,
+    subagent_type: str = "claude",
+) -> Callable:
+    """Build an ArmRunner backed by a worktree-isolated SDK subagent.
+
+    The returned callable matches the ``ArmRunner`` Protocol from
+    :mod:`orchestrator.parallel_arms` — takes one ``ArmUnit`` and returns
+    one ``ArmUnitResult``. Per the no-live-LLM policy, this function does
+    not call the SDK directly: it uses the injected ``sdk_runner`` from
+    :mod:`orchestrator.sdk_dispatch`, so tests pass a recording fake.
+
+    Each subagent is dispatched with ``isolation="worktree"`` and
+    ``subagent_type`` set so the harness creates a fresh worktree,
+    runs the unit's planned command inside it, and tears the worktree
+    down on exit. The post-run patch (``git diff`` inside the worktree)
+    is captured by the subagent and written to
+    ``iter_dir/patches/<arm>.patch`` — matching the existing convention.
+
+    This is the harness-managed replacement for the manual lifecycle
+    in ``create_experiment_worktree`` / ``remove_experiment_worktree``;
+    once #123 wires this runner into the parallel-arm path, the manual
+    code becomes vestigial.
+    """
+    repo_path = Path(repo_path)
+    iter_dir = Path(iter_dir)
+
+    def _run(unit):
+        # Imported lazily so the factory itself works on branches where
+        # parallel_arms hasn't landed yet (it stacks on this PR).
+        from orchestrator.parallel_arms import ArmUnitResult
+        results_dir = iter_dir / unit.relative_results_dir
+        results_dir.mkdir(parents=True, exist_ok=True)
+        patches_dir = iter_dir / "patches"
+        patches_dir.mkdir(parents=True, exist_ok=True)
+        patch_path = patches_dir / f"{unit.arm_id}.patch"
+
+        prompt = (
+            f"# Arm: {unit.arm_id} (seed {unit.seed})\n\n"
+            f"You are a subagent running one experiment unit in an isolated\n"
+            f"git worktree. **Do not modify files outside this worktree.**\n\n"
+            f"## Command\n```\n{unit.command}\n```\n\n"
+            f"## Results destination\n"
+            f"Write all output files to: `{results_dir}`\n\n"
+            f"## Patch capture\n"
+            f"Before exiting, run `git diff` in this worktree and write the\n"
+            f"output to `{patch_path}`. If there are no changes, create an\n"
+            f"empty file at that path.\n"
+        )
+
+        try:
+            result = sdk_runner(
+                prompt=prompt,
+                model=model,
+                cwd=repo_path,
+                max_turns=max_turns,
+                system_prompt=None,
+                settings_path=None,
+                event_log_path=None,
+                isolation="worktree",
+                subagent_type=subagent_type,
+            )
+        except TypeError:
+            # Older runners don't accept isolation/subagent_type kwargs;
+            # fall back to the basic call signature.
+            result = sdk_runner(
+                prompt=prompt, model=model, cwd=repo_path, max_turns=max_turns,
+            )
+
+        if getattr(result, "is_error", False):
+            return ArmUnitResult(
+                unit=unit, status="failed",
+                duration_ms=int(getattr(result, "duration_ms", 0) or 0),
+                error=str(getattr(result, "error_message", "") or "sdk reported error"),
+            )
+
+        output_files = sorted(
+            str(p.relative_to(iter_dir))
+            for p in results_dir.rglob("*") if p.is_file()
+        )
+        return ArmUnitResult(
+            unit=unit,
+            status="complete",
+            duration_ms=int(getattr(result, "duration_ms", 0) or 0),
+            output_files=output_files,
+        )
+
+    return _run

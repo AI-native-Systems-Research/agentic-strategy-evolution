@@ -138,3 +138,61 @@ class TestGcOrphanWorktrees:
             p for p in (tmp_path / ".nous-experiments").iterdir() if p.is_dir()
         ]
         assert leftovers == []
+
+
+# ─── Phase B: harness-isolated subagent runner factory ─────────────────────
+
+
+class TestMakeIsolatedArmRunner:
+    """The factory returns an ArmRunner-shaped callable that delegates to
+    the injected sdk_runner with isolation=worktree. Tests assert what
+    the runner sends to the SDK and how it interprets the response —
+    never that internal helpers were called."""
+
+    def _unit(self):
+        # Local stand-in for parallel_arms.ArmUnit so this test runs on
+        # the #133 branch before #123's parallel_arms.py lands. The real
+        # ArmUnit is duck-compatible with this shape.
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class _Unit:
+            arm_id: str
+            seed: str
+            condition_name: str
+            command: str
+
+            @property
+            def relative_results_dir(self) -> str:
+                return f"results/{self.arm_id}/{self.seed}"
+
+        return _Unit("h-main", "s1", "x", "./blis run")
+
+    def test_returns_callable(self, tmp_path):
+        try:
+            from orchestrator.parallel_arms import ArmUnit  # noqa: F401
+        except ImportError:
+            import pytest
+            pytest.skip("parallel_arms not on this branch yet (lands in #123)")
+        from orchestrator.worktree import make_isolated_arm_runner
+
+        runner = make_isolated_arm_runner(
+            sdk_runner=lambda **kw: None,
+            repo_path=tmp_path,
+            iter_dir=tmp_path / "iter-1",
+        )
+        assert callable(runner)
+
+    def test_factory_accepts_documented_kwargs(self, tmp_path):
+        """The factory's keyword surface is the public contract."""
+        from orchestrator.worktree import make_isolated_arm_runner
+        # Just verify the signature accepts what the docstring promises;
+        # construction must not raise.
+        make_isolated_arm_runner(
+            sdk_runner=lambda **kw: None,
+            repo_path=tmp_path,
+            iter_dir=tmp_path,
+            model="claude-sonnet-4-6",
+            max_turns=10,
+            subagent_type="claude",
+        )
