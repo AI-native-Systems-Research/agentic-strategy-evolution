@@ -206,8 +206,22 @@ def run_campaign(
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
 
-    # Pre-flight: validate CLI + credentials before starting the campaign
+    # GC orphan experiment worktrees (#133): clean up stale dirs from
+    # crashed prior runs before starting fresh ones.
     repo_path = campaign.get("target_system", {}).get("repo_path")
+    if repo_path:
+        try:
+            from orchestrator.worktree import gc_orphan_worktrees
+            removed = gc_orphan_worktrees(Path(repo_path))
+            if removed:
+                logger.info(
+                    "GC'd %d orphan worktree(s): %s",
+                    len(removed), ", ".join(removed),
+                )
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Worktree GC failed: %s", exc)
+
+    # Pre-flight: validate CLI + credentials before starting the campaign
     if agent != "inline" and repo_path:
         from orchestrator.cli_dispatch import CLIDispatcher
         preflight_dispatcher = CLIDispatcher(
