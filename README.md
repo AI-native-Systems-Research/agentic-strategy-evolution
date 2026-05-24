@@ -80,15 +80,23 @@ If you're using Anthropic directly via a LiteLLM proxy, point both vars at the p
 ### 1. Install Nous
 
 ```bash
-pip install "git+https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git"
+pip install "git+https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git@reflective"
 ```
+
+`reflective` is the active integration branch — that's where new work lands first. `main` lags slightly behind. To pin to a release, replace `@reflective` with a tag (`@v0.2.0`).
 
 For development (editable install with test dependencies):
 
 ```bash
-git clone https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git
+git clone -b reflective https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git
 cd agentic-strategy-evolution
 pip install -e ".[dev]"
+```
+
+For the SDK-based dispatcher (`--agent sdk`, see `docs/architecture.md`), also install the optional `[sdk]` extra:
+
+```bash
+pip install -e ".[dev,sdk]"
 ```
 
 ### 2. Configure models
