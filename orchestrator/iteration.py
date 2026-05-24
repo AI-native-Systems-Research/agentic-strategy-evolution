@@ -281,9 +281,15 @@ def run_iteration(
         cli_dispatcher = inline_dispatcher
         llm_dispatcher = inline_dispatcher
     else:
-        # API mode: CLIDispatcher for code-access roles only (when repo_path is set)
+        # API or SDK mode: code-access dispatcher only when repo_path is set.
+        # SDK uses claude-agent-sdk; api uses the claude -p subprocess (CLIDispatcher).
+        if agent == "sdk":
+            from orchestrator.sdk_dispatch import SDKDispatcher
+            code_dispatcher_cls = SDKDispatcher
+        else:
+            code_dispatcher_cls = CLIDispatcher
         cli_dispatcher = (
-            CLIDispatcher(
+            code_dispatcher_cls(
                 work_dir=work_dir, campaign=campaign,
                 model=_model_for("design"), timeout=timeout,
                 max_turns=_max_turns_for("design"),
@@ -493,7 +499,7 @@ def main() -> None:
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
                         help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
-    parser.add_argument("--agent", choices=["inline", "api"], default="api",
+    parser.add_argument("--agent", choices=["inline", "api", "sdk"], default="api",
                         help="Dispatch backend: 'inline' emits prompts to stdout for the "
                              "calling agent, 'api' uses the LLM API (default: api)")
     parser.add_argument("-v", "--verbose", action="store_true",

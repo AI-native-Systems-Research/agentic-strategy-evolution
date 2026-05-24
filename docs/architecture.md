@@ -110,7 +110,8 @@ Both agents write artifacts directly to the campaign directory (`iter_dir`) and 
 **Implementations:**
 
 - `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
-- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Agents write files directly to `iter_dir`. Supports `override_cwd()` context manager for pointing the executor at a git worktree.
+- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Agents write files directly to `iter_dir`. Supports `override_cwd()` context manager for pointing the executor at a git worktree. Selected via `--agent api`.
+- `SDKDispatcher` (`sdk_dispatch.py`) calls the Claude Agent SDK (`claude-agent-sdk`) instead of spawning a subprocess. Same artifact and metrics contract as `CLIDispatcher`; gains native streaming, programmatic prompt caching, and message-level retry. Selected via `--agent sdk`. Requires the optional `sdk` install extra (`pip install -e ".[sdk]"`). Inherits parse / validate / retry-with-feedback machinery from `CLIDispatcher` — only the transport changes.
 
 **Dispatch interface:**
 ```python
@@ -122,7 +123,7 @@ dispatcher.dispatch(
 )
 ```
 
-Both dispatchers share the same interface — `CLIDispatcher` extends `LLMDispatcher`.
+All three dispatchers share the same interface. `CLIDispatcher` extends `LLMDispatcher`; `SDKDispatcher` extends `CLIDispatcher` and overrides only `_call_claude` and `preflight_check`.
 
 ## CLI Dispatch
 

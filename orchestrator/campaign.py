@@ -206,15 +206,24 @@ def run_campaign(
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
 
-    # Pre-flight: validate CLI + credentials before starting the campaign
+    # Pre-flight: validate CLI + credentials before starting the campaign.
+    # SDK mode pre-flights via claude-agent-sdk import; API mode via claude CLI.
     repo_path = campaign.get("target_system", {}).get("repo_path")
     if agent != "inline" and repo_path:
-        from orchestrator.cli_dispatch import CLIDispatcher
-        preflight_dispatcher = CLIDispatcher(
-            work_dir=work_dir, campaign=campaign,
-            model=_resolve_model(campaign, "design", model),
-            max_retries=max_cli_retries,
-        )
+        if agent == "sdk":
+            from orchestrator.sdk_dispatch import SDKDispatcher
+            preflight_dispatcher = SDKDispatcher(
+                work_dir=work_dir, campaign=campaign,
+                model=_resolve_model(campaign, "design", model),
+                max_retries=max_cli_retries,
+            )
+        else:
+            from orchestrator.cli_dispatch import CLIDispatcher
+            preflight_dispatcher = CLIDispatcher(
+                work_dir=work_dir, campaign=campaign,
+                model=_resolve_model(campaign, "design", model),
+                max_retries=max_cli_retries,
+            )
         preflight_dispatcher.preflight_check()
 
     start_iter = _resume_completed_campaign(work_dir, max_iterations)
@@ -353,7 +362,7 @@ def main() -> None:
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
                         help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
-    parser.add_argument("--agent", choices=["inline", "api"], default="api",
+    parser.add_argument("--agent", choices=["inline", "api", "sdk"], default="api",
                         help="Dispatch backend: 'inline' emits prompts to stdout for the "
                              "calling agent (no subprocess, no API key), "
                              "'api' uses the LLM API (default: api)")
