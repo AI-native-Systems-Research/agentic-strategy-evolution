@@ -197,3 +197,84 @@ class TestMarkdownCard:
         )
         text = json.loads(poster.calls[0]["body_text"])["text"]
         assert "Findings approved by validator." in text
+
+
+# ─── Phase B: reply parsing + wait-for-decision ────────────────────────────
+
+
+class TestParseReply:
+
+    def test_recognizes_approve_tokens(self):
+        from orchestrator.channels import parse_reply
+        for text in ("approve", "Approved", "LGTM", "ok let's go", "yes please"):
+            assert parse_reply(text) == "approve", text
+
+    def test_recognizes_reject_tokens(self):
+        from orchestrator.channels import parse_reply
+        for text in ("reject", "no", "Rejected — fix h-main", "redesign"):
+            assert parse_reply(text) == "reject", text
+
+    def test_recognizes_abort_tokens(self):
+        from orchestrator.channels import parse_reply
+        for text in ("abort", "STOP", "cancel this"):
+            assert parse_reply(text) == "abort", text
+
+    def test_unrecognized_reply_returns_none(self):
+        from orchestrator.channels import parse_reply
+        assert parse_reply("hmm not sure") is None
+        assert parse_reply("") is None
+        assert parse_reply(None) is None  # type: ignore[arg-type]
+
+
+class TestWaitForReply:
+
+    def test_returns_decision_on_first_recognized_reply(self):
+        from orchestrator.channels import wait_for_reply
+
+        replies = iter(["", "still thinking", "approve"])
+
+        def provider():
+            try:
+                return next(replies)
+            except StopIteration:
+                return None
+
+        ticks = iter([0.0, 1.0, 2.0, 3.0, 4.0])
+
+        decision = wait_for_reply(
+            provider, timeout_seconds=10,
+            sleeper=lambda _: None,
+            clock=lambda: next(ticks),
+        )
+        assert decision == "approve"
+
+    def test_timeout_returns_none(self):
+        from orchestrator.channels import wait_for_reply
+
+        ticks = iter([0.0, 5.0, 10.0, 15.0])
+
+        decision = wait_for_reply(
+            lambda: None, timeout_seconds=10,
+            sleeper=lambda _: None,
+            clock=lambda: next(ticks),
+        )
+        assert decision is None
+
+    def test_unrecognized_replies_keep_polling(self):
+        from orchestrator.channels import wait_for_reply
+
+        replies = iter(["hmm", "thinking", "weird message", "abort"])
+        ticks = iter([0.0] * 20)
+
+        def provider():
+            try:
+                return next(replies)
+            except StopIteration:
+                return None
+
+        decision = wait_for_reply(
+            provider, timeout_seconds=100,
+            sleeper=lambda _: None,
+            clock=lambda: next(ticks),
+        )
+        assert decision == "abort"

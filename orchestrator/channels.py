@@ -149,3 +149,81 @@ def notify_gate(
             result["error"] = str(exc)
         results.append(result)
     return results
+
+
+# ─── Phase B: reply parsing + wait-for-decision ────────────────────────────
+
+
+_REPLY_TOKENS: dict[str, str] = {
+    "approve": "approve",
+    "approved": "approve",
+    "lgtm": "approve",
+    "ok": "approve",
+    "yes": "approve",
+    "reject": "reject",
+    "rejected": "reject",
+    "no": "reject",
+    "redesign": "reject",
+    "abort": "abort",
+    "stop": "abort",
+    "cancel": "abort",
+}
+
+
+def parse_reply(text: str) -> str | None:
+    """Map a free-form channel reply to a gate Decision.
+
+    Returns ``"approve"`` / ``"reject"`` / ``"abort"`` when the message
+    starts with (or is exactly) a recognized token. Returns ``None``
+    when the reply doesn't decode to a decision — caller should keep
+    waiting or fall through to the timeout.
+
+    Recognized tokens (case-insensitive):
+      approve | approved | lgtm | ok | yes  -> approve
+      reject  | rejected | no   | redesign  -> reject
+      abort   | stop     | cancel           -> abort
+    """
+    if not isinstance(text, str):
+        return None
+    head = text.strip().lower().split()
+    if not head:
+        return None
+    return _REPLY_TOKENS.get(head[0])
+
+
+def wait_for_reply(
+    reply_provider: "Callable[[], str | None]",
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 1.0,
+    sleeper: "Callable[[float], None] | None" = None,
+    clock: "Callable[[], float] | None" = None,
+) -> str | None:
+    """Poll ``reply_provider`` until it returns a recognized decision or
+    timeout elapses.
+
+    Args:
+      reply_provider: callable returning the latest channel message text
+        (or ``None`` if no new reply yet).
+      timeout_seconds: max time to wait before returning ``None``.
+      poll_interval_seconds: how long to sleep between polls.
+      sleeper: dependency-injection seam for tests (default: time.sleep).
+      clock: dependency-injection seam for tests (default: time.time).
+
+    Returns:
+      ``"approve"`` / ``"reject"`` / ``"abort"`` on first recognized reply.
+      ``None`` on timeout — caller should fall back to ``--auto-approve``
+      semantics (the issue's documented timeout behavior).
+    """
+    import time as _time
+    sleep = sleeper if sleeper is not None else _time.sleep
+    now = clock if clock is not None else _time.time
+
+    deadline = now() + timeout_seconds
+    while now() < deadline:
+        text = reply_provider()
+        decision = parse_reply(text) if text is not None else None
+        if decision is not None:
+            return decision
+        sleep(poll_interval_seconds)
+    return None
