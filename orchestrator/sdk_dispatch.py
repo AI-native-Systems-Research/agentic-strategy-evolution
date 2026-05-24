@@ -41,6 +41,37 @@ class SDKTransientError(RuntimeError):
     """Runner raises this for retryable transport-level failures."""
 
 
+def _tee_event(event_log_path: Path | None, message: object, cls_name: str) -> None:
+    """Append one SDK event to executor_log.jsonl (#127 Phase B).
+
+    Best-effort: log-write failures don't break the agent. The TUI's
+    snapshot reader (orchestrator.status) already consumes this file.
+    """
+    if event_log_path is None:
+        return
+    import json as _json
+    record: dict = {
+        "type": cls_name,
+        "ts": time.time(),
+    }
+    # Surface fields the TUI cares about — tool name, content kind. We
+    # touch only attributes that exist via getattr so the format here
+    # is robust to SDK message-class evolution.
+    for field_name in ("tool_name", "tool_use_id", "content"):
+        val = getattr(message, field_name, None)
+        if val is not None and not callable(val):
+            try:
+                _json.dumps(val)  # serializability probe
+                record[field_name] = val
+            except (TypeError, ValueError):
+                record[field_name] = repr(val)[:200]
+    try:
+        with open(event_log_path, "a") as f:
+            f.write(_json.dumps(record) + "\n")
+    except OSError:
+        pass
+
+
 @dataclass
 class SDKResult:
     """One SDK call's outcome.
@@ -82,6 +113,7 @@ class SDKRunner(Protocol):
         max_turns: int,
         system_prompt: str | None = None,
         settings_path: Path | None = None,
+        event_log_path: Path | None = None,
     ) -> SDKResult:
         ...
 
@@ -101,6 +133,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
         max_turns: int,
         system_prompt: str | None = None,
         settings_path: Path | None = None,
+        event_log_path: Path | None = None,
     ) -> SDKResult:
         try:
             import anyio
@@ -128,8 +161,13 @@ def _default_sdk_runner_factory() -> SDKRunner:
             duration_ms = 0
             num_turns = 0
             t0 = time.time()
+            if event_log_path is not None:
+                Path(event_log_path).parent.mkdir(parents=True, exist_ok=True)
             async for message in query(prompt=prompt, options=options):
                 cls = type(message).__name__
+                # #127 Phase B: tee every SDK message as a JSONL event so
+                # `nous status --watch` can render live progress.
+                _tee_event(event_log_path, message, cls)
                 if cls == "AssistantMessage":
                     for block in getattr(message, "content", []):
                         if hasattr(block, "text"):
@@ -224,6 +262,31 @@ class SDKDispatcher(CLIDispatcher):
         self._sdk_runner = sdk_runner or _default_sdk_runner_factory()
         self._system_prompt = system_prompt
         self._settings_path = settings_path
+        # #127 Phase B: event log path is recomputed per-dispatch (it depends
+        # on the iteration), so we don't store it on the dispatcher.
+        self._event_log_path: Path | None = None
+
+    # ------------------------------------------------------------------
+    # Per-iteration event log (#127 Phase B)
+    # ------------------------------------------------------------------
+
+    def dispatch(  # type: ignore[override]
+        self, role: str, phase: str, *, output_path, iteration: int,
+        perspective=None, h_main_result="CONFIRMED",
+    ) -> None:
+        # Compute the executor_log.jsonl path for this iteration so the
+        # runner tees SDK events to a place the status reader can find.
+        self._event_log_path = (
+            self.work_dir / "runs" / f"iter-{iteration}" / "executor_log.jsonl"
+        )
+        try:
+            super().dispatch(
+                role, phase,
+                output_path=output_path, iteration=iteration,
+                perspective=perspective, h_main_result=h_main_result,
+            )
+        finally:
+            self._event_log_path = None
 
     # ------------------------------------------------------------------
     # Pre-flight
@@ -275,6 +338,7 @@ class SDKDispatcher(CLIDispatcher):
                     max_turns=turns,
                     system_prompt=self._system_prompt,
                     settings_path=self._settings_path,
+                    event_log_path=self._event_log_path,
                 )
             except SDKTransientError as exc:
                 failure_count += 1

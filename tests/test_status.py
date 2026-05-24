@@ -126,6 +126,74 @@ class TestReadSnapshot:
         assert snap.last_event["tool_name"] == "Edit"
 
 
+# ─── #127 Phase B: SDK event tee wiring ────────────────────────────────────
+
+class TestSDKEventTeeIntegration:
+    """SDKDispatcher passes event_log_path to its runner so the runner
+    can append every SDK message as a JSONL row that the status reader
+    picks up. Verify the wiring contract."""
+
+    def _campaign(self, repo_path: Path) -> dict:
+        return {
+            "research_question": "?",
+            "target_system": {
+                "name": "test", "description": "test",
+                "repo_path": str(repo_path),
+            },
+        }
+
+    def test_runner_receives_event_log_path_for_iteration(self, tmp_path):
+        from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult
+
+        captured: list[dict] = []
+
+        def runner(**kwargs):
+            captured.append(kwargs)
+            return SDKResult(text="ok")
+
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=self._campaign(tmp_path),
+            sdk_runner=runner,
+        )
+        dispatcher.dispatch(
+            "planner", "design",
+            output_path=tmp_path / "runs" / "iter-3" / "design_log.md",
+            iteration=3,
+        )
+
+        elp = captured[0]["event_log_path"]
+        assert elp == tmp_path / "runs" / "iter-3" / "executor_log.jsonl"
+
+    def test_each_iteration_gets_its_own_event_log(self, tmp_path):
+        from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult
+
+        captured: list[dict] = []
+
+        def runner(**kwargs):
+            captured.append(kwargs)
+            return SDKResult(text="ok")
+
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=self._campaign(tmp_path),
+            sdk_runner=runner,
+        )
+        dispatcher.dispatch(
+            "planner", "design",
+            output_path=tmp_path / "runs" / "iter-1" / "design_log.md",
+            iteration=1,
+        )
+        dispatcher.dispatch(
+            "planner", "design",
+            output_path=tmp_path / "runs" / "iter-2" / "design_log.md",
+            iteration=2,
+        )
+
+        assert "iter-1" in str(captured[0]["event_log_path"])
+        assert "iter-2" in str(captured[1]["event_log_path"])
+
+
 # ─── Formatters ─────────────────────────────────────────────────────────────
 
 class TestFormatOneLiner:
