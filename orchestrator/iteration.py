@@ -221,11 +221,14 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     # file the user has hand-edited.
     settings_path = settings_path_for(work_dir)
     if not settings_path.exists():
-        stop_hook = Path(__file__).resolve().parent.parent / "bin" / "nous-execute-stop"
+        bin_dir = Path(__file__).resolve().parent.parent / "bin"
+        stop_hook = bin_dir / "nous-execute-stop"
+        plan_enforcer = bin_dir / "nous-plan-enforcer"
         settings = render_campaign_settings(
             work_dir=work_dir,
             repo_path=Path(repo_path) if repo_path else None,
             stop_hook_path=stop_hook if stop_hook.exists() else None,
+            pre_tool_use_hook_path=plan_enforcer if plan_enforcer.exists() else None,
         )
         write_campaign_settings(settings_path, settings)
 
