@@ -206,9 +206,23 @@ def run_campaign(
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
 
+    # GC orphan experiment worktrees (#133): clean up stale dirs from
+    # crashed prior runs before starting fresh ones.
+    repo_path = campaign.get("target_system", {}).get("repo_path")
+    if repo_path:
+        try:
+            from orchestrator.worktree import gc_orphan_worktrees
+            removed = gc_orphan_worktrees(Path(repo_path))
+            if removed:
+                logger.info(
+                    "GC'd %d orphan worktree(s): %s",
+                    len(removed), ", ".join(removed),
+                )
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Worktree GC failed: %s", exc)
+
     # Pre-flight: validate CLI + credentials before starting the campaign.
     # SDK mode pre-flights via claude-agent-sdk import; API mode via claude CLI.
-    repo_path = campaign.get("target_system", {}).get("repo_path")
     if agent != "inline" and repo_path:
         if agent == "sdk":
             from orchestrator.sdk_dispatch import SDKDispatcher
