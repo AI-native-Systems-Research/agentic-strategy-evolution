@@ -74,6 +74,24 @@ Beyond tests, Nous itself must be frugal with tokens:
 5. Stack PRs when one logical change builds on another rather than waiting
    for merge — see `docs/plans/CHECKPOINT.md` for the pattern.
 
+## Meta-findings emit at campaign end (issue #155)
+
+Every campaign's terminal transition writes `meta_findings.json` at the
+campaign work-dir. Three streams:
+
+1. `campaign_design_lessons` — how to structure future campaigns better.
+2. `target_system_asks` — what the target repo could improve.
+3. `nous_asks` — what Nous itself could improve.
+
+The emitter (`orchestrator.meta_findings.emit_meta_findings`) is **pure
+Python** — zero LLM tokens. Heuristics over `ledger.json`,
+`principles.json`, per-iteration `findings.json`, `retry_log.jsonl`,
+and `llm_metrics.jsonl` produce structured entries with concrete
+citations (iter-N, file path, tool name, error string, numeric
+measurement). The validator floor (`validate_evidence`) rejects
+aspirational platitudes regardless of source. See `docs/data-model.md`
+for the schema.
+
 ## See also
 
 - `docs/contributing/workflow.md` — full workflow doc.

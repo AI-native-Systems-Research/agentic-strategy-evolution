@@ -3,6 +3,7 @@
 Usage:
     python -m orchestrator.validate design --dir runs/iter-1/
     python -m orchestrator.validate execution --dir runs/iter-1/
+    python -m orchestrator.validate meta-findings --dir <work_dir>/
 """
 import argparse
 import json
@@ -212,24 +213,72 @@ def validate_execution(iter_dir: Path) -> dict:
     return {"status": "pass"}
 
 
+def validate_meta_findings(work_dir: Path) -> dict:
+    """Check meta_findings.json conforms to schema and citation floor.
+
+    The citation floor (``orchestrator.meta_findings.evidence_is_concrete``)
+    rejects entries whose ``evidence`` is a vague platitude. Schema does
+    minLength + enum; the floor catches anything that passes minLength
+    but is still aspirational.
+    """
+    work_dir = Path(work_dir)
+    errors: list[str] = []
+
+    target = work_dir / "meta_findings.json"
+    if not target.exists():
+        return {"status": "fail", "errors": [f"{target.name} not found at {work_dir}"]}
+
+    try:
+        payload = json.loads(target.read_text())
+    except json.JSONDecodeError as exc:
+        return {"status": "fail", "errors": [f"meta_findings.json is not valid JSON: {exc}"]}
+
+    try:
+        schema = _load_json_schema("meta_findings.schema.json")
+        jsonschema.validate(payload, schema)
+    except jsonschema.ValidationError as exc:
+        errors.append(f"meta_findings.json schema error: {exc.message}")
+
+    # Citation floor — applied to every evidence string in every stream.
+    from orchestrator.meta_findings import validate_evidence
+
+    for stream_name in ("campaign_design_lessons", "target_system_asks", "nous_asks"):
+        items = payload.get(stream_name) or []
+        if not isinstance(items, list):
+            continue
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            evidence = item.get("evidence", "")
+            err = validate_evidence(evidence)
+            if err:
+                errors.append(f"{stream_name}[{i}]: {err}")
+
+    if errors:
+        return {"status": "fail", "errors": errors}
+    return {"status": "pass"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Validate Nous artifacts for a given phase.",
     )
     parser.add_argument(
-        "phase", choices=["design", "execution"],
+        "phase", choices=["design", "execution", "meta-findings"],
         help="Which phase to validate",
     )
     parser.add_argument(
         "--dir", required=True, type=Path,
-        help="Path to the iteration directory (e.g., runs/iter-1/)",
+        help="Path to the iteration directory (or work_dir for meta-findings)",
     )
     args = parser.parse_args()
 
     if args.phase == "design":
         result = validate_design(args.dir)
-    else:
+    elif args.phase == "execution":
         result = validate_execution(args.dir)
+    else:
+        result = validate_meta_findings(args.dir)
 
     print(json.dumps(result, indent=2))
     sys.exit(0 if result["status"] == "pass" else 1)

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/meta_findings.schema.json",
+  "title": "Campaign Meta-Findings",
+  "description": "Three streams of lessons emitted at campaign DONE: how to design future campaigns better, what the target system should improve to support Nous, what Nous itself should improve. Each entry must cite a concrete moment from the campaign so the file is triagable rather than aspirational.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "campaign_design_lessons",
+    "target_system_asks",
+    "nous_asks"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1" },
+    "generated_at": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "iterations_completed": { "type": "integer", "minimum": 0 },
+    "campaign_design_lessons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/design_lesson" }
+    },
+    "target_system_asks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/system_ask" }
+    },
+    "nous_asks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/nous_ask" }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional free text — used to explain when a stream is intentionally empty (no surprises observed)."
+    }
+  },
+  "$defs": {
+    "design_lesson": {
+      "type": "object",
+      "required": ["lesson", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "lesson": { "type": "string", "minLength": 12 },
+        "evidence": { "type": "string", "minLength": 8 }
+      }
+    },
+    "system_ask": {
+      "type": "object",
+      "required": ["ask", "evidence", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "ask": { "type": "string", "minLength": 12 },
+        "evidence": { "type": "string", "minLength": 8 },
+        "kind": {
+          "type": "string",
+          "enum": ["instrumentation", "reproducibility", "controllability", "documentation", "other"]
+        }
+      }
+    },
+    "nous_ask": {
+      "type": "object",
+      "required": ["ask", "evidence", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "ask": { "type": "string", "minLength": 12 },
+        "evidence": { "type": "string", "minLength": 8 },
+        "kind": {
+          "type": "string",
+          "enum": ["token_budget", "observability", "dispatch", "api", "gates", "schemas", "other"]
+        }
+      }
+    }
+  }
+}
