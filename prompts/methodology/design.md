@@ -274,6 +274,28 @@ search; the engine continues toward that goal regardless. The
 HUMAN_FINDINGS_GATE is the only path to DONE, so stopping is always
 a deliberate human decision, not a silent drop on REFUTE.
 
+## External theory grounding (issue #88)
+
+If `campaign.yaml` declares `theory_references`, read them as
+authoritative external grounding for your ground truths. Each entry
+names a theorem (e.g. Little's Law, M/G/K stability bound, PASTA) and
+optionally describes *how* to apply it.
+
+When designing an arm's `ground_truth` block (issue #85):
+  * Prefer a ground truth derived from a `theory_references` entry
+    over one invented from the detector itself. The theorem is
+    independent of the detector; "completion fraction below
+    threshold" usually isn't.
+  * Cite the specific reference name in `ground_truth.independence_argument`
+    so the human gate can verify the chain of reasoning.
+
+If no `theory_references` are declared and you're testing a
+quantitative detector, ask whether you can defend any external
+ground truth at all — if not, your experiment is at risk of being
+tautological (the `composite-saturation-detection` failure mode from
+#84). Surface this concern in `problem.md` rather than silently
+inventing a self-referential check.
+
 ## Empirical content vs. mathematical identity (issue #86)
 
 When extracting principles from findings, label each one with

@@ -124,3 +124,38 @@ properties:
       Opt-in named preset for the objective block (issue #168). Mutually
       exclusive with `objective`. Adding new presets requires a schema
       change so users can never silently inherit weights they didn't see.
+
+  theory_references:
+    type: array
+    description: >
+      Optional list of external, established theory the campaign uses
+      to ground its ground truths (issue #88). Each entry names a
+      theorem / law / identity and (optionally) describes how the
+      designer should use it. Pairs with the ground_truth block on
+      bundle.yaml (issue #85): theory_references say "here's the
+      independent thermometer to use"; ground_truth.independence_argument
+      says "and here's why it can disagree with the detector."
+    items:
+      type: object
+      required: [name, statement]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: "Short name (e.g. 'Little's Law', 'M/G/K stability bound')."
+        statement:
+          type: string
+          minLength: 1
+          description: "Plain-English statement of the theorem."
+        independent_of_detector:
+          type: boolean
+          description: "True iff this theorem doesn't depend on the detector under test."
+        use_as:
+          type: string
+          enum: [ground_truth, sanity_check, calibration]
+          description: "How the designer should use this in experiments."
+        how:
+          type: string
+          minLength: 1
+          description: "Plain-English instructions for applying the theorem (e.g. 'Compute μ_analytical = K / E[S] and compare against measured throughput.')."
