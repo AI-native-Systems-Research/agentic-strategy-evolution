@@ -84,6 +84,39 @@ $defs:
         type: object
         description: "Optional domain-specific metadata for this arm."
 
+      # ─── Adaptive sweep (issue #165) ───────────────────────────────────
+      # Optional adaptive sub-arm sweep block. When present, the runner
+      # delegates to orchestrator.arm_sweep.run_sweep with an Optuna-
+      # backed sampler instead of iterating a fixed condition list.
+      # Use for 1-D scalar searches with monotone or unimodal expected
+      # response (boundary finding, threshold seeking, simple optimization).
+      sweep:
+        type: object
+        required: [param, low, high, budget]
+        additionalProperties: false
+        properties:
+          param:
+            type: string
+            minLength: 1
+            description: "Knob being swept."
+          low:
+            type: number
+            description: "Lower bound of the search domain (inclusive)."
+          high:
+            type: number
+            description: "Upper bound of the search domain (inclusive)."
+          budget:
+            type: integer
+            minimum: 1
+            description: "Maximum number of trials the sampler may run."
+          direction:
+            type: string
+            enum: [minimize, maximize]
+            description: "Optimization direction. Default 'minimize'."
+          sampler_name:
+            type: string
+            description: "Sampler hint (e.g. 'tpe', 'gp'). Default 'tpe'. Informational."
+
       # ─── Seeds rationale (issue #163) ──────────────────────────────────
       # Optional power-analysis declaration. When present, the design
       # phase substitutes the computed N for the literal seed count and

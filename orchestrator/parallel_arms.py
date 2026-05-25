@@ -36,6 +36,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Callable
 
+from orchestrator.arm_sweep import SweepSpec
+
 
 @dataclass(frozen=True)
 class ArmUnit:
@@ -67,11 +69,17 @@ def partition_plan(plan: dict) -> list[ArmUnit]:
     Each (arm × condition) becomes one unit. Seed defaults to ``"seed-1"``
     when the condition doesn't carry an explicit seed list; multi-seed
     conditions fan out to one unit per seed.
+
+    Arms with a ``sweep`` block are excluded — they're partitioned via
+    ``extract_sweep_specs`` and run by ``orchestrator.arm_sweep.run_sweep``
+    instead of the fixed-condition runner. Issue #165.
     """
     units: list[ArmUnit] = []
     for arm in plan.get("arms", []) or []:
         if not isinstance(arm, dict):
             continue
+        if arm.get("sweep") is not None:
+            continue  # handled by extract_sweep_specs
         arm_id = str(arm.get("arm_id") or arm.get("type") or "?")
         for cond in arm.get("conditions", []) or []:
             if not isinstance(cond, dict):
@@ -196,3 +204,37 @@ def merge_unit_results(
 def failed_units(results: list[ArmUnitResult]) -> list[ArmUnit]:
     """Helper for the partial-retry path: which units need re-running?"""
     return [r.unit for r in results if r.status == "failed"]
+
+
+def extract_sweep_specs(plan: dict) -> list[tuple[str, SweepSpec]]:
+    """Pull adaptive-sweep specs out of an experiment_plan.yaml-shaped dict.
+
+    Returns a list of ``(arm_id, SweepSpec)`` pairs — one per arm that
+    declares a ``sweep`` block. Arms without ``sweep`` are skipped here
+    and instead become ``ArmUnit`` rows via ``partition_plan``. The two
+    functions cooperate: their union covers every arm in the plan, and
+    they never emit the same arm twice.
+
+    SweepSpec validation runs at construction time (see arm_sweep.py).
+    A ``sweep`` block with malformed numeric fields raises ValueError
+    here at extraction time — that's the cross-field check JSON Schema
+    can't express.
+    """
+    specs: list[tuple[str, SweepSpec]] = []
+    for arm in plan.get("arms", []) or []:
+        if not isinstance(arm, dict):
+            continue
+        sweep = arm.get("sweep")
+        if not isinstance(sweep, dict):
+            continue
+        arm_id = str(arm.get("arm_id") or arm.get("type") or "?")
+        spec = SweepSpec(
+            param=str(sweep["param"]),
+            low=float(sweep["low"]),
+            high=float(sweep["high"]),
+            budget=int(sweep["budget"]),
+            direction=str(sweep.get("direction", "minimize")),
+            sampler_name=str(sweep.get("sampler_name", "tpe")),
+        )
+        specs.append((arm_id, spec))
+    return specs

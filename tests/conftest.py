@@ -89,6 +89,24 @@ def block_live_llm_calls(monkeypatch):
     except ImportError:
         pass
 
+    # Block live Optuna trial execution (issue #165). Importing optuna
+    # is allowed; running Study.optimize() is not — it triggers per-trial
+    # function calls that the seam is meant to control. Inject a sampler=
+    # callable into orchestrator.arm_sweep.run_sweep() instead.
+    try:
+        import optuna  # type: ignore[import-not-found]
+
+        def _blocked_optimize(self, *args, **kwargs):
+            raise RuntimeError(
+                "Test invoked optuna Study.optimize — live trial execution "
+                "is forbidden in tests. Inject a sampler= callable into "
+                "orchestrator.arm_sweep.run_sweep(). See CLAUDE.md."
+            )
+
+        monkeypatch.setattr(optuna.study.Study, "optimize", _blocked_optimize)
+    except ImportError:
+        pass
+
 
 @pytest.fixture
 def schemas_dir():

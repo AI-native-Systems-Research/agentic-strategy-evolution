@@ -220,6 +220,36 @@ Skip the field when you don't have an effect-size estimate to defend.
 A literal seed count with a brief comment is honest; a power-analysis
 declaration with a guessed effect size is not.
 
+## Adaptive sweeps (issue #165)
+
+When an arm tests a 1-D scalar question — boundary finding, threshold
+seeking, simple optimization — declare a `sweep: {param, low, high,
+budget, direction}` block instead of hand-rolling a grid in
+`conditions`. The runner delegates to an adaptive sampler (Optuna TPE
+by default), which converges to the answer with much smaller budgets
+than evenly-spaced grids.
+
+Use it for:
+  * "find the rate where metric X crosses threshold T" (direction:
+    minimize the squared distance from T)
+  * "what's the lowest value of knob K at which the system still
+    meets SLO" (boundary search)
+  * "maximize metric Y over the allowed range of param P" (direction:
+    maximize)
+
+Don't use it for:
+  * fixed-grid sweeps the experiment is *meant* to enumerate (use
+    `conditions` with explicit values)
+  * dose-response shape testing (use `h-dose-response` arm — the
+    expected_shape declaration carries the scientific content)
+  * multi-dimensional searches (today's spec is 1-D; multi-D will land
+    later)
+
+Pick `budget` deliberately. Budget=12 with TPE is roughly the cost of
+a 12-point grid but with adaptive coverage; for unimodal surfaces TPE
+typically finds the optimum in 8-10 evals. Budget=5 is generally too
+small unless the objective is decisive.
+
 ## Constraints
 
 - Do NOT violate active principles.
