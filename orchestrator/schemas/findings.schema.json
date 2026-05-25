@@ -34,7 +34,7 @@
       "properties": {
         "arm_type": {
           "type": "string",
-          "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness", "h-dose-response"]
+          "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness", "h-dose-response", "h-tradeoff"]
         },
         "predicted": { "type": "string", "minLength": 1 },
         "observed": { "type": "string", "minLength": 1 },
@@ -74,6 +74,25 @@
             }
           },
           "description": "Observed (knob_value, metric_value) pairs for h-dose-response arms."
+        },
+        "primary_change_observed": {
+          "type": ["number", "null"],
+          "description": "Observed change in primary metric for h-tradeoff arms."
+        },
+        "secondary_change_observed": {
+          "type": ["number", "null"],
+          "description": "Observed change in secondary metric for h-tradeoff arms."
+        },
+        "primary_predicate_met": {
+          "type": ["boolean", "null"]
+        },
+        "secondary_predicate_met": {
+          "type": ["boolean", "null"]
+        },
+        "tradeoff_verdict": {
+          "type": ["string", "null"],
+          "enum": ["confirmed", "primary_failed", "cost_too_high", "both_failed", null],
+          "description": "Verdict for h-tradeoff arms; cost_too_high is the new failure mode this arm unlocks."
         }
       }
     }

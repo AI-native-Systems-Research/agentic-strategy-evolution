@@ -77,7 +77,7 @@
             "required": ["arm_type", "predicted", "observed", "status", "error_type", "diagnostic_note"],
             "additionalProperties": false,
             "properties": {
-              "arm_type": { "type": "string", "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness", "h-dose-response"] },
+              "arm_type": { "type": "string", "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness", "h-dose-response", "h-tradeoff"] },
               "predicted": { "type": "string", "minLength": 1 },
               "observed": { "type": "string", "minLength": 1 },
               "status": { "type": "string", "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED"] },
@@ -97,7 +97,12 @@
                     "metric": { "type": ["number", "null"] }
                   }
                 }
-              }
+              },
+              "primary_change_observed": { "type": ["number", "null"] },
+              "secondary_change_observed": { "type": ["number", "null"] },
+              "primary_predicate_met": { "type": ["boolean", "null"] },
+              "secondary_predicate_met": { "type": ["boolean", "null"] },
+              "tradeoff_verdict": { "type": ["string", "null"], "enum": ["confirmed", "primary_failed", "cost_too_high", "both_failed", null] }
             }
           }
         },

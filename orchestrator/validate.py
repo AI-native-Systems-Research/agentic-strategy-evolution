@@ -93,6 +93,23 @@ def _validate_typed_arm_fields(bundle: dict) -> list[str]:
                         f"arms[{i}] (h-dose-response) has duplicate values; "
                         f"distinct knob settings required."
                     )
+        elif arm_type == "h-tradeoff":
+            for field in (
+                "metric", "secondary_metric", "secondary_budget",
+                "secondary_direction",
+            ):
+                if field not in arm:
+                    errors.append(
+                        f"arms[{i}] (h-tradeoff) missing required field {field!r}"
+                    )
+            if (
+                arm.get("metric") is not None
+                and arm.get("metric") == arm.get("secondary_metric")
+            ):
+                errors.append(
+                    f"arms[{i}] (h-tradeoff): secondary_metric must differ "
+                    f"from primary metric (both = {arm.get('metric')!r})."
+                )
     return errors
 
 

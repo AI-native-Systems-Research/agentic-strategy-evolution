@@ -50,6 +50,7 @@ $defs:
           - h-control-negative
           - h-robustness
           - h-dose-response
+          - h-tradeoff
       component:
         type: string
         description: "Component name, used for h-ablation arms."
@@ -100,6 +101,30 @@ $defs:
           - saturating
           - flat
         description: "Predicted shape of metric vs. knob value."
+
+      # ─── H-tradeoff fields (issue #158) ────────────────────────────────
+      # Required when type == h-tradeoff (cross-checked in
+      # orchestrator.validate). The arm declares an intervention's
+      # improvement on `metric` and the maximum acceptable degradation
+      # of `secondary_metric` (in the named "worse" direction).
+      secondary_metric:
+        type: string
+        minLength: 1
+        description: "Cost metric paired with `metric` for h-tradeoff arms; must differ from `metric`."
+      secondary_budget:
+        type: number
+        minimum: 0
+        description: "Maximum acceptable degradation in secondary_metric, in the worse direction. h-tradeoff only."
+      secondary_direction:
+        type: string
+        enum: [increase, decrease]
+        description: "Which way is 'worse' for secondary_metric (e.g., increase for memory, decrease for accuracy)."
+      primary_change:
+        type: number
+        description: "Predicted directional change in `metric` (signed). h-tradeoff only."
+      intervention_ref:
+        type: string
+        description: "Optional reference to the intervention (other arm id or description)."
 
       code_changes:
         type: array
