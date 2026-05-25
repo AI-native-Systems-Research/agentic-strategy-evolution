@@ -77,6 +77,31 @@ $ grep -n "evict" src/cache.go
 
 Every command and file format in your design must come from something you observed — not assumed.
 
+## Repo Knowledge Cache — read this BEFORE rediscovering (issue #156)
+
+If `.nous/repo/` exists in the target repo, it contains a cache from a
+prior campaign:
+
+- `.nous/repo/exploration.md` — narrative tour of the codebase.
+- `.nous/repo/knobs.yaml` — discovered tunables (name, location, type, range).
+- `.nous/repo/metrics.yaml` — observable metrics and how to capture them.
+- `.nous/repo/build.yaml` — build/test/run commands and prerequisites.
+
+**Read those files first.** They are the cheapest way to learn the
+factual layer of the repo (paths, commands, knob locations) — much
+cheaper than a fresh Explore pass. Use them as a starting point.
+
+**Verify before trusting**: the cache may be stale. For each claim you
+plan to act on (a knob location, a build command, a metric source),
+do one targeted check (`Read`, `Bash --version`, `git log --oneline -1
+<file>`) to confirm the claim still holds at the current sha. If a
+claim has rotted, ignore it and re-discover that specific item.
+**Do NOT** re-walk the whole codebase if the cache exists — verify
+the bits you'll use, then proceed.
+
+The cache is advisory, never authoritative. Today's Explore work
+benefits next campaign's planner the same way.
+
 ## Instructions — Phase 1: Explore and Validate
 
 Before designing anything, ground yourself in the real system:

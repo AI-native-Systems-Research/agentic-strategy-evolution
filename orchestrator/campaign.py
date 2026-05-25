@@ -61,6 +61,43 @@ def _resolve_model(campaign: dict, phase_key: str, cli_model: str | None) -> str
     return cli_model or "aws/claude-sonnet-4-5"
 
 
+def _write_repo_cache(work_dir: Path, campaign: dict) -> None:
+    """Persist repo-level knowledge cache for the next campaign (issue #156).
+
+    Pure-Python: reads handoff.md + campaign.yaml and writes the cache
+    files. Skipped when there's no target_system.repo_path (no place
+    to put the cache). Best-effort — failures are logged, not fatal.
+    """
+    target = campaign.get("target_system", {}) if isinstance(campaign, dict) else {}
+    repo_path = target.get("repo_path")
+    if not repo_path:
+        return
+    try:
+        from orchestrator.repo_cache import (
+            build_cache_from_campaign,
+            write_repo_cache,
+        )
+        exploration, knobs, metrics, build = build_cache_from_campaign(
+            work_dir, campaign,
+        )
+        if not (exploration or knobs or metrics or build):
+            logger.info("No cache content extracted; skipping repo cache write.")
+            return
+        cache_dir = write_repo_cache(
+            Path(repo_path),
+            exploration=exploration,
+            knobs=knobs,
+            metrics=metrics,
+            build=build,
+        )
+        print(
+            f"  -> repo cache written to {cache_dir}  "
+            f"({len(knobs)} knob(s), {len(metrics)} metric(s))"
+        )
+    except Exception as exc:
+        logger.warning("Repo cache write failed: %s", exc)
+
+
 def _emit_meta_findings(work_dir: Path, campaign: dict) -> None:
     """Emit meta_findings.json at campaign end (issue #155).
 
@@ -320,6 +357,7 @@ def run_campaign(
             append_ledger_row(work_dir, i)
             print(f"\n  Campaign complete after {i} iteration(s).")
             _emit_meta_findings(work_dir, campaign)
+            _write_repo_cache(work_dir, campaign)
             _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
             _write_metrics_summary(work_dir)
             return
@@ -328,6 +366,7 @@ def run_campaign(
             print(f"\n  Campaign aborted at iteration {i}.")
             print("  Engine state preserved for potential resume.")
             _emit_meta_findings(work_dir, campaign)
+            _write_repo_cache(work_dir, campaign)
             _write_metrics_summary(work_dir)
             return
 
@@ -377,6 +416,7 @@ def run_campaign(
             engine.transition("DONE")
             print(f"\n  Campaign stopped after {i} iteration(s).")
             _emit_meta_findings(work_dir, campaign)
+            _write_repo_cache(work_dir, campaign)
             _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
             _write_metrics_summary(work_dir)
             return
@@ -389,6 +429,7 @@ def run_campaign(
 
     print(f"\n  Campaign reached max_iterations ({max_iterations}).")
     _emit_meta_findings(work_dir, campaign)
+    _write_repo_cache(work_dir, campaign)
     _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
     _write_metrics_summary(work_dir)
 

@@ -1,0 +1,71 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/repo_cache.schema.yaml"
+title: Repo Knowledge Cache
+description: >
+  Schemas for the four files that make up a Nous repo-level knowledge cache
+  at <target_repo>/.nous/repo/. Survives across campaigns to skip
+  rediscovery; verified against the current git sha before use.
+
+$defs:
+  knobs_file:
+    type: object
+    required: [schema_version, knobs]
+    additionalProperties: false
+    properties:
+      schema_version: { type: string, const: "1" }
+      knobs:
+        type: array
+        items:
+          type: object
+          required: [name]
+          additionalProperties: false
+          properties:
+            name: { type: string, minLength: 1 }
+            location:
+              type: string
+              description: "file:line or file path where the knob is exposed."
+            type:
+              type: string
+              description: "Free-form: int, float, enum, bool, string, etc."
+            default: {}
+            range:
+              type: array
+              minItems: 1
+              maxItems: 2
+            notes: { type: string }
+
+  metrics_file:
+    type: object
+    required: [schema_version, metrics]
+    additionalProperties: false
+    properties:
+      schema_version: { type: string, const: "1" }
+      metrics:
+        type: array
+        items:
+          type: object
+          required: [name]
+          additionalProperties: false
+          properties:
+            name: { type: string, minLength: 1 }
+            unit: { type: string }
+            capture: { type: string, description: "How to capture this metric." }
+            source: { type: string, description: "Where the metric is emitted." }
+            notes: { type: string }
+
+  build_file:
+    type: object
+    required: [schema_version]
+    additionalProperties: false
+    properties:
+      schema_version: { type: string, const: "1" }
+      build_command: { type: string }
+      test_command: { type: string }
+      run_command: { type: string }
+      prerequisites:
+        type: array
+        items: { type: string }
+      env_vars:
+        type: array
+        items: { type: string }
+      notes: { type: string }
