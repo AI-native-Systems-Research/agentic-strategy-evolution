@@ -83,9 +83,20 @@ class LLMDispatcher:
         self._current_phase: str = "unknown"
         dal = campaign.get("prompts", {}).get("domain_adapter_layer")
         if dal is not None:
+            # Issue #89: this field looks like the right place for domain
+            # context but is NOT YET IMPLEMENTED. Authors hit this trap
+            # silently — their carefully-prepared notes never reach the LLM.
+            # The warning is loud and points at the migration path: put
+            # the content in target_system.description (which IS substituted
+            # into agent prompts) and run `nous create-campaign` for guidance.
             logger.warning(
-                "domain_adapter_layer is set to %r but is not yet supported. "
-                "Only the methodology layer will be used.",
+                "⚠️  prompts.domain_adapter_layer is set to %r but is NOT YET "
+                "IMPLEMENTED (issue #89). The value will be IGNORED. The LLM "
+                "agents will not see any context from this file. To fix: "
+                "migrate that content into `target_system.description` "
+                "(which IS substituted into the agent's prompts), then set "
+                "domain_adapter_layer to null. The `nous create-campaign` "
+                "skill / CLI walks through the correct structure.",
                 dal,
             )
 

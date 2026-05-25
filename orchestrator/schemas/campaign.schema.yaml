@@ -74,7 +74,13 @@ properties:
         description: "Path to generic Nous methodology prompts."
       domain_adapter_layer:
         type: ["string", "null"]
-        description: "Path to domain-specific prompt overrides. Null if not yet generated."
+        description: >
+          ⚠️ NOT YET IMPLEMENTED (issue #89). Setting this field triggers a
+          warning and the value is ignored. Put domain-specific context
+          (data schema gotchas, exact paths, baselines, statistical
+          guardrails) in `target_system.description` instead — that field
+          IS substituted into the LLM's prompts. The `nous create-campaign`
+          skill walks authors through the correct structure.
 
   pre_work_script:
     type: string

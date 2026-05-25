@@ -317,6 +317,36 @@ def _cmd_replay(args):
             print("  Worktree cleaned up.")
 
 
+def _cmd_create_campaign(args):
+    """Scaffold a heavily-commented campaign.yaml (issue #89)."""
+    from orchestrator.create_campaign import scaffold_campaign
+
+    kwargs: dict = {"force": args.force}
+    if args.target_name:
+        kwargs["target_name"] = args.target_name
+    if args.target_description:
+        kwargs["target_description"] = args.target_description
+    if args.research_question:
+        kwargs["research_question"] = args.research_question
+    if args.run_id:
+        kwargs["run_id"] = args.run_id
+
+    try:
+        path = scaffold_campaign(args.to, **kwargs)
+    except FileExistsError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        print("Pass --force to overwrite.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Wrote {path}")
+    print()
+    print("Next steps:")
+    print(f"  1. Edit {path} — replace TODO markers, especially")
+    print(f"     target_system.description (that's the channel the LLM reads).")
+    print(f"  2. Skim the AUTHORING CHECKLIST near the top of the file.")
+    print(f"  3. Run: nous run {path}")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="nous")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -383,6 +413,40 @@ def main():
     p_replay.add_argument("target")
     p_replay.add_argument("--iter", required=True, type=int)
     p_replay.set_defaults(func=_cmd_replay)
+
+    # `create-campaign` (issue #89): scaffold a heavily-commented
+    # campaign.yaml that names the four agent-reachable fields and
+    # warns about the domain_adapter_layer trap.
+    p_create = subparsers.add_parser(
+        "create-campaign",
+        help="Scaffold a new campaign.yaml with inline guidance.",
+    )
+    p_create.add_argument(
+        "--to", required=True, type=Path,
+        help="Path to write the new campaign.yaml.",
+    )
+    p_create.add_argument(
+        "--target-name", default="TODO-SET-SYSTEM-NAME",
+        help="target_system.name in the scaffolded YAML.",
+    )
+    p_create.add_argument(
+        "--target-description", default=None,
+        help="target_system.description (the field the agent actually reads). "
+             "Use heredoc / file substitution for multi-line content.",
+    )
+    p_create.add_argument(
+        "--research-question", default=None,
+        help="Top-level research_question (one falsifiable sentence).",
+    )
+    p_create.add_argument(
+        "--run-id", default="TODO-SET-RUN-ID",
+        help="Working directory name for campaign output.",
+    )
+    p_create.add_argument(
+        "--force", action="store_true",
+        help="Overwrite if the target file already exists.",
+    )
+    p_create.set_defaults(func=_cmd_create_campaign)
 
     args = parser.parse_args()
     if not args.command:
