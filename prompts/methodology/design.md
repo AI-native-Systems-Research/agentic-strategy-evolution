@@ -274,6 +274,34 @@ search; the engine continues toward that goal regardless. The
 HUMAN_FINDINGS_GATE is the only path to DONE, so stopping is always
 a deliberate human decision, not a silent drop on REFUTE.
 
+## Empirical content vs. mathematical identity (issue #86)
+
+When extracting principles from findings, label each one with
+`empirical_content` (bool) and `derivation_type` (one of
+`empirical | algebraic | definitional`):
+
+  * `empirical_content: true`, `derivation_type: empirical` — the
+    experiments could have falsified this. Genuine discovery.
+    Example: *"Under bursty arrivals (CV=7), the detector misclassifies
+    33% of the time."*
+  * `empirical_content: false`, `derivation_type: algebraic` — the
+    statement follows from math. Example: *"CC_RD > 1.0 iff
+    completion_fraction < 1 - 1/√N"* — that's algebra, not data.
+  * `empirical_content: false`, `derivation_type: definitional` — the
+    statement restates a definition.
+
+**Decision rule:** before writing each principle, ask: *"If my
+experiments had returned different numbers, could this principle have
+been false?"*  If YES ⇒ empirical. If NO ⇒ algebraic or definitional.
+
+Why it matters: mathematical identities always hold across all
+experiments (obviously — they're math), so they look like the
+strongest principles. But they teach nothing about whether the
+system works. Marking them as `empirical_content: false` keeps the
+next iteration's designer from treating them as evidence of a
+working detector — see `composite-sensitivity-boundary` principle
+RP-9 for the failure mode this prevents.
+
 ## Constraints
 
 - Do NOT violate active principles.
