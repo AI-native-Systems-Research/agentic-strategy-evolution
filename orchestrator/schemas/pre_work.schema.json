@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/pre_work.schema.json",
+  "title": "Pre-Work Result",
+  "description": "Output of the PRE_WORK phase (issue #167). Cheap deterministic exploration of the target system that informs iter-1 DESIGN. All fields are optional — empty results are valid and indicate the default runner had nothing to surface.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "data_summary": {
+      "type": "object",
+      "description": "Summary stats over the target system's data: row counts, distinct values, per-column ranges. Shape is domain-specific."
+    },
+    "candidate_parameter_ranges": {
+      "type": "object",
+      "description": "Per-knob plausible ranges discovered by the runner. Maps knob name to a [low, high] pair or a list of discrete candidates."
+    },
+    "structural_groupings": {
+      "type": "array",
+      "description": "Optional candidate groupings of the data or the system (e.g. high-momentum vs. defensive symbols, fast-path vs. slow-path requests). The designer may use these to scope arms."
+    },
+    "baseline_metrics": {
+      "type": "object",
+      "description": "Baseline values for observable metrics computed without intervention. Used by composite scoring (issue #168) and the deployment recommendation (issue #170)."
+    },
+    "recommended_arms_for_iter1": {
+      "type": "array",
+      "description": "Plain-English suggestions for what iter-1 should test, derived from the data summary. Designer treats as hints, not constraints.",
+      "items": {
+        "oneOf": [
+          { "type": "string", "minLength": 1 },
+          { "type": "object" }
+        ]
+      }
+    }
+  }
+}

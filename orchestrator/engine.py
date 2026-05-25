@@ -21,6 +21,7 @@ class Phase(str, Enum):
     """All valid orchestrator phases."""
 
     INIT = "INIT"
+    PRE_WORK = "PRE_WORK"
     DESIGN = "DESIGN"
     HUMAN_DESIGN_GATE = "HUMAN_DESIGN_GATE"
     EXECUTE_ANALYZE = "EXECUTE_ANALYZE"
@@ -29,8 +30,14 @@ class Phase(str, Enum):
 
 
 # Valid transitions: from_state -> set of valid to_states (immutable)
+#
+# PRE_WORK (issue #167) is opt-in: campaigns may go INIT → PRE_WORK → DESIGN
+# OR INIT → DESIGN. Legacy campaigns without a pre_work_script keep the
+# direct path; new campaigns that want cheap pre-iter exploration go through
+# PRE_WORK.
 TRANSITIONS: MappingProxyType[str, frozenset[str]] = MappingProxyType({
-    "INIT":                frozenset({"DESIGN"}),
+    "INIT":                frozenset({"DESIGN", "PRE_WORK"}),
+    "PRE_WORK":            frozenset({"DESIGN"}),
     "DESIGN":              frozenset({"HUMAN_DESIGN_GATE"}),
     "HUMAN_DESIGN_GATE":   frozenset({"EXECUTE_ANALYZE", "DESIGN"}),
     "EXECUTE_ANALYZE":     frozenset({"HUMAN_FINDINGS_GATE"}),

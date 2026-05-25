@@ -49,9 +49,11 @@ SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 DEFAULTS_PATH = Path(__file__).resolve().parent / "defaults.yaml"
 _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-# Phase ordering for resume logic
+# Phase ordering for resume logic. PRE_WORK (issue #167) sits between
+# INIT and DESIGN — campaigns that opt into pre-work pass through it,
+# legacy campaigns skip it via the INIT → DESIGN transition.
 _PHASE_ORDER = [
-    "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
+    "INIT", "PRE_WORK", "DESIGN", "HUMAN_DESIGN_GATE",
     "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE",
     "DONE",
 ]

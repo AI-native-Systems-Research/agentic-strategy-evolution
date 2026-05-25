@@ -75,3 +75,13 @@ properties:
       domain_adapter_layer:
         type: ["string", "null"]
         description: "Path to domain-specific prompt overrides. Null if not yet generated."
+
+  pre_work_script:
+    type: string
+    minLength: 1
+    description: >
+      Optional path to a user-supplied pre-work script (issue #167). Run before
+      iter-1 DESIGN as a subprocess; the stdout JSON is parsed into a
+      pre_work.json artifact that the designer reads as additional context.
+      Pure deterministic exploration is the intent — fast, ~$0 LLM cost.
+      Path is relative to campaign.yaml.

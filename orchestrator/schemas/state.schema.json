@@ -10,10 +10,10 @@
     "phase": {
       "type": "string",
       "enum": [
-        "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
+        "INIT", "PRE_WORK", "DESIGN", "HUMAN_DESIGN_GATE",
         "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE", "DONE"
       ],
-      "description": "Current state machine phase."
+      "description": "Current state machine phase. PRE_WORK (issue #167) is an opt-in cheap-exploration phase between INIT and DESIGN."
     },
     "iteration": {
       "type": "integer",
