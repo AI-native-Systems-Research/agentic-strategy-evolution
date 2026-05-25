@@ -125,6 +125,22 @@ properties:
       exclusive with `objective`. Adding new presets requires a schema
       change so users can never silently inherit weights they didn't see.
 
+  warm_start:
+    type: object
+    required: [prior_run_id]
+    additionalProperties: false
+    description: >
+      Optional warm-start from a completed prior campaign on the same
+      target repo (issue #83). Copies principles.json + handoff.md
+      with drift detection; inherited principles are tagged
+      `confidence: inherited` (no drift) or `confidence: tentative`
+      (drift detected — designer must revalidate).
+    properties:
+      prior_run_id:
+        type: string
+        minLength: 1
+        description: "Run id of the prior campaign whose knowledge to inherit."
+
   theory_references:
     type: array
     description: >
