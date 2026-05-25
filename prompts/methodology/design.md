@@ -250,6 +250,30 @@ a 12-point grid but with adaptive coverage; for unimodal surfaces TPE
 typically finds the optimum in 8-10 evals. Budget=5 is generally too
 small unless the objective is decisive.
 
+## Refuted-mechanism constraints (issue #169)
+
+After every iteration with REFUTED arms, the orchestrator records a
+constraint principle with `category=meta` and a `statement` beginning
+"Refuted: family=...". These persist across iterations in
+`principles.json` — read them BEFORE proposing the next bundle.
+
+Treat each "Refuted: ..." constraint as a no-go zone:
+  * Do not re-propose the same family + arm-type combination unless
+    you have a concrete reason the regime has changed.
+  * The constraint's `applicability_bounds` carries the
+    iter-N + observed snippet that documents the failure. Cite it
+    in your problem.md when explaining why iter-{N+1} explores a
+    different mechanism.
+  * Constraints are honest signal that the *space is large* — a single
+    refutation eliminates one configuration, not the whole research
+    direction. Use the constraint to redirect search, not to give up.
+
+This pairs with the search-oriented stance (issue #166): a campaign's
+job is to find a deployable winner. A REFUTE is data that narrows
+search; the engine continues toward that goal regardless. The
+HUMAN_FINDINGS_GATE is the only path to DONE, so stopping is always
+a deliberate human decision, not a silent drop on REFUTE.
+
 ## Constraints
 
 - Do NOT violate active principles.
