@@ -23,6 +23,7 @@ class Phase(str, Enum):
     INIT = "INIT"
     PRE_WORK = "PRE_WORK"
     DESIGN = "DESIGN"
+    CRITIC = "CRITIC"
     HUMAN_DESIGN_GATE = "HUMAN_DESIGN_GATE"
     EXECUTE_ANALYZE = "EXECUTE_ANALYZE"
     HUMAN_FINDINGS_GATE = "HUMAN_FINDINGS_GATE"
@@ -35,10 +36,16 @@ class Phase(str, Enum):
 # OR INIT → DESIGN. Legacy campaigns without a pre_work_script keep the
 # direct path; new campaigns that want cheap pre-iter exploration go through
 # PRE_WORK.
+#
+# CRITIC (issue #87) is opt-in between DESIGN and HUMAN_DESIGN_GATE: campaigns
+# may go DESIGN → CRITIC → HUMAN_DESIGN_GATE OR DESIGN → HUMAN_DESIGN_GATE
+# (legacy). Adds a deterministic "can this experiment fail?" check that
+# composes with #85 (ground_truth), #86 (empirical_content), #88 (theory_references).
 TRANSITIONS: MappingProxyType[str, frozenset[str]] = MappingProxyType({
     "INIT":                frozenset({"DESIGN", "PRE_WORK"}),
     "PRE_WORK":            frozenset({"DESIGN"}),
-    "DESIGN":              frozenset({"HUMAN_DESIGN_GATE"}),
+    "DESIGN":              frozenset({"HUMAN_DESIGN_GATE", "CRITIC"}),
+    "CRITIC":              frozenset({"HUMAN_DESIGN_GATE"}),
     "HUMAN_DESIGN_GATE":   frozenset({"EXECUTE_ANALYZE", "DESIGN"}),
     "EXECUTE_ANALYZE":     frozenset({"HUMAN_FINDINGS_GATE"}),
     "HUMAN_FINDINGS_GATE": frozenset({"DONE", "EXECUTE_ANALYZE"}),
