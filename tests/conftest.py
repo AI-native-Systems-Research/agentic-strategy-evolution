@@ -70,6 +70,25 @@ def block_live_llm_calls(monkeypatch):
     except ImportError:
         pass
 
+    # Block live PyMC NUTS sampling (issue #164). Importing pymc is
+    # allowed; running pymc.sample() is not — it pulls in MCMC chains
+    # that take seconds-to-minutes per call and inject randomness into
+    # the test suite. The seam is principles_posterior.posterior(
+    # posterior_fn=...) — inject a deterministic fake.
+    try:
+        import pymc  # type: ignore[import-not-found]
+
+        def _blocked_sample(*args, **kwargs):
+            raise RuntimeError(
+                "Test invoked pymc.sample — live MCMC is forbidden in tests. "
+                "Inject a deterministic posterior_fn= into "
+                "orchestrator.principles_posterior.posterior(). See CLAUDE.md."
+            )
+
+        monkeypatch.setattr(pymc, "sample", _blocked_sample)
+    except ImportError:
+        pass
+
 
 @pytest.fixture
 def schemas_dir():
