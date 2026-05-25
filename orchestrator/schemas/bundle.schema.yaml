@@ -84,6 +84,34 @@ $defs:
         type: object
         description: "Optional domain-specific metadata for this arm."
 
+      # ─── Seeds rationale (issue #163) ──────────────────────────────────
+      # Optional power-analysis declaration. When present, the design
+      # phase substitutes the computed N for the literal seed count and
+      # records the calculation in handoff.md. See orchestrator.power.
+      seeds_rationale:
+        type: object
+        required: [effect_size]
+        additionalProperties: false
+        properties:
+          effect_size:
+            type: number
+            exclusiveMinimum: 0
+            description: "Magnitude to detect. Cohen's d for t; Cohen's h for proportions."
+          power:
+            type: number
+            exclusiveMinimum: 0
+            exclusiveMaximum: 1
+            description: "Detection probability if effect exists. Default 0.8."
+          alpha:
+            type: number
+            exclusiveMinimum: 0
+            exclusiveMaximum: 1
+            description: "Two-sided significance level. Default 0.05."
+          kind:
+            type: string
+            enum: [t, proportions]
+            description: "Test family. Default 't' (two-sample t-test)."
+
       # ─── H-dose-response fields (issue #157) ───────────────────────────
       # Required when type == h-dose-response (cross-checked in
       # orchestrator.validate). Schema keeps them optional to preserve

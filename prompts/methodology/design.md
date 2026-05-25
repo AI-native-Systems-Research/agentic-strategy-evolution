@@ -202,6 +202,24 @@ The design gate flags jumps of more than one tier across iterations.
 This is for visibility, not enforcement — but if you're escalating
 without a refutation to point at, the human will ask why.
 
+## Seeds rationale (issue #163)
+
+Each arm may declare an optional `seeds_rationale: {effect_size,
+power, alpha, kind}`. When present, the design phase calls
+`orchestrator.power.required_seeds(...)` to compute the per-arm seed
+count and substitutes it for the literal seed list.
+
+Use it when you can defend an effect-size estimate from prior
+iterations or the target system's documented variance. `effect_size`
+is Cohen's d for `kind: t` (default) — magnitude of the standardized
+mean difference you expect — or Cohen's h for `kind: proportions`.
+Defaults: `power=0.8`, `alpha=0.05`. Stricter alpha or higher power
+costs more seeds; small effects (d<0.3) cost dramatically more.
+
+Skip the field when you don't have an effect-size estimate to defend.
+A literal seed count with a brief comment is honest; a power-analysis
+declaration with a guessed effect size is not.
+
 ## Constraints
 
 - Do NOT violate active principles.
