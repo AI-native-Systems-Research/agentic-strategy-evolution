@@ -49,6 +49,7 @@ $defs:
           - h-super-additivity
           - h-control-negative
           - h-robustness
+          - h-dose-response
       component:
         type: string
         description: "Component name, used for h-ablation arms."
@@ -67,6 +68,39 @@ $defs:
       metadata:
         type: object
         description: "Optional domain-specific metadata for this arm."
+
+      # ─── H-dose-response fields (issue #157) ───────────────────────────
+      # Required when type == h-dose-response (cross-checked in
+      # orchestrator.validate). Schema keeps them optional to preserve
+      # additive-only backward compatibility for existing arm types.
+      knob:
+        type: string
+        minLength: 1
+        description: "Name of the knob being varied. h-dose-response only."
+      values:
+        type: array
+        minItems: 3
+        uniqueItems: true
+        items:
+          oneOf:
+            - { type: number }
+            - { type: string, minLength: 1 }
+        description: "Distinct knob settings to test. h-dose-response only; >= 3 values."
+      metric:
+        type: string
+        minLength: 1
+        description: "Observable metric whose response shape is being tested."
+      expected_shape:
+        type: string
+        enum:
+          - monotone_decreasing
+          - monotone_increasing
+          - u_shaped
+          - inverted_u
+          - saturating
+          - flat
+        description: "Predicted shape of metric vs. knob value."
+
       code_changes:
         type: array
         description: "Optional code change intents. Planner says what and why, not how."

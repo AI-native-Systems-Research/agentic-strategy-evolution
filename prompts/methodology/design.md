@@ -167,11 +167,12 @@ Now design a hypothesis bundle based on what you actually observed and verified:
    - `h-ablation`: Remove one component to test if it's necessary.
    - `h-robustness`: Test under varied conditions.
    - `h-super-additivity`: Test whether combined factors produce more than the sum of parts.
+   - `h-dose-response` *(issue #157)*: Vary a continuous knob across **>= 3 distinct values** and predict the **shape** of the metric response (`monotone_decreasing`, `monotone_increasing`, `u_shaped`, `inverted_u`, `saturating`, or `flat`). Use this when the natural question is "how should this knob be set" — not just "does this knob matter at value X". Required fields: `knob`, `values` (>= 3 distinct), `metric`, `expected_shape`.
 
    Include a brief note explaining which arms you chose and why.
 
 3. Each arm must have:
-   - `type`: One of h-main, h-ablation, h-super-additivity, h-control-negative, h-robustness.
+   - `type`: One of h-main, h-ablation, h-super-additivity, h-control-negative, h-robustness, h-dose-response.
    - `prediction`: A **directional**, falsifiable claim referencing observable metrics. State the expected direction and relative magnitude (e.g., "increasing X will decrease Y consistently across seeds"). Do NOT invent arbitrary numeric thresholds (e.g., ">10% improvement") unless the campaign.yaml specifies one. The hypothesis bundle's multi-seed design tests significance — your prediction tests direction and mechanism.
    - `mechanism`: A causal explanation grounded in the code you read.
    - `diagnostic`: What to investigate if the prediction is wrong.

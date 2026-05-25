@@ -55,6 +55,47 @@ def _check_unexpected_files(iter_dir: Path) -> list[str]:
     return errors
 
 
+def _validate_typed_arm_fields(bundle: dict) -> list[str]:
+    """Cross-field rules per arm type that JSON Schema can't easily express.
+
+    H-dose-response (issue #157) requires knob, values (>=3 distinct),
+    metric, and expected_shape. JSON Schema accepts these as optional
+    so existing arm types stay valid; this function enforces them
+    when the arm type asks for them.
+
+    H-tradeoff (issue #158) requires metric, secondary_metric, and
+    a tradeoff prediction with secondary_budget — see #158's
+    extension to this function.
+    """
+    errors: list[str] = []
+    arms = bundle.get("arms") or []
+    if not isinstance(arms, list):
+        return errors
+    for i, arm in enumerate(arms):
+        if not isinstance(arm, dict):
+            continue
+        arm_type = arm.get("type")
+        if arm_type == "h-dose-response":
+            for field in ("knob", "values", "metric", "expected_shape"):
+                if field not in arm:
+                    errors.append(
+                        f"arms[{i}] (h-dose-response) missing required field {field!r}"
+                    )
+            values = arm.get("values")
+            if isinstance(values, list):
+                if len(values) < 3:
+                    errors.append(
+                        f"arms[{i}] (h-dose-response) has < 3 values "
+                        f"({len(values)}); dose-response needs >= 3."
+                    )
+                if len(values) != len(set(map(repr, values))):
+                    errors.append(
+                        f"arms[{i}] (h-dose-response) has duplicate values; "
+                        f"distinct knob settings required."
+                    )
+    return errors
+
+
 def validate_design(iter_dir: Path) -> dict:
     """Check design artifacts exist and conform to schemas."""
     iter_dir = Path(iter_dir)
@@ -76,6 +117,7 @@ def validate_design(iter_dir: Path) -> dict:
             bundle = yaml.safe_load(bundle_path.read_text())
             schema = _load_yaml_schema("bundle.schema.yaml")
             jsonschema.validate(bundle, schema)
+            errors.extend(_validate_typed_arm_fields(bundle))
         except yaml.YAMLError as exc:
             errors.append(f"bundle.yaml is not valid YAML: {exc}")
         except jsonschema.ValidationError as exc:
