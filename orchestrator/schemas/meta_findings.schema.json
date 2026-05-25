@@ -8,7 +8,8 @@
     "schema_version",
     "campaign_design_lessons",
     "target_system_asks",
-    "nous_asks"
+    "nous_asks",
+    "deployment_recommendation"
   ],
   "additionalProperties": false,
   "properties": {
@@ -27,6 +28,9 @@
     "nous_asks": {
       "type": "array",
       "items": { "$ref": "#/$defs/nous_ask" }
+    },
+    "deployment_recommendation": {
+      "$ref": "#/$defs/deployment_recommendation"
     },
     "notes": {
       "type": "string",
@@ -66,6 +70,44 @@
         "kind": {
           "type": "string",
           "enum": ["token_budget", "observability", "dispatch", "api", "gates", "schemas", "other"]
+        }
+      }
+    },
+    "deployment_recommendation": {
+      "type": "object",
+      "description": "Shippable verdict for the campaign (issue #170). Always emitted, even when the verdict is fall_back_to_baseline.",
+      "required": ["verdict", "top_candidate_id", "score", "citations", "caveats"],
+      "additionalProperties": false,
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["deploy", "deploy_with_caveats", "fall_back_to_baseline"]
+        },
+        "top_candidate_id": {
+          "type": ["string", "null"],
+          "description": "candidate_id from best_found.json. Null when nothing was found to recommend."
+        },
+        "score": {
+          "type": ["number", "null"],
+          "description": "Composite score of the top candidate. Null when no candidate."
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["iteration", "arm_id", "evidence_snippet"],
+            "additionalProperties": false,
+            "properties": {
+              "iteration": { "type": "integer", "minimum": 0 },
+              "arm_id": { "type": "string", "minLength": 1 },
+              "evidence_snippet": { "type": "string", "minLength": 8 }
+            }
+          }
+        },
+        "caveats": {
+          "type": "array",
+          "description": "Non-empty for deploy_with_caveats verdicts. Each caveat must cite a concrete iter-N + arm marker (validator floor enforces; see meta_findings.validate_caveat).",
+          "items": { "type": "string", "minLength": 8 }
         }
       }
     }

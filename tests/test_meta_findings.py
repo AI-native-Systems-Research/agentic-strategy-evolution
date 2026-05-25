@@ -328,6 +328,11 @@ class TestValidatorRejectsVague:
             ],
             "target_system_asks": [],
             "nous_asks": [],
+            "deployment_recommendation": {
+                "verdict": "fall_back_to_baseline",
+                "top_candidate_id": None, "score": None,
+                "citations": [], "caveats": [],
+            },
         }
         (work_dir / "meta_findings.json").write_text(json.dumps(bad))
 
@@ -355,6 +360,11 @@ class TestValidatorRejectsVague:
             ],
             "target_system_asks": [],
             "nous_asks": [],
+            "deployment_recommendation": {
+                "verdict": "fall_back_to_baseline",
+                "top_candidate_id": None, "score": None,
+                "citations": [], "caveats": [],
+            },
         }
         (work_dir / "meta_findings.json").write_text(json.dumps(good))
 

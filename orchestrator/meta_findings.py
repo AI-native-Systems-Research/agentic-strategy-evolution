@@ -92,6 +92,28 @@ def validate_evidence(text: str) -> str | None:
     return None
 
 
+def validate_caveat(text: str) -> str | None:
+    """Return None if a deployment_recommendation caveat passes the
+    citation floor, else an error. Caveats follow the same rule as
+    evidence — vague aspirations rejected regardless of source.
+
+    Issue #170: every caveat in deployment_recommendation.caveats must
+    cite a concrete marker.
+    """
+    if not isinstance(text, str):
+        return f"caveat must be a string, got {type(text).__name__}"
+    if len(text) < 8:
+        return f"caveat too short ({len(text)} chars; need >= 8)"
+    if not evidence_is_concrete(text):
+        return (
+            "caveat is vague: must cite at least one concrete marker "
+            "(iter-N, file path, tool name, quoted error, arm id, or "
+            "a numeric measurement). Got: "
+            + (text[:80] + ("…" if len(text) > 80 else ""))
+        )
+    return None
+
+
 # ─── Artifact readers ────────────────────────────────────────────────────
 
 
@@ -378,6 +400,16 @@ def emit_meta_findings(
         "target_system_asks": _detect_target_system_asks(campaign, retries),
         "nous_asks": _detect_nous_asks(metrics, retries),
     }
+
+    # Deployment recommendation (issue #170): every campaign emits a
+    # shippable verdict, even when the verdict is "fall back to baseline".
+    # Imported lazily to avoid a top-level cycle (deployment_recommendation
+    # itself imports from composite_score, not from meta_findings).
+    from orchestrator.deployment_recommendation import (
+        make_deployment_recommendation,
+    )
+    rec = make_deployment_recommendation(work_dir, campaign=campaign)
+    payload["deployment_recommendation"] = rec.to_dict()
 
     if not (
         payload["campaign_design_lessons"]
