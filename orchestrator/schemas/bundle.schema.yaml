@@ -43,6 +43,36 @@ properties:
     type: string
     description: "Brief reason for the chosen tier given the iteration index and prior refutations."
 
+  ground_truth:
+    type: object
+    description: >
+      Optional declaration of how the experiment will judge correctness
+      (issue #85). Forces the designer to make the detector / ground-truth
+      independence explicit so the validator can reject tautological
+      experiments — see #84.
+    required: [definition, shares_computation_with_detector]
+    additionalProperties: false
+    properties:
+      definition:
+        type: string
+        minLength: 1
+        description: "How the ground truth is computed (plain English)."
+      measurement_type:
+        type: string
+        enum: [stock, flow, trend, ratio, count, derived]
+        description: "Kind of signal the ground truth is. Compared against detector_measurement_type to flag potential overlap."
+      detector_measurement_type:
+        type: string
+        enum: [stock, flow, trend, ratio, count, derived]
+        description: "Kind of signal the detector under test produces."
+      independence_argument:
+        type: string
+        minLength: 1
+        description: "Plain-English justification that the ground truth can disagree with the detector. Missing field downgrades to a WARN at validate time."
+      shares_computation_with_detector:
+        type: boolean
+        description: "Author's self-assessment. true ⇒ tautological by construction; validator REJECTS. false ⇒ explicit declaration of independence."
+
   arms:
     type: array
     minItems: 1

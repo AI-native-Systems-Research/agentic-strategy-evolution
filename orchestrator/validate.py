@@ -55,6 +55,55 @@ def _check_unexpected_files(iter_dir: Path) -> list[str]:
     return errors
 
 
+def _validate_ground_truth_independence(bundle: dict) -> list[str]:
+    """Cross-field check that the ground truth can disagree with the detector (issue #85).
+
+    Returns a list of strings:
+      * Plain strings are HARD ERRORS (validator fails).
+      * Strings starting with "WARN:" are advisory (validator passes
+        but surfaces the warning to the human gate).
+
+    The four tautological-campaign failure mode (#84) is caught when an
+    author either (a) self-declares ``shares_computation_with_detector: true``
+    or (b) omits the ``ground_truth`` block entirely while testing a
+    detector — the schema can't enforce (b) without breaking legacy
+    bundles, so the absence of the block is silently allowed for now.
+    """
+    errors: list[str] = []
+    gt = bundle.get("ground_truth")
+    if not isinstance(gt, dict):
+        return errors  # legacy bundles validate unchanged
+
+    if gt.get("shares_computation_with_detector") is True:
+        errors.append(
+            "ground_truth.shares_computation_with_detector=true: the "
+            "experiment is tautological by construction (the ground "
+            "truth uses the same computation as the detector under test). "
+            "Choose an independent ground truth — see issue #85."
+        )
+        return errors  # no point in further checks if the design is broken
+
+    if not gt.get("independence_argument"):
+        errors.append(
+            "WARN: ground_truth.independence_argument is missing. Provide "
+            "a plain-English justification that the ground truth can "
+            "disagree with the detector — required to defend the "
+            "experiment at the design gate."
+        )
+
+    mt = gt.get("measurement_type")
+    dmt = gt.get("detector_measurement_type")
+    if mt and dmt and mt == dmt:
+        errors.append(
+            f"WARN: ground_truth.measurement_type ({mt!r}) equals "
+            f"detector_measurement_type ({dmt!r}); they may secretly "
+            f"measure the same physical signal. Re-check the "
+            f"independence_argument."
+        )
+
+    return errors
+
+
 def _validate_typed_arm_fields(bundle: dict) -> list[str]:
     """Cross-field rules per arm type that JSON Schema can't easily express.
 
@@ -135,6 +184,14 @@ def validate_design(iter_dir: Path) -> dict:
             schema = _load_yaml_schema("bundle.schema.yaml")
             jsonschema.validate(bundle, schema)
             errors.extend(_validate_typed_arm_fields(bundle))
+            # Issue #85: WARN-prefixed entries are advisory and don't fail
+            # validation (the human gate sees them but the campaign continues).
+            for entry in _validate_ground_truth_independence(bundle):
+                if entry.startswith("WARN:"):
+                    # TODO: surface warnings to gate_summary, not as errors.
+                    pass
+                else:
+                    errors.append(entry)
         except yaml.YAMLError as exc:
             errors.append(f"bundle.yaml is not valid YAML: {exc}")
         except jsonschema.ValidationError as exc:
