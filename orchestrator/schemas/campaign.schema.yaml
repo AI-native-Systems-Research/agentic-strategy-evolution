@@ -85,3 +85,42 @@ properties:
       pre_work.json artifact that the designer reads as additional context.
       Pure deterministic exploration is the intent — fast, ~$0 LLM cost.
       Path is relative to campaign.yaml.
+
+  objective:
+    type: object
+    required: [weights]
+    additionalProperties: false
+    description: >
+      Optional composite-scoring objective (issue #168). Declares per-metric
+      weights for ranking candidates across iterations. Together with
+      best_found.json, drives the deployment recommendation in
+      meta_findings.json (issue #170).
+    properties:
+      weights:
+        type: object
+        description: "Map of metric name → weight. Weights must be ≥ 0 and sum to 1.0 (with float tolerance)."
+        minProperties: 1
+        additionalProperties:
+          type: number
+          minimum: 0
+      metric_extractors:
+        type: object
+        description: >
+          Optional map of metric name → dotted path into arms[].metadata
+          (e.g. "metadata.compound_return"). When omitted, the metric name
+          is used as a flat key in the observed_metrics dict.
+        additionalProperties:
+          type: string
+          minLength: 1
+      deploy_threshold:
+        type: number
+        minimum: 0
+        description: "How much best_found composite score must exceed baseline_score to trigger 'deploy' rather than 'deploy_with_caveats'. Default 0.1. Issue #170."
+
+  objective_preset:
+    type: string
+    enum: [compound-return-style, latency-style]
+    description: >
+      Opt-in named preset for the objective block (issue #168). Mutually
+      exclusive with `objective`. Adding new presets requires a schema
+      change so users can never silently inherit weights they didn't see.
