@@ -66,7 +66,12 @@ class HumanGate:
         reviews: list[str] | None = None,
         summary_path: str | None = None,
         files: list[str] | None = None,
+        tier_panel: str | None = None,
     ) -> tuple[str, str | None]:
+        # Complexity-tier panel (issue #159) — shown before the LLM
+        # summary so a tier escalation flag isn't buried.
+        if tier_panel:
+            print(f"\n{tier_panel}")
         # Show summary if available (before raw artifact and auto-response)
         if summary_path:
             spath = Path(summary_path)

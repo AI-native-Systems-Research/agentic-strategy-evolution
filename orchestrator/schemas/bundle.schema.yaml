@@ -29,6 +29,20 @@ properties:
     type: string
     description: "Brief explanation of which arms were chosen and why."
 
+  complexity_tier:
+    type: integer
+    minimum: 1
+    maximum: 4
+    description: >
+      Iteration's complexity tier (issue #159). 1 = single mechanism +
+      single knob + treatment-vs-control; 2 = single mechanism + multi-knob
+      OR ablation OR dose-response; 3 = multi-mechanism interactions,
+      super-additivity; 4 = cross-system / cross-workload generalization.
+      Iteration N may use any tier <= N — so iter 1 is forced to tier 1.
+  tier_justification:
+    type: string
+    description: "Brief reason for the chosen tier given the iteration index and prior refutations."
+
   arms:
     type: array
     minItems: 1

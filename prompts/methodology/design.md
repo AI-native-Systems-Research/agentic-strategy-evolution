@@ -179,6 +179,29 @@ Now design a hypothesis bundle based on what you actually observed and verified:
    - `diagnostic`: What to investigate if the prediction is wrong.
    - `code_changes` *(optional)*: Include when the arm tests an algorithmic change rather than a flag/config variation. Each entry needs `file`, `intent` (plain English, not a patch), and `rationale`. The EXECUTE_ANALYZE agent will later turn each intent into a patch. If the hypothesis only varies existing CLI flags, omit this field.
 
+## Complexity tier (issue #159)
+
+Each bundle declares an optional `complexity_tier` (1..4) and a
+`tier_justification`:
+
+| Tier | When to use it |
+|---|---|
+| 1 | single mechanism, single knob, treatment vs control |
+| 2 | single mechanism + multi-knob OR ablation OR dose-response on one knob |
+| 3 | multi-mechanism interactions, super-additivity, dose-response across knobs |
+| 4 | cross-system / cross-workload generalization, robustness across regimes |
+
+**Rule: iteration N may use any tier ≤ N.** So iter 1 must be tier 1;
+iter 2 may be tier 1 or 2; etc. Choose the lowest tier that has not
+yet been refuted or shown insufficient by earlier iterations. State
+your tier and a one-line `tier_justification` ("iter 1, simplest
+mechanism" or "iter 3 — tier 1 was refuted in iter-1, tier 2 was
+inconclusive in iter-2, escalating to multi-mechanism").
+
+The design gate flags jumps of more than one tier across iterations.
+This is for visibility, not enforcement — but if you're escalating
+without a refutation to point at, the human will ask why.
+
 ## Constraints
 
 - Do NOT violate active principles.

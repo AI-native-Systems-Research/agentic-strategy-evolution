@@ -404,10 +404,23 @@ def run_iteration(
         print(f"  HUMAN DESIGN GATE")
         print(f"{'='*60}")
         summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "design", campaign=campaign)
+        # Issue #159: render complexity-tier panel from the bundle so tier
+        # escalations are surfaced for human review (deterministic Python,
+        # no LLM cost).
+        try:
+            from orchestrator.complexity_tier import format_tier_summary
+            tier_panel = format_tier_summary(
+                iteration=iteration,
+                bundle_path=iter_dir / "bundle.yaml",
+                work_dir=work_dir,
+            )
+        except (OSError, RuntimeError):
+            tier_panel = None
         decision, reason = gate.prompt(
             "Review the hypothesis bundle. Approve?",
             summary_path=str(summary_path) if summary_path else None,
             files=[str(iter_dir / "bundle.yaml"), str(iter_dir / "problem.md")],
+            tier_panel=tier_panel or None,
         )
         if decision == "reject":
             _save_human_feedback(iter_dir, "design", reason or "(Rejected without specific feedback)")
