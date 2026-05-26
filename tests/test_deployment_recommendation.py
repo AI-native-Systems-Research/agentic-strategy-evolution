@@ -171,6 +171,70 @@ class TestVerdictFallback:
         assert rec.verdict == "fall_back_to_baseline"
 
 
+# ─── #178: missing vs empty best_found.json must be distinguishable ───────
+
+
+class TestFallbackDistinguishesMissingVsEmpty:
+    """Regression for the sort_bench dry-run failure: a 100%-CONFIRMED
+    campaign reported `fall_back_to_baseline` with empty caveats because
+    best_found.json was missing (cascade from #177). Even when #177 is
+    fixed, the deployment recommender should distinguish "missing" from
+    "empty" with concrete caveats so the operator knows what happened."""
+
+    def test_missing_best_found_caveat_cites_filename_and_issue(
+        self, tmp_path: Path,
+    ) -> None:
+        # No best_found.json on disk — the case from the sort_bench run.
+        rec = make_deployment_recommendation(tmp_path, campaign=_campaign())
+        assert rec.verdict == "fall_back_to_baseline"
+        assert rec.caveats, (
+            "missing best_found must produce at least one caveat — "
+            "silent fall_back is the bug from #178"
+        )
+        c0 = rec.caveats[0]
+        assert "best_found.json" in c0
+        assert "#177" in c0 or "update_best_found" in c0, (
+            "caveat must point at the upstream wiring root cause"
+        )
+
+    def test_missing_best_found_caveat_passes_validator_floor(
+        self, tmp_path: Path,
+    ) -> None:
+        """The caveat must pass meta_findings.validate_caveat (#170 floor).
+        Validator floor rejects vague aspirations regardless of source."""
+        from orchestrator.meta_findings import validate_caveat
+
+        rec = make_deployment_recommendation(tmp_path, campaign=_campaign())
+        for caveat in rec.caveats:
+            assert validate_caveat(caveat) is None, (
+                f"auto-generated caveat fails validator floor: {caveat!r}"
+            )
+
+    def test_empty_top_k_caveat_distinguishable_from_missing(
+        self, tmp_path: Path,
+    ) -> None:
+        """File present but top_k=[] is a different condition: search
+        ran, no candidate beat baseline. Caveat text must reflect that."""
+        update_best_found(tmp_path, objective=None, top_k=5)  # writes empty
+        rec = make_deployment_recommendation(tmp_path, campaign=_campaign())
+        assert rec.verdict == "fall_back_to_baseline"
+        assert rec.caveats
+        # Empty case mentions empty / k= rather than the missing path
+        c0 = rec.caveats[0]
+        assert ("empty" in c0 or "no candidate" in c0.lower()
+                or "top_k" in c0)
+
+    def test_empty_top_k_caveat_passes_validator_floor(
+        self, tmp_path: Path,
+    ) -> None:
+        from orchestrator.meta_findings import validate_caveat
+
+        update_best_found(tmp_path, objective=None, top_k=5)
+        rec = make_deployment_recommendation(tmp_path, campaign=_campaign())
+        for caveat in rec.caveats:
+            assert validate_caveat(caveat) is None
+
+
 class TestVerdictWithCaveats:
     def test_high_score_low_consistency_yields_caveats(
         self, tmp_path: Path,

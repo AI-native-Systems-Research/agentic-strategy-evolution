@@ -173,14 +173,48 @@ def make_deployment_recommendation(
     caveats) when there's nothing to recommend — never raises.
     """
     work_dir = Path(work_dir)
-    best_found = _read_json(work_dir / "best_found.json")
+    best_found_path = work_dir / "best_found.json"
+    best_found = _read_json(best_found_path)
 
-    if not best_found or not best_found.get("top_k"):
-        return DeploymentRecommendation(verdict="fall_back_to_baseline")
+    # Issue #178: distinguish "no candidate beat baseline" (genuine
+    # fall-back) from "best_found.json is missing" (upstream wiring
+    # gap — see #177). Both keep the conservative fall_back_to_baseline
+    # verdict, but the caveats now tell the operator what actually
+    # happened. Each caveat passes meta_findings.validate_caveat
+    # (cites a concrete artifact name + numeric / issue reference).
+    if best_found is None:
+        return DeploymentRecommendation(
+            verdict="fall_back_to_baseline",
+            caveats=[
+                f"best_found.json not present at {best_found_path}; "
+                f"cannot rank candidates. The iteration finalize step "
+                f"either did not run or did not call update_best_found. "
+                f"See issue #177 in orchestrator/iteration.py."
+            ],
+        )
+
+    if not best_found.get("top_k"):
+        return DeploymentRecommendation(
+            verdict="fall_back_to_baseline",
+            caveats=[
+                f"best_found.json present at {best_found_path} but "
+                f"top_k is empty (k={best_found.get('k', 0)}); no "
+                f"candidate scored above baseline across the iterations "
+                f"recorded in runs/iter-N/findings.json."
+            ],
+        )
 
     top = best_found["top_k"][0]
     if not isinstance(top, dict):
-        return DeploymentRecommendation(verdict="fall_back_to_baseline")
+        return DeploymentRecommendation(
+            verdict="fall_back_to_baseline",
+            caveats=[
+                f"best_found.json top_k[0] has unexpected type "
+                f"{type(top).__name__!r} at {best_found_path}; "
+                f"expected dict. Investigate whether update_best_found "
+                f"wrote a corrupt entry — see issue #177."
+            ],
+        )
 
     best_score = float(top.get("score", 0.0))
     iteration = int(top.get("iteration", 0))
