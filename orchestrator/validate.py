@@ -104,6 +104,49 @@ def _validate_ground_truth_independence(bundle: dict) -> list[str]:
     return errors
 
 
+def validate_principles_have_empirical_content(
+    principles: list[dict],
+) -> list[str]:
+    """Return WARN strings for category=domain principles missing #86 fields.
+
+    Issue #179: even after the deterministic classifier
+    (``orchestrator.principles_classifier``) runs, some principles
+    will have a statement too neutral for the heuristic to classify.
+    This validator surfaces those residuals so the human can act on
+    them at the design gate or in the report.
+
+    Meta-category principles (constraint principles emitted by
+    ``orchestrator.refute_constraints`` per #169) are exempt — they're
+    orchestrator-emitted facts, not LLM-extracted observations, and
+    the empirical/algebraic distinction doesn't apply to them.
+
+    Returned strings are advisory (``WARN:`` prefix); they don't fail
+    validation. Callers may surface them via the design-gate summary
+    or via a campaign-end report.
+    """
+    if not isinstance(principles, list):
+        return []
+    warnings: list[str] = []
+    for i, p in enumerate(principles):
+        if not isinstance(p, dict):
+            continue
+        if p.get("category") == "meta":
+            continue
+        if p.get("empirical_content") is None or p.get("derivation_type") is None:
+            pid = p.get("id", f"principles[{i}]")
+            warnings.append(
+                f"WARN: principle {pid} has unset empirical_content / "
+                f"derivation_type (issue #86). The classifier (#179) "
+                f"could not infer the fields from the statement. Add "
+                f"explicit empirical_content + derivation_type to the "
+                f"principle, or refine the statement so it cites either "
+                f"a concrete measurement (empirical) or an algebraic / "
+                f"definitional marker (e.g. 'iff', 'theorem', "
+                f"'by definition')."
+            )
+    return warnings
+
+
 def _validate_typed_arm_fields(bundle: dict) -> list[str]:
     """Cross-field rules per arm type that JSON Schema can't easily express.
 

@@ -208,10 +208,14 @@ def finalize_iteration(
     but no caller — this function is the caller.
 
     Steps (deterministic Python, no LLM):
-      1. Merge ``principle_updates.json`` into ``principles.json``.
-      2. Re-rank candidates and atomically rewrite ``best_found.json``
+      1. Classify principle_updates.json in place — fill empirical_content
+         / derivation_type from text heuristics (issue #179).
+      2. Merge ``principle_updates.json`` into ``principles.json``.
+      3. Re-rank candidates and atomically rewrite ``best_found.json``
          (issue #168 / #177).
-      3. Regenerate per-campaign ``CLAUDE.md`` so the next iteration's
+      4. Surface validator warnings for any residual unclassified
+         domain principles (issue #179, #86).
+      5. Regenerate per-campaign ``CLAUDE.md`` so the next iteration's
          session sees the updated principles + handoff (issue #131).
 
     Tolerant of partial fixtures: missing principle_updates.json,
@@ -220,11 +224,30 @@ def finalize_iteration(
     ``principles.json``) are still written.
     """
     from orchestrator.composite_score import update_best_found
+    from orchestrator.principles_classifier import classify_principle_updates_in_place
+    from orchestrator.validate import validate_principles_have_empirical_content
+
+    # Classify BEFORE merge so principles.json reflects the tags on its
+    # very first write (issue #179).
+    classify_principle_updates_in_place(iter_dir)
 
     _merge_principles(work_dir, iter_dir)
 
     objective = _resolve_objective(campaign)
     update_best_found(work_dir, objective=objective, top_k=5)
+
+    # Surface validator warnings for residual unclassified domain
+    # principles. Advisory only — doesn't roll back the merge.
+    principles_path = work_dir / "principles.json"
+    if principles_path.exists():
+        try:
+            store = json.loads(principles_path.read_text())
+            for warning in validate_principles_have_empirical_content(
+                store.get("principles", []),
+            ):
+                logger.warning("%s", warning)
+        except (OSError, json.JSONDecodeError):
+            pass
 
     # CLAUDE.md regenerate is best-effort; failure here doesn't roll back
     # the merged principles or the best_found ranking.
