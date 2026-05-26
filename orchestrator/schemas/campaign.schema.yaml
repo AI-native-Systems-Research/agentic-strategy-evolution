@@ -63,6 +63,29 @@ properties:
       execute_analyze: { type: string, description: "Model for EXECUTE_ANALYZE phase (claude -p). Default: claude-sonnet-4-6." }
       report: { type: string, description: "Model for report generation (LLM API). Default: claude-sonnet-4-6." }
 
+  max_turns:
+    type: object
+    additionalProperties: false
+    description: >
+      Per-phase maximum tool-use turns (#186). Resolution order:
+      campaign.max_turns[phase] > defaults.yaml max_turns[phase] >
+      hardcoded fallback (25). Different campaigns have different tool
+      budgets — a 50-arm fanout may need 200+ design turns while a
+      probe-only campaign fits in 30.
+    properties:
+      design:
+        type: integer
+        minimum: 1
+        description: "Max turns for the DESIGN phase. Defaults to defaults.yaml.max_turns.design (80)."
+      execute_analyze:
+        type: integer
+        minimum: 1
+        description: "Max turns for EXECUTE_ANALYZE. Defaults to defaults.yaml.max_turns.execute_analyze (120)."
+      report:
+        type: integer
+        minimum: 1
+        description: "Max turns for the report-generation phase. Defaults to 25 if unset everywhere."
+
   prompts:
     type: object
     required: [methodology_layer]
@@ -157,27 +180,81 @@ properties:
       bundle.yaml (issue #85): theory_references say "here's the
       independent thermometer to use"; ground_truth.independence_argument
       says "and here's why it can disagree with the detector."
+
+      #185: items may be either a string (short name only — useful when
+      the theory is well-known and no how-to-use guidance is needed) or
+      an object (full metadata). String entries are normalized to
+      ``{name: <string>}`` internally.
     items:
-      type: object
-      required: [name, statement]
-      additionalProperties: false
-      properties:
-        name:
-          type: string
+      oneOf:
+        - type: string
           minLength: 1
-          description: "Short name (e.g. 'Little's Law', 'M/G/K stability bound')."
-        statement:
-          type: string
-          minLength: 1
-          description: "Plain-English statement of the theorem."
-        independent_of_detector:
-          type: boolean
-          description: "True iff this theorem doesn't depend on the detector under test."
-        use_as:
-          type: string
-          enum: [ground_truth, sanity_check, calibration]
-          description: "How the designer should use this in experiments."
-        how:
-          type: string
-          minLength: 1
-          description: "Plain-English instructions for applying the theorem (e.g. 'Compute μ_analytical = K / E[S] and compare against measured throughput.')."
+          description: >
+            Short name only (e.g. "Little's Law"). Normalized internally
+            to ``{name: <string>}`` with empty other fields. (#185)
+        - type: object
+          required: [name, statement]
+          additionalProperties: false
+          properties:
+            name:
+              type: string
+              minLength: 1
+              description: "Short name (e.g. 'Little's Law', 'M/G/K stability bound')."
+            statement:
+              type: string
+              minLength: 1
+              description: "Plain-English statement of the theorem."
+            independent_of_detector:
+              type: boolean
+              description: "True iff this theorem doesn't depend on the detector under test."
+            use_as:
+              type: string
+              enum: [ground_truth, sanity_check, calibration]
+              description: "How the designer should use this in experiments."
+            how:
+              type: string
+              minLength: 1
+              description: "Plain-English instructions for applying the theorem (e.g. 'Compute μ_analytical = K / E[S] and compare against measured throughput.')."
+
+  ground_truth:
+    type: object
+    additionalProperties: false
+    description: >
+      Optional pre-registered ground truth for the campaign (#185).
+      Best-paper rigor calls for declaring the immutable direction
+      claim and pass condition before any iteration runs, so the agent
+      cannot silently move the goalposts. When present, this block is
+      rendered into the agent's prompt template alongside
+      ``target_system.description`` so the inner LLM sees it directly.
+      Distinct from the per-iteration ``ground_truth`` block on
+      bundle.yaml (issue #85) which describes the independence argument
+      for that iteration's detector.
+    properties:
+      pre_registered:
+        type: boolean
+        description: "True if this ground truth was committed before any data was collected."
+      workload:
+        type: string
+        minLength: 1
+        description: "Concrete workload / dataset specification (paths, seeds, params)."
+      baselines:
+        type: array
+        items: { type: string, minLength: 1 }
+        description: "Pre-specified baselines the candidate must beat — names that map to bundle.yaml arms."
+      primary_metric:
+        type: string
+        minLength: 1
+        description: "The single metric the campaign is evaluated on (e.g. 'P95(latency)')."
+      direction_claim:
+        type: string
+        minLength: 1
+        description: "The directional claim being tested (e.g. 'P95(ea-wfq) < P95(wfq) for EARLY class')."
+      pass_condition:
+        type: string
+        minLength: 1
+        description: "Concrete pass/fail rule (e.g. 'direction holds in median across 10 seeds AND in ≥7 of 10 seeds')."
+      seeds:
+        type: array
+        items: { type: integer }
+        minItems: 1
+        description: "Pre-registered seed list. Locking these in advance prevents seed cherry-picking after the fact."

@@ -98,8 +98,8 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 
 | Role | Invoked During | Produces |
 |---|---|---|
-| **Planner** (Opus, `claude -p`) | DESIGN | `problem.md`, `bundle.yaml`, `handoff_snapshot.md` |
-| **Executor** (Sonnet, `claude -p`) | EXECUTE_ANALYZE | `experiment_plan.yaml`, `findings.json`, `principle_updates.json`, `patches/`, `results/` |
+| **Planner** (Opus, Claude Agent SDK) | DESIGN | `problem.md`, `bundle.yaml`, `handoff_snapshot.md` |
+| **Executor** (Sonnet, Claude Agent SDK) | EXECUTE_ANALYZE | `experiment_plan.yaml`, `findings.json`, `principle_updates.json`, `patches/`, `results/` |
 
 Both agents write artifacts directly to the campaign directory (`iter_dir`) and run `nous validate` before claiming done. If validation fails, the agent reads the errors, fixes the artifacts, and retries. The orchestrator runs a post-check as a safety net.
 
@@ -110,8 +110,8 @@ Both agents write artifacts directly to the campaign directory (`iter_dir`) and 
 **Implementations:**
 
 - `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
-- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Agents write files directly to `iter_dir`. Supports `override_cwd()` context manager for pointing the executor at a git worktree. Selected via `--agent api`.
-- `SDKDispatcher` (`sdk_dispatch.py`) calls the Claude Agent SDK (`claude-agent-sdk`) instead of spawning a subprocess. Same artifact and metrics contract as `CLIDispatcher`; gains native streaming, programmatic prompt caching, and message-level retry. Selected via `--agent sdk`. Requires the optional `sdk` install extra (`pip install -e ".[sdk]"`). Inherits parse / validate / retry-with-feedback machinery from `CLIDispatcher` — only the transport changes.
+- `SDKDispatcher` (`sdk_dispatch.py`, default and only user-facing code-access backend post-#183) calls the Claude Agent SDK (`claude-agent-sdk`) directly, giving agents code access and shell tools through native streaming, programmatic prompt caching, and message-level retry. Agents write files directly to `iter_dir`. Selected via `--agent sdk` (the default). Requires `claude-agent-sdk` and `anyio`, both required dependencies of `nous` so `pip install nous` is sufficient.
+- `CLIDispatcher` (`cli_dispatch.py`) is retained as a private base class that `SDKDispatcher` inherits from for the parse / validate / retry-with-feedback machinery. The legacy `--agent api` (claude -p subprocess) path was removed in #183; the class is no longer reachable from the CLI.
 
 **Dispatch interface:**
 ```python
@@ -136,13 +136,13 @@ If either fails, the hook exits with code 2 and writes a structured reason to st
 
 This is preferred over a probabilistic Haiku evaluator anywhere the success criterion is a schema check: cheaper, faster, and immune to evaluator drift.
 
-## CLI Dispatch
+## SDK Dispatch
 
-`CLIDispatcher` invokes `claude -p` for both agent roles.
+`SDKDispatcher` (`--agent sdk`, the default) invokes the Claude Agent SDK for both agent roles. The legacy `--agent api` (claude -p subprocess) backend was removed in #183; only the SDK path is reachable from the CLI.
 
 ### Retry and Resilience
 
-**Pre-flight check:** At campaign start, Nous validates that the CLI is installed and credentials work via a quick `claude -p` test call. Environment problems are caught in seconds, not hours into an overnight run.
+**Pre-flight check:** At campaign start, Nous validates that the SDK is importable and credentials work. Environment problems are caught in seconds, not hours into an overnight run.
 
 **All failures are retried** with exponential backoff (5s → 30s → 120s → 300s → 600s). There is no permanent/transient classification — the only hard failures are CLI-not-found and repo-path-missing, which are caught before the retry loop. Configurable via `--max-cli-retries` (default 10) and `--timeout` (default 1800s).
 
@@ -163,7 +163,7 @@ Prompts are templates in `prompts/methodology/` (one per role). At dispatch time
 
 ### EXECUTE_ANALYZE: Merged Execution Pipeline
 
-The executor agent (Sonnet, `claude -p`) handles the entire execution pipeline in a single session:
+The executor agent (Sonnet, via the Claude Agent SDK) handles the entire execution pipeline in a single session:
 
 1. Receives the approved hypothesis bundle
 2. Explores the target repo, discovers build commands
@@ -176,7 +176,7 @@ After execution, the orchestrator validates artifacts (schema check) and merges 
 
 ### Model Configuration
 
-Two `claude -p` calls per iteration:
+Two Claude Agent SDK calls per iteration:
 
 | Phase | Model | Role |
 |-------|-------|------|
@@ -368,10 +368,11 @@ The orchestrator is designed for crash-safe operation:
 
 ### Using a Different Dispatcher
 
-Nous ships with two dispatchers:
+Nous ships with three dispatchers:
 
-- `StubDispatcher` — deterministic stubs for testing
-- `CLIDispatcher` — real agent calls via `claude -p`
+- `StubDispatcher` — deterministic stubs for testing.
+- `InlineDispatcher` — emits prompts to stdout for an enclosing agent framework (no subprocess, no API key).
+- `SDKDispatcher` — real agent calls via the Claude Agent SDK (default and only user-facing code-access path post-#183).
 
 To create a custom dispatcher, extend `LLMDispatcher`. Your dispatcher must produce artifacts that pass schema validation — the orchestrator trusts the schema contract, not the content.
 

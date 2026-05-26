@@ -88,6 +88,36 @@ class TestScaffolderProducesValidYaml:
         loaded = yaml.safe_load(target.read_text())
         assert loaded["target_system"]["name"] == "Renamed"
 
+    def test_scaffold_writes_explicit_repo_path(self, tmp_path: Path) -> None:
+        """#184: --target-repo-path must land as a real (uncommented)
+        repo_path in the scaffold so `nous run` doesn't silently wedge
+        when invoked from a different CWD later."""
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        path = scaffold_campaign(
+            tmp_path / "campaign.yaml",
+            target_repo_path=repo,
+        )
+        loaded = yaml.safe_load(path.read_text())
+        assert loaded["target_system"]["repo_path"] == str(repo.resolve())
+
+    def test_scaffold_defaults_repo_path_to_cwd(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """#184: when --target-repo-path is omitted, the scaffolder
+        captures CWD at scaffold time and writes it as a real value.
+        This is almost always right because authors typically scaffold
+        from inside the target repo.
+        """
+        repo = tmp_path / "fakerepo"
+        repo.mkdir()
+        monkeypatch.chdir(repo)
+        path = scaffold_campaign(tmp_path / "campaign.yaml")
+        loaded = yaml.safe_load(path.read_text())
+        # Must be a real path (not None / null), and must equal the
+        # CWD that was active when scaffold_campaign ran.
+        assert loaded["target_system"]["repo_path"] == str(repo.resolve())
+
 
 # ─── Scaffolder names which fields reach agents ──────────────────────────
 

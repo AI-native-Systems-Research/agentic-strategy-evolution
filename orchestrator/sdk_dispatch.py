@@ -173,7 +173,8 @@ def _default_sdk_runner_factory() -> SDKRunner:
         except ImportError as exc:
             raise RuntimeError(
                 "claude-agent-sdk is not installed. "
-                "Install with `pip install claude-agent-sdk` or use --agent api."
+                "Install with `pip install claude-agent-sdk` (or reinstall "
+                "nous, which now lists it as a required dependency — see #183)."
             ) from exc
 
         async def _run() -> SDKResult:
@@ -307,9 +308,13 @@ class SDKDispatcher(CLIDispatcher):
     ) -> None:
         # Compute the executor_log.jsonl path for this iteration so the
         # runner tees SDK events to a place the status reader can find.
-        self._event_log_path = (
-            self.work_dir / "runs" / f"iter-{iteration}" / "executor_log.jsonl"
-        )
+        # #190: live under inputs/ so the design-phase validator's iter-root
+        # whitelist (problem.md, bundle.yaml, handoff_snapshot.md, design_log.md)
+        # is preserved. The streaming log is dispatcher telemetry, not a
+        # design artifact, and inputs/ is where non-artifact context lives.
+        inputs_dir = self.work_dir / "runs" / f"iter-{iteration}" / "inputs"
+        inputs_dir.mkdir(parents=True, exist_ok=True)
+        self._event_log_path = inputs_dir / "executor_log.jsonl"
         try:
             super().dispatch(
                 role, phase,
@@ -330,8 +335,8 @@ class SDKDispatcher(CLIDispatcher):
         except ImportError as exc:
             raise RuntimeError(
                 "Pre-flight check failed: claude-agent-sdk is not installed. "
-                "Install with `pip install claude-agent-sdk`, or pass --agent api "
-                "to use the OpenAI-compatible path instead."
+                "Install with `pip install claude-agent-sdk` (or reinstall "
+                "nous, which now lists it as a required dependency — see #183)."
             ) from exc
         logger.info("SDK pre-flight check passed (model=%s)", self.model)
 

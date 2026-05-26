@@ -127,7 +127,14 @@ def read_status_snapshot(
                 if isinstance(p, dict) and p.get("status", "active") == "active"
             )
 
-    log_path = work_dir / "runs" / f"iter-{snap.iteration}" / "executor_log.jsonl"
+    # #190: dispatcher writes the streaming log under inputs/. Fall back
+    # to the legacy iter-root location so older campaigns keep rendering.
+    iter_dir = work_dir / "runs" / f"iter-{snap.iteration}"
+    log_path = iter_dir / "inputs" / "executor_log.jsonl"
+    if not log_path.exists():
+        legacy = iter_dir / "executor_log.jsonl"
+        if legacy.exists():
+            log_path = legacy
     last_event, mtime = _last_log_event(log_path)
     snap.last_event = last_event
     if mtime is not None:

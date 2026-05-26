@@ -106,7 +106,7 @@ class TestCmdRun:
         args = argparse.Namespace(
             campaign=str(campaign_file), max_iterations=None, model=None,
             run_id=None, auto_approve=False, timeout=1800, max_cli_retries=10,
-            agent="api", verbose=False,
+            agent="sdk", verbose=False,
         )
         with pytest.raises(SystemExit):
             _cmd_run(args)
@@ -124,7 +124,7 @@ class TestCmdRun:
         args = argparse.Namespace(
             campaign=str(campaign_file), max_iterations=None, model=None,
             run_id=None, auto_approve=False, timeout=1800, max_cli_retries=10,
-            agent="api", verbose=False,
+            agent="sdk", verbose=False,
         )
         with patch("orchestrator.campaign.run_campaign") as mock_run, \
              patch("orchestrator.iteration.setup_work_dir", return_value=tmp_path / "work") as mock_setup:
@@ -144,7 +144,7 @@ class TestCmdResume:
         args = argparse.Namespace(
             target=str(campaign_file), max_iterations=None, model=None,
             auto_approve=False, timeout=1800, max_cli_retries=10,
-            agent="api", verbose=False,
+            agent="sdk", verbose=False,
         )
         with pytest.raises(SystemExit):
             _cmd_resume(args)
@@ -166,7 +166,7 @@ class TestCmdResume:
         args = argparse.Namespace(
             target=str(campaign_file), max_iterations=None, model=None,
             auto_approve=False, timeout=1800, max_cli_retries=10,
-            agent="api", verbose=False,
+            agent="sdk", verbose=False,
         )
         with patch("orchestrator.campaign.run_campaign") as mock_run:
             _cmd_resume(args)
@@ -262,7 +262,7 @@ class TestCmdReport:
         (work_dir / "state.json").write_text('{"phase":"DONE","iteration":2,"run_id":"exp1"}')
 
         args = argparse.Namespace(
-            target=str(work_dir), model=None, timeout=1800, agent="api", verbose=False,
+            target=str(work_dir), model=None, timeout=1800, agent="sdk", verbose=False,
         )
         with pytest.raises(SystemExit):
             _cmd_report(args)
@@ -281,7 +281,7 @@ class TestCmdReport:
             f"target_system:\n  name: test\n  description: t\n  repo_path: {repo}\n"
         )
         args = argparse.Namespace(
-            target=str(campaign_file), model=None, timeout=1800, agent="api", verbose=False,
+            target=str(campaign_file), model=None, timeout=1800, agent="sdk", verbose=False,
         )
         with patch("orchestrator.campaign._generate_report") as mock_report:
             _cmd_report(args)

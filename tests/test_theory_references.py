@@ -83,6 +83,23 @@ class TestSchemaAcceptsTheoryReferences:
     def test_legacy_campaign_without_theory_references_validates(self) -> None:
         jsonschema.validate(_campaign(), _load_campaign_schema())
 
+    def test_string_form_theory_references_validates(self) -> None:
+        """#185: items may be strings (short-name only)."""
+        campaign = _campaign(theory_references=[
+            "Little's Law",
+            "M/G/K stability bound",
+        ])
+        jsonschema.validate(campaign, _load_campaign_schema())
+
+    def test_mixed_string_and_object_theory_references_validates(self) -> None:
+        """#185: a campaign can mix string and object items freely."""
+        campaign = _campaign(theory_references=[
+            "PASTA",
+            {"name": "Little's Law", "statement": "L = λ × W"},
+            "Wald's identity",
+        ])
+        jsonschema.validate(campaign, _load_campaign_schema())
+
     def test_examples_campaign_yaml_still_validates(self) -> None:
         """The committed example must keep validating."""
         examples = (Path(__file__).resolve().parent.parent

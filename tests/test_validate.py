@@ -129,6 +129,39 @@ class TestValidateDesign:
         assert result["status"] == "fail"
         assert any("unexpected file" in e for e in result["errors"])
 
+    def test_sdk_executor_log_under_inputs_passes(self, tmp_path: Path) -> None:
+        """#190: SDK dispatcher writes executor_log.jsonl under inputs/.
+
+        The validator must accept the design iter dir even when the SDK has
+        teed a streaming log there — that's where the dispatcher belongs.
+        """
+        d = tmp_path / "iter-1"
+        _setup_design(d)
+        (d / "inputs").mkdir(exist_ok=True)
+        (d / "inputs" / "executor_log.jsonl").write_text(
+            '{"type": "AssistantMessage", "ts": 1.0}\n'
+        )
+        result = validate_design(d)
+        assert result["status"] == "pass"
+
+    def test_executor_log_at_iter_root_still_rejected(self, tmp_path: Path) -> None:
+        """#190 contract: the iter root remains artifact-only.
+
+        Putting executor_log.jsonl at the iter root is the legacy bug shape
+        and should continue to fail the validator. This pins the invariant.
+        """
+        d = tmp_path / "iter-1"
+        _setup_design(d)
+        (d / "executor_log.jsonl").write_text(
+            '{"type": "AssistantMessage", "ts": 1.0}\n'
+        )
+        result = validate_design(d)
+        assert result["status"] == "fail"
+        assert any(
+            "executor_log.jsonl" in e and "unexpected file" in e
+            for e in result["errors"]
+        )
+
 
 class TestValidateExecution:
     def test_pass_observe_mode(self, tmp_path: Path) -> None:

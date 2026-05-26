@@ -36,6 +36,9 @@ _KNOWN_ROOT_FILES = {
     "gate_summary_design.json", "gate_summary_findings.json",
     "gate_summary_continue.json",
     "human_feedback.json",
+    # #188: provenance for `nous run --bundle <path>` (pre-authored
+    # bundle, skips DESIGN dispatch).
+    "bundle_manifest.json",
 }
 
 

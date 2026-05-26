@@ -103,6 +103,17 @@ def _cmd_run(args):
     work_dir = setup_work_dir(run_id, repo_path=repo_path)
 
     max_iterations = args.max_iterations if args.max_iterations is not None else campaign.get("max_iterations", 10)
+    # #188: --bundle / --problem-md / --handoff-md only apply to iter-1.
+    # run_campaign passes them through to run_iteration with iter==1.
+    pre_authored_bundle = getattr(args, "bundle", None)
+    pre_authored_problem_md = getattr(args, "problem_md", None)
+    pre_authored_handoff_md = getattr(args, "handoff_md", None)
+    if pre_authored_bundle is not None and not pre_authored_bundle.exists():
+        print(
+            f"Error: --bundle path does not exist: {pre_authored_bundle}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     run_campaign(
         campaign,
         work_dir,
@@ -112,6 +123,9 @@ def _cmd_run(args):
         timeout=args.timeout,
         agent=args.agent,
         max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
+        pre_authored_bundle=pre_authored_bundle,
+        pre_authored_problem_md=pre_authored_problem_md,
+        pre_authored_handoff_md=pre_authored_handoff_md,
     )
 
 
@@ -147,6 +161,180 @@ def _cmd_resume(args):
         agent=args.agent,
         max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
     )
+
+
+def _cmd_stop(args):
+    """Ask a running campaign to wind down cleanly between phases.
+
+    Writes a ``STOP`` sentinel at the campaign work_dir root. The
+    next time the orchestrator passes a checkpoint (between
+    iterations today; between phases is on the roadmap), it raises
+    ``CampaignStopped``, persists a ``stopped_by_user`` ledger row,
+    and exits without orphaning worktrees or pending dispatcher calls.
+
+    For mid-iteration interruption, ``Ctrl+C`` still works — the
+    engine's atomic checkpoint means the next ``nous resume`` picks
+    up at the last completed phase. ``nous stop`` is the agent-friendly
+    handle: an enclosing agent can write the sentinel without sending
+    SIGINT to the parent process.
+    """
+    from orchestrator.iteration import STOP_SENTINEL_NAME, check_stop_requested
+
+    work_dir = resolve_work_dir(args.target)
+    if not work_dir.exists():
+        print(f"Error: work_dir does not exist: {work_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    sentinel = work_dir / STOP_SENTINEL_NAME
+    existing = check_stop_requested(work_dir)
+    if existing is not None:
+        print(
+            f"STOP sentinel already present at {existing}. "
+            f"Campaign will halt at the next checkpoint.",
+        )
+        sys.exit(0)
+
+    reason = (args.reason or "").strip()
+    sentinel.write_text(reason + ("\n" if reason else ""))
+    print(f"Wrote STOP sentinel: {sentinel}")
+    if reason:
+        print(f"Reason: {reason}")
+    print(
+        "The campaign will halt at the next iteration boundary. To "
+        "cancel the stop request, delete the sentinel file."
+    )
+
+
+def _cmd_schema(args):
+    """Print the JSON Schema for a Nous artifact in a friendly form.
+
+    Surface the canonical campaign / bundle / findings shape directly
+    from the CLI so agents and humans don't need to grep the source to
+    learn what fields are required, optional, or rejected. The Markdown
+    rendering walks the schema deterministically; JSON / YAML modes
+    print the schema verbatim for tooling.
+
+    **Pure deterministic Python — no LLM, no SDK, no network.** The
+    schema YAML/JSON file is the single source of truth; this command
+    is just a renderer. Safe to invoke from CI, hooks, or any
+    zero-cost context.
+    """
+    import json as _json
+    SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
+    schema_files = {
+        "campaign": SCHEMAS_DIR / "campaign.schema.yaml",
+        "bundle": SCHEMAS_DIR / "bundle.schema.yaml",
+        "findings": SCHEMAS_DIR / "findings.schema.json",
+    }
+    target = args.artifact
+    schema_path = schema_files[target]
+    if schema_path.suffix in (".yaml", ".yml"):
+        schema = yaml.safe_load(schema_path.read_text())
+    else:
+        schema = _json.loads(schema_path.read_text())
+
+    fmt = args.format
+    if fmt == "json":
+        print(_json.dumps(schema, indent=2))
+        return
+    if fmt == "yaml":
+        print(yaml.safe_dump(schema, sort_keys=False))
+        return
+
+    # Markdown mode (default).
+    print(_render_schema_markdown(schema, artifact=target))
+
+
+def _render_schema_markdown(schema: dict, *, artifact: str) -> str:
+    """Render a schema as a human-friendly Markdown reference.
+
+    Walks ``properties`` once and groups required vs optional fields.
+    Captures field descriptions verbatim so the schema stays the single
+    source of truth — no risk of doc/schema drift.
+    """
+    title = schema.get("title", artifact)
+    description = schema.get("description", "").strip()
+    required = set(schema.get("required", []))
+    properties = schema.get("properties", {}) or {}
+
+    lines: list[str] = []
+    lines.append(f"# {title}")
+    if description:
+        lines.append("")
+        lines.append(description)
+    lines.append("")
+    extra = (
+        "Allows additional properties." if schema.get("additionalProperties")
+        else "Rejects unknown top-level properties."
+    )
+    lines.append(f"_{extra}_")
+    lines.append("")
+
+    if required:
+        lines.append("## Required fields")
+        lines.append("")
+        for name in sorted(required):
+            spec = properties.get(name, {})
+            lines.extend(_render_property_md(name, spec))
+        lines.append("")
+
+    optional = [n for n in properties if n not in required]
+    if optional:
+        lines.append("## Optional fields")
+        lines.append("")
+        for name in sorted(optional):
+            spec = properties.get(name, {})
+            lines.extend(_render_property_md(name, spec))
+        lines.append("")
+
+    if artifact == "campaign":
+        lines.append("## See also")
+        lines.append("")
+        lines.append("- `nous create-campaign --to ./campaign.yaml` — scaffold a heavily-commented starting point.")
+        lines.append("- `nous run campaign.yaml` — run a campaign (default `--agent sdk`).")
+        lines.append("- `nous run campaign.yaml --bundle ./bundle.yaml` — skip DESIGN with a pre-authored bundle (#188).")
+        lines.append("- `nous stop <target>` — ask a running campaign to halt at the next iteration boundary.")
+        lines.append("- `nous status --watch <target>` — live progress, including a STUCK marker after 5 min of silence.")
+    return "\n".join(lines)
+
+
+def _render_property_md(name: str, spec: dict) -> list[str]:
+    """Render one schema property as Markdown bullets."""
+    if not isinstance(spec, dict):
+        return [f"- **{name}**"]
+    type_str = spec.get("type", "")
+    if isinstance(type_str, list):
+        type_str = " | ".join(type_str)
+    enum = spec.get("enum")
+    desc = (spec.get("description") or "").strip()
+    out = [f"- **{name}** _{type_str}_"]
+    if enum:
+        out.append(f"  - Allowed values: {', '.join(repr(e) for e in enum)}")
+    if desc:
+        # Indent each line so the bullet renders cleanly.
+        for line in desc.splitlines():
+            out.append(f"  {line}")
+    sub_props = spec.get("properties")
+    if isinstance(sub_props, dict) and sub_props:
+        sub_required = set(spec.get("required", []))
+        for sub_name in sorted(sub_props):
+            sub_spec = sub_props[sub_name]
+            sub_type = ""
+            if isinstance(sub_spec, dict):
+                t = sub_spec.get("type", "")
+                if isinstance(t, list):
+                    t = " | ".join(t)
+                sub_type = t
+            req_marker = " (required)" if sub_name in sub_required else ""
+            out.append(f"  - `{sub_name}` _{sub_type}_{req_marker}")
+            sub_desc = (
+                sub_spec.get("description", "").strip()
+                if isinstance(sub_spec, dict) else ""
+            )
+            if sub_desc:
+                first_line = sub_desc.splitlines()[0]
+                out.append(f"    - {first_line}")
+    return out
 
 
 def _cmd_validate(args):
@@ -334,6 +522,10 @@ def _cmd_create_campaign(args):
         kwargs["research_question"] = args.research_question
     if args.run_id:
         kwargs["run_id"] = args.run_id
+    # #184: --target-repo-path overrides; otherwise scaffold_campaign
+    # defaults to CWD at scaffold time.
+    if args.target_repo_path is not None:
+        kwargs["target_repo_path"] = args.target_repo_path
 
     try:
         path = scaffold_campaign(args.to, **kwargs)
@@ -352,19 +544,91 @@ def _cmd_create_campaign(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="nous")
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser = argparse.ArgumentParser(
+        prog="nous",
+        description=(
+            "Nous — hypothesis-driven experimentation framework for "
+            "software systems. Author a campaign.yaml describing your "
+            "target system, then run iterative DESIGN → EXECUTE_ANALYZE "
+            "→ REPORT cycles with a Claude Agent SDK-driven inner loop. "
+            "Use `nous schema` to discover the campaign.yaml shape and "
+            "`nous create-campaign --to ./campaign.yaml` to scaffold one."
+        ),
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Enable DEBUG-level logging.",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
-    p_run = subparsers.add_parser("run")
-    p_run.add_argument("campaign")
-    p_run.add_argument("--max-iterations", type=int)
-    p_run.add_argument("--model")
-    p_run.add_argument("--run-id")
-    p_run.add_argument("--auto-approve", action="store_true")
-    p_run.add_argument("--timeout", type=int, default=1800)
-    p_run.add_argument("--max-cli-retries", type=int, default=10)
-    p_run.add_argument("--agent", choices=["inline", "api", "sdk"], default="api")
+    p_run = subparsers.add_parser(
+        "run",
+        help=(
+            "Run a Nous campaign end-to-end. Default `--agent sdk` uses "
+            "the Claude Agent SDK; pass `--bundle` to skip DESIGN."
+        ),
+    )
+    p_run.add_argument(
+        "campaign",
+        help="Path to a campaign.yaml. See `nous schema` for the shape.",
+    )
+    p_run.add_argument(
+        "--max-iterations", type=int,
+        help="Total iteration cap. Overrides campaign.max_iterations. "
+             "Default: campaign value, or 10.",
+    )
+    p_run.add_argument(
+        "--model",
+        help="Fallback model for any phase whose model is not pinned in "
+             "the campaign or defaults.yaml.",
+    )
+    p_run.add_argument(
+        "--run-id",
+        help="Working directory name under <repo>/.nous/. Defaults to "
+             "campaign.run_id or a value derived from the file path.",
+    )
+    p_run.add_argument(
+        "--auto-approve", action="store_true",
+        help="Auto-approve all human gates — required for unattended "
+             "runs (CI, agent-driven invocation).",
+    )
+    p_run.add_argument(
+        "--timeout", type=int, default=1800,
+        help="Per-phase wall-clock timeout in seconds (default 1800 = "
+             "30 minutes).",
+    )
+    p_run.add_argument(
+        "--max-cli-retries", type=int, default=10,
+        help="Max retries per phase on transient SDK failures. -1 means "
+             "unbounded (default: 10).",
+    )
+    p_run.add_argument(
+        "--agent", choices=["inline", "sdk"], default="sdk",
+        help="Dispatch backend. 'sdk' (default) uses the Claude Agent "
+             "SDK for code phases; 'inline' emits prompts to stdout for "
+             "an enclosing agent framework. The legacy 'api' backend "
+             "was removed in #183.",
+    )
+    p_run.add_argument(
+        "--bundle", type=Path, default=None,
+        help="Path to a pre-authored bundle.yaml. Skips DESIGN's agent "
+             "turn entirely and uses the supplied bundle as iter-1's "
+             "design output (#188). The bundle is schema-validated, "
+             "hashed, and recorded in iter-1/bundle_manifest.json for "
+             "reviewer-defensible provenance.",
+    )
+    p_run.add_argument(
+        "--problem-md", type=Path, default=None,
+        help="Optional path to a pre-authored problem.md. Used with "
+             "--bundle. When omitted, a stub is generated from the "
+             "campaign's research_question (#188).",
+    )
+    p_run.add_argument(
+        "--handoff-md", type=Path, default=None,
+        help="Optional path to a pre-authored handoff_snapshot.md. Used "
+             "with --bundle. When omitted, a stub is generated from "
+             "the bundle's metadata block (#188).",
+    )
     p_run.set_defaults(func=_cmd_run)
 
     p_resume = subparsers.add_parser("resume")
@@ -374,13 +638,51 @@ def main():
     p_resume.add_argument("--auto-approve", action="store_true")
     p_resume.add_argument("--timeout", type=int, default=1800)
     p_resume.add_argument("--max-cli-retries", type=int, default=10)
-    p_resume.add_argument("--agent", choices=["inline", "api", "sdk"], default="api")
+    p_resume.add_argument("--agent", choices=["inline", "sdk"], default="sdk")
     p_resume.set_defaults(func=_cmd_resume)
+
+    p_schema = subparsers.add_parser(
+        "schema",
+        help="Print a friendly reference for a Nous artifact schema "
+             "(campaign / bundle / findings). The schema YAML is the "
+             "single source of truth — this is just a renderer.",
+    )
+    p_schema.add_argument(
+        "artifact",
+        choices=["campaign", "bundle", "findings"],
+        nargs="?",
+        default="campaign",
+        help="Which schema to print. Defaults to 'campaign'.",
+    )
+    p_schema.add_argument(
+        "--format", choices=["md", "json", "yaml"], default="md",
+        help="Output format. 'md' (default) is human-readable. "
+             "'json' and 'yaml' print the raw schema for tooling.",
+    )
+    p_schema.set_defaults(func=_cmd_schema)
 
     p_validate = subparsers.add_parser("validate")
     p_validate.add_argument("phase", choices=["design", "execution"])
     p_validate.add_argument("--dir", required=True, type=Path)
     p_validate.set_defaults(func=_cmd_validate)
+
+    p_stop = subparsers.add_parser(
+        "stop",
+        help="Ask a running campaign to halt cleanly at the next "
+             "iteration boundary by writing a STOP sentinel.",
+    )
+    p_stop.add_argument(
+        "target",
+        help="Campaign target — either a path to the work_dir, a path "
+             "to campaign.yaml, or a run_id whose work_dir is under "
+             "the current repo's .nous/.",
+    )
+    p_stop.add_argument(
+        "--reason", default=None,
+        help="Optional human-readable reason recorded in the sentinel "
+             "and surfaced in the campaign's halt message.",
+    )
+    p_stop.set_defaults(func=_cmd_stop)
 
     p_status = subparsers.add_parser("status")
     p_status.add_argument("target")
@@ -410,7 +712,7 @@ def main():
     p_report.add_argument("target")
     p_report.add_argument("--model")
     p_report.add_argument("--timeout", type=int, default=1800)
-    p_report.add_argument("--agent", choices=["inline", "api", "sdk"], default="api")
+    p_report.add_argument("--agent", choices=["inline", "sdk"], default="sdk")
     p_report.set_defaults(func=_cmd_report)
 
     p_replay = subparsers.add_parser("replay")
@@ -445,6 +747,14 @@ def main():
     p_create.add_argument(
         "--run-id", default="TODO-SET-RUN-ID",
         help="Working directory name for campaign output.",
+    )
+    p_create.add_argument(
+        "--target-repo-path", default=None, type=Path,
+        help="target_system.repo_path in the scaffold (#184). When "
+             "omitted, the current working directory at scaffold time "
+             "is written — which is almost always the right answer "
+             "since authors typically scaffold from inside the target "
+             "repo. Override with this flag for cross-repo authoring.",
     )
     p_create.add_argument(
         "--force", action="store_true",

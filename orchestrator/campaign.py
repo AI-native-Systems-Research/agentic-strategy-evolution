@@ -14,13 +14,17 @@ campaign-level document) and previous findings feed the next iteration's
 design prompt so that each hypothesis bundle is informed by all prior learning.
 
 Dispatch backends:
-    --agent api (default): Uses CLIDispatcher for code phases (when repo_path
-        is set) and LLMDispatcher for structured phases. OPENAI_API_KEY is
-        optional — gate summaries are skipped if not set.
+    --agent sdk (default): Uses the Claude Agent SDK for code phases (native
+        streaming, programmatic prompt caching, parallel subagents) and
+        LLMDispatcher for structured phases. OPENAI_API_KEY is optional —
+        gate summaries are skipped if not set.
     --agent inline: Emits prompts to stdout for the calling agent to reason
         about. No subprocess, no API key — the agent that invoked run_campaign.py
         sees the prompt and writes artifacts directly. Ideal for embedded use
         inside agent frameworks (e.g., Hive strategist).
+
+    The legacy ``api`` backend (claude -p subprocess) was removed in #183;
+    SDK is the only supported code-access path post-#120.
 """
 import argparse
 import json
@@ -149,7 +153,7 @@ def _write_metrics_summary(work_dir: Path) -> None:
 
 def _generate_report(
     campaign: dict, work_dir: Path, model: str | None,
-    agent: str = "api", timeout: int = 1800,
+    agent: str = "sdk", timeout: int = 1800,
 ) -> None:
     """Generate report.md summarizing the campaign."""
     try:
@@ -250,8 +254,11 @@ def run_campaign(
     model: str | None = None,
     auto_approve: bool = False,
     timeout: int = 1800,
-    agent: str = "api",
+    agent: str = "sdk",
     max_cli_retries: int | None = None,
+    pre_authored_bundle: Path | None = None,
+    pre_authored_problem_md: Path | None = None,
+    pre_authored_handoff_md: Path | None = None,
 ) -> None:
     """Run a multi-iteration Nous campaign.
 
@@ -290,22 +297,16 @@ def run_campaign(
             logger.warning("Worktree GC failed: %s", exc)
 
     # Pre-flight: validate CLI + credentials before starting the campaign.
-    # SDK mode pre-flights via claude-agent-sdk import; API mode via claude CLI.
-    if agent != "inline" and repo_path:
-        if agent == "sdk":
-            from orchestrator.sdk_dispatch import SDKDispatcher
-            preflight_dispatcher = SDKDispatcher(
-                work_dir=work_dir, campaign=campaign,
-                model=_resolve_model(campaign, "design", model),
-                max_retries=max_cli_retries,
-            )
-        else:
-            from orchestrator.cli_dispatch import CLIDispatcher
-            preflight_dispatcher = CLIDispatcher(
-                work_dir=work_dir, campaign=campaign,
-                model=_resolve_model(campaign, "design", model),
-                max_retries=max_cli_retries,
-            )
+    # #183: only the SDK path remains as a code-access backend; the legacy
+    # claude -p subprocess path was removed. Programmatic callers passing
+    # agent="api" hit the guard in run_iteration().
+    if agent == "sdk" and repo_path:
+        from orchestrator.sdk_dispatch import SDKDispatcher
+        preflight_dispatcher = SDKDispatcher(
+            work_dir=work_dir, campaign=campaign,
+            model=_resolve_model(campaign, "design", model),
+            max_retries=max_cli_retries,
+        )
         preflight_dispatcher.preflight_check()
 
     start_iter = _resume_completed_campaign(work_dir, max_iterations)
@@ -322,11 +323,35 @@ def run_campaign(
                 print(f"  CAMPAIGN — Iteration {i} of {max_iterations}")
             print(f"{'#'*60}")
 
+            # User-requested stop (issue: nous stop). Honour the sentinel
+            # *before* spawning the next iteration so we never start work
+            # the operator has just asked us to halt.
+            from orchestrator.iteration import (
+                CampaignStopped, _raise_if_stopped,
+            )
             try:
+                _raise_if_stopped(work_dir, where=f"before iteration {i}")
+            except CampaignStopped as exc:
+                logger.info("Campaign stop requested: %s", exc)
+                print(f"\n  CAMPAIGN STOPPED — {exc}")
+                append_failed_row(work_dir, i, f"stopped_by_user: {exc}")
+                outcome = None
+                break
+
+            try:
+                # #188: only iter-1 receives the pre-authored bundle.
+                # Subsequent iterations (if any) follow the normal
+                # agent-authored flow.
+                pab = pre_authored_bundle if i == 1 else None
+                ppm = pre_authored_problem_md if i == 1 else None
+                phm = pre_authored_handoff_md if i == 1 else None
                 outcome = run_iteration(
                     campaign, work_dir, iteration=i, model=model, final=is_last,
                     auto_approve=auto_approve, timeout=timeout, agent=agent,
                     max_cli_retries=max_cli_retries,
+                    pre_authored_bundle=pab,
+                    pre_authored_problem_md=ppm,
+                    pre_authored_handoff_md=phm,
                 )
             except Exception as exc:
                 logger.error("Iteration %d failed permanently: %s", i, exc)
@@ -452,10 +477,11 @@ def main() -> None:
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
                         help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
-    parser.add_argument("--agent", choices=["inline", "api", "sdk"], default="api",
-                        help="Dispatch backend: 'inline' emits prompts to stdout for the "
-                             "calling agent (no subprocess, no API key), "
-                             "'api' uses the LLM API (default: api)")
+    parser.add_argument("--agent", choices=["inline", "sdk"], default="sdk",
+                        help="Dispatch backend: 'sdk' (default) uses the Claude "
+                             "Agent SDK for code phases; 'inline' emits prompts "
+                             "to stdout for the calling agent (no subprocess, "
+                             "no API key required).")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()

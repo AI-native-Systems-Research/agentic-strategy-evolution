@@ -39,7 +39,7 @@ def _write_principles(work_dir: Path, principles: list[dict]) -> None:
 
 
 def _write_log(work_dir: Path, iteration: int, events: list[dict], mtime: float) -> Path:
-    iter_dir = work_dir / "runs" / f"iter-{iteration}"
+    iter_dir = work_dir / "runs" / f"iter-{iteration}" / "inputs"
     iter_dir.mkdir(parents=True, exist_ok=True)
     log = iter_dir / "executor_log.jsonl"
     log.write_text("\n".join(json.dumps(e) for e in events) + "\n")
@@ -110,7 +110,7 @@ class TestReadSnapshot:
 
     def test_corrupt_executor_log_lines_skipped(self, tmp_path):
         _write_state(tmp_path, run_id="r1", phase="EXECUTE_ANALYZE", iteration=1)
-        iter_dir = tmp_path / "runs" / "iter-1"
+        iter_dir = tmp_path / "runs" / "iter-1" / "inputs"
         iter_dir.mkdir(parents=True)
         log = iter_dir / "executor_log.jsonl"
         log.write_text(
@@ -163,7 +163,10 @@ class TestSDKEventTeeIntegration:
         )
 
         elp = captured[0]["event_log_path"]
-        assert elp == tmp_path / "runs" / "iter-3" / "executor_log.jsonl"
+        assert elp == tmp_path / "runs" / "iter-3" / "inputs" / "executor_log.jsonl"
+        # #190: inputs/ is created by the dispatcher so the runner can write
+        # without surprising an empty parent.
+        assert elp.parent.is_dir()
 
     def test_each_iteration_gets_its_own_event_log(self, tmp_path):
         from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult

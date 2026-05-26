@@ -119,9 +119,12 @@ target_system:
     - "TODO: replace with a real knob name"
     - "TODO: replace with a real knob name"
 
-  # Optional path to the target system's git repo. When set, the
-  # orchestrator uses worktree isolation per arm (#133).
-  repo_path: null
+  # Path to the target system's git repo. When set, the orchestrator
+  # creates the campaign directory at <repo_path>/.nous/<run_id>/ and
+  # uses worktree isolation per arm (#133). Set to null only if you
+  # plan to override on the CLI; running `nous run` from a different
+  # CWD will silently land artifacts in the wrong place (#184).
+  repo_path: {repo_path}
 
 prompts:
   # Path to the generic Nous methodology prompts. Usually leave as-is.
@@ -176,6 +179,7 @@ def scaffold_campaign(
         "investigating, with a clear directional claim."
     ),
     run_id: str = "TODO-SET-RUN-ID",
+    target_repo_path: Path | str | None = None,
     force: bool = False,
 ) -> Path:
     """Write a heavily-commented campaign.yaml at ``target_path``.
@@ -189,6 +193,12 @@ def scaffold_campaign(
         research_question: Top-level research_question. Defaults to a
             TODO marker.
         run_id: Working directory name for campaign output.
+        target_repo_path: ``target_system.repo_path``. When omitted,
+            defaults to the current working directory at scaffold time
+            (which is almost always the right answer — authors run
+            ``nous create-campaign`` from inside the target repo). Pass
+            ``None`` explicitly via the CLI ``--no-repo-path`` flag if
+            you intend to fill it in later. (#184)
         force: Overwrite if the target file already exists.
 
     Returns:
@@ -205,12 +215,23 @@ def scaffold_campaign(
         )
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if target_repo_path is None:
+        # #184: CWD at scaffold time is almost always the right answer.
+        # The author is typically inside the target repo when they run
+        # `nous create-campaign --to ...`; defaulting to CWD avoids the
+        # silent "wrong work_dir" trap when `nous run` is invoked from
+        # elsewhere later.
+        repo_path_value = str(Path.cwd().resolve())
+    else:
+        repo_path_value = str(Path(target_repo_path).resolve())
+
     content = _TEMPLATE.format(
         generated_at_marker="(by `nous create-campaign`)",
         research_question=research_question.replace("\n", "\n  "),
         run_id=run_id,
         target_name=target_name,
         target_description=target_description.replace("\n", "\n    "),
+        repo_path=repo_path_value,
     )
     target_path.write_text(content)
     return target_path

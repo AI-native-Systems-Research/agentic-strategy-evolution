@@ -36,6 +36,79 @@ _FENCE_RE = {
 _schema_cache: dict[str, dict] = {}
 
 
+def _format_campaign_ground_truth(gt: dict | None) -> str:
+    """Render a top-level campaign.ground_truth block as Markdown for the
+    DESIGN prompt (#185). Returns the empty string when the block is absent
+    so templates that don't reference it stay clean.
+
+    Authors who pre-register a direction claim and pass condition want
+    those visible to the agent verbatim — this surfaces them next to
+    target_system.description rather than burying them in prose.
+    """
+    if not gt or not isinstance(gt, dict):
+        return ""
+    lines: list[str] = ["## Pre-registered ground truth"]
+    if gt.get("pre_registered"):
+        lines.append("This ground truth was committed before any data was collected.")
+    field_order = (
+        ("workload", "Workload"),
+        ("baselines", "Baselines"),
+        ("primary_metric", "Primary metric"),
+        ("direction_claim", "Direction claim"),
+        ("pass_condition", "Pass condition"),
+        ("seeds", "Seeds"),
+    )
+    for key, label in field_order:
+        val = gt.get(key)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            rendered = ", ".join(str(x) for x in val)
+        else:
+            rendered = str(val)
+        lines.append(f"- **{label}:** {rendered}")
+    return "\n".join(lines)
+
+
+def _normalize_theory_references(refs) -> list[dict]:
+    """Normalize theory_references items to object form (#185).
+
+    Schema accepts either string or object items; downstream consumers
+    should always see ``[{"name": ..., ...}, ...]``. String entries
+    become ``{"name": <string>}`` with empty other fields.
+    """
+    if not refs:
+        return []
+    out: list[dict] = []
+    for entry in refs:
+        if isinstance(entry, str):
+            out.append({"name": entry})
+        elif isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
+def _format_theory_references(refs) -> str:
+    """Render theory_references as a Markdown bullet list for the DESIGN
+    prompt. Empty when no references are declared.
+    """
+    norm = _normalize_theory_references(refs)
+    if not norm:
+        return ""
+    lines: list[str] = ["## External theory anchors"]
+    for ref in norm:
+        name = ref.get("name", "?")
+        statement = ref.get("statement")
+        if statement:
+            lines.append(f"- **{name}** — {statement}")
+        else:
+            lines.append(f"- **{name}**")
+        how = ref.get("how")
+        if how:
+            lines.append(f"  - How to apply: {how}")
+    return "\n".join(lines)
+
+
 class LLMDispatcher:
     """Dispatch agent roles to an LLM and produce schema-conformant artifacts."""
 
@@ -242,6 +315,17 @@ class LLMDispatcher:
             iter_dir = self.work_dir / "runs" / f"iter-{iteration}"
             ctx["iter_dir"] = str(iter_dir.resolve())
             ctx["nous_dir"] = str(Path(__file__).resolve().parent.parent)
+            # #185: surface a top-level pre-registered ground_truth block
+            # to the designer so the immutable direction-claim and pass
+            # condition reach the LLM directly. When absent, the
+            # placeholder stays empty and templates that don't reference
+            # it remain unaffected.
+            ctx["ground_truth"] = _format_campaign_ground_truth(
+                self.campaign.get("ground_truth"),
+            )
+            ctx["theory_references"] = _format_theory_references(
+                self.campaign.get("theory_references"),
+            )
 
         if phase == "design":
             # Campaign-level handoff — the living document updated each iteration

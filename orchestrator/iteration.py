@@ -11,10 +11,12 @@ Creates a working directory named after the target system, copies templates,
 and runs one full iteration with human gates for approval.
 
 Dispatch backends:
-    --agent api (default): Uses CLIDispatcher for code phases (when repo_path
+    --agent sdk (default): Claude Agent SDK for code phases (when repo_path
         is set) and LLMDispatcher for structured phases. OPENAI_API_KEY is
         optional — gate summaries are skipped if not set.
     --agent inline: Prompts emitted to stdout for the calling agent.
+
+    The legacy ``api`` backend was removed in #183.
 """
 import argparse
 import json
@@ -59,6 +61,231 @@ _PHASE_ORDER = [
     "DONE",
 ]
 _PHASE_INDEX = {p: i for i, p in enumerate(_PHASE_ORDER)}
+
+
+# Sentinel file an operator writes via `nous stop <target>` to ask the
+# orchestrator to wind down cleanly between phases / iterations. Lives
+# at the campaign work_dir root (alongside state.json) and is consumed
+# by ``check_stop_requested`` and removed by callers when honoured.
+STOP_SENTINEL_NAME = "STOP"
+
+
+class CampaignStopped(RuntimeError):
+    """Raised when a stop sentinel was found mid-campaign.
+
+    The campaign loop converts this into an ABORTED outcome and a
+    ledger row tagged ``stopped_by_user``. The exception message
+    mentions the sentinel path so the operator knows what to clear
+    before resuming.
+    """
+
+
+def check_stop_requested(work_dir: Path) -> Path | None:
+    """Return the STOP sentinel path if it exists, else None."""
+    sentinel = Path(work_dir) / STOP_SENTINEL_NAME
+    return sentinel if sentinel.exists() else None
+
+
+def _read_stop_reason(sentinel: Path) -> str:
+    """Read the optional reason text the operator wrote into the sentinel."""
+    try:
+        text = sentinel.read_text().strip()
+    except OSError:
+        return ""
+    return text
+
+
+def _raise_if_stopped(work_dir: Path, *, where: str) -> None:
+    """Bail out cleanly if the operator left a STOP sentinel.
+
+    ``where`` names the moment in the campaign loop (e.g.
+    ``"before iteration 2"``) so the resulting error message orients
+    the operator without forcing them to hunt through the source.
+    """
+    sentinel = check_stop_requested(work_dir)
+    if sentinel is None:
+        return
+    reason = _read_stop_reason(sentinel)
+    msg = (
+        f"Campaign stopped by user at {where}. Sentinel: {sentinel}"
+    )
+    if reason:
+        msg += f". Reason: {reason}"
+    msg += (
+        "\n\nDelete the sentinel file to resume "
+        "(`rm <sentinel>`), or run `nous resume <target>` after the "
+        "underlying issue is addressed."
+    )
+    raise CampaignStopped(msg)
+
+
+# #187: which files MUST exist after DESIGN completes for the iteration
+# to advance. Drives the structured "design_incomplete" diagnostic.
+_REQUIRED_DESIGN_ARTIFACTS = ("problem.md", "bundle.yaml", "handoff_snapshot.md")
+
+
+class DesignIncompleteError(RuntimeError):
+    """DESIGN exited without producing the required artifacts (#187).
+
+    Distinct from a validator failure (where the artifacts exist but
+    are malformed). This error fires when one or more of bundle.yaml /
+    problem.md / handoff_snapshot.md is missing on disk after the
+    dispatcher returned — typically because the agent ran out of turns
+    or pursued the experiment instead of authoring the bundle.
+
+    The orchestrator catches this and writes a structured retry_log
+    entry with ``failure_type: "design_incomplete"`` so the operator
+    sees what went wrong without grepping for missing files.
+    """
+
+    def __init__(self, missing: list[str], iter_dir: Path, max_turns: int):
+        self.missing = list(missing)
+        self.iter_dir = Path(iter_dir)
+        self.max_turns = max_turns
+        super().__init__(self._build_message())
+
+    def _build_message(self) -> str:
+        missing_lines = "\n".join(f"  - {m}" for m in self.missing)
+        log_path = self.iter_dir / "inputs" / "executor_log.jsonl"
+        legacy_log_path = self.iter_dir / "executor_log.jsonl"
+        return (
+            f"DESIGN incomplete for {self.iter_dir.name}. Missing "
+            f"required artifacts:\n"
+            f"{missing_lines}\n\n"
+            f"The agent did not commit a complete design. Likely causes:\n"
+            f"  1. max_turns exhaustion (current limit: {self.max_turns}). "
+            f"Consider raising via the per-campaign max_turns block (#186) "
+            f"or tightening the campaign brief.\n"
+            f"  2. The agent ran the main experiment in DESIGN instead "
+            f"of authoring bundle.yaml. Check whether the campaign brief "
+            f"explicitly forbids running the experiment in DESIGN scope.\n"
+            f"  3. API stall / timeout. The SDK streaming log is at\n"
+            f"     {log_path}\n"
+            f"     (or, on legacy campaigns predating #190, at\n"
+            f"     {legacy_log_path}).\n"
+            f"  4. Pre-flight or transport failure. Check retry_log.jsonl\n"
+            f"     for transient-error history.\n"
+            f"\n"
+            f"For full context, look at "
+            f"{self.iter_dir / 'design_log.md'} (the agent's working notes "
+            f"this turn) and the metrics-row count in llm_metrics.jsonl."
+        )
+
+
+def _missing_design_artifacts(iter_dir: Path) -> list[str]:
+    """Return the list of required DESIGN artifacts that don't exist (#187)."""
+    return [
+        name for name in _REQUIRED_DESIGN_ARTIFACTS
+        if not (iter_dir / name).exists()
+    ]
+
+
+def _apply_pre_authored_bundle(
+    iter_dir: Path,
+    *,
+    bundle_path: Path,
+    problem_md_path: Path | None,
+    handoff_md_path: Path | None,
+    campaign: dict,
+) -> None:
+    """Skip DESIGN by copying a pre-authored bundle into ``iter_dir`` (#188).
+
+    For paper-reproduction campaigns the experiment is fully specified
+    in advance — the agent shouldn't re-derive the design each run, both
+    for cost and for determinism (the agent might author a slightly
+    different bundle each time). This helper validates the bundle, copies
+    it, stubs the missing companion artifacts when the user didn't
+    provide them, and writes a ``bundle_manifest.json`` so reviewers can
+    verify which inputs were pre-authored.
+    """
+    import hashlib
+    import shutil
+
+    if not bundle_path.exists():
+        raise FileNotFoundError(
+            f"Pre-authored bundle not found: {bundle_path}"
+        )
+
+    bundle_text = bundle_path.read_text()
+    try:
+        bundle_doc = yaml.safe_load(bundle_text)
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            f"Pre-authored bundle is not valid YAML ({bundle_path}): {exc}"
+        ) from exc
+
+    schema = yaml.safe_load(
+        (SCHEMAS_DIR / "bundle.schema.yaml").read_text()
+    )
+    try:
+        jsonschema.validate(bundle_doc, schema)
+    except jsonschema.ValidationError as exc:
+        raise ValueError(
+            f"Pre-authored bundle failed schema validation "
+            f"({bundle_path}): {exc.message}"
+        ) from exc
+
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    target_bundle = iter_dir / "bundle.yaml"
+    target_bundle.write_text(bundle_text)
+
+    target_problem = iter_dir / "problem.md"
+    if problem_md_path is not None:
+        if not problem_md_path.exists():
+            raise FileNotFoundError(
+                f"Pre-authored problem.md not found: {problem_md_path}"
+            )
+        shutil.copyfile(problem_md_path, target_problem)
+    else:
+        rq = campaign.get("research_question", "(no research_question set)")
+        target_problem.write_text(
+            f"# Problem (pre-authored)\n\n"
+            f"This iteration uses a pre-authored bundle (#188). "
+            f"The driving research question is:\n\n"
+            f"> {rq}\n\n"
+            f"See `bundle.yaml` for the experiment specification and "
+            f"`bundle_manifest.json` for provenance.\n"
+        )
+
+    target_handoff = iter_dir / "handoff_snapshot.md"
+    if handoff_md_path is not None:
+        if not handoff_md_path.exists():
+            raise FileNotFoundError(
+                f"Pre-authored handoff_snapshot.md not found: {handoff_md_path}"
+            )
+        shutil.copyfile(handoff_md_path, target_handoff)
+    else:
+        metadata = (bundle_doc or {}).get("metadata", {}) if isinstance(bundle_doc, dict) else {}
+        family = metadata.get("family", "(family unset)")
+        target_handoff.write_text(
+            f"# Handoff snapshot (pre-authored)\n\n"
+            f"- Bundle source: pre_authored (issue #188)\n"
+            f"- Bundle family: {family}\n"
+            f"- Source path: {bundle_path}\n"
+            f"\n"
+            f"This handoff is auto-generated because the user supplied "
+            f"a bundle directly via `--bundle`. The downstream "
+            f"EXECUTE_ANALYZE phase reads `bundle.yaml`; this file "
+            f"satisfies the validator's whitelist and gives reviewers "
+            f"a pointer to the original.\n"
+        )
+
+    sha256 = hashlib.sha256(bundle_text.encode("utf-8")).hexdigest()
+    manifest = {
+        "bundle_source": "pre_authored",
+        "bundle_path": str(bundle_path),
+        "bundle_sha256": sha256,
+        "problem_md_source": (
+            "pre_authored" if problem_md_path is not None else "auto_stub"
+        ),
+        "handoff_snapshot_md_source": (
+            "pre_authored" if handoff_md_path is not None else "auto_stub"
+        ),
+    }
+    atomic_write(
+        iter_dir / "bundle_manifest.json",
+        json.dumps(manifest, indent=2) + "\n",
+    )
 
 
 def _save_human_feedback(iter_dir: Path, phase: str, reason: str) -> None:
@@ -388,8 +615,11 @@ def run_iteration(
     final: bool = True,
     auto_approve: bool = False,
     timeout: int = 1800,
-    agent: str = "api",
+    agent: str = "sdk",
     max_cli_retries: int | None = None,
+    pre_authored_bundle: Path | None = None,
+    pre_authored_problem_md: Path | None = None,
+    pre_authored_handoff_md: Path | None = None,
 ) -> IterationOutcome:
     """Run a single iteration of the Nous loop.
 
@@ -398,14 +628,28 @@ def run_iteration(
     Args:
         final: If True (default), transitions to DONE after principle merge.
         auto_approve: If True, all human gates are automatically approved.
-        agent: Dispatch backend — "inline" emits prompts to stdout,
-            "api" uses LLMDispatcher (with CLIDispatcher for code phases
-            when repo_path is set).
-        max_cli_retries: Max retries for transient claude -p failures (None = unbounded).
+        agent: Dispatch backend — "sdk" (default) uses the Claude Agent SDK
+            for code phases (when repo_path is set); "inline" emits prompts
+            to stdout for the calling agent. The legacy "api" backend was
+            removed in #183.
+        max_cli_retries: Max retries for transient SDK failures (None = unbounded).
 
     Returns:
         An IterationOutcome value: COMPLETED, CONTINUE, ABORTED, or REDESIGN.
     """
+    # #183: validate the agent value before any state inspection so the
+    # migration error is the first thing legacy callers see.
+    if agent == "api":
+        raise ValueError(
+            "agent='api' (legacy claude -p subprocess) was removed in #183. "
+            "Use agent='sdk' (default) — install with `pip install nous` and "
+            "the claude-agent-sdk dependency lands automatically."
+        )
+    if agent not in ("sdk", "inline"):
+        raise ValueError(
+            f"Unknown agent backend: {agent!r}. Valid values: 'sdk', 'inline'."
+        )
+
     engine = Engine(work_dir)
     repo_path = campaign.get("target_system", {}).get("repo_path")
 
@@ -416,14 +660,24 @@ def run_iteration(
     default_models = defaults.get("models", {})
     default_max_turns = defaults.get("max_turns", {})
     campaign_models = campaign.get("models", {})
+    # #186: campaign-level max_turns overrides defaults.yaml. Schema
+    # accepts an object {design, execute_analyze, report}; we read it
+    # the same way as `models:`.
+    campaign_max_turns = campaign.get("max_turns", {}) or {}
 
     def _model_for(phase_key: str) -> str:
         return campaign_models.get(phase_key) or default_models.get(phase_key) or model or "aws/claude-sonnet-4-5"
 
     def _max_turns_for(phase_key: str) -> int:
-        return default_max_turns.get(phase_key, 25)
+        # Resolution order (#186): campaign > defaults > hardcoded fallback.
+        v = campaign_max_turns.get(phase_key)
+        if v is not None:
+            return int(v)
+        v = default_max_turns.get(phase_key)
+        if v is not None:
+            return int(v)
+        return 25
 
-    from orchestrator.cli_dispatch import CLIDispatcher
     from orchestrator.inline_dispatch import InlineDispatcher
     if agent == "inline":
         inline_dispatcher = InlineDispatcher(
@@ -432,15 +686,10 @@ def run_iteration(
         cli_dispatcher = inline_dispatcher
         llm_dispatcher = inline_dispatcher
     else:
-        # API or SDK mode: code-access dispatcher only when repo_path is set.
-        # SDK uses claude-agent-sdk; api uses the claude -p subprocess (CLIDispatcher).
-        if agent == "sdk":
-            from orchestrator.sdk_dispatch import SDKDispatcher
-            code_dispatcher_cls = SDKDispatcher
-        else:
-            code_dispatcher_cls = CLIDispatcher
+        # SDK mode: code-access dispatcher only when repo_path is set.
+        from orchestrator.sdk_dispatch import SDKDispatcher
         cli_dispatcher = (
-            code_dispatcher_cls(
+            SDKDispatcher(
                 work_dir=work_dir, campaign=campaign,
                 model=_model_for("design"), timeout=timeout,
                 max_turns=_max_turns_for("design"),
@@ -464,10 +713,45 @@ def run_iteration(
     # ─── DESIGN ───────────────────────────────────────────────────────────
     if _enter_phase(engine, "DESIGN"):
         print(f"\n{'='*60}")
-        print(f"  DESIGN — exploring system and creating hypothesis bundle")
-        print(f"{'='*60}")
+        if pre_authored_bundle is not None:
+            # #188: experiment is fully pre-specified — skip the agent
+            # turn entirely. Cheaper, deterministic, and reviewer-friendly.
+            print(f"  DESIGN — applying pre-authored bundle ({pre_authored_bundle})")
+            print(f"{'='*60}")
+            _apply_pre_authored_bundle(
+                iter_dir,
+                bundle_path=Path(pre_authored_bundle),
+                problem_md_path=(
+                    Path(pre_authored_problem_md)
+                    if pre_authored_problem_md is not None else None
+                ),
+                handoff_md_path=(
+                    Path(pre_authored_handoff_md)
+                    if pre_authored_handoff_md is not None else None
+                ),
+                campaign=campaign,
+            )
+            print(f"  -> {iter_dir / 'bundle.yaml'} (pre_authored)")
+            print(f"  -> {iter_dir / 'bundle_manifest.json'}")
+            # Fall through to validation; required artifacts now exist.
+            from orchestrator.validate import validate_design
+            result = validate_design(iter_dir)
+            if result["status"] == "fail":
+                raise RuntimeError(
+                    f"Pre-authored design artifacts failed validation:\n"
+                    + "\n".join(f"  - {e}" for e in result["errors"])
+                )
+            print(f"  -> {iter_dir / 'problem.md'}")
+            # Skip the dispatcher path below.
+            _skip_design_dispatch = True
+        else:
+            _skip_design_dispatch = False
+            print(f"  DESIGN — exploring system and creating hypothesis bundle")
+            print(f"{'='*60}")
         design_dispatcher = cli_dispatcher or llm_dispatcher
-        if cli_dispatcher:
+        if _skip_design_dispatch:
+            pass  # already finished above
+        elif cli_dispatcher:
             # CLI path: agent writes files directly to iter_dir
             design_dispatcher.dispatch(
                 "planner", "design",
@@ -486,6 +770,25 @@ def run_iteration(
                 raw_response = output_file.read_text()
                 _split_design_output(raw_response, iter_dir)
                 output_file.unlink()
+        # #187: surface the structured "design_incomplete" diagnostic
+        # BEFORE running schema validation. When required artifacts are
+        # missing, the operator needs hints (max_turns exhaustion, agent
+        # ran the experiment in DESIGN, etc.), not a raw "X not found".
+        missing = _missing_design_artifacts(iter_dir)
+        if missing:
+            from orchestrator.metrics import log_retry_event
+            log_retry_event(work_dir / "llm_metrics.jsonl", {
+                "iteration": iteration,
+                "phase": "design",
+                "failure_type": "design_incomplete",
+                "missing_artifacts": missing,
+                "max_turns": _max_turns_for("design"),
+            })
+            raise DesignIncompleteError(
+                missing=missing,
+                iter_dir=iter_dir,
+                max_turns=_max_turns_for("design"),
+            )
         # Validate design artifacts regardless of dispatch path
         from orchestrator.validate import validate_design
         result = validate_design(iter_dir)
@@ -670,9 +973,10 @@ def main() -> None:
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
                         help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
-    parser.add_argument("--agent", choices=["inline", "api", "sdk"], default="api",
-                        help="Dispatch backend: 'inline' emits prompts to stdout for the "
-                             "calling agent, 'api' uses the LLM API (default: api)")
+    parser.add_argument("--agent", choices=["inline", "sdk"], default="sdk",
+                        help="Dispatch backend: 'sdk' (default) uses the Claude "
+                             "Agent SDK for code phases; 'inline' emits prompts "
+                             "to stdout for the calling agent.")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()

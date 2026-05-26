@@ -64,11 +64,13 @@ Every experiment is structured as a bundle of falsifiable predictions:
 ### Prerequisites
 
 - **Python 3.11+**
-- **Claude Code CLI** (`claude`) — installed and authenticated
+- **Claude Code CLI** (`claude`) — installed and authenticated. The Claude
+  Agent SDK (the default code-access backend, `--agent sdk`) reuses your
+  CLI authentication.
 
 ### Environment setup
 
-The `claude -p` subprocess handles its own authentication via Claude CLI config. However, gate summaries and report generation use the OpenAI-compatible LLM API, which needs:
+The Claude Agent SDK handles its own authentication via Claude CLI config. However, gate summaries and report generation use the OpenAI-compatible LLM API, which needs:
 
 ```bash
 export OPENAI_API_KEY=your-api-key
@@ -93,15 +95,14 @@ cd agentic-strategy-evolution
 pip install -e ".[dev]"
 ```
 
-For the SDK-based dispatcher (`--agent sdk`, see `docs/architecture.md`), also install the optional `[sdk]` extra:
-
-```bash
-pip install -e ".[dev,sdk]"
-```
+The Claude Agent SDK (`claude-agent-sdk`) is a required dependency and
+lands automatically — no separate install step. The legacy `--agent api`
+(claude -p subprocess) backend was removed in #183; `--agent sdk` is the
+default and only user-facing code-access path.
 
 ### 2. Configure models
 
-Two LLM calls per iteration, both via `claude -p`:
+Two LLM calls per iteration, both via the Claude Agent SDK:
 
 | Phase | Default model | Role |
 |-------|---------------|------|
@@ -112,7 +113,18 @@ Both agents write their artifacts directly to disk and run `nous validate` befor
 
 ### 4. Create a campaign
 
-Create a `campaign.yaml` pointing to your target repo:
+The fastest path is the scaffolder, which writes a heavily-commented
+campaign.yaml with the right defaults (including `repo_path` set to
+your CWD so `nous run` doesn't silently wedge — see #184):
+
+```bash
+cd /path/to/your/repo
+nous create-campaign --to ./campaign.yaml \
+  --target-name "Your System" \
+  --research-question "What mechanism drives the primary bottleneck?"
+```
+
+If you prefer to author by hand, use this minimum:
 
 ```yaml
 research_question: >
@@ -128,6 +140,29 @@ target_system:
 ```
 
 When `repo_path` is set, the campaign directory is created inside the target repo at `.nous/<run_id>/`. All artifacts live there.
+
+To discover the full schema (required vs optional fields, descriptions
+verbatim from the schema source), run:
+
+```bash
+nous schema                      # campaign schema, Markdown (default)
+nous schema bundle --format yaml # bundle schema, raw YAML for tooling
+nous schema findings             # findings schema
+```
+
+Optional blocks worth knowing about:
+
+- **`max_turns`** (#186) — per-phase tool-use budget override. Default
+  is 80 design / 120 execute_analyze. A 50-arm fanout may need 200+
+  design turns; a probe-only campaign fits in 30.
+- **`ground_truth`** (#185) — pre-register the immutable direction
+  claim and pass condition before any iteration runs. Surfaces in the
+  agent's prompt verbatim alongside `target_system.description`.
+- **`models`** — pin per-phase models. Defaults: Opus for DESIGN,
+  Sonnet for EXECUTE_ANALYZE.
+- **`theory_references`** — declare external theory anchors (Little's
+  Law, M/G/K stability bound, etc.). Items can be plain strings or
+  full `{name, statement, ...}` objects.
 
 The planner explores the codebase to discover metrics, knobs, and execution methods. You can optionally provide `observable_metrics` and `controllable_knobs` as hints — see [examples/campaign.yaml](examples/campaign.yaml) for all options.
 
@@ -152,6 +187,11 @@ Options:
 nous run campaign.yaml --max-iterations 5 -v   # verbose
 nous run campaign.yaml --auto-approve           # skip gates (for CI/non-interactive)
 nous run campaign.yaml --auto-approve --max-iterations 1  # quick unattended run
+
+# Skip DESIGN entirely with a pre-authored bundle (#188 — paper repro).
+# Bundle is schema-validated, hashed, and recorded in
+# iter-1/bundle_manifest.json for reviewer-defensible provenance.
+nous run campaign.yaml --bundle ./fig7_bundle.yaml --auto-approve
 ```
 
 ### Overnight / long-running campaigns
@@ -174,7 +214,7 @@ nous run campaign.yaml \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--timeout` | 1800 (30 min) | Per-phase time limit for `claude -p` |
+| `--timeout` | 1800 (30 min) | Per-phase time limit for the Agent SDK call |
 | `--max-cli-retries` | 10 | Retries per phase before giving up |
 | `--max-iterations` | 10 | Total experiment iterations |
 
@@ -215,13 +255,56 @@ your-repo/.nous/<run_id>/
 ### Other CLI commands
 
 ```bash
-nous status campaign.yaml        # show campaign phase, iteration, principles
-nous cost campaign.yaml          # token/cost summary from llm_metrics.jsonl
-nous report campaign.yaml        # generate report.md (uses LLM)
-nous resume campaign.yaml        # resume a paused/interrupted campaign
-nous replay campaign.yaml --iter 1  # re-run iteration 1 commands in fresh worktree (no LLM)
+nous status campaign.yaml             # one-shot campaign phase, iteration, principles
+nous status campaign.yaml --watch     # live redraw; STUCK marker after 5 min of silence
+nous status campaign.yaml --line      # one-line summary (shell prompt / parent agent)
+nous cost campaign.yaml               # token/cost summary from llm_metrics.jsonl
+nous cost campaign.yaml --cache-stats # include prompt-cache hit-rate stats (#122)
+nous report campaign.yaml             # generate report.md (uses LLM)
+nous resume campaign.yaml             # resume a paused/interrupted campaign
+nous replay campaign.yaml --iter 1    # re-run iteration 1 commands in fresh worktree (no LLM)
 nous validate design --dir .nous/run/runs/iter-1/   # validate artifacts (agent-facing)
+nous schema [campaign|bundle|findings] [--format md|json|yaml]  # print artifact schema
+nous stop campaign.yaml --reason "out of budget"  # halt at next iteration boundary
 ```
+
+### Quick reference: how to run nous correctly
+
+| You want to... | Command |
+|---|---|
+| Discover the campaign.yaml shape | `nous schema` |
+| Scaffold a starter campaign | `nous create-campaign --to ./campaign.yaml` |
+| Run a campaign end-to-end | `nous run campaign.yaml` (uses `--agent sdk` by default) |
+| Skip DESIGN with a pre-authored bundle | `nous run campaign.yaml --bundle path/to/bundle.yaml` |
+| Watch progress live | `nous status campaign.yaml --watch` |
+| Cleanly halt a running campaign | `nous stop campaign.yaml` |
+| Resume after halt or interruption | `nous resume campaign.yaml` |
+| Diagnose a failed iteration | `cat .nous/<run>/runs/iter-N/inputs/executor_log.jsonl` (#190) and `cat .nous/<run>/retry_log.jsonl` |
+| Audit token spend | `nous cost campaign.yaml --cache-stats` |
+
+### Observability (when nous looks stuck or wrong)
+
+When a campaign is mid-iteration and you can't tell what's happening:
+
+1. **`nous status --watch`** — live redraw of phase / iteration / last
+   tool call. Prints `STUCK` after 5 min of dispatcher silence.
+2. **`runs/iter-N/inputs/executor_log.jsonl`** (#190) — every SDK
+   streaming event with timestamps. Tail it: `tail -f .nous/<run>/runs/iter-N/inputs/executor_log.jsonl`.
+3. **`retry_log.jsonl`** at the campaign root — every transient failure
+   with attempt count, backoff, error string. The DESIGN-incomplete
+   case (#187) writes a `failure_type: "design_incomplete"` entry with
+   the missing-files list and the active `max_turns`.
+4. **`llm_metrics.jsonl`** at the campaign root — per-call tokens,
+   cost, cache hits. `nous cost --cache-stats` aggregates this.
+5. **`state.json`** — the engine's atomic phase + iteration. Safe to
+   `cat` mid-run. Resume picks up from here.
+
+When DESIGN exits without producing `bundle.yaml` / `problem.md` /
+`handoff_snapshot.md`, the orchestrator raises a structured
+`DesignIncompleteError` (#187) naming the missing files and listing
+the four common causes — `max_turns` exhaustion, agent ran the
+experiment in DESIGN, API stall, transport failure — each with a
+concrete file to inspect.
 
 ### Run tests
 
@@ -238,7 +321,8 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   engine.py                State machine with atomic checkpoint/resume
   validate.py              Artifact validation CLI (nous validate design/execution)
   dispatch.py              Stub agent dispatch (for testing without LLM)
-  cli_dispatch.py          Code-access agent dispatch via claude -p
+  sdk_dispatch.py          Code-access agent dispatch via Claude Agent SDK (default)
+  cli_dispatch.py          Private base class for sdk_dispatch (legacy claude -p path retired in #183)
   prompt_loader.py         Template loading with {{placeholder}} rendering
   gates.py                 Human approval gates with summaries
   ledger.py                Deterministic ledger append (no LLM)
