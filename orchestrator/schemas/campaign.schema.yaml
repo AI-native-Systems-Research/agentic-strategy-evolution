@@ -63,6 +63,60 @@ properties:
       execute_analyze: { type: string, description: "Model for EXECUTE_ANALYZE phase (claude -p). Default: claude-sonnet-4-6." }
       report: { type: string, description: "Model for report generation (LLM API). Default: claude-sonnet-4-6." }
 
+  sdk_timeouts:
+    type: object
+    additionalProperties: false
+    description: >
+      SDK turn timing controls (#201). Per-campaign tunables for the
+      silence detector that surfaces excessive event gaps to
+      retry_log.jsonl after each turn. Observation-only today —
+      operators can scan retry_log for ``failure_type: sdk_silence`` to
+      catch hung subprocesses, polling-loop stalls, and API stalls
+      without watching the run live.
+    properties:
+      silence_threshold_seconds:
+        type: number
+        minimum: 0
+        description: >
+          Minimum gap between SDK streaming events that should trigger a
+          silence warning in retry_log.jsonl. Default 600 (10 minutes).
+          Set to 0 to disable the diagnostic entirely.
+
+  sandbox:
+    type: string
+    enum: [bypass, default]
+    description: >
+      Claude Agent SDK filesystem sandbox mode (#193). Default: ``bypass``.
+      Nous campaigns routinely write outside the launched cwd (the
+      orchestrator runs the agent with cwd=experiment-worktree, but
+      build/test/BLIS subprocesses write to the main repo's
+      .nous/<run>/runs/iter-N/results/). The default sandbox blocks
+      these writes; ``bypass`` removes the restriction. Set to
+      ``default`` only if the campaign genuinely lives entirely under
+      the launched cwd (rare).
+
+  validation:
+    type: object
+    additionalProperties: false
+    description: >
+      Per-campaign overrides to nous's validators (#199). Most campaigns
+      don't need this block; paper-* and other campaigns with custom
+      iter-root artifacts (analysis_summary.json, manifest.json,
+      probe_report.md, …) declare them here so validate_design /
+      validate_execution don't reject them as "unexpected file at iter
+      root."
+    properties:
+      iter_root_extensions:
+        type: array
+        items:
+          type: string
+          minLength: 1
+        uniqueItems: true
+        description: >
+          Additional filenames allowed at the iter root (in addition to
+          the global whitelist in orchestrator/validate.py). Names only,
+          not paths — files in subdirectories are always allowed.
+
   max_turns:
     type: object
     additionalProperties: false

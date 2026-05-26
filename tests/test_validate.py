@@ -144,6 +144,68 @@ class TestValidateDesign:
         result = validate_design(d)
         assert result["status"] == "pass"
 
+    def test_campaign_iter_root_extensions_allow_extra_files(self, tmp_path: Path) -> None:
+        """#199: campaign.validation.iter_root_extensions adds to the
+        global whitelist. Paper-* campaigns need this for analysis_summary.json,
+        manifest.json, probe_report.md.
+        """
+        d = tmp_path / "iter-1"
+        _setup_design(d)
+        (d / "analysis_summary.json").write_text("{}")
+        (d / "manifest.json").write_text("{}")
+        (d / "probe_report.md").write_text("# Probe report")
+
+        # Without the extension: reject all three.
+        result = validate_design(d)
+        assert result["status"] == "fail"
+        assert sum(
+            1 for e in result["errors"]
+            if any(name in e for name in (
+                "analysis_summary.json",
+                "manifest.json",
+                "probe_report.md",
+            ))
+        ) == 3
+
+        # With the extension: pass.
+        campaign = {
+            "validation": {
+                "iter_root_extensions": [
+                    "analysis_summary.json",
+                    "manifest.json",
+                    "probe_report.md",
+                ],
+            },
+        }
+        result = validate_design(d, campaign=campaign)
+        assert result["status"] == "pass", result
+
+    def test_extension_does_not_disable_whitelist(self, tmp_path: Path) -> None:
+        """#199: even with extensions, files outside both lists still fail."""
+        d = tmp_path / "iter-1"
+        _setup_design(d)
+        (d / "analysis_summary.json").write_text("{}")  # extension
+        (d / "rogue_file.txt").write_text("nope")        # not extension
+        campaign = {
+            "validation": {"iter_root_extensions": ["analysis_summary.json"]},
+        }
+        result = validate_design(d, campaign=campaign)
+        assert result["status"] == "fail"
+        assert any("rogue_file.txt" in e for e in result["errors"])
+        assert not any(
+            "analysis_summary.json" in e and "unexpected file" in e
+            for e in result["errors"]
+        )
+
+    def test_no_validation_block_keeps_strict_default(self, tmp_path: Path) -> None:
+        """#199: campaigns that don't declare extensions get the strict default."""
+        d = tmp_path / "iter-1"
+        _setup_design(d)
+        (d / "analysis_summary.json").write_text("{}")  # not on default whitelist
+        result = validate_design(d, campaign={})  # no validation block
+        assert result["status"] == "fail"
+        assert any("analysis_summary.json" in e for e in result["errors"])
+
     def test_executor_log_at_iter_root_still_rejected(self, tmp_path: Path) -> None:
         """#190 contract: the iter root remains artifact-only.
 

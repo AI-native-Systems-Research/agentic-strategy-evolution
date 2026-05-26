@@ -38,6 +38,7 @@ import yaml
 from orchestrator.engine import Engine
 from orchestrator.gates import HumanGate
 from orchestrator.inline_dispatch import InlineDispatcher
+from orchestrator.util import atomic_write
 from orchestrator.ledger import append_failed_row, append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.metrics import summarize_metrics
@@ -175,6 +176,53 @@ def _generate_report(
         print(f"  Report generation skipped: {exc}")
 
 
+def _persist_max_iterations(work_dir: Path, max_iterations: int) -> None:
+    """Write effective max_iterations into state.json (#197).
+
+    Best-effort: on any read/parse/write failure we log and move on; the
+    feature is operational sugar, not load-bearing for correctness.
+    """
+    state_path = Path(work_dir) / "state.json"
+    if not state_path.exists():
+        return
+    try:
+        state = json.loads(state_path.read_text())
+        if not isinstance(state, dict):
+            return
+        if state.get("max_iterations") == max_iterations:
+            return
+        state["max_iterations"] = int(max_iterations)
+        atomic_write(state_path, json.dumps(state, indent=2) + "\n")
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Could not persist max_iterations=%d to state.json (%s): "
+            "resume will fall back to CLI flag / campaign.yaml / default.",
+            max_iterations, exc,
+        )
+
+
+def read_persisted_max_iterations(work_dir: Path) -> int | None:
+    """Read max_iterations from state.json if present (#197).
+
+    Returns None when state.json doesn't exist, can't be parsed, or
+    doesn't carry a max_iterations field. Callers should fall back to
+    their normal resolution chain (CLI flag → campaign.yaml → default).
+    """
+    state_path = Path(work_dir) / "state.json"
+    if not state_path.exists():
+        return None
+    try:
+        state = json.loads(state_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    val = state.get("max_iterations")
+    if not isinstance(val, int) or val < 1:
+        return None
+    return val
+
+
 def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
     """Decide where to resume a campaign and, if DONE, advance it.
 
@@ -194,8 +242,16 @@ def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
     if engine.phase not in ("INIT", "DONE"):
         start = engine.iteration
         if start < 1:
-            logger.warning(
-                "state.json has iteration=%d (< 1); starting fresh.", start,
+            # #202: pre-#194, the engine kept state.iteration=0 throughout
+            # iter-1 (incrementing only on DONE→DESIGN). The earlier WARNING
+            # "starting fresh" wording read like data loss; in practice
+            # existing iter-1 artifacts are preserved and the resume
+            # continues at state.phase. Phrase it informationally.
+            logger.info(
+                "state.json has iteration=%d (no completed iterations yet); "
+                "treating as iter-1. Existing artifacts under runs/iter-1/ "
+                "are preserved; resuming at phase=%s.",
+                start, engine.phase,
             )
             return 1
         if start > max_iterations:
@@ -308,6 +364,12 @@ def run_campaign(
             max_retries=max_cli_retries,
         )
         preflight_dispatcher.preflight_check()
+
+    # #197: persist effective max_iterations into state.json so a later
+    # `nous resume` (without --max-iterations) honors the original cap
+    # instead of silently defaulting to 10. The state file is the single
+    # source of truth across run/resume invocations.
+    _persist_max_iterations(work_dir, max_iterations)
 
     start_iter = _resume_completed_campaign(work_dir, max_iterations)
 

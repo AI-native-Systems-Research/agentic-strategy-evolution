@@ -114,6 +114,11 @@ def _cmd_run(args):
             file=sys.stderr,
         )
         sys.exit(1)
+    # #193: --sandbox CLI flag overrides campaign.sandbox if both present;
+    # leaving it unset preserves whatever the campaign.yaml declares (or
+    # the SDKDispatcher default of "bypass").
+    if getattr(args, "sandbox", None) is not None:
+        campaign["sandbox"] = args.sandbox
     run_campaign(
         campaign,
         work_dir,
@@ -132,7 +137,7 @@ def _cmd_run(args):
 def _cmd_resume(args):
     import logging
 
-    from orchestrator.campaign import run_campaign
+    from orchestrator.campaign import run_campaign, read_persisted_max_iterations
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
@@ -150,7 +155,29 @@ def _cmd_resume(args):
         print("resume requires campaign.yaml", file=sys.stderr)
         sys.exit(1)
 
-    max_iterations = args.max_iterations if args.max_iterations is not None else campaign.get("max_iterations", 10)
+    # #197: max_iterations resolution chain on resume:
+    #   1. CLI --max-iterations (explicit override wins)
+    #   2. state.json (preserves the cap from the original `nous run`)
+    #   3. campaign.yaml.max_iterations (fallback for legacy state)
+    #   4. hardcoded default (10)
+    if args.max_iterations is not None:
+        max_iterations = args.max_iterations
+        print(f"Resuming with max_iterations={max_iterations} (CLI override).")
+    else:
+        persisted = read_persisted_max_iterations(work_dir)
+        if persisted is not None:
+            max_iterations = persisted
+            print(
+                f"Resuming with max_iterations={max_iterations} "
+                f"(persisted from original `nous run`)."
+            )
+        else:
+            max_iterations = campaign.get("max_iterations", 10)
+            print(
+                f"Resuming with max_iterations={max_iterations} "
+                f"(from campaign.yaml / default — state.json had no "
+                f"persisted value)."
+            )
     run_campaign(
         campaign,
         work_dir,
@@ -608,6 +635,13 @@ def main():
              "SDK for code phases; 'inline' emits prompts to stdout for "
              "an enclosing agent framework. The legacy 'api' backend "
              "was removed in #183.",
+    )
+    p_run.add_argument(
+        "--sandbox", choices=["bypass", "default"], default=None,
+        help="SDK filesystem sandbox mode (#193). Default 'bypass' (set "
+             "via campaign.sandbox). Pass 'default' to use the SDK's "
+             "default permission gating — only sensible when the "
+             "campaign's writes all land under the launched cwd.",
     )
     p_run.add_argument(
         "--bundle", type=Path, default=None,

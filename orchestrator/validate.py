@@ -42,20 +42,44 @@ _KNOWN_ROOT_FILES = {
 }
 
 
-def _check_unexpected_files(iter_dir: Path) -> list[str]:
-    """Flag files at iter root that aren't known protocol artifacts."""
+def _check_unexpected_files(
+    iter_dir: Path,
+    extra_allowed: set[str] | frozenset[str] = frozenset(),
+) -> list[str]:
+    """Flag files at iter root that aren't known protocol artifacts.
+
+    #199: ``extra_allowed`` is a per-campaign extension to the global
+    ``_KNOWN_ROOT_FILES`` whitelist. Campaigns that need additional
+    iter-root artifacts (e.g. paper-* needing ``analysis_summary.json``
+    + ``manifest.json``) declare them via ``campaign.validation.iter_root_extensions``
+    in the campaign YAML.
+    """
     if not iter_dir.is_dir():
         return []
+    allowed = _KNOWN_ROOT_FILES | set(extra_allowed)
     errors = []
     for f in iter_dir.iterdir():
         if f.is_dir():
             continue
-        if f.name not in _KNOWN_ROOT_FILES:
+        if f.name not in allowed:
             errors.append(
                 f"unexpected file at iter root: {f.name} "
                 f"(should be in inputs/ or results/)"
             )
     return errors
+
+
+def _campaign_iter_root_extensions(campaign: dict | None) -> frozenset[str]:
+    """Read ``campaign.validation.iter_root_extensions`` (#199).
+
+    Returns an empty frozenset for campaigns that don't declare it (the
+    common case — most campaigns are fine with the global whitelist).
+    """
+    if not campaign:
+        return frozenset()
+    validation = campaign.get("validation") or {}
+    extensions = validation.get("iter_root_extensions") or []
+    return frozenset(str(x) for x in extensions if x)
 
 
 def _validate_ground_truth_independence(bundle: dict) -> list[str]:
@@ -208,8 +232,13 @@ def _validate_typed_arm_fields(bundle: dict) -> list[str]:
     return errors
 
 
-def validate_design(iter_dir: Path) -> dict:
-    """Check design artifacts exist and conform to schemas."""
+def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
+    """Check design artifacts exist and conform to schemas.
+
+    #199: ``campaign`` is optional but recommended — it enables the
+    per-campaign iter-root whitelist extension via
+    ``campaign.validation.iter_root_extensions``.
+    """
     iter_dir = Path(iter_dir)
     errors = []
 
@@ -250,14 +279,16 @@ def validate_design(iter_dir: Path) -> dict:
     elif handoff_path.stat().st_size == 0:
         errors.append("handoff_snapshot.md is empty")
 
-    errors.extend(_check_unexpected_files(iter_dir))
+    errors.extend(
+        _check_unexpected_files(iter_dir, _campaign_iter_root_extensions(campaign))
+    )
 
     if errors:
         return {"status": "fail", "errors": errors}
     return {"status": "pass"}
 
 
-def validate_execution(iter_dir: Path) -> dict:
+def validate_execution(iter_dir: Path, campaign: dict | None = None) -> dict:
     """Check execution artifacts exist, conform to schemas, and patches are valid."""
     iter_dir = Path(iter_dir)
     errors = []
@@ -368,7 +399,9 @@ def validate_execution(iter_dir: Path) -> dict:
         except KeyError as exc:
             errors.append(f"bundle.yaml arm missing required field: {exc}")
 
-    errors.extend(_check_unexpected_files(iter_dir))
+    errors.extend(
+        _check_unexpected_files(iter_dir, _campaign_iter_root_extensions(campaign))
+    )
 
     if errors:
         return {"status": "fail", "errors": errors}

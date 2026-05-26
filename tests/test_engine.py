@@ -150,13 +150,53 @@ class TestEngine:
         assert engine.phase == "DONE"
 
     def test_human_design_gate_reject(self, work_dir):
-        """Human rejects at design gate -> back to DESIGN without incrementing."""
+        """Human rejects at design gate -> back to DESIGN without incrementing.
+
+        #194: iteration ticks once on leaving INIT; rejecting at the gate
+        and looping back to DESIGN must NOT tick it again.
+        """
         engine = Engine(work_dir)
         for s in ["DESIGN", "HUMAN_DESIGN_GATE"]:
             engine.transition(s)
+        # After INIT→DESIGN→GATE we're in iter-1.
+        assert engine.iteration == 1
         engine.transition("DESIGN")  # human rejects
         assert engine.phase == "DESIGN"
-        assert engine.iteration == 0  # must NOT increment
+        assert engine.iteration == 1  # still iter-1, must NOT re-increment
+
+    def test_iteration_ticks_on_leaving_init(self, work_dir):
+        """#194: state.iteration must equal 1 once iter-1 starts."""
+        engine = Engine(work_dir)
+        assert engine.iteration == 0  # INIT
+        engine.transition("DESIGN")
+        assert engine.iteration == 1  # iter-1 has begun
+
+    def test_iteration_is_1_throughout_iter1_phases(self, work_dir):
+        """#194: state.iteration stays at 1 across all of iter-1's phases.
+
+        Pre-#194 the counter sat at 0 throughout iter-1, breaking
+        ``nous status --line`` (which read state.iteration) while artifacts
+        were correctly being written to runs/iter-1/. Pin it.
+        """
+        engine = Engine(work_dir)
+        for phase in [
+            "DESIGN", "HUMAN_DESIGN_GATE",
+            "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE",
+        ]:
+            engine.transition(phase)
+            assert engine.iteration == 1, (
+                f"after transitioning to {phase}, iteration should be 1 "
+                f"(matching runs/iter-1/), got {engine.iteration}"
+            )
+
+    def test_iteration_ticks_on_leaving_init_via_pre_work(self, work_dir):
+        """#194 + #167: PRE_WORK is on the INIT→DESIGN path; counter must
+        tick on leaving INIT regardless of which path is taken."""
+        engine = Engine(work_dir)
+        engine.transition("PRE_WORK")
+        assert engine.iteration == 1  # already in iter-1's pre-work
+        engine.transition("DESIGN")
+        assert engine.iteration == 1  # still iter-1; no double-tick
 
     def test_iteration_increments_on_done_to_design(self, work_dir):
         engine = Engine(work_dir)
@@ -165,9 +205,9 @@ class TestEngine:
             "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
-        assert engine.iteration == 0
+        assert engine.iteration == 1  # iter-1 done; counter stable through phases
         engine.transition("DESIGN")
-        assert engine.iteration == 1
+        assert engine.iteration == 2  # iter-2 begins
 
     def test_human_findings_gate_reject(self, work_dir):
         engine = Engine(work_dir)
@@ -192,33 +232,38 @@ class TestEngine:
         assert engine.phase == "DESIGN"
 
     def test_done_to_design_increments_iteration(self, work_dir):
-        """DONE -> DESIGN must increment iteration (resume a campaign)."""
+        """DONE -> DESIGN must increment iteration (start the next iter).
+
+        #194: state.iteration is now 1 throughout iter-1, ticking to 2 on
+        DONE→DESIGN. Pre-#194 it stayed at 0 throughout iter-1.
+        """
         engine = Engine(work_dir)
         for s in [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
             "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
-        assert engine.iteration == 0
+        assert engine.iteration == 1  # iter-1 done; counter has been 1 throughout
         engine.transition("DESIGN")
-        assert engine.iteration == 1
+        assert engine.iteration == 2  # iter-2 begins
 
     def test_multi_iteration(self, work_dir):
+        """#194: counter is 1 from leaving INIT, ticks to 2 on DONE→DESIGN."""
         engine = Engine(work_dir)
         for s in [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
-            "HUMAN_FINDINGS_GATE", "DONE",
-        ]:
-            engine.transition(s)
-        engine.transition("DESIGN")  # iter 0 -> 1
-        assert engine.iteration == 1
-        for s in [
-            "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
             "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
         engine.transition("DESIGN")  # iter 1 -> 2
         assert engine.iteration == 2
+        for s in [
+            "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
+            "HUMAN_FINDINGS_GATE", "DONE",
+        ]:
+            engine.transition(s)
+        engine.transition("DESIGN")  # iter 2 -> 3
+        assert engine.iteration == 3
 
 
 class TestSaveStateAtomicity:

@@ -180,6 +180,82 @@ def _missing_design_artifacts(iter_dir: Path) -> list[str]:
     ]
 
 
+# #200: which files MUST exist after EXECUTE_ANALYZE completes for the
+# iteration to advance to the findings gate. Drives the structured
+# "execute_incomplete" diagnostic — sister to #187 for DESIGN.
+_REQUIRED_EXECUTE_ARTIFACTS = (
+    "experiment_plan.yaml",
+    "findings.json",
+    "principle_updates.json",
+)
+
+
+class ExecuteAnalyzeIncompleteError(RuntimeError):
+    """EXECUTE_ANALYZE exited without producing the required artifacts (#200).
+
+    Distinct from a validator failure (where the artifacts exist but
+    are malformed). Fires when one or more of experiment_plan.yaml /
+    findings.json / principle_updates.json is missing on disk after the
+    dispatcher returned — typically because:
+
+      * max_turns budget exhausted before the agent finished aggregating
+        per-arm results.
+      * A subprocess (BLIS, build, test) hung and the agent never
+        recovered to author the analysis files.
+      * The agent got stuck in a polling loop waiting on a never-arriving
+        signal (e.g. a hung child process the orchestrator can't see).
+      * API stall / transport failure mid-turn.
+
+    The orchestrator catches this and writes a structured retry_log
+    entry with ``failure_type: "execute_incomplete"`` so post-mortem
+    tooling (#170 meta-findings, ad-hoc grep) can name the failure mode.
+    """
+
+    def __init__(self, missing: list[str], iter_dir: Path, max_turns: int):
+        self.missing = list(missing)
+        self.iter_dir = Path(iter_dir)
+        self.max_turns = max_turns
+        super().__init__(self._build_message())
+
+    def _build_message(self) -> str:
+        missing_lines = "\n".join(f"  - {m}" for m in self.missing)
+        log_path = self.iter_dir / "inputs" / "executor_log.jsonl"
+        legacy_log_path = self.iter_dir / "executor_log.jsonl"
+        return (
+            f"EXECUTE_ANALYZE incomplete for {self.iter_dir.name}. Missing "
+            f"required artifacts:\n"
+            f"{missing_lines}\n\n"
+            f"The agent did not commit a complete analysis. Likely causes:\n"
+            f"  1. max_turns exhaustion (current limit: {self.max_turns}). "
+            f"Compare against the actual turn count in llm_metrics.jsonl. "
+            f"Raise the cap via per-campaign max_turns (#186) if turns ran "
+            f"out before the agent could aggregate results.\n"
+            f"  2. Subprocess hang. The agent's tool calls block the SDK "
+            f"turn; check `ps` for orphaned BLIS / build / test processes "
+            f"that never returned.\n"
+            f"  3. Polling loop without progress. Look for repeated "
+            f"`sleep N && ls …` patterns in the streaming log; those "
+            f"signal the agent waiting on something that never arrived.\n"
+            f"  4. API stall / transport failure. The SDK streaming log\n"
+            f"     is at {log_path}\n"
+            f"     (or, on legacy campaigns predating #190, at\n"
+            f"     {legacy_log_path}).\n"
+            f"\n"
+            f"For full context, look at "
+            f"{self.iter_dir / 'executor_log.md'} (the agent's working "
+            f"notes this turn) and any partial outputs under "
+            f"{self.iter_dir / 'results'}/."
+        )
+
+
+def _missing_execute_artifacts(iter_dir: Path) -> list[str]:
+    """Return the list of required EXECUTE_ANALYZE artifacts that don't exist (#200)."""
+    return [
+        name for name in _REQUIRED_EXECUTE_ARTIFACTS
+        if not (iter_dir / name).exists()
+    ]
+
+
 def _apply_pre_authored_bundle(
     iter_dir: Path,
     *,
@@ -378,13 +454,24 @@ def _split_design_output(raw: str, iter_dir: Path) -> None:
         atomic_write(iter_dir.parent.parent / "handoff.md", handoff_md + "\n")
 
 
-def _enter_phase(engine, phase):
-    """Transition to phase if needed. Returns True if phase work should run."""
+def _enter_phase(engine, phase, work_dir: Path | None = None):
+    """Transition to phase if needed. Returns True if phase work should run.
+
+    #198: when ``work_dir`` is supplied and we're about to begin (not
+    skip-past) a phase, honour any STOP sentinel before doing the
+    transition. This makes ``nous stop`` granular at phase boundaries
+    (DESIGN / HUMAN_DESIGN_GATE / EXECUTE_ANALYZE / HUMAN_FINDINGS_GATE)
+    instead of only iteration boundaries — important when a long
+    EXECUTE_ANALYZE phase is running and the operator wants to halt
+    without waiting for the next iteration.
+    """
     current_idx = _PHASE_INDEX[engine.phase]
     target_idx = _PHASE_INDEX[phase]
     if current_idx > target_idx:
         return False
     if engine.phase != phase:
+        if work_dir is not None:
+            _raise_if_stopped(work_dir, where=f"before {phase}")
         engine.transition(phase)
     return True
 
@@ -711,7 +798,7 @@ def run_iteration(
         print(f"\n  Resuming from {engine.phase}\n")
 
     # ─── DESIGN ───────────────────────────────────────────────────────────
-    if _enter_phase(engine, "DESIGN"):
+    if _enter_phase(engine, "DESIGN", work_dir):
         print(f"\n{'='*60}")
         if pre_authored_bundle is not None:
             # #188: experiment is fully pre-specified — skip the agent
@@ -735,7 +822,7 @@ def run_iteration(
             print(f"  -> {iter_dir / 'bundle_manifest.json'}")
             # Fall through to validation; required artifacts now exist.
             from orchestrator.validate import validate_design
-            result = validate_design(iter_dir)
+            result = validate_design(iter_dir, campaign=campaign)
             if result["status"] == "fail":
                 raise RuntimeError(
                     f"Pre-authored design artifacts failed validation:\n"
@@ -791,7 +878,7 @@ def run_iteration(
             )
         # Validate design artifacts regardless of dispatch path
         from orchestrator.validate import validate_design
-        result = validate_design(iter_dir)
+        result = validate_design(iter_dir, campaign=campaign)
         if result["status"] == "fail":
             raise RuntimeError(
                 f"Design artifacts failed validation:\n"
@@ -801,7 +888,7 @@ def run_iteration(
         print(f"  -> {iter_dir / 'bundle.yaml'}")
 
     # ─── HUMAN DESIGN GATE ────────────────────────────────────────────────
-    if _enter_phase(engine, "HUMAN_DESIGN_GATE"):
+    if _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir):
         print(f"\n{'='*60}")
         print(f"  HUMAN DESIGN GATE")
         print(f"{'='*60}")
@@ -835,7 +922,7 @@ def run_iteration(
 
     # ─── EXECUTE + ANALYZE ────────────────────────────────────────────────
     experiment_dir = experiment_id = None
-    if _enter_phase(engine, "EXECUTE_ANALYZE"):
+    if _enter_phase(engine, "EXECUTE_ANALYZE", work_dir):
         print(f"\n{'='*60}")
         print(f"  EXECUTE + ANALYZE — building, running, and analyzing")
         print(f"{'='*60}")
@@ -888,9 +975,32 @@ def run_iteration(
                     iter_dir / "principle_updates.json",
                     json.dumps(combined["principle_updates"], indent=2) + "\n",
                 )
+        # #200: surface the structured "execute_incomplete" diagnostic
+        # BEFORE running schema validation. When required EXECUTE artifacts
+        # are missing, the operator needs hints (max_turns exhaustion,
+        # subprocess hang, polling loop, API stall) — not just a raw
+        # "X not found" from validate_execution.
+        missing = _missing_execute_artifacts(iter_dir)
+        if missing:
+            from orchestrator.metrics import log_retry_event
+            log_retry_event(work_dir / "llm_metrics.jsonl", {
+                "iteration": iteration,
+                "phase": "execute-analyze",
+                "failure_type": "execute_incomplete",
+                "missing_artifacts": missing,
+                "max_turns": _max_turns_for("execute_analyze"),
+            })
+            # Clean up the experiment worktree so a re-run isn't blocked.
+            if repo_path and experiment_id:
+                remove_experiment_worktree(Path(repo_path), experiment_id)
+            raise ExecuteAnalyzeIncompleteError(
+                missing=missing,
+                iter_dir=iter_dir,
+                max_turns=_max_turns_for("execute_analyze"),
+            )
         # Validate artifacts — trust the agent, log warning on failure
         from orchestrator.validate import validate_execution
-        result = validate_execution(iter_dir)
+        result = validate_execution(iter_dir, campaign=campaign)
         if result["status"] == "fail":
             logger.warning(
                 "Executor artifacts failed post-check validation: %s",
@@ -914,7 +1024,7 @@ def run_iteration(
         ) from exc
 
     # ─── HUMAN FINDINGS GATE ──────────────────────────────────────────────
-    if _enter_phase(engine, "HUMAN_FINDINGS_GATE"):
+    if _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir):
         print(f"\n{'='*60}")
         print(f"  HUMAN FINDINGS GATE")
         print(f"{'='*60}")

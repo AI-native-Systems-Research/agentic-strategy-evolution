@@ -253,7 +253,14 @@ class TestResumeCompletedCampaign:
         assert engine.phase == "DESIGN"  # untouched
 
     def test_mid_flight_corrupt_iteration_falls_back_to_1(self, tmp_path, caplog):
-        """Mid-flight with iteration < 1 in state.json falls back to 1 with a warning."""
+        """Mid-flight with iteration < 1 in state.json falls back to 1.
+
+        #202: the message was rewarded from WARNING ("starting fresh", which
+        sounded like data loss) to INFO with informative wording. After
+        #194 this path is mostly dead — engine.transition increments
+        iteration on leaving INIT — but the safety net stays for any
+        legitimately-corrupt state.json that survives a crash mid-write.
+        """
         import logging
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
@@ -262,10 +269,17 @@ class TestResumeCompletedCampaign:
         state["iteration"] = 0
         (work_dir / "state.json").write_text(json.dumps(state))
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.INFO):
             result = _resume_completed_campaign(work_dir, max_iterations=5)
         assert result == 1
-        assert any("iteration=0" in r.message for r in caplog.records)
+        assert any(
+            "iteration=0" in r.message and "preserved" in r.message
+            for r in caplog.records
+        ), (
+            "expected an INFO log mentioning iteration=0 and that artifacts "
+            "are preserved (#202); got: "
+            f"{[r.message for r in caplog.records]}"
+        )
 
     def test_mid_flight_exceeds_max_iterations_warns(self, tmp_path, caplog):
         """Mid-flight iteration > max_iterations logs a warning and returns start."""

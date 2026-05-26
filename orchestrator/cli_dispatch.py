@@ -186,7 +186,14 @@ class CLIDispatcher(LLMDispatcher):
             else:
                 atomic_write(output_path, json.dumps(data, indent=2) + "\n")
 
-        logger.info("CLIDispatcher: role=%s phase=%s -> %s", role, phase, output_path)
+        logger.info(
+            # #196: report the runtime class name, not the parent's. SDKDispatcher
+            # inherits from CLIDispatcher and runs through this path, but the
+            # log line should say "SDKDispatcher" so operators don't think the
+            # legacy claude -p subprocess (removed in #183) is in use.
+            "%s: role=%s phase=%s -> %s",
+            type(self).__name__, role, phase, output_path,
+        )
 
     def _retry_cli_parse(self, original_prompt: str, error: Exception, fmt: str) -> dict:
         feedback = (

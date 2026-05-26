@@ -121,9 +121,16 @@ class Engine:
                 f"Invalid transition: {current} -> {to_state}. "
                 f"Valid: {TRANSITIONS[current]}"
             )
-        # Build candidate state before writing to disk
+        # Build candidate state before writing to disk.
+        # #194: increment iteration whenever we leave INIT (iter-1 begins,
+        # whether via PRE_WORK or directly to DESIGN) and whenever DONE
+        # transitions to DESIGN (iter-N+1 begins). Pre-#194, the counter
+        # only ticked on DONE→DESIGN, so state.iteration stayed at 0
+        # throughout iter-1 even though artifacts lived at runs/iter-1/.
         new_state = dict(self._state)
-        if current == "DONE" and to_state == "DESIGN":
+        if current == "INIT":
+            new_state["iteration"] += 1
+        elif current == "DONE" and to_state == "DESIGN":
             new_state["iteration"] += 1
         new_state["phase"] = to_state
         new_state["timestamp"] = datetime.now(timezone.utc).isoformat()

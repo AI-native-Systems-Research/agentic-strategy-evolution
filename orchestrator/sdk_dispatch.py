@@ -70,6 +70,47 @@ def _load_methodology_preamble(methodology_dir: Path) -> str | None:
     return "\n\n---\n\n".join(blocks)
 
 
+def summarize_silence_gaps(event_log_path: Path) -> dict:
+    """Walk an executor_log.jsonl and report the longest silence gap (#201).
+
+    Returns ``{"max_gap_seconds": float, "event_count": int}`` — both 0
+    when the log doesn't exist, has fewer than 2 events, or can't be
+    parsed. The max-gap is the largest delta between consecutive event
+    timestamps, in seconds. Useful for post-turn diagnostics: a multi-
+    minute gap between events typically signals a hung tool call (BLIS
+    subprocess, long-running build, polling-loop on a stuck signal).
+    """
+    if not event_log_path.exists():
+        return {"max_gap_seconds": 0.0, "event_count": 0}
+    try:
+        lines = event_log_path.read_text().splitlines()
+    except OSError:
+        return {"max_gap_seconds": 0.0, "event_count": 0}
+    import json as _json
+    timestamps: list[float] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            rec = _json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        ts = rec.get("ts")
+        if isinstance(ts, (int, float)):
+            timestamps.append(float(ts))
+    if len(timestamps) < 2:
+        return {"max_gap_seconds": 0.0, "event_count": len(timestamps)}
+    max_gap = 0.0
+    for prev, cur in zip(timestamps, timestamps[1:]):
+        gap = cur - prev
+        if gap > max_gap:
+            max_gap = gap
+    return {
+        "max_gap_seconds": max_gap,
+        "event_count": len(timestamps),
+    }
+
+
 def _tee_event(event_log_path: Path | None, message: object, cls_name: str) -> None:
     """Append one SDK event to executor_log.jsonl (#127 Phase B).
 
@@ -94,6 +135,22 @@ def _tee_event(event_log_path: Path | None, message: object, cls_name: str) -> N
                 record[field_name] = val
             except (TypeError, ValueError):
                 record[field_name] = repr(val)[:200]
+    # #195: AssistantMessage.tool_name is empty; the actual tool name lives
+    # on ToolUseBlock instances inside `content` (a list of TextBlock /
+    # ThinkingBlock / ToolUseBlock objects). Walk the list and surface the
+    # last tool name so `nous status` can render `last=Bash` etc.
+    if "tool_name" not in record:
+        content = getattr(message, "content", None)
+        if isinstance(content, (list, tuple)):
+            for block in reversed(content):
+                name = getattr(block, "name", None)
+                if name and not callable(name):
+                    try:
+                        _json.dumps(name)
+                        record["tool_name"] = name
+                        break
+                    except (TypeError, ValueError):
+                        pass
     try:
         with open(event_log_path, "a") as f:
             f.write(_json.dumps(record) + "\n")
@@ -143,6 +200,7 @@ class SDKRunner(Protocol):
         system_prompt: str | None = None,
         settings_path: Path | None = None,
         event_log_path: Path | None = None,
+        permission_mode: str | None = None,
     ) -> SDKResult:
         ...
 
@@ -163,6 +221,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
         system_prompt: str | None = None,
         settings_path: Path | None = None,
         event_log_path: Path | None = None,
+        permission_mode: str | None = "bypassPermissions",
     ) -> SDKResult:
         try:
             import anyio
@@ -178,13 +237,32 @@ def _default_sdk_runner_factory() -> SDKRunner:
             ) from exc
 
         async def _run() -> SDKResult:
-            options = ClaudeAgentOptions(
-                model=model,
-                cwd=str(cwd) if cwd else None,
-                max_turns=max_turns,
-                system_prompt=system_prompt,
-                settings=str(settings_path) if settings_path else None,
-            )
+            # #193: ``permission_mode`` controls the Claude Code SDK
+            # filesystem sandbox. Default is "bypassPermissions" because
+            # nous campaigns routinely need writes outside cwd (the
+            # orchestrator launches with cwd=worktree but BLIS / build /
+            # test subprocess outputs land at <main-repo>/.nous/<run>/
+            # runs/iter-N/results/, which the default sandbox rejects).
+            # Operators can opt out via campaign.sandbox="default" or
+            # `nous run --sandbox default` if they want the SDK's default
+            # permission gating.
+            if permission_mode:
+                options = ClaudeAgentOptions(
+                    model=model,
+                    cwd=str(cwd) if cwd else None,
+                    max_turns=max_turns,
+                    system_prompt=system_prompt,
+                    settings=str(settings_path) if settings_path else None,
+                    permission_mode=permission_mode,  # type: ignore[arg-type]
+                )
+            else:
+                options = ClaudeAgentOptions(
+                    model=model,
+                    cwd=str(cwd) if cwd else None,
+                    max_turns=max_turns,
+                    system_prompt=system_prompt,
+                    settings=str(settings_path) if settings_path else None,
+                )
             text_chunks: list[str] = []
             usage: dict = {}
             cost_usd = 0.0
@@ -279,6 +357,7 @@ class SDKDispatcher(CLIDispatcher):
         sdk_runner: Callable | None = None,
         system_prompt: str | None = None,
         settings_path: Path | None = None,
+        sandbox: str | None = None,
     ) -> None:
         super().__init__(
             work_dir=work_dir,
@@ -294,6 +373,24 @@ class SDKDispatcher(CLIDispatcher):
             prompts_dir or Path(__file__).parent.parent / "prompts" / "methodology",
         )
         self._settings_path = settings_path
+        # #193: resolve sandbox mode. Order: explicit kwarg > campaign.sandbox
+        # > "bypass" default (which maps to permission_mode="bypassPermissions").
+        # Pass "default" to keep the SDK's default permission gating.
+        resolved = sandbox if sandbox is not None else campaign.get("sandbox", "bypass")
+        if resolved not in ("bypass", "default"):
+            raise ValueError(
+                f"campaign.sandbox must be 'bypass' or 'default', got {resolved!r}"
+            )
+        self._permission_mode = (
+            "bypassPermissions" if resolved == "bypass" else None
+        )
+        # #201: silence threshold (seconds) for post-turn diagnostics.
+        # Default 600s; opt out by setting to 0. Configured per-campaign
+        # via campaign.sdk_timeouts.silence_threshold_seconds.
+        timeouts = campaign.get("sdk_timeouts") or {}
+        self._silence_threshold = float(
+            timeouts.get("silence_threshold_seconds", 600)
+        )
         # #127 Phase B: event log path is recomputed per-dispatch (it depends
         # on the iteration), so we don't store it on the dispatcher.
         self._event_log_path: Path | None = None
@@ -301,6 +398,30 @@ class SDKDispatcher(CLIDispatcher):
     # ------------------------------------------------------------------
     # Per-iteration event log (#127 Phase B)
     # ------------------------------------------------------------------
+
+    def _maybe_log_silence(self, iteration: int, phase: str) -> None:
+        """#201: post-turn diagnostic — if the streaming log shows a gap
+        between events larger than the configured threshold, append a
+        ``failure_type: "sdk_silence"`` entry to retry_log.jsonl. Purely
+        observational; doesn't interrupt or fail the turn.
+        """
+        if self._silence_threshold <= 0 or self._event_log_path is None:
+            return
+        summary = summarize_silence_gaps(self._event_log_path)
+        if summary["max_gap_seconds"] > self._silence_threshold:
+            log_retry_event(self._metrics_path, {
+                "iteration": iteration,
+                "phase": phase,
+                "failure_type": "sdk_silence",
+                "max_gap_seconds": round(summary["max_gap_seconds"], 1),
+                "threshold_seconds": self._silence_threshold,
+                "event_count": summary["event_count"],
+            })
+            logger.warning(
+                "SDK turn observed a %.1fs silence gap (threshold=%.0fs); "
+                "see retry_log.jsonl for details.",
+                summary["max_gap_seconds"], self._silence_threshold,
+            )
 
     def dispatch(  # type: ignore[override]
         self, role: str, phase: str, *, output_path, iteration: int,
@@ -322,6 +443,13 @@ class SDKDispatcher(CLIDispatcher):
                 perspective=perspective, h_main_result=h_main_result,
             )
         finally:
+            # #201: post-turn silence diagnostic. Read the streaming log
+            # we just produced and surface excessive event gaps to
+            # retry_log.jsonl. Best-effort — never raise from the finally.
+            try:
+                self._maybe_log_silence(iteration=iteration, phase=phase)
+            except Exception as exc:  # noqa: BLE001 — never break the turn
+                logger.debug("silence diagnostic skipped: %s", exc)
             self._event_log_path = None
 
     # ------------------------------------------------------------------
@@ -375,6 +503,7 @@ class SDKDispatcher(CLIDispatcher):
                     system_prompt=self._system_prompt,
                     settings_path=self._settings_path,
                     event_log_path=self._event_log_path,
+                    permission_mode=self._permission_mode,
                 )
             except SDKTransientError as exc:
                 failure_count += 1

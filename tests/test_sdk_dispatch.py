@@ -347,3 +347,76 @@ class TestSDKDispatchErrorResult:
         retry_log = _read_jsonl(tmp_path / "retry_log.jsonl")
         assert len(retry_log) == 1
         assert "rate limit exceeded" in retry_log[0]["error"]
+
+
+# ─── _tee_event extraction (#195) ─────────────────────────────────────────
+
+
+class _FakeToolUseBlock:
+    def __init__(self, name: str):
+        self.name = name
+
+
+class _FakeTextBlock:
+    def __init__(self, text: str):
+        self.text = text
+
+
+class _FakeAssistantMessage:
+    """Mimics SDK message shape: tool_name not at top level; lives on
+    ToolUseBlock instances inside the content list."""
+    def __init__(self, content: list):
+        self.content = content
+
+
+class TestTeeEventToolNameExtraction:
+    """#195: _tee_event must extract tool_name from ToolUseBlock entries
+    inside content, not from the message top-level (which is empty)."""
+
+    def test_extracts_tool_name_from_tool_use_block(self, tmp_path: Path) -> None:
+        from orchestrator.sdk_dispatch import _tee_event
+        log = tmp_path / "executor_log.jsonl"
+        msg = _FakeAssistantMessage(content=[
+            _FakeTextBlock("thinking..."),
+            _FakeToolUseBlock(name="Bash"),
+        ])
+        _tee_event(log, msg, "AssistantMessage")
+        rows = [json.loads(l) for l in log.read_text().splitlines() if l]
+        assert len(rows) == 1
+        assert rows[0]["tool_name"] == "Bash"
+
+    def test_picks_last_tool_block_when_multiple(self, tmp_path: Path) -> None:
+        from orchestrator.sdk_dispatch import _tee_event
+        log = tmp_path / "executor_log.jsonl"
+        msg = _FakeAssistantMessage(content=[
+            _FakeToolUseBlock(name="Read"),
+            _FakeToolUseBlock(name="Bash"),
+            _FakeToolUseBlock(name="Edit"),
+        ])
+        _tee_event(log, msg, "AssistantMessage")
+        rows = [json.loads(l) for l in log.read_text().splitlines() if l]
+        # Last tool wins — most recent action.
+        assert rows[0]["tool_name"] == "Edit"
+
+    def test_no_tool_block_means_no_tool_name(self, tmp_path: Path) -> None:
+        from orchestrator.sdk_dispatch import _tee_event
+        log = tmp_path / "executor_log.jsonl"
+        msg = _FakeAssistantMessage(content=[_FakeTextBlock("just text")])
+        _tee_event(log, msg, "AssistantMessage")
+        rows = [json.loads(l) for l in log.read_text().splitlines() if l]
+        assert "tool_name" not in rows[0]
+
+    def test_top_level_tool_name_still_wins_when_present(self, tmp_path: Path) -> None:
+        """Forward-compat: if a future SDK release puts tool_name at
+        message top-level, prefer that over the content-walk fallback."""
+        from orchestrator.sdk_dispatch import _tee_event
+        log = tmp_path / "executor_log.jsonl"
+
+        class _MsgWithTopLevelToolName:
+            tool_name = "TopLevelTool"
+            content = [_FakeToolUseBlock(name="Bash")]
+
+        _tee_event(log, _MsgWithTopLevelToolName(), "AssistantMessage")
+        rows = [json.loads(l) for l in log.read_text().splitlines() if l]
+        assert rows[0]["tool_name"] == "TopLevelTool"
+
