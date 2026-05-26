@@ -45,6 +45,10 @@ def resolve_work_dir(target):
     if p.is_dir() and (p / "state.json").exists():
         return p
 
+    if p.is_absolute() or "/" in target:
+        print(f"Work directory not found: {p}", file=sys.stderr)
+        sys.exit(1)
+
     run_id = target
     root = _find_repo_root()
     work_dir = root / ".nous" / run_id

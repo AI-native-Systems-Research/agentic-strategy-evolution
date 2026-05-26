@@ -46,6 +46,47 @@ class TestResolveWorkDir:
         with pytest.raises(SystemExit):
             resolve_work_dir("/no/such/campaign.yaml")
 
+    def test_absolute_path_to_nonexistent_dir_reports_missing_workdir(
+        self, tmp_path, capsys
+    ):
+        """An absolute path that doesn't exist must not be silently
+        reinterpreted as a bare run-id — the user clearly intended a path,
+        so the error should name that path, not 'no .nous/ in any parent'.
+        Regression for #181."""
+        missing = tmp_path / "inference-sim" / ".nous" / "paper-burst"
+        with pytest.raises(SystemExit):
+            resolve_work_dir(str(missing))
+        err = capsys.readouterr().err
+        assert "Work directory not found" in err
+        assert str(missing) in err
+        assert ".nous/ directory in any parent" not in err
+
+    def test_absolute_path_to_dir_without_state_json_reports_missing_workdir(
+        self, tmp_path, capsys
+    ):
+        """A directory that exists but lacks state.json (e.g. mid-bootstrap
+        or wrong path) must produce the same path-shaped error, not the
+        run-id walk-up error. Regression for #181."""
+        half = tmp_path / ".nous" / "half-bootstrapped"
+        half.mkdir(parents=True)
+        with pytest.raises(SystemExit):
+            resolve_work_dir(str(half))
+        err = capsys.readouterr().err
+        assert "Work directory not found" in err
+        assert ".nous/ directory in any parent" not in err
+
+    def test_relative_path_with_separator_treated_as_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """A relative target containing a path separator is path-shaped —
+        don't fall through to run-id resolution."""
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit):
+            resolve_work_dir("subdir/missing-run")
+        err = capsys.readouterr().err
+        assert "Work directory not found" in err
+        assert ".nous/ directory in any parent" not in err
+
 
 class TestCmdRun:
     def test_run_errors_if_state_beyond_init(self, tmp_path):
