@@ -156,10 +156,12 @@ def _cmd_resume(args):
         sys.exit(1)
 
     # #197: max_iterations resolution chain on resume:
-    #   1. CLI --max-iterations (explicit override wins)
-    #   2. state.json (preserves the cap from the original `nous run`)
-    #   3. campaign.yaml.max_iterations (fallback for legacy state)
-    #   4. hardcoded default (10)
+    #   1. CLI --max-iterations (explicit override wins).
+    #   2. state.json (preserves the cap from the original `nous run`).
+    #   3. campaign.yaml.max_iterations, or the hardcoded default 10 if
+    #      campaign.yaml doesn't pin it. (Both flow through the same
+    #      `campaign.get("max_iterations", 10)` call — legacy state files
+    #      pre-dating #197 land here.)
     if args.max_iterations is not None:
         max_iterations = args.max_iterations
         print(f"Resuming with max_iterations={max_iterations} (CLI override).")

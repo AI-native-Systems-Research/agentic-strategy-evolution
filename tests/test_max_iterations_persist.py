@@ -135,6 +135,87 @@ class TestResumeReadsPersistedCap:
         out = capsys.readouterr().out
         assert "persisted" in out
 
+    def test_resume_falls_back_to_campaign_yaml_when_state_absent(
+        self, tmp_path: Path, monkeypatch, capsys,
+    ) -> None:
+        """#197 resolution chain step 3: state.json has no max_iterations
+        AND no CLI flag → fall back to campaign.yaml.max_iterations.
+        Pre-#197 state files don't carry the field; this preserves their
+        intended cap on resume."""
+        import argparse
+        from orchestrator import cli as cli_mod
+        from orchestrator import campaign as campaign_mod
+
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        work_dir = repo / ".nous" / "demo"
+        work_dir.mkdir(parents=True)
+        # state.json from a pre-#197 run: no max_iterations field.
+        (work_dir / "state.json").write_text(json.dumps(
+            _state_with(phase="DESIGN")  # no max_iter
+        ))
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            "run_id: demo\n"
+            "max_iterations: 7\n"  # campaign.yaml's cap should be honoured
+            "research_question: q\n"
+            f"target_system:\n  name: t\n  description: d\n  repo_path: {repo}\n"
+            "prompts:\n  methodology_layer: p\n"
+        )
+        captured: dict = {}
+        monkeypatch.setattr(
+            campaign_mod, "run_campaign",
+            lambda *a, **kw: captured.update(kw),
+        )
+
+        args = argparse.Namespace(
+            target=str(campaign_file), max_iterations=None, model=None,
+            auto_approve=True, timeout=1800, max_cli_retries=10,
+            agent="sdk", verbose=False,
+        )
+        cli_mod._cmd_resume(args)
+        assert captured.get("max_iterations") == 7
+        out = capsys.readouterr().out
+        assert "campaign.yaml" in out
+
+    def test_resume_falls_back_to_default_10_when_neither_set(
+        self, tmp_path: Path, monkeypatch, capsys,
+    ) -> None:
+        """#197 resolution chain step 4: state has no field, campaign.yaml
+        has no field, no CLI flag → hardcoded default 10."""
+        import argparse
+        from orchestrator import cli as cli_mod
+        from orchestrator import campaign as campaign_mod
+
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        work_dir = repo / ".nous" / "demo"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps(
+            _state_with(phase="DESIGN")
+        ))
+        campaign_file = tmp_path / "campaign.yaml"
+        # No max_iterations field at all.
+        campaign_file.write_text(
+            "run_id: demo\n"
+            "research_question: q\n"
+            f"target_system:\n  name: t\n  description: d\n  repo_path: {repo}\n"
+            "prompts:\n  methodology_layer: p\n"
+        )
+        captured: dict = {}
+        monkeypatch.setattr(
+            campaign_mod, "run_campaign",
+            lambda *a, **kw: captured.update(kw),
+        )
+
+        args = argparse.Namespace(
+            target=str(campaign_file), max_iterations=None, model=None,
+            auto_approve=True, timeout=1800, max_cli_retries=10,
+            agent="sdk", verbose=False,
+        )
+        cli_mod._cmd_resume(args)
+        assert captured.get("max_iterations") == 10  # hardcoded default
+
     def test_resume_cli_flag_overrides_persisted(
         self, tmp_path: Path, monkeypatch, capsys,
     ) -> None:

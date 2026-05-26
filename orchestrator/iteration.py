@@ -212,6 +212,25 @@ class ExecuteAnalyzeIncompleteError(RuntimeError):
     """
 
     def __init__(self, missing: list[str], iter_dir: Path, max_turns: int):
+        # Defensive validation. ``missing`` must be non-empty (otherwise
+        # this exception class doesn't make sense) and every entry must
+        # be a known required artifact (catches typos at the raise site).
+        if not missing:
+            raise ValueError(
+                "ExecuteAnalyzeIncompleteError.missing must be non-empty"
+            )
+        unknown = [m for m in missing if m not in _REQUIRED_EXECUTE_ARTIFACTS]
+        if unknown:
+            raise ValueError(
+                f"ExecuteAnalyzeIncompleteError.missing contains unknown "
+                f"artifact name(s) {unknown!r}; allowed: "
+                f"{list(_REQUIRED_EXECUTE_ARTIFACTS)!r}"
+            )
+        if max_turns < 1:
+            raise ValueError(
+                f"ExecuteAnalyzeIncompleteError.max_turns must be >= 1, "
+                f"got {max_turns}"
+            )
         self.missing = list(missing)
         self.iter_dir = Path(iter_dir)
         self.max_turns = max_turns
@@ -243,8 +262,11 @@ class ExecuteAnalyzeIncompleteError(RuntimeError):
             f"\n"
             f"For full context, look at "
             f"{self.iter_dir / 'executor_log.md'} (the agent's working "
-            f"notes this turn) and any partial outputs under "
-            f"{self.iter_dir / 'results'}/."
+            f"notes this turn). Per-arm BLIS outputs (when present) "
+            f"live under {self.iter_dir / 'results'}/; the missing "
+            f"top-level analysis files (experiment_plan.yaml / "
+            f"findings.json / principle_updates.json) belong at the "
+            f"iter root."
         )
 
 
@@ -454,24 +476,27 @@ def _split_design_output(raw: str, iter_dir: Path) -> None:
         atomic_write(iter_dir.parent.parent / "handoff.md", handoff_md + "\n")
 
 
-def _enter_phase(engine, phase, work_dir: Path | None = None):
+def _enter_phase(engine, phase, work_dir: Path):
     """Transition to phase if needed. Returns True if phase work should run.
 
-    #198: when ``work_dir`` is supplied and we're about to begin (not
-    skip-past) a phase, honour any STOP sentinel before doing the
-    transition. This makes ``nous stop`` granular at phase boundaries
-    (DESIGN / HUMAN_DESIGN_GATE / EXECUTE_ANALYZE / HUMAN_FINDINGS_GATE)
-    instead of only iteration boundaries — important when a long
-    EXECUTE_ANALYZE phase is running and the operator wants to halt
-    without waiting for the next iteration.
+    #198: when we're about to begin (not skip-past) a phase, honour any
+    STOP sentinel before doing the transition. This makes ``nous stop``
+    granular at phase boundaries (DESIGN / HUMAN_DESIGN_GATE /
+    EXECUTE_ANALYZE / HUMAN_FINDINGS_GATE) instead of only iteration
+    boundaries — important when a long EXECUTE_ANALYZE phase is running
+    and the operator wants to halt without waiting for the next
+    iteration.
+
+    ``work_dir`` was made required after PR #204 review: a default of
+    ``None`` would silently skip the stop-sentinel check for any caller
+    that forgot to pass it, and all in-repo callers pass it anyway.
     """
     current_idx = _PHASE_INDEX[engine.phase]
     target_idx = _PHASE_INDEX[phase]
     if current_idx > target_idx:
         return False
     if engine.phase != phase:
-        if work_dir is not None:
-            _raise_if_stopped(work_dir, where=f"before {phase}")
+        _raise_if_stopped(work_dir, where=f"before {phase}")
         engine.transition(phase)
     return True
 

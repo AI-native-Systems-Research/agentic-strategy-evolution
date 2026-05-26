@@ -179,8 +179,15 @@ def _generate_report(
 def _persist_max_iterations(work_dir: Path, max_iterations: int) -> None:
     """Write effective max_iterations into state.json (#197).
 
-    Best-effort: on any read/parse/write failure we log and move on; the
-    feature is operational sugar, not load-bearing for correctness.
+    Best-effort. Three early-return paths are silent benign no-ops:
+      * state.json doesn't exist (run hasn't called setup_work_dir yet)
+      * state.json content isn't a dict (corrupt; load_state will catch it)
+      * value is unchanged (idempotent skip)
+
+    OS / parse / write *errors* are logged at WARNING level with the
+    fallback chain noted, since the feature is operational sugar
+    (carries the original cap across resume) and not load-bearing for
+    correctness.
     """
     state_path = Path(work_dir) / "state.json"
     if not state_path.exists():

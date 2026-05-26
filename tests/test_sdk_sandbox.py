@@ -134,6 +134,84 @@ class TestSandboxValidation:
             )
 
 
+class TestCmdRunSandboxFlag:
+    """End-to-end (#193): the --sandbox CLI flag mutates campaign["sandbox"]
+    before run_campaign sees it, so SDKDispatcher reads the override.
+    A regression that drops the mutation at orchestrator/cli.py would
+    not be caught by the constructor-kwarg unit tests alone."""
+
+    def test_cli_flag_overrides_campaign_sandbox(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        import argparse
+        from orchestrator import cli as cli_mod
+        from orchestrator import campaign as campaign_mod
+
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            "run_id: demo\n"
+            "max_iterations: 1\n"
+            "research_question: q\n"
+            f"target_system:\n  name: t\n  description: d\n  repo_path: {repo}\n"
+            "prompts:\n  methodology_layer: p\n"
+            "sandbox: bypass\n"  # campaign says bypass, CLI will override
+        )
+        captured: dict = {}
+        monkeypatch.setattr(
+            campaign_mod, "run_campaign",
+            lambda campaign, *a, **kw: captured.update(
+                campaign=campaign, **kw,
+            ),
+        )
+
+        args = argparse.Namespace(
+            campaign=str(campaign_file), max_iterations=1, model=None,
+            run_id=None, auto_approve=True, timeout=1800,
+            max_cli_retries=10, agent="sdk", sandbox="default",
+            bundle=None, problem_md=None, handoff_md=None, verbose=False,
+        )
+        cli_mod._cmd_run(args)
+        # CLI flag mutated campaign["sandbox"] from "bypass" → "default".
+        assert captured["campaign"]["sandbox"] == "default"
+
+    def test_cli_flag_absent_preserves_campaign_sandbox(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """When --sandbox is not passed, campaign.yaml's value should
+        flow through unchanged."""
+        import argparse
+        from orchestrator import cli as cli_mod
+        from orchestrator import campaign as campaign_mod
+
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        campaign_file = tmp_path / "campaign.yaml"
+        campaign_file.write_text(
+            "run_id: demo\n"
+            "max_iterations: 1\n"
+            "research_question: q\n"
+            f"target_system:\n  name: t\n  description: d\n  repo_path: {repo}\n"
+            "prompts:\n  methodology_layer: p\n"
+            "sandbox: default\n"
+        )
+        captured: dict = {}
+        monkeypatch.setattr(
+            campaign_mod, "run_campaign",
+            lambda campaign, *a, **kw: captured.update(campaign=campaign),
+        )
+        args = argparse.Namespace(
+            campaign=str(campaign_file), max_iterations=1, model=None,
+            run_id=None, auto_approve=True, timeout=1800,
+            max_cli_retries=10, agent="sdk", sandbox=None,
+            bundle=None, problem_md=None, handoff_md=None, verbose=False,
+        )
+        cli_mod._cmd_run(args)
+        # No CLI flag → campaign.yaml's value preserved.
+        assert captured["campaign"]["sandbox"] == "default"
+
+
 class TestSandboxSchema:
     def test_campaign_yaml_accepts_sandbox_bypass(self) -> None:
         import jsonschema, yaml

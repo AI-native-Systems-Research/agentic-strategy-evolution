@@ -282,18 +282,91 @@ class TestEnterPhaseHonorsSentinel:
         result = _enter_phase(engine, "DESIGN", tmp_path)
         assert result is False
 
-    def test_enter_phase_without_work_dir_skips_sentinel_check(
-        self, tmp_path: Path,
-    ) -> None:
-        """Backwards-compat: callers passing no work_dir get the old
-        behavior (no sentinel check). Keeps ad-hoc test fixtures simple."""
+    def test_enter_phase_requires_work_dir(self, tmp_path: Path) -> None:
+        """``work_dir`` is required (post-PR-#204 review tightening).
+
+        A default of ``None`` would silently skip the stop-sentinel check
+        for any caller that forgot to pass it. Failing fast at TypeError
+        is the right shape — all in-repo callers pass it.
+        """
         from orchestrator.engine import Engine
-        from orchestrator.iteration import _enter_phase, STOP_SENTINEL_NAME
+        from orchestrator.iteration import _enter_phase
 
         _seed_init_state(tmp_path)
         engine = Engine(tmp_path)
-        (tmp_path / STOP_SENTINEL_NAME).write_text("ignored\n")
+        with pytest.raises(TypeError):
+            _enter_phase(engine, "DESIGN")  # missing work_dir → TypeError
 
-        result = _enter_phase(engine, "DESIGN")  # no work_dir
-        assert result is True
-        assert engine.phase == "DESIGN"
+
+# ─── End-to-end: run_iteration honours mid-iteration sentinel (#198) ─────
+
+
+class TestRunIterationHaltsAtPhaseBoundary:
+    """Pin the call-site wiring (#198): run_iteration's four _enter_phase
+    calls each pass work_dir, so a STOP sentinel written mid-iteration
+    halts at the next phase boundary instead of waiting for the next
+    iteration. A regression that drops work_dir from any of the four
+    call sites would not be caught by the _enter_phase unit tests
+    alone.
+    """
+
+    def test_sentinel_after_design_halts_before_design_gate(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        """Stage state at DESIGN, write sentinel, run_iteration must
+        raise CampaignStopped naming the next phase boundary."""
+        from orchestrator.inline_dispatch import InlineDispatcher
+        from orchestrator.iteration import (
+            CampaignStopped,
+            STOP_SENTINEL_NAME,
+            run_iteration,
+        )
+
+        # Make InlineDispatcher.dispatch a no-op so DESIGN doesn't
+        # actually try to do anything; the test focuses on the
+        # phase-boundary sentinel honor on transition out of DESIGN.
+        monkeypatch.setattr(
+            InlineDispatcher, "dispatch", lambda self, *a, **kw: None,
+        )
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        iter_dir = work_dir / "runs" / "iter-1"
+        iter_dir.mkdir(parents=True)
+        # Pre-stage all DESIGN artifacts so DESIGN's own "incomplete"
+        # check passes and we proceed toward HUMAN_DESIGN_GATE.
+        (iter_dir / "problem.md").write_text("p")
+        (iter_dir / "bundle.yaml").write_text(
+            "metadata:\n  iteration: 1\n  family: t\n  research_question: q\n"
+            "arms:\n  - type: h-main\n"
+            "    prediction: p\n    mechanism: m\n    diagnostic: d\n"
+        )
+        (iter_dir / "handoff_snapshot.md").write_text("h")
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "DESIGN", "iteration": 1, "run_id": "exp",
+            "family": "test", "timestamp": "2026-01-01T00:00:00Z",
+        }))
+        (work_dir / "ledger.json").write_text(json.dumps({"iterations": []}))
+        (work_dir / "principles.json").write_text(
+            json.dumps({"principles": []}),
+        )
+        # Sentinel pre-staged: as soon as run_iteration tries to
+        # transition out of DESIGN into HUMAN_DESIGN_GATE, the
+        # _enter_phase check at that call site must honour it.
+        (work_dir / STOP_SENTINEL_NAME).write_text("test halt\n")
+
+        campaign = {
+            "research_question": "q?",
+            "run_id": "exp",
+            "max_iterations": 1,
+            "target_system": {"name": "T", "description": "d"},
+            "prompts": {"methodology_layer": "p"},
+        }
+
+        with pytest.raises(CampaignStopped, match="HUMAN_DESIGN_GATE"):
+            run_iteration(
+                campaign, work_dir, iteration=1, agent="inline",
+                auto_approve=True,
+            )

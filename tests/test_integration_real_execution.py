@@ -28,8 +28,8 @@ class TestEnterPhase:
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "DESIGN") is False
-        assert _enter_phase(engine, "HUMAN_DESIGN_GATE") is False
+        assert _enter_phase(engine, "DESIGN", tmp_path) is False
+        assert _enter_phase(engine, "HUMAN_DESIGN_GATE", tmp_path) is False
         assert engine.phase == "EXECUTE_ANALYZE"  # unchanged
 
     def test_redo_current_phase(self, tmp_path):
@@ -41,7 +41,7 @@ class TestEnterPhase:
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "EXECUTE_ANALYZE") is True
+        assert _enter_phase(engine, "EXECUTE_ANALYZE", tmp_path) is True
         assert engine.phase == "EXECUTE_ANALYZE"  # no transition happened
 
     def test_advance_to_next_phase(self, tmp_path):
@@ -53,7 +53,7 @@ class TestEnterPhase:
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "DESIGN") is True
+        assert _enter_phase(engine, "DESIGN", tmp_path) is True
         assert engine.phase == "DESIGN"
 
     def test_done_skips_everything(self, tmp_path):
@@ -66,7 +66,7 @@ class TestEnterPhase:
         engine = Engine(tmp_path)
 
         for phase in _PHASE_ORDER:
-            assert _enter_phase(engine, phase) is (phase == "DONE")
+            assert _enter_phase(engine, phase, tmp_path) is (phase == "DONE")
 
     def test_phase_order_matches_engine_phases(self):
         """_PHASE_ORDER must contain exactly the same phases as the engine."""
@@ -86,11 +86,11 @@ class TestEnterPhase:
         (tmp_path / "state.json").write_text(json.dumps(state))
         engine = Engine(tmp_path)
 
-        assert _enter_phase(engine, "DESIGN") is False
-        assert _enter_phase(engine, "EXECUTE_ANALYZE") is True
+        assert _enter_phase(engine, "DESIGN", tmp_path) is False
+        assert _enter_phase(engine, "EXECUTE_ANALYZE", tmp_path) is True
         assert engine.phase == "EXECUTE_ANALYZE"
         # Can advance to next
-        assert _enter_phase(engine, "HUMAN_FINDINGS_GATE") is True
+        assert _enter_phase(engine, "HUMAN_FINDINGS_GATE", tmp_path) is True
         assert engine.phase == "HUMAN_FINDINGS_GATE"
 
 

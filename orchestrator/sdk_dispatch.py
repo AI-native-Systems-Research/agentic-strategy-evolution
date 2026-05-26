@@ -29,7 +29,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Protocol, runtime_checkable
+from typing import Callable, Literal, Protocol, runtime_checkable
 
 from orchestrator.cli_dispatch import CLIDispatcher, _backoff_for
 from orchestrator.metrics import log_metrics, log_retry_event
@@ -200,8 +200,16 @@ class SDKRunner(Protocol):
         system_prompt: str | None = None,
         settings_path: Path | None = None,
         event_log_path: Path | None = None,
-        permission_mode: str | None = None,
+        permission_mode: Literal["bypassPermissions"] | None = None,
     ) -> SDKResult:
+        """One SDK turn.
+
+        ``permission_mode``: ``"bypassPermissions"`` disables the Claude
+        Code SDK's filesystem sandbox (the default for nous campaigns;
+        see #193). ``None`` means: don't pass the flag — let the SDK
+        apply its own default permission gating. The dispatcher
+        translates ``campaign.sandbox`` to one of these two values.
+        """
         ...
 
 
@@ -221,7 +229,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
         system_prompt: str | None = None,
         settings_path: Path | None = None,
         event_log_path: Path | None = None,
-        permission_mode: str | None = "bypassPermissions",
+        permission_mode: Literal["bypassPermissions"] | None = "bypassPermissions",
     ) -> SDKResult:
         try:
             import anyio
@@ -381,16 +389,30 @@ class SDKDispatcher(CLIDispatcher):
             raise ValueError(
                 f"campaign.sandbox must be 'bypass' or 'default', got {resolved!r}"
             )
-        self._permission_mode = (
+        self._permission_mode: Literal["bypassPermissions"] | None = (
             "bypassPermissions" if resolved == "bypass" else None
         )
         # #201: silence threshold (seconds) for post-turn diagnostics.
         # Default 600s; opt out by setting to 0. Configured per-campaign
         # via campaign.sdk_timeouts.silence_threshold_seconds.
         timeouts = campaign.get("sdk_timeouts") or {}
-        self._silence_threshold = float(
-            timeouts.get("silence_threshold_seconds", 600)
-        )
+        raw_threshold = timeouts.get("silence_threshold_seconds", 600)
+        try:
+            self._silence_threshold = float(raw_threshold)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"campaign.sdk_timeouts.silence_threshold_seconds must be "
+                f"a non-negative number, got {raw_threshold!r}"
+            ) from exc
+        # Defensive Python-side validation. The schema enforces
+        # ``minimum: 0`` but ad-hoc dict callers (programmatic entry
+        # points, tests) bypass schema validation; mirror the
+        # ``sandbox`` enum check for consistency.
+        if self._silence_threshold < 0:
+            raise ValueError(
+                f"campaign.sdk_timeouts.silence_threshold_seconds must be "
+                f">= 0, got {self._silence_threshold}"
+            )
         # #127 Phase B: event log path is recomputed per-dispatch (it depends
         # on the iteration), so we don't store it on the dispatcher.
         self._event_log_path: Path | None = None
@@ -404,6 +426,10 @@ class SDKDispatcher(CLIDispatcher):
         between events larger than the configured threshold, append a
         ``failure_type: "sdk_silence"`` entry to retry_log.jsonl. Purely
         observational; doesn't interrupt or fail the turn.
+
+        ``campaign.sdk_timeouts.silence_threshold_seconds == 0`` (or
+        unset and ``< 0`` after Python-side validation) disables the
+        diagnostic entirely.
         """
         if self._silence_threshold <= 0 or self._event_log_path is None:
             return
@@ -449,7 +475,9 @@ class SDKDispatcher(CLIDispatcher):
             try:
                 self._maybe_log_silence(iteration=iteration, phase=phase)
             except Exception as exc:  # noqa: BLE001 — never break the turn
-                logger.debug("silence diagnostic skipped: %s", exc)
+                # warning, not debug: if the diagnostic crashes every
+                # turn, debug-only logs would never surface that.
+                logger.warning("silence diagnostic skipped: %s", exc)
             self._event_log_path = None
 
     # ------------------------------------------------------------------

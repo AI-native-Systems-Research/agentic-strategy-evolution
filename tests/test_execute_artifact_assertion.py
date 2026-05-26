@@ -137,3 +137,101 @@ class TestRetryLogEntryShape:
             "findings.json", "principle_updates.json",
         ]
         assert "timestamp" in row  # auto-stamped
+
+
+# ─── End-to-end: run_iteration EXECUTE_ANALYZE wiring ────────────────────
+
+
+class TestRunIterationRaisesOnIncompleteExecute:
+    """Pin the orchestrator glue (#200): when EXECUTE_ANALYZE's dispatch
+    returns success but the required artifacts aren't on disk, the
+    orchestrator (a) writes a structured retry_log row, (b) raises
+    ExecuteAnalyzeIncompleteError, and (c) cleans up the experiment
+    worktree before raising. A regression that silently swallowed the
+    error or skipped the retry-log write would be invisible without
+    this test."""
+
+    def test_dispatcher_returns_success_but_no_artifacts_raises(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        from orchestrator.inline_dispatch import InlineDispatcher
+        from orchestrator.iteration import (
+            ExecuteAnalyzeIncompleteError,
+            run_iteration,
+        )
+
+        # Stub InlineDispatcher.dispatch so EXECUTE_ANALYZE returns
+        # cleanly without writing the required artifacts — simulating
+        # the actual paper-burst friction case (max_turns exhausted /
+        # subprocess hang / polling-loop stall, no findings on disk).
+        monkeypatch.setattr(
+            InlineDispatcher, "dispatch", lambda self, *a, **kw: None,
+        )
+
+        # Set up a work_dir with state.json pointing past DESIGN so we
+        # land in EXECUTE_ANALYZE on the first run_iteration call.
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        iter_dir = work_dir / "runs" / "iter-1"
+        iter_dir.mkdir(parents=True)
+        # Pre-populate DESIGN artifacts so DESIGN doesn't fire.
+        (iter_dir / "problem.md").write_text("p")
+        (iter_dir / "bundle.yaml").write_text(
+            "metadata:\n  iteration: 1\n  family: t\n  research_question: q\n"
+            "arms:\n"
+            "  - type: h-main\n"
+            "    prediction: p\n    mechanism: m\n    diagnostic: d\n"
+        )
+        (iter_dir / "handoff_snapshot.md").write_text("h")
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "EXECUTE_ANALYZE",
+            "iteration": 1,
+            "run_id": "exp",
+            "family": "test",
+            "timestamp": "2026-01-01T00:00:00Z",
+        }))
+        (work_dir / "ledger.json").write_text(json.dumps({"iterations": []}))
+        (work_dir / "principles.json").write_text(
+            json.dumps({"principles": []}),
+        )
+
+        campaign = {
+            "research_question": "q?",
+            "run_id": "exp",
+            "max_iterations": 1,
+            "target_system": {
+                "name": "T", "description": "d",
+                # No repo_path → no worktree to clean up. Keeps the test
+                # focused on the raise + retry_log contract.
+            },
+            "prompts": {"methodology_layer": "p"},
+        }
+
+        with pytest.raises(ExecuteAnalyzeIncompleteError) as excinfo:
+            run_iteration(
+                campaign, work_dir, iteration=1, agent="inline",
+                auto_approve=True,
+            )
+        # Error names every required artifact (none of them exist).
+        assert sorted(excinfo.value.missing) == [
+            "experiment_plan.yaml", "findings.json", "principle_updates.json",
+        ]
+
+        # retry_log entry shape pinned.
+        retry_log = work_dir / "retry_log.jsonl"
+        assert retry_log.exists()
+        rows = [
+            json.loads(line)
+            for line in retry_log.read_text().splitlines() if line
+        ]
+        execute_rows = [
+            r for r in rows if r.get("failure_type") == "execute_incomplete"
+        ]
+        assert len(execute_rows) == 1
+        assert execute_rows[0]["phase"] == "execute-analyze"
+        assert execute_rows[0]["iteration"] == 1
+        assert sorted(execute_rows[0]["missing_artifacts"]) == [
+            "experiment_plan.yaml", "findings.json", "principle_updates.json",
+        ]
