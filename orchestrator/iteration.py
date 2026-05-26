@@ -162,6 +162,79 @@ def _enter_phase(engine, phase):
     return True
 
 
+def _resolve_objective(campaign: dict):
+    """Resolve campaign.yaml's objective block to an ObjectiveSpec, or None.
+
+    Issue #177: the iteration finalize step calls update_best_found with
+    this objective. Legacy campaigns without `objective` or `objective_preset`
+    fall through to the legacy status-based ranking inside update_best_found.
+    """
+    if not isinstance(campaign, dict):
+        return None
+    from orchestrator.composite_score import ObjectiveSpec, get_preset
+
+    if (preset := campaign.get("objective_preset")):
+        try:
+            return get_preset(str(preset))
+        except ValueError:
+            return None
+
+    obj = campaign.get("objective")
+    if isinstance(obj, dict) and obj.get("weights"):
+        try:
+            return ObjectiveSpec(
+                weights={str(k): float(v) for k, v in obj["weights"].items()},
+                metric_extractors=dict(obj.get("metric_extractors") or {}),
+                deploy_threshold=float(obj.get("deploy_threshold", 0.1)),
+            )
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def finalize_iteration(
+    *,
+    work_dir: Path,
+    iter_dir: Path,
+    iteration: int,
+    campaign: dict,
+) -> None:
+    """Run the deterministic post-gate finalize steps for an iteration.
+
+    Public seam (issue #177) so integration tests can drive the same
+    code path that ``run_iteration`` calls after HUMAN_FINDINGS_GATE
+    approves. The sort_bench dry-run on 2026-05-25 surfaced the gap:
+    ``update_best_found`` shipped in PR #172 with passing unit tests
+    but no caller — this function is the caller.
+
+    Steps (deterministic Python, no LLM):
+      1. Merge ``principle_updates.json`` into ``principles.json``.
+      2. Re-rank candidates and atomically rewrite ``best_found.json``
+         (issue #168 / #177).
+      3. Regenerate per-campaign ``CLAUDE.md`` so the next iteration's
+         session sees the updated principles + handoff (issue #131).
+
+    Tolerant of partial fixtures: missing principle_updates.json,
+    missing findings.json, and CLAUDE.md regeneration failures all
+    soft-fail — the iteration's terminal artifacts (``best_found.json``,
+    ``principles.json``) are still written.
+    """
+    from orchestrator.composite_score import update_best_found
+
+    _merge_principles(work_dir, iter_dir)
+
+    objective = _resolve_objective(campaign)
+    update_best_found(work_dir, objective=objective, top_k=5)
+
+    # CLAUDE.md regenerate is best-effort; failure here doesn't roll back
+    # the merged principles or the best_found ranking.
+    try:
+        from orchestrator.claude_md import regenerate_from_disk
+        regenerate_from_disk(work_dir, campaign, iteration=iteration)
+    except (OSError, RuntimeError) as exc:
+        logger.warning("Failed to regenerate CLAUDE.md: %s", exc)
+
+
 def _merge_principles(work_dir: Path, iter_dir: Path) -> None:
     """Merge principle_updates.json into the shared principles.json store."""
     updates_path = iter_dir / "principle_updates.json"
@@ -534,19 +607,16 @@ def run_iteration(
             print("Aborted.")
             return IterationOutcome.ABORTED
 
-    # ─── PRINCIPLE MERGE (Python, no LLM) ─────────────────────────────────
-    _merge_principles(work_dir, iter_dir)
+    # ─── FINALIZE: merge principles + write best_found.json + CLAUDE.md ───
+    # Issue #177: the sort_bench dry-run on 2026-05-25 surfaced that
+    # update_best_found (#168) had no caller in the production path.
+    # finalize_iteration is the caller. Tests drive it directly.
+    finalize_iteration(
+        work_dir=work_dir, iter_dir=iter_dir,
+        iteration=iteration, campaign=campaign,
+    )
     print(f"  -> Principles merged into {work_dir / 'principles.json'}")
-
-    # ─── CLAUDE.md REGENERATE (Python, no LLM) — issue #131 ───────────────
-    # Refresh per-campaign CLAUDE.md so the next iteration's session loads
-    # the updated principles + handoff via Claude Code's auto-context loading.
-    try:
-        from orchestrator.claude_md import regenerate_from_disk
-        regenerate_from_disk(work_dir, campaign, iteration=iteration)
-    except (OSError, RuntimeError) as exc:
-        # Best-effort: a CLAUDE.md write failure shouldn't abort the iteration.
-        logger.warning("Failed to regenerate CLAUDE.md: %s", exc)
+    print(f"  -> best_found.json updated at {work_dir / 'best_found.json'}")
 
     if final:
         engine.transition("DONE")
