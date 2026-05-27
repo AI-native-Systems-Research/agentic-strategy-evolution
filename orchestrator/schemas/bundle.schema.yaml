@@ -94,7 +94,13 @@ properties:
   # properties anyway) remains supported for backward compat.
   experiment_spec:
     type: object
-    additionalProperties: true
+    # Locked enum: typo'd field names (e.g. preflight_command singular,
+    # verifid_parameters) would otherwise pass schema validation and
+    # silently fail at runtime when the executor doesn't see them. The
+    # four sub-fields are an enumerated DESIGN→EXECUTE_ANALYZE contract;
+    # adding a new one requires a schema change so executor-side
+    # consumers update in lockstep.
+    additionalProperties: false
     description: >
       Operational handoff from DESIGN to EXECUTE_ANALYZE. Pin decisions
       that don't belong in narrative form: commands the executor must

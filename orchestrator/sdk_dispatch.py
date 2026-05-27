@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Protocol, runtime_checkable
 
@@ -122,13 +122,19 @@ def build_error_message(message, *, message_class_counts: dict | None = None) ->
 async def aiter_with_silence_watchdog(aiter, threshold: float | None):
     """Yield messages from ``aiter``, raising SDKTransientError on silence.
 
-    #205: when ``threshold`` is positive, each ``__anext__`` is wrapped
-    in ``anyio.fail_after``. If no message arrives within ``threshold``
-    seconds, raise :class:`SDKTransientError` so the existing retry
-    machinery can recover instead of blocking indefinitely.
+    Per-message live watchdog (#205): when ``threshold`` is positive,
+    each ``__anext__`` is wrapped in ``anyio.fail_after``. If no message
+    arrives within ``threshold`` seconds, raise
+    :class:`SDKTransientError` so the existing retry machinery can
+    recover instead of blocking indefinitely.
 
     ``threshold=None`` or ``<= 0`` disables the watchdog (yields the
     underlying iterator transparently).
+
+    Resource hygiene: when raising on timeout (or any other exception),
+    we explicitly call ``aiter.aclose()`` if it's an async generator,
+    so the underlying SDK stream's tasks/sockets get released instead
+    of being orphaned for GC. A test asserts this contract.
 
     Pulled out as a standalone async helper so it's testable without
     ``claude_agent_sdk`` (which the test guard hard-fails). Tests inject
@@ -136,21 +142,33 @@ async def aiter_with_silence_watchdog(aiter, threshold: float | None):
     """
     import anyio  # local import — keep top-level import-time clean
     wd = float(threshold) if threshold and threshold > 0 else None
-    while True:
-        try:
-            if wd is not None:
-                with anyio.fail_after(wd):
+    try:
+        while True:
+            try:
+                if wd is not None:
+                    with anyio.fail_after(wd):
+                        message = await aiter.__anext__()
+                else:
                     message = await aiter.__anext__()
-            else:
-                message = await aiter.__anext__()
-        except StopAsyncIteration:
-            return
-        except TimeoutError as exc:
-            raise SDKTransientError(
-                f"SDK turn observed >{wd:.0f}s silence between events; "
-                f"aborting turn so the dispatcher can retry (#205)."
-            ) from exc
-        yield message
+            except StopAsyncIteration:
+                return
+            except TimeoutError as exc:
+                raise SDKTransientError(
+                    f"SDK turn observed >{wd:.0f}s silence between events; "
+                    f"aborting turn so the dispatcher can retry."
+                ) from exc
+            yield message
+    finally:
+        # Release the underlying SDK stream's resources. Only async
+        # generators have ``aclose``; plain async iterators don't, so
+        # guard with ``hasattr``. Best-effort: if aclose itself raises,
+        # we don't mask the original exception we're already unwinding.
+        aclose = getattr(aiter, "aclose", None)
+        if callable(aclose):
+            try:
+                await aclose()
+            except Exception:  # noqa: BLE001 — best-effort cleanup
+                pass
 
 
 def summarize_silence_gaps(event_log_path: Path) -> dict:
@@ -248,6 +266,13 @@ class SDKResult:
     The dispatcher reads only these fields. Producers (real or fake) must
     populate ``text`` (assistant final text); usage/cost fields default
     to zero so trivial fakes need not set them.
+
+    Invariant: ``is_error=True`` requires a non-empty ``error_message``.
+    Locked in ``__post_init__`` so producers (real or fake) can't ship
+    an unactionable error path the way the friction-test rerun did
+    (retry_log row recorded ``error: "None"``). ``build_error_message``
+    is the canonical producer when SDK reports is_error with empty
+    result text.
     """
 
     text: str
@@ -260,7 +285,15 @@ class SDKResult:
     num_turns: int = 1
     is_error: bool = False
     error_message: str = ""
-    extra: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.is_error and not self.error_message.strip():
+            raise ValueError(
+                "SDKResult(is_error=True) requires a non-empty "
+                "error_message — see build_error_message() for the "
+                "canonical producer when the SDK returns is_error with "
+                "no result text."
+            )
 
 
 @runtime_checkable

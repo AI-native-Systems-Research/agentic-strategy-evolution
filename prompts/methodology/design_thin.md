@@ -5,6 +5,12 @@
 > consult CLAUDE.md for the hypothesis-bundle structure, prediction taxonomy,
 > arm types, and writing standards.
 
+## Iteration mode
+
+This iteration's mode is: **{{iteration_mode}}**
+
+{{mode_guidance}}
+
 ## Research question
 {{research_question}}
 

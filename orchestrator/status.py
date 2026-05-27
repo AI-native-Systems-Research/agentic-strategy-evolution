@@ -30,6 +30,16 @@ from typing import Any
 
 _STUCK_THRESHOLD_SECONDS = 5 * 60
 
+# The set of ledger-row ``status`` values that count as a *failed*
+# iteration (vs a clean completion that may have CONFIRMED or REFUTED
+# the hypothesis). Any new failure status that ``append_failed_row``
+# (or future ledger writers) introduces must be added here so
+# ``failed_iterations`` doesn't silently misclassify it. Today only
+# ``"FAILED"`` exists — but pinning it as an explicit set means a
+# future ``"TIMEOUT"`` or ``"CANCELLED"`` status won't slip into the
+# completed bucket undetected.
+_TERMINAL_FAILURE_STATUSES: frozenset[str] = frozenset({"FAILED"})
+
 
 @dataclass
 class StatusSnapshot:
@@ -37,19 +47,21 @@ class StatusSnapshot:
     phase: str = "?"
     iteration: int = 0
     completed_iterations: int = 0
-    # #217: separate counter for iterations that ran but ended in
-    # failure (ledger row with ``status: "FAILED"``). Treating these as
-    # "Completed" makes a botched run look identical to a clean refute.
+    # Separate counter for iterations that ran but ended in failure
+    # (ledger row with ``status`` in ``_TERMINAL_FAILURE_STATUSES``).
+    # Counting these as "Completed" would make a botched run look
+    # identical to a clean refute.
     failed_iterations: int = 0
     active_principles: int = 0
     last_event: dict[str, Any] | None = None
     elapsed_since_last_event: float | None = None  # seconds; None if no event
-    # #207: most recent event in the log that has a `tool_name`. Distinct
-    # from `last_event` because the very last logged event is often a
+    # Most recent event in the log that has a ``tool_name``. Distinct
+    # from ``last_event`` because the very last logged event is often a
     # SystemMessage / TaskNotificationMessage / pure ThinkingBlock that
-    # carries no `tool_name`, even though a Bash/Read happened seconds
-    # earlier. The reader walks backward to find the nearest tool-bearing
-    # event so the operator sees a useful tool name in `nous status`.
+    # carries no ``tool_name`` even when a Bash/Read happened seconds
+    # earlier. The reader walks backward to find the nearest
+    # tool-bearing event (see ``_walkback_for_tool_name``) so the
+    # operator sees a useful tool name in ``nous status``.
     last_tool_name: str | None = None
     stuck: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
@@ -96,39 +108,38 @@ def _last_log_event(log_path: Path) -> tuple[dict | None, float | None]:
     return last, mtime
 
 
-# #207: walkback window. Most turns produce dozens of events between
-# tool calls (thinking blocks, hook events, sub-task notifications); a
-# bounded window keeps the cost cheap while still recovering the
-# operator-useful tool name in practice.
+# Walkback window for ``_walkback_for_tool_name``. Most turns produce
+# dozens of events between tool calls (thinking blocks, hook events,
+# sub-task notifications); a bounded window keeps the cost cheap while
+# still recovering the operator-useful tool name in practice.
 _TOOL_WALKBACK_LIMIT = 200
 
 
 def _walkback_for_tool_name(
     log_path: Path, *, limit: int = _TOOL_WALKBACK_LIMIT,
 ) -> str | None:
-    """#207: walk backward through executor_log.jsonl looking for the
-    nearest event with a populated ``tool_name``.
+    """Walk backward through executor_log.jsonl for the nearest tool_name.
 
     Returns the tool name (e.g. ``"Bash"``) or ``None`` if no
-    tool-bearing event exists within the walkback window. Reads at most
-    ``limit`` recent lines so a 50k-event log doesn't dominate the cost
-    of `nous status`.
+    tool-bearing event exists within the walkback window. Bounded I/O:
+    uses ``collections.deque`` with ``maxlen`` so the file is streamed
+    line-by-line and only the last ``limit`` lines are retained — for a
+    50k-event log this is a couple of MB scanned per ``nous status``
+    refresh, not 50 MB.
     """
     if not log_path.exists():
         return None
+    from collections import deque
     try:
-        lines = log_path.read_text().splitlines()
+        with open(log_path, "r") as f:
+            tail: deque = deque(f, maxlen=limit)
     except OSError:
         return None
-    # Walk newest-first; stop after `limit` candidate lines.
-    inspected = 0
-    for line in reversed(lines):
+    # Walk the tail newest-first.
+    for line in reversed(tail):
         line = line.strip()
         if not line:
             continue
-        inspected += 1
-        if inspected > limit:
-            break
         try:
             evt = json.loads(line)
         except json.JSONDecodeError:
@@ -173,11 +184,15 @@ def read_status_snapshot(
                 and isinstance(r.get("iteration"), int)
                 and r["iteration"] >= 1
             ]
-            # #217: split clean completions from failures so the operator
-            # can tell a botched run apart from a clean refute. ``status``
-            # is the field ``append_failed_row`` writes; clean rows omit it.
+            # Split clean completions from failures so a botched run is
+            # distinguishable from a clean refute. ``status`` is the
+            # field ``append_failed_row`` writes; clean rows omit it.
+            # Membership-test against _TERMINAL_FAILURE_STATUSES so
+            # future "TIMEOUT"/"CANCELLED" values don't silently bucket
+            # as completions.
             snap.failed_iterations = sum(
-                1 for r in valid_rows if r.get("status") == "FAILED"
+                1 for r in valid_rows
+                if r.get("status") in _TERMINAL_FAILURE_STATUSES
             )
             snap.completed_iterations = len(valid_rows) - snap.failed_iterations
 
@@ -204,8 +219,6 @@ def read_status_snapshot(
         current = now if now is not None else time.time()
         snap.elapsed_since_last_event = max(0.0, current - mtime)
         snap.stuck = snap.elapsed_since_last_event >= stuck_threshold_seconds
-    # #207: separate from `last_event` because the very last event often
-    # has no `tool_name` even when a tool call happened moments before.
     snap.last_tool_name = _walkback_for_tool_name(log_path)
 
     return snap
@@ -213,8 +226,9 @@ def read_status_snapshot(
 
 def format_one_liner(snap: StatusSnapshot) -> str:
     """Single-line summary suitable for a shell prompt or CI log."""
-    # #217: surface failed-iteration count so a clean refute (which would
-    # show e.g. "1 done") is distinguishable from a botched run ("1 failed").
+    # Surface failed-iteration count so a clean refute (which would
+    # show e.g. "1 done") is distinguishable from a botched run
+    # ("1 failed"). See ``failed_iterations`` field for the source.
     done_segment = f"{snap.completed_iterations} done"
     if snap.failed_iterations:
         done_segment += f" / {snap.failed_iterations} failed"
@@ -225,9 +239,9 @@ def format_one_liner(snap: StatusSnapshot) -> str:
         done_segment,
         f"{snap.active_principles} principles",
     ]
-    # #207: prefer the walkback-resolved tool name; fall back to the very
-    # last event's tool field for compat with logs that don't have any
-    # tool-bearing event recently (rare).
+    # Prefer the walkback-resolved tool name; fall back to the very
+    # last event's tool field for logs whose tail has no tool-bearing
+    # event recently (rare).
     tool = snap.last_tool_name
     if not tool and snap.last_event:
         cand = snap.last_event.get("tool_name") or snap.last_event.get("tool") or ""
@@ -252,7 +266,7 @@ def format_watch_panel(snap: StatusSnapshot) -> str:
         f"Iteration:  {snap.iteration}",
         f"Completed:  {snap.completed_iterations} iteration(s)",
     ]
-    # #217: only render the Failed line when there are actually failed
+    # Only render the Failed line when there are actually failed
     # iterations — keeps the panel uncluttered for healthy campaigns.
     if snap.failed_iterations:
         lines.append(
@@ -261,8 +275,6 @@ def format_watch_panel(snap: StatusSnapshot) -> str:
         )
     lines.append(f"Principles: {snap.active_principles} active")
     if snap.last_event:
-        # #207: use the walkback-resolved tool name when available;
-        # otherwise fall back to the last event's tool fields, then "?".
         tool = snap.last_tool_name
         if not tool:
             tool = snap.last_event.get("tool_name") or snap.last_event.get("tool") or "?"

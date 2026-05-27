@@ -1,4 +1,4 @@
-"""Per-iteration mode resolution (#212).
+"""Per-iteration mode resolution.
 
 A campaign's ``iterations: [...]`` list, when present, lets operators tag
 each iteration as ``rehearsal`` or ``real``. The DESIGN methodology reads
@@ -15,16 +15,23 @@ test_iteration_mode covers the cases.
 """
 from __future__ import annotations
 
+from typing import Literal
+
+
+# Type alias used by callers that want the type-checker to enforce the
+# enum at the API surface (instead of duck-typed strings flowing through).
+Mode = Literal["rehearsal", "real"]
 
 # Default when the campaign omits ``iterations``, or when an iteration
-# index is out of range. Real iterations are the safe default — agents
-# at sonnet level have always run real iterations until #212.
-DEFAULT_MODE = "real"
+# index is out of range. ``real`` is the conservative default — a
+# rehearsal-mode iteration scope-shrinks; defaulting to it could mean
+# "skip the full experiment by accident."
+DEFAULT_MODE: Mode = "real"
 
-VALID_MODES = ("rehearsal", "real")
+VALID_MODES: tuple[Mode, ...] = ("rehearsal", "real")
 
 
-def iteration_mode_for(campaign: dict, iteration: int) -> str:
+def iteration_mode_for(campaign: dict, iteration: int) -> Mode:
     """Return the mode for iteration N, defaulting to ``real``.
 
     Out-of-range index, missing block, or malformed entry: ``real``.
@@ -42,7 +49,7 @@ def iteration_mode_for(campaign: dict, iteration: int) -> str:
         return DEFAULT_MODE
     mode = entry.get("mode")
     if mode in VALID_MODES:
-        return mode
+        return mode  # type: ignore[return-value] — narrowed by membership
     return DEFAULT_MODE
 
 
@@ -97,8 +104,18 @@ re-discover the same friction.
 """
 
 
-def mode_guidance_for(mode: str) -> str:
-    """Return the prompt block that guides the agent for ``mode``."""
+def mode_guidance_for(mode: Mode) -> str:
+    """Return the prompt block that guides the agent for ``mode``.
+
+    Raises ``ValueError`` on an unknown mode value. Silently defaulting
+    to REAL_GUIDANCE was the prior behavior; that's the more dangerous
+    default (rehearsal is the conservative one), so we fail loudly
+    instead of running a full experiment when a typo says otherwise.
+    """
     if mode == "rehearsal":
         return REHEARSAL_GUIDANCE
-    return REAL_GUIDANCE
+    if mode == "real":
+        return REAL_GUIDANCE
+    raise ValueError(
+        f"unknown iteration mode {mode!r}; expected one of {VALID_MODES}"
+    )

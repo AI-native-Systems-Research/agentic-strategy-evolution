@@ -458,3 +458,37 @@ class TestFailedIterationCounter:
         assert "Failed:" not in panel, (
             f"#217: watch panel should NOT show 'Failed:' when zero; got:\n{panel}"
         )
+
+
+class TestWalkbackCapBoundary:
+    """Walkback bound must hold so a 50k-event log doesn't dominate the
+    cost of ``nous status``. The cap is _TOOL_WALKBACK_LIMIT (200)."""
+
+    def test_returns_none_when_tool_event_outside_cap(
+            self, tmp_path: Path) -> None:
+        wd = tmp_path / "campaign"
+        _write_state(wd, run_id="r1", phase="EXECUTE_ANALYZE", iteration=1)
+        # 1 oldest tool event + 250 newer tool-less events (well beyond cap)
+        events = [{"type": "AssistantMessage", "ts": 100.0, "tool_name": "Bash"}]
+        for i in range(250):
+            events.append({"type": "SystemMessage", "ts": 200.0 + i})
+        _write_log(wd, 1, events, mtime=600.0)
+
+        snap = read_status_snapshot(wd, now=605.0)
+        assert snap.last_tool_name is None, (
+            "walkback cap must hold: 250 tool-less events past the old "
+            "Bash event should mean Bash is past the 200-event bound."
+        )
+
+    def test_finds_tool_event_just_inside_cap(self, tmp_path: Path) -> None:
+        """At exactly 199 tool-less events newer than the Bash, the
+        Bash is the 200th-newest event — just inside the cap."""
+        wd = tmp_path / "campaign"
+        _write_state(wd, run_id="r1", phase="EXECUTE_ANALYZE", iteration=1)
+        events = [{"type": "AssistantMessage", "ts": 100.0, "tool_name": "Bash"}]
+        for i in range(199):
+            events.append({"type": "SystemMessage", "ts": 200.0 + i})
+        _write_log(wd, 1, events, mtime=600.0)
+
+        snap = read_status_snapshot(wd, now=605.0)
+        assert snap.last_tool_name == "Bash"

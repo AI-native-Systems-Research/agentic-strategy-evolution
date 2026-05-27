@@ -113,12 +113,36 @@ class TestSchemaAcceptsExperimentSpec:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(b, _load_bundle_schema())
 
-    def test_freeform_extra_keys_in_experiment_spec_allowed(self):
-        """experiment_spec is additionalProperties: true so existing
-        freeform usage (e.g. a custom workload block) keeps working."""
+    def test_typo_field_rejected(self):
+        """#2 critical-fix regression: experiment_spec is additionalProperties:
+        false, so a typo'd field name (preflight_command singular,
+        verifid_parameters, etc.) fails validation loudly instead of
+        silently skipping the operational handoff."""
+        b = _make_bundle(experiment_spec={
+            "preflight_command": ["build"],  # typo: should be plural
+        })
+        with pytest.raises(jsonschema.ValidationError, match="preflight_command"):
+            jsonschema.validate(b, _load_bundle_schema())
+
+    def test_unknown_top_level_field_rejected(self):
         b = _make_bundle(experiment_spec={
             "preflight_commands": ["build"],
-            "custom_block": {"any": "shape"},
+            "verifid_parameters": {"x": 1},  # typo
+        })
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(b, _load_bundle_schema())
+
+    def test_verified_parameters_keeps_open_value_namespace(self):
+        """#2 fix scope: verified_parameters is the one place where
+        additionalProperties: true is correct — it's a target-knob
+        namespace and the keys can't be enumerated. Verify the locked
+        outer block doesn't accidentally lock down inner knobs."""
+        b = _make_bundle(experiment_spec={
+            "verified_parameters": {
+                "any_target_knob": 1100,
+                "another_one": "string-value",
+                "nested": {"k": 2},
+            },
         })
         jsonschema.validate(b, _load_bundle_schema())
 
@@ -172,6 +196,57 @@ class TestBundleAmendmentsSummary:
         assert "2 amendment(s)" in out
         assert "kv_blocks" in out
         assert "horizon" in out
+
+    def test_malformed_lines_surfaced_not_silently_skipped(
+            self, tmp_path: Path) -> None:
+        """A corrupted amendment line is *exactly* the divergence #211
+        was added to surface. Skipping it silently re-introduces the
+        silence — the helper must announce the skip count so operators
+        know the amendment record may be incomplete."""
+        wd = tmp_path / "campaign"
+        inputs = wd / "runs" / "iter-1" / "inputs"
+        inputs.mkdir(parents=True)
+        (inputs / "bundle_amendments.jsonl").write_text(
+            json.dumps({"parameter": "kv_blocks", "prescribed_value": 1100,
+                        "actual_value": 1200, "reason": "valid row"}) + "\n"
+            + "not valid json {\n"
+            + "{\"another_invalid\":\n"
+            + json.dumps({"parameter": "p2", "prescribed_value": 1,
+                          "actual_value": 2, "reason": "another valid row"}) + "\n"
+        )
+
+        out = _format_bundle_amendments_summary(wd)
+        # The valid rows render
+        assert "kv_blocks" in out
+        assert "p2" in out
+        # The malformed lines are SURFACED, not silently dropped
+        assert "malformed" in out.lower()
+        assert "2" in out  # 2 malformed lines
+
+    def test_unreadable_amendments_log_surfaced(
+            self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When read_text raises OSError (e.g., permission denied), the
+        helper produces a visible row instead of silently dropping the
+        iter from the report's view."""
+        wd = tmp_path / "campaign"
+        inputs = wd / "runs" / "iter-1" / "inputs"
+        inputs.mkdir(parents=True)
+        log = inputs / "bundle_amendments.jsonl"
+        log.write_text("{}")  # exists; we'll patch read_text
+
+        from pathlib import Path as _Path
+        original_read_text = _Path.read_text
+
+        def _failing_read_text(self, *args, **kwargs):
+            if self == log:
+                raise PermissionError("simulated unreadable")
+            return original_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(_Path, "read_text", _failing_read_text)
+
+        out = _format_bundle_amendments_summary(wd)
+        assert "unreadable" in out.lower()
+        assert "PermissionError" in out
 
     def test_caps_long_amendment_lists(self, tmp_path: Path) -> None:
         wd = tmp_path / "campaign"

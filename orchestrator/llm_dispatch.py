@@ -159,18 +159,38 @@ def _format_bundle_amendments_summary(work_dir: Path) -> str:
         log = iter_dir / "inputs" / "bundle_amendments.jsonl"
         if not log.exists():
             continue
+        try:
+            text = log.read_text()
+        except OSError as exc:
+            sections.append(
+                f"- {iter_dir.name}: bundle_amendments.jsonl unreadable "
+                f"({type(exc).__name__})"
+            )
+            continue
         rows: list[dict] = []
-        for line in log.read_text().splitlines():
+        skipped_malformed = 0
+        for line in text.splitlines():
             if not line.strip():
                 continue
             try:
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
-                continue
-        if not rows:
+                skipped_malformed += 1
+        if not rows and skipped_malformed == 0:
             continue
+        # Header for this iter — single line whether or not malformed
+        # rows were skipped; the skip count is appended in-line so the
+        # operator sees both the valid count and the corruption count.
+        if skipped_malformed:
+            sections.append(
+                f"- {iter_dir.name}: {len(rows)} amendment(s) + "
+                f"{skipped_malformed} malformed line(s) skipped"
+            )
+            if not rows:
+                continue
+        else:
+            sections.append(f"- {iter_dir.name}: {len(rows)} amendment(s)")
         total += len(rows)
-        sections.append(f"- {iter_dir.name}: {len(rows)} amendment(s)")
         for r in rows[:20]:
             param = r.get("parameter", "?")
             prescribed = r.get("prescribed_value", "?")
@@ -182,7 +202,7 @@ def _format_bundle_amendments_summary(work_dir: Path) -> str:
             )
         if len(rows) > 20:
             sections.append(f"  - ... and {len(rows) - 20} more")
-    if total == 0:
+    if not sections:
         return (
             "(no bundle_amendments.jsonl entries — DESIGN's experiment_spec "
             "ran unmodified through EXECUTE_ANALYZE.)"
