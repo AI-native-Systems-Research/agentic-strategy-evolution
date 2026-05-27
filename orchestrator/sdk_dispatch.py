@@ -70,6 +70,89 @@ def _load_methodology_preamble(methodology_dir: Path) -> str | None:
     return "\n\n---\n\n".join(blocks)
 
 
+def build_error_message(message, *, message_class_counts: dict | None = None) -> str:
+    """Construct a useful error_message from an SDK ResultMessage with is_error=True.
+
+    #216: when ``message.result`` is missing, ``None``, or empty string,
+    the dispatcher would otherwise log ``error: "None"`` to retry_log
+    — useless for diagnosing what broke. This helper falls back to
+    a structured summary built from whatever attributes ARE available
+    (``stop_reason``, ``num_turns``, ``subtype``, message-class counts
+    seen during the turn).
+
+    Pure Python — testable without ``claude_agent_sdk``. Tests construct
+    a duck-typed object with the fields they want to exercise.
+    """
+    raw = getattr(message, "result", None)
+    if isinstance(raw, str) and raw.strip() and raw.strip().lower() != "none":
+        return raw
+
+    fields: list[str] = []
+    stop_reason = getattr(message, "stop_reason", None)
+    if stop_reason:
+        fields.append(f"stop_reason={stop_reason}")
+    subtype = getattr(message, "subtype", None)
+    if subtype:
+        fields.append(f"subtype={subtype}")
+    num_turns = getattr(message, "num_turns", None)
+    if isinstance(num_turns, int) and num_turns > 0:
+        fields.append(f"num_turns={num_turns}")
+    duration_ms = getattr(message, "duration_ms", None)
+    if isinstance(duration_ms, int) and duration_ms > 0:
+        fields.append(f"duration_ms={duration_ms}")
+    if message_class_counts:
+        seen = ",".join(
+            f"{k}={v}" for k, v in sorted(message_class_counts.items()) if v
+        )
+        if seen:
+            fields.append(f"messages_seen={seen}")
+
+    if fields:
+        return (
+            "SDK reported is_error=True with no result text; "
+            "captured context: " + " ".join(fields)
+        )
+    return (
+        "SDK reported is_error=True with no result text and no diagnostic "
+        "context (no stop_reason, subtype, num_turns, or message stream). "
+        "See executor_log.jsonl for the SDK message types observed in this turn."
+    )
+
+
+async def aiter_with_silence_watchdog(aiter, threshold: float | None):
+    """Yield messages from ``aiter``, raising SDKTransientError on silence.
+
+    #205: when ``threshold`` is positive, each ``__anext__`` is wrapped
+    in ``anyio.fail_after``. If no message arrives within ``threshold``
+    seconds, raise :class:`SDKTransientError` so the existing retry
+    machinery can recover instead of blocking indefinitely.
+
+    ``threshold=None`` or ``<= 0`` disables the watchdog (yields the
+    underlying iterator transparently).
+
+    Pulled out as a standalone async helper so it's testable without
+    ``claude_agent_sdk`` (which the test guard hard-fails). Tests inject
+    a tiny async iterator that controls when (or whether) values arrive.
+    """
+    import anyio  # local import — keep top-level import-time clean
+    wd = float(threshold) if threshold and threshold > 0 else None
+    while True:
+        try:
+            if wd is not None:
+                with anyio.fail_after(wd):
+                    message = await aiter.__anext__()
+            else:
+                message = await aiter.__anext__()
+        except StopAsyncIteration:
+            return
+        except TimeoutError as exc:
+            raise SDKTransientError(
+                f"SDK turn observed >{wd:.0f}s silence between events; "
+                f"aborting turn so the dispatcher can retry (#205)."
+            ) from exc
+        yield message
+
+
 def summarize_silence_gaps(event_log_path: Path) -> dict:
     """Walk an executor_log.jsonl and report the longest silence gap (#201).
 
@@ -201,6 +284,7 @@ class SDKRunner(Protocol):
         settings_path: Path | None = None,
         event_log_path: Path | None = None,
         permission_mode: Literal["bypassPermissions"] | None = None,
+        turn_silence_threshold: float | None = None,
     ) -> SDKResult:
         """One SDK turn.
 
@@ -209,6 +293,15 @@ class SDKRunner(Protocol):
         see #193). ``None`` means: don't pass the flag — let the SDK
         apply its own default permission gating. The dispatcher
         translates ``campaign.sandbox`` to one of these two values.
+
+        ``turn_silence_threshold``: per-message live watchdog (#205).
+        If more than ``turn_silence_threshold`` seconds elapse between
+        SDK events while the agent is mid-turn, raise
+        :class:`SDKTransientError` so the existing retry machinery can
+        recover the campaign instead of blocking indefinitely. ``None``
+        or ``<= 0`` disables the watchdog. Different from
+        ``campaign.sdk_timeouts.silence_threshold_seconds`` (which is
+        post-mortem; this one is live).
         """
         ...
 
@@ -230,6 +323,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
         settings_path: Path | None = None,
         event_log_path: Path | None = None,
         permission_mode: Literal["bypassPermissions"] | None = "bypassPermissions",
+        turn_silence_threshold: float | None = None,
     ) -> SDKResult:
         try:
             import anyio
@@ -277,10 +371,24 @@ def _default_sdk_runner_factory() -> SDKRunner:
             duration_ms = 0
             num_turns = 0
             t0 = time.time()
+            # #216: track message-class counts so a downstream is_error
+            # path can synthesize a useful diagnostic when result text is
+            # missing (instead of recording the literal string "None").
+            message_class_counts: dict[str, int] = {}
             if event_log_path is not None:
                 Path(event_log_path).parent.mkdir(parents=True, exist_ok=True)
-            async for message in query(prompt=prompt, options=options):
+            # #205: per-message live watchdog. When a positive
+            # ``turn_silence_threshold`` is set, ``aiter_with_silence_watchdog``
+            # wraps each ``__anext__`` in ``anyio.fail_after`` so a
+            # model-side hang surfaces as ``SDKTransientError``. The
+            # existing transient-retry machinery (lines below) catches
+            # it and retries instead of blocking the campaign forever.
+            aiter = query(prompt=prompt, options=options).__aiter__()
+            async for message in aiter_with_silence_watchdog(
+                aiter, turn_silence_threshold,
+            ):
                 cls = type(message).__name__
+                message_class_counts[cls] = message_class_counts.get(cls, 0) + 1
                 # #127 Phase B: tee every SDK message as a JSONL event so
                 # `nous status --watch` can render live progress.
                 _tee_event(event_log_path, message, cls)
@@ -296,7 +404,12 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     if getattr(message, "is_error", False):
                         return SDKResult(
                             text="".join(text_chunks),
-                            error_message=str(getattr(message, "result", "unknown")),
+                            # #216: build a diagnostic-rich error_message
+                            # so retry_log rows aren't literally "None".
+                            error_message=build_error_message(
+                                message,
+                                message_class_counts=message_class_counts,
+                            ),
                             is_error=True,
                             input_tokens=int(usage.get("input_tokens", 0) or 0),
                             output_tokens=int(usage.get("output_tokens", 0) or 0),
@@ -412,6 +525,29 @@ class SDKDispatcher(CLIDispatcher):
             raise ValueError(
                 f"campaign.sdk_timeouts.silence_threshold_seconds must be "
                 f">= 0, got {self._silence_threshold}"
+            )
+        # #205: live mid-turn watchdog. Defaults to the post-mortem
+        # threshold (so by default the live watchdog catches what the
+        # post-mortem would otherwise only diagnose after the fact).
+        # Operators can split the two by setting
+        # ``campaign.sdk_timeouts.turn_silence_threshold_seconds`` to a
+        # different value, or to 0 to disable the live watchdog while
+        # keeping the post-mortem analyzer.
+        raw_turn_threshold = timeouts.get(
+            "turn_silence_threshold_seconds",
+            self._silence_threshold,
+        )
+        try:
+            self._turn_silence_threshold = float(raw_turn_threshold)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"campaign.sdk_timeouts.turn_silence_threshold_seconds must be "
+                f"a non-negative number, got {raw_turn_threshold!r}"
+            ) from exc
+        if self._turn_silence_threshold < 0:
+            raise ValueError(
+                f"campaign.sdk_timeouts.turn_silence_threshold_seconds must be "
+                f">= 0, got {self._turn_silence_threshold}"
             )
         # #127 Phase B: event log path is recomputed per-dispatch (it depends
         # on the iteration), so we don't store it on the dispatcher.
@@ -532,6 +668,7 @@ class SDKDispatcher(CLIDispatcher):
                     settings_path=self._settings_path,
                     event_log_path=self._event_log_path,
                     permission_mode=self._permission_mode,
+                    turn_silence_threshold=self._turn_silence_threshold,
                 )
             except SDKTransientError as exc:
                 failure_count += 1

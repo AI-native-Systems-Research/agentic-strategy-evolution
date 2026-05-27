@@ -126,6 +126,31 @@ class TestCmdStop:
         captured = capsys.readouterr()
         assert "already present" in captured.out
 
+    def test_stop_message_announces_phase_boundary(
+        self, tmp_path: Path, capsys,
+    ) -> None:
+        """#208: the CLI's user-facing message must say 'phase boundary',
+        not 'iteration boundary' — STOP is honoured at every phase
+        transition post-#198, not only at iteration boundaries."""
+        from orchestrator.cli import _cmd_stop
+        from orchestrator.iteration import STOP_SENTINEL_NAME
+
+        work_dir = tmp_path / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "DESIGN", "iteration": 1, "run_id": "exp1",
+        }))
+
+        _cmd_stop(self._argspace(str(work_dir)))
+        captured = capsys.readouterr()
+        assert "phase boundary" in captured.out, (
+            f"#208: stop message should announce phase boundary; got: {captured.out!r}"
+        )
+        # The legacy 'iteration boundary' phrasing should be gone.
+        assert "iteration boundary" not in captured.out, (
+            f"#208: legacy 'iteration boundary' phrasing leaked: {captured.out!r}"
+        )
+
     def test_stop_errors_on_missing_work_dir(
         self, tmp_path: Path, capsys,
     ) -> None:

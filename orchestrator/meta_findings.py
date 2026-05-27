@@ -287,6 +287,61 @@ def _detect_nous_asks(
                 "kind": "dispatch",
             })
 
+    # #215: surface specific failure types that always warrant operator
+    # attention — even a single occurrence. The post-#204 paper-burst
+    # rerun produced 1 api_error + 1 sdk_silence row and the previous
+    # threshold (>= 5 entries) swallowed both, leaving operators with
+    # no actionable nous_asks despite a real iteration failure.
+    silence_entries = [
+        e for e in retry_entries if e.get("failure_type") == "sdk_silence"
+    ]
+    if silence_entries:
+        worst = max(
+            silence_entries,
+            key=lambda e: float(e.get("max_gap_seconds") or 0),
+        )
+        gap = float(worst.get("max_gap_seconds") or 0)
+        threshold = float(worst.get("threshold_seconds") or 0)
+        phase = worst.get("phase") or "(unknown)"
+        asks.append({
+            "ask": (
+                "Investigate sources of mid-turn SDK silence (#205). The "
+                "live watchdog cancelled at least one turn; consider "
+                "tightening turn_silence_threshold_seconds or splitting "
+                "long-running parallel tool calls into smaller batches "
+                "so progress events flow more often."
+            ),
+            "evidence": (
+                f"retry_log.jsonl: failure_type=sdk_silence with "
+                f"max_gap_seconds={gap:.1f} (threshold={threshold:.0f}) "
+                f"in phase={phase}."
+            ),
+            "kind": "dispatch",
+        })
+
+    api_error_entries = [
+        e for e in retry_entries if e.get("failure_type") == "api_error"
+    ]
+    unhelpful = [
+        e for e in api_error_entries
+        if not (e.get("error") or "").strip()
+        or (e.get("error") or "").strip().lower() in ("none", "unknown")
+    ]
+    if unhelpful:
+        asks.append({
+            "ask": (
+                "Capture richer diagnostic context for SDK api_error "
+                "failures (#216) — at least one retry_log row recorded "
+                "an empty or 'None' error message, leaving operators "
+                "with nothing to diagnose."
+            ),
+            "evidence": (
+                f"retry_log.jsonl: {len(unhelpful)} api_error row(s) "
+                f"have empty/None error text."
+            ),
+            "kind": "dispatch",
+        })
+
     return asks
 
 
@@ -416,11 +471,24 @@ def emit_meta_findings(
         or payload["target_system_asks"]
         or payload["nous_asks"]
     ):
-        payload["notes"] = (
-            "No surprises detected from artifacts. This is rare — typically "
-            "indicates a very short campaign (single iteration, no retries, "
-            "no token-budget anomalies)."
-        )
+        if retries:
+            # #215: don't claim "no surprises" when retry_log has entries
+            # but the heuristics didn't fire on any of them. That's a
+            # heuristics gap, not a clean campaign — say so.
+            payload["notes"] = (
+                f"retry_log.jsonl has {len(retries)} entry(ies) but the "
+                f"heuristics didn't classify any of them as a campaign "
+                f"design lesson, target-system ask, or nous ask. This is "
+                f"a heuristics gap — review retry_log.jsonl directly and "
+                f"consider adding a detector to "
+                f"orchestrator/meta_findings.py."
+            )
+        else:
+            payload["notes"] = (
+                "No surprises detected from artifacts. This is rare — "
+                "typically indicates a very short campaign (single "
+                "iteration, no retries, no token-budget anomalies)."
+            )
 
     return payload
 

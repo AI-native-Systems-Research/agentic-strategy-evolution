@@ -30,7 +30,14 @@ def _load_bundle_schema() -> dict:
 
 
 def _make_bundle(*, iteration: int, tier: int | None = None,
-                 justification: str | None = None) -> dict:
+                 justification: str | None = None,
+                 in_metadata: bool = False) -> dict:
+    """Build a bundle for tests.
+
+    ``in_metadata=True`` puts complexity_tier / tier_justification under
+    ``metadata`` (the post-#206 canonical location); the default keeps them
+    at root for backward-compat coverage.
+    """
     bundle: dict = {
         "metadata": {
             "iteration": iteration, "family": "test",
@@ -41,10 +48,11 @@ def _make_bundle(*, iteration: int, tier: int | None = None,
              "diagnostic": "d"},
         ],
     }
+    target = bundle["metadata"] if in_metadata else bundle
     if tier is not None:
-        bundle["complexity_tier"] = tier
+        target["complexity_tier"] = tier
     if justification is not None:
-        bundle["tier_justification"] = justification
+        target["tier_justification"] = justification
     return bundle
 
 
@@ -74,6 +82,51 @@ class TestSchemaAcceptsTier:
         bundle = _make_bundle(iteration=1, tier=5)
         with self_assertions_raises(jsonschema.ValidationError):
             jsonschema.validate(bundle, _load_bundle_schema())
+
+    # ─── #206: tier fields also accepted under `metadata` ───────────────
+
+    def test_bundle_with_tier_in_metadata_validates(self) -> None:
+        """#206: agents that put complexity_tier inside metadata (where
+        iteration / family / research_question already live) should not
+        be rejected. Both locations are accepted post-#206."""
+        bundle = _make_bundle(iteration=1, tier=1,
+                              justification="iter 1, simplest", in_metadata=True)
+        jsonschema.validate(bundle, _load_bundle_schema())
+
+    def test_bundle_with_invalid_tier_in_metadata_rejected(self) -> None:
+        bundle = _make_bundle(iteration=1, tier=5, in_metadata=True)
+        with self_assertions_raises(jsonschema.ValidationError):
+            jsonschema.validate(bundle, _load_bundle_schema())
+
+    def test_read_bundle_tier_finds_in_metadata(self, tmp_path: Path) -> None:
+        """The reader finds complexity_tier in metadata too (post-#206)."""
+        from orchestrator.complexity_tier import _read_bundle_tier
+        bundle = _make_bundle(iteration=1, tier=2, in_metadata=True)
+        path = tmp_path / "bundle.yaml"
+        path.write_text(yaml.safe_dump(bundle))
+        assert _read_bundle_tier(path) == 2
+
+    def test_read_bundle_tier_metadata_wins_over_root(self, tmp_path: Path) -> None:
+        """If both locations are populated (legacy + metadata), metadata wins."""
+        from orchestrator.complexity_tier import _read_bundle_tier
+        bundle = _make_bundle(iteration=1, tier=2, in_metadata=True)
+        bundle["complexity_tier"] = 1  # legacy location with stale value
+        path = tmp_path / "bundle.yaml"
+        path.write_text(yaml.safe_dump(bundle))
+        assert _read_bundle_tier(path) == 2
+
+    def test_format_tier_summary_reads_justification_from_metadata(
+            self, tmp_path: Path) -> None:
+        """The gate panel renders justification from either location."""
+        bundle = _make_bundle(iteration=1, tier=1,
+                              justification="canary text",
+                              in_metadata=True)
+        path = tmp_path / "bundle.yaml"
+        path.write_text(yaml.safe_dump(bundle))
+        rendered = format_tier_summary(
+            iteration=1, bundle_path=path, work_dir=None,
+        )
+        assert "canary text" in rendered
 
     def test_bundle_with_tier_zero_rejected(self) -> None:
         bundle = _make_bundle(iteration=1, tier=0)

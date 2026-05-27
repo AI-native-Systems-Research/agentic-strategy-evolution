@@ -21,7 +21,13 @@ import jsonschema
 import pytest
 import yaml
 
-from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult, SDKTransientError
+from orchestrator.sdk_dispatch import (
+    SDKDispatcher,
+    SDKResult,
+    SDKTransientError,
+    aiter_with_silence_watchdog,
+    build_error_message,
+)
 
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
@@ -420,3 +426,240 @@ class TestTeeEventToolNameExtraction:
         rows = [json.loads(l) for l in log.read_text().splitlines() if l]
         assert rows[0]["tool_name"] == "TopLevelTool"
 
+
+
+# ─── #205: live mid-turn silence watchdog ─────────────────────────────────
+
+
+class _ImmediateAsyncIter:
+    """An async iterator that yields a fixed list of values immediately."""
+
+    def __init__(self, values: list):
+        self._values = list(values)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._values:
+            raise StopAsyncIteration
+        return self._values.pop(0)
+
+
+class _StallingAsyncIter:
+    """An async iterator that yields one value, then stalls forever.
+
+    Used to simulate a model-side mid-turn hang. The watchdog under test
+    must abort the second ``__anext__`` after the configured threshold.
+    """
+
+    def __init__(self, first_value):
+        self._first = first_value
+        self._yielded = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._yielded:
+            self._yielded = True
+            return self._first
+        # Stall — wait far longer than any test threshold; the watchdog
+        # should cancel us before this completes.
+        import anyio
+        await anyio.sleep(3600)
+        raise StopAsyncIteration  # pragma: no cover — unreachable
+
+
+class TestSilenceWatchdog:
+    """#205: aiter_with_silence_watchdog raises SDKTransientError when the
+    underlying async iterator stalls longer than the configured threshold,
+    instead of blocking indefinitely. Pure asyncio test — no SDK imports."""
+
+    def test_passthrough_when_threshold_disabled(self):
+        """threshold=None means no watchdog: every value flows through."""
+        import anyio
+
+        async def _go():
+            collected = []
+            aiter = _ImmediateAsyncIter(["a", "b", "c"])
+            async for m in aiter_with_silence_watchdog(aiter, threshold=None):
+                collected.append(m)
+            return collected
+
+        assert anyio.run(_go) == ["a", "b", "c"]
+
+    def test_passthrough_when_threshold_zero(self):
+        """threshold=0 (or negative) also disables the watchdog."""
+        import anyio
+
+        async def _go():
+            collected = []
+            aiter = _ImmediateAsyncIter(["x", "y"])
+            async for m in aiter_with_silence_watchdog(aiter, threshold=0):
+                collected.append(m)
+            return collected
+
+        assert anyio.run(_go) == ["x", "y"]
+
+    def test_raises_transient_on_silence(self):
+        """When the iterator stalls past the threshold, the helper raises
+        SDKTransientError (not TimeoutError) so the dispatcher's existing
+        retry path catches it."""
+        import anyio
+
+        async def _go():
+            aiter = _StallingAsyncIter(first_value="hello")
+            collected = []
+            async for m in aiter_with_silence_watchdog(aiter, threshold=0.05):
+                collected.append(m)
+            return collected
+
+        with pytest.raises(SDKTransientError, match=r"silence between events"):
+            anyio.run(_go)
+
+    def test_no_raise_when_messages_arrive_within_threshold(self):
+        """If every message arrives within threshold, no transient is raised."""
+        import anyio
+
+        async def _go():
+            collected = []
+            aiter = _ImmediateAsyncIter([1, 2, 3])
+            async for m in aiter_with_silence_watchdog(aiter, threshold=5.0):
+                collected.append(m)
+            return collected
+
+        assert anyio.run(_go) == [1, 2, 3]
+
+
+class TestTurnSilenceThresholdWiring:
+    """#205: SDKDispatcher reads campaign.sdk_timeouts.turn_silence_threshold_seconds
+    and passes it through to the runner. The threshold defaults to the
+    post-mortem silence_threshold_seconds when unset."""
+
+    def test_default_threshold_matches_silence_threshold(self, tmp_path):
+        """Default behaviour: turn_silence_threshold == silence_threshold."""
+        runner = _ScriptedRunner([SDKResult(text="ok")])
+        campaign = _make_campaign(tmp_path)
+        # silence_threshold defaults to 600 in the dispatcher
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path, campaign=campaign, sdk_runner=runner,
+        )
+        dispatcher.dispatch(
+            "planner", "design",
+            output_path=tmp_path / "runs" / "iter-1" / "design_log.md",
+            iteration=1,
+        )
+        assert runner.calls[0]["turn_silence_threshold"] == 600.0
+
+    def test_explicit_threshold_passed_to_runner(self, tmp_path):
+        """campaign.sdk_timeouts.turn_silence_threshold_seconds = 30 → 30
+        flows to the runner."""
+        runner = _ScriptedRunner([SDKResult(text="ok")])
+        campaign = _make_campaign(tmp_path)
+        campaign.setdefault("sdk_timeouts", {})["turn_silence_threshold_seconds"] = 30
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path, campaign=campaign, sdk_runner=runner,
+        )
+        dispatcher.dispatch(
+            "planner", "design",
+            output_path=tmp_path / "runs" / "iter-1" / "design_log.md",
+            iteration=1,
+        )
+        assert runner.calls[0]["turn_silence_threshold"] == 30.0
+
+    def test_zero_disables_live_watchdog(self, tmp_path):
+        """Setting turn_silence_threshold_seconds=0 keeps the post-mortem
+        analyzer (silence_threshold_seconds) but disables the live watchdog."""
+        runner = _ScriptedRunner([SDKResult(text="ok")])
+        campaign = _make_campaign(tmp_path)
+        campaign.setdefault("sdk_timeouts", {})["turn_silence_threshold_seconds"] = 0
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path, campaign=campaign, sdk_runner=runner,
+        )
+        dispatcher.dispatch(
+            "planner", "design",
+            output_path=tmp_path / "runs" / "iter-1" / "design_log.md",
+            iteration=1,
+        )
+        assert runner.calls[0]["turn_silence_threshold"] == 0.0
+
+    def test_negative_threshold_rejected(self, tmp_path):
+        """Defensive: a negative threshold raises ValueError at init."""
+        campaign = _make_campaign(tmp_path)
+        campaign.setdefault("sdk_timeouts", {})["turn_silence_threshold_seconds"] = -1
+        with pytest.raises(ValueError, match=r"turn_silence_threshold_seconds"):
+            SDKDispatcher(
+                work_dir=tmp_path, campaign=campaign,
+                sdk_runner=_ScriptedRunner([]),
+            )
+
+
+# ─── #216: build_error_message synthesizes useful diagnostics ─────────────
+
+
+class _FakeResultMessage:
+    """Duck-typed stand-in for the real SDK ResultMessage."""
+
+    def __init__(self, **fields):
+        for k, v in fields.items():
+            setattr(self, k, v)
+
+
+class TestBuildErrorMessage:
+    """#216: build_error_message must never produce the literal string
+    'None' or '' when the SDK returns is_error=True. Operators reading
+    retry_log.jsonl after a failure should always have something to act on."""
+
+    def test_passes_through_substantive_result(self):
+        m = _FakeResultMessage(result="rate limit exceeded for tenant X")
+        assert build_error_message(m) == "rate limit exceeded for tenant X"
+
+    def test_none_result_falls_back_to_diagnostic(self):
+        """The friction-test failure: result=None produced 'None' in retry_log."""
+        m = _FakeResultMessage(
+            result=None,
+            stop_reason="end_turn",
+            num_turns=14,
+            duration_ms=125000,
+        )
+        msg = build_error_message(m, message_class_counts={
+            "AssistantMessage": 28, "UserMessage": 14, "ResultMessage": 1,
+        })
+        assert "None" not in msg or "no result text" in msg
+        assert "stop_reason=end_turn" in msg
+        assert "num_turns=14" in msg
+        assert "duration_ms=125000" in msg
+        assert "AssistantMessage=28" in msg
+
+    def test_empty_string_result_falls_back(self):
+        m = _FakeResultMessage(result="", stop_reason="max_turns_reached")
+        msg = build_error_message(m)
+        assert "stop_reason=max_turns_reached" in msg
+
+    def test_literal_none_string_treated_as_missing(self):
+        """If the SDK literally puts 'None' in the result, treat as missing
+        so the operator gets the diagnostic context, not a useless 'None'."""
+        m = _FakeResultMessage(result="None", stop_reason="end_turn")
+        msg = build_error_message(m)
+        assert "stop_reason=end_turn" in msg
+
+    def test_no_attributes_at_all_produces_actionable_pointer(self):
+        """Worst case: nothing useful on the message. The error must still
+        point the operator somewhere they can dig (executor_log.jsonl)."""
+        m = _FakeResultMessage(result=None)
+        msg = build_error_message(m, message_class_counts={})
+        assert "executor_log" in msg
+
+    def test_subtype_surfaces(self):
+        """Some failure paths populate ``subtype`` instead of ``stop_reason``."""
+        m = _FakeResultMessage(result="", subtype="error_during_execution")
+        msg = build_error_message(m)
+        assert "subtype=error_during_execution" in msg
+
+    def test_zero_num_turns_omitted(self):
+        """A num_turns=0 isn't useful; only positive counts are reported."""
+        m = _FakeResultMessage(result=None, num_turns=0, stop_reason="x")
+        msg = build_error_message(m)
+        assert "num_turns" not in msg
+        assert "stop_reason=x" in msg

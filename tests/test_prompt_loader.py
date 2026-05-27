@@ -155,6 +155,9 @@ class TestRealMethodologyThinTemplates:
             "nous_dir": "/path/to/nous",
             "repo_context": "(test)",
             "max_turns": "25",
+            # #212: rehearsal/real mode rendered into the design prompt.
+            "iteration_mode": "real",
+            "mode_guidance": "(real-mode guidance text)",
         }
 
     def _ctx_for_execute(self) -> dict[str, str]:

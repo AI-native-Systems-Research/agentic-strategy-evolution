@@ -244,6 +244,91 @@ class TestNousAskDetection:
         assert token_asks
         assert any("cache" in a["evidence"] for a in token_asks)
 
+    def test_sdk_silence_in_retry_log_surfaces_ask(self, tmp_path: Path) -> None:
+        """#215: a single sdk_silence row is enough to produce a nous_ask
+        (the previous >=5-entry threshold swallowed real friction)."""
+        work_dir = tmp_path / "campaign"
+        _write_state(work_dir)
+        _write_ledger(work_dir, [1])
+        _write_findings(work_dir, 1)
+        _append_jsonl(work_dir / "retry_log.jsonl", [{
+            "iteration": 1, "phase": "execute-analyze",
+            "failure_type": "sdk_silence",
+            "max_gap_seconds": 600.3, "threshold_seconds": 600.0,
+            "event_count": 593,
+        }])
+
+        payload = emit_meta_findings(
+            work_dir,
+            campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        silence_asks = [a for a in payload["nous_asks"]
+                        if "silence" in a["ask"].lower() or "#205" in a["ask"]]
+        assert silence_asks, (
+            f"#215: a single sdk_silence row should produce a nous_ask; "
+            f"got {payload['nous_asks']!r}"
+        )
+        # Evidence cites the actual gap value
+        assert any("600" in a["evidence"] for a in silence_asks)
+
+    def test_unhelpful_api_error_in_retry_log_surfaces_ask(
+            self, tmp_path: Path) -> None:
+        """#215+#216: an api_error row with error='None' (the post-#204
+        bug shape) should produce a nous_ask about diagnostic context."""
+        work_dir = tmp_path / "campaign"
+        _write_state(work_dir)
+        _write_ledger(work_dir, [1])
+        _write_findings(work_dir, 1)
+        _append_jsonl(work_dir / "retry_log.jsonl", [{
+            "role": "executor", "phase": "execute-analyze",
+            "failure_type": "api_error", "attempt": 1, "error": "None",
+        }])
+
+        payload = emit_meta_findings(
+            work_dir,
+            campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        diag_asks = [a for a in payload["nous_asks"]
+                     if "diagnostic" in a["ask"].lower() or "#216" in a["ask"]]
+        assert diag_asks, (
+            f"#215+#216: api_error rows with empty/'None' error should "
+            f"surface a diagnostic-context ask; got {payload['nous_asks']!r}"
+        )
+
+    def test_retries_present_but_no_asks_says_heuristics_gap(
+            self, tmp_path: Path) -> None:
+        """#215: the notes field must NOT say 'no surprises' when
+        retry_log has entries the heuristics failed to classify."""
+        work_dir = tmp_path / "campaign"
+        _write_state(work_dir)
+        _write_ledger(work_dir, [1])
+        _write_findings(work_dir, 1)
+        # An unrecognized failure_type — heuristics don't know how to
+        # classify it, but we still shouldn't claim "no surprises".
+        _append_jsonl(work_dir / "retry_log.jsonl", [{
+            "iteration": 1, "phase": "design",
+            "failure_type": "novel_unknown_failure", "attempt": 1,
+            "error": "something the heuristics don't recognize",
+        }])
+
+        payload = emit_meta_findings(
+            work_dir,
+            campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        if not payload["nous_asks"] and not payload["campaign_design_lessons"]:
+            # Heuristics didn't fire — the notes field must own that gap.
+            assert "heuristics gap" in (payload.get("notes") or "").lower()
+            assert "no surprises" not in (payload.get("notes") or "").lower()
+
     def test_no_anomalies_yields_empty_streams(self, tmp_path: Path) -> None:
         """Healthy campaign with full campaign.yaml + cache hits + no retries."""
         work_dir = tmp_path / "campaign"

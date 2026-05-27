@@ -26,6 +26,37 @@ properties:
     minimum: 1
     description: "Maximum number of iterations for run_campaign.py. CLI --max-iterations overrides this. Default: 10."
 
+  iterations:
+    type: array
+    minItems: 1
+    description: >
+      Optional per-iteration overrides (#212). When present, each entry
+      is consulted by index for that iteration's ``mode``. iter-1 looks
+      up ``iterations[0]``, iter-2 ``iterations[1]``, and so on. Out-of-
+      range iterations fall back to mode=real.
+
+      v1 supports the ``mode`` field: a ``rehearsal`` iteration tells
+      the design agent to keep scope minimal — focus on the apparatus
+      (does the workload spec parse? do BLIS args bind? does analysis
+      validate?) and the feasibility check (does the parameter regime
+      actually engage the mechanism?). Surface any campaign-spec
+      friction as ``brief_amendments.md`` so subsequent runs of the
+      same campaign benefit. A ``real`` iteration is the full run.
+
+      Operators typically schedule iter-1 as rehearsal and iter-2+ as
+      real. That's not enforced, just the documented usage.
+    items:
+      type: object
+      required: [mode]
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum: [rehearsal, real]
+          description: >
+            ``rehearsal`` = surgical scope check (#212). ``real`` = full
+            arms × full seed list × no scope shrink.
+
   target_system:
     type: object
     required: [name, description]

@@ -88,6 +88,80 @@ def _normalize_theory_references(refs) -> list[dict]:
     return out
 
 
+def _format_results_summary(work_dir: Path) -> str:
+    """#214: enumerate per-iteration result files for the REPORT extractor.
+
+    Walks ``runs/iter-*/results/`` and produces a structured listing the
+    extractor can engage with directly. Without this, a campaign that
+    completed 4/5 policies × 10 seeds (40 valid arms) but failed on the
+    5th policy can have its report dismiss all 40 results as "no data"
+    — a search-orientation violation. Pre-rendering the file inventory
+    forces the extractor to acknowledge what's on disk.
+
+    Pure deterministic Python — no LLM, no I/O beyond directory walks.
+    """
+    runs_dir = work_dir / "runs"
+    if not runs_dir.is_dir():
+        return "No iteration directories found."
+    lines: list[str] = []
+    iter_dirs = sorted(
+        (d for d in runs_dir.iterdir()
+         if d.is_dir() and d.name.startswith("iter-")),
+        key=lambda d: d.name,
+    )
+    if not iter_dirs:
+        return "No iteration directories found."
+    for iter_dir in iter_dirs:
+        results_dir = iter_dir / "results"
+        if not results_dir.is_dir():
+            lines.append(f"- {iter_dir.name}: results/ directory absent")
+            continue
+        files = sorted(p for p in results_dir.iterdir() if p.is_file())
+        if not files:
+            lines.append(f"- {iter_dir.name}: 0 result files in {results_dir}")
+            continue
+        lines.append(
+            f"- {iter_dir.name}: {len(files)} result file(s) "
+            f"under {results_dir}"
+        )
+        # Cap per-iter listing to keep prompts bounded.
+        cap = 50
+        for f in files[:cap]:
+            lines.append(f"  - {f.name}")
+        if len(files) > cap:
+            lines.append(f"  - ... and {len(files) - cap} more")
+    return "\n".join(lines)
+
+
+def _format_retry_log_summary(work_dir: Path) -> str:
+    """#214: surface retry_log entries to the REPORT extractor so it can
+    distinguish 'no data because iteration failed cleanly' from 'no data
+    because the apparatus broke mid-run'. Empty when the log is missing
+    or empty.
+    """
+    log = work_dir / "retry_log.jsonl"
+    if not log.exists():
+        return "(retry_log.jsonl not present — no dispatcher-level retries.)"
+    rows: list[dict] = []
+    for line in log.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    if not rows:
+        return "(retry_log.jsonl is empty — no dispatcher-level retries.)"
+    by_type: dict[str, int] = {}
+    for r in rows:
+        ft = r.get("failure_type") or "unknown"
+        by_type[ft] = by_type.get(ft, 0) + 1
+    parts = [f"{len(rows)} entry/entries by failure_type:"]
+    for ft, n in sorted(by_type.items(), key=lambda kv: -kv[1]):
+        parts.append(f"  - {ft}: {n}")
+    return "\n".join(parts)
+
+
 def _format_theory_references(refs) -> str:
     """Render theory_references as a Markdown bullet list for the DESIGN
     prompt. Empty when no references are declared.
@@ -315,6 +389,16 @@ class LLMDispatcher:
             iter_dir = self.work_dir / "runs" / f"iter-{iteration}"
             ctx["iter_dir"] = str(iter_dir.resolve())
             ctx["nous_dir"] = str(Path(__file__).resolve().parent.parent)
+            # #212: per-iteration mode (rehearsal | real). Default = real
+            # for backward compat. Mode-specific guidance is rendered into
+            # the prompt directly so the design template doesn't need
+            # conditional logic.
+            from orchestrator.iteration_mode import (
+                iteration_mode_for, mode_guidance_for,
+            )
+            mode = iteration_mode_for(self.campaign, iteration)
+            ctx["iteration_mode"] = mode
+            ctx["mode_guidance"] = mode_guidance_for(mode)
             # #185: surface a top-level pre-registered ground_truth block
             # to the designer so the immutable direction-claim and pass
             # condition reach the LLM directly. When absent, the
@@ -481,6 +565,13 @@ class LLMDispatcher:
                 ctx["final_principles"] = principles_path.read_text()
             else:
                 ctx["final_principles"] = "No principles extracted."
+            # #214: Pre-render an enumeration of per-iteration result
+            # files so the extractor surfaces partial data EVEN WHEN an
+            # iteration failed mid-execute. Without this, the extractor
+            # has no way to know what's on disk and frequently dismisses
+            # 80% data as "no data" — search-orientation violation.
+            ctx["results_summary"] = _format_results_summary(self.work_dir)
+            ctx["retry_log_summary"] = _format_retry_log_summary(self.work_dir)
 
         return ctx
 

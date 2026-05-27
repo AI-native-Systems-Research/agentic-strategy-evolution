@@ -37,7 +37,12 @@ TIER_NAMES: dict[int, str] = {
 
 
 def _read_bundle_tier(path: Path) -> int | None:
-    """Read complexity_tier from a bundle.yaml. None if missing or malformed."""
+    """Read complexity_tier from a bundle.yaml. None if missing or malformed.
+
+    Looks under ``metadata`` first, then falls back to the legacy top-level
+    location (#206). When both are populated, the metadata value wins so
+    ``metadata`` is the canonical place to put it going forward.
+    """
     if not path.exists():
         return None
     try:
@@ -46,9 +51,29 @@ def _read_bundle_tier(path: Path) -> int | None:
         return None
     if not isinstance(data, dict):
         return None
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        tier = metadata.get("complexity_tier")
+        if isinstance(tier, int) and 1 <= tier <= 4:
+            return tier
     tier = data.get("complexity_tier")
     if isinstance(tier, int) and 1 <= tier <= 4:
         return tier
+    return None
+
+
+def _read_bundle_justification(bundle: object) -> str | None:
+    """Pull tier_justification from metadata, falling back to root (#206)."""
+    if not isinstance(bundle, dict):
+        return None
+    metadata = bundle.get("metadata")
+    if isinstance(metadata, dict):
+        j = metadata.get("tier_justification")
+        if isinstance(j, str) and j.strip():
+            return j
+    j = bundle.get("tier_justification")
+    if isinstance(j, str) and j.strip():
+        return j
     return None
 
 
@@ -139,7 +164,7 @@ def format_tier_summary(
     # Show justification if present.
     try:
         bundle = yaml.safe_load(Path(bundle_path).read_text())
-        justification = bundle.get("tier_justification") if isinstance(bundle, dict) else None
+        justification = _read_bundle_justification(bundle)
     except (OSError, yaml.YAMLError):
         justification = None
     if justification:

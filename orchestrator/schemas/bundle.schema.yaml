@@ -24,6 +24,18 @@ properties:
       research_question:
         type: string
         minLength: 1
+      # #206: accept complexity_tier / tier_justification under metadata
+      # too (where iteration / family / research_question already live).
+      # The legacy top-level location is still accepted for backward-compat;
+      # readers prefer metadata when both are present.
+      complexity_tier:
+        type: integer
+        minimum: 1
+        maximum: 4
+        description: "See top-level complexity_tier — accepted here for ergonomics (#206)."
+      tier_justification:
+        type: string
+        description: "See top-level tier_justification — accepted here for ergonomics (#206)."
 
   arm_selection_rationale:
     type: string

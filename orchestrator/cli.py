@@ -196,10 +196,11 @@ def _cmd_stop(args):
     """Ask a running campaign to wind down cleanly between phases.
 
     Writes a ``STOP`` sentinel at the campaign work_dir root. The
-    next time the orchestrator passes a checkpoint (between
-    iterations today; between phases is on the roadmap), it raises
-    ``CampaignStopped``, persists a ``stopped_by_user`` ledger row,
-    and exits without orphaning worktrees or pending dispatcher calls.
+    next time the orchestrator passes a checkpoint — at the start of
+    each iteration AND at every phase transition within an iteration
+    (#198) — it raises ``CampaignStopped``, persists a
+    ``stopped_by_user`` ledger row, and exits without orphaning
+    worktrees or pending dispatcher calls.
 
     For mid-iteration interruption, ``Ctrl+C`` still works — the
     engine's atomic checkpoint means the next ``nous resume`` picks
@@ -229,8 +230,10 @@ def _cmd_stop(args):
     if reason:
         print(f"Reason: {reason}")
     print(
-        "The campaign will halt at the next iteration boundary. To "
-        "cancel the stop request, delete the sentinel file."
+        "The campaign will halt at the next phase boundary (a phase "
+        "transition within the current iteration, or the start of "
+        "the next iteration — whichever comes first). To cancel the "
+        "stop request, delete the sentinel file."
     )
 
 
