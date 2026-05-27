@@ -171,9 +171,11 @@ class TestResultShape:
         _write_findings(wd / "runs" / "iter-1", valid=True)
         result = evaluate_promote_gate(wd, 1)
         for k in ("decision", "reasoning", "blocking_amendments",
-                  "applied_amendments", "feasibility_check"):
+                  "applied_amendments", "feasibility_check",
+                  "malformed_amendment_lines"):
             assert k in result, f"missing key {k} in result"
         assert "passed" in result["feasibility_check"]
+        assert isinstance(result["malformed_amendment_lines"], int)
 
     def test_reasoning_is_human_readable(self, tmp_path: Path) -> None:
         """Smoke test that reasoning text is non-empty and references
@@ -204,10 +206,11 @@ class TestDegenerate:
         result = evaluate_promote_gate(wd, 1)
         assert result["decision"] == "abort"
 
-    def test_malformed_amendments_skipped_silently(self, tmp_path: Path) -> None:
-        """A malformed line in brief_amendments.jsonl should not crash
-        the gate — it skips the bad row and proceeds (matching the
-        helper-renderer convention from #223)."""
+    def test_malformed_amendments_downgrade_to_revise(self, tmp_path: Path) -> None:
+        """A malformed line in brief_amendments.jsonl could have been a
+        BLOCKING amendment — silently letting it through risks a false
+        promote. Asymmetric-risk: we choose revise instead, surfacing
+        the malformed_amendment_lines count for operator inspection."""
         wd = tmp_path / "campaign"
         _write_findings(wd / "runs" / "iter-1", valid=True)
         inputs = wd / "runs" / "iter-1" / "inputs"
@@ -217,6 +220,39 @@ class TestDegenerate:
                         "fix": "f", "priority": "HIGH"}) + "\n"
             + "not valid json {\n"
         )
-        # Only valid row was HIGH (not BLOCKING), so → promote
+        # The valid row is HIGH (no BLOCKING) but the malformed line
+        # could have been anything — we cannot rule out a hidden
+        # BLOCKING. Decision: revise.
+        result = evaluate_promote_gate(wd, 1)
+        assert result["decision"] == "revise", (
+            f"asymmetric-risk: malformed amendment lines should "
+            f"trigger revise, not silent promote. Got {result!r}"
+        )
+        assert result["malformed_amendment_lines"] == 1
+        assert "malformed" in result["reasoning"].lower()
+
+    def test_clean_amendments_no_malformed_lines(self, tmp_path: Path) -> None:
+        """Sanity: no malformed lines → malformed_amendment_lines is 0."""
+        wd = tmp_path / "campaign"
+        _write_findings(wd / "runs" / "iter-1", valid=True)
         result = evaluate_promote_gate(wd, 1)
         assert result["decision"] == "promote"
+        assert result["malformed_amendment_lines"] == 0
+
+    def test_blocking_takes_priority_over_malformed(self, tmp_path: Path) -> None:
+        """When both a BLOCKING amendment AND a malformed line exist,
+        the BLOCKING-amendment decision wins (still revise — but the
+        reasoning should cite the BLOCKING IDs first)."""
+        wd = tmp_path / "campaign"
+        _write_findings(wd / "runs" / "iter-1", valid=True)
+        inputs = wd / "runs" / "iter-1" / "inputs"
+        inputs.mkdir(parents=True)
+        (inputs / "brief_amendments.jsonl").write_text(
+            json.dumps({"id": "BA-1", "brief_section": "x", "problem": "p",
+                        "fix": "f", "priority": "BLOCKING"}) + "\n"
+            + "garbage {\n"
+        )
+        result = evaluate_promote_gate(wd, 1)
+        assert result["decision"] == "revise"
+        assert "BA-1" in result["blocking_amendments"]
+        assert result["malformed_amendment_lines"] == 1

@@ -140,14 +140,17 @@ def _format_brief_amendments_summary(work_dir: Path) -> str:
     Each amendment is a JSON object with required fields
     ``id, brief_section, problem, fix, priority``. Optional
     ``evidence``, ``impact``. The schema lives at
-    ``orchestrator/schemas/brief_amendments.schema.json``.
+    ``orchestrator/schemas/brief_amendments.schema.json`` and is
+    enforced by the agent that *writes* the file (per methodology) —
+    this renderer JSON-decodes each row and surfaces a count of
+    lines that failed to parse so the operator sees corruption,
+    but does not itself re-validate against the schema.
 
-    Walks ``runs/iter-*/inputs/brief_amendments.jsonl``, schema-validates
-    rows individually (skipping malformed with a visible warning), and
-    renders a per-iter listing grouped by priority. The REPORT extractor
-    can use this to: (a) cite which amendments shaped the iteration's
-    findings, (b) flag which BLOCKING amendments still need applying
-    to the upstream brief (the cross-run learning loop).
+    Walks ``runs/iter-*/inputs/brief_amendments.jsonl`` and renders a
+    per-iter listing grouped by priority. The REPORT extractor can use
+    this to: (a) cite which amendments shaped the iteration's findings,
+    (b) flag which BLOCKING amendments still need applying to the
+    upstream brief (the cross-run learning loop).
     """
     runs_dir = work_dir / "runs"
     if not runs_dir.is_dir():

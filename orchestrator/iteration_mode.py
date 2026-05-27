@@ -81,10 +81,15 @@ scientific completeness. Two distinct goals — score them separately:
 If you find any campaign-spec or brief inconsistencies (paths the
 validator rejects, broken argv quoting, wall-time claims that don't
 match reality, single-tenant probes when the target requires multi-
-tenant, etc.), write them to ``runs/iter-N/brief_amendments.md`` —
-one entry per finding, with file path + suggested change. The next
-``real`` iteration will read this; future runs of the same campaign
-will benefit indefinitely.
+tenant, etc.), write them to
+``runs/iter-N/inputs/brief_amendments.jsonl`` as one structured JSON
+object per line. Required fields: ``id`` (pattern ``BA-N``),
+``brief_section``, ``problem``, ``fix``, ``priority`` (one of
+``BLOCKING``, ``HIGH``, ``MEDIUM``, ``LOW``, ``INFO``). Optional
+``evidence``, ``impact``. Schema:
+``orchestrator/schemas/brief_amendments.schema.json``. The promote
+gate, the REPORT extractor, and the future ``apply-amendments`` CLI
+all read this structured form.
 
 **Do NOT:**
 - Author full multi-arm bundles. Keep arms minimal.
@@ -132,13 +137,13 @@ def mode_guidance_for(mode: Mode) -> str:
 # entire economic argument for #212.
 
 EXECUTE_REHEARSAL_GUIDANCE = """\
-This iteration is in **REHEARSAL** mode (#212). The DESIGN agent's
-bundle declares the full experimental design (so iter-2 / future runs
-can run it untouched). YOUR JOB this iter:
+This iteration is in **REHEARSAL** mode. The DESIGN agent's bundle
+declares the full experimental design (so iter-2 / future runs can
+run it untouched). YOUR JOB this iter:
 
 1. **Honor the rehearsal scope.** If the bundle's
-   ``experiment_spec.rehearsal_subset`` is populated (#222), execute
-   ONLY that subset (typically: 1 seed × the contrast-pair arms).
+   ``experiment_spec.rehearsal_subset`` is populated, execute ONLY
+   that subset (typically: 1 seed × the contrast-pair arms).
    Do NOT fan out the full ``experiment_spec`` — that's iter-2's job.
    If ``rehearsal_subset`` is missing, default to: first canonical
    seed + ``h-main`` and ``h-control-negative`` arms only.
@@ -148,7 +153,7 @@ can run it untouched). YOUR JOB this iter:
    analysis script fails or returns null where data is present,
    fix the script (or surface the issue) before iter-2 runs.
 
-3. **Append per-policy timing observations** (#226). During the
+3. **Append per-policy timing observations.** During the
    feasibility / contrast-pair runs, measure wall-clock per policy.
    Record into ``experiment_spec.timing_observations``:
    ``expected_wall_time_seconds_per_policy: { ea-wfq: 25, wfq: 23, ... }``
@@ -156,7 +161,7 @@ can run it untouched). YOUR JOB this iter:
    (~3× the slowest observed policy + buffer). iter-2's watchdog
    reads these to calibrate.
 
-4. **Emit ``brief_amendments.jsonl``** (post-#223 structured form) at
+4. **Emit ``brief_amendments.jsonl``** at
    ``runs/iter-N/inputs/brief_amendments.jsonl`` if you find any
    campaign-spec friction (workload params, timing claims, missing
    flags, etc.). One JSON object per line; required fields: ``id``
@@ -164,7 +169,7 @@ can run it untouched). YOUR JOB this iter:
    ``priority`` (BLOCKING / HIGH / MEDIUM / LOW / INFO). Optional
    ``evidence``, ``impact``.
 
-5. **Append to ``bundle_amendments.jsonl``** (#211) when you override
+5. **Append to ``bundle_amendments.jsonl``** when you override
    any parameter from ``experiment_spec.verified_parameters``.
 
 6. **Write findings.json with ``mode: rehearsal``** in the outcome,
@@ -180,15 +185,22 @@ can run it untouched). YOUR JOB this iter:
 """
 
 EXECUTE_REAL_GUIDANCE = """\
-This iteration is in **REAL** mode (#212). Run the full experiment_spec
-at the bundle's prescribed scope: all arms, full seed list. If a prior
-``rehearsal`` iter emitted ``brief_amendments.jsonl``, read it before
-launching the experiment — if any ``priority: BLOCKING`` amendments
-exist that haven't been applied to the brief, halt with a
-``failure_note.md`` (promotion-gate logic, #224). Otherwise run the
-full bundle, write ``findings.json`` with ``mode: real`` and a CONFIRMED /
-REFUTED / NULL status per arm, and append ``bundle_amendments.jsonl``
-(#211) for any parameter overrides observed during execution.
+This iteration is in **REAL** mode. Run the full experiment_spec at
+the bundle's prescribed scope: all arms, full seed list.
+
+If a prior ``rehearsal`` iter emitted ``brief_amendments.jsonl``, read
+it BEFORE launching the experiment. Any ``priority: BLOCKING``
+amendments encode constraints iter-2 must respect (e.g., a workload
+parameter the rehearsal verified is required for the experiment to
+engage the mechanism). Apply each BLOCKING amendment to your run
+configuration and proceed; if you cannot apply one, write a
+``failure_note.md`` describing why and STOP — the campaign should
+revise the brief before continuing.
+
+Write ``findings.json`` with ``mode: real`` and a CONFIRMED / REFUTED
+/ NULL status per arm. Append ``bundle_amendments.jsonl`` for any
+parameter overrides observed during execution (silent drift breaks
+reproducibility).
 """
 
 

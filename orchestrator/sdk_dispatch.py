@@ -620,13 +620,16 @@ class SDKDispatcher(CLIDispatcher):
 
     def _bundle_recommended_turn_silence_threshold(
             self, iteration: int) -> float | None:
-        """#226: read the rehearsal-recorded watchdog threshold override
-        from ``bundle.experiment_spec.timing_observations.recommended_turn_silence_threshold_seconds``
-        for the iter immediately PRIOR to the current one (the rehearsal
-        iter, when present).
+        """Read the rehearsal-recorded watchdog threshold override from the
+        prior iter's bundle.experiment_spec.timing_observations.
 
-        Returns None if the bundle / field doesn't exist or is malformed.
-        Pure file reader — no LLM, no I/O beyond a single read.
+        Returns ``None`` for: iter-1 (no prior bundle), missing bundle file,
+        unparseable YAML, or absent/malformed
+        ``recommended_turn_silence_threshold_seconds``. On parse failures
+        (corrupt YAML, missing PyYAML), logs a warning so operators see
+        why the override didn't apply — silently falling back to the
+        campaign default would be the silent-failure pattern PR #218
+        was specifically meant to kill.
         """
         if iteration < 2:
             return None
@@ -634,10 +637,26 @@ class SDKDispatcher(CLIDispatcher):
         bundle_path = prior_iter_dir / "bundle.yaml"
         if not bundle_path.exists():
             return None
+        # Import yaml outside the try/except: an ImportError here is
+        # an environmental defect that should propagate, not a
+        # silent fallback to the campaign default.
+        import yaml as _yaml
         try:
-            import yaml as _yaml
-            data = _yaml.safe_load(bundle_path.read_text())
-        except (OSError, Exception):  # noqa: BLE001
+            text = bundle_path.read_text()
+            data = _yaml.safe_load(text)
+        except OSError as exc:
+            logger.warning(
+                "iter-%d bundle unreadable; skipping timing-override "
+                "(%s: %s)",
+                iteration - 1, type(exc).__name__, exc,
+            )
+            return None
+        except _yaml.YAMLError as exc:
+            logger.warning(
+                "iter-%d bundle YAML invalid; skipping timing-override "
+                "(falling back to campaign default %.0fs): %s",
+                iteration - 1, self._turn_silence_threshold, exc,
+            )
             return None
         if not isinstance(data, dict):
             return None

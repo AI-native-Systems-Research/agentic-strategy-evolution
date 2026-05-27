@@ -43,15 +43,23 @@ Decision = Literal["promote", "revise", "abort"]
 VALID_DECISIONS: tuple[Decision, ...] = ("promote", "revise", "abort")
 
 
-def _read_jsonl(path: Path) -> list[dict]:
-    """Read a JSONL file; skip malformed lines silently."""
+def _read_jsonl_with_skips(path: Path) -> tuple[list[dict], int]:
+    """Read a JSONL file. Returns ``(valid_rows, malformed_count)``.
+
+    Malformed-line counts are surfaced (not silently dropped) because
+    the gate makes BLOCKING decisions on these files: a corrupt line
+    that was meant to be a BLOCKING amendment must not silently
+    register as "no BLOCKING amendments" and let the campaign promote
+    to its next iteration.
+    """
     if not path.exists():
-        return []
-    rows: list[dict] = []
+        return [], 0
     try:
         text = path.read_text()
     except OSError:
-        return []
+        return [], 0
+    rows: list[dict] = []
+    malformed = 0
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -59,7 +67,16 @@ def _read_jsonl(path: Path) -> list[dict]:
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError:
-            continue
+            malformed += 1
+    return rows, malformed
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    """Backward-compat thin wrapper. Drops the malformed count for
+    callers that don't need it (today: ``applied_amendments.jsonl``,
+    where the cost of a corrupted apply log is symmetric — false
+    negatives + false positives both possible)."""
+    rows, _ = _read_jsonl_with_skips(path)
     return rows
 
 
@@ -92,12 +109,26 @@ def evaluate_promote_gate(
            ``<work_dir>/applied_amendments.jsonl`` → ``revise``
            ("blocking amendment must be applied to the brief before
            iter-(N+1) can produce valid data").
+        3b. Any malformed line(s) in ``brief_amendments.jsonl`` →
+           ``revise`` (cannot rule out a hidden BLOCKING entry;
+           asymmetric-risk choice).
         4. Otherwise → ``promote``.
+
+    **Scoping (v1):** the gate reads only iter-N's
+    ``brief_amendments.jsonl``, NOT amendments from earlier iters. Per
+    the schema, ``id`` (e.g. ``BA-1``) is "stable within this iter's
+    amendments" — *not globally unique*. So an iter-1 BLOCKING
+    amendment that the operator never applied will NOT be re-flagged
+    when this function is called for iter-2 (iter-2's gate looks at
+    iter-2's amendments only). The cross-iter "still-pending" view is
+    deferred to v2 (apply-amendments CLI + composite IDs); for v1,
+    callers MUST run the gate after EVERY iter that emits any
+    BLOCKING amendment, not just the last one.
 
     Engine integration (v2): the engine calls this between iterations
     and acts on ``decision``: ``promote`` → start iter-(N+1),
     ``revise`` → halt with ``CampaignStopped("revise")`` so the operator
-    can run ``nous brief apply-amendments``, ``abort`` → halt with
+    can apply amendments, ``abort`` → halt with
     ``CampaignStopped("abort")``.
     """
     work_dir = Path(work_dir)
@@ -132,8 +163,14 @@ def evaluate_promote_gate(
             feasibility=False,
         )
 
-    # 3. Brief-amendments gate.
-    amendments = _read_jsonl(iter_dir / "inputs" / "brief_amendments.jsonl")
+    # 3. Brief-amendments gate. Counts malformed lines separately —
+    # a corrupted line could have been a BLOCKING amendment, and
+    # silently letting it disappear past the gate is exactly the
+    # asymmetric-risk failure (false promote >> false revise) we
+    # want to avoid.
+    amendments, malformed = _read_jsonl_with_skips(
+        iter_dir / "inputs" / "brief_amendments.jsonl",
+    )
     applied_rows = _read_jsonl(work_dir / "applied_amendments.jsonl")
     applied_ids = {
         str(r.get("id"))
@@ -158,12 +195,34 @@ def evaluate_promote_gate(
                 f"{len(blocking_unapplied)} BLOCKING brief_amendment(s) "
                 f"({ids}) have not been applied to the upstream brief. "
                 f"Iter-{iteration + 1} would re-discover or re-trip "
-                f"these issues. Run `nous brief apply-amendments` (post-#223 "
-                f"v2) or apply manually, then resume."
+                f"these issues. Apply the amendments manually (or wait "
+                f"for `nous brief apply-amendments`), then resume."
             ),
             blocking=[str(a.get("id", "?")) for a in blocking_unapplied],
             applied=sorted(applied_ids),
             feasibility=True,
+            malformed_lines=malformed,
+        )
+
+    # 3b. Malformed-line safety: if the amendments file had any
+    # unparseable lines, we cannot rule out a hidden BLOCKING entry.
+    # Asymmetric risk: false revise costs an operator a few minutes
+    # of inspection; false promote past corruption can waste an
+    # iteration's tokens. Choose revise.
+    if malformed > 0:
+        return _decision(
+            "revise",
+            reasoning=(
+                f"{malformed} malformed line(s) in "
+                f"runs/iter-{iteration}/inputs/brief_amendments.jsonl "
+                f"could not be parsed. We cannot rule out a hidden "
+                f"BLOCKING amendment among them. Inspect the file and "
+                f"fix the malformed lines before iter-{iteration + 1}."
+            ),
+            blocking=[],
+            applied=sorted(applied_ids),
+            feasibility=True,
+            malformed_lines=malformed,
         )
 
     # 4. Default → promote.
@@ -177,6 +236,7 @@ def evaluate_promote_gate(
         blocking=[],
         applied=sorted(applied_ids),
         feasibility=True,
+        malformed_lines=0,
     )
 
 
@@ -187,8 +247,8 @@ def _decision(
     blocking: list[str],
     applied: list[str],
     feasibility: bool,
+    malformed_lines: int = 0,
 ) -> dict:
-    """Build the result dict in the canonical shape."""
     return {
         "decision": decision,
         "reasoning": reasoning,
@@ -197,4 +257,5 @@ def _decision(
         "feasibility_check": {
             "passed": feasibility,
         },
+        "malformed_amendment_lines": malformed_lines,
     }

@@ -538,6 +538,59 @@ class TestWatchdogReadsBundleOverride:
             "campaign default again."
         )
 
+    def test_dispatch_restores_threshold_when_runner_raises(
+            self, tmp_path: Path,
+            monkeypatch: pytest.MonkeyPatch) -> None:
+        """#226 + post-PR-#227-review: the override-and-restore must
+        survive a runner failure. If a regression moved the restore
+        line out of ``finally``, this test catches it: dispatch() raises,
+        but the dispatcher's stored threshold is still the campaign
+        default — no leak into subsequent dispatches.
+        """
+        from orchestrator.sdk_dispatch import SDKDispatcher, SDKTransientError
+        monkeypatch.setattr(
+            "orchestrator.sdk_dispatch.time.sleep", lambda _s: None,
+        )
+        # iter-1 bundle: recommends 100s
+        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
+        b1 = _make_bundle(experiment_spec={
+            "timing_observations": {
+                "recommended_turn_silence_threshold_seconds": 100.0,
+            },
+        })
+        (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
+            yaml.safe_dump(b1),
+        )
+        (tmp_path / "runs" / "iter-2").mkdir(parents=True)
+
+        def runner(**_):
+            raise SDKTransientError("simulated runner failure")
+
+        d = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_campaign_with_default_threshold(tmp_path),
+            sdk_runner=runner,
+            max_retries=0,
+        )
+        default_threshold = d._turn_silence_threshold
+
+        with pytest.raises(RuntimeError):
+            d.dispatch(
+                "planner", "design",
+                output_path=tmp_path / "runs" / "iter-2" / "design_log.md",
+                iteration=2,
+            )
+
+        # Critical: post-failure, dispatcher's stored threshold MUST be
+        # the campaign default — not the iter-1 override that was
+        # applied transiently.
+        assert d._turn_silence_threshold == default_threshold, (
+            "post-PR-#227-review: try/finally must restore "
+            "_turn_silence_threshold even when super().dispatch raises. "
+            "A regression here would leak the override into all "
+            "subsequent iterations of a long-running campaign."
+        )
+
     def test_dispatch_uses_campaign_default_when_no_bundle_override(
             self, tmp_path: Path) -> None:
         """When the prior iter's bundle has no timing_observations,
@@ -744,3 +797,106 @@ class TestReportContextIncludesBriefAmendments:
         )
         assert "BLOCKING" in all_prompt
         assert "max-model-len" in all_prompt
+
+
+# ─── End-to-end coupling across #221+#222+#223+#224 ────────────────────────
+
+
+from orchestrator.iteration_mode import iteration_mode_for, execute_mode_guidance_for
+from orchestrator.promote_gate import evaluate_promote_gate
+
+
+class TestEndToEndIntegration:
+    """Post-PR-#227-review: a single test that exercises the chain
+    #221 (mode signal flows to EXECUTE) → #222 (rehearsal_subset is the
+    structural scope) → #223 (BLOCKING brief_amendment is written by
+    rehearsal) → #224 (gate decides revise based on it).
+
+    If any link in the chain breaks (mode resolver bug, schema drift,
+    field-name typo, gate logic regression), this test catches it
+    even though each per-feature test still passes."""
+
+    def test_rehearsal_emits_blocking_amendment_then_gate_revises(
+            self, tmp_path: Path) -> None:
+        # 1. Campaign declares iter-1 rehearsal, iter-2 real (#212).
+        c = _make_campaign()
+        c["iterations"] = [{"mode": "rehearsal"}, {"mode": "real"}]
+
+        # 2. Mode resolver returns "rehearsal" for iter-1 (#212).
+        assert iteration_mode_for(c, 1) == "rehearsal"
+        assert iteration_mode_for(c, 2) == "real"
+
+        # 3. Execute-phase guidance for rehearsal mentions
+        # rehearsal_subset (#221 → #222 link).
+        guidance = execute_mode_guidance_for("rehearsal")
+        assert "rehearsal_subset" in guidance, (
+            "#221 → #222 link broken: execute-phase rehearsal guidance "
+            "must reference rehearsal_subset (the structural scope)."
+        )
+        # And mentions the brief_amendments.jsonl path (#221 → #223 link).
+        assert "brief_amendments.jsonl" in guidance
+        assert "BLOCKING" in guidance
+
+        # 4. DESIGN agent emits a bundle with rehearsal_subset (#222).
+        # Schema-validate to confirm the structural field is honored.
+        bundle = _make_bundle(experiment_spec={
+            "rehearsal_subset": {
+                "seeds": [42],
+                "arms": ["h-main", "h-control-negative"],
+                "extra_validation_only": True,
+            },
+        })
+        jsonschema.validate(bundle, _load_bundle_schema())
+
+        # 5. Rehearsal iter-1 emits a BLOCKING brief_amendment (#223
+        # structured form). Schema-validate the amendment row.
+        iter1 = tmp_path / "runs" / "iter-1"
+        inputs = iter1 / "inputs"
+        inputs.mkdir(parents=True)
+        amendment = {
+            "id": "BA-1",
+            "brief_section": "paper-burst-brief.md §ITER-1",
+            "problem": "Probe command produces schema-invalid output",
+            "fix": "Replace probe command with workload-spec version",
+            "priority": "BLOCKING",
+        }
+        jsonschema.validate(amendment, _load_brief_amendments_schema())
+        (inputs / "brief_amendments.jsonl").write_text(
+            json.dumps(amendment) + "\n"
+        )
+        # Plus a successful findings.json so the gate passes its
+        # apparatus check.
+        (iter1 / "findings.json").write_text(json.dumps({
+            "iteration": 1,
+            "bundle_ref": "runs/iter-1/bundle.yaml",
+            "experiment_valid": True,
+            "arms": [{
+                "arm_type": "h-main",
+                "predicted": "stub", "observed": "stub",
+                "status": "CONFIRMED", "error_type": None,
+                "diagnostic_note": "stub",
+            }],
+        }))
+
+        # 6. Promote gate (#224) decides revise — because BA-1 is
+        # BLOCKING and applied_amendments.jsonl is empty.
+        result = evaluate_promote_gate(tmp_path, 1)
+        assert result["decision"] == "revise", (
+            "#224 link broken: gate must emit revise when a BLOCKING "
+            f"amendment is unapplied. Got {result!r}"
+        )
+        assert "BA-1" in result["blocking_amendments"]
+        # Reasoning string is operator-actionable.
+        assert "BA-1" in result["reasoning"]
+
+        # 7. Operator applies BA-1 → applied_amendments.jsonl populated
+        # → gate now promotes. (In v2 this is a CLI; in v1 it's manual.)
+        (tmp_path / "applied_amendments.jsonl").write_text(
+            json.dumps({"id": "BA-1"}) + "\n"
+        )
+        result_after = evaluate_promote_gate(tmp_path, 1)
+        assert result_after["decision"] == "promote", (
+            "#224 link: once the BLOCKING amendment is in "
+            "applied_amendments.jsonl, the gate should promote."
+        )
+        assert "BA-1" in result_after["applied_amendments"]
