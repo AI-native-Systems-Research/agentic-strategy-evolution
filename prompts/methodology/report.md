@@ -24,6 +24,10 @@ You are writing the final report for a Nous research campaign.
 
 {{bundle_amendments_summary}}
 
+## Brief amendments (campaign-spec friction surfaced; cross-run propagation)
+
+{{brief_amendments_summary}}
+
 ## Instructions
 
 Write a concise research report in markdown answering the research question. Structure:

@@ -169,6 +169,9 @@ class TestRealMethodologyThinTemplates:
             "iter_dir": "/tmp/iter-2",
             "observable_metrics": "throughput, latency",
             "controllable_knobs": "batch_size, scheduling",
+            # #221: rehearsal/real mode rendered into the execute prompt.
+            "iteration_mode": "real",
+            "mode_guidance": "(real-mode execute guidance)",
         }
 
     def test_design_thin_renders_and_is_smaller_than_full(self, tmp_path):

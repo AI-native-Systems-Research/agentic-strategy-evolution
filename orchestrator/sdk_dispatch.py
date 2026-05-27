@@ -618,6 +618,44 @@ class SDKDispatcher(CLIDispatcher):
                 summary["max_gap_seconds"], self._silence_threshold,
             )
 
+    def _bundle_recommended_turn_silence_threshold(
+            self, iteration: int) -> float | None:
+        """#226: read the rehearsal-recorded watchdog threshold override
+        from ``bundle.experiment_spec.timing_observations.recommended_turn_silence_threshold_seconds``
+        for the iter immediately PRIOR to the current one (the rehearsal
+        iter, when present).
+
+        Returns None if the bundle / field doesn't exist or is malformed.
+        Pure file reader — no LLM, no I/O beyond a single read.
+        """
+        if iteration < 2:
+            return None
+        prior_iter_dir = self.work_dir / "runs" / f"iter-{iteration - 1}"
+        bundle_path = prior_iter_dir / "bundle.yaml"
+        if not bundle_path.exists():
+            return None
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(bundle_path.read_text())
+        except (OSError, Exception):  # noqa: BLE001
+            return None
+        if not isinstance(data, dict):
+            return None
+        spec = data.get("experiment_spec") or {}
+        if not isinstance(spec, dict):
+            return None
+        timing = spec.get("timing_observations") or {}
+        if not isinstance(timing, dict):
+            return None
+        val = timing.get("recommended_turn_silence_threshold_seconds")
+        try:
+            v = float(val) if val is not None else None
+        except (TypeError, ValueError):
+            return None
+        if v is None or v < 0:
+            return None
+        return v
+
     def dispatch(  # type: ignore[override]
         self, role: str, phase: str, *, output_path, iteration: int,
         perspective=None, h_main_result="CONFIRMED",
@@ -631,6 +669,18 @@ class SDKDispatcher(CLIDispatcher):
         inputs_dir = self.work_dir / "runs" / f"iter-{iteration}" / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=True)
         self._event_log_path = inputs_dir / "executor_log.jsonl"
+        # #226: per-iter watchdog threshold override. Resolution chain:
+        # bundle.experiment_spec.timing_observations.recommended_turn_silence_threshold_seconds
+        # > campaign.sdk_timeouts.turn_silence_threshold_seconds (set in
+        # __init__) > 600s default. Resolve here so the runner sees the
+        # right value for THIS iter; reset after to avoid leaking state
+        # to subsequent dispatches in long-running campaigns.
+        original_threshold = self._turn_silence_threshold
+        bundle_override = self._bundle_recommended_turn_silence_threshold(
+            iteration,
+        )
+        if bundle_override is not None:
+            self._turn_silence_threshold = bundle_override
         try:
             super().dispatch(
                 role, phase,
@@ -638,6 +688,7 @@ class SDKDispatcher(CLIDispatcher):
                 perspective=perspective, h_main_result=h_main_result,
             )
         finally:
+            self._turn_silence_threshold = original_threshold
             # #201: post-turn silence diagnostic. Read the streaming log
             # we just produced and surface excessive event gaps to
             # retry_log.jsonl. Best-effort — never raise from the finally.

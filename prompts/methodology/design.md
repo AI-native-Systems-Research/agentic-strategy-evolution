@@ -196,6 +196,25 @@ Now design a hypothesis bundle based on what you actually observed and verified:
      the executor a plain-Python expression that labels each row.
    - `verified_parameters`: parameters you confirmed work for this
      target (e.g. `{total_kv_blocks: 1200}`). Treat as canonical.
+   - `rehearsal_subset` *(populate when iteration_mode == rehearsal — #222)*:
+     declarative scope for what iter-1 (rehearsal) should execute.
+     Required sub-fields when present: `seeds: [int]` (typically the
+     first canonical seed only), `arms: [str]` (typically the
+     contrast pair: h-main + the most direct control). Optional
+     `extra_validation_only: bool` (when true, findings.json marked
+     `mode: rehearsal` regardless of confirmed/refuted). The full
+     experiment_spec stays at full scope so iter-2 inherits it
+     untouched.
+   - `timing_observations` *(populate when iteration_mode == rehearsal — #226)*:
+     per-policy wall-time observations from feasibility probes.
+     Required sub-fields: `expected_wall_time_seconds_per_policy: { policy: number }`
+     and `recommended_turn_silence_threshold_seconds: number` (~3×
+     the slowest observed policy + buffer). iter-2's
+     `SDKDispatcher` reads `recommended_turn_silence_threshold_seconds`
+     to calibrate the live watchdog (#205). Without these
+     measurements, the watchdog uses the campaign's global default,
+     which is a one-size-fits-all that doesn't catch a runaway
+     `wfq` while tolerating a slow `externality-credit`.
 
 4. Each arm must have:
    - `type`: One of h-main, h-ablation, h-super-additivity, h-control-negative, h-robustness, h-dose-response, h-tradeoff.

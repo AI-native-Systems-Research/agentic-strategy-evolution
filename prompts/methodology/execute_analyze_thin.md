@@ -5,6 +5,12 @@
 > structure, fast-fail rules, prediction-error taxonomy, and principle-update
 > protocol.
 
+## Iteration mode
+
+This iteration's mode is: **{{iteration_mode}}**
+
+{{mode_guidance}}
+
 ## Active principles
 {{active_principles}}
 

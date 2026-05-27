@@ -11,6 +11,12 @@ Your job has FIVE phases — all in one session with full context:
 
 You have {{max_turns}} turns. Use them.
 
+## Iteration mode
+
+This iteration's mode is: **{{iteration_mode}}**
+
+{{mode_guidance}}
+
 ## Target System
 
 - **Name:** {{target_system}}
@@ -80,6 +86,16 @@ operational handoff from DESIGN. Specifically:
 - **`experiment_spec.verified_parameters`** (#210): treat as canonical.
   If smoke / validation reveals a parameter must change, see "Bundle
   amendments" in Step 1 below — don't override silently.
+- **`experiment_spec.rehearsal_subset`** *(when iteration_mode == "rehearsal")* (#222):
+  declarative scope override. Run ONLY the seeds × arms in this
+  subset; do NOT fan out the full experiment. iter-2 (real mode)
+  ignores this field and runs the full spec.
+- **`experiment_spec.timing_observations`** *(when populated by a prior
+  rehearsal iter)* (#226): use the per-policy wall-time observations
+  to set per-arm timeouts in the fan-out (e.g. `parallel --timeout`).
+  The engine has already read
+  `recommended_turn_silence_threshold_seconds` and applied it to the
+  watchdog — you don't need to reconfigure that yourself.
 
 ### Step 1: Build the system
 Use the build command from the designer handoff (or

@@ -294,3 +294,194 @@ class TestDesignPromptIncludesMode:
         # No unfilled placeholders leaked.
         assert "{{mode_guidance}}" not in prompt_text
         assert "{{iteration_mode}}" not in prompt_text
+
+
+# ─── #221: execute-phase mode guidance ───────────────────────────────────
+
+
+from orchestrator.iteration_mode import (
+    EXECUTE_REHEARSAL_GUIDANCE,
+    EXECUTE_REAL_GUIDANCE,
+    execute_mode_guidance_for,
+)
+
+
+def _valid_execute_analyze_response() -> str:
+    """Schema-passing stub for executor/execute-analyze so the
+    dispatcher's parse path doesn't crash — lets prompt-content
+    assertions run. Mirrors the shape from tests/test_llm_dispatch.py.
+    """
+    payload = {
+        "plan": {
+            "metadata": {"iteration": 1, "bundle_ref": "runs/iter-1/bundle.yaml"},
+            "arms": [{"arm_id": "h-main",
+                      "conditions": [{"name": "baseline",
+                                      "cmd": "echo test"}]}],
+        },
+        "findings": {
+            "iteration": 1,
+            "bundle_ref": "runs/iter-1/bundle.yaml",
+            "experiment_valid": True,
+            "arms": [{
+                "arm_type": "h-main",
+                "predicted": "stub",
+                "observed": "stub",
+                "status": "CONFIRMED",
+                "error_type": None,
+                "diagnostic_note": "stub",
+            }],
+        },
+        "principle_updates": [],
+    }
+    return "```json\n" + json.dumps(payload) + "\n```"
+
+
+class TestExecuteModeGuidance:
+    """#221: execute_mode_guidance_for returns phase-appropriate text
+    distinct from mode_guidance_for. Rehearsal-mode execute guidance
+    must instruct the agent to honor rehearsal_subset, NOT fan out
+    the full bundle."""
+
+    def test_rehearsal_mentions_rehearsal_subset_and_scope(self):
+        text = execute_mode_guidance_for("rehearsal")
+        assert text == EXECUTE_REHEARSAL_GUIDANCE
+        # Critical scope-shrink instructions
+        assert "rehearsal_subset" in text, (
+            "#221: rehearsal-mode execute guidance must mention the "
+            "rehearsal_subset bundle field — that's the structural "
+            "scope-shrink mechanism."
+        )
+        assert "Do NOT fan out the full" in text, (
+            "#221: rehearsal-mode execute guidance must imperative-forbid "
+            "full fan-out (the post-#212 paper-burst rerun observed the "
+            "agent fanning out the full bundle anyway because it had "
+            "no signal not to)."
+        )
+        # Cross-reference to companion mechanisms:
+        assert "brief_amendments.jsonl" in text  # #223
+        assert "bundle_amendments.jsonl" in text  # #211
+        assert "timing_observations" in text  # #226
+
+    def test_real_mentions_full_scope_and_promotion_gate(self):
+        text = execute_mode_guidance_for("real")
+        assert text == EXECUTE_REAL_GUIDANCE
+        assert "full" in text.lower()
+        # Promotion-gate intent (#224): real iter respects BLOCKING amendments.
+        assert "BLOCKING" in text
+        assert "brief_amendments" in text
+
+    def test_unknown_mode_raises_value_error(self):
+        """Same fail-loud discipline as design-phase mode_guidance_for."""
+        with pytest.raises(ValueError, match=r"unknown iteration mode"):
+            execute_mode_guidance_for("turbo")  # type: ignore[arg-type]
+
+    def test_design_and_execute_guidance_are_distinct(self):
+        """Sanity: the two helpers return different strings (otherwise
+        the whole #221 split is moot — DESIGN and EXECUTE would be
+        getting the same prompt block)."""
+        assert mode_guidance_for("rehearsal") != execute_mode_guidance_for("rehearsal")
+        assert mode_guidance_for("real") != execute_mode_guidance_for("real")
+
+
+class TestExecuteAnalyzeContextIncludesMode:
+    """#221: the EXECUTE_ANALYZE-phase context populates iteration_mode +
+    mode_guidance with execute-phase text. Tests at the ``_build_context``
+    seam (the dispatcher's actual contract for prompt content) rather
+    than driving the full dispatch+parse+validate pipeline — keeps the
+    test focused on what #221 actually changes."""
+
+    def _build_executor_ctx(self, tmp_path: Path,
+                            campaign: dict,
+                            monkeypatch: pytest.MonkeyPatch) -> dict:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        # Pre-create the DESIGN artifacts the executor's context-builder
+        # reads (bundle.yaml, problem.md, campaign-level handoff.md).
+        iter1 = tmp_path / "runs" / "iter-1"
+        iter1.mkdir(parents=True)
+        (iter1 / "bundle.yaml").write_text(yaml.safe_dump({
+            "metadata": {"iteration": 1, "family": "test",
+                         "research_question": "?"},
+            "arms": [{"type": "h-main", "prediction": "p", "mechanism": "m",
+                      "diagnostic": "d"}],
+        }))
+        (iter1 / "problem.md").write_text("## problem\nbrief\n")
+        (tmp_path / "handoff.md").write_text("## prior handoff\n")
+
+        d = LLMDispatcher(
+            work_dir=tmp_path, campaign=campaign,
+            completion_fn=_make_completion(["unused"]),
+        )
+        return d._build_context("executor", "execute-analyze",
+                                iteration=1, perspective=None)
+
+    def test_rehearsal_ctx_carries_execute_rehearsal_guidance(
+            self, tmp_path: Path,
+            monkeypatch: pytest.MonkeyPatch) -> None:
+        c = _make_campaign(iterations=[{"mode": "rehearsal"},
+                                       {"mode": "real"}])
+        ctx = self._build_executor_ctx(tmp_path, c, monkeypatch)
+
+        assert ctx["iteration_mode"] == "rehearsal", (
+            f"#221: iter-1 (rehearsal) ctx must carry mode; got {ctx['iteration_mode']!r}"
+        )
+        guidance = ctx["mode_guidance"]
+        assert "rehearsal_subset" in guidance, (
+            "#221: execute-phase rehearsal guidance must mention "
+            "rehearsal_subset (scope-shrink mechanism)."
+        )
+        assert "Do NOT fan out" in guidance, (
+            "#221: rehearsal guidance must imperative-forbid full fan-out."
+        )
+        # Companion mechanisms cross-referenced:
+        assert "brief_amendments.jsonl" in guidance
+        assert "timing_observations" in guidance
+
+    def test_real_ctx_carries_execute_real_guidance(
+            self, tmp_path: Path,
+            monkeypatch: pytest.MonkeyPatch) -> None:
+        c = _make_campaign()  # no iterations block → real default
+        ctx = self._build_executor_ctx(tmp_path, c, monkeypatch)
+
+        assert ctx["iteration_mode"] == "real"
+        guidance = ctx["mode_guidance"]
+        # Real-mode guidance must mention BLOCKING amendment handling
+        # (the promotion-gate intent) and full scope.
+        assert "BLOCKING" in guidance
+        assert "full" in guidance.lower()
+        # Rehearsal-specific scope language should NOT be foregrounded.
+        assert "Do NOT fan out" not in guidance
+
+    def test_executor_ctx_distinct_from_design_ctx(
+            self, tmp_path: Path,
+            monkeypatch: pytest.MonkeyPatch) -> None:
+        """Sanity: design-phase and execute-phase ctx populate
+        mode_guidance with DIFFERENT text, not the same string."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        c = _make_campaign(iterations=[{"mode": "rehearsal"}])
+        d = LLMDispatcher(
+            work_dir=tmp_path, campaign=c,
+            completion_fn=_make_completion(["unused"]),
+        )
+        # Pre-create iter dir
+        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
+
+        design_ctx = d._build_context("planner", "design",
+                                      iteration=1, perspective=None)
+
+        # And execute ctx (with prerequisite artifacts)
+        iter1 = tmp_path / "runs" / "iter-1"
+        (iter1 / "bundle.yaml").write_text(yaml.safe_dump({
+            "metadata": {"iteration": 1, "family": "test",
+                         "research_question": "?"},
+            "arms": [{"type": "h-main", "prediction": "p", "mechanism": "m",
+                      "diagnostic": "d"}],
+        }))
+        (iter1 / "problem.md").write_text("brief")
+        (tmp_path / "handoff.md").write_text("handoff")
+        execute_ctx = d._build_context("executor", "execute-analyze",
+                                       iteration=1, perspective=None)
+
+        assert design_ctx["mode_guidance"] != execute_ctx["mode_guidance"], (
+            "#221: design-phase and execute-phase mode_guidance must "
+            "differ — otherwise the whole phase-aware split is moot."
+        )

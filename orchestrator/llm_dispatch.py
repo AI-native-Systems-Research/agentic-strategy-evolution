@@ -133,6 +133,91 @@ def _format_results_summary(work_dir: Path) -> str:
     return "\n".join(lines)
 
 
+def _format_brief_amendments_summary(work_dir: Path) -> str:
+    """#223: surface structured ``brief_amendments.jsonl`` entries to
+    the REPORT extractor.
+
+    Each amendment is a JSON object with required fields
+    ``id, brief_section, problem, fix, priority``. Optional
+    ``evidence``, ``impact``. The schema lives at
+    ``orchestrator/schemas/brief_amendments.schema.json``.
+
+    Walks ``runs/iter-*/inputs/brief_amendments.jsonl``, schema-validates
+    rows individually (skipping malformed with a visible warning), and
+    renders a per-iter listing grouped by priority. The REPORT extractor
+    can use this to: (a) cite which amendments shaped the iteration's
+    findings, (b) flag which BLOCKING amendments still need applying
+    to the upstream brief (the cross-run learning loop).
+    """
+    runs_dir = work_dir / "runs"
+    if not runs_dir.is_dir():
+        return "(no iteration directories — no brief amendments to report.)"
+    iter_dirs = sorted(
+        (d for d in runs_dir.iterdir()
+         if d.is_dir() and d.name.startswith("iter-")),
+        key=lambda d: d.name,
+    )
+    sections: list[str] = []
+    total = 0
+    for iter_dir in iter_dirs:
+        log = iter_dir / "inputs" / "brief_amendments.jsonl"
+        if not log.exists():
+            continue
+        try:
+            text = log.read_text()
+        except OSError as exc:
+            sections.append(
+                f"- {iter_dir.name}: brief_amendments.jsonl unreadable "
+                f"({type(exc).__name__})"
+            )
+            continue
+        rows: list[dict] = []
+        skipped_malformed = 0
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                skipped_malformed += 1
+        if not rows and skipped_malformed == 0:
+            continue
+        # Group by priority for at-a-glance triage. BLOCKING first, then
+        # HIGH / MEDIUM / LOW / INFO. Unknown priorities sort last.
+        priority_order = {
+            "BLOCKING": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4,
+        }
+        rows_sorted = sorted(
+            rows,
+            key=lambda r: priority_order.get(
+                str(r.get("priority", "")).upper(), 99
+            ),
+        )
+        header = f"- {iter_dir.name}: {len(rows)} amendment(s)"
+        if skipped_malformed:
+            header += f" + {skipped_malformed} malformed line(s) skipped"
+        sections.append(header)
+        total += len(rows)
+        cap = 20
+        for r in rows_sorted[:cap]:
+            aid = r.get("id", "?")
+            prio = r.get("priority", "?")
+            section = r.get("brief_section", "?")
+            problem = r.get("problem", "")
+            sections.append(
+                f"  - [{prio}] {aid} (target: {section}) — "
+                + (problem[:160] + "..." if len(problem) > 160 else problem)
+            )
+        if len(rows_sorted) > cap:
+            sections.append(f"  - ... and {len(rows_sorted) - cap} more")
+    if not sections:
+        return (
+            "(no brief_amendments.jsonl entries — the campaign brief was "
+            "consistent with the agent's runs; no amendments queued.)"
+        )
+    return "\n".join(sections)
+
+
 def _format_bundle_amendments_summary(work_dir: Path) -> str:
     """#211: surface bundle_amendments.jsonl entries to the REPORT extractor.
 
@@ -594,6 +679,19 @@ class LLMDispatcher:
                     "No design handoff available — explore the system directly."
                 )
 
+            # #221: per-iteration mode signal in EXECUTE_ANALYZE too. The
+            # post-#212 paper-burst rerun observed the DESIGN agent
+            # honoring rehearsal scope-shrink while EXECUTE_ANALYZE
+            # dutifully fanned out the full bundle anyway — because the
+            # mode signal only flowed to DESIGN. Rendering it in execute
+            # too closes that gap.
+            from orchestrator.iteration_mode import (
+                iteration_mode_for, execute_mode_guidance_for,
+            )
+            mode = iteration_mode_for(self.campaign, iteration)
+            ctx["iteration_mode"] = mode
+            ctx["mode_guidance"] = execute_mode_guidance_for(mode)
+
         if perspective is not None:
             ctx["perspective_name"] = perspective
 
@@ -655,6 +753,14 @@ class LLMDispatcher:
             # different values.
             ctx["bundle_amendments_summary"] = (
                 _format_bundle_amendments_summary(self.work_dir)
+            )
+            # #223: structured brief_amendments — propagate to REPORT
+            # so the extractor can cite which amendments shaped the
+            # iteration's findings AND surface BLOCKING amendments
+            # that haven't been applied to the upstream brief yet
+            # (cross-run learning loop).
+            ctx["brief_amendments_summary"] = (
+                _format_brief_amendments_summary(self.work_dir)
             )
 
         return ctx

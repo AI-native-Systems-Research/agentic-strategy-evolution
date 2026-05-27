@@ -141,6 +141,85 @@ properties:
           system, e.g. ``{total_kv_blocks: 1200}``. EXECUTE_ANALYZE
           treats them as canonical; deviations require an entry in
           ``bundle_amendments.jsonl`` (#211).
+      rehearsal_subset:
+        # #222: structured rehearsal scope. When iteration_mode ==
+        # "rehearsal" AND this field is populated, EXECUTE_ANALYZE
+        # executes ONLY this subset (not the full experiment_spec).
+        # Without this field, the rehearsal agent has to infer scope
+        # from prose methodology — which the post-#212 paper-burst
+        # rerun showed is unreliable (the agent fanned out the full
+        # 50-arm bundle anyway).
+        type: object
+        additionalProperties: false
+        description: >
+          Subset of the full experiment to execute in rehearsal mode (#222).
+          DESIGN populates this; EXECUTE_ANALYZE in rehearsal mode runs
+          ONLY this subset. iter-2 (real mode) ignores this field and
+          runs the full experiment_spec.
+        properties:
+          seeds:
+            type: array
+            items: { type: integer }
+            minItems: 1
+            description: >
+              Subset of canonical seeds to execute in rehearsal.
+              Typically the first canonical seed only.
+          arms:
+            type: array
+            items: { type: string, minLength: 1 }
+            minItems: 1
+            description: >
+              Subset of arm IDs to execute in rehearsal — typically
+              the contrast pair (h-main + the most direct control).
+          extra_validation_only:
+            type: boolean
+            description: >
+              When true, rehearsal does NOT make scientific claims —
+              ``findings.json`` is marked ``mode: rehearsal`` regardless
+              of confirmed/refuted status. Iter-2 makes the canonical
+              scientific call.
+      timing_observations:
+        # #226: structured per-policy timing data captured during
+        # rehearsal feasibility probes. Fields are SCHEMA-LOCKED here
+        # (vs verified_parameters which is open by design — that's a
+        # knob namespace; this is a measurement record). Iter-2's
+        # SDKDispatcher reads ``recommended_turn_silence_threshold_seconds``
+        # to calibrate the live watchdog (#205).
+        type: object
+        additionalProperties: false
+        description: >
+          Per-policy wall-time observations from rehearsal feasibility
+          probes (#226). Used by the engine to calibrate iter-2's
+          watchdog thresholds and by the brief_amendments machinery
+          to surface recurring slow-policy patterns across runs.
+        properties:
+          expected_wall_time_seconds_per_policy:
+            type: object
+            description: >
+              Map of policy name → observed wall-time seconds. Recorded
+              during the rehearsal feasibility probe at one canonical
+              seed. EXECUTE_ANALYZE's per-arm timeout (when the runner
+              supports one) and the watchdog threshold derive from this.
+            additionalProperties:
+              type: number
+              minimum: 0
+          recommended_turn_silence_threshold_seconds:
+            type: number
+            minimum: 0
+            description: >
+              Suggested override for ``campaign.sdk_timeouts.turn_silence_threshold_seconds``
+              for iter-2 / real iters. Computed by the rehearsal agent
+              as roughly 3× the slowest policy observed, with buffer.
+              ``SDKDispatcher`` reads this in preference to the
+              campaign-level default.
+          observation_method:
+            type: string
+            minLength: 1
+            description: >
+              How the observations were collected (e.g. "feasibility
+              probe at seed=42, horizon=120s, single arm per policy").
+              Helps iter-2 / future runs interpret the numbers
+              correctly.
 
   arms:
     type: array
