@@ -62,8 +62,46 @@ The Nous project is at: `{{nous_dir}}`
 
 ## Phase 1: Prepare
 
+### Step 0: Apply operational handoff (#209/#210)
+If the bundle declares `experiment_spec`, treat it as authoritative
+operational handoff from DESIGN. Specifically:
+
+- **`experiment_spec.preflight_commands`** (#209): run these first, in
+  order. They typically include build steps (`go build -o blis main.go`)
+  that the worktree's fresh checkout doesn't carry. Failing fast here is
+  better than discovering missing binaries during fan-out.
+- **`experiment_spec.fanout_template`** (#210): use this exact shell
+  template for the parallel fan-out below. The DESIGN agent has already
+  worked through GNU-parallel quoting gotchas; reuse their work.
+- **`experiment_spec.classification_function`** (#210): apply this when
+  labelling per-result rows (cooperators vs adversaries, treatment vs
+  control, etc.). DO NOT re-derive what DESIGN already verified by
+  re-grepping the target's source.
+- **`experiment_spec.verified_parameters`** (#210): treat as canonical.
+  If smoke / validation reveals a parameter must change, see "Bundle
+  amendments" in Step 1 below — don't override silently.
+
 ### Step 1: Build the system
-Use the build command from the designer handoff. Verify it succeeds.
+Use the build command from the designer handoff (or
+`experiment_spec.preflight_commands` if present). Verify it succeeds.
+
+If during smoke-testing you discover a parameter the DESIGN phase
+prescribed must be changed (e.g. `total_kv_blocks` was too tight,
+producing `dropped_unservable`), append an entry to
+`{{iter_dir}}/inputs/bundle_amendments.jsonl` BEFORE running the main
+experiment with the changed value (#211):
+
+```jsonl
+{"parameter": "total_kv_blocks", "prescribed_value": 1100, "actual_value": 1200, "reason": "smoke produced dropped_unservable=120; raising cache to ensure adv requests engage KV pressure"}
+```
+
+Each line is one JSON object with: `parameter` (string),
+`prescribed_value` (any), `actual_value` (any), `reason` (string,
+plain English). Append-only — do not edit prior entries.
+
+This is **not optional**. Silent parameter overrides break the
+campaign's reproducibility manifest. The REPORT phase reads this file
+and surfaces the divergence.
 
 ### Step 2: Validate the baseline command
 Run the baseline command from the handoff with reduced scale. Verify it exits 0 and produces output with expected metric fields. Fix until it works.

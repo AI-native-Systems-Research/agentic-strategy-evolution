@@ -85,6 +85,57 @@ properties:
         type: boolean
         description: "Author's self-assessment. true ⇒ tautological by construction; validator REJECTS. false ⇒ explicit declaration of independence."
 
+  # ─── #209/#210: operational experiment_spec block ───────────────────────
+  # Optional structured block that lets the DESIGN agent pin operational
+  # decisions (build commands, fan-out template, classification logic,
+  # verified parameters) so the EXECUTE_ANALYZE agent doesn't re-derive
+  # them in a fresh worktree. All fields are optional; freeform
+  # experiment_spec content alongside (top-level allows additional
+  # properties anyway) remains supported for backward compat.
+  experiment_spec:
+    type: object
+    additionalProperties: true
+    description: >
+      Operational handoff from DESIGN to EXECUTE_ANALYZE. Pin decisions
+      that don't belong in narrative form: commands the executor must
+      run before the main fan-out (#209), how to classify per-request
+      output when tenant_id isn't reliable (#210), the parallel-fan-out
+      template (#210), and any parameters the DESIGN phase verified
+      against the target system (#210).
+    properties:
+      preflight_commands:
+        type: array
+        items: { type: string, minLength: 1 }
+        description: >
+          Shell commands the EXECUTE_ANALYZE agent must run before the
+          main fan-out (#209). Use for build steps that don't carry
+          across the fresh git worktree (e.g. ``go build -o blis main.go``)
+          and any one-off setup the design agent verified manually.
+      fanout_template:
+        type: string
+        minLength: 1
+        description: >
+          The exact shell template EXECUTE_ANALYZE should use to fan
+          arms out in parallel (#210). Avoids GNU-parallel quoting
+          gotchas that the DESIGN agent already worked through.
+      classification_function:
+        type: string
+        minLength: 1
+        description: >
+          Plain-Python expression or short snippet describing how to
+          label a result row (e.g. cooperators vs adversaries) when
+          the target's per-request output lacks the obvious tag (#210).
+          Frees EXECUTE_ANALYZE from re-grepping the target's source
+          to re-derive what DESIGN already figured out.
+      verified_parameters:
+        type: object
+        additionalProperties: true
+        description: >
+          Parameters the DESIGN phase verified work for the target
+          system, e.g. ``{total_kv_blocks: 1200}``. EXECUTE_ANALYZE
+          treats them as canonical; deviations require an entry in
+          ``bundle_amendments.jsonl`` (#211).
+
   arms:
     type: array
     minItems: 1

@@ -20,6 +20,10 @@ You are writing the final report for a Nous research campaign.
 
 {{retry_log_summary}}
 
+## Bundle amendments (executed parameters vs prescribed)
+
+{{bundle_amendments_summary}}
+
 ## Instructions
 
 Write a concise research report in markdown answering the research question. Structure:

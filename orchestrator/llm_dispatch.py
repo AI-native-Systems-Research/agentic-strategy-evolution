@@ -133,6 +133,63 @@ def _format_results_summary(work_dir: Path) -> str:
     return "\n".join(lines)
 
 
+def _format_bundle_amendments_summary(work_dir: Path) -> str:
+    """#211: surface bundle_amendments.jsonl entries to the REPORT extractor.
+
+    EXECUTE_ANALYZE writes one entry per parameter override during
+    smoke/validation cycles (e.g. kv_blocks 1100 → 1200 because smoke
+    showed dropped_unservable). Without this, the silent drift becomes
+    invisible in the report — and the next campaign run re-discovers
+    the same friction.
+
+    Walks ``runs/iter-*/inputs/bundle_amendments.jsonl`` and produces
+    a per-iter listing. Pure deterministic Python.
+    """
+    runs_dir = work_dir / "runs"
+    if not runs_dir.is_dir():
+        return "(no iteration directories — no amendments to report.)"
+    iter_dirs = sorted(
+        (d for d in runs_dir.iterdir()
+         if d.is_dir() and d.name.startswith("iter-")),
+        key=lambda d: d.name,
+    )
+    sections: list[str] = []
+    total = 0
+    for iter_dir in iter_dirs:
+        log = iter_dir / "inputs" / "bundle_amendments.jsonl"
+        if not log.exists():
+            continue
+        rows: list[dict] = []
+        for line in log.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        if not rows:
+            continue
+        total += len(rows)
+        sections.append(f"- {iter_dir.name}: {len(rows)} amendment(s)")
+        for r in rows[:20]:
+            param = r.get("parameter", "?")
+            prescribed = r.get("prescribed_value", "?")
+            actual = r.get("actual_value", "?")
+            reason = r.get("reason", "")
+            sections.append(
+                f"  - {param}: {prescribed!r} → {actual!r}"
+                + (f" — {reason}" if reason else "")
+            )
+        if len(rows) > 20:
+            sections.append(f"  - ... and {len(rows) - 20} more")
+    if total == 0:
+        return (
+            "(no bundle_amendments.jsonl entries — DESIGN's experiment_spec "
+            "ran unmodified through EXECUTE_ANALYZE.)"
+        )
+    return "\n".join(sections)
+
+
 def _format_retry_log_summary(work_dir: Path) -> str:
     """#214: surface retry_log entries to the REPORT extractor so it can
     distinguish 'no data because iteration failed cleanly' from 'no data
@@ -572,6 +629,13 @@ class LLMDispatcher:
             # 80% data as "no data" — search-orientation violation.
             ctx["results_summary"] = _format_results_summary(self.work_dir)
             ctx["retry_log_summary"] = _format_retry_log_summary(self.work_dir)
+            # #211: surface any silent parameter overrides EXECUTE_ANALYZE
+            # logged during smoke / validation, so the report doesn't
+            # describe the prescribed bundle when the actual run used
+            # different values.
+            ctx["bundle_amendments_summary"] = (
+                _format_bundle_amendments_summary(self.work_dir)
+            )
 
         return ctx
 
