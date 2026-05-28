@@ -19,6 +19,19 @@ def _find_repo_root(start=None):
 
 
 def resolve_work_dir(target):
+    """Resolve a CLI ``target`` (yaml path | dir | run_id) to a work_dir.
+
+    For yaml inputs and bare run_ids, honors ``NOUS_CAMPAIGN_PARENT``
+    (#239) consistently with ``setup_work_dir``: if the env var is set,
+    the work_dir is ``$NOUS_CAMPAIGN_PARENT/<run_id>/``; else legacy
+    ``<repo_path>/.nous/<run_id>/`` or CWD-walk.
+
+    For an explicit dir target with state.json, the dir is taken at
+    face value (state.json's own existence implies the work_dir is
+    valid at that path).
+    """
+    from orchestrator.work_dir_resolver import resolve_work_dir as _resolve
+
     if target.endswith(".yaml") or target.endswith(".yml"):
         p = Path(target)
         if not p.exists():
@@ -33,13 +46,12 @@ def resolve_work_dir(target):
             print(f"Campaign file {target} is empty or not a YAML mapping", file=sys.stderr)
             sys.exit(1)
         try:
-            repo_path = Path(data["target_system"]["repo_path"])
+            repo_path = data["target_system"]["repo_path"]
             run_id = data["run_id"]
         except (KeyError, TypeError) as exc:
             print(f"Campaign file {target} missing required field: {exc}", file=sys.stderr)
             sys.exit(1)
-        work_dir = repo_path / ".nous" / run_id
-        return work_dir
+        return _resolve(run_id, repo_path)
 
     p = Path(target)
     if p.is_dir() and (p / "state.json").exists():
@@ -50,8 +62,14 @@ def resolve_work_dir(target):
         sys.exit(1)
 
     run_id = target
-    root = _find_repo_root()
-    work_dir = root / ".nous" / run_id
+    # #239: prefer NOUS_CAMPAIGN_PARENT if set; else fall back to the
+    # CWD-walk pattern.
+    import os
+    if os.environ.get("NOUS_CAMPAIGN_PARENT"):
+        work_dir = _resolve(run_id, repo_path=None)
+    else:
+        root = _find_repo_root()
+        work_dir = root / ".nous" / run_id
     if not work_dir.is_dir():
         print(f"Work directory not found: {work_dir}", file=sys.stderr)
         sys.exit(1)
@@ -88,20 +106,23 @@ def _cmd_run(args):
     run_id = args.run_id or campaign.get("run_id") or (campaign_path.parent.name + "-run")
     repo_path = campaign["target_system"].get("repo_path")
 
-    if repo_path:
-        state_path = Path(repo_path) / ".nous" / run_id / "state.json"
-        if state_path.exists():
-            state = json.loads(state_path.read_text())
-            # #236: read via helper so legacy ``phase`` keys still resolve.
-            from orchestrator.engine import read_phase_field
-            phase = read_phase_field(state)
-            if phase != "INIT":
-                print(
-                    f"Run '{run_id}' already in progress (phase={phase}). "
-                    f"Use 'nous resume' to continue.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+    # #239: honor NOUS_CAMPAIGN_PARENT consistently with setup_work_dir.
+    # The state.json's absolute path is whichever resolver branch fires
+    # for the current environment — env-var-set or legacy fallback.
+    from orchestrator.work_dir_resolver import resolve_work_dir as _resolve
+    state_path = _resolve(run_id, repo_path) / "state.json"
+    if state_path.exists():
+        state = json.loads(state_path.read_text())
+        # #236: read via helper so legacy ``phase`` keys still resolve.
+        from orchestrator.engine import read_phase_field
+        phase = read_phase_field(state)
+        if phase != "INIT":
+            print(
+                f"Run '{run_id}' already in progress (phase={phase}). "
+                f"Use 'nous resume' to continue.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     work_dir = setup_work_dir(run_id, repo_path=repo_path)
 

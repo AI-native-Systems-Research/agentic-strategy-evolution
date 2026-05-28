@@ -119,11 +119,26 @@ target_system:
     - "TODO: replace with a real knob name"
     - "TODO: replace with a real knob name"
 
-  # Path to the target system's git repo. When set, the orchestrator
-  # creates the campaign directory at <repo_path>/.nous/<run_id>/ and
-  # uses worktree isolation per arm (#133). Set to null only if you
-  # plan to override on the CLI; running `nous run` from a different
-  # CWD will silently land artifacts in the wrong place (#184).
+  # Path to the target system's git repo. Used for two distinct things
+  # (#239 keeps them cleanly separated):
+  #   1. Code worktrees per arm (#133) live at
+  #      <repo_path>/.nous-experiments/<run_id>/<arm>/. Always relative
+  #      to the target repo — they ARE code FOR the target.
+  #   2. Campaign artifacts (state, ledger, principles, findings, JSON
+  #      results) live at:
+  #        - $NOUS_CAMPAIGN_PARENT/<run_id>/        if env var set (recommended)
+  #        - <repo_path>/.nous/<run_id>/             legacy default (untracked
+  #                                                   in target — pollutes git
+  #                                                   status, see #239)
+  #
+  # Recommended setup: export NOUS_CAMPAIGN_PARENT=~/Documents/Projects/nous-campaigns
+  # in your shell rc. Campaign artifacts then live outside the target,
+  # cleanly separated from regular development. The target's git status
+  # stays clean; `git stash -u` won't capture campaign output.
+  #
+  # Set repo_path to null only if you plan to override on the CLI;
+  # running `nous run` from a different CWD will silently land artifacts
+  # in the wrong place (#184).
   repo_path: {repo_path}
 
 prompts:

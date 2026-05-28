@@ -37,6 +37,10 @@
     "config_ref": {
       "type": ["string", "null"],
       "description": "Path to the campaign configuration file (campaign.yaml). Null before setup."
+    },
+    "work_dir": {
+      "type": ["string", "null"],
+      "description": "Absolute path to the campaign's work_dir, recorded at setup_work_dir (#239). The per-campaign source of truth for location: even if the user changes NOUS_CAMPAIGN_PARENT or the legacy <repo>/.nous/<run_id>/ default between runs, this field preserves the original resolved path. Null before setup. Set to the resolved Path(work_dir).resolve() at first setup; downstream tooling can read this rather than re-deriving from convention."
     }
   }
 }

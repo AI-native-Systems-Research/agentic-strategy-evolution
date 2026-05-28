@@ -726,9 +726,21 @@ def _merge_principles(work_dir: Path, iter_dir: Path) -> None:
 def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     """Create and initialize a working directory from templates.
 
-    If repo_path is provided, the campaign directory is created inside
-    the target repo at .nous/<run_id>/. Otherwise falls back to creating
-    <run_id>/ in the current directory.
+    Resolution rules (#239):
+      1. If ``NOUS_CAMPAIGN_PARENT`` is set, the work_dir is
+         ``$NOUS_CAMPAIGN_PARENT/<run_id>/``. Target repo is unaffected.
+      2. Else, if repo_path is provided, falls back to legacy
+         ``<repo_path>/.nous/<run_id>/`` (preserves backward-compat).
+      3. Else, falls back to ``<run_id>/`` in the current directory.
+
+    The resolved absolute work_dir is recorded in state.json's
+    ``work_dir`` field — this is the per-campaign source of truth for
+    location, robust to env var changes between runs.
+
+    Worktrees are NOT affected: they continue to live at
+    ``<repo_path>/.nous-experiments/<run_id>/<arm>/`` because they are
+    code FOR the target repo and must share its git history. See
+    ``orchestrator/worktree.py``.
 
     Also writes a per-campaign ``.claude/settings.json`` permission policy
     (issue #135) so dispatchers can pass ``--settings <path>`` instead of
@@ -739,11 +751,9 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
         settings_path_for,
         write_campaign_settings,
     )
+    from orchestrator.work_dir_resolver import resolve_work_dir
 
-    if repo_path:
-        work_dir = Path(repo_path) / ".nous" / run_id
-    else:
-        work_dir = Path(run_id)
+    work_dir = resolve_work_dir(run_id, repo_path)
     work_dir.mkdir(parents=True, exist_ok=True)
     for t in ["state.json", "ledger.json", "principles.json"]:
         dest = work_dir / t
@@ -751,6 +761,12 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
             shutil.copy(TEMPLATES_DIR / t, dest)
     state = json.loads((work_dir / "state.json").read_text())
     state["run_id"] = run_id
+    # #239: record the resolved absolute work_dir as per-campaign source
+    # of truth. Survives env var changes: if NOUS_CAMPAIGN_PARENT is
+    # later unset or changed, downstream tooling can still find the
+    # campaign by reading this field rather than re-deriving from
+    # convention.
+    state["work_dir"] = str(work_dir.resolve())
     atomic_write(work_dir / "state.json", json.dumps(state, indent=2) + "\n")
 
     # Per-campaign permission policy. Idempotent: don't overwrite a settings

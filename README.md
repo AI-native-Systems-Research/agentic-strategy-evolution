@@ -79,6 +79,19 @@ export OPENAI_BASE_URL=https://your-litellm-proxy.example.com  # or any OpenAI-c
 
 If you're using Anthropic directly via a LiteLLM proxy, point both vars at the proxy. If these aren't set, gate summaries and report generation are skipped (non-fatal). The campaign still runs — you just won't get LLM-generated summaries at the gates or a final report.
 
+**Recommended: relocate campaign artifacts outside the target repo (#239).**
+
+By default, Nous creates each campaign's working directory at `<target_repo>/.nous/<run_id>/`. That puts campaign output (state, ledger, principles, JSON results, findings) inside the target repo's working tree as untracked files — which means `git stash -u` silently captures them, `git status` shows thousands of unrelated entries, and `git add .` accidentally stages campaign content. To avoid this, set:
+
+```bash
+# Add to your shell rc (.zshrc / .bashrc):
+export NOUS_CAMPAIGN_PARENT=~/Documents/Projects/nous-campaigns
+```
+
+When `NOUS_CAMPAIGN_PARENT` is set, campaign artifacts live at `$NOUS_CAMPAIGN_PARENT/<run_id>/` — wholly outside the target repo. Code worktrees (per-arm BLIS branches, #133) continue to live at `<target>/.nous-experiments/<run_id>/<arm>/` because they ARE code FOR the target. The target repo's working tree stays clean. Backward-compat: when the env var is unset, behavior is byte-identical to today.
+
+The resolved absolute work_dir is recorded in each campaign's `state.json` (`work_dir` field) so the campaign location is robust to env var changes between runs.
+
 ### 1. Install Nous
 
 ```bash
