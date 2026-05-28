@@ -95,6 +95,13 @@ def _record_undeclared_writes_in_findings(
 ) -> None:
     """Merge ``worktree_uncommitted_writes`` into ``findings.json`` (#230).
 
+    Always writes the (sorted, de-duplicated) list — including the empty
+    case (#235). Presence of the key signals "the tripwire ran"; the
+    value signals "what it found". Absence is reserved for the failure
+    modes below (findings missing or corrupt) so an absent key in an
+    otherwise-successful iteration is a real regression signal, not
+    silent success.
+
     No-op if findings.json is missing — the cleanup may be running in
     the execute-incomplete branch where findings was never produced
     (the caller surfaces the data via retry_log there instead).
@@ -104,7 +111,7 @@ def _record_undeclared_writes_in_findings(
     returns without writing — modifying a corrupt JSON file would
     only make recovery harder.
     """
-    if not undeclared or not findings_path.exists():
+    if not findings_path.exists():
         return
     try:
         findings = json.loads(findings_path.read_text())
@@ -1136,14 +1143,16 @@ def run_iteration(
         # worktree is removed below. Persist into findings.json so the
         # design agent on iter-N+1 can see what to declare in
         # ``code_changes``. Tripwire only — never blocks cleanup.
+        # #235: emit unconditionally (even when the list is empty) so
+        # an absent key in findings.json is a real regression signal,
+        # not silent success.
         if repo_path and experiment_id and experiment_dir is not None:
             undeclared = _detect_undeclared_writes_for_iter(
                 iter_dir, experiment_dir,
             )
-            if undeclared:
-                _record_undeclared_writes_in_findings(
-                    iter_dir / "findings.json", undeclared,
-                )
+            _record_undeclared_writes_in_findings(
+                iter_dir / "findings.json", undeclared,
+            )
         # Clean up worktree only on success
         if repo_path and experiment_id:
             remove_experiment_worktree(Path(repo_path), experiment_id)

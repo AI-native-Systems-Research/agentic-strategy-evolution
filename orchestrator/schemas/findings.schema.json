@@ -29,7 +29,7 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true,
-      "description": "#230 — paths the executor wrote inside the experiment worktree without declaring them in the bundle's `code_changes`. Surfaced just before worktree cleanup; logged at WARNING. Empty array (or absent) means the executor declared everything it wrote, or wrote nothing untracked. The orchestrator does not block cleanup on undeclared writes — this is a tripwire, not a gate."
+      "description": "#230 — paths the executor wrote inside the experiment worktree without declaring them in the bundle's `code_changes`. Surfaced just before worktree cleanup; logged at WARNING. #235: written unconditionally — presence of the key means the tripwire ran, value is what it found (empty list = clean run; non-empty = paths that will be lost on cleanup). Absent only when findings.json was never produced (execute-incomplete branch surfaces the data via `retry_log.jsonl` instead) or when findings.json was corrupt at write time. The orchestrator does not block cleanup on undeclared writes — this is a tripwire, not a gate."
     }
   },
   "$defs": {

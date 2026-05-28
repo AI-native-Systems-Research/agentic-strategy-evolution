@@ -491,17 +491,42 @@ class TestRecordUndeclaredWritesInFindings:
         schema = json.loads(schema_path.read_text())
         jsonschema.validate(loaded, schema)  # raises on failure
 
-    def test_empty_undeclared_is_noop(self, tmp_path):
+    def test_empty_undeclared_writes_empty_list(self, tmp_path):
+        # #235: empty list is written explicitly so "I checked, saw nothing"
+        # is distinguishable from "I never ran". Absence of evidence ≠
+        # evidence of absence.
         findings_path = self._make_findings(tmp_path)
-        original = findings_path.read_text()
         _record_undeclared_writes_in_findings(findings_path, [])
-        assert findings_path.read_text() == original
+        loaded = json.loads(findings_path.read_text())
+        assert "worktree_uncommitted_writes" in loaded
+        assert loaded["worktree_uncommitted_writes"] == []
+        # Other keys preserved.
+        assert loaded["experiment_valid"] is True
+
+    def test_empty_undeclared_keeps_findings_schema_valid(self, tmp_path):
+        # #235: the empty-list case must still validate against the schema.
+        import jsonschema
+        findings_path = self._make_findings(tmp_path)
+        _record_undeclared_writes_in_findings(findings_path, [])
+        loaded = json.loads(findings_path.read_text())
+        schema_path = (
+            Path(__file__).resolve().parent.parent
+            / "orchestrator" / "schemas" / "findings.schema.json"
+        )
+        schema = json.loads(schema_path.read_text())
+        jsonschema.validate(loaded, schema)
 
     def test_missing_findings_no_raise(self, tmp_path):
         # If findings.json wasn't produced (bad iteration), don't blow up.
+        # Applies whether undeclared is empty or non-empty — the recorder
+        # has no findings to merge into either way.
         _record_undeclared_writes_in_findings(
             tmp_path / "missing.json", ["a.py"],
         )
+        _record_undeclared_writes_in_findings(
+            tmp_path / "missing.json", [],
+        )
+        assert not (tmp_path / "missing.json").exists()
 
     def test_malformed_findings_no_raise(self, tmp_path):
         findings_path = tmp_path / "findings.json"
