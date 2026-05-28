@@ -73,9 +73,12 @@ def create_experiment_worktree(
     if extras:
         try:
             _link_worktree_extras(repo_path, worktree_dir, extras)
-        except BaseException:
+        except Exception:
             # If symlinking fails (bad extras config), don't leak the
             # half-built worktree + branch — clean up before re-raising.
+            # Scoped to ``Exception`` so a Ctrl-C (KeyboardInterrupt)
+            # during setup aborts fast instead of triggering a `git
+            # worktree remove` subprocess that may itself stall.
             remove_experiment_worktree(repo_path, experiment_id)
             raise
 
@@ -89,16 +92,24 @@ def _link_worktree_extras(
 ) -> None:
     """Symlink each entry in ``extras`` from ``repo_path`` into ``worktree_dir``.
 
-    Each entry must be a relative path (no leading ``/``, no ``..``
-    traversal that escapes ``repo_path``). The source path must exist in
-    ``repo_path``. Parent directories under the worktree are created as
-    needed.
+    Validation order:
 
-    If a path under the worktree already exists at the target location
-    (typically because the entry refers to a tracked path that the
-    worktree checkout already populated), the existing path is left
-    untouched and a warning is logged — do not silently overwrite the
-    real checkout with a symlink.
+    1. Each entry must be a non-empty relative path (no leading ``/``).
+    2. Resolved source must lie under ``repo_path`` — ``..`` traversal
+       is permitted *syntactically* but rejected if the resolved path
+       escapes the repo boundary.
+    3. Source must exist in ``repo_path``.
+    4. If the target path already exists in the worktree (typically a
+       tracked path the checkout populated), the existing file is left
+       untouched. This is logged at WARNING with the entry name so
+       operators can spot a misconfigured extras list — declaring a
+       tracked path as an extra is almost always a mistake (the agent
+       reads main's working tree instead of main's HEAD).
+
+    On failure mid-loop, prior symlinks created in this call are NOT
+    rolled back here — the caller's ``except Exception`` in
+    ``create_experiment_worktree`` (which calls
+    ``remove_experiment_worktree``) sweeps the whole worktree.
     """
     for entry in extras:
         if not entry or os.path.isabs(entry):
@@ -122,10 +133,17 @@ def _link_worktree_extras(
 
         link_path = worktree_dir / entry
         if link_path.exists() or link_path.is_symlink():
+            # Loud warning, not silent — the executor will see main's
+            # tracked content here instead of the symlinked target,
+            # which subverts the campaign author's intent.
             logger.warning(
-                "worktree_extras: %s already present in worktree; leaving "
-                "the existing path untouched (entry was %r)",
-                link_path, entry,
+                "worktree_extras: %r collides with an existing path in "
+                "the worktree (%s) — leaving it untouched. This usually "
+                "means the entry refers to a tracked path; tracked paths "
+                "should NOT be declared as extras (they're already in "
+                "the worktree checkout). Drop %r from worktree_extras "
+                "or rename the source.",
+                entry, link_path, entry,
             )
             continue
         link_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,17 +151,47 @@ def _link_worktree_extras(
         logger.info("worktree_extras: linked %s -> %s", link_path, source)
 
 
+# Porcelain v1 status codes that indicate the executor produced or
+# changed file content the bundle didn't declare. ``M`` = modified, ``A``
+# = added (staged), ``R`` = renamed, ``C`` = copied, ``T`` = typechange.
+# ``D`` (deleted) is intentionally NOT here: removing a tracked file
+# isn't a "write," and surfacing it would turn ``git rm`` between arms
+# into noise. Untracked is signalled by the special ``??`` prefix and
+# handled separately in the parser.
+_PORCELAIN_WRITE_CODES = frozenset({"M", "A", "R", "C", "T"})
+
+
+def _parse_porcelain_line(line: str) -> tuple[str, str, str] | None:
+    """Parse one ``git status --porcelain`` v1 line.
+
+    Returns ``(index_status, worktree_status, path)`` or ``None`` for
+    blank/short lines. For renames and copies (``R``, ``C``), the
+    porcelain format is ``XY orig -> new``; this returns the *new*
+    path so the caller treats the destination as the relevant write.
+    """
+    if len(line) < 4:
+        return None
+    index_st, worktree_st = line[0], line[1]
+    rest = line[3:]
+    if " -> " in rest:
+        rest = rest.split(" -> ", 1)[1]
+    return index_st, worktree_st, rest.strip()
+
+
 def detect_undeclared_writes(
     worktree_path: Path,
     declared_paths: set[str] | None = None,
 ) -> list[str]:
-    """Return paths in ``worktree_path`` that the executor wrote without
+    """Return paths the executor wrote in ``worktree_path`` without
     declaring them via the bundle's ``code_changes`` (#230).
 
     Parses ``git -C <worktree_path> status --porcelain`` and reports
-    every untracked file (``??``) and modified-tracked file (``M``) that
-    is not already covered by ``declared_paths``. Each returned path is
-    relative to ``worktree_path``.
+    every porcelain line whose status indicates a write — untracked
+    (``??``), modified (``M``), staged-add (``A``), renamed (``R``),
+    copied (``C``), or typechanged (``T``) — in either the index or
+    the worktree column. Deletions (``D``) are not surfaced (see
+    ``_PORCELAIN_WRITE_CODES``). Each returned path is relative to
+    ``worktree_path``; for renames, the destination path is reported.
 
     Symlinks (typically created by ``worktree_extras``, #229) are
     excluded — they're orchestrator-managed inputs, not undeclared
@@ -154,6 +202,12 @@ def detect_undeclared_writes(
     ``code_changes`` entry will lose the file when the worktree is
     cleaned up. Reporting it loudly turns the silent loss into an
     auditable trail.
+
+    Returns an empty list when ``worktree_path`` is missing or when
+    ``git status`` itself fails — the cleanup path must not break on
+    diagnostics. Failures are logged at WARNING with returncode +
+    stderr, so an empty return on a real git failure is loud, not
+    silent.
     """
     declared_paths = declared_paths or set()
     worktree_path = Path(worktree_path)
@@ -168,22 +222,30 @@ def detect_undeclared_writes(
         check=False,
     )
     if result.returncode != 0:
-        # Worktree may have been removed already, or git is unhappy —
-        # don't make cleanup fail because diagnostics failed.
-        logger.debug(
-            "git status --porcelain on %s exited %s: %s",
+        # Diagnostic failure — we still must not block cleanup, but the
+        # whole point of this function is "turn silent loss into an
+        # auditable trail," so log loudly rather than at DEBUG.
+        logger.warning(
+            "detect_undeclared_writes: git status failed for %s "
+            "(returncode=%s); returning empty list. stderr=%s",
             worktree_path, result.returncode, result.stderr.strip(),
         )
         return []
 
     undeclared: list[str] = []
     for line in result.stdout.splitlines():
-        if len(line) < 4:
+        parsed = _parse_porcelain_line(line)
+        if parsed is None:
             continue
-        # Porcelain v1 prefix: 2 status chars + space + path.
-        status = line[:2]
-        path = line[3:].strip()
-        if not (status.startswith("??") or "M" in status):
+        index_st, worktree_st, path = parsed
+        # Untracked is the special ``??`` prefix.
+        if index_st == "?" and worktree_st == "?":
+            relevant = True
+        else:
+            relevant = bool(
+                _PORCELAIN_WRITE_CODES & {index_st, worktree_st}
+            )
+        if not relevant:
             continue
         if path in declared_paths:
             continue

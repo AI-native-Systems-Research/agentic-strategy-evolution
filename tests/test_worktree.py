@@ -316,6 +316,95 @@ class TestDetectUndeclaredWrites:
         finally:
             remove_experiment_worktree(temp_git_repo, experiment_id)
 
+    def test_modify_then_stage_flagged(self, temp_git_repo):
+        # Porcelain code "MM": modified-staged-AND-modified-unstaged.
+        # The earlier substring filter (`"M" in status`) caught this by
+        # accident; the new explicit-status filter must continue to.
+        worktree_dir, experiment_id = create_experiment_worktree(temp_git_repo, 1)
+        try:
+            (worktree_dir / "README.md").write_text("# Once\n")
+            subprocess.run(
+                ["git", "add", "README.md"],
+                cwd=worktree_dir, check=True, capture_output=True,
+            )
+            (worktree_dir / "README.md").write_text("# Twice\n")
+            assert "README.md" in detect_undeclared_writes(worktree_dir)
+        finally:
+            remove_experiment_worktree(temp_git_repo, experiment_id)
+
+    def test_added_staged_file_flagged(self, temp_git_repo):
+        # Porcelain code "A ": added (staged), no working-tree diff. The
+        # branch-and-its-staged-content gets destroyed on cleanup just
+        # like an untracked file, so this must surface.
+        worktree_dir, experiment_id = create_experiment_worktree(temp_git_repo, 1)
+        try:
+            (worktree_dir / "executor_added.py").write_text("# new\n")
+            subprocess.run(
+                ["git", "add", "executor_added.py"],
+                cwd=worktree_dir, check=True, capture_output=True,
+            )
+            assert "executor_added.py" in detect_undeclared_writes(worktree_dir)
+        finally:
+            remove_experiment_worktree(temp_git_repo, experiment_id)
+
+    def test_renamed_file_reports_destination(self, temp_git_repo):
+        # Porcelain v1 renames: "R  orig -> new". The destination path
+        # is what matters; the parser must extract it (not record
+        # "orig -> new" as one path).
+        worktree_dir, experiment_id = create_experiment_worktree(temp_git_repo, 1)
+        try:
+            subprocess.run(
+                ["git", "mv", "README.md", "RENAMED.md"],
+                cwd=worktree_dir, check=True, capture_output=True,
+            )
+            undeclared = detect_undeclared_writes(worktree_dir)
+            # Destination present, not the "orig -> new" composite.
+            assert "RENAMED.md" in undeclared
+            assert not any(" -> " in p for p in undeclared)
+        finally:
+            remove_experiment_worktree(temp_git_repo, experiment_id)
+
+    def test_deleted_file_not_flagged(self, temp_git_repo):
+        # Deletions aren't "writes" — surfacing them would turn `git rm`
+        # between conditions into noise. Documented in the helper.
+        worktree_dir, experiment_id = create_experiment_worktree(temp_git_repo, 1)
+        try:
+            (worktree_dir / "README.md").unlink()
+            assert detect_undeclared_writes(worktree_dir) == []
+        finally:
+            remove_experiment_worktree(temp_git_repo, experiment_id)
+
+    def test_renamed_destination_can_be_declared(self, temp_git_repo):
+        # The destination of a rename must round-trip through the
+        # declared_paths filter — i.e. declaring "RENAMED.md" suppresses it.
+        worktree_dir, experiment_id = create_experiment_worktree(temp_git_repo, 1)
+        try:
+            subprocess.run(
+                ["git", "mv", "README.md", "RENAMED.md"],
+                cwd=worktree_dir, check=True, capture_output=True,
+            )
+            assert detect_undeclared_writes(
+                worktree_dir, declared_paths={"RENAMED.md"},
+            ) == []
+        finally:
+            remove_experiment_worktree(temp_git_repo, experiment_id)
+
+    def test_git_failure_logs_warning(self, tmp_path, caplog):
+        # When `git status --porcelain` exits non-zero, the function
+        # returns [] but logs at WARNING — silent loss is exactly what
+        # the helper exists to prevent, so a diagnostic-failure must
+        # not be quiet.
+        import logging
+        # tmp_path exists but isn't a git repo → git status will exit non-zero.
+        (tmp_path / "marker").write_text("x")
+        with caplog.at_level(logging.WARNING, logger="orchestrator.worktree"):
+            result = detect_undeclared_writes(tmp_path)
+        assert result == []
+        assert any(
+            "git status failed" in r.getMessage() and r.levelname == "WARNING"
+            for r in caplog.records
+        )
+
 
 class TestDeclaredCodeChangePaths:
     """#230 — read declared paths from bundle.arms[].code_changes[].file."""
@@ -420,3 +509,29 @@ class TestRecordUndeclaredWritesInFindings:
         _record_undeclared_writes_in_findings(findings_path, ["a.py"])
         # Original unchanged.
         assert findings_path.read_text() == "{not valid json"
+
+    def test_malformed_findings_logs_error_with_paths(self, tmp_path, caplog):
+        # Refused-to-write must be loud, not silent — the undeclared
+        # paths still need to appear somewhere the operator can recover.
+        import logging
+        findings_path = tmp_path / "findings.json"
+        findings_path.write_text("{not valid json")
+        with caplog.at_level(logging.ERROR, logger="orchestrator.iteration"):
+            _record_undeclared_writes_in_findings(
+                findings_path, ["lost1.py", "lost2.py"],
+            )
+        msg = " ".join(r.getMessage() for r in caplog.records if r.levelname == "ERROR")
+        assert "lost1.py" in msg
+        assert "lost2.py" in msg
+        assert "not valid JSON" in msg
+
+    def test_corrupted_bundle_logs_error(self, tmp_path, caplog):
+        # YAML parse failure surfaces — bundle.yaml is a system boundary.
+        import logging
+        bundle_path = tmp_path / "bundle.yaml"
+        bundle_path.write_text("not: valid: yaml: [")
+        with caplog.at_level(logging.ERROR, logger="orchestrator.iteration"):
+            assert _declared_code_change_paths(bundle_path) == set()
+        msg = " ".join(r.getMessage() for r in caplog.records if r.levelname == "ERROR")
+        assert "bundle.yaml parse failed" in msg
+        assert str(bundle_path) in msg
