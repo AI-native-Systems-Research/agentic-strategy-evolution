@@ -114,10 +114,12 @@ def _summarize(root: Path) -> CampaignSummary | None:
     repo: str | None = None
     if root.parent.name == ".nous":
         repo = str(root.parent.parent.resolve())
+    # #236: read via helper so legacy ``phase`` keys still resolve.
+    from orchestrator.engine import read_phase_field
     return CampaignSummary(
         run_id=state.get("run_id", root.name),
         path=str(root.resolve()),
-        phase=state.get("phase", "UNKNOWN"),
+        phase=read_phase_field(state, default="UNKNOWN"),
         iteration=int(state.get("iteration", 0) or 0),
         completed_iterations=completed,
         active_principles=active,

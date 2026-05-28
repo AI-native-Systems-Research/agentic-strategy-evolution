@@ -92,9 +92,12 @@ def _cmd_run(args):
         state_path = Path(repo_path) / ".nous" / run_id / "state.json"
         if state_path.exists():
             state = json.loads(state_path.read_text())
-            if state.get("phase") != "INIT":
+            # #236: read via helper so legacy ``phase`` keys still resolve.
+            from orchestrator.engine import read_phase_field
+            phase = read_phase_field(state)
+            if phase != "INIT":
                 print(
-                    f"Run '{run_id}' already in progress (phase={state['phase']}). "
+                    f"Run '{run_id}' already in progress (phase={phase}). "
                     f"Use 'nous resume' to continue.",
                     file=sys.stderr,
                 )

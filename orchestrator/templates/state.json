@@ -1,5 +1,5 @@
 {
-  "phase": "INIT",
+  "last_entered_phase": "INIT",
   "iteration": 0,
   "run_id": "TODO-SET-RUN-ID",
   "family": null,

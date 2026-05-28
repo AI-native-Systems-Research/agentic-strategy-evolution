@@ -213,7 +213,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DESIGN"
+        state["last_entered_phase"] = "DESIGN"
         state["iteration"] = 16
         (work_dir / "state.json").write_text(json.dumps(state))
 
@@ -228,7 +228,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "EXECUTE_ANALYZE"
+        state["last_entered_phase"] = "EXECUTE_ANALYZE"
         state["iteration"] = 5
         (work_dir / "state.json").write_text(json.dumps(state))
 
@@ -243,7 +243,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DESIGN"
+        state["last_entered_phase"] = "DESIGN"
         state["iteration"] = 1
         (work_dir / "state.json").write_text(json.dumps(state))
 
@@ -265,7 +265,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DESIGN"
+        state["last_entered_phase"] = "DESIGN"
         state["iteration"] = 0
         (work_dir / "state.json").write_text(json.dumps(state))
 
@@ -287,7 +287,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DESIGN"
+        state["last_entered_phase"] = "DESIGN"
         state["iteration"] = 16
         (work_dir / "state.json").write_text(json.dumps(state))
 
@@ -304,7 +304,7 @@ class TestResumeCompletedCampaign:
 
         # Simulate a completed single-iteration campaign.
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         ledger = {"iterations": [
             {"iteration": 0, "family": "baseline"},
@@ -320,7 +320,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         ledger = {"iterations": [
             {"iteration": 0, "family": "baseline"},
@@ -338,7 +338,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         ledger = {"iterations": [{"iteration": 0, "family": "baseline"}]}
         (work_dir / "ledger.json").write_text(json.dumps(ledger))
@@ -352,7 +352,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         (work_dir / "ledger.json").write_text("{this is not valid json")
 
@@ -366,7 +366,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         ledger = {"iterations": [
             {"iteration": 0, "family": "baseline"},

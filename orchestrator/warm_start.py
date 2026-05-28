@@ -143,10 +143,14 @@ def warm_start_from_prior(
     prior_dir = _find_prior_dir(prior_run_id, prior_search_paths)
     state = _load_state(prior_dir)
 
-    if state.get("phase") != "DONE":
+    # #236: read via helper so legacy ``phase`` keys still work for
+    # in-flight campaigns being warm-started off.
+    from orchestrator.engine import read_phase_field
+    prior_phase = read_phase_field(state)
+    if prior_phase != "DONE":
         raise RuntimeError(
             f"prior campaign {prior_run_id!r} is not complete "
-            f"(phase={state.get('phase')!r}); only DONE campaigns can "
+            f"(phase={prior_phase!r}); only DONE campaigns can "
             f"be warm-started from",
         )
 

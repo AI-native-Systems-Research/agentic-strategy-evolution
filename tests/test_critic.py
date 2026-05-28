@@ -162,7 +162,7 @@ class TestPhaseRegistration:
 class TestStateSchemaAcceptsCritic:
     def test_state_with_critic_phase_validates(self) -> None:
         state = {
-            "phase": "CRITIC", "iteration": 1, "run_id": "demo",
+            "last_entered_phase": "CRITIC", "iteration": 1, "run_id": "demo",
             "family": None, "timestamp": "2026-05-25T00:00:00Z",
         }
         jsonschema.validate(state, _load_schema("state.schema.json"))

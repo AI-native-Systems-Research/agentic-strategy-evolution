@@ -2,18 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/state.schema.json",
   "title": "Investigation State",
-  "description": "Current phase, family, and iteration — the investigation checkpoint.",
+  "description": "Last-entered phase, family, and iteration — the investigation checkpoint. The phase field reflects what was last entered; it is not updated as artifacts are written within a phase. Operators wanting fine-grained progress should watch the iteration artifact directory's mtimes (#236).",
   "type": "object",
-  "required": ["phase", "iteration", "run_id", "family", "timestamp"],
+  "required": ["last_entered_phase", "iteration", "run_id", "family", "timestamp"],
   "additionalProperties": false,
   "properties": {
-    "phase": {
+    "last_entered_phase": {
       "type": "string",
       "enum": [
         "INIT", "PRE_WORK", "DESIGN", "CRITIC", "HUMAN_DESIGN_GATE",
         "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE", "DONE"
       ],
-      "description": "Current state machine phase. PRE_WORK (issue #167) is an opt-in cheap-exploration phase between INIT and DESIGN. CRITIC (issue #87) is an opt-in falsifiability check between DESIGN and HUMAN_DESIGN_GATE."
+      "description": "The last phase the engine entered (#236). NOT necessarily the currently active phase — artifact writes within a phase do not update this field, so during a long phase you'll see the entry-time value linger even though the phase is well underway. Renamed from `phase` in #236 so its semantics aren't conflated with 'currently active phase.' Pre-#236 state.json files used the key `phase` instead; ``orchestrator.engine`` accepts those for backward compat (in-flight runs) and migrates them to this key on the next save, but the schema only describes the canonical post-#236 shape. PRE_WORK (#167) is an opt-in cheap-exploration phase between INIT and DESIGN. CRITIC (#87) is an opt-in falsifiability check between DESIGN and HUMAN_DESIGN_GATE."
     },
     "iteration": {
       "type": "integer",

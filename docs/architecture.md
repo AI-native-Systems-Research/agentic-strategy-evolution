@@ -84,7 +84,7 @@ INIT ──▶ DESIGN ──▶ HUMAN_DESIGN_GATE
 - DONE → DESIGN (next iteration, increments counter)
 
 **Key behaviors:**
-- `transition(to_state)` validates against the transition table, updates the timestamp, and atomically writes `state.json`.
+- `transition(to_state)` validates against the transition table, updates the timestamp, sets `last_entered_phase`, and atomically writes `state.json`. Both fields update only on phase entry — artifact writes within a phase do not refresh them (#236), so operators polling `state.json` for progress see entry-time values linger throughout long phases. Watch artifact mtimes for sub-second progress instead.
 - Iteration counter increments only on the DONE → DESIGN transition (starting a new iteration). Loopbacks from HUMAN_DESIGN_GATE → DESIGN (reject) do NOT increment — they are revisions within the same iteration.
 - The DONE state allows transition to DESIGN for the next iteration.
 

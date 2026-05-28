@@ -120,7 +120,7 @@ class TestEngine:
         engine.transition("DESIGN")
         assert engine.phase == "DESIGN"
         saved = json.loads((work_dir / "state.json").read_text())
-        assert saved["phase"] == "DESIGN"
+        assert saved["last_entered_phase"] == "DESIGN"
 
     def test_invalid_transition_rejected(self, work_dir):
         engine = Engine(work_dir)
@@ -365,5 +365,91 @@ class TestForcePhase:
         engine = Engine(tmp_path)
         engine.force_phase("DESIGN")
         saved = json.loads((tmp_path / "state.json").read_text())
-        assert saved["phase"] == "DESIGN"
+        assert saved["last_entered_phase"] == "DESIGN"
         assert saved["iteration"] == 4
+
+
+class TestLastEnteredPhaseRename:
+    """#236 — state.json's `phase` field reflects the last *entered* phase,
+    not the currently active phase. Renamed on disk to
+    ``last_entered_phase`` so operators reading state.json don't conflate
+    "I started this phase 30s ago" with "I'm still in this phase."
+
+    The legacy ``phase`` key is read for backward compat (in-flight runs)
+    and migrated to the new key on the next ``transition()``.
+    """
+
+    def _write_state(self, work_dir, **overrides):
+        from pathlib import Path
+        state = {
+            "iteration": 0,
+            "run_id": "test-236",
+            "family": None,
+            "timestamp": "2026-04-01T00:00:00Z",
+        }
+        state.update(overrides)
+        Path(work_dir / "state.json").write_text(json.dumps(state))
+
+    def test_load_with_new_key(self, tmp_path):
+        self._write_state(tmp_path, last_entered_phase="INIT")
+        engine = Engine(tmp_path)
+        assert engine.phase == "INIT"
+        assert engine.last_entered_phase == "INIT"
+
+    def test_load_with_legacy_phase_key(self, tmp_path):
+        # Backward compat: in-flight state.json files written by older
+        # nous versions have ``phase``. Engine must read them.
+        self._write_state(tmp_path, phase="DESIGN")
+        engine = Engine(tmp_path)
+        assert engine.phase == "DESIGN"
+        assert engine.last_entered_phase == "DESIGN"
+
+    def test_legacy_state_migrates_on_next_transition(self, tmp_path):
+        # After a transition writes the file, the canonical key is used
+        # and the legacy key is gone. No explicit migration step needed.
+        self._write_state(tmp_path, phase="DESIGN", iteration=1)
+        engine = Engine(tmp_path)
+        engine.transition("HUMAN_DESIGN_GATE")
+        saved = json.loads((tmp_path / "state.json").read_text())
+        assert saved["last_entered_phase"] == "HUMAN_DESIGN_GATE"
+        assert "phase" not in saved
+
+    def test_transition_writes_new_key(self, tmp_path):
+        self._write_state(tmp_path, last_entered_phase="INIT")
+        engine = Engine(tmp_path)
+        engine.transition("DESIGN")
+        saved = json.loads((tmp_path / "state.json").read_text())
+        assert saved["last_entered_phase"] == "DESIGN"
+        assert "phase" not in saved
+
+    def test_force_phase_writes_new_key(self, tmp_path):
+        self._write_state(tmp_path, last_entered_phase="INIT")
+        engine = Engine(tmp_path)
+        engine.force_phase("DESIGN")
+        saved = json.loads((tmp_path / "state.json").read_text())
+        assert saved["last_entered_phase"] == "DESIGN"
+        assert "phase" not in saved
+
+    def test_missing_both_keys_raises(self, tmp_path):
+        # If neither key is present, this is a malformed state.json —
+        # the required-keys check must fire just as it did pre-rename.
+        self._write_state(tmp_path)  # no phase key at all
+        with pytest.raises(ValueError, match="missing required keys"):
+            Engine(tmp_path)
+
+    def test_unrecognized_legacy_phase_rejected(self, tmp_path):
+        # Legacy key with a bogus value still fails the unrecognized-phase
+        # check (the migration path doesn't bypass validation).
+        self._write_state(tmp_path, phase="BOGUS")
+        with pytest.raises(ValueError, match="unrecognized phase"):
+            Engine(tmp_path)
+
+    def test_read_phase_field_helper_prefers_new_key(self):
+        from orchestrator.engine import read_phase_field
+        assert read_phase_field({"last_entered_phase": "DONE"}) == "DONE"
+        # Both present (mid-migration write would never produce this,
+        # but the helper is robust): prefer the canonical key.
+        assert read_phase_field({"last_entered_phase": "DONE", "phase": "OLD"}) == "DONE"
+        assert read_phase_field({"phase": "DESIGN"}) == "DESIGN"
+        assert read_phase_field({}, default="?") == "?"
+        assert read_phase_field({}) is None

@@ -262,7 +262,7 @@ class TestPhaseRegistration:
 class TestSchemaAcceptsPreWorkPhase:
     def test_state_with_pre_work_phase_validates(self) -> None:
         state = {
-            "phase": "PRE_WORK",
+            "last_entered_phase": "PRE_WORK",
             "iteration": 0,
             "run_id": "demo",
             "family": None,
@@ -272,7 +272,7 @@ class TestSchemaAcceptsPreWorkPhase:
 
     def test_legacy_state_without_pre_work_validates(self) -> None:
         state = {
-            "phase": "DESIGN",
+            "last_entered_phase": "DESIGN",
             "iteration": 1,
             "run_id": "demo",
             "family": None,

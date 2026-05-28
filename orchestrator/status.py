@@ -169,8 +169,10 @@ def read_status_snapshot(
 
     state = _read_json(work_dir / "state.json")
     if isinstance(state, dict):
+        # #236: read via helper so legacy ``phase`` keys still resolve.
+        from orchestrator.engine import read_phase_field
         snap.run_id = str(state.get("run_id", "?"))
-        snap.phase = str(state.get("phase", "?"))
+        snap.phase = str(read_phase_field(state, default="?"))
         snap.iteration = int(state.get("iteration", 0) or 0)
         snap.raw = state
 
