@@ -84,6 +84,23 @@ properties:
         type: ["string", "null"]
         minLength: 1
         description: "Path to target system git repo. Used by CLIDispatcher for code-access agents. If set, experiments run in isolated worktrees."
+      worktree_extras:
+        type: array
+        items:
+          type: string
+          minLength: 1
+        uniqueItems: true
+        description: >
+          Paths (relative to repo_path) to symlink into each experiment
+          worktree on creation (#229). Use this for gitignored assets
+          the executor needs from main — virtualenvs, pre-fetched data
+          dirs, prior-iteration outputs, build artifacts. Without this
+          mechanism, executors discover that the worktree is missing
+          their tooling and `cd` back to the parent repo, silently
+          breaking isolation. Each entry must be a relative path that
+          resolves under repo_path; absolute paths and ``..`` traversal
+          are rejected at worktree creation. Source must exist in main
+          at the time of worktree creation.
 
   models:
     type: object

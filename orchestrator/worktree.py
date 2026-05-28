@@ -17,7 +17,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,27 @@ _EXPERIMENTS_DIRNAME = ".nous-experiments"
 _DEFAULT_ORPHAN_AGE_SECONDS = 60 * 60  # 1 hour
 
 
-def create_experiment_worktree(repo_path: Path, iteration: int) -> tuple[Path, str]:
+def create_experiment_worktree(
+    repo_path: Path,
+    iteration: int,
+    *,
+    extras: Sequence[str] | None = None,
+) -> tuple[Path, str]:
     """Create a git worktree for running an experiment in isolation.
+
+    Args:
+        repo_path: Target repo root.
+        iteration: 1-based iteration index. Used to name the experiment.
+        extras: Paths (relative to ``repo_path``) to symlink into the
+            worktree. Each entry is symlinked as ``<worktree>/<entry>``
+            pointing at ``<repo_path>/<entry>`` (#229). Use this for
+            gitignored deps the executor needs from main — venvs, large
+            data dirs, prior-iteration outputs — so the executor doesn't
+            have to ``cd`` to the parent repo and silently break
+            isolation. Each path must be relative and resolve under
+            ``repo_path``; absolute paths and ``..`` traversal are
+            rejected. Source must exist; missing source raises
+            ``FileNotFoundError``.
 
     Returns:
         Tuple of (worktree_path, experiment_id).
@@ -50,7 +69,129 @@ def create_experiment_worktree(repo_path: Path, iteration: int) -> tuple[Path, s
         text=True,
     )
     logger.info("Created experiment worktree: %s (branch: %s)", worktree_dir, branch_name)
+
+    if extras:
+        try:
+            _link_worktree_extras(repo_path, worktree_dir, extras)
+        except BaseException:
+            # If symlinking fails (bad extras config), don't leak the
+            # half-built worktree + branch — clean up before re-raising.
+            remove_experiment_worktree(repo_path, experiment_id)
+            raise
+
     return worktree_dir, experiment_id
+
+
+def _link_worktree_extras(
+    repo_path: Path,
+    worktree_dir: Path,
+    extras: Sequence[str],
+) -> None:
+    """Symlink each entry in ``extras`` from ``repo_path`` into ``worktree_dir``.
+
+    Each entry must be a relative path (no leading ``/``, no ``..``
+    traversal that escapes ``repo_path``). The source path must exist in
+    ``repo_path``. Parent directories under the worktree are created as
+    needed.
+
+    If a path under the worktree already exists at the target location
+    (typically because the entry refers to a tracked path that the
+    worktree checkout already populated), the existing path is left
+    untouched and a warning is logged — do not silently overwrite the
+    real checkout with a symlink.
+    """
+    for entry in extras:
+        if not entry or os.path.isabs(entry):
+            raise ValueError(
+                f"worktree_extras entries must be non-empty relative paths; "
+                f"got {entry!r}"
+            )
+        source = (repo_path / entry).resolve()
+        try:
+            source.relative_to(repo_path.resolve())
+        except ValueError as exc:
+            raise ValueError(
+                f"worktree_extras entry {entry!r} resolves outside repo_path "
+                f"({repo_path}); refusing to symlink across the repo boundary."
+            ) from exc
+        if not source.exists():
+            raise FileNotFoundError(
+                f"worktree_extras source not found: {source} "
+                f"(declared as {entry!r} in target_system.worktree_extras)"
+            )
+
+        link_path = worktree_dir / entry
+        if link_path.exists() or link_path.is_symlink():
+            logger.warning(
+                "worktree_extras: %s already present in worktree; leaving "
+                "the existing path untouched (entry was %r)",
+                link_path, entry,
+            )
+            continue
+        link_path.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(source, link_path)
+        logger.info("worktree_extras: linked %s -> %s", link_path, source)
+
+
+def detect_undeclared_writes(
+    worktree_path: Path,
+    declared_paths: set[str] | None = None,
+) -> list[str]:
+    """Return paths in ``worktree_path`` that the executor wrote without
+    declaring them via the bundle's ``code_changes`` (#230).
+
+    Parses ``git -C <worktree_path> status --porcelain`` and reports
+    every untracked file (``??``) and modified-tracked file (``M``) that
+    is not already covered by ``declared_paths``. Each returned path is
+    relative to ``worktree_path``.
+
+    Symlinks (typically created by ``worktree_extras``, #229) are
+    excluded — they're orchestrator-managed inputs, not undeclared
+    executor writes.
+
+    The intent is to surface silent loss of work: an executor that
+    writes a Python module via the ``Write`` tool but forgets to add a
+    ``code_changes`` entry will lose the file when the worktree is
+    cleaned up. Reporting it loudly turns the silent loss into an
+    auditable trail.
+    """
+    declared_paths = declared_paths or set()
+    worktree_path = Path(worktree_path)
+
+    if not worktree_path.exists():
+        return []
+
+    result = subprocess.run(
+        ["git", "-C", str(worktree_path), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        # Worktree may have been removed already, or git is unhappy —
+        # don't make cleanup fail because diagnostics failed.
+        logger.debug(
+            "git status --porcelain on %s exited %s: %s",
+            worktree_path, result.returncode, result.stderr.strip(),
+        )
+        return []
+
+    undeclared: list[str] = []
+    for line in result.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        # Porcelain v1 prefix: 2 status chars + space + path.
+        status = line[:2]
+        path = line[3:].strip()
+        if not (status.startswith("??") or "M" in status):
+            continue
+        if path in declared_paths:
+            continue
+        full = worktree_path / path
+        if full.is_symlink():
+            continue
+        undeclared.append(path)
+    return undeclared
 
 
 def remove_experiment_worktree(repo_path: Path, experiment_id: str) -> None:

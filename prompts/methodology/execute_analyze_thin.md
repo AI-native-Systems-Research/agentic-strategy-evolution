@@ -11,6 +11,15 @@ This iteration's mode is: **{{iteration_mode}}**
 
 {{mode_guidance}}
 
+## Worktree discipline (#228)
+
+Your `cwd` is an experiment worktree, not the target repo. Stay in it.
+Parent-repo assets (venvs, data dirs, prior-iter outputs) appear as
+symlinks declared in `target_system.worktree_extras` (#229) — reference
+them via relative paths, never `cd` to the parent repo. Any file you
+write that isn't in a bundle arm's `code_changes[]` gets listed in
+`findings.worktree_uncommitted_writes` and lost on cleanup (#230).
+
 ## Active principles
 {{active_principles}}
 

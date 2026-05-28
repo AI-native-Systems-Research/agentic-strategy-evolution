@@ -60,9 +60,21 @@ class PromptLoader:
 
         remaining = _PLACEHOLDER_RE.findall(text)
         if remaining:
+            missing = sorted(set(remaining))
+            # #232: forensic logging on the resume-time placeholder bug.
+            # The error message names the missing placeholders; we add
+            # what keys WERE present in the context so the next
+            # occurrence produces evidence pointing at the actual cause
+            # (phase string mismatch, stale loader, resume-path field
+            # uninitialized, ...).
+            logger.error(
+                "prompt render failed: template=%s resolved_path=%s "
+                "missing_placeholders=%s context_keys=%s",
+                template_name, path, missing, sorted(context.keys()),
+            )
             raise ValueError(
                 f"Unreplaced placeholders in {template_name}.md: "
-                f"{', '.join(sorted(set(remaining)))}"
+                f"{', '.join(missing)}"
             )
 
         logger.debug("Loaded prompt %s (%d chars)", template_name, len(text))

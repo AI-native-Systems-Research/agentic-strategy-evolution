@@ -1,4 +1,5 @@
 """Tests for the prompt template loader."""
+import logging
 from pathlib import Path
 
 import pytest
@@ -195,3 +196,101 @@ class TestRealMethodologyThinTemplates:
         out = loader.load("execute_analyze", self._ctx_for_execute())
         assert "CLAUDE.md" in out
         assert "BLIS" in out
+
+
+class TestWorktreeDisciplineGuidance:
+    """#231 — both shipped EXECUTE_ANALYZE templates must carry the
+    "Worktree discipline" guidance so the executor knows to stay in the
+    worktree, reference parent assets via ``worktree_extras`` symlinks,
+    and declare any new files via ``code_changes``.
+    """
+
+    REAL_PROMPTS_DIR = (
+        Path(__file__).resolve().parent.parent / "prompts" / "methodology"
+    )
+
+    def test_full_template_carries_discipline_section(self):
+        text = (self.REAL_PROMPTS_DIR / "execute_analyze.md").read_text()
+        assert "Worktree discipline" in text
+        assert "worktree_extras" in text
+        assert "Do not `cd` to the parent repo" in text
+        # Persistence rule must be present so executors don't lose work.
+        assert "code_changes" in text
+
+    def test_thin_template_carries_discipline_section(self):
+        text = (self.REAL_PROMPTS_DIR / "execute_analyze_thin.md").read_text()
+        assert "Worktree discipline" in text
+        assert "worktree_extras" in text
+        assert "code_changes" in text
+
+    def test_thin_template_renders_with_existing_context(self, tmp_path):
+        # The new section adds prose only — no new placeholders. Confirm
+        # the existing dispatcher context still renders the template
+        # without unreplaced-placeholder errors.
+        claude_md = tmp_path / "CLAUDE.md"
+        claude_md.write_text("...")
+        loader = PromptLoader(self.REAL_PROMPTS_DIR, claude_md_at=claude_md)
+        ctx = {
+            "iteration": "2",
+            "target_system": "BLIS",
+            "system_description": "Inference simulator.",
+            "active_principles": "p1.",
+            "iter_dir": "/tmp/iter-2",
+            "observable_metrics": "throughput",
+            "controllable_knobs": "batch_size",
+            "iteration_mode": "real",
+            "mode_guidance": "(guidance)",
+        }
+        out = loader.load("execute_analyze", ctx)
+        assert "Worktree discipline" in out
+
+
+class TestPlaceholderDiagnosticLogging:
+    """#232 — when prompt rendering fails on unreplaced placeholders,
+    the loader must emit a forensic log line listing both the missing
+    placeholders AND the keys that were present in the context. The
+    cross-account-signal-pooling campaign hit a non-deterministic
+    `Unreplaced placeholders: iteration_mode, mode_guidance` on iter-2;
+    the error message named what was missing, but operators had no way
+    to tell whether the keys were absent or just spelled wrong.
+
+    This issue does NOT fix the underlying bug — only ships diagnostics
+    so the next occurrence produces actionable evidence.
+    """
+
+    def test_logs_missing_placeholders_and_context_keys(self, prompts_dir, caplog):
+        _write_template(
+            prompts_dir,
+            "execute_analyze",
+            "mode={{iteration_mode}}\nguide={{mode_guidance}}\nrest={{iter_dir}}",
+        )
+        loader = PromptLoader(prompts_dir)
+        # Mimic the resume-bug shape: context has *some* keys but is
+        # missing iteration_mode + mode_guidance.
+        partial_context = {"iter_dir": "/tmp/iter-2", "target_system": "X"}
+
+        with caplog.at_level(logging.ERROR, logger="orchestrator.prompt_loader"):
+            with pytest.raises(ValueError, match="iteration_mode, mode_guidance"):
+                loader.load("execute_analyze", partial_context)
+
+        # The forensic log line must carry the two new fields.
+        record = next(
+            (r for r in caplog.records if r.levelname == "ERROR"
+             and "prompt render failed" in r.getMessage()),
+            None,
+        )
+        assert record is not None, "expected ERROR-level diagnostic log line"
+        msg = record.getMessage()
+        assert "missing_placeholders=['iteration_mode', 'mode_guidance']" in msg
+        assert "context_keys=['iter_dir', 'target_system']" in msg
+        assert "template=execute_analyze" in msg
+
+    def test_no_log_on_successful_render(self, prompts_dir, caplog):
+        _write_template(prompts_dir, "ok", "Hello {{name}}!")
+        loader = PromptLoader(prompts_dir)
+        with caplog.at_level(logging.ERROR, logger="orchestrator.prompt_loader"):
+            loader.load("ok", {"name": "Nous"})
+        assert not [
+            r for r in caplog.records
+            if "prompt render failed" in r.getMessage()
+        ]

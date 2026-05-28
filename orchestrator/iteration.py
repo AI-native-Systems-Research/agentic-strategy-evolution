@@ -48,6 +48,46 @@ class IterationOutcome(str, Enum):
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
+
+
+def _declared_code_change_paths(bundle_path: Path) -> set[str]:
+    """Read ``bundle.yaml`` and return every ``arms[].code_changes[].file``
+    relative path declared on any arm. Returns an empty set if the file
+    is missing, unparseable, or declares no ``code_changes`` (#230)."""
+    if not bundle_path.exists():
+        return set()
+    try:
+        bundle = yaml.safe_load(bundle_path.read_text()) or {}
+    except yaml.YAMLError:
+        return set()
+    arms = bundle.get("arms") or []
+    declared: set[str] = set()
+    for arm in arms:
+        if not isinstance(arm, dict):
+            continue
+        for change in arm.get("code_changes") or []:
+            if isinstance(change, dict) and isinstance(change.get("file"), str):
+                declared.add(change["file"])
+    return declared
+
+
+def _record_undeclared_writes_in_findings(
+    findings_path: Path,
+    undeclared: list[str],
+) -> None:
+    """Merge ``worktree_uncommitted_writes`` into ``findings.json`` (#230).
+
+    No-op if findings.json is missing or unparseable — the schema
+    validator downstream will already complain and we don't want to
+    block worktree cleanup on a malformed findings artifact."""
+    if not undeclared or not findings_path.exists():
+        return
+    try:
+        findings = json.loads(findings_path.read_text())
+    except json.JSONDecodeError:
+        return
+    findings["worktree_uncommitted_writes"] = sorted(set(undeclared))
+    atomic_write(findings_path, json.dumps(findings, indent=2) + "\n")
 DEFAULTS_PATH = Path(__file__).resolve().parent / "defaults.yaml"
 _ARM_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -960,8 +1000,9 @@ def run_iteration(
                 create_experiment_worktree,
                 remove_experiment_worktree,
             )
+            extras = campaign.get("target_system", {}).get("worktree_extras") or []
             experiment_dir, experiment_id = create_experiment_worktree(
-                Path(repo_path), iteration,
+                Path(repo_path), iteration, extras=extras,
             )
             (iter_dir / ".experiment_id").write_text(experiment_id)
             print(f"  Experiment worktree: {experiment_dir}")
@@ -1031,6 +1072,24 @@ def run_iteration(
                 "Executor artifacts failed post-check validation: %s",
                 result["errors"],
             )
+        # #230: surface undeclared writes that would be lost when the
+        # worktree is removed below. Persist into findings.json so the
+        # design agent on iter-N+1 can see what to declare in
+        # ``code_changes``. Tripwire only — never blocks cleanup.
+        if repo_path and experiment_dir is not None:
+            from orchestrator.worktree import detect_undeclared_writes
+            declared = _declared_code_change_paths(iter_dir / "bundle.yaml")
+            undeclared = detect_undeclared_writes(experiment_dir, declared)
+            if undeclared:
+                logger.warning(
+                    "Executor wrote %d files in the experiment worktree "
+                    "without declaring them in bundle.arms[].code_changes; "
+                    "they will be lost on cleanup: %s",
+                    len(undeclared), undeclared[:20],
+                )
+                _record_undeclared_writes_in_findings(
+                    iter_dir / "findings.json", undeclared,
+                )
         # Clean up worktree only on success
         if repo_path and experiment_id:
             remove_experiment_worktree(Path(repo_path), experiment_id)
