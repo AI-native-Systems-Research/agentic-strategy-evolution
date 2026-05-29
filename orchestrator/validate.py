@@ -82,6 +82,40 @@ def _campaign_iter_root_extensions(campaign: dict | None) -> frozenset[str]:
     return frozenset(str(x) for x in extensions if x)
 
 
+def _campaign_required_iter_root(campaign: dict | None) -> frozenset[str]:
+    """Read ``campaign.validation.required_iter_root`` (#199 v2).
+
+    Files declared here are treated as MUST-EXIST at validate_execution
+    time. Required ⊆ allowed: a required file is also implicitly an
+    iter-root extension, so campaigns don't need to list it twice.
+    """
+    if not campaign:
+        return frozenset()
+    validation = campaign.get("validation") or {}
+    required = validation.get("required_iter_root") or []
+    return frozenset(str(x) for x in required if x)
+
+
+def _check_required_iter_root(
+    iter_dir: Path, required: set[str] | frozenset[str],
+) -> list[str]:
+    """Return one error per required iter-root file that's missing.
+
+    #199 v2: campaign.validation.required_iter_root declares files the
+    campaign promises to produce by EXECUTE_ANALYZE end. Missing entries
+    are surfaced with a clear "required iter-root file missing: X"
+    message so the operator (or a future incomplete-iteration diagnostic
+    in the spirit of #187 / #200) sees what the campaign committed to.
+    """
+    errors: list[str] = []
+    if not iter_dir.is_dir():
+        return errors
+    for name in sorted(required):
+        if not (iter_dir / name).exists():
+            errors.append(f"required iter-root file missing: {name}")
+    return errors
+
+
 def _validate_ground_truth_independence(bundle: dict) -> list[str]:
     """Cross-field check that the ground truth can disagree with the detector (issue #85).
 
@@ -279,9 +313,13 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
     elif handoff_path.stat().st_size == 0:
         errors.append("handoff_snapshot.md is empty")
 
-    errors.extend(
-        _check_unexpected_files(iter_dir, _campaign_iter_root_extensions(campaign))
-    )
+    # #199 v2: required ⊆ allowed at design time too. We don't enforce
+    # required-presence here (most required files are written during
+    # EXECUTE, not DESIGN), but if the campaign agent does write one
+    # during DESIGN, the unexpected-file check must not reject it.
+    extensions = _campaign_iter_root_extensions(campaign)
+    required = _campaign_required_iter_root(campaign)
+    errors.extend(_check_unexpected_files(iter_dir, extensions | required))
 
     if errors:
         return {"status": "fail", "errors": errors}
@@ -399,9 +437,13 @@ def validate_execution(iter_dir: Path, campaign: dict | None = None) -> dict:
         except KeyError as exc:
             errors.append(f"bundle.yaml arm missing required field: {exc}")
 
-    errors.extend(
-        _check_unexpected_files(iter_dir, _campaign_iter_root_extensions(campaign))
-    )
+    # #199 v2: required ⊆ allowed (a required file is also implicitly
+    # allowed at iter-root, so campaigns don't have to declare it
+    # twice). Merge before the unexpected-file check.
+    extensions = _campaign_iter_root_extensions(campaign)
+    required = _campaign_required_iter_root(campaign)
+    errors.extend(_check_unexpected_files(iter_dir, extensions | required))
+    errors.extend(_check_required_iter_root(iter_dir, required))
 
     if errors:
         return {"status": "fail", "errors": errors}

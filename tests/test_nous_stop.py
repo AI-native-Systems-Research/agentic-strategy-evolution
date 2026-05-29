@@ -395,3 +395,61 @@ class TestRunIterationHaltsAtPhaseBoundary:
                 campaign, work_dir, iteration=1, agent="inline",
                 auto_approve=True,
             )
+
+
+# ─── Documentation parity (#198) ─────────────────────────────────────────
+#
+# The behavior of `nous stop` is honoured at every phase boundary
+# post-#198 (see TestEnterPhaseHonorsSentinel above). User-facing
+# documentation must reflect that — the legacy "iteration boundary"
+# wording lags the post-#198 reality and misleads operators.
+
+
+class TestStopDocumentationReflectsPhaseAwareness:
+    """#198: every user-facing surface must describe `nous stop` as
+    halting at a phase boundary, not an iteration boundary."""
+
+    def test_argparse_help_says_phase_boundary(
+        self, monkeypatch, capsys,
+    ) -> None:
+        """`nous stop --help` (the argparse text) must announce phase
+        boundary, not iteration boundary."""
+        import sys
+        from orchestrator.cli import main
+
+        monkeypatch.setattr(sys, "argv", ["nous", "stop", "--help"])
+        with pytest.raises(SystemExit):
+            main()  # --help triggers SystemExit(0)
+        out = capsys.readouterr().out
+        # argparse line-wraps long descriptions, so normalize whitespace
+        # before substring-matching.
+        normalized = " ".join(out.split())
+        assert "phase boundary" in normalized, (
+            f"#198: nous stop help must say 'phase boundary'; got: "
+            f"{normalized!r}"
+        )
+        assert "iteration boundary" not in normalized, (
+            f"#198: legacy 'iteration boundary' phrasing leaked into "
+            f"argparse help: {normalized!r}"
+        )
+
+    def test_schema_doc_render_says_phase_boundary(self, capsys) -> None:
+        """`nous schema` markdown render references `nous stop` in its
+        See-also section. That string must announce phase boundary too."""
+        from orchestrator.cli import _cmd_schema
+
+        ns = argparse.Namespace(artifact="campaign", format="md")
+        _cmd_schema(ns)
+        out = capsys.readouterr().out
+        stop_lines = [ln for ln in out.splitlines() if "`nous stop" in ln]
+        assert stop_lines, (
+            "schema doc render should describe `nous stop` in See-also"
+        )
+        joined = "\n".join(stop_lines)
+        assert "phase boundary" in joined, (
+            f"#198: schema doc must say 'phase boundary'; got: {joined!r}"
+        )
+        assert "iteration boundary" not in joined, (
+            f"#198: legacy 'iteration boundary' leaked into schema doc: "
+            f"{joined!r}"
+        )

@@ -413,7 +413,7 @@ def _render_schema_markdown(schema: dict, *, artifact: str) -> str:
         lines.append("- `nous create-campaign --to ./campaign.yaml` — scaffold a heavily-commented starting point.")
         lines.append("- `nous run campaign.yaml` — run a campaign (default `--agent sdk`).")
         lines.append("- `nous run campaign.yaml --bundle ./bundle.yaml` — skip DESIGN with a pre-authored bundle (#188).")
-        lines.append("- `nous stop <target>` — ask a running campaign to halt at the next iteration boundary.")
+        lines.append("- `nous stop <target>` — ask a running campaign to halt at the next phase boundary (#198).")
         lines.append("- `nous status --watch <target>` — live progress, including a STUCK marker after 5 min of silence.")
     return "\n".join(lines)
 
@@ -879,7 +879,17 @@ def main():
     p_stop = subparsers.add_parser(
         "stop",
         help="Ask a running campaign to halt cleanly at the next "
-             "iteration boundary by writing a STOP sentinel.",
+             "phase boundary by writing a STOP sentinel (#198: honoured "
+             "at DESIGN / HUMAN_DESIGN_GATE / EXECUTE_ANALYZE / "
+             "HUMAN_FINDINGS_GATE transitions, not just between iterations).",
+        description=(
+            "Write a STOP sentinel that the running campaign honours at "
+            "the next phase boundary (#198). Phase boundaries are DESIGN, "
+            "HUMAN_DESIGN_GATE, EXECUTE_ANALYZE, and HUMAN_FINDINGS_GATE — "
+            "so the operator can halt cleanly without waiting for the "
+            "next iteration. Mid-phase interruption (a wedged BLIS "
+            "subprocess, a stuck SDK turn) is still SIGINT's job."
+        ),
     )
     p_stop.add_argument(
         "target",

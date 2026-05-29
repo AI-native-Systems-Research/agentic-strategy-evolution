@@ -453,3 +453,145 @@ class TestCheckUnexpectedFiles:
         (d / "results").mkdir()
         (d / "inputs").mkdir()
         assert _check_unexpected_files(d) == []
+
+
+# ─── #199 v2 — required_iter_root ────────────────────────────────────────
+#
+# Sister field to iter_root_extensions: campaigns can declare files that
+# MUST exist at the iter root after EXECUTE_ANALYZE completes. Missing
+# entries fail validate_execution. Mirrors the #187 / #200 pattern of
+# turning silent omissions into structured errors.
+
+
+class TestRequiredIterRoot:
+    """#199 v2: campaign.validation.required_iter_root makes campaign-
+    specific iter-root files mandatory at validate_execution time. The
+    validator fails with a clear ``required iter-root file missing: X``
+    error so operators see what the campaign promised to produce."""
+
+    def test_missing_required_file_fails_execution(
+        self, tmp_path: Path,
+    ) -> None:
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        # No analysis_summary.json on disk.
+        campaign = {
+            "validation": {
+                "required_iter_root": ["analysis_summary.json"],
+                # Required files are also implicitly allowed (so a
+                # campaign doesn't have to list them in both blocks).
+            },
+        }
+        result = validate_execution(d, campaign=campaign)
+        assert result["status"] == "fail"
+        assert any(
+            "required iter-root file missing" in e
+            and "analysis_summary.json" in e
+            for e in result["errors"]
+        ), result["errors"]
+
+    def test_present_required_file_passes(self, tmp_path: Path) -> None:
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        (d / "analysis_summary.json").write_text("{}")
+        campaign = {
+            "validation": {
+                "required_iter_root": ["analysis_summary.json"],
+            },
+        }
+        result = validate_execution(d, campaign=campaign)
+        assert result["status"] == "pass", result
+
+    def test_required_file_implicitly_allowed_at_iter_root(
+        self, tmp_path: Path,
+    ) -> None:
+        """A required file should NOT need to be listed in
+        iter_root_extensions to avoid the unexpected-file rejection.
+        Required ⊆ allowed — the validator merges them automatically."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        (d / "probe_report.md").write_text("# Probe report\n")
+        campaign = {
+            "validation": {
+                "required_iter_root": ["probe_report.md"],
+                # Note: iter_root_extensions intentionally omitted.
+            },
+        }
+        result = validate_execution(d, campaign=campaign)
+        assert result["status"] == "pass", result
+        # Negative: the unexpected-file error must not have fired.
+        if result.get("errors"):
+            assert not any(
+                "unexpected file" in e and "probe_report.md" in e
+                for e in result["errors"]
+            ), result["errors"]
+
+    def test_missing_required_listed_alongside_other_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        """Required-file check runs even when other errors exist —
+        validation collects all errors so the operator sees the full
+        picture in one pass."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        (d / "findings.json").unlink()  # primary error
+        campaign = {
+            "validation": {
+                "required_iter_root": ["analysis_summary.json"],
+            },
+        }
+        result = validate_execution(d, campaign=campaign)
+        assert result["status"] == "fail"
+        joined = " | ".join(result["errors"])
+        assert "findings.json" in joined
+        assert "analysis_summary.json" in joined
+
+    def test_no_required_block_keeps_default_behavior(
+        self, tmp_path: Path,
+    ) -> None:
+        """Campaigns without required_iter_root behave exactly as
+        before this PR (backward-compat)."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        # No analysis_summary.json on disk; no required_iter_root either.
+        result = validate_execution(d, campaign={})
+        assert result["status"] == "pass", result
+
+    def test_required_combined_with_extensions(
+        self, tmp_path: Path,
+    ) -> None:
+        """A campaign declares both required and optional iter-root
+        files; only the required one is enforced for presence."""
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        (d / "analysis_summary.json").write_text("{}")  # required, present
+        # manifest.json is "extensions" (optional) and absent — no error.
+        campaign = {
+            "validation": {
+                "required_iter_root": ["analysis_summary.json"],
+                "iter_root_extensions": ["manifest.json"],
+            },
+        }
+        result = validate_execution(d, campaign=campaign)
+        assert result["status"] == "pass", result
+
+    def test_schema_accepts_required_iter_root(self) -> None:
+        """The campaign.schema.yaml must accept the new field — without
+        a schema entry, jsonschema validation in nous run would reject
+        the campaign before the validator ever sees it."""
+        from orchestrator.validate import _load_yaml_schema
+        import jsonschema
+
+        schema = _load_yaml_schema("campaign.schema.yaml")
+        campaign = {
+            "research_question": "Does X work?",
+            "run_id": "demo",
+            "target_system": {"name": "T", "description": "d"},
+            "prompts": {"methodology_layer": "p"},
+            "validation": {
+                "required_iter_root": ["probe_report.md"],
+                "iter_root_extensions": ["analysis_summary.json"],
+            },
+        }
+        # Should not raise.
+        jsonschema.validate(campaign, schema)

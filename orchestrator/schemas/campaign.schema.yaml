@@ -164,6 +164,21 @@ properties:
           Additional filenames allowed at the iter root (in addition to
           the global whitelist in orchestrator/validate.py). Names only,
           not paths — files in subdirectories are always allowed.
+      required_iter_root:
+        type: array
+        items:
+          type: string
+          minLength: 1
+        uniqueItems: true
+        description: >
+          Filenames that MUST exist at the iter root after EXECUTE_ANALYZE
+          completes (#199 v2). validate_execution emits a "required
+          iter-root file missing: X" error for each missing entry,
+          turning silent omissions into structured failures (sister to
+          #187's DesignIncompleteError and #200's
+          ExecuteAnalyzeIncompleteError). Required files are implicitly
+          allowed at the iter root — no need to also list them in
+          iter_root_extensions. Names only, not paths.
 
   max_turns:
     type: object
