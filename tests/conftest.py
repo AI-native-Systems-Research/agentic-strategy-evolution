@@ -41,6 +41,14 @@ def block_live_llm_calls(monkeypatch):
     for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
+    # #239: NOUS_CAMPAIGN_PARENT relocates campaign work_dirs. Strip it
+    # from every test's environment so that tests asserting on legacy
+    # paths (<repo>/.nous/<run>) don't fail when a contributor follows
+    # the README's recommendation to export the var in their shell rc.
+    # Tests that legitimately need the var set use monkeypatch.setenv
+    # to opt back in.
+    monkeypatch.delenv("NOUS_CAMPAIGN_PARENT", raising=False)
+
     original_urlopen = urllib.request.urlopen
 
     def _guarded_urlopen(req, *args, **kwargs):

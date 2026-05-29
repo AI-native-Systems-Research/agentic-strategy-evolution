@@ -21,6 +21,7 @@ Dispatch backends:
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
 import sys
@@ -726,16 +727,17 @@ def _merge_principles(work_dir: Path, iter_dir: Path) -> None:
 def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     """Create and initialize a working directory from templates.
 
-    Resolution rules (#239):
-      1. If ``NOUS_CAMPAIGN_PARENT`` is set, the work_dir is
-         ``$NOUS_CAMPAIGN_PARENT/<run_id>/``. Target repo is unaffected.
-      2. Else, if repo_path is provided, falls back to legacy
-         ``<repo_path>/.nous/<run_id>/`` (preserves backward-compat).
-      3. Else, falls back to ``<run_id>/`` in the current directory.
+    See ``orchestrator/work_dir_resolver.py`` for the canonical
+    RESOLUTION RULES — this function delegates path resolution there.
+    Briefly: ``$NOUS_CAMPAIGN_PARENT/<run_id>/`` if env var set, else
+    legacy ``<repo_path>/.nous/<run_id>/``, else ``<run_id>/`` relative
+    to CWD (#239).
 
-    The resolved absolute work_dir is recorded in state.json's
-    ``work_dir`` field — this is the per-campaign source of truth for
-    location, robust to env var changes between runs.
+    The resolved absolute work_dir AND repo_path are recorded in
+    state.json — this is the per-campaign source of truth for location.
+    Used by collision detection (refuses to clobber a same-named
+    campaign that targets a different repo, #239 D1) and by future
+    resume/discovery tooling.
 
     Worktrees are NOT affected: they continue to live at
     ``<repo_path>/.nous-experiments/<run_id>/<arm>/`` because they are
@@ -745,28 +747,65 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     Also writes a per-campaign ``.claude/settings.json`` permission policy
     (issue #135) so dispatchers can pass ``--settings <path>`` instead of
     ``--dangerously-skip-permissions``.
+
+    Raises:
+        ValueError: ``NOUS_CAMPAIGN_PARENT`` set to empty/whitespace, OR
+            an existing state.json at the resolved path records a
+            different ``repo_path`` (run_id collision under env var).
+        FileNotFoundError: ``repo_path`` provided but doesn't exist.
+        OSError: filesystem error creating the work_dir (wrapped with
+            env-var context if ``NOUS_CAMPAIGN_PARENT`` is set).
     """
     from orchestrator.settings_template import (
         render_campaign_settings,
         settings_path_for,
         write_campaign_settings,
     )
-    from orchestrator.work_dir_resolver import resolve_work_dir
+    from orchestrator.work_dir_resolver import ENV_VAR, resolve_work_dir
 
     work_dir = resolve_work_dir(run_id, repo_path)
-    work_dir.mkdir(parents=True, exist_ok=True)
+
+    # #239 D1: collision detection. If state.json already exists with a
+    # different recorded repo_path, the user has accidentally collided
+    # two campaigns under the same run_id. Refuse loudly rather than
+    # silently corrupt the existing campaign.
+    existing_state = work_dir / "state.json"
+    if existing_state.exists():
+        try:
+            prior = json.loads(existing_state.read_text())
+        except (json.JSONDecodeError, OSError):
+            prior = {}
+        prior_repo = prior.get("repo_path")
+        new_repo = str(Path(repo_path).resolve()) if repo_path else None
+        if prior_repo and new_repo and prior_repo != new_repo:
+            raise ValueError(
+                f"run_id collision at {work_dir}: existing state.json "
+                f"records repo_path={prior_repo!r} but this run targets "
+                f"repo_path={new_repo!r}. Run_ids must be globally unique "
+                f"under {ENV_VAR}; rename one campaign's run_id."
+            )
+
+    try:
+        work_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        env_hint = ""
+        if os.environ.get(ENV_VAR):
+            env_hint = f" (resolved via {ENV_VAR}={os.environ[ENV_VAR]!r})"
+        raise OSError(
+            f"could not create campaign work_dir at {work_dir}{env_hint}: {exc}"
+        ) from exc
+
     for t in ["state.json", "ledger.json", "principles.json"]:
         dest = work_dir / t
         if not dest.exists():
             shutil.copy(TEMPLATES_DIR / t, dest)
     state = json.loads((work_dir / "state.json").read_text())
     state["run_id"] = run_id
-    # #239: record the resolved absolute work_dir as per-campaign source
-    # of truth. Survives env var changes: if NOUS_CAMPAIGN_PARENT is
-    # later unset or changed, downstream tooling can still find the
-    # campaign by reading this field rather than re-deriving from
-    # convention.
+    # #239: record resolved paths as per-campaign source of truth.
+    # work_dir survives env var changes; repo_path enables collision
+    # detection and future cross-machine discovery.
     state["work_dir"] = str(work_dir.resolve())
+    state["repo_path"] = str(Path(repo_path).resolve()) if repo_path else None
     atomic_write(work_dir / "state.json", json.dumps(state, indent=2) + "\n")
 
     # Per-campaign permission policy. Idempotent: don't overwrite a settings

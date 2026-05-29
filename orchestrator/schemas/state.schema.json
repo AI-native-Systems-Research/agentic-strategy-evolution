@@ -40,7 +40,11 @@
     },
     "work_dir": {
       "type": ["string", "null"],
-      "description": "Absolute path to the campaign's work_dir, recorded at setup_work_dir (#239). The per-campaign source of truth for location: even if the user changes NOUS_CAMPAIGN_PARENT or the legacy <repo>/.nous/<run_id>/ default between runs, this field preserves the original resolved path. Null before setup. Set to the resolved Path(work_dir).resolve() at first setup; downstream tooling can read this rather than re-deriving from convention."
+      "description": "Absolute filesystem path to the campaign's work_dir, recorded at setup_work_dir (#239). Per-campaign source of truth for location, robust to NOUS_CAMPAIGN_PARENT changes between runs. **Machine-local**: tools that travel state.json across machines must validate Path(work_dir).exists() before trusting it (or rederive from the local environment). Null before setup."
+    },
+    "repo_path": {
+      "type": ["string", "null"],
+      "description": "Absolute path to the target system's repo, recorded at setup_work_dir (#239). Used for collision detection (refusing to clobber a same-named campaign that targets a different repo when NOUS_CAMPAIGN_PARENT is set) and to identify which target a campaign belongs to. **Machine-local**, same caveats as work_dir. Null before setup or when the campaign was authored without a target_system.repo_path."
     }
   }
 }
