@@ -62,6 +62,8 @@ A bookmark. It tells the orchestrator what phase we entered last, which iteratio
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |
 | `timestamp` | When this was last updated (i.e., when `last_entered_phase` was last entered — *not* when an artifact was last written) |
 | `config_ref` | Path to the campaign configuration file (null before setup) |
+| `work_dir` | Absolute filesystem path to this campaign's work_dir, recorded at `setup_work_dir` (#239). Per-campaign source of truth; survives `NOUS_CAMPAIGN_PARENT` changes between runs. Machine-local — tools that travel state.json across machines must validate `Path(work_dir).exists()` before trusting it. Null before setup. |
+| `repo_path` | Absolute path to the target system's repo, recorded at `setup_work_dir` (#239). Used for collision detection when `NOUS_CAMPAIGN_PARENT` is set (refusing to clobber a same-named campaign that targets a different repo) and to identify which target a campaign belongs to. Machine-local; null before setup or when authored without `target_system.repo_path`. |
 
 The orchestrator writes this atomically (temp file + rename) so a crash never leaves a corrupt checkpoint.
 

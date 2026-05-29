@@ -14,7 +14,7 @@ List Nous campaigns under a search root.
 
 ## Inputs
 
-- `search-root` (required): directory to walk. Typically the parent of one or more `<repo>/.nous/` directories.
+- `search-root` (required): directory to walk for campaign work_dirs. Typically `$NOUS_CAMPAIGN_PARENT/` (#239 recommended) or the parent of one or more `<repo>/.nous/` directories (legacy layout). Both layouts coexist; `find_existing_work_dir` (orchestrator/work_dir_resolver.py) handles them transparently.
 - `query` (optional): case-insensitive substring filter against run_id.
 - `status` (optional): filter to a specific phase (`DONE`, `EXECUTE_ANALYZE`, `INIT`, etc.).
 - `repo` (optional): substring filter against the resolved repo path.

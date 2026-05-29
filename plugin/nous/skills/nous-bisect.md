@@ -14,7 +14,7 @@ Compare two iterations of one campaign. Powered by `compare_iterations` (#126).
 
 ## Inputs
 
-- `campaign-root` (required): the campaign work-dir (e.g. `<repo>/.nous/<run-id>`).
+- `campaign-root` (required): the campaign work-dir — typically `$NOUS_CAMPAIGN_PARENT/<run-id>/` (#239 recommended) or `<repo>/.nous/<run-id>/` (legacy default).
 - `iter-a` (required): first iteration number.
 - `iter-b` (required): second iteration number.
 

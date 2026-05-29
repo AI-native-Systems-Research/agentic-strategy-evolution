@@ -14,7 +14,7 @@ Resume an interrupted Nous campaign from the latest checkpoint (#91).
 
 ## Inputs
 
-- `target` (required): campaign.yaml path. The orchestrator reads the matching `<repo>/.nous/<run-id>/state.json` to find the resume point.
+- `target` (required): campaign.yaml path. The orchestrator reads `state.json` from `$NOUS_CAMPAIGN_PARENT/<run-id>/` if that env var is set, else from `<repo>/.nous/<run-id>/` (legacy default; #239). `find_existing_work_dir` checks both candidates plus state.json's recorded `work_dir`, so campaigns created before/after env-var adoption are both resumable.
 - `max-iterations` (optional): override the campaign's cap.
 - `agent` (optional): backend to use on resume — usually matches the original.
 

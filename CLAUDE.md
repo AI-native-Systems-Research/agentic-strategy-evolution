@@ -65,6 +65,40 @@ Beyond tests, Nous itself must be frugal with tokens:
 - **Read-only mapping uses Explore subagents**, not Opus. See
   `orchestrator/explore_design.py`.
 
+## Campaign-artifact location (issue #239)
+
+Campaign work_dirs default to ``<target_repo>/.nous/<run_id>/`` for
+backward compat, but the recommended setup is to export
+``NOUS_CAMPAIGN_PARENT`` so artifacts live OUTSIDE the target:
+
+```bash
+# Add to your shell rc:
+export NOUS_CAMPAIGN_PARENT=~/Documents/Projects/nous-campaigns
+```
+
+When set, work_dirs land at ``$NOUS_CAMPAIGN_PARENT/<run_id>/``.
+The target repo's working tree stays clean — ``git stash -u`` won't
+capture campaign output, ``git status`` stays uncluttered, ``git add .``
+won't accidentally stage campaign content.
+
+**The split that matters:**
+
+| Artifact type | Lives at | Why |
+|---|---|---|
+| Code worktrees per arm (#133) | ``<target>/.nous-experiments/<run>/<arm>/`` | They ARE code FOR the target repo; share its git history. Unaffected by the env var. |
+| Campaign artifacts (state, ledger, principles, findings, JSON results) | ``$NOUS_CAMPAIGN_PARENT/<run_id>/`` if env var set, else ``<target>/.nous/<run_id>/`` | About *experiment results*, not target's code. Env-var location avoids working-tree pollution. |
+
+Path resolution lives in ``orchestrator/work_dir_resolver.py`` —
+single source of truth (``RESOLUTION RULES`` marker). Three call
+sites (``setup_work_dir``, ``cli.resolve_work_dir``, ``cli._cmd_run``)
+delegate there. State.json records the resolved ``work_dir`` and
+``repo_path`` for collision detection and per-campaign provenance.
+
+``find_existing_work_dir`` provides migration grace: pre-#239
+campaigns at the legacy path are still findable when the user later
+sets the env var, so existing campaigns don't break on env-var
+adoption.
+
 ## PR workflow (project owner: @sriumcp)
 
 1. Branch off `upstream/reflective` (NOT `main`).

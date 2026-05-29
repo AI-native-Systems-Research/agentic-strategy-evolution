@@ -254,26 +254,27 @@ git clone https://github.com/inference-sim/inference-sim.git blis
 nous run examples/campaign.yaml --max-iterations 3
 ```
 
-Campaign artifacts will be created at `blis/.nous/<run_id>/`.
+Campaign artifacts will be created at `$NOUS_CAMPAIGN_PARENT/<run_id>/` if you've set the env var (recommended), else at `blis/.nous/<run_id>/`.
 
 ### Output
 
+Each campaign's work_dir contains:
+
 ```
-your-repo/.nous/<run_id>/
-  state.json              # orchestrator checkpoint
-  principles.json         # accumulated principles
-  ledger.json             # one row per iteration
-  handoff.md              # living exploration context (updated each iteration)
-  runs/iter-N/
-    problem.md            # problem framing
-    bundle.yaml           # hypothesis bundle
-    handoff_snapshot.md   # iteration snapshot of handoff
-    experiment_plan.yaml  # exact commands per arm
-    findings.json         # prediction vs outcome
-    principle_updates.json # proposed principle changes
-    patches/              # code diffs (evolve mode only)
-    inputs/               # agent-created input files (configs, workloads)
-    results/              # experiment output files
+state.json              # orchestrator checkpoint
+principles.json         # accumulated principles
+ledger.json             # one row per iteration
+handoff.md              # living exploration context (updated each iteration)
+runs/iter-N/
+  problem.md            # problem framing
+  bundle.yaml           # hypothesis bundle
+  handoff_snapshot.md   # iteration snapshot of handoff
+  experiment_plan.yaml  # exact commands per arm
+  findings.json         # prediction vs outcome
+  principle_updates.json # proposed principle changes
+  patches/              # code diffs (evolve mode only)
+  inputs/               # agent-created input files (configs, workloads)
+  results/              # experiment output files
 ```
 
 ### Other CLI commands
@@ -303,7 +304,7 @@ nous stop campaign.yaml --reason "out of budget"  # halt at next iteration bound
 | Watch progress live | `nous status campaign.yaml --watch` |
 | Cleanly halt a running campaign | `nous stop campaign.yaml` |
 | Resume after halt or interruption | `nous resume campaign.yaml` |
-| Diagnose a failed iteration | `cat .nous/<run>/runs/iter-N/inputs/executor_log.jsonl` (#190) and `cat .nous/<run>/retry_log.jsonl` |
+| Diagnose a failed iteration | `cat <work_dir>/runs/iter-N/inputs/executor_log.jsonl` (#190) and `cat <work_dir>/retry_log.jsonl`, where `<work_dir>` is `$NOUS_CAMPAIGN_PARENT/<run>/` (recommended) or `<repo>/.nous/<run>/` (legacy) |
 | Audit token spend | `nous cost campaign.yaml --cache-stats` |
 
 ### Observability (when nous looks stuck or wrong)
@@ -313,7 +314,8 @@ When a campaign is mid-iteration and you can't tell what's happening:
 1. **`nous status --watch`** — live redraw of phase / iteration / last
    tool call. Prints `STUCK` after 5 min of dispatcher silence.
 2. **`runs/iter-N/inputs/executor_log.jsonl`** (#190) — every SDK
-   streaming event with timestamps. Tail it: `tail -f .nous/<run>/runs/iter-N/inputs/executor_log.jsonl`.
+   streaming event with timestamps. Tail it: `tail -f <work_dir>/runs/iter-N/inputs/executor_log.jsonl`
+   (where `<work_dir>` is `$NOUS_CAMPAIGN_PARENT/<run>/` or `<repo>/.nous/<run>/`).
 3. **`retry_log.jsonl`** at the campaign root — every transient failure
    with attempt count, backoff, error string. The DESIGN-incomplete
    case (#187) writes a `failure_type: "design_incomplete"` entry with
