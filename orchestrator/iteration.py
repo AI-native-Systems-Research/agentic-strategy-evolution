@@ -799,6 +799,17 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
         dest = work_dir / t
         if not dest.exists():
             shutil.copy(TEMPLATES_DIR / t, dest)
+
+    # #242: eagerly create an empty retry_log.jsonl. The orchestrator
+    # writes it on first dispatch failure, so a dispatcher-side crash
+    # before any retry would leave no trail at all — making the
+    # retry-log-keyed heuristics in meta_findings.py blind to the
+    # failure. Touching it here guarantees downstream tooling always
+    # sees a parseable artifact, even if it's empty.
+    retry_log = work_dir / "retry_log.jsonl"
+    if not retry_log.exists():
+        retry_log.touch()
+
     state = json.loads((work_dir / "state.json").read_text())
     state["run_id"] = run_id
     # #239: record resolved paths as per-campaign source of truth.

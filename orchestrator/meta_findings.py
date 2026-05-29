@@ -416,23 +416,30 @@ def _detect_nous_asks_from_missing_artifacts(
         return []
     latest_iter = max(ledger_iters)
 
-    if (work_dir / "retry_log.jsonl").exists():
+    # After #242's eager init, retry_log.jsonl is touched at setup_work_dir
+    # so it always exists for fresh campaigns. Treat a 0-row file as
+    # equivalent to "no dispatch retries logged" — the original semantic
+    # the detector cares about.
+    retry_log = work_dir / "retry_log.jsonl"
+    has_retry_rows = retry_log.exists() and retry_log.stat().st_size > 0
+    findings = work_dir / "runs" / f"iter-{latest_iter}" / "findings.json"
+
+    if has_retry_rows:
         return []
-    if (work_dir / "runs" / f"iter-{latest_iter}" / "findings.json").exists():
+    if findings.exists():
         return []
 
+    retry_state = "absent" if not retry_log.exists() else "empty"
     return [{
         "ask": (
             "Investigate why the iteration progressed in state.json but "
-            "the dispatcher died before writing any per-iteration "
-            "artifacts. Consider initialising retry_log.jsonl at "
-            "iteration start so dispatcher-side crashes still leave a "
-            "parseable trail."
+            "the dispatcher produced no per-iteration artifacts. The "
+            "iteration ended with no findings.json and no retry rows."
         ),
         "evidence": (
-            f"state.json: iteration={iteration} phase={phase} but "
-            f"runs/iter-{latest_iter}/findings.json and retry_log.jsonl "
-            f"absent — dispatcher died before any artifact was written."
+            f"state.json: iteration={iteration} phase={phase} — "
+            f"runs/iter-{latest_iter}/findings.json absent, "
+            f"retry_log.jsonl {retry_state}."
         ),
         "kind": "observability",
     }]

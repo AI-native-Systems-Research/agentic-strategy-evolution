@@ -562,6 +562,89 @@ def _cmd_report(args):
     _generate_report(campaign, work_dir, args.model, agent=args.agent, timeout=args.timeout)
 
 
+def _cmd_reports(args):
+    """On-demand re-emission of meta_findings.json (#242).
+
+    Runs the pure-Python emitter against any work_dir, regardless of
+    whether the campaign reached a clean terminal transition. Useful for
+    legacy campaigns that pre-date the in-line emission wired into
+    campaign.py, and for campaigns that aborted mid-phase and so never
+    reached the four call sites that invoke the emitter automatically.
+
+    Target may be a campaign.yaml (preferred — gives full target_system
+    context for the heuristics) or a work_dir / run_id (emitted with an
+    empty target_system stub).
+    """
+    import json as _json
+    import yaml as _yaml
+    from orchestrator.meta_findings import (
+        emit_meta_findings,
+        write_meta_findings,
+    )
+    from orchestrator.validate import validate_meta_findings
+
+    work_dir = resolve_work_dir(args.target)
+
+    campaign: dict = {"target_system": {}}
+    if args.target.endswith((".yaml", ".yml")):
+        try:
+            data = _yaml.safe_load(Path(args.target).read_text())
+            if isinstance(data, dict):
+                campaign = data
+        except (_yaml.YAMLError, OSError) as exc:
+            print(
+                f"Warning: could not parse {args.target} ({exc}); "
+                f"emitting against empty target_system context.",
+                file=sys.stderr,
+            )
+
+    payload = emit_meta_findings(work_dir, campaign)
+
+    state_path = work_dir / "state.json"
+    is_terminal = False
+    if state_path.exists():
+        try:
+            state = _json.loads(state_path.read_text())
+            phase = state.get("last_entered_phase") or state.get("phase")
+            is_terminal = phase in ("DONE", "STOPPED")
+        except (_json.JSONDecodeError, OSError):
+            pass
+
+    if not is_terminal:
+        prior = payload.get("notes") or ""
+        suffix = (
+            f"Emitted on-demand via `nous reports` against a non-terminal "
+            f"work_dir (state.json: phase is not DONE/STOPPED). The "
+            f"three streams reflect partial state — re-emit after "
+            f"campaign termination for the canonical record."
+        )
+        payload["notes"] = (prior + " " + suffix).strip() if prior else suffix
+
+    target = write_meta_findings(work_dir, payload)
+    result = validate_meta_findings(work_dir)
+    if result["status"] == "fail":
+        print(
+            f"Warning: emitted meta_findings.json failed self-validation: "
+            f"{result['errors']}",
+            file=sys.stderr,
+        )
+
+    n_lessons = len(payload.get("campaign_design_lessons") or [])
+    n_repo = len(payload.get("target_system_asks") or [])
+    n_nous = len(payload.get("nous_asks") or [])
+    print(
+        f"{target}  "
+        f"({n_lessons} design lesson(s), {n_repo} repo ask(s), "
+        f"{n_nous} nous ask(s))"
+    )
+    if not is_terminal:
+        print(
+            "Note: emitted against a non-terminal work_dir; see "
+            "meta_findings.json `notes` field.",
+            file=sys.stderr,
+        )
+
+
 def _cmd_replay(args):
     import subprocess
     import yaml
@@ -846,6 +929,19 @@ def main():
     p_replay.add_argument("target")
     p_replay.add_argument("--iter", required=True, type=int)
     p_replay.set_defaults(func=_cmd_replay)
+
+    p_reports = subparsers.add_parser(
+        "reports",
+        help="Re-emit meta_findings.json on demand for any work_dir (#242). "
+             "Pure-Python; zero LLM tokens. Works against legacy or aborted "
+             "campaigns that never reached the in-line emitter.",
+    )
+    p_reports.add_argument(
+        "target",
+        help="campaign.yaml (preferred — supplies target_system context) "
+             "OR a work_dir / run_id resolvable via NOUS_CAMPAIGN_PARENT.",
+    )
+    p_reports.set_defaults(func=_cmd_reports)
 
     # `create-campaign` (issue #89): scaffold a heavily-commented
     # campaign.yaml that names the four agent-reachable fields and

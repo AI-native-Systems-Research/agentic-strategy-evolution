@@ -165,6 +165,37 @@ class TestSetupWorkDirEnvVarUnset:
         state = json.loads((work_dir / "state.json").read_text())
         jsonschema.validate(state, _load_state_schema())
 
+    def test_creates_empty_retry_log_jsonl(self, tmp_path: Path) -> None:
+        """#242: setup_work_dir touches retry_log.jsonl so dispatcher
+        crashes always leave a parseable artifact behind, and
+        retry-log-keyed tooling never has to special-case its absence.
+        """
+        repo = tmp_path / "target-repo"
+        repo.mkdir()
+        work_dir = setup_work_dir("legacy-run", repo_path=str(repo))
+        retry_log = work_dir / "retry_log.jsonl"
+        assert retry_log.exists(), "setup_work_dir must touch retry_log.jsonl"
+        assert retry_log.stat().st_size == 0, (
+            "retry_log.jsonl should be empty at setup time — entries "
+            "are appended later by orchestrator.metrics on dispatch failures"
+        )
+
+    def test_retry_log_existing_content_not_clobbered(
+        self, tmp_path: Path
+    ) -> None:
+        """Idempotency: a second setup_work_dir on the same work_dir
+        must not truncate an existing retry_log.jsonl that already
+        contains rows from the first run.
+        """
+        repo = tmp_path / "target-repo"
+        repo.mkdir()
+        work_dir = setup_work_dir("legacy-run", repo_path=str(repo))
+        existing = '{"phase":"design","failure_type":"api_error"}\n'
+        (work_dir / "retry_log.jsonl").write_text(existing)
+        # Call again — must be idempotent.
+        setup_work_dir("legacy-run", repo_path=str(repo))
+        assert (work_dir / "retry_log.jsonl").read_text() == existing
+
 
 class TestSetupWorkDirEnvVarSet:
     """When NOUS_CAMPAIGN_PARENT is set, setup_work_dir creates

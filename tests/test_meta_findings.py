@@ -683,7 +683,7 @@ class TestMissingArtifactDetection:
 
         obs_asks = [a for a in payload["nous_asks"]
                     if a.get("kind") == "observability"
-                    and "dispatcher died" in a["ask"].lower()]
+                    and "no per-iteration artifacts" in a["ask"].lower()]
         assert obs_asks, payload["nous_asks"]
         assert "iter-1" in obs_asks[0]["evidence"]
 
@@ -705,7 +705,7 @@ class TestMissingArtifactDetection:
 
         obs_asks = [a for a in payload["nous_asks"]
                     if a.get("kind") == "observability"
-                    and "dispatcher died" in a["ask"].lower()]
+                    and "no per-iteration artifacts" in a["ask"].lower()]
         assert obs_asks == []
 
     def test_no_emission_when_retry_log_present(self, tmp_path: Path) -> None:
@@ -729,7 +729,7 @@ class TestMissingArtifactDetection:
 
         obs_asks = [a for a in payload["nous_asks"]
                     if a.get("kind") == "observability"
-                    and "dispatcher died" in a["ask"].lower()]
+                    and "no per-iteration artifacts" in a["ask"].lower()]
         assert obs_asks == []
 
     def test_no_emission_when_phase_is_idle(self, tmp_path: Path) -> None:
@@ -749,7 +749,7 @@ class TestMissingArtifactDetection:
 
         obs_asks = [a for a in payload["nous_asks"]
                     if a.get("kind") == "observability"
-                    and "dispatcher died" in a["ask"].lower()]
+                    and "no per-iteration artifacts" in a["ask"].lower()]
         assert obs_asks == []
 
     def test_no_emission_on_missing_state_or_ledger(
@@ -765,7 +765,7 @@ class TestMissingArtifactDetection:
 
         obs_asks = [a for a in payload["nous_asks"]
                     if a.get("kind") == "observability"
-                    and "dispatcher died" in a["ask"].lower()]
+                    and "no per-iteration artifacts" in a["ask"].lower()]
         assert obs_asks == []
 
     def test_evidence_passes_validate_evidence_floor(
@@ -786,10 +786,39 @@ class TestMissingArtifactDetection:
 
         obs_asks = [a for a in payload["nous_asks"]
                     if a.get("kind") == "observability"
-                    and "dispatcher died" in a["ask"].lower()]
+                    and "no per-iteration artifacts" in a["ask"].lower()]
         assert obs_asks
         for ask in obs_asks:
             assert validate_evidence(ask["evidence"]) is None, ask
+
+    def test_empty_retry_log_still_triggers(self, tmp_path: Path) -> None:
+        """#242: after the eager-init fix, retry_log.jsonl always exists
+        (even for crashed campaigns). The detector must still fire when
+        the file is empty AND findings.json is absent — that's the
+        canonical post-#242 catastrophic-failure shape.
+        """
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(
+            work_dir, iteration=1, last_entered_phase="EXECUTE_ANALYZE",
+        )
+        _write_ledger_with_failure(
+            work_dir, iteration=1, error="SDK returned error",
+        )
+        # Empty file (touched by setup_work_dir, never written to).
+        (work_dir / "retry_log.jsonl").touch()
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        obs_asks = [a for a in payload["nous_asks"]
+                    if a.get("kind") == "observability"
+                    and "no per-iteration artifacts" in a["ask"].lower()]
+        assert obs_asks, payload["nous_asks"]
+        # Evidence reflects the empty (not absent) state.
+        assert any("empty" in a["evidence"] for a in obs_asks), obs_asks
 
 
 class TestPost204RerunAcceptanceFixture:
