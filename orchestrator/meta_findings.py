@@ -345,6 +345,99 @@ def _detect_nous_asks(
     return asks
 
 
+def _detect_nous_asks_from_ledger_failures(ledger: dict | list | None) -> list[dict]:
+    """Surface ledger.json rows where status="FAILED" as nous_asks (#242).
+
+    Closes the structural blind spot where every other detector keys off
+    retry_log.jsonl: a dispatcher that dies before writing the retry log
+    leaves only ledger.json as evidence, and the previous emitter
+    silently produced 0/0/0 streams. ledger.json is written by the
+    orchestrator itself, so it survives dispatcher-side crashes.
+    """
+    asks: list[dict] = []
+    if not isinstance(ledger, dict):
+        return asks
+    for row in ledger.get("iterations") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("status") != "FAILED":
+            continue
+        iteration = row.get("iteration")
+        if not isinstance(iteration, int):
+            continue
+        err = (row.get("error") or "").strip()
+        err_short = err[:120] if err else "(no error text)"
+        asks.append({
+            "ask": (
+                "Investigate the dispatcher failure that prevented this "
+                "iteration from completing — the iteration ended without "
+                "producing findings.json or retry_log.jsonl, leaving the "
+                "ledger row as the only diagnostic surface."
+            ),
+            "evidence": (
+                f"ledger.json: iter-{iteration} status=FAILED, "
+                f"error=\"{err_short}\""
+            ),
+            "kind": "dispatch",
+        })
+    return asks
+
+
+def _detect_nous_asks_from_missing_artifacts(
+    work_dir: Path, state: dict | list | None, ledger: dict | list | None,
+) -> list[dict]:
+    """Flag campaigns where state.json shows iteration progressed but
+    per-iteration artifacts are absent (#242).
+
+    Triggered when state.iteration >= 1 and state.last_entered_phase
+    is not IDLE, ledger.json has at least one row with iteration >= 1,
+    retry_log.jsonl is absent, and runs/iter-N/findings.json is absent
+    for the highest ledger iter N. This is the post-#204 rerun shape:
+    the dispatcher died after the orchestrator advanced state but
+    before writing any per-iteration artifacts.
+    """
+    if not isinstance(state, dict) or not isinstance(ledger, dict):
+        return []
+    iteration = state.get("iteration")
+    phase = state.get("last_entered_phase")
+    if not isinstance(iteration, int) or iteration < 1:
+        return []
+    if not phase or phase == "IDLE":
+        return []
+
+    ledger_iters: list[int] = []
+    for row in ledger.get("iterations") or []:
+        if not isinstance(row, dict):
+            continue
+        n = row.get("iteration")
+        if isinstance(n, int) and n >= 1:
+            ledger_iters.append(n)
+    if not ledger_iters:
+        return []
+    latest_iter = max(ledger_iters)
+
+    if (work_dir / "retry_log.jsonl").exists():
+        return []
+    if (work_dir / "runs" / f"iter-{latest_iter}" / "findings.json").exists():
+        return []
+
+    return [{
+        "ask": (
+            "Investigate why the iteration progressed in state.json but "
+            "the dispatcher died before writing any per-iteration "
+            "artifacts. Consider initialising retry_log.jsonl at "
+            "iteration start so dispatcher-side crashes still leave a "
+            "parseable trail."
+        ),
+        "evidence": (
+            f"state.json: iteration={iteration} phase={phase} but "
+            f"runs/iter-{latest_iter}/findings.json and retry_log.jsonl "
+            f"absent — dispatcher died before any artifact was written."
+        ),
+        "kind": "observability",
+    }]
+
+
 def _detect_design_lessons(work_dir: Path) -> list[dict]:
     """Find lessons about campaign design from per-iteration findings."""
     lessons: list[dict] = []
@@ -453,7 +546,11 @@ def emit_meta_findings(
         "iterations_completed": iterations_completed,
         "campaign_design_lessons": _detect_design_lessons(work_dir),
         "target_system_asks": _detect_target_system_asks(campaign, retries),
-        "nous_asks": _detect_nous_asks(metrics, retries),
+        "nous_asks": (
+            _detect_nous_asks(metrics, retries)
+            + _detect_nous_asks_from_ledger_failures(ledger)
+            + _detect_nous_asks_from_missing_artifacts(work_dir, state, ledger)
+        ),
     }
 
     # Deployment recommendation (issue #170): every campaign emits a

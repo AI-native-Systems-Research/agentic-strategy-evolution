@@ -481,3 +481,357 @@ class TestRenderMarkdown:
         assert "Lesson A" in md
         assert "iter-1 details" in md
         assert "_None._" in md  # nous asks empty
+
+
+# ─── Ledger-floor heuristics (#242) ───────────────────────────────────────
+#
+# Background: every existing detector keys off retry_log.jsonl or
+# llm_metrics.jsonl. When a campaign's dispatcher dies before writing
+# those artifacts (e.g., a single-iteration campaign that fails at the
+# SDK call), every heuristic short-circuits and meta_findings.json reports
+# 0/0/0 across all three named streams — even though the failure is
+# recorded plainly in ledger.json. The acceptance fixture is the
+# post-204-rerun campaign: ledger.json has iter-1 status=FAILED but no
+# retry_log.jsonl, no findings.json. These tests pin the new floor.
+
+
+def _write_state_v2(
+    work_dir: Path, *, iteration: int = 1,
+    last_entered_phase: str = "EXECUTE_ANALYZE",
+    run_id: str = "test-run",
+) -> None:
+    """Write state.json using the post-d5764ce field name (last_entered_phase)
+    that the production orchestrator emits and the new detectors read."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "state.json").write_text(json.dumps({
+        "iteration": iteration,
+        "run_id": run_id,
+        "family": "test",
+        "timestamp": "2026-05-26T20:42:14Z",
+        "last_entered_phase": last_entered_phase,
+        "work_dir": str(work_dir),
+        "repo_path": None,
+        "config_ref": None,
+        "max_iterations": 1,
+    }))
+
+
+def _write_ledger_with_failure(
+    work_dir: Path, *, iteration: int, error: str,
+) -> None:
+    """Write a ledger.json containing a FAILED iteration row, mirroring the
+    shape produced by orchestrator on a dispatcher-error iteration end."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "ledger.json").write_text(json.dumps({
+        "iterations": [{
+            "iteration": iteration,
+            "family": "unknown",
+            "timestamp": "2026-05-26T22:09:05+00:00",
+            "candidate_id": f"iter-{iteration}",
+            "status": "FAILED",
+            "error": error,
+            "h_main_result": None,
+            "ablation_results": {},
+            "control_result": None,
+            "robustness_result": None,
+            "prediction_accuracy": None,
+            "principles_extracted": [],
+            "frontier_update": None,
+        }],
+    }))
+
+
+class TestLedgerFailureDetection:
+    """ledger.json: iterations[*].status == FAILED → one nous_ask per row."""
+
+    def test_emits_one_entry_per_failed_ledger_row(self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(work_dir, iteration=2)
+        # Two FAILED rows → expect two nous_asks.
+        (work_dir / "ledger.json").write_text(json.dumps({
+            "iterations": [
+                {"iteration": 1, "status": "FAILED",
+                 "error": "SDK returned error after 1 attempt(s): None"},
+                {"iteration": 2, "status": "FAILED",
+                 "error": "Bash subprocess timed out after 600s"},
+            ],
+        }))
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        ledger_asks = [a for a in payload["nous_asks"]
+                       if "ledger.json" in a["evidence"]]
+        assert len(ledger_asks) == 2, payload["nous_asks"]
+        # Each row's iter-N and quoted error appear in evidence.
+        assert any("iter-1" in a["evidence"] and "SDK returned" in a["evidence"]
+                   for a in ledger_asks), ledger_asks
+        assert any("iter-2" in a["evidence"] and "timed out" in a["evidence"]
+                   for a in ledger_asks), ledger_asks
+
+    def test_no_emission_when_ledger_has_no_failed_rows(
+            self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(work_dir, iteration=1)
+        _write_ledger(work_dir, [1])  # writes status="completed"
+        _write_findings(work_dir, 1)
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+        ledger_asks = [a for a in payload["nous_asks"]
+                       if "ledger.json: iter" in a["evidence"]
+                       and "status=FAILED" in a["evidence"]]
+        assert ledger_asks == []
+
+    def test_no_emission_on_missing_ledger(self, tmp_path: Path) -> None:
+        # No ledger.json at all → detector silently degrades.
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(work_dir, iteration=1)
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+        ledger_asks = [a for a in payload["nous_asks"]
+                       if "ledger.json: iter" in a["evidence"]
+                       and "status=FAILED" in a["evidence"]]
+        assert ledger_asks == []
+
+    def test_no_emission_on_malformed_ledger(self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(work_dir, iteration=1)
+        (work_dir / "ledger.json").write_text("{ not json at all")
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+        ledger_asks = [a for a in payload["nous_asks"]
+                       if "ledger.json: iter" in a["evidence"]
+                       and "status=FAILED" in a["evidence"]]
+        assert ledger_asks == []
+
+    def test_evidence_passes_validate_evidence_floor(
+            self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(work_dir, iteration=1)
+        _write_ledger_with_failure(
+            work_dir, iteration=1,
+            error="SDK returned error after 1 attempt(s): None",
+        )
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        ledger_asks = [a for a in payload["nous_asks"]
+                       if "ledger.json: iter" in a["evidence"]]
+        assert ledger_asks
+        for ask in ledger_asks:
+            assert validate_evidence(ask["evidence"]) is None, ask
+
+    def test_kind_is_dispatch(self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(work_dir, iteration=1)
+        _write_ledger_with_failure(
+            work_dir, iteration=1,
+            error="SDK returned error after 1 attempt(s): None",
+        )
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        ledger_asks = [a for a in payload["nous_asks"]
+                       if "ledger.json: iter" in a["evidence"]]
+        assert ledger_asks
+        assert all(a["kind"] == "dispatch" for a in ledger_asks)
+
+
+class TestMissingArtifactDetection:
+    """state shows iteration progressed but findings.json/retry_log.jsonl
+    absent → one nous_ask flagging the silent dispatcher death."""
+
+    def test_emits_when_iter_advanced_but_no_artifacts(
+            self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(
+            work_dir, iteration=1, last_entered_phase="EXECUTE_ANALYZE",
+        )
+        _write_ledger_with_failure(
+            work_dir, iteration=1, error="SDK returned error",
+        )
+        # No retry_log.jsonl, no runs/iter-1/findings.json.
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        obs_asks = [a for a in payload["nous_asks"]
+                    if a.get("kind") == "observability"
+                    and "dispatcher died" in a["ask"].lower()]
+        assert obs_asks, payload["nous_asks"]
+        assert "iter-1" in obs_asks[0]["evidence"]
+
+    def test_no_emission_when_findings_present(self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(
+            work_dir, iteration=1, last_entered_phase="EXECUTE_ANALYZE",
+        )
+        _write_ledger_with_failure(
+            work_dir, iteration=1, error="SDK returned error",
+        )
+        _write_findings(work_dir, 1)  # findings.json exists → no observability ask.
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        obs_asks = [a for a in payload["nous_asks"]
+                    if a.get("kind") == "observability"
+                    and "dispatcher died" in a["ask"].lower()]
+        assert obs_asks == []
+
+    def test_no_emission_when_retry_log_present(self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(
+            work_dir, iteration=1, last_entered_phase="EXECUTE_ANALYZE",
+        )
+        _write_ledger_with_failure(
+            work_dir, iteration=1, error="SDK returned error",
+        )
+        _append_jsonl(work_dir / "retry_log.jsonl", [
+            {"phase": "execute-analyze", "failure_type": "api_error",
+             "attempt": 1, "error": "real error text"},
+        ])
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        obs_asks = [a for a in payload["nous_asks"]
+                    if a.get("kind") == "observability"
+                    and "dispatcher died" in a["ask"].lower()]
+        assert obs_asks == []
+
+    def test_no_emission_when_phase_is_idle(self, tmp_path: Path) -> None:
+        # Pre-iteration campaign: state was written but no work has happened.
+        # Ledger has no rows at iteration >= 1.
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(
+            work_dir, iteration=0, last_entered_phase="IDLE",
+        )
+        (work_dir / "ledger.json").write_text(json.dumps({"iterations": []}))
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        obs_asks = [a for a in payload["nous_asks"]
+                    if a.get("kind") == "observability"
+                    and "dispatcher died" in a["ask"].lower()]
+        assert obs_asks == []
+
+    def test_no_emission_on_missing_state_or_ledger(
+            self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        work_dir.mkdir()
+        # Neither state.json nor ledger.json — defensive degrade.
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        obs_asks = [a for a in payload["nous_asks"]
+                    if a.get("kind") == "observability"
+                    and "dispatcher died" in a["ask"].lower()]
+        assert obs_asks == []
+
+    def test_evidence_passes_validate_evidence_floor(
+            self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "campaign"
+        _write_state_v2(
+            work_dir, iteration=1, last_entered_phase="EXECUTE_ANALYZE",
+        )
+        _write_ledger_with_failure(
+            work_dir, iteration=1, error="SDK returned error",
+        )
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        obs_asks = [a for a in payload["nous_asks"]
+                    if a.get("kind") == "observability"
+                    and "dispatcher died" in a["ask"].lower()]
+        assert obs_asks
+        for ask in obs_asks:
+            assert validate_evidence(ask["evidence"]) is None, ask
+
+
+class TestPost204RerunAcceptanceFixture:
+    """The acceptance fixture from issue #242's diagnostic comment.
+
+    Reproduces the on-disk shape of paper-burst.post-204-rerun.1779882732/:
+    state.json with iteration=1 phase=EXECUTE_ANALYZE, ledger.json with one
+    iter-1 status=FAILED row, no retry_log.jsonl, no findings.json. Before
+    this PR, emit_meta_findings produces 0 nous_asks for this shape. After,
+    it must produce ≥1.
+    """
+
+    def test_post_204_rerun_shape_emits_at_least_one_nous_ask(
+            self, tmp_path: Path) -> None:
+        work_dir = tmp_path / "paper-burst.post-204-rerun"
+        _write_state_v2(
+            work_dir, iteration=1, last_entered_phase="EXECUTE_ANALYZE",
+            run_id="paper-burst",
+        )
+        _write_ledger_with_failure(
+            work_dir, iteration=1,
+            error="SDK returned error after 1 attempt(s): None",
+        )
+        # principles.json is empty in the real campaign — schema permits absence.
+        (work_dir / "principles.json").write_text(
+            json.dumps({"principles": []}),
+        )
+
+        payload = emit_meta_findings(
+            work_dir, campaign={"target_system": {
+                "observable_metrics": ["x"], "controllable_knobs": ["y"],
+            }},
+        )
+
+        # The structural floor: SOMETHING in nous_asks must reflect the
+        # iter-1 FAILED row. Today this is zero — that's the bug #242
+        # documents.
+        assert payload["nous_asks"], (
+            f"#242: ledger.json iter-1 FAILED with retry_log absent should "
+            f"surface ≥1 nous_ask. Got: {payload['nous_asks']!r}"
+        )
+        # And the artifact must self-validate.
+        write_meta_findings(work_dir, payload)
+        result = validate_meta_findings(work_dir)
+        assert result["status"] == "pass", result.get("errors")
