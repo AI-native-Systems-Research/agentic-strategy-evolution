@@ -575,6 +575,59 @@ class TestRequiredIterRoot:
         result = validate_execution(d, campaign=campaign)
         assert result["status"] == "pass", result
 
+    def test_required_file_at_design_time_is_allowed_not_required(
+        self, tmp_path: Path,
+    ) -> None:
+        """validate_design merges required ⊆ allowed (so a campaign that
+        writes a required file during DESIGN doesn't get rejected by the
+        unexpected-file check), but does NOT enforce required-presence
+        at design time — most required artifacts are EXECUTE-phase
+        outputs (e.g. probe_report.md is written during EXECUTE for
+        paper-* campaigns).
+
+        Pins both invariants:
+          (a) present-during-design → no "unexpected file" rejection
+          (b) absent-during-design → still passes design (no required-presence enforcement)
+        """
+        campaign = {
+            "validation": {"required_iter_root": ["probe_report.md"]},
+        }
+
+        # (a) Present during DESIGN — required ⊆ allowed must let it through.
+        d1 = tmp_path / "iter-1"
+        _setup_design(d1)
+        (d1 / "probe_report.md").write_text("# Probe report\n")
+        result = validate_design(d1, campaign=campaign)
+        assert result["status"] == "pass", result
+
+        # (b) Absent during DESIGN — must still pass (only validate_execution
+        # enforces required-presence).
+        d2 = tmp_path / "iter-2"
+        _setup_design(d2)
+        result = validate_design(d2, campaign=campaign)
+        assert result["status"] == "pass", result
+
+    def test_required_overlapping_known_root_file_still_enforced(
+        self, tmp_path: Path,
+    ) -> None:
+        """A campaign may declare a file already in _KNOWN_ROOT_FILES
+        (e.g. findings.json) as required. The required-presence check
+        must still fire when the file is missing, even though the
+        unexpected-file check would never have flagged it.
+        """
+        d = tmp_path / "iter-1"
+        _setup_execution(d)
+        (d / "findings.json").unlink()  # in _KNOWN_ROOT_FILES, now absent.
+        campaign = {
+            "validation": {"required_iter_root": ["findings.json"]},
+        }
+        result = validate_execution(d, campaign=campaign)
+        assert result["status"] == "fail"
+        assert any(
+            "required iter-root file missing" in e and "findings.json" in e
+            for e in result["errors"]
+        ), result["errors"]
+
     def test_schema_accepts_required_iter_root(self) -> None:
         """The campaign.schema.yaml must accept the new field — without
         a schema entry, jsonschema validation in nous run would reject
