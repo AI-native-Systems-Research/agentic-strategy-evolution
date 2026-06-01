@@ -141,6 +141,96 @@ properties:
           system, e.g. ``{total_kv_blocks: 1200}``. EXECUTE_ANALYZE
           treats them as canonical; deviations require an entry in
           ``bundle_amendments.jsonl`` (#211).
+
+          Issue #246 (F1): each entry is also cross-checked against
+          ``campaign.locked_parameters`` (when present); deviation is a
+          hard validation failure regardless of --auto-approve.
+      unlocked_parameters_audit:
+        type: array
+        description: >
+          Issue #261 (F16): DESIGN agent's enumeration of every
+          campaign-physics-affecting target-system parameter it is
+          leaving at default. Forces explicit inheritance instead of
+          silent inheritance — the failure mode that took five reactive
+          rounds of locking to discover ``total_kv_blocks`` mattered in
+          paper-memorytime-mirage. Empty list is allowed (signals
+          "nothing inheritable"); validators warn when a campaign with
+          ``locked_parameters`` declares an empty audit.
+        items:
+          type: object
+          required: [name, default_value, justification]
+          additionalProperties: false
+          properties:
+            name:
+              type: string
+              minLength: 1
+              description: "Parameter name (e.g. ``MaxModelLen``)."
+            default_value:
+              description: "Default the experiment is inheriting (any JSON-serializable value)."
+            justification:
+              type: string
+              minLength: 1
+              description: "One-sentence reason this default is acceptable for this experiment."
+      physical_realism_check:
+        type: object
+        additionalProperties: false
+        description: >
+          Issue #260 (F15): when ``verified_parameters`` includes any
+          K-class parameter (KV blocks, max_model_len, max_batched_tokens),
+          DESIGN must populate this block. Validator emits a soft
+          warning when ``k_realism_ratio < 0.5`` and ``justification`` is
+          empty/perfunctory — the "you constructed your own contention"
+          reviewer-pushback failure mode.
+        properties:
+          model: { type: string, minLength: 1 }
+          gpu: { type: string, minLength: 1, description: "Hardware target the realistic K is derived for (e.g. ``H100-80GB``)." }
+          gpu_memory_utilization: { type: number, minimum: 0, maximum: 1 }
+          derived_k_realistic:
+            type: number
+            minimum: 0
+            description: "K (in blocks or tokens) computed from realistic (model, GPU, gpu_memory_utilization)."
+          k_used_in_experiment:
+            type: number
+            minimum: 0
+            description: "K actually used by the experiment."
+          k_realism_ratio:
+            type: number
+            minimum: 0
+            description: "k_used_in_experiment / derived_k_realistic. Validator soft-warns when < 0.5 unless justification is concrete."
+          justification:
+            type: string
+            description: >
+              Plain-English defense of the chosen K (and any other
+              K-class deviation) against the realism baseline.
+              Required when k_realism_ratio is far from 1.
+      workload_changes_from_canonical:
+        type: object
+        additionalProperties: false
+        required: [rationale, diff]
+        description: >
+          Issue #265 (F20): DESIGN-declared rewrite of the canonical
+          workload. When ``campaign.locked_workload`` is set and the
+          bundle's workload yaml deviates from it, this block must
+          declare the deviation explicitly. Validator hard-fails on
+          undeclared deviation; declared deviation surfaces in F4's
+          gate-summary diff under --auto-approve.
+        properties:
+          rationale:
+            type: string
+            minLength: 1
+            description: "Plain-English reason for the deviation."
+          diff:
+            type: array
+            description: "Per-field deviations from the canonical workload."
+            items:
+              type: object
+              required: [field, from, to]
+              additionalProperties: true
+              properties:
+                tenant: { type: string, description: "Tenant id when deviation is per-tenant." }
+                field: { type: string, minLength: 1 }
+                from: { description: "Canonical value (any JSON-serializable type)." }
+                to: { description: "Replacement value." }
       rehearsal_subset:
         # #222: structured rehearsal scope. When iteration_mode ==
         # "rehearsal" AND this field is populated, EXECUTE_ANALYZE
@@ -178,6 +268,28 @@ properties:
               ``findings.json`` is marked ``mode: rehearsal`` regardless
               of confirmed/refuted status. Iter-2 makes the canonical
               scientific call.
+          depth_overrides:
+            type: object
+            additionalProperties: true
+            description: >
+              Issue #248 (F3): the **breadth-vs-depth distinction**. The
+              ``seeds`` and ``arms`` fields above narrow rehearsal
+              breadth — the cell physics is preserved. ``depth_overrides``
+              narrows depth (smaller cells: shorter ``duration_seconds``,
+              lower ``concurrency_per_tenant``, etc.) — which silently
+              invalidates scale-dependent apparatus checks (empirical-PMF
+              histograms, 99.9% backlog-nonempty checks, sliding-window
+              arrival-curve checks). When this object is non-empty,
+              ``invalidates_checks`` MUST also be populated — the
+              validator rejects the rehearsal otherwise. Forces
+              authors to be explicit about which guarantees they are
+              surrendering for cheaper rehearsal cost.
+            properties:
+              invalidates_checks:
+                type: array
+                items: { type: string, minLength: 1 }
+                minItems: 1
+                description: "Names of apparatus checks invalidated by these depth overrides."
       timing_observations:
         # #226: structured per-policy timing data captured during
         # rehearsal feasibility probes. Fields are SCHEMA-LOCKED here
@@ -204,14 +316,33 @@ properties:
               type: number
               minimum: 0
           recommended_turn_silence_threshold_seconds:
-            type: number
-            minimum: 0
+            oneOf:
+              - type: number
+                minimum: 0
+              - type: object
+                additionalProperties: false
+                properties:
+                  design: { type: number, minimum: 0 }
+                  execute_analyze: { type: number, minimum: 0 }
+                  report: { type: number, minimum: 0 }
             description: >
               Suggested override for ``campaign.sdk_timeouts.turn_silence_threshold_seconds``
               for iter-2 / real iters. Computed by the rehearsal agent
               as roughly 3× the slowest policy observed, with buffer.
               ``SDKDispatcher`` reads this in preference to the
               campaign-level default.
+
+              Issue #264 (F19): may be either a scalar (legacy: same
+              threshold for every phase) or a per-phase map
+              ``{design, execute_analyze, report}``. EXECUTE_ANALYZE-tuned
+              values silently broke DESIGN turns in
+              paper-memorytime-mirage iter-3 — DESIGN's heavy reasoning
+              between tool calls trips a 120s threshold that's
+              appropriate for EXECUTE_ANALYZE's frequent simulator
+              calls. Rehearsal-derived values that vary by phase MUST
+              use the map form; the scalar form is preserved for
+              backward compat with iter-1 rehearsals that ran one
+              phase only.
           observation_method:
             type: string
             minLength: 1

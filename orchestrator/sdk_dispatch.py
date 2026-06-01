@@ -25,6 +25,7 @@ Design decisions worth knowing:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -163,10 +164,21 @@ async def aiter_with_silence_watchdog(aiter, threshold: float | None):
         # generators have ``aclose``; plain async iterators don't, so
         # guard with ``hasattr``. Best-effort: if aclose itself raises,
         # we don't mask the original exception we're already unwinding.
+        #
+        # #257 (F12): wrap in a short timeout so we don't deadlock when
+        # the consumer was mid-iteration on abort (the
+        # ``RuntimeError: aclose(): asynchronous generator is already
+        # running`` race), and explicitly catch the documented exception
+        # set so the asyncio default "loud cleanup error" doesn't
+        # spam the abort report's stderr.
         aclose = getattr(aiter, "aclose", None)
         if callable(aclose):
             try:
-                await aclose()
+                coro = aclose()
+                if hasattr(coro, "__await__"):
+                    await asyncio.wait_for(coro, timeout=5.0)  # type: ignore[arg-type]
+            except (asyncio.TimeoutError, asyncio.CancelledError, RuntimeError, GeneratorExit):
+                pass  # already running / racing — let the loop tear down naturally
             except Exception:  # noqa: BLE001 — best-effort cleanup
                 pass
 
@@ -417,9 +429,28 @@ def _default_sdk_runner_factory() -> SDKRunner:
             # existing transient-retry machinery (lines below) catches
             # it and retries instead of blocking the campaign forever.
             aiter = query(prompt=prompt, options=options).__aiter__()
+            # #250 (F5): event-boundary STOP. Resolve the work_dir once
+            # per-turn from the event_log_path (which lives at
+            # ``<work_dir>/runs/iter-N/inputs/executor_log.jsonl``) so
+            # the loop can check for STOP_IMMEDIATE at each message
+            # boundary without re-walking the filesystem every event.
+            stop_immediate_path: Path | None = None
+            if event_log_path is not None:
+                # walk up to work_dir: inputs/.. = iter-N; iter-N/.. = runs; runs/.. = work_dir
+                try:
+                    stop_immediate_path = (
+                        Path(event_log_path).parent.parent.parent.parent / "STOP_IMMEDIATE"
+                    )
+                except (IndexError, ValueError):
+                    stop_immediate_path = None
             async for message in aiter_with_silence_watchdog(
                 aiter, turn_silence_threshold,
             ):
+                if stop_immediate_path is not None and stop_immediate_path.exists():
+                    raise SDKTransientError(
+                        "STOP_IMMEDIATE sentinel detected; aborting SDK turn "
+                        "at event boundary (#250 / F5)."
+                    )
                 cls = type(message).__name__
                 message_class_counts[cls] = message_class_counts.get(cls, 0) + 1
                 # #127 Phase B: tee every SDK message as a JSONL event so
@@ -570,21 +601,68 @@ class SDKDispatcher(CLIDispatcher):
             "turn_silence_threshold_seconds",
             self._silence_threshold,
         )
-        try:
-            self._turn_silence_threshold = float(raw_turn_threshold)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"campaign.sdk_timeouts.turn_silence_threshold_seconds must be "
-                f"a non-negative number, got {raw_turn_threshold!r}"
-            ) from exc
-        if self._turn_silence_threshold < 0:
-            raise ValueError(
-                f"campaign.sdk_timeouts.turn_silence_threshold_seconds must be "
-                f">= 0, got {self._turn_silence_threshold}"
+        # #264 (F19): scalar (legacy) OR per-phase map. Per-phase
+        # defaults — DESIGN's heavy reasoning between tool calls
+        # earns 600s; EXECUTE_ANALYZE's frequent simulator calls
+        # earns 120s; REPORT sits in between at 240s. These match
+        # the friction-report's recommended values.
+        self._phase_silence_thresholds: dict[str, float] = {
+            "design": 600.0,
+            "execute_analyze": 120.0,
+            "report": 240.0,
+        }
+        if isinstance(raw_turn_threshold, dict):
+            for phase_key in ("design", "execute_analyze", "report"):
+                if phase_key in raw_turn_threshold:
+                    try:
+                        v = float(raw_turn_threshold[phase_key])
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            f"campaign.sdk_timeouts.turn_silence_threshold_seconds.{phase_key} "
+                            f"must be a non-negative number, got "
+                            f"{raw_turn_threshold[phase_key]!r}"
+                        ) from exc
+                    if v < 0:
+                        raise ValueError(
+                            f"campaign.sdk_timeouts.turn_silence_threshold_seconds.{phase_key} "
+                            f"must be >= 0, got {v}"
+                        )
+                    self._phase_silence_thresholds[phase_key] = v
+            # Legacy scalar attribute: use the largest phase value as
+            # the "global default" the rest of the dispatcher reads.
+            # In practice every code path now goes through
+            # _resolve_turn_silence_threshold(phase), so this is
+            # transitional plumbing that backward-compat callers
+            # (older tests) can still reach.
+            self._turn_silence_threshold = max(
+                self._phase_silence_thresholds.values()
             )
+        else:
+            try:
+                self._turn_silence_threshold = float(raw_turn_threshold)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"campaign.sdk_timeouts.turn_silence_threshold_seconds must be "
+                    f"a non-negative number or per-phase map, got {raw_turn_threshold!r}"
+                ) from exc
+            if self._turn_silence_threshold < 0:
+                raise ValueError(
+                    f"campaign.sdk_timeouts.turn_silence_threshold_seconds must be "
+                    f">= 0, got {self._turn_silence_threshold}"
+                )
+            # Scalar form applies to every phase (backward compat).
+            self._phase_silence_thresholds = {
+                k: self._turn_silence_threshold
+                for k in self._phase_silence_thresholds
+            }
         # #127 Phase B: event log path is recomputed per-dispatch (it depends
         # on the iteration), so we don't store it on the dispatcher.
         self._event_log_path: Path | None = None
+        # #264 (F19): bundle-side per-iter silence threshold side-effect
+        # state. Populated by ``_bundle_recommended_turn_silence_threshold``
+        # at dispatch start; consumed by ``_resolve_turn_silence_threshold``.
+        self._bundle_silence_phase_overrides: dict[str, float] = {}
+        self._bundle_silence_scalar_override: float | None = None
 
     # ------------------------------------------------------------------
     # Per-iteration event log (#127 Phase B)
@@ -618,6 +696,24 @@ class SDKDispatcher(CLIDispatcher):
                 summary["max_gap_seconds"], self._silence_threshold,
             )
 
+    def _resolve_turn_silence_threshold(self, phase: str) -> float:
+        """#264 (F19): the live watchdog threshold for THIS phase.
+
+        Resolution chain (highest priority first):
+          1. Bundle-side per-phase override (rehearsal-recorded).
+          2. Bundle-side scalar override (rehearsal-recorded, legacy).
+          3. Campaign-side per-phase value (set in __init__).
+          4. Phase default (design=600, execute_analyze=120, report=240).
+        Returns 0 only if every layer evaluated to 0 (operator opted out).
+        """
+        bundle_per_phase = self._bundle_silence_phase_overrides
+        if bundle_per_phase and phase in bundle_per_phase:
+            return bundle_per_phase[phase]
+        bundle_scalar = self._bundle_silence_scalar_override
+        if bundle_scalar is not None:
+            return bundle_scalar
+        return self._phase_silence_thresholds.get(phase, self._turn_silence_threshold)
+
     def _bundle_recommended_turn_silence_threshold(
             self, iteration: int) -> float | None:
         """Read the rehearsal-recorded watchdog threshold override from the
@@ -630,7 +726,16 @@ class SDKDispatcher(CLIDispatcher):
         why the override didn't apply — silently falling back to the
         campaign default would be the silent-failure pattern PR #218
         was specifically meant to kill.
+
+        Side effect: also populates
+        ``self._bundle_silence_phase_overrides`` (for the per-phase map
+        form, #264/F19). Callers that want phase-aware resolution
+        should use ``_resolve_turn_silence_threshold(phase)`` instead
+        of this scalar return value.
         """
+        # Reset side-effect state.
+        self._bundle_silence_phase_overrides = {}
+        self._bundle_silence_scalar_override: float | None = None
         if iteration < 2:
             return None
         prior_iter_dir = self.work_dir / "runs" / f"iter-{iteration - 1}"
@@ -667,12 +772,31 @@ class SDKDispatcher(CLIDispatcher):
         if not isinstance(timing, dict):
             return None
         val = timing.get("recommended_turn_silence_threshold_seconds")
+        # #264 (F19): per-phase map form. Populate the side-effect dict
+        # so _resolve_turn_silence_threshold() can use it.
+        if isinstance(val, dict):
+            for phase_key in ("design", "execute_analyze", "report"):
+                if phase_key in val:
+                    try:
+                        v = float(val[phase_key])
+                    except (TypeError, ValueError):
+                        continue
+                    if v < 0:
+                        continue
+                    self._bundle_silence_phase_overrides[phase_key] = v
+            # Legacy callers that use the scalar return value get the
+            # max — preserves "iter-2 watchdog at least catches what the
+            # rehearsal saw" semantics.
+            if self._bundle_silence_phase_overrides:
+                return max(self._bundle_silence_phase_overrides.values())
+            return None
         try:
             v = float(val) if val is not None else None
         except (TypeError, ValueError):
             return None
         if v is None or v < 0:
             return None
+        self._bundle_silence_scalar_override = v
         return v
 
     def dispatch(  # type: ignore[override]
@@ -695,11 +819,17 @@ class SDKDispatcher(CLIDispatcher):
         # right value for THIS iter; reset after to avoid leaking state
         # to subsequent dispatches in long-running campaigns.
         original_threshold = self._turn_silence_threshold
-        bundle_override = self._bundle_recommended_turn_silence_threshold(
-            iteration,
-        )
-        if bundle_override is not None:
-            self._turn_silence_threshold = bundle_override
+        # Calling this populates the per-phase override side-effect dict
+        # used by _resolve_turn_silence_threshold().
+        self._bundle_recommended_turn_silence_threshold(iteration)
+        # #264 (F19): resolve phase-aware threshold for THIS phase.
+        # Mapping is loose — phase strings vary across the codebase
+        # ("design"/"execute_analyze"/"report" are the canonical
+        # buckets; phases like "summarize-gate" fall back to the
+        # nearest match or the legacy global).
+        phase_key = self._normalize_phase(phase)
+        resolved = self._resolve_turn_silence_threshold(phase_key)
+        self._turn_silence_threshold = resolved
         try:
             super().dispatch(
                 role, phase,
@@ -722,6 +852,25 @@ class SDKDispatcher(CLIDispatcher):
     # ------------------------------------------------------------------
     # Pre-flight
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_phase(phase: str) -> str:
+        """#264 (F19): map dispatcher phase strings to the per-phase
+        threshold keys (design/execute_analyze/report).
+
+        Phases the codebase emits include ``design``, ``execute-analyze``,
+        ``execute_analyze``, ``summarize-gate`` (LLM-only summarizer,
+        not a code phase), ``critique``, etc. We normalize the
+        canonical three and fall back to ``execute_analyze`` for
+        anything code-flavored.
+        """
+        if phase in ("design",):
+            return "design"
+        if phase in ("execute-analyze", "execute_analyze"):
+            return "execute_analyze"
+        if phase in ("report", "summarize-gate", "summarize_gate"):
+            return "report"
+        return "execute_analyze"
 
     def preflight_check(self) -> None:
         """Verify the SDK is reachable before starting a campaign."""

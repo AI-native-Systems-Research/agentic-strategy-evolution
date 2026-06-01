@@ -121,6 +121,14 @@ properties:
       operators can scan retry_log for ``failure_type: sdk_silence`` to
       catch hung subprocesses, polling-loop stalls, and API stalls
       without watching the run live.
+
+      #264 (F19): ``turn_silence_threshold_seconds`` (and the bundle-side
+      override at experiment_spec.timing_observations.recommended_turn_silence_threshold_seconds)
+      may be either a scalar (legacy: same threshold for every phase) or
+      a per-phase map ``{design, execute_analyze, report}``. Different
+      phases have different rhythms — DESIGN does heavy reasoning between
+      tool calls, EXECUTE_ANALYZE does frequent simulator calls — so
+      one number for both is wrong by construction.
     properties:
       silence_threshold_seconds:
         type: number
@@ -129,6 +137,22 @@ properties:
           Minimum gap between SDK streaming events that should trigger a
           silence warning in retry_log.jsonl. Default 600 (10 minutes).
           Set to 0 to disable the diagnostic entirely.
+      turn_silence_threshold_seconds:
+        oneOf:
+          - type: number
+            minimum: 0
+          - type: object
+            additionalProperties: false
+            properties:
+              design: { type: number, minimum: 0 }
+              execute_analyze: { type: number, minimum: 0 }
+              report: { type: number, minimum: 0 }
+        description: >
+          Live mid-turn watchdog (#205) override. Scalar form applies
+          globally (legacy). Map form (#264 / F19) applies per-phase —
+          recommended defaults: design=600, execute_analyze=120,
+          report=240. Phases not listed in the map fall back to
+          ``silence_threshold_seconds`` (or 600 if also unset).
 
   sandbox:
     type: string
@@ -270,6 +294,156 @@ properties:
       Opt-in named preset for the objective block (issue #168). Mutually
       exclusive with `objective`. Adding new presets requires a schema
       change so users can never silently inherit weights they didn't see.
+
+  locked_parameters:
+    type: object
+    additionalProperties: true
+    description: >
+      Issue #246 (F1): campaign-author-declared parameters that are
+      hard-pinned for this campaign's experiments. Each ``key: value``
+      entry MUST appear identically in
+      ``bundle.experiment_spec.verified_parameters``; mismatches are
+      hard validation failures (see ``orchestrator.validate.validate_design``)
+      that fire **regardless of --auto-approve**. This is the spec-
+      fidelity primitive that closes the gap left by HUMAN_DESIGN_GATE
+      bypass under auto-approve.
+
+      Idiomatic keys: ``model``, ``concurrency_per_tenant``,
+      ``duration_seconds``, ``warmup_seconds``, ``total_kv_blocks``,
+      and any other knob whose deviation would invalidate the
+      experiment. See ``docs/campaign-authoring-guide.md`` for the
+      "what to lock" inventory.
+
+  locked_workload:
+    type: object
+    additionalProperties: true
+    description: >
+      Issue #265 (F20): canonical workload structure that
+      ``bundle.inputs/<workload>.yaml`` must match. Same hard-fail
+      semantics as ``locked_parameters``, but covers the workload
+      yaml content (per-tenant input/output distributions,
+      concurrency) which doesn't appear in
+      ``verified_parameters``. Entry shape mirrors the workload yaml
+      structure so a copy-paste from the canonical workload is the
+      simplest authoring path. Deliberate deviations require
+      ``bundle.workload_changes_from_canonical`` (see #265).
+
+  derived_from:
+    type: object
+    additionalProperties: false
+    required: [campaign]
+    description: >
+      Issue #266 (F21): declares that this campaign inherits the
+      worktree code state of a prior campaign at a specific iteration.
+      At INIT, nous reads
+      ``$NOUS_CAMPAIGN_PARENT/<campaign>/runs/iter-<iteration>/patches/cumulative.patch``
+      (or the legacy ``<target>/.nous/...`` location) and applies it
+      as a preflight to every experiment worktree. Removes the manual
+      "find the right patch, verify it applies, bake into preflight_commands"
+      archeology that follow-up campaigns paid for in paper-memorytime-mirage.
+    properties:
+      campaign:
+        type: string
+        minLength: 1
+        description: "run_id of the prior campaign whose code state to inherit."
+      iteration:
+        oneOf:
+          - { type: integer, minimum: 1 }
+          - { type: string, enum: [final] }
+        description: >
+          Iteration whose ``cumulative.patch`` to apply. ``final`` resolves to
+          the highest-numbered completed iteration. Default: ``final``.
+
+  plot_specs:
+    type: array
+    description: >
+      Issue #263 (F18): declarative figure pipeline. After
+      ``findings.json`` is written in REPORT, nous invokes each
+      script with environment variables ``NOUS_RESULTS_DIR`` (the
+      iter's results/) and ``NOUS_FIGURES_DIR`` (the iter's
+      figures/, auto-created). The script's job is to read JSON
+      from results/ and write outputs to figures/. Solves the
+      "every paper rebuilds figure scaffolding" problem in one
+      campaign-level declaration.
+    items:
+      type: object
+      required: [id, script]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: "Stable identifier (e.g. ``figure-1-mirage-ratio``)."
+        script:
+          type: string
+          minLength: 1
+          description: "Path to the figure script (relative to campaign.yaml)."
+        consumes:
+          type: array
+          items: { type: string, minLength: 1 }
+          description: "Arm IDs whose results feed this figure (informational; the script reads results/ itself)."
+        metrics:
+          type: array
+          items: { type: string, minLength: 1 }
+          description: "Metric names the figure depends on (informational)."
+        outputs:
+          type: array
+          items: { type: string, minLength: 1 }
+          description: "Output filenames written to ``figures/`` (informational; checked when the script returns)."
+        caption:
+          type: string
+          description: "Caption text (also used in nous package's README)."
+
+  reproducibility_metadata:
+    type: object
+    additionalProperties: true
+    description: >
+      Issue #262 (F17): auto-populated by ``nous run`` at INIT (before
+      DESIGN). Captures the environment metadata required for external
+      reproduction that nous would otherwise leave to operator
+      memory: target repo commit, hardware-config sha, language
+      versions, gpu_memory_utilization, etc. Per-iteration snapshots
+      of latency-config files land in ``runs/iter-N/snapshots/``.
+
+      The block is user-readable but **not user-set** — values present
+      at campaign load time are overwritten by the INIT capturer. To
+      pin a value the user controls (e.g. choose a specific commit),
+      check it out before running nous; the captured ``repo_commit``
+      reflects what was on disk.
+    properties:
+      repo_commit: { type: string, description: "Target repo HEAD sha at INIT." }
+      repo_dirty:
+        type: boolean
+        description: "True if the working tree had uncommitted changes when nous started."
+      hardware_config_sha256:
+        type: string
+        description: "SHA-256 of the target repo's hardware_config.json (or equivalent)."
+      latency_config_files:
+        type: array
+        items: { type: string, minLength: 1 }
+        description: "Paths to model-latency config files snapshotted into snapshots/."
+      go_sum_sha256:
+        type: string
+        description: "SHA-256 of go.sum (Go targets)."
+      requirements_sha256:
+        type: string
+        description: "SHA-256 of requirements.txt / pyproject.toml (Python targets)."
+      package_lock_sha256:
+        type: string
+        description: "SHA-256 of package-lock.json (Node targets)."
+      cargo_lock_sha256:
+        type: string
+        description: "SHA-256 of Cargo.lock (Rust targets)."
+      language_versions:
+        type: object
+        additionalProperties: { type: string }
+        description: "Map of language → version string (e.g. ``go: 1.22.0``)."
+      gpu_memory_utilization:
+        type: number
+        description: "vLLM-style fraction; affects K derivation."
+      captured_at:
+        type: string
+        description: "ISO-8601 timestamp when nous wrote this block."
 
   warm_start:
     type: object

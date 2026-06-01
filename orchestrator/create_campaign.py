@@ -151,6 +151,81 @@ prompts:
   # target_system.description above. Issue #89.
   domain_adapter_layer: null
 
+# ─── Spec-fidelity locks (issues #246/F1, #258/F13, #265/F20) ────────────
+# Hard-pinned campaign parameters. Each key here MUST appear identically
+# in the design agent's bundle.experiment_spec.verified_parameters;
+# nous's validator hard-fails any deviation, regardless of --auto-approve.
+#
+# WHAT TO LOCK: any parameter whose deviation would invalidate THIS
+# experiment. Common categories:
+#
+#   * Workload identity:    model, concurrency_per_tenant, duration_seconds, warmup_seconds
+#   * KV / batching:        total_kv_blocks, MaxModelLen, MaxOutputLen,
+#                           max_num_seqs, max_batched_tokens, gpu_memory_utilization,
+#                           BlockSize
+#   * Latency model:        MfuPrefill, MfuDecode, TP factor (when these
+#                           appear in the target's per-model latency config)
+#   * Scheduler tunables:   beta_seconds, omega, H, kv_quota, etc.
+#   * Network / streaming:  rtt_ms, bandwidth, FlowControlEnabled
+#
+# The discipline (#258 / F13): enumerate every parameter that COULD
+# affect the experimental physics and decide for EACH whether deviation
+# is acceptable. Locking reactively (waiting for a bug to surface)
+# accumulates rather than addresses risk. See
+# docs/campaign-authoring-guide.md for the inventory checklist.
+# locked_parameters:
+#   model: meta-llama/llama-3.1-8b-instruct
+#   concurrency_per_tenant: 32
+#   duration_seconds: 600
+#   warmup_seconds: 30
+#   total_kv_blocks: 24576
+#   gpu_memory_utilization: 0.9
+
+# Workload yaml lock (#265 / F20). Parallel to locked_parameters, for
+# per-tenant distributions that live in inputs/<workload>.yaml.
+# Mismatches against bundle.inputs/*.yaml hard-fail; deliberate
+# deviations require bundle.workload_changes_from_canonical.
+# locked_workload:
+#   tenants:
+#     tenant-A:
+#       input_distribution: {{type: constant, value: 1024}}
+#       output_distribution: {{type: constant, value: 1}}
+#       concurrency: 32
+#     tenant-B:
+#       input_distribution:
+#         type: empirical_pmf
+#         values: [100, 4720]
+#         probs: [0.8, 0.2]
+
+# Cross-campaign code reuse (#266 / F21). Inherits the cumulative
+# patch from a prior campaign's specified iteration. nous applies it
+# as a preflight at every experiment-worktree creation.
+# derived_from:
+#   campaign: paper-memorytime-mirage
+#   iteration: 2          # or "final"
+
+# Per-phase silence threshold (#264 / F19). Different phases have
+# different rhythms — DESIGN's heavy reasoning between tool calls
+# vs EXECUTE_ANALYZE's frequent simulator calls. Defaults are
+# design=600, execute_analyze=120, report=240. Scalar form (legacy)
+# applies one threshold to all phases.
+# sdk_timeouts:
+#   silence_threshold_seconds: 600
+#   turn_silence_threshold_seconds:
+#     design: 600
+#     execute_analyze: 120
+#     report: 240
+
+# Declarative figure pipeline (#263 / F18). REPORT phase invokes
+# each script with NOUS_RESULTS_DIR + NOUS_FIGURES_DIR env vars.
+# plot_specs:
+#   - id: figure-1-mirage-ratio
+#     script: plots/figure_1_mirage.py
+#     consumes: [h-main]
+#     metrics: [memorytime_share_ratio]
+#     outputs: [figures/figure-1.pdf]
+#     caption: "Mirage manifests under WFQ; KV-time corrects."
+
 # ─── Optional cross-campaign + epistemic-rigor blocks ─────────────────────
 # Uncomment + fill in as needed. See linked issues for details.
 

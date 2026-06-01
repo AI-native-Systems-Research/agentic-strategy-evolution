@@ -148,9 +148,29 @@ measurement). The validator floor (`validate_evidence`) rejects
 aspirational platitudes regardless of source. See `docs/data-model.md`
 for the schema.
 
+## Spec fidelity (issue #246 / F1, friction-report #245)
+
+Every campaign should declare ``locked_parameters`` (and, when
+applicable, ``locked_workload``) for every knob whose deviation
+would invalidate the experiment. The validator hard-fails any
+bundle whose ``experiment_spec.verified_parameters`` deviates from
+``locked_parameters`` — regardless of ``--auto-approve``. This
+closes the spec-fidelity gap that allowed paper-memorytime-mirage
+iter-1 to silently rewrite four locked workload parameters.
+
+Authoring discipline lives in ``docs/campaign-authoring-guide.md``
+(the "what to lock" inventory + the rehearsal-as-instrument
+worked example). The full friction-report resolution map is in
+``docs/friction-245-resolution.md``.
+
 ## See also
 
 - `docs/contributing/workflow.md` — full workflow doc.
 - `docs/security.md` — permission policy (#135).
 - `docs/architecture.md` — internals.
+- `docs/campaign-authoring-guide.md` — locked_parameters, the
+  "what to lock" inventory, rehearsal-as-instrument (#245
+  resolution).
+- `docs/friction-245-resolution.md` — F1..F21 → file map for
+  paper-memorytime-mirage friction report.
 - `docs/plans/CHECKPOINT.md` — current state of the #120 epic.

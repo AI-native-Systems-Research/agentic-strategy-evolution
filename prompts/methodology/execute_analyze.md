@@ -19,6 +19,48 @@ Your job has FIVE phases — all in one session with full context:
 
 You have {{max_turns}} turns. Use them.
 
+## Apparatus discipline (#252 / F7)
+
+**Apparatus invariants must validate the ATTRIBUTION the experiment
+depends on, not just an upstream total.**
+
+When the experiment's claim is "per-tenant ``A_i`` is correct," your
+invariant must compare per-tenant ``A_i`` (your attribution variable)
+against an **independent per-tenant ground truth** — not against the
+totals-level ground truth. A check that compares ``Σ tenants``
+against ``Σ everything`` will pass even if individual tenants are
+mis-attributed (orphan-attribution bugs, swap-out gaps,
+preempt-without-account bugs).
+
+**The bug-class test.** When designing an invariant, ask: *if the
+bug I want to catch were present, would this invariant fail?* If the
+bug-of-interest involves attribution among items, your invariant
+must distinguish per-item, not just sum.
+
+**Worked example (paper-memorytime-mirage, BLIS sim/kvtime/meter.go).**
+- Conservation invariant: ``Σ_RequestMap == UsedBlocks · BlockSize``. ✅ Always passed.
+- Per-tenant attribution: walked ``runningBatch``, not ``RequestMap``.
+- Author's own comment: *"RequestMap may also contain requests NOT in runningBatch"* — i.e., orphans (preempted/swapped requests holding KV blocks).
+- Result: orphans counted toward ``UsedBlocks · BlockSize`` (right-hand side of the conservation check) but NOT attributed to any tenant in ``Accumulated``. Per-tenant ``A_i(t)`` silently undercounted; conservation passed.
+
+The conservation check validated the upstream total, not the
+attribution the experiment depended on. **Generalizable pattern**:
+*if your meter walks set A but conservation compares set B's total,
+a mismatch between A and B is invisible*.
+
+**Apparatus-design checklist** — for each invariant in your
+implementation, write a one-line declaration:
+* What bug-class does this invariant catch?
+* Does the invariant inspect the variable the experiment cares about,
+  or only an aggregate that happens to be cheaper to compute?
+* If the bug-class is "attribution among items," is the check
+  per-item?
+
+Capture this checklist alongside your apparatus implementation
+(e.g., in a code comment, the README, or ``invariants.md`` next
+to the meter). Reviewers (and the next iteration's designer) need
+it to recognize a check that's "passing for the wrong reason."
+
 ## Iteration mode
 
 This iteration's mode is: **{{iteration_mode}}**

@@ -8,6 +8,34 @@ This iteration's mode is: **{{iteration_mode}}**
 
 {{mode_guidance}}
 
+## Source-of-truth hierarchy (#247 / F2)
+
+When the **campaign.yaml** conflicts with the target repo's
+documentation, sample configs, or example YAMLs, **the campaign.yaml
+wins**. Do not adopt patterns from the target repo's docs (e.g.,
+model names, default concurrency, default block sizes, default
+durations) if they contradict any value declared in the campaign.yaml's
+``workload``, ``target_system``, ``locked_parameters``, or
+``locked_workload`` sections. When in doubt, treat the campaign.yaml
+as the only source of truth for **what to invoke the system with**;
+treat the target repo as a source of truth only for **how to invoke
+it** (CLI flags, file formats, build commands).
+
+**Worked example.** campaign.yaml says ``model: meta-llama/llama-3.1-8b-instruct``.
+Target repo's ``CLAUDE.md`` shows ``qwen/qwen3-14b`` in 10+
+example invocations. Choose llama. The campaign.yaml wins.
+
+**locked_parameters as a hard constraint (#246 / F1).** Every key
+in ``campaign.locked_parameters`` MUST appear identically in your
+``bundle.experiment_spec.verified_parameters``. nous's validator
+hard-fails on any deviation, regardless of ``--auto-approve``. If a
+locked parameter conflicts with what your exploration suggests
+(e.g., a smaller K would make iter-1 cheaper), do NOT silently
+override it — surface the friction in ``problem.md`` and respect
+the campaign's value. The campaign author intends those values; the
+right channel for changing them is ``brief_amendments.md``, not
+silent rewrite.
+
 ## Artifact Directory
 
 Write all artifacts to: `{{iter_dir}}`
@@ -196,6 +224,39 @@ Now design a hypothesis bundle based on what you actually observed and verified:
      the executor a plain-Python expression that labels each row.
    - `verified_parameters`: parameters you confirmed work for this
      target (e.g. `{total_kv_blocks: 1200}`). Treat as canonical.
+     Cross-checked against ``campaign.locked_parameters`` (#246/F1) —
+     mismatches hard-fail validation regardless of ``--auto-approve``.
+   - `unlocked_parameters_audit` *(#261 / F16)*: enumerate every
+     target-system parameter that could plausibly affect experiment
+     outcomes and that you are leaving at default. For each, declare
+     ``{name, default_value, justification}``. Justify each in one
+     sentence: why is this default acceptable for THIS experiment?
+     Examples of parameters worth auditing in an LLM-serving
+     campaign: ``MaxModelLen``, ``MaxOutputLen``, ``max_num_seqs``,
+     ``max_batched_tokens``, ``gpu_memory_utilization``,
+     ``BlockSize``, ``MfuPrefill``, ``MfuDecode``, ``rtt_ms``. The
+     reactive failure mode (locked-parameter sets growing across 5
+     review rounds in paper-memorytime-mirage) was a symptom of
+     silent inheritance. Use this audit to make inheritance explicit,
+     so the campaign author can see what you're inheriting and add a
+     ``locked_parameters`` entry if any default is fragile.
+   - `physical_realism_check` *(#260 / F15 — populate whenever
+     verified_parameters includes a K-class quantity)*: declare
+     ``{model, gpu, gpu_memory_utilization, derived_k_realistic,
+     k_used_in_experiment, k_realism_ratio, justification}``.
+     ``k_realism_ratio`` is ``k_used / k_realistic``. If the ratio
+     is far from 1, the validator surfaces a soft warning unless
+     ``justification`` is concrete (>= 30 chars). Why this matters:
+     a campaign that picks K to make the mechanism manifest
+     (mathematically valid for showing the effect) is vulnerable to
+     reviewer pushback ("you constructed your own contention") if
+     the realism check isn't surfaced. Declare it.
+   - `workload_changes_from_canonical` *(#265 / F20 — populate
+     whenever the workload yaml deviates from
+     campaign.locked_workload)*: declare ``{rationale, diff:
+     [{tenant?, field, from, to}]}``. The validator hard-fails on
+     undeclared deviation, but a declared, justified deviation
+     surfaces in F4's gate-summary diff and is auditable.
    - `rehearsal_subset` *(populate when iteration_mode == rehearsal — #222)*:
      declarative scope for what iter-1 (rehearsal) should execute.
      Required sub-fields when present: `seeds: [int]` (typically the
@@ -205,6 +266,34 @@ Now design a hypothesis bundle based on what you actually observed and verified:
      `mode: rehearsal` regardless of confirmed/refuted). The full
      experiment_spec stays at full scope so iter-2 inherits it
      untouched.
+
+     **Breadth vs depth — #248 / F3.** ``seeds`` and ``arms`` narrow
+     **breadth** (fewer cells); the **cell physics is preserved**.
+     Do NOT shrink depth (``duration_seconds``, ``concurrency``, etc.)
+     by writing smaller values directly into ``verified_parameters``
+     for the rehearsal — that silently invalidates scale-dependent
+     apparatus checks (empirical-PMF histograms, 99.9%
+     backlog-nonempty checks, sliding-window arrival-curve checks).
+     If iter-1 must run at smaller depth, declare it explicitly:
+
+     ```yaml
+     rehearsal_subset:
+       seeds: [42]
+       arms: [h-main, h-control-negative]
+       depth_overrides:
+         duration_seconds: 120
+         concurrency_per_tenant: 8
+         invalidates_checks:
+           - workload-distribution-histogram
+           - backlog-nonempty-99.9
+     ```
+
+     ``invalidates_checks`` is REQUIRED whenever ``depth_overrides``
+     contains any payload field; the validator rejects the rehearsal
+     otherwise. The principle: *retain physics validation with
+     simplicity, instead of sacrificing physics for the sake of
+     simplicity*. Occam should narrow what's tested, not weaken what
+     each test means.
    - `timing_observations` *(populate when iteration_mode == rehearsal — #226)*:
      per-policy wall-time observations from feasibility probes.
      Required sub-fields: `expected_wall_time_seconds_per_policy: { policy: number }`

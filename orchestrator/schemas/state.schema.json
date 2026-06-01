@@ -45,6 +45,11 @@
     "repo_path": {
       "type": ["string", "null"],
       "description": "Absolute path to the target system's repo, recorded at setup_work_dir (#239). Used for collision detection (refusing to clobber a same-named campaign that targets a different repo when NOUS_CAMPAIGN_PARENT is set) and to identify which target a campaign belongs to. **Machine-local**, same caveats as work_dir. Null before setup or when the campaign was authored without a target_system.repo_path."
+    },
+    "reproducibility_metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Auto-captured reproducibility metadata (#262 / F17). Populated by setup_work_dir at INIT (target repo HEAD sha, hardware-config sha, language versions, latency-config file paths, gpu_memory_utilization, captured_at). First-capture-wins: re-running INIT on an existing campaign preserves the original block, which is what reviewers want (the state at campaign start, not at iter-3 resume time). See orchestrator/reproducibility.py for the capture logic and orchestrator/schemas/campaign.schema.yaml for the per-field documentation."
     }
   }
 }

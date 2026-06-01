@@ -288,4 +288,57 @@ def format_watch_panel(snap: StatusSnapshot) -> str:
     if snap.stuck:
         lines.append("")
         lines.append("⚠  STUCK?  no executor activity in the last 5 minutes.")
+    # #249 (F4): surface campaign_spec_diff from the most recent
+    # gate_summary_design.json. Auditors and watchdogs can also
+    # grep the JSON directly; this is the human-readable form.
+    diff_summary = _format_recent_spec_diff(snap)
+    if diff_summary:
+        lines.append("")
+        lines.append(diff_summary)
+    # #262 (F17): show repro-metadata hint so reviewers know it's captured.
+    repro = (snap.raw or {}).get("reproducibility_metadata")
+    if isinstance(repro, dict) and repro.get("repo_commit"):
+        lines.append(
+            f"Repro:      repo_commit={repro['repo_commit'][:12]} "
+            f"(dirty={repro.get('repo_dirty', '?')})"
+        )
     return "\n".join(lines)
+
+
+def _format_recent_spec_diff(snap: StatusSnapshot) -> str | None:
+    """#249 (F4): render the campaign_spec_diff block (if any) from
+    the most recent design-gate summary into human-readable form.
+    """
+    work_dir_path = (snap.raw or {}).get("work_dir")
+    if not work_dir_path:
+        return None
+    work_dir = Path(work_dir_path)
+    iter_n = snap.iteration or 1
+    summary_path = work_dir / "runs" / f"iter-{iter_n}" / "gate_summary_design.json"
+    if not summary_path.exists():
+        return None
+    try:
+        summary = json.loads(summary_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    diff = summary.get("campaign_spec_diff") if isinstance(summary, dict) else None
+    if not isinstance(diff, dict):
+        return None
+    parts: list[str] = []
+    violations = diff.get("locked_parameters_violations") or []
+    if violations:
+        parts.append(f"Spec diff:  {len(violations)} locked-parameter violation(s):")
+        for v in violations:
+            parts.append(
+                f"  - {v.get('param')}: campaign={v.get('campaign')!r}, "
+                f"bundle={v.get('bundle')!r}"
+            )
+    if diff.get("depth_overrides_present"):
+        invalidates = diff.get("invalidated_checks_declared") or []
+        parts.append(
+            f"            depth_overrides present "
+            f"(invalidates: {len(invalidates)} check(s))"
+        )
+    if diff.get("workload_changes_from_canonical_declared"):
+        parts.append("            workload_changes_from_canonical declared")
+    return "\n".join(parts) if parts else None

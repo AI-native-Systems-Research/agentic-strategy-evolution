@@ -208,6 +208,196 @@ def validate_principles_have_empirical_content(
     return warnings
 
 
+def _validate_locked_parameters(
+    bundle: dict, campaign: dict | None,
+) -> list[str]:
+    """Issue #246 (F1): hard-fail when bundle deviates from campaign.locked_parameters.
+
+    Closes the spec-fidelity gap left by HUMAN_DESIGN_GATE bypass under
+    --auto-approve. The bundle's ``experiment_spec.verified_parameters``
+    is the canonical place where DESIGN pins concrete values; comparing
+    each ``campaign.locked_parameters[k]`` against
+    ``verified_parameters.get(k)`` catches the failure mode where
+    DESIGN silently rewrites locked workload parameters to its own
+    guess (paper-memorytime-mirage iter-1: ``model``, ``concurrency``,
+    ``duration``, ``warmup`` all overwritten).
+
+    The error message lists EVERY deviation in one shot, not just the
+    first — so a single re-run of the gate sees the full diff.
+    """
+    if not campaign:
+        return []
+    locked = campaign.get("locked_parameters")
+    if not isinstance(locked, dict) or not locked:
+        return []
+    spec = bundle.get("experiment_spec") or {}
+    verified = spec.get("verified_parameters") or {}
+    if not isinstance(verified, dict):
+        return [
+            "campaign.locked_parameters is set but "
+            "bundle.experiment_spec.verified_parameters is missing or "
+            "malformed; cannot verify spec-fidelity (#246)."
+        ]
+    deviations: list[str] = []
+    for key, expected in locked.items():
+        if key not in verified:
+            deviations.append(
+                f"  - {key}: campaign={expected!r}, bundle=<missing>"
+            )
+            continue
+        actual = verified[key]
+        if actual != expected:
+            deviations.append(
+                f"  - {key}: campaign={expected!r}, bundle={actual!r}"
+            )
+    if not deviations:
+        return []
+    return [
+        "bundle.experiment_spec.verified_parameters deviates from "
+        "campaign.locked_parameters (#246/F1). Each entry must match "
+        "exactly:\n" + "\n".join(deviations)
+    ]
+
+
+def _validate_locked_workload(
+    iter_dir: Path, bundle: dict, campaign: dict | None,
+) -> list[str]:
+    """Issue #265 (F20): hard-fail when bundle.inputs/*.yaml deviates
+    from campaign.locked_workload, unless bundle.workload_changes_from_canonical
+    explicitly declares the deviation.
+
+    Workload distributions live in ``inputs/<workload>.yaml`` (referenced
+    from the bundle), not in ``verified_parameters``, so #246's check
+    misses them. This validator does the structural diff.
+
+    Resolution: scan ``iter_dir/inputs/*.yaml``; for each top-level field
+    that also appears in ``locked_workload``, compare. If the values
+    differ, fail unless ``workload_changes_from_canonical.diff`` declares
+    that field-tuple.
+    """
+    if not campaign:
+        return []
+    locked = campaign.get("locked_workload")
+    if not isinstance(locked, dict) or not locked:
+        return []
+    declared = bundle.get("workload_changes_from_canonical") or {}
+    declared_diffs = declared.get("diff") or [] if isinstance(declared, dict) else []
+    declared_fields = {
+        (entry.get("tenant"), entry.get("field"))
+        for entry in declared_diffs
+        if isinstance(entry, dict)
+    }
+
+    inputs_dir = iter_dir / "inputs"
+    if not inputs_dir.is_dir():
+        # Workload yaml may not exist yet; nothing to diff.
+        return []
+    deviations: list[str] = []
+    workload_yamls = sorted(inputs_dir.glob("*.yaml")) + sorted(inputs_dir.glob("*.yml"))
+    for workload_path in workload_yamls:
+        try:
+            data = yaml.safe_load(workload_path.read_text())
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        # Compare every top-level locked field.
+        _walk_locked_workload(
+            locked, data, declared_fields, deviations, workload_path.name,
+        )
+    if not deviations:
+        return []
+    return [
+        f"workload yaml deviates from campaign.locked_workload "
+        f"(#265/F20). Each must match exactly OR be declared in "
+        f"bundle.workload_changes_from_canonical.diff:\n"
+        + "\n".join(deviations)
+    ]
+
+
+def _walk_locked_workload(
+    locked: dict, actual: dict, declared: set, errors: list[str], src: str,
+    *, path: str = "", tenant: str | None = None,
+) -> None:
+    """Recursive walk for #265: compare locked dict against actual,
+    report any mismatch not present in ``declared`` (set of (tenant, field)
+    tuples from workload_changes_from_canonical.diff).
+    """
+    for key, expected in locked.items():
+        sub_path = f"{path}.{key}" if path else key
+        if isinstance(expected, dict) and isinstance(actual.get(key), dict):
+            # Recurse — for ``tenants`` block, the key at this level is
+            # the tenant id, threaded through to the deviation tuple.
+            _walk_locked_workload(
+                expected, actual[key], declared, errors, src,
+                path=sub_path, tenant=tenant or (key if path == "tenants" else tenant),
+            )
+            continue
+        actual_value = actual.get(key, "<missing>")
+        if actual_value != expected:
+            if (tenant, sub_path) in declared or (None, sub_path) in declared:
+                continue  # explicitly declared deviation
+            errors.append(
+                f"  - {src}: {sub_path}: canonical={expected!r}, "
+                f"actual={actual_value!r}"
+                + (f" (tenant={tenant})" if tenant else "")
+            )
+
+
+def _validate_depth_overrides(bundle: dict) -> list[str]:
+    """Issue #248 (F3): if rehearsal_subset.depth_overrides has any
+    payload field set (i.e. anything besides ``invalidates_checks``),
+    ``invalidates_checks`` must be populated — otherwise the rehearsal
+    silently weakens scale-dependent apparatus checks.
+    """
+    spec = bundle.get("experiment_spec") or {}
+    rehearsal = spec.get("rehearsal_subset") or {}
+    overrides = rehearsal.get("depth_overrides")
+    if not isinstance(overrides, dict) or not overrides:
+        return []
+    payload_keys = [k for k in overrides if k != "invalidates_checks"]
+    if not payload_keys:
+        return []
+    invalidates = overrides.get("invalidates_checks") or []
+    if not invalidates:
+        return [
+            "rehearsal_subset.depth_overrides sets payload field(s) "
+            f"{payload_keys} without declaring invalidates_checks. "
+            "Depth shrinkage silently invalidates scale-dependent "
+            "apparatus checks; the campaign author must list which "
+            "checks they're surrendering (#248/F3)."
+        ]
+    return []
+
+
+def _validate_physical_realism(bundle: dict) -> list[str]:
+    """Issue #260 (F15): soft-warn when k_realism_ratio is far from 1
+    and justification is missing/perfunctory. WARN-prefixed; never
+    hard-fails the gate (the campaign author may legitimately choose
+    a synthetic regime to demonstrate the mechanism).
+    """
+    spec = bundle.get("experiment_spec") or {}
+    block = spec.get("physical_realism_check")
+    if not isinstance(block, dict):
+        return []
+    ratio = block.get("k_realism_ratio")
+    if not isinstance(ratio, (int, float)):
+        return []
+    if 0.5 <= ratio <= 2.0:
+        return []
+    justification = (block.get("justification") or "").strip()
+    # Perfunctory = empty or under 30 chars.
+    if len(justification) >= 30:
+        return []
+    return [
+        f"WARN: physical_realism_check.k_realism_ratio={ratio:.3f} "
+        f"is far from 1 (synthetic-regime risk: \"you constructed "
+        f"your own contention\"), and justification is empty or "
+        f"perfunctory. Add a substantive justification or raise K to "
+        f"the realistic value (#260/F15)."
+    ]
+
+
 def _validate_typed_arm_fields(bundle: dict) -> list[str]:
     """Cross-field rules per arm type that JSON Schema can't easily express.
 
@@ -266,6 +456,72 @@ def _validate_typed_arm_fields(bundle: dict) -> list[str]:
     return errors
 
 
+def compute_campaign_spec_diff(
+    iter_dir: Path, campaign: dict | None,
+) -> dict:
+    """Issue #249 (F4): structured campaign-vs-bundle deviation report.
+
+    Used by ``_generate_gate_summary`` to populate the
+    ``campaign_spec_diff`` block on every gate summary, regardless of
+    --auto-approve. The diff is "soft" (informational) by default —
+    F1's ``_validate_locked_parameters`` is the hard-fail layer.
+
+    Returns a dict with three sub-keys:
+      * ``locked_parameters_violations`` — list of {param, campaign,
+        bundle} entries (these are also hard validation failures
+        upstream; recorded here so an auditor sees them in one place).
+      * ``locked_workload_violations`` — list of {field, canonical, actual,
+        tenant?} entries (these are also hard validation failures upstream).
+      * ``depth_overrides_present`` — bool.
+      * ``invalidated_checks_declared`` — list of strings.
+      * ``workload_changes_from_canonical_declared`` — bool.
+
+    All keys are present so the consumer can grep for missing keys as
+    a regression signal (PR #235 pattern).
+    """
+    diff: dict = {
+        "locked_parameters_violations": [],
+        "locked_workload_violations": [],
+        "depth_overrides_present": False,
+        "invalidated_checks_declared": [],
+        "workload_changes_from_canonical_declared": False,
+    }
+    bundle_path = iter_dir / "bundle.yaml"
+    if not bundle_path.exists():
+        return diff
+    try:
+        bundle = yaml.safe_load(bundle_path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return diff
+    if not isinstance(bundle, dict):
+        return diff
+    spec = bundle.get("experiment_spec") or {}
+    verified = (spec.get("verified_parameters") or {}) if isinstance(spec, dict) else {}
+
+    locked = (campaign or {}).get("locked_parameters") or {}
+    if isinstance(locked, dict) and isinstance(verified, dict):
+        for k, expected in locked.items():
+            actual = verified.get(k, "<missing>")
+            if actual != expected:
+                diff["locked_parameters_violations"].append(
+                    {"param": k, "campaign": expected, "bundle": actual}
+                )
+
+    rehearsal = spec.get("rehearsal_subset") or {} if isinstance(spec, dict) else {}
+    overrides = rehearsal.get("depth_overrides") if isinstance(rehearsal, dict) else None
+    if isinstance(overrides, dict):
+        payload_keys = [k for k in overrides if k != "invalidates_checks"]
+        diff["depth_overrides_present"] = bool(payload_keys)
+        invalidates = overrides.get("invalidates_checks") or []
+        if isinstance(invalidates, list):
+            diff["invalidated_checks_declared"] = [str(x) for x in invalidates]
+
+    diff["workload_changes_from_canonical_declared"] = (
+        isinstance(bundle.get("workload_changes_from_canonical"), dict)
+    )
+    return diff
+
+
 def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
     """Check design artifacts exist and conform to schemas.
 
@@ -293,6 +549,19 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
             schema = _load_yaml_schema("bundle.schema.yaml")
             jsonschema.validate(bundle, schema)
             errors.extend(_validate_typed_arm_fields(bundle))
+            # #246 (F1): locked_parameters spec-fidelity. Hard-fail under
+            # auto-approve too — that's the whole point.
+            errors.extend(_validate_locked_parameters(bundle, campaign))
+            # #265 (F20): locked_workload diff against bundle.inputs/*.yaml.
+            errors.extend(_validate_locked_workload(iter_dir, bundle, campaign))
+            # #248 (F3): depth_overrides without invalidates_checks.
+            errors.extend(_validate_depth_overrides(bundle))
+            # #260 (F15): physical-realism soft warning. WARN-prefixed.
+            for entry in _validate_physical_realism(bundle):
+                if entry.startswith("WARN:"):
+                    pass  # surfaced via gate_summary, not validate errors
+                else:
+                    errors.append(entry)
             # Issue #85: WARN-prefixed entries are advisory and don't fail
             # validation (the human gate sees them but the campaign continues).
             for entry in _validate_ground_truth_independence(bundle):

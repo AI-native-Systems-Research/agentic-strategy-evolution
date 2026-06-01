@@ -817,6 +817,16 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     # detection and future cross-machine discovery.
     state["work_dir"] = str(work_dir.resolve())
     state["repo_path"] = str(Path(repo_path).resolve()) if repo_path else None
+    # #262 (F17): auto-capture reproducibility metadata at INIT (before
+    # any DESIGN turn fires). First capture wins — re-running INIT on
+    # an existing campaign preserves the original commit/dirty/sha
+    # values, which is what reviewers want (the state at campaign
+    # start, not at iter-3 resume time).
+    if "reproducibility_metadata" not in state:
+        from orchestrator.reproducibility import capture_reproducibility_metadata
+        state["reproducibility_metadata"] = capture_reproducibility_metadata(
+            Path(repo_path) if repo_path else None
+        )
     atomic_write(work_dir / "state.json", json.dumps(state, indent=2) + "\n")
 
     # Per-campaign permission policy. Idempotent: don't overwrite a settings
@@ -837,15 +847,96 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     return work_dir
 
 
+def _emit_high_build_warning(bundle_path: Path, max_turns_execute_analyze: int) -> None:
+    """#256 (F11): warn when bundle.code_changes implies a high BUILD count.
+
+    Threshold heuristic: ``len(arms-with-code_changes) >= 5`` OR
+    ``total_files >= 5``. Below the threshold, no warning. At/above,
+    print a recommendation that the operator raise
+    ``campaign.max_turns.execute_analyze`` to ~``120 + 30 * total_files``.
+
+    Pure print — never raises — so a misshapen bundle that the schema
+    validator already rejected doesn't fail this advisory pass.
+    """
+    if not bundle_path.exists():
+        return
+    try:
+        bundle = yaml.safe_load(bundle_path.read_text()) or {}
+    except yaml.YAMLError:
+        return
+    if not isinstance(bundle, dict):
+        return
+    arms = bundle.get("arms") or []
+    if not isinstance(arms, list):
+        return
+    total_files = 0
+    arms_with_code = 0
+    for arm in arms:
+        if not isinstance(arm, dict):
+            continue
+        changes = arm.get("code_changes") or []
+        if isinstance(changes, list) and changes:
+            arms_with_code += 1
+            total_files += len(changes)
+    if total_files < 5:
+        return
+    suggested = 120 + 30 * total_files
+    if max_turns_execute_analyze >= suggested:
+        return
+    print(
+        f"  ⚠  Bundle implies ~{total_files} net-new files in EXECUTE_ANALYZE "
+        f"({arms_with_code} arms with code_changes). Default "
+        f"max_turns.execute_analyze={max_turns_execute_analyze} is likely "
+        f"insufficient. Consider setting `max_turns.execute_analyze: "
+        f"{suggested}` in campaign.yaml (#256 / F11)."
+    )
+
+
+def _augment_summary_with_spec_diff(
+    summary_path: Path, iter_dir: Path, campaign: dict | None,
+    auto_approve: bool, *, stub: bool,
+) -> None:
+    """#249 (F4): post-process gate_summary_design.json to include the
+    deterministic ``campaign_spec_diff`` block. Read-modify-write JSON.
+    """
+    from orchestrator.validate import compute_campaign_spec_diff
+    if stub or not summary_path.exists():
+        summary: dict = {
+            "gate_type": "design",
+            "summary": "(LLM summarizer unavailable; deterministic diff only)",
+            "key_points": [],
+        }
+    else:
+        try:
+            summary = json.loads(summary_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            summary = {"gate_type": "design"}
+        if not isinstance(summary, dict):
+            summary = {"gate_type": "design"}
+    diff = compute_campaign_spec_diff(iter_dir, campaign)
+    summary["campaign_spec_diff"] = diff
+    summary["auto_approved"] = bool(auto_approve)
+    atomic_write(summary_path, json.dumps(summary, indent=2) + "\n")
+
+
 def _generate_gate_summary(
     dispatcher, iter_dir: Path, iteration: int, gate_type: str,
     *, campaign: dict | None = None,
+    auto_approve: bool = False,
 ) -> Path | None:
     """Generate a gate summary file. Returns the path, or None on failure.
 
     When ``campaign`` is provided and contains a non-empty ``channels`` list,
     also fires off a per-channel notification (#130) with the rendered
     summary. Channel failures are logged at warning and never block the gate.
+
+    #249 (F4): for the design-phase summary, ALWAYS attach a deterministic
+    ``campaign_spec_diff`` block (auto-approve or not). Auditors and
+    watchdogs can grep for ``campaign_spec_diff.locked_parameters_violations``
+    to catch design-agent deviations without needing the LLM summarizer
+    to reason about them. The hard-fail layer is upstream (#246/F1's
+    ``validate_locked_parameters``); this is the soft-record layer for
+    everything else (depth_overrides, declared workload changes).
     """
     summary_path = iter_dir / f"gate_summary_{gate_type}.json"
     try:
@@ -859,7 +950,25 @@ def _generate_gate_summary(
         logger = logging.getLogger(__name__)
         logger.warning("Gate summary generation failed: %s", exc)
         print(f"  (Gate summary skipped: {exc})")
+        # Even when the LLM summarizer fails, write a minimal stub so
+        # downstream consumers don't see a missing file. F4's diff is
+        # deterministic; it works without the LLM block.
+        if gate_type == "design":
+            try:
+                _augment_summary_with_spec_diff(
+                    summary_path, iter_dir, campaign, auto_approve, stub=True,
+                )
+            except OSError:
+                pass
         return None
+    if gate_type == "design":
+        try:
+            _augment_summary_with_spec_diff(
+                summary_path, iter_dir, campaign, auto_approve, stub=False,
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            logger = logging.getLogger(__name__)
+            logger.warning("campaign_spec_diff augmentation failed: %s", exc)
 
     # Channel notification (#130 Phase A): outbound only; the campaign still
     # blocks on terminal input for the actual decision.
@@ -978,6 +1087,17 @@ def run_iteration(
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
     for sub in ("inputs", "results", "patches"):
         (iter_dir / sub).mkdir(parents=True, exist_ok=True)
+    # #262 (F17): snapshot latency/hardware config files into
+    # runs/iter-N/snapshots/ so a future reviewer can diff the exact
+    # numbers each iter ran with — even if the operator later edits the
+    # source-of-truth file in the target repo. Best-effort; missing
+    # files are skipped (the candidate list is target-agnostic).
+    if repo_path and not (iter_dir / "snapshots").exists():
+        try:
+            from orchestrator.reproducibility import snapshot_iter_files
+            snapshot_iter_files(Path(repo_path), iter_dir)
+        except (OSError, ImportError) as exc:
+            logger.warning("repro snapshot for iter-%d skipped: %s", iteration, exc)
 
     if engine.phase == "DONE":
         print(f"Iteration {iteration} already complete.")
@@ -1075,13 +1195,27 @@ def run_iteration(
             )
         print(f"  -> {iter_dir / 'problem.md'}")
         print(f"  -> {iter_dir / 'bundle.yaml'}")
+        # #256 (F11): high-BUILD warning. When the bundle implies many
+        # net-new code changes, the default ``max_turns.execute_analyze=120``
+        # may abort mid-build with ``error_max_turns``. Warning fires
+        # regardless of --auto-approve so CI logs see the suggestion.
+        try:
+            _emit_high_build_warning(
+                iter_dir / "bundle.yaml",
+                _max_turns_for("execute_analyze"),
+            )
+        except (OSError, RuntimeError) as exc:
+            logger.warning("high-BUILD warning skipped: %s", exc)
 
     # ─── HUMAN DESIGN GATE ────────────────────────────────────────────────
     if _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir):
         print(f"\n{'='*60}")
         print(f"  HUMAN DESIGN GATE")
         print(f"{'='*60}")
-        summary_path = _generate_gate_summary(llm_dispatcher, iter_dir, iteration, "design", campaign=campaign)
+        summary_path = _generate_gate_summary(
+            llm_dispatcher, iter_dir, iteration, "design",
+            campaign=campaign, auto_approve=auto_approve,
+        )
         # Issue #159: render complexity-tier panel from the bundle so tier
         # escalations are surfaced for human review (deterministic Python,
         # no LLM cost).
@@ -1130,6 +1264,27 @@ def run_iteration(
             )
             (iter_dir / ".experiment_id").write_text(experiment_id)
             print(f"  Experiment worktree: {experiment_dir}")
+            # #266 (F21): apply derived_from cumulative patch as a
+            # preflight if the campaign declares one. Failure to apply
+            # is surfaced loudly (the user must rebase the prior
+            # campaign or update derived_from.iteration); we do NOT
+            # silently proceed.
+            try:
+                from orchestrator.lineage import (
+                    apply_derived_from_patch,
+                    resolve_derived_from,
+                )
+                derived_patch = resolve_derived_from(
+                    campaign, repo_path=Path(repo_path),
+                )
+                if derived_patch is not None:
+                    ok, msg = apply_derived_from_patch(experiment_dir, derived_patch)
+                    if ok:
+                        print(f"  derived_from: {msg}")
+                    else:
+                        raise RuntimeError(msg)
+            except ImportError:
+                pass
         if cli_dispatcher:
             import contextlib
             ctx = cli_dispatcher.override_cwd(experiment_dir) if experiment_dir else contextlib.nullcontext()
@@ -1219,6 +1374,19 @@ def run_iteration(
             _record_undeclared_writes_in_findings(
                 iter_dir / "findings.json", undeclared,
             )
+        # #266 (F21): emit ``patches/cumulative.patch`` BEFORE removing
+        # the experiment worktree branch. The cumulative form is what
+        # future ``derived_from`` campaigns reuse; the per-arm patches
+        # are incremental on the branch state and don't apply to a
+        # fresh main checkout.
+        if repo_path and experiment_id:
+            try:
+                from orchestrator.lineage import emit_cumulative_patch
+                emit_cumulative_patch(
+                    Path(repo_path), f"nous-exp-{experiment_id}", iter_dir,
+                )
+            except (ImportError, OSError) as exc:
+                logger.warning("cumulative patch emit skipped: %s", exc)
         # Clean up worktree only on success
         if repo_path and experiment_id:
             remove_experiment_worktree(Path(repo_path), experiment_id)
@@ -1264,6 +1432,17 @@ def run_iteration(
         work_dir=work_dir, iter_dir=iter_dir,
         iteration=iteration, campaign=campaign,
     )
+    # #263 (F18): invoke plot_specs scripts after findings.json exists.
+    # Best-effort — plot failures never block the iteration.
+    if campaign.get("plot_specs"):
+        try:
+            from orchestrator.plot_specs import invoke_plot_specs
+            results = invoke_plot_specs(campaign, iter_dir)
+            ok = sum(1 for r in results if r.get("ok"))
+            print(f"  plot_specs: {ok}/{len(results)} succeeded → "
+                  f"{iter_dir / 'figures'}")
+        except (ImportError, OSError) as exc:
+            logger.warning("plot_specs invocation skipped: %s", exc)
     print(f"  -> Principles merged into {work_dir / 'principles.json'}")
     print(f"  -> best_found.json updated at {work_dir / 'best_found.json'}")
 

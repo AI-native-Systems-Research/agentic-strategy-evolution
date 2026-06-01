@@ -218,6 +218,54 @@ nous run campaign.yaml --auto-approve --max-iterations 1  # quick unattended run
 nous run campaign.yaml --bundle ./fig7_bundle.yaml --auto-approve
 ```
 
+#### `--auto-approve` safety preconditions (#255 / F10)
+
+`--auto-approve` skips the HUMAN_DESIGN_GATE and HUMAN_FINDINGS_GATE,
+which are nous's primary safety mechanisms for catching design-agent
+deviations from campaign intent. **Auto-approve is safe to use only
+when ALL of these hold**:
+
+1. The campaign declares ``locked_parameters`` (#246 / F1) for every
+   campaign-spec-critical knob (model, concurrency, duration, warmup,
+   K-class parameters like ``total_kv_blocks``, anything whose
+   deviation would silently invalidate the experiment). nous hard-fails
+   any bundle whose ``experiment_spec.verified_parameters`` contradicts
+   a locked parameter — regardless of ``--auto-approve``.
+2. If the campaign has a canonical workload, declare
+   ``locked_workload`` (#265 / F20). The validator diffs
+   ``bundle.inputs/*.yaml`` against it. Deliberate deviations require
+   ``bundle.workload_changes_from_canonical`` to be populated.
+3. The target repo's docs do not contain example values that
+   contradict the campaign's locked spec (#247 / F2). When they do,
+   the methodology prompt's "campaign > target-repo-docs" hierarchy
+   covers it — but a stale methodology prompt would not. If you're
+   running a target whose docs heavily contradict the campaign,
+   verify the methodology prompt has the hierarchy clause before
+   trusting auto-approve.
+4. The campaign's apparatus checks are robust to design-agent
+   variation, and validate ATTRIBUTION (not just upstream totals,
+   #252 / F7).
+5. A stale ``principles.json`` ledger is acceptable. Auto-approve
+   never gates on it.
+
+**If any of these fail**, either run interactively (no
+``--auto-approve``) so a human reviewer sees the design at the gate,
+or invoke an external watchdog process to compare bundles against
+your campaign spec.
+
+Even under ``--auto-approve``, every design gate writes
+``gate_summary_design.json`` with a deterministic
+``campaign_spec_diff`` block (#249 / F4). Watchdog-style audit:
+
+```bash
+jq '.campaign_spec_diff' "$NOUS_CAMPAIGN_PARENT"/<run>/runs/iter-*/gate_summary_design.json
+```
+
+Non-empty ``locked_parameters_violations`` means F1's hard-fail
+fired (the iteration won't have proceeded). ``depth_overrides_present``
+or ``workload_changes_from_canonical_declared`` flag deliberate
+deviations the design agent declared.
+
 ### Overnight / long-running campaigns
 
 For unattended runs, increase retries and timeout so transient failures don't kill the campaign:

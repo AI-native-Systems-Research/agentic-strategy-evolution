@@ -240,6 +240,80 @@ Before each human gate, a formatted summary (`gate_summary_*.json`) is produced.
 
 Gates display the summary first, then the raw artifact (for those who want full detail).
 
+**Spec-fidelity diff (#249 / F4).** For the design-phase summary,
+``_augment_summary_with_spec_diff`` (in `orchestrator/iteration.py`)
+post-processes the LLM-generated summary to attach a deterministic
+``campaign_spec_diff`` block: locked_parameters violations, depth_overrides
+presence, declared workload changes. Always emitted, regardless of
+``--auto-approve``. ``nous status`` surfaces it in human-readable
+form.
+
+### Spec fidelity (`orchestrator/validate.py`)
+
+Two pure-Python validators close the gap between *self-consistency*
+(the executor matches the bundle) and *spec-fidelity* (the bundle
+matches the campaign):
+
+* `_validate_locked_parameters` (#246 / F1) — every entry in
+  ``campaign.locked_parameters`` must match
+  ``bundle.experiment_spec.verified_parameters`` exactly. Hard-fail
+  regardless of ``--auto-approve``.
+* `_validate_locked_workload` (#265 / F20) — walks the canonical
+  workload structure and diffs against ``bundle.inputs/*.yaml``.
+  Declared deviations (``bundle.workload_changes_from_canonical``)
+  are allowed; undeclared are hard-fails.
+
+`compute_campaign_spec_diff` exposes the same logic for read-only
+auditor use (the F4 gate-summary diff). See
+`docs/campaign-authoring-guide.md` for the discipline these enforce.
+
+### Reproducibility metadata (`orchestrator/reproducibility.py`)
+
+`capture_reproducibility_metadata` (#262 / F17) runs at INIT and
+records target repo HEAD, dirty flag, hardware-config sha,
+language versions, gpu_memory_utilization, latency-config file
+paths. The block is persisted in `state.json` (first-capture wins;
+re-running INIT preserves the original) and surfaced via `nous
+status`. Per-iteration `snapshot_iter_files` copies the actual
+hardware/latency config files into `runs/iter-N/snapshots/` so a
+future reviewer can diff exact numbers even after the operator
+edits the source-of-truth file.
+
+### Cross-campaign code reuse (`orchestrator/lineage.py`)
+
+`emit_cumulative_patch` (#266 / F21) runs at iteration completion,
+*before* the experiment branch is destroyed, capturing
+``git diff <main>..<branch>`` to ``runs/iter-N/patches/cumulative.patch``.
+Future campaigns reuse it via:
+
+```yaml
+derived_from:
+  campaign: paper-memorytime-mirage
+  iteration: 2          # or "final"
+```
+
+`apply_derived_from_patch` resolves and applies the cumulative
+patch to every experiment worktree as a preflight. `nous lineage
+<run_id>` surfaces the inheritance chain.
+
+### Per-phase silence threshold (`orchestrator/sdk_dispatch.py`)
+
+`_resolve_turn_silence_threshold(phase)` (#264 / F19) walks the
+resolution chain — bundle per-phase override → bundle scalar
+override → campaign per-phase value → phase default
+(design=600, execute_analyze=120, report=240). DESIGN's heavy
+reasoning between tool calls earns a longer threshold than
+EXECUTE_ANALYZE's frequent simulator calls, eliminating the active
+stall observed in paper-memorytime-mirage iter-3.
+
+### Plot specs + paper packaging (`orchestrator/plot_specs.py`, `nous package`)
+
+`invoke_plot_specs` (#263 / F18) reads `campaign.plot_specs`,
+invokes each user-supplied figure script with `NOUS_RESULTS_DIR`
+and `NOUS_FIGURES_DIR` environment variables. `nous package`
+tarballs work_dir + reproduce.sh + Dockerfile + README using the
+F17 reproducibility metadata.
+
 
 ## Data Flow
 

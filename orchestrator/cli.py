@@ -1,4 +1,5 @@
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -119,6 +120,43 @@ def resolve_work_dir(target):
     return work_dir
 
 
+def _warn_tracked_worktree_extras(repo_path, extras: list[str]) -> None:
+    """#251 (F6): emit a soft warning at campaign load time for any
+    worktree_extras entry that is tracked in the target repo's main
+    branch. Tracked paths are already in every git worktree checkout;
+    declaring them in worktree_extras triggers a per-iteration
+    collision warning. Catching this at load time saves the operator
+    from re-investing in a doomed run.
+
+    Best-effort — git failures fall through silently (the per-iteration
+    warning still fires as the second line of defense).
+    """
+    if not repo_path or not extras:
+        return
+    import subprocess as _sp
+
+    repo = Path(repo_path)
+    if not repo.is_dir():
+        return
+    for entry in extras:
+        if not isinstance(entry, str) or not entry.strip():
+            continue
+        result = _sp.run(
+            ["git", "-C", str(repo), "ls-files", "--error-unmatch", entry],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        if result.returncode == 0:
+            print(
+                f"  ⚠  worktree_extras entry {entry!r} is tracked in the "
+                f"target repo's main branch. Tracked paths are already "
+                f"in every git worktree checkout; declaring them here "
+                f"will trigger per-iteration collision warnings (#251 / F6). "
+                f"Remove this entry from campaign.target_system.worktree_extras, "
+                f"or move the file out of git tracking if you intend "
+                f"to override it."
+            )
+
+
 def _cmd_run(args):
     import json
     import logging
@@ -148,6 +186,15 @@ def _cmd_run(args):
 
     run_id = args.run_id or campaign.get("run_id") or (campaign_path.parent.name + "-run")
     repo_path = campaign["target_system"].get("repo_path")
+
+    # #251 (F6): warn at campaign load time about ``worktree_extras``
+    # entries that are tracked in the target repo's main branch.
+    # Tracked paths are already in every git worktree checkout;
+    # declaring them here triggers a per-iteration collision warning
+    # that is preventable here.
+    _warn_tracked_worktree_extras(
+        repo_path, campaign.get("target_system", {}).get("worktree_extras") or [],
+    )
 
     # #239: in-progress detection must check BOTH the legacy and
     # env-var locations — otherwise toggling NOUS_CAMPAIGN_PARENT
@@ -229,6 +276,40 @@ def _cmd_resume(args):
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
+    # #253 (F8): a frequent user trip-up is passing a work_dir to
+    # ``nous resume`` (because ``nous status <work_dir>`` works that
+    # way). Detect it and emit a diagnostic error rather than the
+    # confusing "Work directory not found" message that doesn't
+    # explain the argument-type expectation.
+    target_path = Path(args.target)
+    if (
+        not (args.target.endswith(".yaml") or args.target.endswith(".yml"))
+        and target_path.is_dir()
+    ):
+        # Looks like a directory, not a campaign.yaml. If a
+        # campaign.yaml.copy exists at the work_dir, hint to the user
+        # to point ``nous resume`` at the original campaign.yaml.
+        candidate = target_path / "campaign.yaml.copy"
+        hint = ""
+        if candidate.exists():
+            hint = (
+                f"\nNote: a copy of the campaign yaml is at:\n  {candidate}\n"
+                f"You can pass that to ``nous resume`` (it will be schema-"
+                f"validated like the original)."
+            )
+        print(
+            f"Error: ``nous resume`` expects a campaign.yaml path "
+            f"(the same target you passed to ``nous run``). "
+            f"Got: {args.target}\n"
+            f"This appears to be a work_dir. Use ``nous status "
+            f"{args.target}`` to inspect the work_dir; ``nous resume`` "
+            f"needs the campaign yaml so it can re-validate the spec "
+            f"and re-emit reproducibility metadata (#253 / F8)."
+            f"{hint}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     work_dir = resolve_work_dir(args.target)
 
     state_path = work_dir / "state.json"
@@ -304,8 +385,9 @@ def _cmd_stop(args):
         sys.exit(1)
 
     sentinel = work_dir / STOP_SENTINEL_NAME
+    immediate = work_dir / "STOP_IMMEDIATE"
     existing = check_stop_requested(work_dir)
-    if existing is not None:
+    if existing is not None and not getattr(args, "immediate", False):
         print(
             f"STOP sentinel already present at {existing}. "
             f"Campaign will halt at the next checkpoint.",
@@ -313,15 +395,33 @@ def _cmd_stop(args):
         sys.exit(0)
 
     reason = (args.reason or "").strip()
-    sentinel.write_text(reason + ("\n" if reason else ""))
-    print(f"Wrote STOP sentinel: {sentinel}")
+    if not sentinel.exists():
+        sentinel.write_text(reason + ("\n" if reason else ""))
+        print(f"Wrote STOP sentinel: {sentinel}")
+    if getattr(args, "immediate", False):
+        # #250 (F5): event-boundary halt. Writes a second sentinel that
+        # the SDK turn loop checks at each tool-call return. The
+        # phase-boundary STOP is also written so the orchestrator's
+        # checkpoint loop terminates cleanly even if the SDK turn
+        # didn't notice the immediate sentinel.
+        immediate.write_text(reason + ("\n" if reason else ""))
+        print(f"Wrote STOP_IMMEDIATE sentinel: {immediate}")
+        print(
+            "The SDK turn will abort at the next event boundary "
+            "(typically within seconds), then the orchestrator's "
+            "phase-checkpoint will see the STOP sentinel and shut "
+            "down cleanly."
+        )
+        return
     if reason:
         print(f"Reason: {reason}")
     print(
         "The campaign will halt at the next phase boundary (a phase "
         "transition within the current iteration, or the start of "
         "the next iteration — whichever comes first). To cancel the "
-        "stop request, delete the sentinel file."
+        "stop request, delete the sentinel file. For event-boundary "
+        "halt during a long EXECUTE_ANALYZE turn, use ``--immediate`` "
+        "(#250 / F5)."
     )
 
 
@@ -746,6 +846,181 @@ def _cmd_create_campaign(args):
     print(f"  3. Run: nous run {path}")
 
 
+def _cmd_lineage(args):
+    """#266 (F21): print derivation chain + cumulative-patch availability."""
+    from orchestrator.lineage import summarize_lineage
+
+    work_dir = resolve_work_dir(args.target)
+    summary = summarize_lineage(work_dir)
+    if getattr(args, "json", False):
+        print(json.dumps(summary, indent=2))
+        return
+    print(f"Campaign:    {summary.get('run_id', '?')}")
+    print(f"Work dir:    {summary.get('work_dir')}")
+    if summary.get("repo_commit"):
+        print(f"Repo commit: {summary['repo_commit'][:12]}")
+    derived = summary.get("derived_from")
+    if derived:
+        print(
+            f"derived_from: campaign={derived.get('campaign')}, "
+            f"iteration={derived.get('iteration', 'final')}"
+        )
+    else:
+        print("derived_from: (none — this campaign is a fresh root)")
+    print()
+    print("Iterations:")
+    for it in summary.get("iterations", []):
+        marker = "✓ cumulative" if it.get("cumulative_patch") else "✗ no cumulative"
+        print(f"  {it['iteration']}  [{marker}]")
+    if not summary.get("iterations"):
+        print("  (no iterations completed yet)")
+
+
+def _cmd_clean(args):
+    """#254 (F9): remove orphaned nous-exp-* worktrees + branches."""
+    import subprocess as _sp
+
+    target_repo = args.target_repo or Path.cwd()
+    target_repo = Path(target_repo).resolve()
+    experiments_dir = target_repo / ".nous-experiments"
+    if not experiments_dir.is_dir():
+        print(f"No .nous-experiments/ under {target_repo}; nothing to clean.")
+        return
+
+    candidates: list[Path] = []
+    for entry in sorted(experiments_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        if args.campaign and args.campaign not in entry.name:
+            continue
+        candidates.append(entry)
+
+    if args.dry_run:
+        print(f"Would remove {len(candidates)} worktree(s) under {experiments_dir}:")
+        for p in candidates:
+            print(f"  - {p}")
+        return
+
+    removed = 0
+    for entry in candidates:
+        # Best-effort liveness check via .nous-pid (matches gc_orphan_worktrees).
+        pid_file = entry / ".nous-pid"
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                import os as _os
+                _os.kill(pid, 0)
+                # Process is alive — skip.
+                print(f"  skip {entry.name} (active pid {pid})")
+                continue
+            except (ValueError, ProcessLookupError, OSError):
+                pass
+        # Remove worktree + branch.
+        _sp.run(
+            ["git", "worktree", "remove", str(entry), "--force"],
+            cwd=target_repo, capture_output=True, text=True, check=False,
+        )
+        branch = f"nous-exp-{entry.name}"
+        _sp.run(
+            ["git", "branch", "-D", branch],
+            cwd=target_repo, capture_output=True, text=True, check=False,
+        )
+        if entry.exists():
+            import shutil as _shutil
+            _shutil.rmtree(entry, ignore_errors=True)
+        print(f"  removed {entry.name} (+ branch {branch})")
+        removed += 1
+    print(f"Removed {removed} orphaned worktree(s).")
+
+
+def _cmd_package(args):
+    """#263 (F18): tarball work_dir + reproduce.sh + Dockerfile + README."""
+    import tarfile
+    import textwrap
+
+    work_dir = resolve_work_dir(args.target)
+    if not (work_dir / "state.json").exists():
+        print(f"Error: {work_dir} has no state.json; not a campaign work dir.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    output = args.output or work_dir.parent / f"{work_dir.name}.tar.gz"
+
+    state = json.loads((work_dir / "state.json").read_text())
+    repro = state.get("reproducibility_metadata") or {}
+
+    repro_section = "\n".join(
+        f"#   {k}: {v}" for k, v in repro.items()
+    ) if repro else "#   (no reproducibility_metadata recorded — pre-#262 campaign)"
+
+    repo_commit = repro.get("repo_commit", "<UNKNOWN>")
+    reproduce_sh = textwrap.dedent(f"""\
+        #!/usr/bin/env bash
+        # Generated by ``nous package`` (#263 / F18).
+        # Reproducibility metadata captured at INIT (#262 / F17):
+        {repro_section}
+        set -euo pipefail
+        echo "Re-running campaign {state.get('run_id', '?')}"
+        echo "Target repo commit at INIT: {repo_commit}"
+        echo
+        echo "1. Clone the target repo at the captured commit:"
+        echo "     git clone <repo-url> target/"
+        echo "     cd target && git checkout {repo_commit}"
+        echo "2. Re-apply the cumulative patch from any iteration of interest:"
+        echo "     git apply ../runs/iter-N/patches/cumulative.patch"
+        echo "3. Re-run from this campaign yaml:"
+        echo "     nous run campaign.yaml.copy --auto-approve"
+    """)
+
+    dockerfile = textwrap.dedent(f"""\
+        # Generated by ``nous package`` (#263 / F18).
+        # Pins language versions captured by ``capture_reproducibility_metadata`` at INIT.
+        FROM ubuntu:24.04
+        ENV DEBIAN_FRONTEND=noninteractive
+        RUN apt-get update && apt-get install -y --no-install-recommends \\
+            git ca-certificates curl python3 python3-pip && \\
+            rm -rf /var/lib/apt/lists/*
+        # Captured language versions (informational):
+        {repro_section.replace(chr(10), chr(10) + '# ')}
+        WORKDIR /work
+        COPY . /work/
+        ENTRYPOINT ["/bin/bash", "/work/reproduce.sh"]
+    """)
+
+    readme = textwrap.dedent(f"""\
+        # Campaign artifact: {state.get('run_id', '?')}
+
+        Generated by ``nous package`` (#263 / F18). Self-contained
+        bundle for paper artifact evaluation.
+
+        ## Contents
+
+        * Campaign work directory (state.json, ledger.json, principles.json,
+          per-iter runs/, meta_findings.json).
+        * ``reproduce.sh`` — operator-runnable reproduction script
+          using the captured reproducibility metadata (#262 / F17).
+        * ``Dockerfile`` — pins language versions captured at INIT.
+        * Cumulative patches per iteration (``runs/iter-N/patches/cumulative.patch``).
+
+        ## Reproducibility metadata
+
+        ```
+        {json.dumps(repro, indent=2)}
+        ```
+    """)
+
+    # Stage these alongside the work_dir for tar inclusion.
+    pkg_root = work_dir
+    (pkg_root / "reproduce.sh").write_text(reproduce_sh)
+    (pkg_root / "reproduce.sh").chmod(0o755)
+    (pkg_root / "Dockerfile").write_text(dockerfile)
+    (pkg_root / "PACKAGE_README.md").write_text(readme)
+
+    with tarfile.open(output, "w:gz") as tar:
+        tar.add(work_dir, arcname=work_dir.name)
+    print(f"Wrote {output}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="nous",
@@ -793,7 +1068,11 @@ def main():
     p_run.add_argument(
         "--auto-approve", action="store_true",
         help="Auto-approve all human gates — required for unattended "
-             "runs (CI, agent-driven invocation).",
+             "runs (CI, agent-driven invocation). See README "
+             "'--auto-approve safety preconditions' (#255 / F10) "
+             "for when this is safe — at minimum, declare "
+             "campaign.locked_parameters (#246 / F1) for every "
+             "campaign-spec-critical knob.",
     )
     p_run.add_argument(
         "--timeout", type=int, default=1800,
@@ -902,6 +1181,14 @@ def main():
         help="Optional human-readable reason recorded in the sentinel "
              "and surfaced in the campaign's halt message.",
     )
+    p_stop.add_argument(
+        "--immediate", action="store_true",
+        help="Event-boundary halt (#250 / F5). Writes a STOP_IMMEDIATE "
+             "sentinel that the SDK turn loop checks at each tool-call "
+             "return — aborts within seconds rather than at the next "
+             "phase boundary. Use when EXECUTE_ANALYZE is building "
+             "wrong code and you want to halt promptly.",
+    )
     p_stop.set_defaults(func=_cmd_stop)
 
     p_status = subparsers.add_parser("status")
@@ -994,6 +1281,62 @@ def main():
         help="Overwrite if the target file already exists.",
     )
     p_create.set_defaults(func=_cmd_create_campaign)
+
+    # #266 (F21): cross-campaign lineage inspection.
+    p_lineage = subparsers.add_parser(
+        "lineage",
+        help="Show derivation chain + per-iteration cumulative-patch "
+             "availability for a campaign (#266 / F21).",
+    )
+    p_lineage.add_argument(
+        "target",
+        help="Campaign run_id, work_dir, or path to campaign.yaml.",
+    )
+    p_lineage.add_argument(
+        "--json", action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+    p_lineage.set_defaults(func=_cmd_lineage)
+
+    # #254 (F9): orphan-worktree cleanup.
+    p_clean = subparsers.add_parser(
+        "clean",
+        help="Remove stale nous-exp-* worktrees and branches (#254 / F9).",
+    )
+    p_clean.add_argument(
+        "--orphaned", action="store_true",
+        help="Remove worktrees whose owning campaign run is dead. "
+             "Default mode when --campaign and --target-repo are both unset.",
+    )
+    p_clean.add_argument(
+        "--target-repo", type=Path, default=None,
+        help="Target repo to scan. Default: current directory.",
+    )
+    p_clean.add_argument(
+        "--campaign", default=None,
+        help="Scope cleanup to a single campaign run_id.",
+    )
+    p_clean.add_argument(
+        "--dry-run", action="store_true",
+        help="Print what would be removed without acting.",
+    )
+    p_clean.set_defaults(func=_cmd_clean)
+
+    # #263 (F18): paper-artifact tarball.
+    p_package = subparsers.add_parser(
+        "package",
+        help="Tarball a work_dir + reproduce.sh + Dockerfile + README "
+             "for paper artifact evaluation (#263 / F18).",
+    )
+    p_package.add_argument(
+        "target",
+        help="Campaign run_id, work_dir, or path to campaign.yaml.",
+    )
+    p_package.add_argument(
+        "--output", type=Path, default=None,
+        help="Path to write the tarball. Default: <work_dir>.tar.gz.",
+    )
+    p_package.set_defaults(func=_cmd_package)
 
     args = parser.parse_args()
     if not args.command:
