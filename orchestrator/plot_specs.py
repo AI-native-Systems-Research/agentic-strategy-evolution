@@ -46,10 +46,24 @@ def invoke_plot_specs(
     figures_dir.mkdir(parents=True, exist_ok=True)
 
     if campaign_yaml_dir is None:
-        # Fall back to the work_dir's parent — best-effort. Operators
-        # who need a different base can pass ``campaign_yaml_dir``
-        # explicitly via ``_generate_report`` plumbing.
-        campaign_yaml_dir = iter_dir.parent.parent.parent
+        # No fallback by design: plot script paths declared in
+        # campaign.plot_specs[].script are relative to the
+        # campaign.yaml's directory, which is recorded as
+        # ``state.json["config_ref"]`` at setup_work_dir time
+        # (#263 / F18). The caller must read it via
+        # ``orchestrator.iteration._campaign_yaml_dir_from_state``.
+        # Returning an empty result is the right answer here —
+        # guessing a directory and silently failing to resolve
+        # scripts was the bug from review I1.
+        logger.warning(
+            "invoke_plot_specs called without campaign_yaml_dir; "
+            "skipping (script paths cannot be resolved without it)."
+        )
+        return [
+            {"id": (s or {}).get("id", "<unnamed>"), "ok": False,
+             "error": "no campaign_yaml_dir available"}
+            for s in specs if isinstance(s, dict)
+        ]
 
     out: list[dict] = []
     for spec in specs:
@@ -75,7 +89,7 @@ def invoke_plot_specs(
         }
         try:
             result = subprocess.run(
-                [_pick_interpreter(script_path), str(script_path)],
+                _build_command(script_path),
                 env=env, capture_output=True, text=True, check=False,
                 timeout=300,
             )
@@ -105,16 +119,22 @@ def invoke_plot_specs(
     return out
 
 
-def _pick_interpreter(script_path: Path) -> str:
-    """Pick a sensible interpreter for a figure script. Honors
-    shebang via direct execution when the file is executable; else
-    dispatches by extension. Defaults to ``python3``.
+def _build_command(script_path: Path) -> list[str]:
+    """Build the argv list for invoking ``script_path``.
+
+    Dispatch by extension (``.py`` → python3, ``.sh``/``.bash`` →
+    bash). For executable files with no recognized extension, invoke
+    directly via the shebang (single-element argv) — the previous
+    ``_pick_interpreter`` returned the script as both interpreter
+    and argv[1], which made the script invoke itself with itself
+    as its first argument. Falls back to python3 for unknown
+    non-executable suffixes (the most common authoring shape).
     """
     suffix = script_path.suffix.lower()
-    if suffix in (".py",):
-        return "python3"
+    if suffix == ".py":
+        return ["python3", str(script_path)]
     if suffix in (".sh", ".bash"):
-        return "bash"
+        return ["bash", str(script_path)]
     if os.access(script_path, os.X_OK):
-        return str(script_path)
-    return "python3"
+        return [str(script_path)]
+    return ["python3", str(script_path)]

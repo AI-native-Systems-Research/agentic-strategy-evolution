@@ -587,7 +587,9 @@ def main() -> None:
 
     run_id = args.run_id or campaign.get("run_id") or campaign_path.parent.name + "-run"
     repo_path = campaign.get("target_system", {}).get("repo_path")
-    work_dir = setup_work_dir(run_id, repo_path=repo_path)
+    work_dir = setup_work_dir(
+        run_id, repo_path=repo_path, campaign_path=str(campaign_path),
+    )
     print(f"Working directory: {work_dir.resolve()}")
     print(f"Max iterations: {max_iter}")
 

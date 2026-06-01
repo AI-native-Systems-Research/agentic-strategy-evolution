@@ -34,7 +34,17 @@ import yaml
 
 from orchestrator.engine import Engine
 from orchestrator.gates import HumanGate
+from orchestrator.lineage import (
+    apply_derived_from_patch,
+    emit_cumulative_patch,
+    resolve_derived_from,
+)
 from orchestrator.llm_dispatch import LLMDispatcher
+from orchestrator.plot_specs import invoke_plot_specs
+from orchestrator.reproducibility import (
+    capture_reproducibility_metadata,
+    snapshot_iter_files,
+)
 from orchestrator.util import atomic_write
 
 logger = logging.getLogger(__name__)
@@ -724,7 +734,32 @@ def _merge_principles(work_dir: Path, iter_dir: Path) -> None:
     atomic_write(principles_path, json.dumps(store, indent=2) + "\n")
 
 
-def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
+def _campaign_yaml_dir_from_state(work_dir: Path) -> Path | None:
+    """#263 (F18): resolve the campaign.yaml's directory from state.json.
+
+    Plot scripts declared in ``campaign.plot_specs[].script`` are
+    relative to the campaign.yaml's directory. ``config_ref`` is
+    recorded in state.json at ``setup_work_dir`` time; this helper
+    is the single read site so a legacy campaign without
+    ``config_ref`` returns ``None`` rather than guessing.
+    """
+    state_path = work_dir / "state.json"
+    if not state_path.exists():
+        return None
+    try:
+        state = json.loads(state_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    config_ref = state.get("config_ref") if isinstance(state, dict) else None
+    if not config_ref:
+        return None
+    return Path(config_ref).parent
+
+
+def setup_work_dir(
+    run_id: str, repo_path: str | None = None,
+    campaign_path: str | None = None,
+) -> Path:
     """Create and initialize a working directory from templates.
 
     See ``orchestrator/work_dir_resolver.py`` for the canonical
@@ -817,13 +852,20 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
     # detection and future cross-machine discovery.
     state["work_dir"] = str(work_dir.resolve())
     state["repo_path"] = str(Path(repo_path).resolve()) if repo_path else None
+    # #263 (F18): record the campaign.yaml's absolute path so
+    # plot_specs scripts (declared relative to that file) can be
+    # resolved at REPORT/finalize time. Only set when provided —
+    # don't clobber a value already recorded by a prior setup.
+    if campaign_path is not None:
+        state["config_ref"] = str(Path(campaign_path).resolve())
+    elif "config_ref" not in state:
+        state["config_ref"] = None
     # #262 (F17): auto-capture reproducibility metadata at INIT (before
     # any DESIGN turn fires). First capture wins — re-running INIT on
     # an existing campaign preserves the original commit/dirty/sha
     # values, which is what reviewers want (the state at campaign
     # start, not at iter-3 resume time).
     if "reproducibility_metadata" not in state:
-        from orchestrator.reproducibility import capture_reproducibility_metadata
         state["reproducibility_metadata"] = capture_reproducibility_metadata(
             Path(repo_path) if repo_path else None
         )
@@ -850,10 +892,12 @@ def setup_work_dir(run_id: str, repo_path: str | None = None) -> Path:
 def _emit_high_build_warning(bundle_path: Path, max_turns_execute_analyze: int) -> None:
     """#256 (F11): warn when bundle.code_changes implies a high BUILD count.
 
-    Threshold heuristic: ``len(arms-with-code_changes) >= 5`` OR
-    ``total_files >= 5``. Below the threshold, no warning. At/above,
+    Threshold: ``total_files >= 5`` (sum of code_changes entries
+    across all arms with a non-empty list). Below 5, silent. At/above,
     print a recommendation that the operator raise
-    ``campaign.max_turns.execute_analyze`` to ~``120 + 30 * total_files``.
+    ``campaign.max_turns.execute_analyze`` to ~``120 + 30 * total_files``,
+    suppressed when the operator already set a value at or above
+    that target.
 
     Pure print — never raises — so a misshapen bundle that the schema
     validator already rejected doesn't fail this advisory pass.
@@ -1090,13 +1134,14 @@ def run_iteration(
     # #262 (F17): snapshot latency/hardware config files into
     # runs/iter-N/snapshots/ so a future reviewer can diff the exact
     # numbers each iter ran with — even if the operator later edits the
-    # source-of-truth file in the target repo. Best-effort; missing
-    # files are skipped (the candidate list is target-agnostic).
-    if repo_path and not (iter_dir / "snapshots").exists():
+    # source-of-truth file in the target repo. Idempotency lives in
+    # snapshot_iter_files itself (mkdir exist_ok + content overwrite),
+    # so we don't gate on the directory's existence — that would skip
+    # re-snapshotting on resume after a manual touch.
+    if repo_path:
         try:
-            from orchestrator.reproducibility import snapshot_iter_files
             snapshot_iter_files(Path(repo_path), iter_dir)
-        except (OSError, ImportError) as exc:
+        except OSError as exc:
             logger.warning("repro snapshot for iter-%d skipped: %s", iteration, exc)
 
     if engine.phase == "DONE":
@@ -1268,23 +1313,17 @@ def run_iteration(
             # preflight if the campaign declares one. Failure to apply
             # is surfaced loudly (the user must rebase the prior
             # campaign or update derived_from.iteration); we do NOT
-            # silently proceed.
-            try:
-                from orchestrator.lineage import (
-                    apply_derived_from_patch,
-                    resolve_derived_from,
-                )
-                derived_patch = resolve_derived_from(
-                    campaign, repo_path=Path(repo_path),
-                )
-                if derived_patch is not None:
-                    ok, msg = apply_derived_from_patch(experiment_dir, derived_patch)
-                    if ok:
-                        print(f"  derived_from: {msg}")
-                    else:
-                        raise RuntimeError(msg)
-            except ImportError:
-                pass
+            # silently proceed. Imports are at module top — a broken
+            # orchestrator.lineage is a self-inflicted bug, not an
+            # optional dependency.
+            derived_patch = resolve_derived_from(
+                campaign, repo_path=Path(repo_path),
+            )
+            if derived_patch is not None:
+                ok, msg = apply_derived_from_patch(experiment_dir, derived_patch)
+                if not ok:
+                    raise RuntimeError(msg)
+                print(f"  derived_from: {msg}")
         if cli_dispatcher:
             import contextlib
             ctx = cli_dispatcher.override_cwd(experiment_dir) if experiment_dir else contextlib.nullcontext()
@@ -1378,15 +1417,23 @@ def run_iteration(
         # the experiment worktree branch. The cumulative form is what
         # future ``derived_from`` campaigns reuse; the per-arm patches
         # are incremental on the branch state and don't apply to a
-        # fresh main checkout.
+        # fresh main checkout. emit_cumulative_patch is best-effort
+        # internally (returns None on git failure) and writes a
+        # cumulative.patch.error sidecar so a later operator inspecting
+        # ``nous lineage`` can see why inheritance broke.
         if repo_path and experiment_id:
-            try:
-                from orchestrator.lineage import emit_cumulative_patch
-                emit_cumulative_patch(
-                    Path(repo_path), f"nous-exp-{experiment_id}", iter_dir,
+            cumulative_path = emit_cumulative_patch(
+                Path(repo_path), f"nous-exp-{experiment_id}", iter_dir,
+            )
+            if cumulative_path is None:
+                # I1: surface the failure to the user-facing console too,
+                # not just orchestrator.log — `derived_from` campaigns
+                # depend on this artifact.
+                print(
+                    f"  ⚠  cumulative.patch emit failed for iter-{iteration} — "
+                    f"see {iter_dir / 'patches' / 'cumulative.patch.error'} "
+                    f"if you plan to derive a future campaign from this run."
                 )
-            except (ImportError, OSError) as exc:
-                logger.warning("cumulative patch emit skipped: %s", exc)
         # Clean up worktree only on success
         if repo_path and experiment_id:
             remove_experiment_worktree(Path(repo_path), experiment_id)
@@ -1433,15 +1480,27 @@ def run_iteration(
         iteration=iteration, campaign=campaign,
     )
     # #263 (F18): invoke plot_specs scripts after findings.json exists.
-    # Best-effort — plot failures never block the iteration.
+    # Best-effort — plot failures never block the iteration. The
+    # campaign_yaml_dir is read from state.json (recorded at INIT)
+    # so script paths declared in campaign.plot_specs[].script
+    # resolve relative to the campaign.yaml's directory, not
+    # work_dir's parent.
     if campaign.get("plot_specs"):
         try:
-            from orchestrator.plot_specs import invoke_plot_specs
-            results = invoke_plot_specs(campaign, iter_dir)
+            campaign_yaml_dir = _campaign_yaml_dir_from_state(work_dir)
+            results = invoke_plot_specs(
+                campaign, iter_dir, campaign_yaml_dir=campaign_yaml_dir,
+            )
             ok = sum(1 for r in results if r.get("ok"))
             print(f"  plot_specs: {ok}/{len(results)} succeeded → "
                   f"{iter_dir / 'figures'}")
-        except (ImportError, OSError) as exc:
+            # Persist the per-spec result rows so failures are
+            # inspectable post-hoc, not just in the orchestrator log.
+            atomic_write(
+                iter_dir / "figures" / "plot_specs_results.json",
+                json.dumps(results, indent=2) + "\n",
+            )
+        except OSError as exc:
             logger.warning("plot_specs invocation skipped: %s", exc)
     print(f"  -> Principles merged into {work_dir / 'principles.json'}")
     print(f"  -> best_found.json updated at {work_dir / 'best_found.json'}")
@@ -1509,7 +1568,9 @@ def main() -> None:
 
     run_id = args.run_id or campaign.get("run_id") or campaign_path.parent.name + "-run"
     repo_path = campaign.get("target_system", {}).get("repo_path")
-    work_dir = setup_work_dir(run_id, repo_path=repo_path)
+    work_dir = setup_work_dir(
+        run_id, repo_path=repo_path, campaign_path=str(campaign_path),
+    )
     print(f"Working directory: {work_dir.resolve()}")
 
     run_iteration(

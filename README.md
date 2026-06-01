@@ -245,8 +245,10 @@ when ALL of these hold**:
 4. The campaign's apparatus checks are robust to design-agent
    variation, and validate ATTRIBUTION (not just upstream totals,
    #252 / F7).
-5. A stale ``principles.json`` ledger is acceptable. Auto-approve
-   never gates on it.
+
+(Note: ``principles.json`` staleness is NOT a precondition.
+Auto-approve never gates on it, so the ledger's freshness doesn't
+affect whether the gate would have caught a deviation.)
 
 **If any of these fail**, either run interactively (no
 ``--auto-approve``) so a human reviewer sees the design at the gate,

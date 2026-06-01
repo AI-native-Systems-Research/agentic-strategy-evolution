@@ -235,7 +235,9 @@ def _cmd_run(args):
                 file=sys.stderr,
             )
 
-    work_dir = setup_work_dir(run_id, repo_path=repo_path)
+    work_dir = setup_work_dir(
+        run_id, repo_path=repo_path, campaign_path=str(campaign_path),
+    )
 
     max_iterations = args.max_iterations if args.max_iterations is not None else campaign.get("max_iterations", 10)
     # #188: --bundle / --problem-md / --handoff-md only apply to iter-1.
@@ -303,8 +305,10 @@ def _cmd_resume(args):
             f"Got: {args.target}\n"
             f"This appears to be a work_dir. Use ``nous status "
             f"{args.target}`` to inspect the work_dir; ``nous resume`` "
-            f"needs the campaign yaml so it can re-validate the spec "
-            f"and re-emit reproducibility metadata (#253 / F8)."
+            f"needs the campaign yaml so it can re-validate the spec. "
+            f"(reproducibility_metadata captured at the original INIT "
+            f"is preserved — first-capture-wins, #262 / F17.) "
+            f"(#253 / F8)"
             f"{hint}",
             file=sys.stderr,
         )
@@ -934,8 +938,17 @@ def _cmd_clean(args):
 
 
 def _cmd_package(args):
-    """#263 (F18): tarball work_dir + reproduce.sh + Dockerfile + README."""
+    """#263 (F18): tarball work_dir + reproduce.sh + Dockerfile + README.
+
+    Staging artifacts (reproduce.sh, Dockerfile, PACKAGE_README.md) are
+    written to a temp directory and added to the tarball at the
+    ``<run_id>/`` prefix — they never touch the work_dir on disk.
+    Successive runs of ``nous package`` produce identical tarballs
+    without accumulating staging files in the campaign's persistent
+    state.
+    """
     import tarfile
+    import tempfile
     import textwrap
 
     work_dir = resolve_work_dir(args.target)
@@ -1009,15 +1022,20 @@ def _cmd_package(args):
         ```
     """)
 
-    # Stage these alongside the work_dir for tar inclusion.
-    pkg_root = work_dir
-    (pkg_root / "reproduce.sh").write_text(reproduce_sh)
-    (pkg_root / "reproduce.sh").chmod(0o755)
-    (pkg_root / "Dockerfile").write_text(dockerfile)
-    (pkg_root / "PACKAGE_README.md").write_text(readme)
-
-    with tarfile.open(output, "w:gz") as tar:
-        tar.add(work_dir, arcname=work_dir.name)
+    # Stage to a temp directory (gone after this command), tar both
+    # work_dir AND the staged files at <run_id>/ prefix. The work_dir
+    # on disk is unchanged — this command is read-only with respect
+    # to the campaign's persistent state.
+    with tempfile.TemporaryDirectory() as tmp_root:
+        tmp = Path(tmp_root)
+        (tmp / "reproduce.sh").write_text(reproduce_sh)
+        (tmp / "reproduce.sh").chmod(0o755)
+        (tmp / "Dockerfile").write_text(dockerfile)
+        (tmp / "PACKAGE_README.md").write_text(readme)
+        with tarfile.open(output, "w:gz") as tar:
+            tar.add(work_dir, arcname=work_dir.name)
+            for staged in ("reproduce.sh", "Dockerfile", "PACKAGE_README.md"):
+                tar.add(tmp / staged, arcname=f"{work_dir.name}/{staged}")
     print(f"Wrote {output}")
 
 
@@ -1184,10 +1202,11 @@ def main():
     p_stop.add_argument(
         "--immediate", action="store_true",
         help="Event-boundary halt (#250 / F5). Writes a STOP_IMMEDIATE "
-             "sentinel that the SDK turn loop checks at each tool-call "
-             "return — aborts within seconds rather than at the next "
-             "phase boundary. Use when EXECUTE_ANALYZE is building "
-             "wrong code and you want to halt promptly.",
+             "sentinel that the SDK turn loop checks at each event "
+             "boundary (every SDK message) — aborts within seconds "
+             "rather than at the next phase boundary. Use when "
+             "EXECUTE_ANALYZE is building wrong code and you want "
+             "to halt promptly.",
     )
     p_stop.set_defaults(func=_cmd_stop)
 

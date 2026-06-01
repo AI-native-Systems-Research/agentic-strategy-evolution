@@ -179,8 +179,15 @@ async def aiter_with_silence_watchdog(aiter, threshold: float | None):
                     await asyncio.wait_for(coro, timeout=5.0)  # type: ignore[arg-type]
             except (asyncio.TimeoutError, asyncio.CancelledError, RuntimeError, GeneratorExit):
                 pass  # already running / racing — let the loop tear down naturally
-            except Exception:  # noqa: BLE001 — best-effort cleanup
-                pass
+            except Exception as exc:  # noqa: BLE001 — best-effort cleanup
+                # We're in a finally block already unwinding the
+                # primary exception; do NOT re-raise (would mask the
+                # original) but DO log so a real cleanup-side defect
+                # has an audit trail. Review I3.
+                logger.warning(
+                    "aclose cleanup raised %s: %s",
+                    type(exc).__name__, exc,
+                )
 
 
 def summarize_silence_gaps(event_log_path: Path) -> dict:
@@ -434,15 +441,22 @@ def _default_sdk_runner_factory() -> SDKRunner:
             # ``<work_dir>/runs/iter-N/inputs/executor_log.jsonl``) so
             # the loop can check for STOP_IMMEDIATE at each message
             # boundary without re-walking the filesystem every event.
+            #
+            # Path walk: executor_log.jsonl/.. = inputs ; inputs/.. =
+            # iter-N ; iter-N/.. = runs ; runs/.. = work_dir.
+            # Four ``.parent`` calls. ``.parent`` never raises (returns
+            # the filesystem root if the path is too short), so we
+            # defensively check the resolved path lives under a
+            # directory that actually exists rather than wrapping in
+            # try/except.
             stop_immediate_path: Path | None = None
             if event_log_path is not None:
-                # walk up to work_dir: inputs/.. = iter-N; iter-N/.. = runs; runs/.. = work_dir
-                try:
-                    stop_immediate_path = (
-                        Path(event_log_path).parent.parent.parent.parent / "STOP_IMMEDIATE"
-                    )
-                except (IndexError, ValueError):
-                    stop_immediate_path = None
+                candidate = (
+                    Path(event_log_path).parent.parent.parent.parent
+                    / "STOP_IMMEDIATE"
+                )
+                if candidate.parent.exists():
+                    stop_immediate_path = candidate
             async for message in aiter_with_silence_watchdog(
                 aiter, turn_silence_threshold,
             ):
@@ -597,10 +611,6 @@ class SDKDispatcher(CLIDispatcher):
         # ``campaign.sdk_timeouts.turn_silence_threshold_seconds`` to a
         # different value, or to 0 to disable the live watchdog while
         # keeping the post-mortem analyzer.
-        raw_turn_threshold = timeouts.get(
-            "turn_silence_threshold_seconds",
-            self._silence_threshold,
-        )
         # #264 (F19): scalar (legacy) OR per-phase map. Per-phase
         # defaults — DESIGN's heavy reasoning between tool calls
         # earns 600s; EXECUTE_ANALYZE's frequent simulator calls
@@ -611,7 +621,18 @@ class SDKDispatcher(CLIDispatcher):
             "execute_analyze": 120.0,
             "report": 240.0,
         }
-        if isinstance(raw_turn_threshold, dict):
+        # Only override the per-phase defaults when the operator
+        # explicitly set ``turn_silence_threshold_seconds``. If the
+        # field is absent, fall through and let the per-phase
+        # defaults stand — defaulting to ``silence_threshold_seconds``
+        # would silently apply 600 to every phase, defeating the
+        # whole point of F19's per-phase split.
+        explicit_turn_threshold = "turn_silence_threshold_seconds" in timeouts
+        raw_turn_threshold = timeouts.get(
+            "turn_silence_threshold_seconds",
+            self._silence_threshold,
+        )
+        if explicit_turn_threshold and isinstance(raw_turn_threshold, dict):
             for phase_key in ("design", "execute_analyze", "report"):
                 if phase_key in raw_turn_threshold:
                     try:
@@ -637,7 +658,9 @@ class SDKDispatcher(CLIDispatcher):
             self._turn_silence_threshold = max(
                 self._phase_silence_thresholds.values()
             )
-        else:
+        elif explicit_turn_threshold:
+            # Operator set a scalar (legacy form) — apply it to every
+            # phase, preserving pre-F19 behavior.
             try:
                 self._turn_silence_threshold = float(raw_turn_threshold)
             except (TypeError, ValueError) as exc:
@@ -650,11 +673,17 @@ class SDKDispatcher(CLIDispatcher):
                     f"campaign.sdk_timeouts.turn_silence_threshold_seconds must be "
                     f">= 0, got {self._turn_silence_threshold}"
                 )
-            # Scalar form applies to every phase (backward compat).
             self._phase_silence_thresholds = {
                 k: self._turn_silence_threshold
                 for k in self._phase_silence_thresholds
             }
+        else:
+            # Neither map nor scalar set — keep the per-phase defaults.
+            # Legacy scalar attribute mirrors the highest default for
+            # callers that read it directly.
+            self._turn_silence_threshold = max(
+                self._phase_silence_thresholds.values()
+            )
         # #127 Phase B: event log path is recomputed per-dispatch (it depends
         # on the iteration), so we don't store it on the dispatcher.
         self._event_log_path: Path | None = None
@@ -702,8 +731,16 @@ class SDKDispatcher(CLIDispatcher):
         Resolution chain (highest priority first):
           1. Bundle-side per-phase override (rehearsal-recorded).
           2. Bundle-side scalar override (rehearsal-recorded, legacy).
-          3. Campaign-side per-phase value (set in __init__).
-          4. Phase default (design=600, execute_analyze=120, report=240).
+          3. Campaign-side per-phase value, falling back to the
+             phase default (design=600, execute_analyze=120, report=240).
+
+        Steps 3 and 4 from the friction-report write-up are merged
+        in ``self._phase_silence_thresholds``: the constructor seeds
+        the dict with the per-phase defaults, then overlays operator
+        values from ``campaign.sdk_timeouts.turn_silence_threshold_seconds``.
+        A single dict lookup therefore reads the right value
+        regardless of which layer set it.
+
         Returns 0 only if every layer evaluated to 0 (operator opted out).
         """
         bundle_per_phase = self._bundle_silence_phase_overrides

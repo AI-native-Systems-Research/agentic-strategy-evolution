@@ -33,6 +33,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import yaml
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,12 +63,21 @@ def emit_cumulative_patch(
     The cumulative form is what future campaigns reuse via
     ``derived_from``. The existing per-arm ``<arm>.patch`` files
     (incremental, branch-state-dependent) remain unchanged.
+
+    Failure surface: when emission fails, a sidecar
+    ``patches/cumulative.patch.error`` is written with the git stderr.
+    ``summarize_lineage`` (and ``nous lineage`` via that helper) read
+    the sidecar and surface the failure to the operator. Without the
+    sidecar, a failed emission becomes a single warning line in
+    orchestrator.log that downstream ``derived_from`` campaigns will
+    silently miss months later. (Review I1.)
     """
     repo_path = Path(repo_path)
     iter_dir = Path(iter_dir)
     patches_dir = iter_dir / "patches"
     patches_dir.mkdir(parents=True, exist_ok=True)
     cumulative_path = patches_dir / "cumulative.patch"
+    error_path = patches_dir / "cumulative.patch.error"
 
     main_ref = _git_main_ref(repo_path)
     try:
@@ -76,14 +87,27 @@ def emit_cumulative_patch(
         )
     except (subprocess.SubprocessError, OSError) as exc:
         logger.warning("emit_cumulative_patch: git diff failed (%s)", exc)
+        error_path.write_text(
+            f"git diff {main_ref}..{branch_name} subprocess error: {exc}\n"
+        )
         return None
     if result.returncode != 0:
         logger.warning(
             "emit_cumulative_patch: git diff %s..%s failed: %s",
             main_ref, branch_name, result.stderr.strip(),
         )
+        error_path.write_text(
+            f"git diff {main_ref}..{branch_name} returncode={result.returncode}\n"
+            f"stderr:\n{result.stderr}"
+        )
         return None
     cumulative_path.write_text(result.stdout)
+    # Clean up any prior sidecar from a previous failed attempt.
+    if error_path.exists():
+        try:
+            error_path.unlink()
+        except OSError:
+            pass
     return cumulative_path
 
 
@@ -215,16 +239,22 @@ def summarize_lineage(work_dir: Path) -> dict:
             pass
 
     # Look for campaign.yaml.copy or sibling campaign yaml for derived_from.
+    # Errors (unreadable / malformed) are surfaced into the summary so
+    # ``nous lineage`` shows the operator why derived_from couldn't be
+    # determined, rather than silently leaving it as ``null``.
     for candidate in (work_dir / "campaign.yaml.copy", work_dir / "campaign.yaml"):
         if candidate.exists():
             try:
-                import yaml as _yaml
-                campaign = _yaml.safe_load(candidate.read_text()) or {}
-                if isinstance(campaign.get("derived_from"), dict):
-                    summary["derived_from"] = campaign["derived_from"]
+                campaign = yaml.safe_load(candidate.read_text()) or {}
+            except OSError as exc:
+                summary["campaign_yaml_error"] = f"unreadable: {exc}"
                 break
-            except (OSError, Exception):  # noqa: BLE001 — best-effort
-                pass
+            except yaml.YAMLError as exc:
+                summary["campaign_yaml_error"] = f"malformed: {exc}"
+                break
+            if isinstance(campaign.get("derived_from"), dict):
+                summary["derived_from"] = campaign["derived_from"]
+            break
 
     runs_dir = work_dir / "runs"
     if runs_dir.is_dir():
@@ -240,5 +270,11 @@ def summarize_lineage(work_dir: Path) -> dict:
                 str(cumulative) if cumulative.is_file() and cumulative.stat().st_size > 0
                 else None
             )
+            error_sidecar = entry / "patches" / "cumulative.patch.error"
+            if error_sidecar.is_file():
+                try:
+                    iter_info["cumulative_patch_error"] = error_sidecar.read_text().strip()
+                except OSError:
+                    iter_info["cumulative_patch_error"] = "(error file unreadable)"
             summary["iterations"].append(iter_info)
     return summary

@@ -37,10 +37,17 @@ bug I want to catch were present, would this invariant fail?* If the
 bug-of-interest involves attribution among items, your invariant
 must distinguish per-item, not just sum.
 
-**Worked example (paper-memorytime-mirage, BLIS sim/kvtime/meter.go).**
+**Worked example (paper-memorytime-mirage, BLIS ``sim/kvtime/meter.go``,
+iter-1, 2026-05).**
 - Conservation invariant: ``Σ_RequestMap == UsedBlocks · BlockSize``. ✅ Always passed.
 - Per-tenant attribution: walked ``runningBatch``, not ``RequestMap``.
-- Author's own comment: *"RequestMap may also contain requests NOT in runningBatch"* — i.e., orphans (preempted/swapped requests holding KV blocks).
+- Author's own comment near the attribution loop: *"RequestMap may
+  also contain requests NOT in runningBatch"* — i.e., orphans
+  (preempted/swapped requests holding KV blocks). The exact line
+  number drifts as BLIS evolves; grep for ``runningBatch`` in
+  ``sim/kvtime/`` of the BLIS repo at the campaign's recorded
+  ``repo_commit`` (see ``state.json.reproducibility_metadata``) to
+  reproduce the snapshot the original analysis was against.
 - Result: orphans counted toward ``UsedBlocks · BlockSize`` (right-hand side of the conservation check) but NOT attributed to any tenant in ``Accumulated``. Per-tenant ``A_i(t)`` silently undercounted; conservation passed.
 
 The conservation check validated the upstream total, not the

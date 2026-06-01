@@ -11,9 +11,15 @@ etc. The block lives in two places:
   exact numbers each iter ran with, even if the operator later edits
   the source-of-truth file in the target repo).
 
-Pure Python, no LLM. Idempotent: re-running on an existing work_dir
-preserves the original capture (you don't accidentally rewrite the
-``repo_commit`` field after several iterations have run).
+Pure Python, no LLM. Idempotent at the caller layer:
+``setup_work_dir`` (in iteration.py) guards
+``state["reproducibility_metadata"]`` before invoking the capture,
+so re-running on an existing work_dir preserves the original
+capture (you don't accidentally rewrite the ``repo_commit`` field
+after several iterations have run). The same first-capture-wins
+guard is also implemented in ``attach_to_state`` for external
+tooling; production goes through ``setup_work_dir``'s inline
+guard, not through ``attach_to_state``.
 """
 from __future__ import annotations
 
@@ -231,18 +237,37 @@ def snapshot_iter_files(
 
 
 def attach_to_state(work_dir: Path, block: dict) -> None:
-    """Persist the reproducibility_metadata block into state.json
-    (idempotent: don't overwrite a block already present unless the
-    captured_at is older than 24h, which signals a re-init).
+    """Persist the reproducibility_metadata block into state.json.
 
-    State-only — campaign.yaml stays user-set. The captured block is
-    surfaced via ``nous status`` from state.json.
+    First-capture-wins: if state.json already has a
+    ``reproducibility_metadata`` dict with ``captured_at``, we
+    leave it untouched. Re-running ``nous run`` on an existing
+    campaign therefore preserves the original commit/dirty/sha
+    values, which is what reviewers want (the state at campaign
+    start, not at iter-3 resume time).
+
+    state.json must already exist and be valid JSON — this function
+    is meant to run after ``setup_work_dir``. A read failure means
+    something has gone seriously wrong (state corruption, or the
+    caller used the wrong work_dir), so we raise rather than
+    silently swallow.
+
+    Note: the production capture path inlines this logic in
+    ``setup_work_dir`` (iteration.py); ``attach_to_state`` is the
+    public helper for tests and external tooling that need the
+    same semantics without going through ``setup_work_dir``.
     """
     state_path = work_dir / "state.json"
     try:
         state = json.loads(state_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return
+    except OSError as exc:
+        raise RuntimeError(
+            f"reproducibility: cannot read {state_path}: {exc}"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"reproducibility: {state_path} is malformed: {exc}"
+        ) from exc
     existing = state.get("reproducibility_metadata")
     if isinstance(existing, dict) and "captured_at" in existing:
         # Already present — don't rewrite. The first capture wins,

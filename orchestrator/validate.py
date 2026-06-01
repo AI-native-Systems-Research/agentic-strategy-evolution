@@ -295,11 +295,30 @@ def _validate_locked_workload(
     deviations: list[str] = []
     workload_yamls = sorted(inputs_dir.glob("*.yaml")) + sorted(inputs_dir.glob("*.yml"))
     for workload_path in workload_yamls:
+        # F20's whole point is to catch silent workload drift —
+        # malformed/unreadable input yaml is exactly the regime where
+        # DESIGN-vs-execution divergence hides. Surface it as a
+        # deviation so the validator's caller (validate_design)
+        # raises with a clear diagnostic, not a silent skip.
         try:
-            data = yaml.safe_load(workload_path.read_text())
-        except (OSError, yaml.YAMLError):
+            text = workload_path.read_text()
+        except OSError as exc:
+            deviations.append(
+                f"  - {workload_path.name}: cannot read ({exc})"
+            )
+            continue
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            deviations.append(
+                f"  - {workload_path.name}: malformed yaml ({exc})"
+            )
             continue
         if not isinstance(data, dict):
+            deviations.append(
+                f"  - {workload_path.name}: top-level is not a mapping "
+                f"({type(data).__name__})"
+            )
             continue
         # Compare every top-level locked field.
         _walk_locked_workload(
@@ -322,6 +341,15 @@ def _walk_locked_workload(
     """Recursive walk for #265: compare locked dict against actual,
     report any mismatch not present in ``declared`` (set of (tenant, field)
     tuples from workload_changes_from_canonical.diff).
+
+    Tenant threading: assumes ``locked_workload`` has the canonical
+    shape ``{tenants: {<tenant_id>: {…}}}`` — when we descend through
+    a ``tenants`` key, the next-level key IS the tenant id, and we
+    thread it into the (tenant, field-path) deviation tuple. Other
+    group keys (e.g. a hypothetical ``service_classes.<id>.…``) are
+    NOT threaded; they appear in deviation entries with ``tenant=None``,
+    which means matching them in workload_changes_from_canonical
+    requires a non-tenant-keyed declared diff entry.
     """
     for key, expected in locked.items():
         sub_path = f"{path}.{key}" if path else key
@@ -466,7 +494,7 @@ def compute_campaign_spec_diff(
     --auto-approve. The diff is "soft" (informational) by default —
     F1's ``_validate_locked_parameters`` is the hard-fail layer.
 
-    Returns a dict with three sub-keys:
+    Returns a dict with five sub-keys:
       * ``locked_parameters_violations`` — list of {param, campaign,
         bundle} entries (these are also hard validation failures
         upstream; recorded here so an auditor sees them in one place).
