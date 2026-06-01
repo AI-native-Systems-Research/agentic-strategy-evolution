@@ -1,9 +1,11 @@
 """Tests for multi-iteration campaign loop."""
+import importlib.metadata as importlib_metadata
 import json
 import shutil
+import subprocess
 import warnings
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import jsonschema
 import pytest
@@ -12,7 +14,12 @@ import yaml
 from orchestrator.dispatch import StubDispatcher
 from orchestrator.engine import Engine
 from orchestrator.campaign import run_campaign
-from orchestrator.iteration import IterationOutcome, _save_human_feedback
+from orchestrator.iteration import (
+    IterationOutcome,
+    _capture_runtime_meta,
+    _save_human_feedback,
+    setup_work_dir,
+)
 
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "templates"
@@ -449,3 +456,170 @@ class TestSaveHumanFeedback:
         fb = json.loads((tmp_path / "human_feedback.json").read_text())
         assert len(fb["design"]) == 1
         assert len(fb["findings"]) == 1
+
+
+class TestMetadataEnrichment:
+    """Tests for campaign metadata enrichment (runtime block in campaign.yaml copy)."""
+
+    CAMPAIGN_WITH_META = {
+        **SAMPLE_CAMPAIGN,
+        "metadata": {
+            "tags": ["prefix-caching", "ttft"],
+            "goal": "Determine prefix ratio effect on TTFT",
+        },
+    }
+
+    def test_setup_work_dir_writes_enriched_campaign_yaml(self, tmp_path):
+        """setup_work_dir writes an enriched campaign.yaml with runtime block."""
+        campaign_path = tmp_path / "campaign.yaml"
+        campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
+
+        work_dir = setup_work_dir(
+            "test-run", repo_path=None,
+            campaign_path=campaign_path, campaign=self.CAMPAIGN_WITH_META,
+        )
+
+        enriched_path = work_dir / "campaign.yaml"
+        assert enriched_path.exists()
+
+        enriched = yaml.safe_load(enriched_path.read_text())
+        assert "runtime" in enriched
+        assert "started_at" in enriched["runtime"]
+        assert "nous_version" in enriched["runtime"]
+        assert "target_repo" in enriched["runtime"]
+        assert "target_commit" in enriched["runtime"]
+
+    def test_user_metadata_passes_through(self, tmp_path):
+        """User-defined metadata from campaign.yaml appears in the enriched copy."""
+        campaign_path = tmp_path / "campaign.yaml"
+        campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
+
+        work_dir = setup_work_dir(
+            "test-run", repo_path=None,
+            campaign_path=campaign_path, campaign=self.CAMPAIGN_WITH_META,
+        )
+
+        enriched = yaml.safe_load((work_dir / "campaign.yaml").read_text())
+        assert enriched["metadata"]["tags"] == ["prefix-caching", "ttft"]
+        assert enriched["metadata"]["goal"] == "Determine prefix ratio effect on TTFT"
+
+    def test_enriched_copy_not_overwritten_on_resume(self, tmp_path):
+        """Re-calling setup_work_dir does not clobber the enriched campaign.yaml."""
+        campaign_path = tmp_path / "campaign.yaml"
+        campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
+
+        work_dir = setup_work_dir(
+            "test-run", repo_path=None,
+            campaign_path=campaign_path, campaign=self.CAMPAIGN_WITH_META,
+        )
+
+        # Modify the enriched file to prove it's not overwritten
+        enriched_path = work_dir / "campaign.yaml"
+        enriched = yaml.safe_load(enriched_path.read_text())
+        enriched["runtime"]["marker"] = "original"
+        enriched_path.write_text(yaml.safe_dump(enriched))
+
+        # Call setup_work_dir again (simulating resume)
+        setup_work_dir(
+            "test-run", repo_path=None,
+            campaign_path=campaign_path, campaign=self.CAMPAIGN_WITH_META,
+        )
+
+        reloaded = yaml.safe_load(enriched_path.read_text())
+        assert reloaded["runtime"]["marker"] == "original"
+
+    def test_runtime_meta_tolerates_no_git(self, tmp_path):
+        """_capture_runtime_meta returns nulls gracefully when git is unavailable."""
+        with patch("orchestrator.iteration.subprocess.check_output", side_effect=FileNotFoundError):
+            meta = _capture_runtime_meta(str(tmp_path))
+
+        assert meta["target_repo"] is None
+        assert meta["target_commit"] is None
+        # nous_version may still be set via importlib.metadata
+        assert "started_at" in meta
+
+    def test_runtime_meta_captures_target_commit_from_git_repo(self, tmp_path):
+        """_capture_runtime_meta captures target_commit from a real git repo."""
+        import subprocess
+        repo = tmp_path / "target"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, capture_output=True)
+        (repo / "f.txt").write_text("x")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True, check=True)
+
+        meta = _capture_runtime_meta(str(repo))
+
+        assert meta["target_commit"] is not None
+        assert len(meta["target_commit"]) == 40  # full SHA
+        # No remote configured, so target_repo should be None
+        assert meta["target_repo"] is None
+
+    def test_no_enriched_copy_without_campaign_path(self, tmp_path, monkeypatch):
+        """If campaign_path is not provided, no enriched copy is written."""
+        monkeypatch.chdir(tmp_path)
+        work_dir = setup_work_dir("test-run", repo_path=None)
+        assert not (work_dir / "campaign.yaml").exists()
+
+    @pytest.mark.parametrize("remote,expected", [
+        ("git@github.com:org/repo.git", "org/repo"),
+        ("git@github.com:org/repo", "org/repo"),
+        ("https://github.com/org/repo.git", "org/repo"),
+        ("https://github.com/org/repo", "org/repo"),
+        ("ssh://git@github.com/org/repo.git", "org/repo"),
+        ("https://gitlab.com/org/repo.git", "https://gitlab.com/org/repo.git"),
+        ("git@gitlab.com:org/repo.git", "git@gitlab.com:org/repo.git"),
+    ])
+    def test_remote_url_parsing(self, remote, expected, monkeypatch):
+        """_capture_runtime_meta correctly parses various remote URL formats."""
+        def fake_check_output(cmd, **kwargs):
+            if "rev-parse" in cmd:
+                return "a" * 40 + "\n"
+            if "get-url" in cmd:
+                return remote + "\n"
+            raise subprocess.CalledProcessError(1, cmd)
+
+        import subprocess as real_subprocess
+        monkeypatch.setattr("orchestrator.iteration.subprocess.check_output", fake_check_output)
+        meta = _capture_runtime_meta("/fake/repo")
+        assert meta["target_repo"] == expected
+
+    def test_nous_version_git_sha_fallback(self, monkeypatch):
+        """When importlib.metadata fails, nous_version falls back to git SHA."""
+        fake_sha = "b" * 40
+
+        monkeypatch.setattr(
+            "orchestrator.iteration.importlib_metadata.version",
+            lambda _: (_ for _ in ()).throw(importlib_metadata.PackageNotFoundError()),
+        )
+
+        def fake_check_output(cmd, **kwargs):
+            if "rev-parse" in cmd:
+                return fake_sha + "\n"
+            raise subprocess.CalledProcessError(1, cmd)
+
+        monkeypatch.setattr("orchestrator.iteration.subprocess.check_output", fake_check_output)
+        meta = _capture_runtime_meta(None)
+        assert meta["nous_version"] == fake_sha
+
+    def test_enrichment_with_repo_path(self, tmp_path):
+        """Enriched campaign.yaml is written inside .nous/<run_id>/ when repo_path is set."""
+        campaign_path = tmp_path / "campaign.yaml"
+        campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
+
+        repo = tmp_path / "target_repo"
+        repo.mkdir()
+
+        work_dir = setup_work_dir(
+            "test-run", repo_path=str(repo),
+            campaign_path=campaign_path, campaign=self.CAMPAIGN_WITH_META,
+        )
+
+        assert work_dir == repo / ".nous" / "test-run"
+        enriched_path = work_dir / "campaign.yaml"
+        assert enriched_path.exists()
+        enriched = yaml.safe_load(enriched_path.read_text())
+        assert "runtime" in enriched
+        assert enriched["metadata"]["tags"] == ["prefix-caching", "ttft"]
