@@ -287,7 +287,9 @@ Index a completed Nous campaign into the shared wiki and generate a visualizatio
     ```
     The script generates `~/.nous/wiki/viz/<campaign-name>.html` and opens it in the browser.
 
-12. **Report**: Print all output paths and confirm the visualization opened:
+12. **Invoke /index-wiki**: After visualization is generated, invoke `/index-wiki <campaign-name>` to merge this campaign's data into the cross-campaign registry.
+
+13. **Report**: Print all output paths and confirm the visualization opened:
     - `~/.nous/wiki/campaigns/<name>/dead-ends.json`
     - `~/.nous/wiki/campaigns/<name>/frontiers.json`
     - `~/.nous/wiki/campaigns/<name>/interactions.json`
@@ -297,6 +299,7 @@ Index a completed Nous campaign into the shared wiki and generate a visualizatio
     - `~/.nous/wiki/campaigns/<name>/concepts.json`
     - `~/.nous/wiki/campaigns/<name>/summaries.json`
     - `~/.nous/wiki/viz/<name>.html`
+    - `~/.nous/wiki/registry.json`
 
 ## Important Rules
 
