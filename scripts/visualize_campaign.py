@@ -961,6 +961,59 @@ function showPrinciplePanel(principleId) {{
   }});
 }}
 
+function renderRelationshipChips(d, item, viewContext) {{
+  let html = "";
+  const ctx = viewContext;
+  if (d.nodeType === "concept") {{
+    const ownedParams = (item.parameters || []).map(pName =>
+      (conceptsData.parameters || []).find(p => p.name === pName)).filter(Boolean);
+    if (ownedParams.length > 0) {{
+      html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Parameters</div>`;
+      html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
+      ownedParams.forEach(p => {{
+        const pid = "param-" + p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        html += `<button class="chip-btn chip-param" onclick="openChipPanel('${{pid}}', 'parameter', '${{ctx}}')">${{p.name}}</button>`;
+      }});
+      html += `</div></div>`;
+    }}
+    const operatesOn = (item.operates_on || []).map(eName =>
+      (conceptsData.entities || []).find(e => e.name === eName)).filter(Boolean);
+    if (operatesOn.length > 0) {{
+      html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Operates on</div>`;
+      html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
+      operatesOn.forEach(e => {{
+        const eid = "entity-" + e.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        html += `<button class="chip-btn chip-entity" onclick="openChipPanel('${{eid}}', 'entity', '${{ctx}}')">${{e.name}}</button>`;
+      }});
+      html += `</div></div>`;
+    }}
+  }} else if (d.nodeType === "parameter") {{
+    const parentName = item.parent_concept;
+    if (parentName) {{
+      const parentConcept = (conceptsData.concepts || []).find(c => c.name === parentName);
+      if (parentConcept) {{
+        html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Parent concept</div>`;
+        const cid = "concept-" + parentConcept.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        html += `<button class="chip-btn chip-concept" onclick="openChipPanel('${{cid}}', 'concept', '${{ctx}}')">${{parentConcept.name}}</button>`;
+        html += `</div>`;
+      }}
+    }}
+  }} else if (d.nodeType === "entity") {{
+    const actingConcepts = (conceptsData.concepts || []).filter(c =>
+      (c.operates_on || []).includes(item.name));
+    if (actingConcepts.length > 0) {{
+      html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Concepts that act on this</div>`;
+      html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
+      actingConcepts.forEach(c => {{
+        const cid = "concept-" + c.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        html += `<button class="chip-btn chip-concept" onclick="openChipPanel('${{cid}}', 'concept', '${{ctx}}')">${{c.name}}</button>`;
+      }});
+      html += `</div></div>`;
+    }}
+  }}
+  return html;
+}}
+
 function showConceptPanel(d, viewContext) {{
   resetEdgeHighlights();
   const panel = document.getElementById("iter-detail-panel");
@@ -992,34 +1045,12 @@ function showConceptPanel(d, viewContext) {{
     // Definition
     html += `<div class="panel-field"><div class="panel-field-label">What it is</div><div class="panel-field-value">${{item.definition}}</div></div>`;
 
+    // Render relationship chips (shared logic for both Knowledge and Iterations tabs)
+    html += renderRelationshipChips(d, item, viewContext);
+
     if (isKnowledge) {{
-      // KNOWLEDGE TAB panel logic — uses explicit relationship fields only
+      // Knowledge tab: show principles as clickable buttons for concepts
       if (d.nodeType === "concept") {{
-        // Concept: show owned parameters (from concept.parameters array)
-        const ownedParams = (item.parameters || []).map(pName =>
-          (conceptsData.parameters || []).find(p => p.name === pName)).filter(Boolean);
-        if (ownedParams.length > 0) {{
-          html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Parameters</div>`;
-          html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
-          ownedParams.forEach(p => {{
-            const pid = "param-" + p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-            html += `<button class="chip-btn chip-param" onclick="openChipPanel('${{pid}}', 'parameter', 'knowledge')">${{p.name}}</button>`;
-          }});
-          html += `</div></div>`;
-        }}
-        // Concept: show operates_on entities
-        const operatesOn = (item.operates_on || []).map(eName =>
-          (conceptsData.entities || []).find(e => e.name === eName)).filter(Boolean);
-        if (operatesOn.length > 0) {{
-          html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Operates on</div>`;
-          html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
-          operatesOn.forEach(e => {{
-            const eid = "entity-" + e.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-            html += `<button class="chip-btn chip-entity" onclick="openChipPanel('${{eid}}', 'entity', 'knowledge')">${{e.name}}</button>`;
-          }});
-          html += `</div></div>`;
-        }}
-        // All principles as clickable buttons
         const princNodes = princData.nodes || [];
         const allPrincs = item.principles.map(pid => {{
           const pNode = princNodes.find(n => n.id === pid);
@@ -1035,10 +1066,10 @@ function showConceptPanel(d, viewContext) {{
           }});
           html += `</div></div>`;
         }}
-      }} else if (d.nodeType === "parameter") {{
-        // Parameter: show pre-extracted evolution timeline
+      }}
+      // Knowledge tab: show evolution timeline for parameters
+      if (d.nodeType === "parameter") {{
         const evolution = item.evolution || [];
-
         if (evolution.length > 0) {{
           html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label">Value across iterations</div>`;
           const outcomeColors = {{ "confirmed": "#4caf50", "refuted": "#f44336", "partially_confirmed": "#ff9800", "baseline": "#9e9e9e" }};
@@ -1048,90 +1079,8 @@ function showConceptPanel(d, viewContext) {{
           }});
           html += `</div>`;
         }}
-
-        // Show parent concept (single owner — from parent_concept field)
-        const parentName = item.parent_concept;
-        if (parentName) {{
-          const parentConcept = (conceptsData.concepts || []).find(c => c.name === parentName);
-          if (parentConcept) {{
-            html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Parent concept</div>`;
-            const cid = "concept-" + parentConcept.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-            html += `<button class="chip-btn chip-concept" onclick="openChipPanel('${{cid}}', 'concept', 'knowledge')">${{parentConcept.name}}</button>`;
-            html += `</div>`;
-          }}
-        }}
-      }} else if (d.nodeType === "entity") {{
-        // Entity: show concepts that operate on it (from concept.operates_on)
-        const actingConcepts = (conceptsData.concepts || []).filter(c =>
-          (c.operates_on || []).includes(item.name));
-        if (actingConcepts.length > 0) {{
-          html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Concepts that act on this</div>`;
-          html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
-          actingConcepts.forEach(c => {{
-            const cid = "concept-" + c.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-            html += `<button class="chip-btn chip-concept" onclick="openChipPanel('${{cid}}', 'concept', 'knowledge')">${{c.name}}</button>`;
-          }});
-          html += `</div></div>`;
-        }}
       }}
     }} else {{
-      // ITERATIONS TAB panel logic — uses explicit relationship fields
-      if (d.nodeType === "concept") {{
-        // Concept: show owned parameters
-        const ownedParams = (item.parameters || []).map(pName =>
-          (conceptsData.parameters || []).find(p => p.name === pName)).filter(Boolean);
-        if (ownedParams.length > 0) {{
-          html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Parameters</div>`;
-          html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
-          ownedParams.forEach(p => {{
-            const pid = "param-" + p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-            html += `<button class="chip-btn chip-param" onclick="openChipPanel('${{pid}}', 'parameter', 'iterations')">${{p.name}}</button>`;
-          }});
-          html += `</div></div>`;
-        }}
-        // Concept: show operates_on entities
-        const operatesOn = (item.operates_on || []).map(eName =>
-          (conceptsData.entities || []).find(e => e.name === eName)).filter(Boolean);
-        if (operatesOn.length > 0) {{
-          html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Operates on</div>`;
-          html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
-          operatesOn.forEach(e => {{
-            const eid = "entity-" + e.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-            html += `<button class="chip-btn chip-entity" onclick="openChipPanel('${{eid}}', 'entity', 'iterations')">${{e.name}}</button>`;
-          }});
-          html += `</div></div>`;
-        }}
-      }}
-
-      // Parameters: show parent concept only
-      if (d.nodeType === "parameter") {{
-        const parentName = item.parent_concept;
-        if (parentName) {{
-          const parentConcept = (conceptsData.concepts || []).find(c => c.name === parentName);
-          if (parentConcept) {{
-            html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Parent concept</div>`;
-            const cid = "concept-" + parentConcept.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-            html += `<button class="chip-btn chip-concept" onclick="openChipPanel('${{cid}}', 'concept', 'iterations')">${{parentConcept.name}}</button>`;
-            html += `</div>`;
-          }}
-        }}
-      }}
-
-      // Entities: show concepts that operate on them
-      if (d.nodeType === "entity") {{
-        const actingConcepts = (conceptsData.concepts || []).filter(c =>
-          (c.operates_on || []).includes(item.name));
-        if (actingConcepts.length > 0) {{
-          html += `<div class="panel-field" style="margin-top:12px;padding-top:12px;border-top:1px solid #0f3460;"><div class="panel-field-label" style="margin-bottom:6px;">Concepts that act on this</div>`;
-          html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
-          actingConcepts.forEach(c => {{
-            const cid = "concept-" + c.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-            html += `<button class="chip-btn chip-concept" onclick="openChipPanel('${{cid}}', 'concept', 'iterations')">${{c.name}}</button>`;
-          }});
-          html += `</div></div>`;
-        }}
-      }}
-
       // Which iterations involve this item
       const iterNodes = iterData.nodes.filter(n => n.nodeType === "iteration");
       const connectedIters = iterNodes.filter(iterNode => {{
@@ -2249,13 +2198,13 @@ def build_insights_data(wiki_dir: Path, campaign_name: str) -> dict:
 
 
 def _make_kg_id(node_type: str, name: str) -> str:
-    """Generate a stable node ID from type and name."""
-    slug = name.lower()
-    for ch in " ()/-.,':;\"":
-        slug = slug.replace(ch, "-")
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return f"{node_type}-{slug.strip('-')}"
+    """Generate a stable node ID from type and name.
+
+    Must match the JS slug algorithm: replace all non-[a-z0-9] with dashes.
+    """
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return f"{node_type}-{slug}"
 
 
 def _build_knowledge_graph(concepts_data: dict) -> dict:
