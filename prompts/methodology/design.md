@@ -158,7 +158,7 @@ Now design a hypothesis bundle based on what you actually observed and verified:
 - Predictions must be directional, falsifiable, and reference specific observable metrics. Do not invent arbitrary numeric thresholds unless campaign.yaml specifies them.
 - Base all experiment parameters on verified system behavior — if you didn't probe it, don't assume it.
 - **No `sed`/`awk` for code changes.** When describing code modifications in problem framing or bundle arms, describe the *intent* (what to change and why). The executor agent will implement changes properly via file edits, verify they compile, and create reusable `git diff` patches. Never suggest inline shell regex as an implementation strategy.
-- **Worktree isolation assumed.** The executor runs in a clean git worktree. Each condition starts from clean state (`git checkout -- .` runs between conditions). Design your experimental conditions assuming this — don't include manual cleanup steps.
+- {{worktree_constraint}}
 
 ## Output — Write Files Directly
 

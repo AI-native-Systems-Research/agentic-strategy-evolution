@@ -35,6 +35,85 @@ _FENCE_RE = {
 # Schema cache: schema_name -> parsed schema dict
 _schema_cache: dict[str, dict] = {}
 
+# Prompt fragments that swap based on target_system.live_target. Worktree
+# mode is the default — code-evolution campaigns get an isolated git worktree
+# per iteration. Live-target mode is for running systems (clusters, services,
+# datasets) that the executor probes without per-iteration code mutation.
+# (The flag is `live_target` rather than `observational` to avoid colliding
+# with the existing "observe mode" in execute_analyze.md, which means
+# "the bundle has no code_changes arms.")
+_WORKTREE_EXECUTION_ENV = (
+    "You are running inside an isolated git worktree of the target system. "
+    "You own this worktree — reset it yourself with `git checkout -- .` "
+    "between conditions."
+)
+_LIVE_TARGET_EXECUTION_ENV = (
+    "You are running directly against a live target system, in its working "
+    "directory. There is no per-iteration git isolation, and your bundle "
+    "must contain no `code_changes` arms. Do not mutate the target system's "
+    "persistent state — your job is to probe, measure, and report. Treat "
+    "any files you create as scratch artifacts that belong under "
+    "`{{iter_dir}}/inputs/` or `{{iter_dir}}/results/`, not in the target "
+    "directory."
+)
+_WORKTREE_DESIGN_CONSTRAINT = (
+    "**Worktree isolation assumed.** The executor runs in a clean git "
+    "worktree. Each condition starts from clean state (`git checkout -- .` "
+    "runs between conditions). Design your experimental conditions assuming "
+    "this — don't include manual cleanup steps."
+)
+_LIVE_TARGET_DESIGN_CONSTRAINT = (
+    "**Live target system.** The executor runs directly against a running "
+    "system — no git worktree, no code-change arms. All arms must be pure "
+    "observations of system state (probes, metrics, log scrapes). Do not "
+    "include `code_changes` in any arm; do not assume mutation is possible "
+    "without explicit consent gates."
+)
+
+# Per-condition reset step in execute_analyze.md Phase 2. Worktree mode resets
+# tracked files between conditions; live-target mode has no checkout to
+# revert and instead reminds the agent not to mutate the live target.
+_WORKTREE_CONDITION_RESET = "Reset worktree: `git checkout -- .`"
+_LIVE_TARGET_CONDITION_RESET = (
+    "Do not mutate the target system between conditions. Any files you "
+    "wrote to the target directory during the previous condition must be "
+    "removed before the next one runs (this is your responsibility — "
+    "there is no automatic checkout)."
+)
+
+
+def validate_campaign(campaign: dict) -> None:
+    """Validate campaign config. Module-level so it can be called before any
+    dispatcher is constructed (e.g., from `run_iteration` in inline-agent mode,
+    where no LLMDispatcher is built and the staticmethod path is never taken).
+    """
+    ts = campaign.get("target_system")
+    if not isinstance(ts, dict):
+        raise ValueError(
+            "Campaign config missing 'target_system' section. "
+            "See examples/campaign.yaml for the expected format."
+        )
+    required = ["name", "description"]
+    missing = [k for k in required if k not in ts]
+    if missing:
+        raise ValueError(
+            f"Campaign 'target_system' missing required keys: {missing}. "
+            f"See examples/campaign.yaml for the expected format."
+        )
+    for field in ("observable_metrics", "controllable_knobs"):
+        val = ts.get(field)
+        if val is not None:
+            if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+                raise ValueError(
+                    f"Campaign 'target_system.{field}' must be a list of strings. "
+                    f"Got: {val!r}"
+                )
+    if "live_target" in ts and not isinstance(ts["live_target"], bool):
+        raise ValueError(
+            f"Campaign 'target_system.live_target' must be a bool. "
+            f"Got: {ts['live_target']!r}"
+        )
+
 
 class LLMDispatcher:
     """Dispatch agent roles to an LLM and produce schema-conformant artifacts."""
@@ -50,7 +129,7 @@ class LLMDispatcher:
         completion_fn: Callable | None = None,
     ) -> None:
         self.work_dir = Path(work_dir)
-        self._validate_campaign(campaign)
+        validate_campaign(campaign)
         self.campaign = campaign
         self.model = model
         self.loader = PromptLoader(
@@ -84,29 +163,7 @@ class LLMDispatcher:
                 dal,
             )
 
-    @staticmethod
-    def _validate_campaign(campaign: dict) -> None:
-        ts = campaign.get("target_system")
-        if not isinstance(ts, dict):
-            raise ValueError(
-                "Campaign config missing 'target_system' section. "
-                "See examples/campaign.yaml for the expected format."
-            )
-        required = ["name", "description"]
-        missing = [k for k in required if k not in ts]
-        if missing:
-            raise ValueError(
-                f"Campaign 'target_system' missing required keys: {missing}. "
-                f"See examples/campaign.yaml for the expected format."
-            )
-        for field in ("observable_metrics", "controllable_knobs"):
-            val = ts.get(field)
-            if val is not None:
-                if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
-                    raise ValueError(
-                        f"Campaign 'target_system.{field}' must be a list of strings. "
-                        f"Got: {val!r}"
-                    )
+    _validate_campaign = staticmethod(validate_campaign)
 
     # ------------------------------------------------------------------
     # Public interface (satisfies Dispatcher protocol)
@@ -212,6 +269,7 @@ class LLMDispatcher:
         perspective: str | None,
     ) -> dict[str, str]:
         ts = self.campaign["target_system"]
+        live_target = bool(ts.get("live_target", False))
         ctx: dict[str, str] = {
             "target_system": ts["name"],
             "system_description": ts["description"],
@@ -219,6 +277,9 @@ class LLMDispatcher:
             "controllable_knobs": ", ".join(ts["controllable_knobs"]) if ts.get("controllable_knobs") else "Not specified — planner should discover from code",
             "active_principles": self._format_principles(),
             "iteration": str(iteration),
+            "execution_environment": _LIVE_TARGET_EXECUTION_ENV if live_target else _WORKTREE_EXECUTION_ENV,
+            "worktree_constraint": _LIVE_TARGET_DESIGN_CONSTRAINT if live_target else _WORKTREE_DESIGN_CONSTRAINT,
+            "condition_reset": _LIVE_TARGET_CONDITION_RESET if live_target else _WORKTREE_CONDITION_RESET,
         }
 
         if phase == "design":
