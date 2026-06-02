@@ -79,6 +79,47 @@ visualization script) without re-running the full extraction.
 
 ---
 
+### `/index-wiki`
+
+Merges a single campaign's extracted knowledge into the cross-campaign registry.
+
+**Usage:**
+
+```
+/index-wiki my-campaign-name
+```
+
+**Prerequisites:** The campaign must have already been processed by
+`/post-campaign`. It reads from `~/.nous/wiki/campaigns/<name>/`.
+
+**What it reads:**
+
+| File | What it uses |
+|------|--------------|
+| `concepts.json` | Entities, concepts, parameters, plus repo_path and system_name |
+| `principles.json` | Principle IDs |
+| `dead-ends.json` | Dead-end entries |
+| `frontiers.json` | Frontier entries |
+| `interactions.json` | Interaction entries |
+
+**What it writes:**
+
+`~/.nous/wiki/registry.json` — the cross-campaign routing index.
+
+**What it does:**
+1. Loads or initializes `registry.json`
+2. Checks if campaign is already indexed (skips if yes)
+3. Deduplicates entities by normalized name across campaigns
+4. Assigns globally-unique IDs to all items (E-N, C-N, P-N, DE-N, F-N, I-N)
+5. Appends the campaign's knowledge to the registry
+6. Recomputes entity clusters (semantic grouping by functional role)
+
+**Idempotency:** Running on an already-indexed campaign is a no-op.
+
+**Key rule:** This is the only skill that writes to `registry.json`.
+
+---
+
 ## Output Data Model
 
 All output lives under `~/.nous/wiki/` — a user-level directory outside any
@@ -86,6 +127,7 @@ repo. Each campaign gets its own subdirectory.
 
 ```
 ~/.nous/wiki/
+├── registry.json                    # Cross-campaign index (written by /index-wiki)
 ├── campaigns/
 │   └── <campaign-name>/
 │       ├── concepts.json
