@@ -125,6 +125,43 @@ After a campaign, your working directory contains:
 - **`runs/iter-N/inputs/`** — Agent-created input files (configs, workloads)
 - **`runs/iter-N/results/`** — Experiment output files
 
+## Live-target campaigns (`live_target: true`)
+
+By default Nous treats `repo_path` as a git repo and creates a fresh `git worktree` per iteration so that any source-code patches are isolated. For some campaigns there is no codebase to evolve — the thing you want to study is a *running* system: a Kubernetes cluster, a deployed service, a dataset on disk, a non-git scratch directory. Setting `live_target: true` tells Nous to skip worktree creation and run the executor directly inside `repo_path`.
+
+Use it when:
+
+- The target is a live system you are probing, not a codebase you are mutating (e.g. a GPU cluster, a production-like service, a workload generator).
+- `repo_path` points at a directory that is not a git repo, or is a git repo whose working tree must not be branched.
+- The bundle should only contain probe-style arms (config tweaks, command-line invocations, observation runs) — never `code_changes`.
+
+Example:
+
+```yaml
+research_question: >
+  Why does p99 latency spike when the cluster autoscaler kicks in?
+
+target_system:
+  name: "Staging GPU cluster"
+  description: >
+    Live Kubernetes cluster running our inference workload.
+    The agent probes the cluster via kubectl and Prometheus; it does
+    not modify source code.
+  repo_path: /scratch/cluster-probe   # any working directory; need not be a git repo
+  live_target: true
+
+prompts:
+  methodology_layer: "prompts/methodology"
+  domain_adapter_layer: null
+```
+
+How `live_target` differs from regular observe-mode arms:
+
+- **Observe mode** is a *bundle-level* property — an individual arm has no `code_changes`, so the executor skips patching and just runs commands. The campaign can still mix observe arms and evolve arms in the same bundle, and a worktree is still created.
+- **`live_target: true`** is a *campaign-level* property — it controls the *executor environment* (no worktree, run in `repo_path` directly) and tells the planner up front that the target is a shared running system, so every arm must be a probe. Bundles with `code_changes` arms are incoherent in this mode.
+
+Pick `live_target: true` when there is nothing meaningful to branch from; pick observe-mode arms when you have a real codebase but a particular iteration only needs to measure, not patch.
+
 ## Choosing a model
 
 Defaults (from `defaults.yaml`):

@@ -123,6 +123,8 @@ When `repo_path` is set, the campaign directory is created inside the target rep
 
 The planner explores the codebase to discover metrics, knobs, and execution methods. You can optionally provide `observable_metrics` and `controllable_knobs` as hints — see [examples/campaign.yaml](examples/campaign.yaml) for all options.
 
+If your target is a *running* system rather than a codebase (a cluster, a deployed service, a scratch directory that isn't a git repo), set `target_system.live_target: true`. The executor then runs directly in `repo_path` with no per-iteration `git worktree`, and the planner is told up front that arms must be probes — see [docs/quickstart.md#live-target-campaigns-live_target-true](docs/quickstart.md#live-target-campaigns-live_target-true) for details.
+
 ### 5. Run a campaign
 
 ```bash
