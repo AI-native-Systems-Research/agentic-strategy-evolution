@@ -17,7 +17,7 @@ Examples:
 
 ## Algorithm
 
-The algorithm has two phases: **Retrieval** (script-driven, deterministic) and **Synthesis** (LLM reasoning over the retrieved context). The LLM selects what to retrieve; the script does the mechanical graph traversal and filtering.
+The algorithm has five phases: **A: Retrieval** (script-driven, deterministic), **B: Synthesis** (LLM reasoning over the retrieved context), **C: Output** (write markdown), **D: Format** (file structure), and **E: Campaign Generation** (interactive YAML creation). The LLM selects what to retrieve; the script does the mechanical graph traversal and filtering.
 
 ---
 
@@ -36,8 +36,8 @@ If not found, report: "No prior knowledge for this system. Available projects:" 
 
 From the matched project's registry entry, select:
 
-- **N campaign names** (N = 1–3) — rank by relevance to the user's intent using `research_question`, `concepts[].name`, and `frontiers[].title`
-- **M entity names** (M = 3–6) — from the project-level `entities` array, pick those whose `name` or `aliases` relate to the user's intent. Also include entities that appear in the selected campaigns if their role is relevant.
+- **Exactly 3 campaign names** (or all campaigns if fewer than 3 exist) — rank by relevance to the user's intent using `research_question`, `concepts[].name`, and `frontiers[].title`
+- **Exactly 6 entity names** (or all entities if fewer than 6 exist) — from the project-level `entities` array, pick those whose `name` or `aliases` relate to the user's intent. Also include entities that appear in the selected campaigns if their role is relevant.
 
 #### A3. Run Retrieval Script
 
@@ -205,11 +205,119 @@ The markdown file should follow this structure. The scoring table is **required*
 
 ## Next Steps
 
-To start the top-ranked campaign:
-1. Create a `campaign.yaml` with the suggested research question
-2. Set up the experimental conditions (specific values suggested above)
-3. Run `/post-campaign` after completion to feed results back into the registry
+To start a campaign from these recommendations, use the interactive generator below or manually:
+1. Select recommendations to generate `campaign.yaml` files (Phase E prompt follows)
+2. Review and adjust the generated config if needed
+3. Run: `nous run <path-to-campaign.yaml>`
+4. After completion, run `/post-campaign` to feed results back into the registry
 ```
+
+### Phase E: Interactive Campaign Generation
+
+After printing the terminal summary (end of Phase C), offer to generate executable `campaign.yaml` files from the recommendations.
+
+#### E1. Ask the User
+
+Use AskUserQuestion to present choices:
+
+**Question:** "Which recommendations would you like to generate campaign.yaml files for?"
+
+**Options:**
+- "1" — Generate for recommendation 1 only
+- "2" — Generate for recommendation 2 only
+- "3" — Generate for recommendation 3 only
+- "All" — Generate for all recommendations
+- "None" — Skip campaign generation
+
+Allow multi-select (the user can pick e.g. "1" and "3").
+
+If the user selects "None", print `No campaigns generated.` and **STOP**.
+
+#### E2. Generate campaign.yaml for Each Selected Recommendation
+
+For each selected recommendation, produce a YAML document with these field mappings:
+
+| campaign.yaml field | Source |
+|---|---|
+| `research_question` | Recommendation's suggested research question (verbatim from the `> <question>` block) |
+| `run_id` | Slugified recommendation title (lowercase, hyphens, ≤50 chars) |
+| `max_iterations` | Upper bound from the "Iterations" row in the Predicted cost table (e.g., "6-8" → 8) |
+| `target_system.name` | From registry `projects[key].name` |
+| `target_system.description` | Synthesized from registry project description + recommendation context |
+| `target_system.repo_path` | The project key (path) from the registry |
+| `target_system.observable_metrics` | Inferred from recommendation's Impact rationale (omit field entirely if not confidently inferable) |
+| `target_system.controllable_knobs` | Parameter names from "Builds on" section (omit field entirely if not confidently inferable) |
+| `prompts.methodology_layer` | `"prompts/methodology"` (standard default) |
+| `prompts.domain_adapter_layer` | `null` |
+| `models.design` | From recommendation's "Model configuration → Design phase" model name |
+| `models.execute_analyze` | From recommendation's "Model configuration → Execute phase" model name |
+| `metadata` | Traceability block (see E3) |
+
+**Schema compliance rules:**
+- Do NOT include any fields not in `orchestrator/schemas/campaign.schema.yaml`
+- Root object: only `research_question`, `run_id`, `max_iterations`, `target_system`, `prompts`, `models`, `metadata`
+- `target_system`: only `name`, `description`, `repo_path`, `observable_metrics`, `controllable_knobs`, `live_target`
+- `prompts`: only `methodology_layer`, `domain_adapter_layer`
+- `models`: only `design`, `execute_analyze`, `report`
+- Omit optional fields rather than including empty values
+- Model values default: `claude-opus-4-6` (design), `claude-sonnet-4-6` (execute_analyze)
+
+#### E3. Metadata Traceability Block
+
+Include a `metadata` section for provenance tracking:
+
+```yaml
+metadata:
+  source_suggestion: "<YYYY-MM-DD>-<slug>.md"
+  recommendation_rank: <1|2|3>
+  research_intent: "<user's original intent verbatim>"
+  builds_on_frontiers: ["F-1", "F-3"]
+  tests_interactions: ["I-2"]
+  avoids_dead_ends: ["DE-1", "DE-4"]
+  foundation_principles: ["RP-5", "RP-12"]
+  composite_score: 0.XX
+```
+
+- Use the actual IDs from the recommendation's "Addresses frontiers", "Tests interactions", "Avoid (dead-ends)" sections
+- `foundation_principles`: principle IDs referenced in the Foundation score rationale
+- `composite_score`: the weighted total from the scoring table
+
+#### E4. Write Files
+
+Write each generated YAML to:
+
+```
+~/.nous/wiki/suggestions/campaigns/<YYYY-MM-DD>-<slugified-intent>-<N>.yaml
+```
+
+Where `<N>` is the recommendation number (1, 2, or 3).
+
+- The `<YYYY-MM-DD>-<slugified-intent>` prefix matches the suggestion markdown filename (without `.md`)
+- If the file already exists, append a numeric suffix before `.yaml` (e.g., `-1-2.yaml`)
+- Create `~/.nous/wiki/suggestions/campaigns/` if it doesn't exist
+
+#### E5. Print Execution Instructions
+
+After writing all campaign files, print:
+
+```
+Generated campaign files:
+  <N>. ~/.nous/wiki/suggestions/campaigns/<filename>.yaml
+     Run: nous run <full-path>
+
+  ...
+```
+
+Example:
+```
+Generated campaign files:
+  1. ~/.nous/wiki/suggestions/campaigns/2026-06-03-improve-fairness-1.yaml
+     Run: nous run ~/.nous/wiki/suggestions/campaigns/2026-06-03-improve-fairness-1.yaml
+  3. ~/.nous/wiki/suggestions/campaigns/2026-06-03-improve-fairness-3.yaml
+     Run: nous run ~/.nous/wiki/suggestions/campaigns/2026-06-03-improve-fairness-3.yaml
+```
+
+---
 
 ## Model Configuration Guidance
 
@@ -226,7 +334,7 @@ Iteration count heuristics:
 
 ## Important Rules
 
-- This skill **writes one file** — the suggestion markdown at `~/.nous/wiki/suggestions/`. It never modifies registry files, campaign data, or any other existing files.
+- This skill **writes files only to `~/.nous/wiki/suggestions/`** — the suggestion markdown at the top level, and optionally campaign YAML files in the `campaigns/` subdirectory. It never modifies registry files, campaign data, or any other existing files.
 - All reasoning happens in-context using the LLM's judgment — no external scripts beyond `retrieve_wiki_context.py`.
 - If the registry is empty or the project has no campaigns, say so clearly and suggest the user run their first campaign manually.
 - Always ground recommendations in specific prior data (principle IDs, frontier IDs, dead-end IDs). Never hallucinate IDs that don't exist in the loaded files.

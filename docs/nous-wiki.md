@@ -120,6 +120,48 @@ Merges a single campaign's extracted knowledge into the cross-campaign registry.
 
 ---
 
+### `/suggest-next`
+
+Retrieves prior knowledge from the cross-campaign registry and recommends how
+to frame a new campaign. Optionally generates executable `campaign.yaml` files.
+
+**Usage:**
+
+```
+/suggest-next /path/to/repo "research intent"
+/suggest-next inference-sim "reduce tail latency under burst workloads"
+/suggest-next                  # lists available projects and asks
+```
+
+**Prerequisites:** The project must have at least one campaign indexed via
+`/index-wiki` (i.e., it must exist in `registry.json`).
+
+**What it reads:**
+
+| Source | What it uses |
+|--------|--------------|
+| `~/.nous/wiki/registry.json` | Project matching, campaign selection, entity selection |
+| Campaign wiki files (via `retrieve_wiki_context.py`) | Principles, dead-ends, frontiers, interactions, concepts |
+
+**What it writes:**
+
+| File | Contents |
+|------|----------|
+| `~/.nous/wiki/suggestions/<date>-<slug>.md` | Scored recommendations with research questions, cost predictions, model configs |
+| `~/.nous/wiki/suggestions/campaigns/<date>-<slug>-<N>.yaml` | Nous-compatible campaign configs (optional, user-selected) |
+
+**Algorithm:**
+1. **Phase A (Retrieval):** Matches project in registry, selects 3 campaigns and 6 entities, runs `retrieve_wiki_context.py` for subgraph extraction
+2. **Phase B (Synthesis):** Scores 3 recommendations on Novelty, Foundation, Impact, Testability, Efficiency
+3. **Phase C (Output):** Writes suggestion markdown
+4. **Phase D (Format):** Structures the markdown with scoring tables and per-recommendation detail
+5. **Phase E (Campaign Generation):** Asks which recommendations to turn into `campaign.yaml` files, writes schema-valid YAML to `suggestions/campaigns/`
+
+**What doesn't happen:** This skill never modifies registry files, campaign
+wiki data, or any other existing files.
+
+---
+
 ## Output Data Model
 
 All output lives under `~/.nous/wiki/` — a user-level directory outside any
@@ -138,6 +180,10 @@ repo. Each campaign gets its own subdirectory.
 │       ├── interactions.json
 │       ├── llm_metrics.jsonl
 │       └── summary.md
+├── suggestions/                     # Written by /suggest-next
+│   ├── <date>-<slug>.md            # Scored recommendation reports
+│   └── campaigns/                   # Generated campaign configs
+│       └── <date>-<slug>-<N>.yaml
 └── viz/
     └── <campaign-name>.html
 ```
