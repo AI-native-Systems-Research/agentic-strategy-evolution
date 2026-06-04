@@ -162,6 +162,49 @@ wiki data, or any other existing files.
 
 ---
 
+### `/visualize-registry`
+
+Renders the full cross-campaign knowledge graph with heuristic opportunity
+scores. No LLM calls — runs in seconds.
+
+**Usage:**
+
+```
+/visualize-registry
+```
+
+**Prerequisites:** At least one campaign must be indexed via `/index-wiki`
+(i.e., `registry.json` must exist with at least one project).
+
+**What it reads:**
+
+| Source | What it uses |
+|--------|--------------|
+| `~/.nous/wiki/registry.json` | Projects, entities, entity clusters, campaigns |
+| Per-campaign wiki files | concepts.json, dead-ends.json, frontiers.json, interactions.json, summary.md |
+
+**What it writes:**
+
+| File | Contents |
+|------|----------|
+| `~/.nous/wiki/viz/registry.html` | Interactive cross-campaign knowledge graph |
+
+**Algorithm:**
+1. Verify registry exists
+2. Run `visualize_registry.py` (reads registry + campaign files, computes
+   heuristic scores, writes HTML)
+3. Open HTML in browser
+
+The Opportunities tab shows per-cluster research potential scored by frontier
+count, interaction count, and dead-end density. Each cluster card includes a
+copyable `/suggest-next` command for users who want detailed LLM-powered
+recommendations for that area.
+
+**What doesn't happen:** This skill never modifies registry.json, campaign
+data, or any other existing wiki files. No LLM calls are made.
+
+---
+
 ## Output Data Model
 
 All output lives under `~/.nous/wiki/` — a user-level directory outside any
@@ -185,7 +228,8 @@ repo. Each campaign gets its own subdirectory.
 │   └── campaigns/                   # Generated campaign configs
 │       └── <date>-<slug>-<N>.yaml
 └── viz/
-    └── <campaign-name>.html
+    ├── <campaign-name>.html         # Per-campaign graphs
+    └── registry.html                # Cross-campaign graph
 ```
 
 ### dead-ends.json
