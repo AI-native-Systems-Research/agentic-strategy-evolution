@@ -1347,7 +1347,9 @@ function setOppClusterFilter(clusterId) {{
   renderOpportunities();
 }}
 
-// Compute heuristic opportunity score for a cluster from registry data
+// Compute heuristic opportunity score for a cluster from registry data.
+// Only counts frontiers/interactions whose related_principles overlap with
+// the principles of entities in the cluster (principle-based relevance).
 function computeClusterScore(cluster) {{
   const clusterEntities = new Set(cluster.entities);
   let frontierCount = 0;
@@ -1362,27 +1364,41 @@ function computeClusterScore(cluster) {{
 
   Object.values(registryData.projects || {{}}).forEach(project => {{
     project.campaigns.forEach(campaign => {{
-      // Check if this campaign touches any entity in the cluster
-      const campaignEntities = (campaignDetails[campaign.name] || {{}}).entities || [];
+      const details = campaignDetails[campaign.name] || {{}};
+      const campaignEntities = details.entities || [];
       const touches = campaignEntities.some(e => clusterEntities.has(e.name));
       if (!touches) return;
+
+      // Build the set of principles linked to entities in THIS cluster
+      const clusterPrinciples = new Set();
+      campaignEntities.forEach(e => {{
+        if (clusterEntities.has(e.name)) {{
+          (e.principles || []).forEach(p => clusterPrinciples.add(p));
+        }}
+      }});
 
       campaignCount++;
       relatedCampaigns.push(campaign.name);
       if (campaign.date > latestDate) latestDate = campaign.date;
 
-      // Count frontiers
-      const details = campaignDetails[campaign.name] || {{}};
+      // Count frontiers — only if related_principles overlap with cluster
       (details.frontiers || []).forEach(f => {{
-        frontierCount++;
-        frontierTitles.push(`${{f.id || "?"}}: ${{f.title || ""}}`);
+        const related = f.related_principles || [];
+        if (related.some(p => clusterPrinciples.has(p))) {{
+          frontierCount++;
+          frontierTitles.push(`${{f.id || "?"}}: ${{f.title || ""}}`);
+        }}
       }});
-      // Count interactions
+      // Count interactions — only if related_principles overlap with cluster
       (details.interactions || []).forEach(i => {{
-        interactionCount++;
-        interactionTitles.push(`${{i.id || "?"}}: ${{i.title || ""}}`);
+        const related = i.related_principles || [];
+        if (related.some(p => clusterPrinciples.has(p))) {{
+          interactionCount++;
+          interactionTitles.push(`${{i.id || "?"}}: ${{i.title || ""}}`);
+        }}
       }});
-      // Count dead-ends
+      // Dead-ends lack related_principles — count all from touching campaigns
+      // (conservative: over-counting dead-ends penalizes the score)
       (details.dead_ends || []).forEach(d => {{
         deadEndCount++;
         deadEndTitles.push(`${{d.id || "?"}}: ${{d.title || ""}}`);
@@ -1390,14 +1406,12 @@ function computeClusterScore(cluster) {{
     }});
   }});
 
-  // Heuristic score: more frontiers + interactions = more opportunity
+  // Raw score: more frontiers + interactions = more opportunity
   // Dead-ends reduce score slightly (territory is more constrained)
-  // Normalize to 0-1 range
   const rawScore = (frontierCount * 2) + (interactionCount * 3) - (deadEndCount * 0.5);
-  const score = Math.min(1.0, Math.max(0, rawScore / 20));
 
   return {{
-    score,
+    rawScore,
     frontierCount,
     interactionCount,
     deadEndCount,
@@ -1427,12 +1441,18 @@ function renderOpportunities() {{
     return;
   }}
 
-  // Compute scores for all clusters
-  const scored = entityClusters.map(cluster => ({{
+  // Compute raw scores for all clusters, then normalize adaptively
+  const rawScored = entityClusters.map(cluster => ({{
     ...cluster,
     ...computeClusterScore(cluster),
   }}));
+  const maxRaw = Math.max(...rawScored.map(c => c.rawScore), 1);
+  const scored = rawScored.map(c => ({{
+    ...c,
+    score: Math.max(0, c.rawScore / maxRaw),
+  }}));
   scored.sort((a, b) => b.score - a.score);
+  scored.splice(20); // Cap at 20 clusters
 
   // Filter
   const filtered = oppClusterFilter == null
@@ -1441,12 +1461,12 @@ function renderOpportunities() {{
 
   // Cluster filter bar
   let html = `<div class="opp-cluster-bar">`;
-  html += `<span class="opp-cluster-bar-label">Filter by cluster:</span>`;
+  html += `<span class="opp-cluster-bar-label">Filter by entity cluster:</span>`;
   scored.forEach(cluster => {{
     const color = clusterColors[cluster.id % clusterColors.length];
     const active = oppClusterFilter === cluster.id ? "active" : "";
     html += `<button class="opp-cluster-btn ${{active}}" style="--btn-color:${{color}}" onclick="setOppClusterFilter(${{cluster.id}})">`;
-    html += `<span class="cluster-dot-inline" style="background:${{color}}"></span>${{cluster.label}} (${{cluster.entities.length}})`;
+    html += `<span class="cluster-dot-inline" style="background:${{color}}"></span>${{cluster.label}}`;
     html += `</button>`;
   }});
   const allActive = oppClusterFilter == null ? "active" : "";
@@ -1455,38 +1475,31 @@ function renderOpportunities() {{
 
   // Explainer banner
   html += `<div style="background:rgba(121,134,203,0.08);border:1px solid rgba(121,134,203,0.25);border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:11px;color:#aaa;line-height:1.6;">`;
-  html += `<strong style="color:#b39ddb;">Research landscape</strong> — these scores are computed from frontier, interaction, and dead-end counts per entity cluster. Higher scores indicate more unexplored territory. `;
-  html += `To get detailed, scored recommendations for a specific problem, run:<br>`;
-  html += `<code style="background:#0a1628;padding:4px 8px;border-radius:3px;color:#7986cb;display:inline-block;margin-top:6px;">/suggest-next &lt;project&gt; "your research question"</code>`;
+  html += `<strong style="color:#b39ddb;">Research landscape</strong> — entity clusters ranked by open research territory. `;
+  html += `<span style="color:#ff9800;">Frontiers</span> and <span style="color:#26c6da;">interactions</span> are matched via principle overlap with the cluster's entities.<br>`;
+  html += `To get detailed recommendations, run: `;
+  html += `<code style="background:#0a1628;padding:4px 8px;border-radius:3px;color:#7986cb;display:inline-block;margin-top:4px;">/suggest-next &lt;project&gt; "your research question"</code>`;
   html += `</div>`;
 
   // Header
   html += `<div class="opp-header">`;
-  html += `<span>${{filtered.length}} entity clusters ranked by research opportunity</span>`;
+  html += `<span>${{filtered.length}} entity clusters</span>`;
   html += `</div>`;
 
   // Render cluster cards
   filtered.forEach(cluster => {{
     const color = clusterColors[cluster.id % clusterColors.length];
-    const barWidth = Math.round(cluster.score * 100);
-    const scoreColor = cluster.score >= 0.7 ? "#66bb6a" : cluster.score >= 0.5 ? "#ffab40" : "#f44336";
 
     html += `<div class="opp-card" onclick="this.classList.toggle('expanded')">`;
 
-    // Header: score + label
+    // Header: label
     html += `<div class="opp-card-header">`;
-    html += `<span style="color:${{scoreColor}};font-size:14px;font-weight:700;min-width:40px;">${{cluster.score.toFixed(2)}}</span>`;
     html += `<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${{color}};margin-right:4px;"></span>`;
     html += `<span class="opp-card-title">${{cluster.label}}</span>`;
     html += `</div>`;
 
-    // Score bar
-    html += `<div style="height:3px;background:#0f3460;border-radius:2px;margin:6px 0 8px;overflow:hidden;">`;
-    html += `<div style="height:100%;width:${{barWidth}}%;background:${{scoreColor}};border-radius:2px;"></div>`;
-    html += `</div>`;
-
     // Summary metrics
-    html += `<div class="opp-card-meta">`;
+    html += `<div class="opp-card-meta" style="margin-top:6px;">`;
     html += `<span style="color:#ff9800;">${{cluster.frontierCount}} frontiers</span>`;
     html += `<span style="color:#26c6da;">${{cluster.interactionCount}} interactions</span>`;
     html += `<span style="color:#f44336;">${{cluster.deadEndCount}} dead-ends</span>`;

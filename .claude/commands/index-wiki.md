@@ -71,6 +71,7 @@ Merge a single campaign's extracted knowledge into the cross-campaign registry.
 
    b. Semantically group entities by functional role/purpose into clusters. Rules:
       - Min 2 entities per cluster, max 10
+      - Max 20 clusters total per project — if grouping would exceed 20, merge the smallest/most-similar clusters
       - Each entity belongs to at most one cluster (singletons are valid — omit them)
       - Labels: 2-4 words, Title Case, describe the functional group
 

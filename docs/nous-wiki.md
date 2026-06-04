@@ -4,6 +4,28 @@ After a Nous campaign finishes, its knowledge lives in raw `ledger.json` and
 `principles.json` files. The wiki skills extract that knowledge into structured,
 self-contained files and render them as interactive visualizations.
 
+## Quickstart
+
+After a campaign completes, run these in order:
+
+```bash
+# 1. Extract knowledge, index into registry, generate per-campaign visualization
+/post-campaign path/to/.nous/my-campaign
+
+# 2. Re-render the campaign visualization (e.g., after script updates)
+/visualize-campaign path/to/.nous/my-campaign
+
+# 3. (Optional) Render the cross-campaign knowledge graph
+/visualize-registry
+
+# 4. Get recommendations for the next campaign
+/suggest-next /path/to/repo "your research question"
+```
+
+`/post-campaign` already generates the campaign visualization and calls
+`/index-wiki` internally, so step 2 is only needed to re-render after script
+changes.
+
 ## Skills
 
 ### `/post-campaign`
@@ -354,3 +376,36 @@ The HTML includes:
 - **Knowledge tab** — force-directed graph of entities, concepts, and parameters
 - **Insights tab** — dead-ends, frontiers, and interactions as browsable cards
 - **Summary tab** — the campaign's narrative summary with key principles
+
+### `scripts/visualize_registry.py`
+
+Generates an interactive cross-campaign HTML page from the registry and
+per-campaign wiki files.
+
+```bash
+python scripts/visualize_registry.py
+```
+
+Reads `~/.nous/wiki/registry.json` plus per-campaign files (concepts.json,
+dead-ends.json, frontiers.json, interactions.json, summary.md). Produces
+`~/.nous/wiki/viz/registry.html` and opens it in the default browser.
+
+The HTML includes:
+- **Graph tab** — force-directed graph of entities, concepts, and parameters across all campaigns, colored by campaign
+- **Opportunities tab** — per-cluster research potential scored by frontier count, interaction count, and dead-end density; each card includes a copyable `/suggest-next` command
+
+---
+
+## Concurrency
+
+**Do not run `/post-campaign` in parallel for multiple campaigns targeting the
+same project.** The skill writes to `~/.nous/wiki/campaigns/<name>/` and then
+invokes `/index-wiki`, which performs a read-modify-write cycle on
+`registry.json`. Running two `/post-campaign` invocations concurrently can
+cause one to overwrite the other's registry changes (last-writer-wins race
+condition).
+
+Safe patterns:
+- Run `/post-campaign` sequentially — finish one campaign before starting the next
+- Running `/post-campaign` for campaigns in *different* projects is safe (they write to different registry keys), but still shares the same `registry.json` file — so even cross-project parallelism should be avoided
+- `/visualize-campaign` and `/visualize-registry` are read-only and safe to run anytime
