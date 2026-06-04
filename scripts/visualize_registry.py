@@ -390,8 +390,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 <svg id="graph"></svg>
 
-<script src="d3.v7.min.js"></script>
-<script>if(typeof d3==="undefined")document.write('<script src="https://d3js.org/d3.v7.min.js"><\\/script>')</script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 // --- Data injected by Python ---
 const registryData = {registry_data_json};
@@ -774,8 +773,12 @@ function zoomToFitScope() {{
 
 function applyFilterVisuals() {{
   if (!filterActive) {{
-    node.style("display", "none");
-    link.style("display", "none");
+    // Show all nodes and links when no filter is active
+    node.style("display", null);
+    node.selectAll("circle, rect, polygon").attr("opacity", 1);
+    node.selectAll("text").attr("opacity", 1);
+    link.style("display", null);
+    link.attr("stroke-opacity", 0.5);
     return;
   }}
 
@@ -1099,9 +1102,9 @@ node.filter(d => d.type === "campaign" && campaignCosts[d.label])
   .attr("dy", d => -(nodeRadius(d) + 6))
   .text(d => `$${{campaignCosts[d.label].toFixed(0)}}`);
 
-// Start hidden — graph only appears after retrieval scope is computed
-node.style("display", "none");
-link.style("display", "none");
+// Show all nodes by default — filter hides them only when user selects a scope
+node.style("display", null);
+link.style("display", null);
 
 // Tooltip
 const tooltip = d3.select("#tooltip");
@@ -1587,12 +1590,7 @@ function switchView(view) {{
     graphEl.style.display = "block";
     g.style("display", null);
     svg.call(zoom.on("zoom", (event) => g.attr("transform", event.transform)));
-    if (filterActive) {{
-      applyFilterVisuals();
-    }} else {{
-      node.style("display", "none");
-      link.style("display", "none");
-    }}
+    applyFilterVisuals();
     document.getElementById("filter-panel").style.display = "block";
     document.getElementById("legend-panel").style.display = "block";
     if (filterActive) document.getElementById("stats-bar").style.display = "flex";
@@ -1620,8 +1618,14 @@ def load_registry(wiki_dir: Path) -> dict:
         print("Run /post-campaign and /index-wiki first to build the registry.", file=sys.stderr)
         sys.exit(1)
 
-    with open(registry_path) as f:
-        return json.load(f)
+    try:
+        with open(registry_path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"Error: registry.json is corrupted: {e}", file=sys.stderr)
+        print(f"Path: {registry_path}", file=sys.stderr)
+        print("Try re-running /index-wiki to rebuild the registry.", file=sys.stderr)
+        sys.exit(1)
 
 
 def load_campaign_details(wiki_dir: Path, registry: dict) -> dict:
@@ -1645,29 +1649,41 @@ def load_campaign_details(wiki_dir: Path, registry: dict) -> dict:
             # Load concepts.json for definitions
             concepts_path = campaign_dir / "concepts.json"
             if concepts_path.exists():
-                with open(concepts_path) as f:
-                    concepts_data = json.load(f)
-                entry["concepts"] = concepts_data.get("concepts", [])
-                entry["parameters"] = concepts_data.get("parameters", [])
-                entry["entities"] = concepts_data.get("entities", [])
+                try:
+                    with open(concepts_path) as f:
+                        concepts_data = json.load(f)
+                    entry["concepts"] = concepts_data.get("concepts", [])
+                    entry["parameters"] = concepts_data.get("parameters", [])
+                    entry["entities"] = concepts_data.get("entities", [])
+                except (json.JSONDecodeError, ValueError) as e:
+                    print(f"Warning: skipping corrupted {concepts_path}: {e}", file=sys.stderr)
 
             # Load dead-ends.json
             dead_ends_path = campaign_dir / "dead-ends.json"
             if dead_ends_path.exists():
-                with open(dead_ends_path) as f:
-                    entry["dead_ends"] = json.load(f)
+                try:
+                    with open(dead_ends_path) as f:
+                        entry["dead_ends"] = json.load(f)
+                except (json.JSONDecodeError, ValueError) as e:
+                    print(f"Warning: skipping corrupted {dead_ends_path}: {e}", file=sys.stderr)
 
             # Load frontiers.json
             frontiers_path = campaign_dir / "frontiers.json"
             if frontiers_path.exists():
-                with open(frontiers_path) as f:
-                    entry["frontiers"] = json.load(f)
+                try:
+                    with open(frontiers_path) as f:
+                        entry["frontiers"] = json.load(f)
+                except (json.JSONDecodeError, ValueError) as e:
+                    print(f"Warning: skipping corrupted {frontiers_path}: {e}", file=sys.stderr)
 
             # Load interactions.json
             interactions_path = campaign_dir / "interactions.json"
             if interactions_path.exists():
-                with open(interactions_path) as f:
-                    entry["interactions"] = json.load(f)
+                try:
+                    with open(interactions_path) as f:
+                        entry["interactions"] = json.load(f)
+                except (json.JSONDecodeError, ValueError) as e:
+                    print(f"Warning: skipping corrupted {interactions_path}: {e}", file=sys.stderr)
 
             details[name] = entry
 
@@ -1824,15 +1840,18 @@ def load_campaign_costs(wiki_dir: Path, registry: dict) -> dict:
                 with open(metrics_path) as f:
                     for line in f:
                         line = line.strip()
-                        if line:
+                        if not line:
+                            continue
+                        try:
                             entry = json.loads(line)
                             total += entry.get("cost_usd") or 0
+                        except (json.JSONDecodeError, ValueError):
+                            continue  # skip malformed lines
                 costs[name] = total
     return costs
 
 
-def build_entity_clusters(registry: dict, cross_edges: list,
-                          campaign_details: dict) -> list:
+def build_entity_clusters(registry: dict) -> list:
     """Read pre-computed entity clusters from the registry.
 
     Clusters are assigned at index time by /index-wiki using semantic
@@ -1973,7 +1992,7 @@ def main():
     cross_edges = build_cross_edges(registry, campaign_details)
 
     # Read pre-computed entity clusters from registry
-    entity_clusters = build_entity_clusters(registry, cross_edges, campaign_details)
+    entity_clusters = build_entity_clusters(registry)
 
     # If --list-clusters, output clusters and exit
     if args.list_clusters:
@@ -1994,14 +2013,17 @@ def main():
         viz_dir.mkdir(parents=True, exist_ok=True)
         output_path = viz_dir / "registry.html"
 
-    # Render HTML
+    # Render HTML — escape </ sequences to prevent breaking <script> blocks
+    def safe_json(obj, **kwargs):
+        return json.dumps(obj, **kwargs).replace("</", r"<\/")
+
     html = HTML_TEMPLATE.format(
-        registry_data_json=json.dumps(registry, indent=2),
-        campaign_details_json=json.dumps(campaign_details),
-        cross_edges_json=json.dumps(cross_edges),
-        retrieval_scopes_json=json.dumps(retrieval_scopes),
-        campaign_costs_json=json.dumps(campaign_costs),
-        entity_clusters_json=json.dumps(entity_clusters),
+        registry_data_json=safe_json(registry, indent=2),
+        campaign_details_json=safe_json(campaign_details),
+        cross_edges_json=safe_json(cross_edges),
+        retrieval_scopes_json=safe_json(retrieval_scopes),
+        campaign_costs_json=safe_json(campaign_costs),
+        entity_clusters_json=safe_json(entity_clusters),
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
