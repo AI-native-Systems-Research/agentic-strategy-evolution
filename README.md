@@ -217,6 +217,28 @@ nous replay campaign.yaml --iter 1  # re-run iteration 1 commands in fresh workt
 nous validate design --dir .nous/run/runs/iter-1/   # validate artifacts (agent-facing)
 ```
 
+### 7. Extract campaign knowledge
+
+After a campaign completes, extract its knowledge into the wiki for cross-campaign reuse:
+
+```bash
+# Extract knowledge, index into registry, generate interactive visualization
+/post-campaign path/to/.nous/my-campaign
+
+# Re-render a campaign's interactive HTML visualization
+/visualize-campaign path/to/.nous/my-campaign
+
+# Render the cross-campaign knowledge graph
+/visualize-registry
+
+# Get recommendations for your next campaign based on prior findings
+/suggest-next /path/to/repo "your research question"
+```
+
+The wiki skills turn raw `ledger.json` and `principles.json` into structured knowledge (dead-ends, frontiers, untested interactions) and interactive HTML visualizations. Knowledge compounds across campaigns — `/suggest-next` uses findings from all indexed campaigns to recommend high-value next experiments.
+
+See [docs/nous-wiki.md](docs/nous-wiki.md) for detailed usage, the full data model, and script documentation.
+
 ### Run tests
 
 ```bash
