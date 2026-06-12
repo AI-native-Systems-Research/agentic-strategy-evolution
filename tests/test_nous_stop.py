@@ -231,6 +231,60 @@ class TestCampaignLoopHonoursSentinel:
             for r in rows
         ), f"ledger should record stopped_by_user; got {rows}"
 
+    def test_stop_records_exactly_one_failed_row(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """Regression (PR #279 review): a STOP sentinel must produce exactly
+        ONE stopped_by_user row, not one per remaining iteration. The old
+        code set outcome=None + break, then the outer loop advanced to the
+        next iteration, re-hit _raise_if_stopped, and appended another
+        failed row — looping through every remaining iteration.
+        """
+        from orchestrator import campaign as campaign_mod
+        from orchestrator.iteration import STOP_SENTINEL_NAME
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        work_dir = repo / ".nous" / "exp1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps({
+            "phase": "INIT", "iteration": 1, "run_id": "exp1",
+            "family": "test", "timestamp": "2026-01-01T00:00:00Z",
+        }))
+        (work_dir / "ledger.json").write_text(json.dumps({"iterations": []}))
+        (work_dir / "principles.json").write_text(
+            json.dumps({"principles": []}),
+        )
+        (work_dir / STOP_SENTINEL_NAME).write_text("preempted\n")
+
+        campaign_dict = {
+            "research_question": "q",
+            "run_id": "exp1",
+            "max_iterations": 3,
+            "target_system": {
+                "name": "T", "description": "d", "repo_path": str(repo),
+            },
+            "prompts": {"methodology_layer": "p"},
+        }
+
+        monkeypatch.setattr(campaign_mod, "_generate_report", lambda *a, **k: None)
+        monkeypatch.setattr(campaign_mod, "_emit_meta_findings", lambda *a, **k: None)
+        monkeypatch.setattr(campaign_mod, "_write_repo_cache", lambda *a, **k: None)
+        monkeypatch.setattr(campaign_mod, "_write_metrics_summary", lambda *a, **k: None)
+
+        campaign_mod.run_campaign(
+            campaign_dict, work_dir, max_iterations=3, agent="inline",
+        )
+
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        rows = ledger.get("iterations", [])
+        stopped_rows = [
+            r for r in rows if "stopped_by_user" in (r.get("error") or "")
+        ]
+        assert len(stopped_rows) == 1, (
+            f"expected exactly one stopped_by_user row, got {len(stopped_rows)}: {rows}"
+        )
+
 
 # ─── Phase-boundary stop checks (#198) ───────────────────────────────────
 

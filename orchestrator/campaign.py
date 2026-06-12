@@ -401,11 +401,21 @@ def run_campaign(
             try:
                 _raise_if_stopped(work_dir, where=f"before iteration {i}")
             except CampaignStopped as exc:
+                # Return immediately rather than `outcome = None; break`.
+                # The STOP sentinel is intentionally left on disk (the
+                # operator deletes it to resume), so falling through to the
+                # outer loop would re-enter the next iteration, re-raise
+                # here, and append another stopped_by_user row — one per
+                # remaining iteration (PR #279 review). Record one failed
+                # row, persist terminal artifacts like the other clean
+                # exits, and stop.
                 logger.info("Campaign stop requested: %s", exc)
                 print(f"\n  CAMPAIGN STOPPED — {exc}")
                 append_failed_row(work_dir, i, f"stopped_by_user: {exc}")
-                outcome = None
-                break
+                _emit_meta_findings(work_dir, campaign)
+                _write_repo_cache(work_dir, campaign)
+                _write_metrics_summary(work_dir)
+                return
 
             try:
                 # #188: only iter-1 receives the pre-authored bundle.
@@ -435,6 +445,11 @@ def run_campaign(
                     continue
                 else:
                     print(f"\n  Max redesigns ({max_redesigns}) reached. Stopping.")
+                    # Persist terminal artifacts like every other exit path
+                    # (PR #279 review): meta_findings + repo_cache were
+                    # dropped here, losing lessons from earlier iterations.
+                    _emit_meta_findings(work_dir, campaign)
+                    _write_repo_cache(work_dir, campaign)
                     _write_metrics_summary(work_dir)
                     return
             break  # any non-REDESIGN outcome exits the retry loop
