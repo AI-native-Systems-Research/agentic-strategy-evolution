@@ -58,10 +58,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     border: 1px solid #0f3460; border-radius: 6px; padding: 12px 14px;
     color: #e0e0e0; font-size: 12px; z-index: 50; max-width: 480px;
   }}
+  .campaign-objective.collapsed {{ padding: 6px 12px; }}
+  .campaign-objective .obj-header {{
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; cursor: pointer; user-select: none;
+  }}
   .campaign-objective .obj-label {{
     color: #888; font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.8px; margin-bottom: 6px;
+    letter-spacing: 0.8px;
   }}
+  .campaign-objective:not(.collapsed) .obj-header {{ margin-bottom: 6px; }}
+  .campaign-objective .obj-toggle {{
+    color: #888; font-size: 10px; transition: transform 0.15s;
+    transform: rotate(180deg);
+  }}
+  .campaign-objective.collapsed .obj-toggle {{ transform: rotate(0deg); }}
+  .campaign-objective .obj-header:hover .obj-label,
+  .campaign-objective .obj-header:hover .obj-toggle {{ color: #ccc; }}
+  .campaign-objective.collapsed .obj-body {{ display: none; }}
   .campaign-objective .obj-question {{
     color: #ccc; font-style: italic; line-height: 1.5; margin-bottom: 6px;
   }}
@@ -467,16 +481,22 @@ const llmMetrics = {llm_metrics_json};
 
 let currentView = "iterations";
 
-// Render campaign objective box (bottom-left corner)
+// Render campaign objective box (top-center). Collapsible; persists across reloads via localStorage.
+const OBJECTIVE_COLLAPSED_KEY = "nous-viz-objective-collapsed";
+function toggleObjective() {{
+  const box = document.getElementById("campaign-objective-box");
+  if (!box) return;
+  const nowCollapsed = !box.classList.contains("collapsed");
+  box.classList.toggle("collapsed", nowCollapsed);
+  try {{ localStorage.setItem(OBJECTIVE_COLLAPSED_KEY, nowCollapsed ? "1" : "0"); }} catch (e) {{}}
+}}
 if (campaignContext && (campaignContext.research_question || campaignContext.target_commit)) {{
   const box = document.getElementById("campaign-objective-box");
   if (box) {{
-    let html = '';
+    let bodyHtml = '';
     if (campaignContext.research_question) {{
-      html += '<div class="obj-label">Research Objective</div>';
-      html += '<div class="obj-question">' + campaignContext.research_question + '</div>';
+      bodyHtml += '<div class="obj-question">' + campaignContext.research_question + '</div>';
     }}
-    // Show runtime metadata line
     const metaParts = [];
     if (campaignContext.target_commit) {{
       const shortSha = campaignContext.target_commit.substring(0, 7);
@@ -488,9 +508,20 @@ if (campaignContext && (campaignContext.research_question || campaignContext.tar
       metaParts.push('<span class="obj-meta-item">nous <code>' + shortVer + '</code></span>');
     }}
     if (metaParts.length > 0) {{
-      html += '<div class="obj-meta">' + metaParts.join(' &middot; ') + '</div>';
+      bodyHtml += '<div class="obj-meta">' + metaParts.join(' &middot; ') + '</div>';
     }}
-    box.innerHTML = html;
+    box.innerHTML =
+      '<div class="obj-header" onclick="toggleObjective()">' +
+        '<span class="obj-label">Research Objective</span>' +
+        '<span class="obj-toggle">&#9662;</span>' +
+      '</div>' +
+      '<div class="obj-body">' + bodyHtml + '</div>';
+    let startCollapsed = true;
+    try {{
+      const stored = localStorage.getItem(OBJECTIVE_COLLAPSED_KEY);
+      if (stored === "0") startCollapsed = false;
+    }} catch (e) {{}}
+    box.classList.toggle("collapsed", startCollapsed);
     box.style.display = "block";
   }}
 }}
