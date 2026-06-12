@@ -139,6 +139,28 @@ class TestGcOrphanWorktrees:
         ]
         assert leftovers == []
 
+    def test_survived_dir_is_not_reported_removed(self, tmp_path, monkeypatch):
+        """If rmtree fails to delete the dir (ignore_errors swallows the
+        error), the entry must NOT be reported as removed — a ghost
+        worktree wrongly logged as GC'd would let a later ``git worktree
+        add`` fail cryptically."""
+        import orchestrator.worktree as wt
+
+        _init_git_repo(tmp_path)
+        old = 1000.0
+        _make_worktree_dir(tmp_path, "iter-1-aaaa", mtime=old)
+
+        # Simulate ignore_errors=True swallowing a removal failure: rmtree
+        # is a no-op, so the directory survives on disk.
+        monkeypatch.setattr(wt.shutil, "rmtree", lambda *a, **k: None)
+
+        removed = gc_orphan_worktrees(
+            tmp_path, max_age_seconds=60, now=old + 3600,
+        )
+
+        assert removed == []
+        assert (tmp_path / ".nous-experiments" / "iter-1-aaaa").exists()
+
 
 # ─── Phase B: harness-isolated subagent runner factory ─────────────────────
 

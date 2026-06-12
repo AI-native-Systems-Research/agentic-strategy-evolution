@@ -179,8 +179,14 @@ async def aiter_with_silence_watchdog(aiter, threshold: float | None):
                     await asyncio.wait_for(coro, timeout=5.0)  # type: ignore[arg-type]
             except (asyncio.TimeoutError, asyncio.CancelledError, RuntimeError, GeneratorExit):
                 pass  # already running / racing — let the loop tear down naturally
-            except Exception:  # noqa: BLE001 — best-effort cleanup
-                pass
+            except Exception as exc:  # noqa: BLE001 — best-effort cleanup
+                # An unexpected exception here (SDK teardown bug, version
+                # mismatch raising AttributeError, etc.) must not mask the
+                # exception we may already be unwinding — but for a system
+                # that runs unsupervised for hours, swallowing it silently
+                # makes post-mortem impossible. Log at debug so it's
+                # recoverable without adding noise to the abort report.
+                logger.debug("aiter cleanup raised (non-fatal): %s", exc)
 
 
 def summarize_silence_gaps(event_log_path: Path) -> dict:
@@ -267,8 +273,19 @@ def _tee_event(event_log_path: Path | None, message: object, cls_name: str) -> N
     try:
         with open(event_log_path, "a") as f:
             f.write(_json.dumps(record) + "\n")
-    except OSError:
-        pass
+    except OSError as exc:
+        # The event log is the only observability channel for multi-hour
+        # SDK turns, and ``nous status``' stuck-detector reads timestamps
+        # from it — so a silent failure here makes a healthy agent look
+        # hung. Still best-effort (a log-write error must not break the
+        # turn), but warn once so the operator knows visibility is lost.
+        # Dedup guard keeps a persistent failure (disk full, NFS stale
+        # handle) from spamming the log on every event.
+        if not getattr(_tee_event, "_warned", False):
+            logger.warning(
+                "event log write failed (future writes silent): %s", exc
+            )
+            _tee_event._warned = True
 
 
 @dataclass

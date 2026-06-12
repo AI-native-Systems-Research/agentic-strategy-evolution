@@ -8,8 +8,12 @@ The settings file declares:
     repo's worktree root. Anything else is denied.
   * an allowlist of binaries (Bash) drawn from the experiment plan
     when one is present at init, with conservative defaults otherwise.
-  * a deny rule for outbound network access except localhost / configured
-    proxies.
+  * best-effort egress-reduction deny rules for the common ``curl``/``wget``
+    exfil one-liners (http and https). This is NOT a hard network sandbox:
+    the allowlisted language runtimes (``python``/``node``/``npm``) can still
+    reach the network, so campaigns needing true isolation must add an
+    OS/container-level firewall. The deny list reduces accidental egress; it
+    does not guarantee its absence.
   * (optional) a Stop hook pointing at ``bin/nous-execute-stop`` (#129).
 
 The file's *contents* are the contract. The dispatcher passes
@@ -114,8 +118,19 @@ def render_campaign_settings(
         "permissions": {
             "allowOnly": allow_only,
             "allow": [f"Bash({b}:*)" for b in bin_allowlist],
+            # Best-effort egress reduction — NOT a hard network sandbox.
+            # These rules stop the obvious ``curl``/``wget`` exfil one-liners
+            # (both https and plain http), but they cannot stop egress via
+            # the language runtimes in the allowlist: ``python``/``python3``
+            # (``urllib``/``requests``), ``node`` (``fetch``), or ``npm``
+            # (registry fetches), nor DNS-based exfil via ``dig``/``nslookup``
+            # if those binaries are allowed. Campaigns that require true
+            # network isolation must run under an OS/container-level firewall
+            # (e.g. network namespace, egress proxy). See module docstring.
             "deny": [
+                "Bash(curl http://*)",
                 "Bash(curl https://*)",
+                "Bash(wget http://*)",
                 "Bash(wget https://*)",
                 "Bash(rm -rf /*)",
             ],

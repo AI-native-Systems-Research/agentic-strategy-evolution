@@ -248,13 +248,39 @@ class TestWaitForReply:
         )
         assert decision == "approve"
 
-    def test_timeout_returns_none(self):
-        from orchestrator.channels import wait_for_reply
+    def test_timeout_dead_channel_returns_sentinel(self):
+        # Provider returned None on every poll: the channel never delivered
+        # a message. This must be distinguishable from a no-reply timeout so
+        # the caller doesn't silently auto-approve behind a dead channel.
+        from orchestrator.channels import TIMEOUT_NO_MESSAGES, wait_for_reply
 
         ticks = iter([0.0, 5.0, 10.0, 15.0])
 
         decision = wait_for_reply(
             lambda: None, timeout_seconds=10,
+            sleeper=lambda _: None,
+            clock=lambda: next(ticks),
+        )
+        assert decision == TIMEOUT_NO_MESSAGES
+
+    def test_timeout_after_unrecognized_messages_returns_none(self):
+        # The channel delivered messages but none parsed to a decision: the
+        # human saw the gate and didn't reply in time. Falls back to the
+        # documented None timeout (caller may auto-approve).
+        from orchestrator.channels import wait_for_reply
+
+        replies = iter(["thinking...", "still deciding"])
+
+        def provider():
+            try:
+                return next(replies)
+            except StopIteration:
+                return None
+
+        ticks = iter([0.0, 1.0, 2.0, 3.0, 10.0, 15.0])
+
+        decision = wait_for_reply(
+            provider, timeout_seconds=10,
             sleeper=lambda _: None,
             clock=lambda: next(ticks),
         )

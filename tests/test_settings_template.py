@@ -94,6 +94,15 @@ class TestRenderCampaignSettings:
         deny = settings["permissions"]["deny"]
         assert any("https" in entry for entry in deny)
 
+    def test_deny_blocks_plain_http_curl_and_wget(self, tmp_path):
+        # Plain http:// was an obvious gap: the egress-reduction rules
+        # should cover both schemes for curl and wget.
+        settings = render_campaign_settings(work_dir=tmp_path)
+
+        deny = settings["permissions"]["deny"]
+        assert "Bash(curl http://*)" in deny
+        assert "Bash(wget http://*)" in deny
+
     def test_no_hooks_section_when_no_hook_paths(self, tmp_path):
         settings = render_campaign_settings(work_dir=tmp_path)
 

@@ -35,6 +35,16 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT_SECONDS = 10
 
+# Returned by ``wait_for_reply`` when the timeout elapses *and the channel
+# never delivered a single message* — i.e. the reply provider returned
+# ``None`` on every poll. This is distinct from a plain ``None`` timeout
+# (the human saw the gate but didn't reply in time): a dead channel
+# (webhook misconfigured, network down, provider raising upstream) should
+# NOT be treated the same as "no human response", because falling back to
+# auto-approve semantics on a dead channel silently bypasses a gate that
+# was supposed to require human sign-off.
+TIMEOUT_NO_MESSAGES = "timeout_no_messages"
+
 
 def _summary_to_markdown(summary: dict, *, gate_type: str, iter_dir: Path) -> str:
     """Render a gate_summary dict as a compact markdown card."""
@@ -212,18 +222,28 @@ def wait_for_reply(
 
     Returns:
       ``"approve"`` / ``"reject"`` / ``"abort"`` on first recognized reply.
-      ``None`` on timeout — caller should fall back to ``--auto-approve``
-      semantics (the issue's documented timeout behavior).
+      ``None`` on timeout *when the channel delivered at least one message*
+      but no recognized decision — the human saw the gate but didn't reply
+      in time; the caller should fall back to ``--auto-approve`` semantics
+      (the issue's documented timeout behavior).
+      :data:`TIMEOUT_NO_MESSAGES` on timeout when the provider returned
+      ``None`` on *every* poll — the channel was effectively dead (webhook
+      misconfigured, network down, provider erroring upstream). The caller
+      can distinguish this from a genuine no-reply and refuse to silently
+      auto-approve a gate behind a broken channel.
     """
     import time as _time
     sleep = sleeper if sleeper is not None else _time.sleep
     now = clock if clock is not None else _time.time
 
+    saw_any_message = False
     deadline = now() + timeout_seconds
     while now() < deadline:
         text = reply_provider()
+        if text is not None:
+            saw_any_message = True
         decision = parse_reply(text) if text is not None else None
         if decision is not None:
             return decision
         sleep(poll_interval_seconds)
-    return None
+    return None if saw_any_message else TIMEOUT_NO_MESSAGES

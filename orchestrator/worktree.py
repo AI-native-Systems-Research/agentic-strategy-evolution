@@ -359,6 +359,16 @@ def gc_orphan_worktrees(
         if entry.exists():
             shutil.rmtree(entry, ignore_errors=True)
 
+        # Verify the directory is actually gone before reporting success.
+        # ``ignore_errors=True`` swallows removal failures, so a ghost
+        # worktree that still holds a lockfile would otherwise be logged
+        # as GC'd — and a later ``git worktree add`` would then fail with
+        # a cryptic error. Skip the branch cleanup and the success log
+        # when the directory survived.
+        if entry.exists():
+            logger.warning("GC: failed to remove %s (still on disk)", entry)
+            continue
+
         # Best-effort branch cleanup.
         branch = f"nous-exp-{entry.name}"
         subprocess.run(
