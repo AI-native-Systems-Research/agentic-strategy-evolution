@@ -1,0 +1,16 @@
+{
+  "name": "nous",
+  "version": "0.2.0",
+  "description": "Hypothesis-driven experimentation for software systems. Wraps the `nous` CLI as discoverable Claude Code skills.",
+  "author": "AI-native Systems Research",
+  "homepage": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution",
+  "license": "Apache-2.0",
+  "skills": [
+    "skills/nous-run.md",
+    "skills/nous-status.md",
+    "skills/nous-resume.md",
+    "skills/nous-list.md",
+    "skills/nous-bisect.md",
+    "skills/nous-find-principle.md"
+  ]
+}

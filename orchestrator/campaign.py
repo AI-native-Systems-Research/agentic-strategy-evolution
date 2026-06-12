@@ -14,13 +14,17 @@ campaign-level document) and previous findings feed the next iteration's
 design prompt so that each hypothesis bundle is informed by all prior learning.
 
 Dispatch backends:
-    --agent api (default): Uses CLIDispatcher for code phases (when repo_path
-        is set) and LLMDispatcher for structured phases. OPENAI_API_KEY is
-        optional — gate summaries are skipped if not set.
+    --agent sdk (default): Uses the Claude Agent SDK for code phases (native
+        streaming, programmatic prompt caching, parallel subagents) and
+        LLMDispatcher for structured phases. OPENAI_API_KEY is optional —
+        gate summaries are skipped if not set.
     --agent inline: Emits prompts to stdout for the calling agent to reason
         about. No subprocess, no API key — the agent that invoked run_campaign.py
         sees the prompt and writes artifacts directly. Ideal for embedded use
         inside agent frameworks (e.g., Hive strategist).
+
+    The legacy ``api`` backend (claude -p subprocess) was removed in #183;
+    SDK is the only supported code-access path post-#120.
 """
 import argparse
 import json
@@ -34,6 +38,7 @@ import yaml
 from orchestrator.engine import Engine
 from orchestrator.gates import HumanGate
 from orchestrator.inline_dispatch import InlineDispatcher
+from orchestrator.util import atomic_write
 from orchestrator.ledger import append_failed_row, append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.metrics import summarize_metrics
@@ -61,6 +66,74 @@ def _resolve_model(campaign: dict, phase_key: str, cli_model: str | None) -> str
     return cli_model or "aws/claude-sonnet-4-5"
 
 
+def _write_repo_cache(work_dir: Path, campaign: dict) -> None:
+    """Persist repo-level knowledge cache for the next campaign (issue #156).
+
+    Pure-Python: reads handoff.md + campaign.yaml and writes the cache
+    files. Skipped when there's no target_system.repo_path (no place
+    to put the cache). Best-effort — failures are logged, not fatal.
+    """
+    target = campaign.get("target_system", {}) if isinstance(campaign, dict) else {}
+    repo_path = target.get("repo_path")
+    if not repo_path:
+        return
+    try:
+        from orchestrator.repo_cache import (
+            build_cache_from_campaign,
+            write_repo_cache,
+        )
+        exploration, knobs, metrics, build = build_cache_from_campaign(
+            work_dir, campaign,
+        )
+        if not (exploration or knobs or metrics or build):
+            logger.info("No cache content extracted; skipping repo cache write.")
+            return
+        cache_dir = write_repo_cache(
+            Path(repo_path),
+            exploration=exploration,
+            knobs=knobs,
+            metrics=metrics,
+            build=build,
+        )
+        print(
+            f"  -> repo cache written to {cache_dir}  "
+            f"({len(knobs)} knob(s), {len(metrics)} metric(s))"
+        )
+    except Exception as exc:
+        logger.warning("Repo cache write failed: %s", exc)
+
+
+def _emit_meta_findings(work_dir: Path, campaign: dict) -> None:
+    """Emit meta_findings.json at campaign end (issue #155).
+
+    Pure-Python deterministic emitter — zero LLM tokens. Reads on-disk
+    artifacts (ledger, principles, findings, retry_log, llm_metrics)
+    and writes a structured set of triagable lessons across three
+    streams. Best-effort: failure is logged but never blocks the
+    campaign from exiting.
+    """
+    try:
+        from orchestrator.meta_findings import emit_meta_findings, write_meta_findings
+        from orchestrator.validate import validate_meta_findings
+        payload = emit_meta_findings(work_dir, campaign)
+        target = write_meta_findings(work_dir, payload)
+        result = validate_meta_findings(work_dir)
+        if result["status"] == "fail":
+            logger.warning(
+                "meta_findings.json failed self-validation: %s", result["errors"],
+            )
+        n_lessons = len(payload.get("campaign_design_lessons") or [])
+        n_repo = len(payload.get("target_system_asks") or [])
+        n_nous = len(payload.get("nous_asks") or [])
+        print(
+            f"  -> {target}  "
+            f"({n_lessons} design lesson(s), {n_repo} repo ask(s), "
+            f"{n_nous} nous ask(s))"
+        )
+    except Exception as exc:
+        logger.warning("Meta-findings emission failed: %s", exc)
+
+
 def _write_metrics_summary(work_dir: Path) -> None:
     """Write llm_metrics_summary.json and print a one-liner. Never raises."""
     try:
@@ -81,7 +154,7 @@ def _write_metrics_summary(work_dir: Path) -> None:
 
 def _generate_report(
     campaign: dict, work_dir: Path, model: str | None,
-    agent: str = "api", timeout: int = 1800,
+    agent: str = "sdk", timeout: int = 1800,
 ) -> None:
     """Generate report.md summarizing the campaign."""
     try:
@@ -103,6 +176,60 @@ def _generate_report(
         print(f"  Report generation skipped: {exc}")
 
 
+def _persist_max_iterations(work_dir: Path, max_iterations: int) -> None:
+    """Write effective max_iterations into state.json (#197).
+
+    Best-effort. Three early-return paths are silent benign no-ops:
+      * state.json doesn't exist (run hasn't called setup_work_dir yet)
+      * state.json content isn't a dict (corrupt; load_state will catch it)
+      * value is unchanged (idempotent skip)
+
+    OS / parse / write *errors* are logged at WARNING level with the
+    fallback chain noted, since the feature is operational sugar
+    (carries the original cap across resume) and not load-bearing for
+    correctness.
+    """
+    state_path = Path(work_dir) / "state.json"
+    if not state_path.exists():
+        return
+    try:
+        state = json.loads(state_path.read_text())
+        if not isinstance(state, dict):
+            return
+        if state.get("max_iterations") == max_iterations:
+            return
+        state["max_iterations"] = int(max_iterations)
+        atomic_write(state_path, json.dumps(state, indent=2) + "\n")
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Could not persist max_iterations=%d to state.json (%s): "
+            "resume will fall back to CLI flag / campaign.yaml / default.",
+            max_iterations, exc,
+        )
+
+
+def read_persisted_max_iterations(work_dir: Path) -> int | None:
+    """Read max_iterations from state.json if present (#197).
+
+    Returns None when state.json doesn't exist, can't be parsed, or
+    doesn't carry a max_iterations field. Callers should fall back to
+    their normal resolution chain (CLI flag → campaign.yaml → default).
+    """
+    state_path = Path(work_dir) / "state.json"
+    if not state_path.exists():
+        return None
+    try:
+        state = json.loads(state_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    val = state.get("max_iterations")
+    if not isinstance(val, int) or val < 1:
+        return None
+    return val
+
+
 def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
     """Decide where to resume a campaign and, if DONE, advance it.
 
@@ -122,8 +249,16 @@ def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
     if engine.phase not in ("INIT", "DONE"):
         start = engine.iteration
         if start < 1:
-            logger.warning(
-                "state.json has iteration=%d (< 1); starting fresh.", start,
+            # #202: pre-#194, the engine kept state.iteration=0 throughout
+            # iter-1 (incrementing only on DONE→DESIGN). The earlier WARNING
+            # "starting fresh" wording read like data loss; in practice
+            # existing iter-1 artifacts are preserved and the resume
+            # continues at state.phase. Phrase it informationally.
+            logger.info(
+                "state.json has iteration=%d (no completed iterations yet); "
+                "treating as iter-1. Existing artifacts under runs/iter-1/ "
+                "are preserved; resuming at phase=%s.",
+                start, engine.phase,
             )
             return 1
         if start > max_iterations:
@@ -182,8 +317,11 @@ def run_campaign(
     model: str | None = None,
     auto_approve: bool = False,
     timeout: int = 1800,
-    agent: str = "api",
+    agent: str = "sdk",
     max_cli_retries: int | None = None,
+    pre_authored_bundle: Path | None = None,
+    pre_authored_problem_md: Path | None = None,
+    pre_authored_handoff_md: Path | None = None,
 ) -> None:
     """Run a multi-iteration Nous campaign.
 
@@ -206,16 +344,39 @@ def run_campaign(
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
 
-    # Pre-flight: validate CLI + credentials before starting the campaign
+    # GC orphan experiment worktrees (#133): clean up stale dirs from
+    # crashed prior runs before starting fresh ones.
     repo_path = campaign.get("target_system", {}).get("repo_path")
-    if agent != "inline" and repo_path:
-        from orchestrator.cli_dispatch import CLIDispatcher
-        preflight_dispatcher = CLIDispatcher(
+    if repo_path:
+        try:
+            from orchestrator.worktree import gc_orphan_worktrees
+            removed = gc_orphan_worktrees(Path(repo_path))
+            if removed:
+                logger.info(
+                    "GC'd %d orphan worktree(s): %s",
+                    len(removed), ", ".join(removed),
+                )
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Worktree GC failed: %s", exc)
+
+    # Pre-flight: validate CLI + credentials before starting the campaign.
+    # #183: only the SDK path remains as a code-access backend; the legacy
+    # claude -p subprocess path was removed. Programmatic callers passing
+    # agent="api" hit the guard in run_iteration().
+    if agent == "sdk" and repo_path:
+        from orchestrator.sdk_dispatch import SDKDispatcher
+        preflight_dispatcher = SDKDispatcher(
             work_dir=work_dir, campaign=campaign,
             model=_resolve_model(campaign, "design", model),
             max_retries=max_cli_retries,
         )
         preflight_dispatcher.preflight_check()
+
+    # #197: persist effective max_iterations into state.json so a later
+    # `nous resume` (without --max-iterations) honors the original cap
+    # instead of silently defaulting to 10. The state file is the single
+    # source of truth across run/resume invocations.
+    _persist_max_iterations(work_dir, max_iterations)
 
     start_iter = _resume_completed_campaign(work_dir, max_iterations)
 
@@ -231,11 +392,45 @@ def run_campaign(
                 print(f"  CAMPAIGN — Iteration {i} of {max_iterations}")
             print(f"{'#'*60}")
 
+            # User-requested stop (issue: nous stop). Honour the sentinel
+            # *before* spawning the next iteration so we never start work
+            # the operator has just asked us to halt.
+            from orchestrator.iteration import (
+                CampaignStopped, _raise_if_stopped,
+            )
             try:
+                _raise_if_stopped(work_dir, where=f"before iteration {i}")
+            except CampaignStopped as exc:
+                # Return immediately rather than `outcome = None; break`.
+                # The STOP sentinel is intentionally left on disk (the
+                # operator deletes it to resume), so falling through to the
+                # outer loop would re-enter the next iteration, re-raise
+                # here, and append another stopped_by_user row — one per
+                # remaining iteration (PR #279 review). Record one failed
+                # row, persist terminal artifacts like the other clean
+                # exits, and stop.
+                logger.info("Campaign stop requested: %s", exc)
+                print(f"\n  CAMPAIGN STOPPED — {exc}")
+                append_failed_row(work_dir, i, f"stopped_by_user: {exc}")
+                _emit_meta_findings(work_dir, campaign)
+                _write_repo_cache(work_dir, campaign)
+                _write_metrics_summary(work_dir)
+                return
+
+            try:
+                # #188: only iter-1 receives the pre-authored bundle.
+                # Subsequent iterations (if any) follow the normal
+                # agent-authored flow.
+                pab = pre_authored_bundle if i == 1 else None
+                ppm = pre_authored_problem_md if i == 1 else None
+                phm = pre_authored_handoff_md if i == 1 else None
                 outcome = run_iteration(
                     campaign, work_dir, iteration=i, model=model, final=is_last,
                     auto_approve=auto_approve, timeout=timeout, agent=agent,
                     max_cli_retries=max_cli_retries,
+                    pre_authored_bundle=pab,
+                    pre_authored_problem_md=ppm,
+                    pre_authored_handoff_md=phm,
                 )
             except Exception as exc:
                 logger.error("Iteration %d failed permanently: %s", i, exc)
@@ -250,6 +445,11 @@ def run_campaign(
                     continue
                 else:
                     print(f"\n  Max redesigns ({max_redesigns}) reached. Stopping.")
+                    # Persist terminal artifacts like every other exit path
+                    # (PR #279 review): meta_findings + repo_cache were
+                    # dropped here, losing lessons from earlier iterations.
+                    _emit_meta_findings(work_dir, campaign)
+                    _write_repo_cache(work_dir, campaign)
                     _write_metrics_summary(work_dir)
                     return
             break  # any non-REDESIGN outcome exits the retry loop
@@ -265,6 +465,8 @@ def run_campaign(
         if outcome == IterationOutcome.COMPLETED:
             append_ledger_row(work_dir, i)
             print(f"\n  Campaign complete after {i} iteration(s).")
+            _emit_meta_findings(work_dir, campaign)
+            _write_repo_cache(work_dir, campaign)
             _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
             _write_metrics_summary(work_dir)
             return
@@ -272,6 +474,8 @@ def run_campaign(
         if outcome == IterationOutcome.ABORTED:
             print(f"\n  Campaign aborted at iteration {i}.")
             print("  Engine state preserved for potential resume.")
+            _emit_meta_findings(work_dir, campaign)
+            _write_repo_cache(work_dir, campaign)
             _write_metrics_summary(work_dir)
             return
 
@@ -320,6 +524,8 @@ def run_campaign(
             engine = Engine(work_dir)
             engine.transition("DONE")
             print(f"\n  Campaign stopped after {i} iteration(s).")
+            _emit_meta_findings(work_dir, campaign)
+            _write_repo_cache(work_dir, campaign)
             _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
             _write_metrics_summary(work_dir)
             return
@@ -331,6 +537,8 @@ def run_campaign(
         print(f"\n  Advancing to iteration {i + 1}...")
 
     print(f"\n  Campaign reached max_iterations ({max_iterations}).")
+    _emit_meta_findings(work_dir, campaign)
+    _write_repo_cache(work_dir, campaign)
     _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
     _write_metrics_summary(work_dir)
 
@@ -353,10 +561,11 @@ def main() -> None:
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
                         help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
-    parser.add_argument("--agent", choices=["inline", "api"], default="api",
-                        help="Dispatch backend: 'inline' emits prompts to stdout for the "
-                             "calling agent (no subprocess, no API key), "
-                             "'api' uses the LLM API (default: api)")
+    parser.add_argument("--agent", choices=["inline", "sdk"], default="sdk",
+                        help="Dispatch backend: 'sdk' (default) uses the Claude "
+                             "Agent SDK for code phases; 'inline' emits prompts "
+                             "to stdout for the calling agent (no subprocess, "
+                             "no API key required).")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -399,6 +608,14 @@ def main() -> None:
     )
     print(f"Working directory: {work_dir.resolve()}")
     print(f"Max iterations: {max_iter}")
+
+    # Initial CLAUDE.md so iter 1 has campaign brief + (empty) principles
+    # in scope from session start (#131).
+    try:
+        from orchestrator.claude_md import regenerate_from_disk
+        regenerate_from_disk(work_dir, campaign, iteration=0)
+    except (OSError, RuntimeError) as exc:
+        logger.warning("Failed to write initial CLAUDE.md: %s", exc)
 
     run_campaign(
         campaign, work_dir,

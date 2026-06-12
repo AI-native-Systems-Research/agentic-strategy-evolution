@@ -132,11 +132,13 @@ class TestSingleIterationHappyPath:
         engine.transition("HUMAN_FINDINGS_GATE")
         _merge_principles(campaign_dir, iter_dir)
         engine.transition("DONE")
-        assert engine.iteration == 0
+        # #194: iteration counter is 1 throughout iter-1 (incremented on
+        # leaving INIT). Pre-#194 it stayed at 0 until DONE→DESIGN.
+        assert engine.iteration == 1
 
         # Loop to next iteration
         engine.transition("DESIGN")
-        assert engine.iteration == 1
+        assert engine.iteration == 2
 
         # Iteration 2: refuted
         iter_dir2 = campaign_dir / "runs" / "iter-2"
@@ -155,7 +157,8 @@ class TestSingleIterationHappyPath:
         _merge_principles(campaign_dir, iter_dir2)
         engine.transition("DONE")
         assert engine.phase == "DONE"
-        assert engine.iteration == 1
+        # #194: iter-2 done; counter sat at 2 throughout iter-2.
+        assert engine.iteration == 2
 
         # Verify principles accumulated
         principles = json.loads((campaign_dir / "principles.json").read_text())

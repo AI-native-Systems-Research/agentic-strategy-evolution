@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/brief_amendments.schema.json",
+  "title": "Brief Amendment",
+  "description": "One structured amendment to a campaign brief. Stored as one JSON object per line in `runs/iter-N/inputs/brief_amendments.jsonl`. The structured form (post-#223) replaces the prior free-form markdown so amendments can be programmatically parsed, applied to briefs, and propagated across campaign runs without re-discovery.",
+  "type": "object",
+  "required": ["id", "brief_section", "problem", "fix", "priority"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^BA-[0-9]+$",
+      "description": "Stable identifier within this iter's amendments (e.g. 'BA-1', 'BA-2'). Numbers are 1-indexed and unique within an iter."
+    },
+    "brief_section": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The brief location the amendment targets, e.g. '.nous/paper-burst-brief.md §ITER-1' or 'paper-conventions.md §parallel-execution'. Must be specific enough that an apply-amendments tool can locate the section."
+    },
+    "problem": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Plain-English description of what the brief got wrong, missing, or unclear. The 'why-it-matters' explanation."
+    },
+    "evidence": {
+      "type": "string",
+      "description": "Observed behavior that demonstrates the problem (e.g. 'dropped_unservable=61, adversary completed=0' or a quoted error message). Optional but strongly recommended."
+    },
+    "fix": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Specific edit instruction. Should be concrete enough that an operator (or a future apply-amendments CLI, post-#223 v2) can mechanically apply it: 'Add --max-model-len 0 to all main-experiment BLIS commands' is good; 'fix the model length issue' is not."
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["BLOCKING", "HIGH", "MEDIUM", "LOW", "INFO"],
+      "description": "How urgently this needs applying before iter-2 / next campaign run. BLOCKING means iter-2 will produce invalid data without this fix; HIGH/MEDIUM are quality concerns; LOW is polish; INFO is observation. Per #224, BLOCKING amendments not yet applied trigger the promotion gate's 'revise' decision."
+    },
+    "impact": {
+      "type": "string",
+      "description": "What happens if the brief is NOT amended. Optional. E.g. 'iter-2 produces ground_truth_held=false trivially because adversary requests are all dropped'."
+    }
+  }
+}

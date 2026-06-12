@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""PreToolUse hook: enforce experiment_plan.yaml during EXECUTE_ANALYZE (#128).
+
+Claude Code calls this hook before every Bash tool invocation in the
+executor session. It compares the proposed command against the plan
+sitting in ``$NOUS_ITER_DIR/experiment_plan.yaml`` and decides whether
+to allow it.
+
+Two modes (controlled by ``NOUS_PLAN_ENFORCEMENT``):
+
+  * ``strict``: exit 2 with a structured reason on stderr if the
+    proposed command's head binary doesn't match any planned condition's
+    head binary. The agent receives the reason in its conversation and
+    is expected to either (a) revise the command or (b) annotate it
+    ``# nous: ad-hoc`` to explicitly opt out for one call.
+  * ``warn`` (default): always exit 0; record violations to
+    ``$NOUS_ITER_DIR/plan_violations.jsonl`` for audit. Lets you watch
+    for drift in soak runs without breaking iteration.
+
+Escape hatch: a command containing the literal string ``# nous: ad-hoc``
+is allowed in both modes and logged as ``kind: ad-hoc`` so reviewers can
+audit how often it's used.
+
+Exit codes: 0 = allow, 2 = block (strict only).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable
+
+import yaml
+
+_AD_HOC_MARKER = "# nous: ad-hoc"
+_OK = 0
+_BLOCK = 2
+
+
+def _read_event() -> dict:
+    """Read the PreToolUse JSON payload from stdin. Returns {} on bad input."""
+    try:
+        raw = sys.stdin.read()
+        if not raw.strip():
+            return {}
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _proposed_command(event: dict) -> str | None:
+    """Return the Bash command this event is proposing, or None for non-Bash."""
+    if event.get("tool_name") != "Bash":
+        return None
+    cmd = event.get("tool_input", {}).get("command")
+    if not isinstance(cmd, str):
+        return None
+    return cmd
+
+
+def _head_binary(cmd: str) -> str | None:
+    """Pull the basename of the first token of a shell command."""
+    cmd = cmd.lstrip()
+    # Strip leading comments or ad-hoc marker so we extract the real binary.
+    for line in cmd.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        first = stripped.split()[0]
+        # Drop env-var prefix like ``FOO=bar binary``.
+        while "=" in first and not first.startswith("/") and not first.startswith("./"):
+            # heuristic: env-var-only assignment, skip to next token
+            tokens = stripped.split()
+            if len(tokens) < 2:
+                return None
+            tokens.pop(0)
+            stripped = " ".join(tokens)
+            first = stripped.split()[0]
+        return first.split("/")[-1]
+    return None
+
+
+def _plan_binaries(plan_path: Path) -> set[str]:
+    """Extract the set of head-binary basenames referenced in the plan."""
+    if not plan_path.exists():
+        return set()
+    try:
+        plan = yaml.safe_load(plan_path.read_text()) or {}
+    except yaml.YAMLError:
+        return set()
+    bins: set[str] = set()
+    for arm in plan.get("arms", []) or []:
+        for cond in arm.get("conditions", []) or []:
+            cmd = cond.get("command") or cond.get("cmd")
+            if isinstance(cmd, str):
+                bin_name = _head_binary(cmd)
+                if bin_name:
+                    bins.add(bin_name)
+    return bins
+
+
+def _planning_arm_for(plan_path: Path, head: str) -> str | None:
+    """Best-effort: return arm_id where ``head`` appears (or None)."""
+    if not plan_path.exists():
+        return None
+    try:
+        plan = yaml.safe_load(plan_path.read_text()) or {}
+    except yaml.YAMLError:
+        return None
+    for arm in plan.get("arms", []) or []:
+        for cond in arm.get("conditions", []) or []:
+            cmd = cond.get("command") or cond.get("cmd")
+            if isinstance(cmd, str) and _head_binary(cmd) == head:
+                return arm.get("arm_id")
+    return None
+
+
+def _log_violation(
+    iter_dir: Path,
+    *,
+    kind: str,
+    command: str,
+    arm: str | None,
+) -> None:
+    log_path = iter_dir / "plan_violations.jsonl"
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "kind": kind,
+        "command": command,
+        "arm": arm or "",
+    }
+    try:
+        with open(log_path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except OSError:
+        # Best-effort; never block the agent because logging failed.
+        pass
+
+
+def main() -> int:
+    iter_dir_str = os.environ.get("NOUS_ITER_DIR")
+    mode = os.environ.get("NOUS_PLAN_ENFORCEMENT", "warn").lower()
+
+    event = _read_event()
+    cmd = _proposed_command(event)
+    if cmd is None:
+        # Not a Bash event — nothing to enforce.
+        return _OK
+
+    if not iter_dir_str:
+        # Hook misconfigured — fail open (cannot block what we can't compare).
+        return _OK
+
+    iter_dir = Path(iter_dir_str)
+    plan_path = iter_dir / "experiment_plan.yaml"
+
+    # Escape hatch.
+    if _AD_HOC_MARKER in cmd:
+        _log_violation(iter_dir, kind="ad-hoc", command=cmd, arm=None)
+        return _OK
+
+    head = _head_binary(cmd)
+    if head is None:
+        # Couldn't parse — fail open (warn) or block (strict).
+        if mode == "strict":
+            print(
+                f"plan enforcer could not parse the proposed command:\n  {cmd!r}",
+                file=sys.stderr,
+            )
+            return _BLOCK
+        return _OK
+
+    planned = _plan_binaries(plan_path)
+    if head in planned:
+        return _OK
+
+    arm = _planning_arm_for(plan_path, head)
+    if mode == "strict":
+        print(
+            f"command head '{head}' is not in experiment_plan.yaml.\n"
+            f"Either revise the command to use a planned binary, or, "
+            f"if this is intentional, add '{_AD_HOC_MARKER}' as a comment "
+            f"line in the command.",
+            file=sys.stderr,
+        )
+        return _BLOCK
+
+    _log_violation(iter_dir, kind="unplanned", command=cmd, arm=arm)
+    return _OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

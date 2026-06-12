@@ -51,6 +51,7 @@ class CLIDispatcher(LLMDispatcher):
         timeout: int = 1800,
         max_turns: int = 25,
         max_retries: int | None = 10,
+        settings_path: Path | None = None,
     ) -> None:
         super().__init__(
             work_dir=work_dir,
@@ -66,6 +67,13 @@ class CLIDispatcher(LLMDispatcher):
         self.max_retries = max_retries
         repo_path = campaign.get("target_system", {}).get("repo_path")
         self._cwd = Path(repo_path) if repo_path else None
+        # Per-campaign permission policy (#135). When set, replaces the
+        # blanket --dangerously-skip-permissions with a fine-grained settings
+        # file. Auto-resolved from work_dir/.claude/settings.json if it exists.
+        if settings_path is None:
+            candidate = Path(work_dir) / ".claude" / "settings.json"
+            settings_path = candidate if candidate.exists() else None
+        self._settings_path = settings_path
 
     @contextmanager
     def override_cwd(self, cwd: Path):
@@ -178,7 +186,14 @@ class CLIDispatcher(LLMDispatcher):
             else:
                 atomic_write(output_path, json.dumps(data, indent=2) + "\n")
 
-        logger.info("CLIDispatcher: role=%s phase=%s -> %s", role, phase, output_path)
+        logger.info(
+            # #196: report the runtime class name, not the parent's. SDKDispatcher
+            # inherits from CLIDispatcher and runs through this path, but the
+            # log line should say "SDKDispatcher" so operators don't think the
+            # legacy claude -p subprocess (removed in #183) is in use.
+            "%s: role=%s phase=%s -> %s",
+            type(self).__name__, role, phase, output_path,
+        )
 
     def _retry_cli_parse(self, original_prompt: str, error: Exception, fmt: str) -> dict:
         feedback = (
@@ -216,8 +231,11 @@ class CLIDispatcher(LLMDispatcher):
 
     def _call_claude(self, prompt: str, max_turns: int | None = None) -> str:
         """Invoke `claude -p` with the prompt on stdin, retrying transient failures."""
-        cmd = ["claude", "-p", "--model", self.model, "--output-format", "json",
-               "--dangerously-skip-permissions"]
+        cmd = ["claude", "-p", "--model", self.model, "--output-format", "json"]
+        if self._settings_path is not None:
+            cmd += ["--settings", str(self._settings_path)]
+        else:
+            cmd += ["--dangerously-skip-permissions"]
         turns = max_turns or self.max_turns
         cmd += ["--max-turns", str(turns)]
         cwd = self._cwd

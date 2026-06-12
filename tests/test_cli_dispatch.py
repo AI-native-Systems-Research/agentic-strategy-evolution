@@ -136,6 +136,42 @@ class TestCLIDispatcherUnit:
         assert "Experiment Design" in content
         assert "Research Question" in content
 
+    def test_dispatch_log_uses_runtime_class_name(
+        self, work_dir: Path, campaign: dict, caplog,
+    ) -> None:
+        """#196: SDKDispatcher inherits from CLIDispatcher; the dispatch log
+        line must report the runtime class name so operators don't think the
+        retired claude -p path (#183) is being used."""
+        import logging
+        from orchestrator.cli_dispatch import CLIDispatcher
+
+        # A trivial subclass simulates SDKDispatcher's relationship without
+        # pulling in the SDK. The contract is purely about the log line.
+        class FakeSubclass(CLIDispatcher):
+            pass
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "result": "minimal output", "is_error": False, "usage": {},
+            "total_cost_usd": 0, "duration_ms": 100, "num_turns": 1,
+        })
+        mock_result.stderr = ""
+
+        caplog.set_level(logging.INFO, logger="orchestrator.cli_dispatch")
+        with patch("orchestrator.cli_dispatch.subprocess.run", return_value=mock_result):
+            d = FakeSubclass(work_dir=work_dir, campaign=campaign)
+            out = work_dir / "runs" / "iter-1" / "design.md"
+            d.dispatch("planner", "design", output_path=out, iteration=1)
+
+        # The dispatch log line should name the subclass.
+        relevant = [r for r in caplog.records if "role=planner" in r.getMessage()]
+        assert relevant, "expected a dispatch log line"
+        assert "FakeSubclass" in relevant[-1].getMessage(), (
+            f"log line should name the runtime class, got: "
+            f"{relevant[-1].getMessage()!r}"
+        )
+
     def test_dispatch_executor_execute_analyze_saves_raw_output(self, work_dir: Path, campaign: dict) -> None:
         from orchestrator.cli_dispatch import CLIDispatcher
 

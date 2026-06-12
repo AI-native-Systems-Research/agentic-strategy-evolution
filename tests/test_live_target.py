@@ -197,11 +197,11 @@ def _setup_iteration(
             return StubDispatcher(work_dir)
 
     monkeypatch.setattr(ri, "LLMDispatcher", stub_factory)
-    # When repo_path is set, iteration.py would normally instantiate a
-    # CLIDispatcher. Replace it with a stub that exposes the same surface
-    # iteration.py touches (override_cwd, model, max_turns).
+    # When repo_path is set, iteration.py instantiates SDKDispatcher. Replace
+    # it at that seam with a stub that exposes the same surface iteration.py
+    # touches (override_cwd, model, max_turns).
     monkeypatch.setattr(
-        "orchestrator.cli_dispatch.CLIDispatcher",
+        "orchestrator.sdk_dispatch.SDKDispatcher",
         lambda **kw: _CLIStub(kw["work_dir"]),
     )
     monkeypatch.setattr(
@@ -282,7 +282,7 @@ class TestWorktreeIterationFlow:
         create_calls: list[tuple] = []
         remove_calls: list[tuple] = []
 
-        def fake_create(repo_path, iteration):
+        def fake_create(repo_path, iteration, **_kw):
             create_calls.append((Path(repo_path), iteration))
             experiment_dir = tmp_path / "fake-worktree"
             experiment_dir.mkdir(exist_ok=True)

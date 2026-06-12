@@ -1,8 +1,10 @@
 {
-  "phase": "INIT",
+  "last_entered_phase": "INIT",
   "iteration": 0,
   "run_id": "TODO-SET-RUN-ID",
   "family": null,
   "timestamp": "1970-01-01T00:00:00Z",
-  "config_ref": null
+  "config_ref": null,
+  "work_dir": null,
+  "repo_path": null
 }

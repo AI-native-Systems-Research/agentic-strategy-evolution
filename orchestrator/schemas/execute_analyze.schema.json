@@ -77,13 +77,32 @@
             "required": ["arm_type", "predicted", "observed", "status", "error_type", "diagnostic_note"],
             "additionalProperties": false,
             "properties": {
-              "arm_type": { "type": "string", "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness"] },
+              "arm_type": { "type": "string", "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness", "h-dose-response", "h-tradeoff"] },
               "predicted": { "type": "string", "minLength": 1 },
               "observed": { "type": "string", "minLength": 1 },
               "status": { "type": "string", "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED"] },
-              "error_type": { "type": ["string", "null"], "enum": ["direction", "magnitude", "regime", null] },
+              "error_type": { "type": ["string", "null"], "enum": ["direction", "magnitude", "regime", "shape_mismatch", null] },
               "diagnostic_note": { "type": ["string", "null"] },
-              "metadata": { "type": "object" }
+              "metadata": { "type": "object" },
+              "observed_shape": { "type": ["string", "null"], "enum": ["monotone_decreasing", "monotone_increasing", "u_shaped", "inverted_u", "saturating", "flat", "noisy", null] },
+              "shape_match": { "type": ["boolean", "null"] },
+              "dose_points": {
+                "type": ["array", "null"],
+                "items": {
+                  "type": "object",
+                  "required": ["value", "metric"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "value": { "oneOf": [{"type": "number"}, {"type": "string", "minLength": 1}] },
+                    "metric": { "type": ["number", "null"] }
+                  }
+                }
+              },
+              "primary_change_observed": { "type": ["number", "null"] },
+              "secondary_change_observed": { "type": ["number", "null"] },
+              "primary_predicate_met": { "type": ["boolean", "null"] },
+              "secondary_predicate_met": { "type": ["boolean", "null"] },
+              "tradeoff_verdict": { "type": ["string", "null"], "enum": ["confirmed", "primary_failed", "cost_too_high", "both_failed", null] }
             }
           }
         },

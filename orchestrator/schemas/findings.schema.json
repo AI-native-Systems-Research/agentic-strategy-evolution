@@ -24,6 +24,12 @@
       "minimum": 0,
       "maximum": 100,
       "description": "Percentage of total effect from single dominant component, if detected."
+    },
+    "worktree_uncommitted_writes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "#230 — paths the executor wrote inside the experiment worktree without declaring them in the bundle's `code_changes`. Surfaced just before worktree cleanup; logged at WARNING. #235: written unconditionally — presence of the key means the tripwire ran, value is what it found (empty list = clean run; non-empty = paths that will be lost on cleanup). Absent only when findings.json was never produced (execute-incomplete branch surfaces the data via `retry_log.jsonl` instead) or when findings.json was corrupt at write time. The orchestrator does not block cleanup on undeclared writes — this is a tripwire, not a gate."
     }
   },
   "$defs": {
@@ -34,7 +40,7 @@
       "properties": {
         "arm_type": {
           "type": "string",
-          "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness"]
+          "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness", "h-dose-response", "h-tradeoff"]
         },
         "predicted": { "type": "string", "minLength": 1 },
         "observed": { "type": "string", "minLength": 1 },
@@ -44,12 +50,55 @@
         },
         "error_type": {
           "type": ["string", "null"],
-          "enum": ["direction", "magnitude", "regime", null]
+          "enum": ["direction", "magnitude", "regime", "shape_mismatch", null]
         },
         "diagnostic_note": { "type": ["string", "null"] },
         "metadata": {
           "type": "object",
           "description": "Optional domain-specific metadata for this arm result."
+        },
+        "observed_shape": {
+          "type": ["string", "null"],
+          "enum": ["monotone_decreasing", "monotone_increasing", "u_shaped", "inverted_u", "saturating", "flat", "noisy", null],
+          "description": "Classified shape for h-dose-response arms."
+        },
+        "shape_match": {
+          "type": ["boolean", "null"],
+          "description": "True if observed_shape matches the arm's expected_shape."
+        },
+        "dose_points": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["value", "metric"],
+            "additionalProperties": false,
+            "properties": {
+              "value": {
+                "oneOf": [{ "type": "number" }, { "type": "string", "minLength": 1 }]
+              },
+              "metric": { "type": ["number", "null"] }
+            }
+          },
+          "description": "Observed (knob_value, metric_value) pairs for h-dose-response arms."
+        },
+        "primary_change_observed": {
+          "type": ["number", "null"],
+          "description": "Observed change in primary metric for h-tradeoff arms."
+        },
+        "secondary_change_observed": {
+          "type": ["number", "null"],
+          "description": "Observed change in secondary metric for h-tradeoff arms."
+        },
+        "primary_predicate_met": {
+          "type": ["boolean", "null"]
+        },
+        "secondary_predicate_met": {
+          "type": ["boolean", "null"]
+        },
+        "tradeoff_verdict": {
+          "type": ["string", "null"],
+          "enum": ["confirmed", "primary_failed", "cost_too_high", "both_failed", null],
+          "description": "Verdict for h-tradeoff arms; cost_too_high is the new failure mode this arm unlocks."
         }
       }
     }

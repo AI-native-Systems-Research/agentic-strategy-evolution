@@ -1,0 +1,59 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, reflective]
+  # Trigger on every PR regardless of base branch so contributors get
+  # CI feedback on long-running integration branches (e.g. tracking-N)
+  # in addition to PRs targeting main/reflective.
+  pull_request:
+
+# Cancel in-flight runs on the same PR/branch when a new push lands.
+# Only safe context expressions used here: github.workflow, github.ref,
+# github.event_name. None come from user-controlled input.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pytest:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    # No LLM API keys in the env. The no-live-LLM project principle
+    # (CLAUDE.md, tests/CLAUDE.md, tests/conftest.py autouse guard) says
+    # tests must mock LLMs, never call them. This is the outer line of
+    # defence; the conftest guard is the inner.
+    env:
+      OPENAI_API_KEY: ""
+      OPENAI_BASE_URL: ""
+      ANTHROPIC_API_KEY: ""
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run pytest
+        run: pytest -ra --strict-markers
+
+      - name: Upload pytest cache on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-cache-py${{ matrix.python-version }}
+          path: .pytest_cache/
+          if-no-files-found: ignore

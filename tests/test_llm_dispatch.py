@@ -653,3 +653,136 @@ class TestNoApiKey:
         monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8000/v1")
         d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN)
         assert d._completion is None
+
+
+# ─── #214: REPORT extractor sees per-iteration results & retry_log ────────
+
+
+from orchestrator.llm_dispatch import (
+    _format_results_summary,
+    _format_retry_log_summary,
+)
+
+
+class TestFormatResultsSummary:
+    """#214: a pure helper that walks runs/iter-*/results/ so the REPORT
+    extractor can engage with partial data even when an iteration failed."""
+
+    def test_empty_work_dir_returns_friendly_marker(self, tmp_path: Path) -> None:
+        out = _format_results_summary(tmp_path / "campaign")
+        assert "No iteration directories found" in out
+
+    def test_no_iter_dirs_returns_friendly_marker(self, tmp_path: Path) -> None:
+        (tmp_path / "runs").mkdir()
+        out = _format_results_summary(tmp_path)
+        assert "No iteration directories found" in out
+
+    def test_lists_files_per_iteration(self, tmp_path: Path) -> None:
+        wd = tmp_path / "campaign"
+        results = wd / "runs" / "iter-1" / "results"
+        results.mkdir(parents=True)
+        (results / "ea-wfq_seed42.json").write_text("{}")
+        (results / "wfq_seed42.json").write_text("{}")
+
+        out = _format_results_summary(wd)
+        assert "iter-1" in out
+        assert "2 result file" in out
+        assert "ea-wfq_seed42.json" in out
+        assert "wfq_seed42.json" in out
+
+    def test_caps_listing_for_huge_dirs(self, tmp_path: Path) -> None:
+        """Don't blow the prompt budget when an iter has hundreds of arms."""
+        wd = tmp_path / "campaign"
+        results = wd / "runs" / "iter-1" / "results"
+        results.mkdir(parents=True)
+        for i in range(120):
+            (results / f"arm_seed{i:03d}.json").write_text("{}")
+        out = _format_results_summary(wd)
+        assert "120 result file" in out
+        assert "and 70 more" in out  # 120 - 50 cap
+
+    def test_iter_with_no_results_dir_explicit(self, tmp_path: Path) -> None:
+        wd = tmp_path / "campaign"
+        (wd / "runs" / "iter-1").mkdir(parents=True)
+        # No results/ subdir — iter exists but no data was attempted.
+        out = _format_results_summary(wd)
+        assert "iter-1" in out
+        assert "results/ directory absent" in out
+
+
+class TestFormatRetryLogSummary:
+    """#214: the retry_log summary lets the REPORT extractor distinguish
+    'apparatus failure' from 'experiment cleanly produced null'."""
+
+    def test_missing_log_returns_marker(self, tmp_path: Path) -> None:
+        out = _format_retry_log_summary(tmp_path)
+        assert "not present" in out or "no dispatcher-level retries" in out
+
+    def test_empty_log_returns_marker(self, tmp_path: Path) -> None:
+        (tmp_path / "retry_log.jsonl").write_text("")
+        out = _format_retry_log_summary(tmp_path)
+        assert "no dispatcher-level retries" in out
+
+    def test_groups_entries_by_failure_type(self, tmp_path: Path) -> None:
+        (tmp_path / "retry_log.jsonl").write_text(
+            json.dumps({"failure_type": "api_error", "error": "None"}) + "\n"
+            + json.dumps({"failure_type": "sdk_silence",
+                          "max_gap_seconds": 600.3}) + "\n"
+        )
+        out = _format_retry_log_summary(tmp_path)
+        assert "2 entry" in out
+        assert "api_error: 1" in out
+        assert "sdk_silence: 1" in out
+
+
+class TestReportContextIncludesPartialResults:
+    """#214: when phase=report, the extractor's prompt must include
+    results_summary AND retry_log_summary so it can engage with partial
+    data and infrastructure-failure context."""
+
+    def test_results_files_appear_in_extractor_prompt(self, work_dir: Path) -> None:
+        # Simulate a campaign that completed 4/5 policies before failing.
+        results = work_dir / "runs" / "iter-1" / "results"
+        results.mkdir(parents=True)
+        for policy in ("drf", "ea-wfq", "wfq"):
+            for seed in (42, 123):
+                (results / f"{policy}_seed{seed}.json").write_text("{}")
+        # Add a retry_log row that records the failure shape.
+        (work_dir / "retry_log.jsonl").write_text(json.dumps({
+            "iteration": 1, "phase": "execute-analyze",
+            "failure_type": "sdk_silence", "max_gap_seconds": 600.3,
+            "threshold_seconds": 600.0, "event_count": 593,
+        }) + "\n")
+        # Minimal ledger / principles for context completeness.
+        (work_dir / "ledger.json").write_text(json.dumps({"iterations": []}))
+        (work_dir / "principles.json").write_text(json.dumps({
+            "principles": [],
+        }))
+
+        d = _make_dispatcher(work_dir, ["# Report\n\nMinimal stub."])
+        d.dispatch(
+            "extractor", "report",
+            output_path=work_dir / "report.md",
+            iteration=0,
+        )
+
+        # Inspect the prompt the dispatcher sent to the LLM.
+        completion_calls = d._completion.call_log  # type: ignore[attr-defined]
+        # Concatenate all message contents to search.
+        all_prompt_text = ""
+        for call in completion_calls:
+            for msg in call.get("messages", []):
+                all_prompt_text += msg.get("content", "") + "\n"
+
+        # The extractor must see specific result files...
+        assert "ea-wfq_seed42.json" in all_prompt_text, (
+            "#214: the REPORT extractor's prompt must enumerate per-iter "
+            "results so it can engage with partial data."
+        )
+        assert "wfq_seed42.json" in all_prompt_text
+        # ...and the retry_log shape (so it knows the apparatus failed).
+        assert "sdk_silence" in all_prompt_text, (
+            "#214: the REPORT extractor's prompt must include the "
+            "retry_log summary so it can distinguish apparatus failure "
+            "from null experimental outcome."
+        )

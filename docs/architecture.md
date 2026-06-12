@@ -84,7 +84,7 @@ INIT ──▶ DESIGN ──▶ HUMAN_DESIGN_GATE
 - DONE → DESIGN (next iteration, increments counter)
 
 **Key behaviors:**
-- `transition(to_state)` validates against the transition table, updates the timestamp, and atomically writes `state.json`.
+- `transition(to_state)` validates against the transition table, updates the timestamp, sets `last_entered_phase`, and atomically writes `state.json`. Both fields update only on phase entry — artifact writes within a phase do not refresh them (#236), so operators polling `state.json` for progress see entry-time values linger throughout long phases. Watch artifact mtimes for sub-second progress instead.
 - Iteration counter increments only on the DONE → DESIGN transition (starting a new iteration). Loopbacks from HUMAN_DESIGN_GATE → DESIGN (reject) do NOT increment — they are revisions within the same iteration.
 - The DONE state allows transition to DESIGN for the next iteration.
 
@@ -98,8 +98,8 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 
 | Role | Invoked During | Produces |
 |---|---|---|
-| **Planner** (Opus, `claude -p`) | DESIGN | `problem.md`, `bundle.yaml`, `handoff_snapshot.md` |
-| **Executor** (Sonnet, `claude -p`) | EXECUTE_ANALYZE | `experiment_plan.yaml`, `findings.json`, `principle_updates.json`, `patches/`, `results/` |
+| **Planner** (Opus, Claude Agent SDK) | DESIGN | `problem.md`, `bundle.yaml`, `handoff_snapshot.md` |
+| **Executor** (Sonnet, Claude Agent SDK) | EXECUTE_ANALYZE | `experiment_plan.yaml`, `findings.json`, `principle_updates.json`, `patches/`, `results/` |
 
 Both agents write artifacts directly to the campaign directory (`iter_dir`) and run `nous validate` before claiming done. If validation fails, the agent reads the errors, fixes the artifacts, and retries. The orchestrator runs a post-check as a safety net.
 
@@ -110,7 +110,8 @@ Both agents write artifacts directly to the campaign directory (`iter_dir`) and 
 **Implementations:**
 
 - `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
-- `CLIDispatcher` (`cli_dispatch.py`) invokes `claude -p` as a subprocess, giving agents code access and shell tools. Agents write files directly to `iter_dir`. Supports `override_cwd()` context manager for pointing the executor at a git worktree.
+- `SDKDispatcher` (`sdk_dispatch.py`, default and only user-facing code-access backend post-#183) calls the Claude Agent SDK (`claude-agent-sdk`) directly, giving agents code access and shell tools through native streaming, programmatic prompt caching, and message-level retry. Agents write files directly to `iter_dir`. Selected via `--agent sdk` (the default). Requires `claude-agent-sdk` and `anyio`, both required dependencies of `nous` so `pip install nous` is sufficient.
+- `CLIDispatcher` (`cli_dispatch.py`) is retained as a private base class that `SDKDispatcher` inherits from for the parse / validate / retry-with-feedback machinery. The legacy `--agent api` (claude -p subprocess) path was removed in #183; the class is no longer reachable from the CLI.
 
 **Dispatch interface:**
 ```python
@@ -122,15 +123,26 @@ dispatcher.dispatch(
 )
 ```
 
-Both dispatchers share the same interface — `CLIDispatcher` extends `LLMDispatcher`.
+All three dispatchers share the same interface. `CLIDispatcher` extends `LLMDispatcher`; `SDKDispatcher` extends `CLIDispatcher` and overrides only `_call_claude` and `preflight_check`.
 
-## CLI Dispatch
+### Stop Hook (`bin/nous-execute-stop`)
 
-`CLIDispatcher` invokes `claude -p` for both agent roles.
+Claude Code Stop hooks fire after every agent turn and decide whether the agent is allowed to terminate. `bin/nous-execute-stop` is Nous's deterministic completion check: the executor is allowed to stop only when both conditions hold on disk, no LLM judgment involved:
+
+1. `principle_updates.json` exists in the iteration directory.
+2. `nous validate execution --dir $NOUS_ITER_DIR` returns `status: pass`.
+
+If either fails, the hook exits with code 2 and writes a structured reason to stderr; Claude Code feeds that reason back into the agent's conversation so it can fix the artifact and try again. Wire-up lives in the per-campaign `.claude/settings.json` (see #135) — the orchestrator exports `NOUS_ITER_DIR` before launching the executor session.
+
+This is preferred over a probabilistic Haiku evaluator anywhere the success criterion is a schema check: cheaper, faster, and immune to evaluator drift.
+
+## SDK Dispatch
+
+`SDKDispatcher` (`--agent sdk`, the default) invokes the Claude Agent SDK for both agent roles. The legacy `--agent api` (claude -p subprocess) backend was removed in #183; only the SDK path is reachable from the CLI.
 
 ### Retry and Resilience
 
-**Pre-flight check:** At campaign start, Nous validates that the CLI is installed and credentials work via a quick `claude -p` test call. Environment problems are caught in seconds, not hours into an overnight run.
+**Pre-flight check:** At campaign start, Nous validates that the SDK is importable and credentials work. Environment problems are caught in seconds, not hours into an overnight run.
 
 **All failures are retried** with exponential backoff (5s → 30s → 120s → 300s → 600s). There is no permanent/transient classification — the only hard failures are CLI-not-found and repo-path-missing, which are caught before the retry loop. Configurable via `--max-cli-retries` (default 10) and `--timeout` (default 1800s).
 
@@ -151,7 +163,7 @@ Prompts are templates in `prompts/methodology/` (one per role). At dispatch time
 
 ### EXECUTE_ANALYZE: Merged Execution Pipeline
 
-The executor agent (Sonnet, `claude -p`) handles the entire execution pipeline in a single session:
+The executor agent (Sonnet, via the Claude Agent SDK) handles the entire execution pipeline in a single session:
 
 1. Receives the approved hypothesis bundle
 2. Explores the target repo, discovers build commands
@@ -164,7 +176,7 @@ After execution, the orchestrator validates artifacts (schema check) and merges 
 
 ### Model Configuration
 
-Two `claude -p` calls per iteration:
+Two Claude Agent SDK calls per iteration:
 
 | Phase | Model | Role |
 |-------|-------|------|
@@ -227,6 +239,80 @@ Human gates are hard stops that cannot be bypassed. They surface the artifact an
 Before each human gate, a formatted summary (`gate_summary_*.json`) is produced. The summary includes a plain-language description and bullet points highlighting what matters for the decision.
 
 Gates display the summary first, then the raw artifact (for those who want full detail).
+
+**Spec-fidelity diff (#249 / F4).** For the design-phase summary,
+``_augment_summary_with_spec_diff`` (in `orchestrator/iteration.py`)
+post-processes the LLM-generated summary to attach a deterministic
+``campaign_spec_diff`` block: locked_parameters violations, depth_overrides
+presence, declared workload changes. Always emitted, regardless of
+``--auto-approve``. ``nous status`` surfaces it in human-readable
+form.
+
+### Spec fidelity (`orchestrator/validate.py`)
+
+Two pure-Python validators close the gap between *self-consistency*
+(the executor matches the bundle) and *spec-fidelity* (the bundle
+matches the campaign):
+
+* `_validate_locked_parameters` (#246 / F1) — every entry in
+  ``campaign.locked_parameters`` must match
+  ``bundle.experiment_spec.verified_parameters`` exactly. Hard-fail
+  regardless of ``--auto-approve``.
+* `_validate_locked_workload` (#265 / F20) — walks the canonical
+  workload structure and diffs against ``bundle.inputs/*.yaml``.
+  Declared deviations (``bundle.workload_changes_from_canonical``)
+  are allowed; undeclared are hard-fails.
+
+`compute_campaign_spec_diff` exposes the same logic for read-only
+auditor use (the F4 gate-summary diff). See
+`docs/campaign-authoring-guide.md` for the discipline these enforce.
+
+### Reproducibility metadata (`orchestrator/reproducibility.py`)
+
+`capture_reproducibility_metadata` (#262 / F17) runs at INIT and
+records target repo HEAD, dirty flag, hardware-config sha,
+language versions, gpu_memory_utilization, latency-config file
+paths. The block is persisted in `state.json` (first-capture wins;
+re-running INIT preserves the original) and surfaced via `nous
+status`. Per-iteration `snapshot_iter_files` copies the actual
+hardware/latency config files into `runs/iter-N/snapshots/` so a
+future reviewer can diff exact numbers even after the operator
+edits the source-of-truth file.
+
+### Cross-campaign code reuse (`orchestrator/lineage.py`)
+
+`emit_cumulative_patch` (#266 / F21) runs at iteration completion,
+*before* the experiment branch is destroyed, capturing
+``git diff <main>..<branch>`` to ``runs/iter-N/patches/cumulative.patch``.
+Future campaigns reuse it via:
+
+```yaml
+derived_from:
+  campaign: paper-memorytime-mirage
+  iteration: 2          # or "final"
+```
+
+`apply_derived_from_patch` resolves and applies the cumulative
+patch to every experiment worktree as a preflight. `nous lineage
+<run_id>` surfaces the inheritance chain.
+
+### Per-phase silence threshold (`orchestrator/sdk_dispatch.py`)
+
+`_resolve_turn_silence_threshold(phase)` (#264 / F19) walks the
+resolution chain — bundle per-phase override → bundle scalar
+override → campaign per-phase value → phase default
+(design=600, execute_analyze=120, report=240). DESIGN's heavy
+reasoning between tool calls earns a longer threshold than
+EXECUTE_ANALYZE's frequent simulator calls, eliminating the active
+stall observed in paper-memorytime-mirage iter-3.
+
+### Plot specs + paper packaging (`orchestrator/plot_specs.py`, `nous package`)
+
+`invoke_plot_specs` (#263 / F18) reads `campaign.plot_specs`,
+invokes each user-supplied figure script with `NOUS_RESULTS_DIR`
+and `NOUS_FIGURES_DIR` environment variables. `nous package`
+tarballs work_dir + reproduce.sh + Dockerfile + README using the
+F17 reproducibility metadata.
 
 
 ## Data Flow
@@ -356,10 +442,11 @@ The orchestrator is designed for crash-safe operation:
 
 ### Using a Different Dispatcher
 
-Nous ships with two dispatchers:
+Nous ships with three dispatchers:
 
-- `StubDispatcher` — deterministic stubs for testing
-- `CLIDispatcher` — real agent calls via `claude -p`
+- `StubDispatcher` — deterministic stubs for testing.
+- `InlineDispatcher` — emits prompts to stdout for an enclosing agent framework (no subprocess, no API key).
+- `SDKDispatcher` — real agent calls via the Claude Agent SDK (default and only user-facing code-access path post-#183).
 
 To create a custom dispatcher, extend `LLMDispatcher`. Your dispatcher must produce artifacts that pass schema validation — the orchestrator trusts the schema contract, not the content.
 

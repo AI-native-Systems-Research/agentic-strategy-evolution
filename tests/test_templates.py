@@ -25,7 +25,11 @@ class TestTemplateConformance:
 
     def test_state_template_is_init(self, load_template):
         t = load_template("state.json")
-        assert t["phase"] == "INIT"
+        # #236: canonical key is `last_entered_phase`; legacy `phase` is
+        # not in the template (Engine accepts it on load for backward
+        # compat with in-flight pre-#236 runs).
+        assert t["last_entered_phase"] == "INIT"
+        assert "phase" not in t
         assert t["iteration"] == 0
         assert t["config_ref"] is None
 

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/best_found.schema.json",
+  "title": "Best-Found Candidates",
+  "description": "Top-K candidates ranked by composite score across all iterations completed so far. Updated after each iteration's findings.json is finalized. Issue #168.",
+  "type": "object",
+  "required": ["top_k", "k", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "top_k": {
+      "type": "array",
+      "description": "Best candidates seen so far, ordered by score descending.",
+      "items": {
+        "type": "object",
+        "required": ["candidate_id", "score", "components", "iteration", "arm_id"],
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable identifier for the candidate. Combines iteration + arm + per-arm metadata.candidate_id when available."
+          },
+          "score": {
+            "type": "number",
+            "description": "Composite score; higher is better."
+          },
+          "components": {
+            "type": "object",
+            "description": "Per-metric contribution to the score (weight × observed value)."
+          },
+          "iteration": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Which iteration produced this candidate."
+          },
+          "arm_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Which arm produced this candidate (h-main, h-ablation, etc.)."
+          }
+        }
+      }
+    },
+    "k": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Top-K cap requested by the caller."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the most recent update."
+    }
+  }
+}

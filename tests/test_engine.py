@@ -120,7 +120,7 @@ class TestEngine:
         engine.transition("DESIGN")
         assert engine.phase == "DESIGN"
         saved = json.loads((work_dir / "state.json").read_text())
-        assert saved["phase"] == "DESIGN"
+        assert saved["last_entered_phase"] == "DESIGN"
 
     def test_invalid_transition_rejected(self, work_dir):
         engine = Engine(work_dir)
@@ -150,13 +150,53 @@ class TestEngine:
         assert engine.phase == "DONE"
 
     def test_human_design_gate_reject(self, work_dir):
-        """Human rejects at design gate -> back to DESIGN without incrementing."""
+        """Human rejects at design gate -> back to DESIGN without incrementing.
+
+        #194: iteration ticks once on leaving INIT; rejecting at the gate
+        and looping back to DESIGN must NOT tick it again.
+        """
         engine = Engine(work_dir)
         for s in ["DESIGN", "HUMAN_DESIGN_GATE"]:
             engine.transition(s)
+        # After INIT→DESIGN→GATE we're in iter-1.
+        assert engine.iteration == 1
         engine.transition("DESIGN")  # human rejects
         assert engine.phase == "DESIGN"
-        assert engine.iteration == 0  # must NOT increment
+        assert engine.iteration == 1  # still iter-1, must NOT re-increment
+
+    def test_iteration_ticks_on_leaving_init(self, work_dir):
+        """#194: state.iteration must equal 1 once iter-1 starts."""
+        engine = Engine(work_dir)
+        assert engine.iteration == 0  # INIT
+        engine.transition("DESIGN")
+        assert engine.iteration == 1  # iter-1 has begun
+
+    def test_iteration_is_1_throughout_iter1_phases(self, work_dir):
+        """#194: state.iteration stays at 1 across all of iter-1's phases.
+
+        Pre-#194 the counter sat at 0 throughout iter-1, breaking
+        ``nous status --line`` (which read state.iteration) while artifacts
+        were correctly being written to runs/iter-1/. Pin it.
+        """
+        engine = Engine(work_dir)
+        for phase in [
+            "DESIGN", "HUMAN_DESIGN_GATE",
+            "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE",
+        ]:
+            engine.transition(phase)
+            assert engine.iteration == 1, (
+                f"after transitioning to {phase}, iteration should be 1 "
+                f"(matching runs/iter-1/), got {engine.iteration}"
+            )
+
+    def test_iteration_ticks_on_leaving_init_via_pre_work(self, work_dir):
+        """#194 + #167: PRE_WORK is on the INIT→DESIGN path; counter must
+        tick on leaving INIT regardless of which path is taken."""
+        engine = Engine(work_dir)
+        engine.transition("PRE_WORK")
+        assert engine.iteration == 1  # already in iter-1's pre-work
+        engine.transition("DESIGN")
+        assert engine.iteration == 1  # still iter-1; no double-tick
 
     def test_iteration_increments_on_done_to_design(self, work_dir):
         engine = Engine(work_dir)
@@ -165,9 +205,9 @@ class TestEngine:
             "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
-        assert engine.iteration == 0
+        assert engine.iteration == 1  # iter-1 done; counter stable through phases
         engine.transition("DESIGN")
-        assert engine.iteration == 1
+        assert engine.iteration == 2  # iter-2 begins
 
     def test_human_findings_gate_reject(self, work_dir):
         engine = Engine(work_dir)
@@ -192,33 +232,38 @@ class TestEngine:
         assert engine.phase == "DESIGN"
 
     def test_done_to_design_increments_iteration(self, work_dir):
-        """DONE -> DESIGN must increment iteration (resume a campaign)."""
+        """DONE -> DESIGN must increment iteration (start the next iter).
+
+        #194: state.iteration is now 1 throughout iter-1, ticking to 2 on
+        DONE→DESIGN. Pre-#194 it stayed at 0 throughout iter-1.
+        """
         engine = Engine(work_dir)
         for s in [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
             "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
-        assert engine.iteration == 0
+        assert engine.iteration == 1  # iter-1 done; counter has been 1 throughout
         engine.transition("DESIGN")
-        assert engine.iteration == 1
+        assert engine.iteration == 2  # iter-2 begins
 
     def test_multi_iteration(self, work_dir):
+        """#194: counter is 1 from leaving INIT, ticks to 2 on DONE→DESIGN."""
         engine = Engine(work_dir)
         for s in [
             "DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
-            "HUMAN_FINDINGS_GATE", "DONE",
-        ]:
-            engine.transition(s)
-        engine.transition("DESIGN")  # iter 0 -> 1
-        assert engine.iteration == 1
-        for s in [
-            "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
             "HUMAN_FINDINGS_GATE", "DONE",
         ]:
             engine.transition(s)
         engine.transition("DESIGN")  # iter 1 -> 2
         assert engine.iteration == 2
+        for s in [
+            "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE",
+            "HUMAN_FINDINGS_GATE", "DONE",
+        ]:
+            engine.transition(s)
+        engine.transition("DESIGN")  # iter 2 -> 3
+        assert engine.iteration == 3
 
 
 class TestSaveStateAtomicity:
@@ -320,5 +365,91 @@ class TestForcePhase:
         engine = Engine(tmp_path)
         engine.force_phase("DESIGN")
         saved = json.loads((tmp_path / "state.json").read_text())
-        assert saved["phase"] == "DESIGN"
+        assert saved["last_entered_phase"] == "DESIGN"
         assert saved["iteration"] == 4
+
+
+class TestLastEnteredPhaseRename:
+    """#236 — state.json's `phase` field reflects the last *entered* phase,
+    not the currently active phase. Renamed on disk to
+    ``last_entered_phase`` so operators reading state.json don't conflate
+    "I started this phase 30s ago" with "I'm still in this phase."
+
+    The legacy ``phase`` key is read for backward compat (in-flight runs)
+    and migrated to the new key on the next ``transition()``.
+    """
+
+    def _write_state(self, work_dir, **overrides):
+        from pathlib import Path
+        state = {
+            "iteration": 0,
+            "run_id": "test-236",
+            "family": None,
+            "timestamp": "2026-04-01T00:00:00Z",
+        }
+        state.update(overrides)
+        Path(work_dir / "state.json").write_text(json.dumps(state))
+
+    def test_load_with_new_key(self, tmp_path):
+        self._write_state(tmp_path, last_entered_phase="INIT")
+        engine = Engine(tmp_path)
+        assert engine.phase == "INIT"
+        assert engine.last_entered_phase == "INIT"
+
+    def test_load_with_legacy_phase_key(self, tmp_path):
+        # Backward compat: in-flight state.json files written by older
+        # nous versions have ``phase``. Engine must read them.
+        self._write_state(tmp_path, phase="DESIGN")
+        engine = Engine(tmp_path)
+        assert engine.phase == "DESIGN"
+        assert engine.last_entered_phase == "DESIGN"
+
+    def test_legacy_state_migrates_on_next_transition(self, tmp_path):
+        # After a transition writes the file, the canonical key is used
+        # and the legacy key is gone. No explicit migration step needed.
+        self._write_state(tmp_path, phase="DESIGN", iteration=1)
+        engine = Engine(tmp_path)
+        engine.transition("HUMAN_DESIGN_GATE")
+        saved = json.loads((tmp_path / "state.json").read_text())
+        assert saved["last_entered_phase"] == "HUMAN_DESIGN_GATE"
+        assert "phase" not in saved
+
+    def test_transition_writes_new_key(self, tmp_path):
+        self._write_state(tmp_path, last_entered_phase="INIT")
+        engine = Engine(tmp_path)
+        engine.transition("DESIGN")
+        saved = json.loads((tmp_path / "state.json").read_text())
+        assert saved["last_entered_phase"] == "DESIGN"
+        assert "phase" not in saved
+
+    def test_force_phase_writes_new_key(self, tmp_path):
+        self._write_state(tmp_path, last_entered_phase="INIT")
+        engine = Engine(tmp_path)
+        engine.force_phase("DESIGN")
+        saved = json.loads((tmp_path / "state.json").read_text())
+        assert saved["last_entered_phase"] == "DESIGN"
+        assert "phase" not in saved
+
+    def test_missing_both_keys_raises(self, tmp_path):
+        # If neither key is present, this is a malformed state.json —
+        # the required-keys check must fire just as it did pre-rename.
+        self._write_state(tmp_path)  # no phase key at all
+        with pytest.raises(ValueError, match="missing required keys"):
+            Engine(tmp_path)
+
+    def test_unrecognized_legacy_phase_rejected(self, tmp_path):
+        # Legacy key with a bogus value still fails the unrecognized-phase
+        # check (the migration path doesn't bypass validation).
+        self._write_state(tmp_path, phase="BOGUS")
+        with pytest.raises(ValueError, match="unrecognized phase"):
+            Engine(tmp_path)
+
+    def test_read_phase_field_helper_prefers_new_key(self):
+        from orchestrator.engine import read_phase_field
+        assert read_phase_field({"last_entered_phase": "DONE"}) == "DONE"
+        # Both present (mid-migration write would never produce this,
+        # but the helper is robust): prefer the canonical key.
+        assert read_phase_field({"last_entered_phase": "DONE", "phase": "OLD"}) == "DONE"
+        assert read_phase_field({"phase": "DESIGN"}) == "DESIGN"
+        assert read_phase_field({}, default="?") == "?"
+        assert read_phase_field({}) is None

@@ -52,18 +52,22 @@ The campaign configuration. Describes the target system and points to prompt lay
 
 **Schema:** `schemas/state.schema.json`
 
-A bookmark. It tells the orchestrator what phase we're in, which iteration we're on, and what we're investigating. If the process crashes, it resumes from here.
+A bookmark. It tells the orchestrator what phase we entered last, which iteration we're on, and what we're investigating. If the process crashes, it resumes from here.
 
 | Field | What it means |
 |---|---|
-| `phase` | Which step of the loop (INIT, DESIGN, HUMAN_DESIGN_GATE, EXECUTE_ANALYZE, HUMAN_FINDINGS_GATE, DONE) |
+| `last_entered_phase` | The last phase the engine entered (INIT, PRE_WORK, DESIGN, CRITIC, HUMAN_DESIGN_GATE, EXECUTE_ANALYZE, HUMAN_FINDINGS_GATE, DONE). **Not** necessarily the currently active phase — see the caveat below (#236). |
 | `iteration` | How many times we've gone around the loop (0 = haven't started yet) |
 | `run_id` | A name for this campaign |
 | `family` | What mechanism we're currently exploring (e.g., "routing-signals") |
-| `timestamp` | When this was last updated |
+| `timestamp` | When this was last updated (i.e., when `last_entered_phase` was last entered — *not* when an artifact was last written) |
 | `config_ref` | Path to the campaign configuration file (null before setup) |
+| `work_dir` | Absolute filesystem path to this campaign's work_dir, recorded at `setup_work_dir` (#239). Per-campaign source of truth; survives `NOUS_CAMPAIGN_PARENT` changes between runs. Machine-local — tools that travel state.json across machines must validate `Path(work_dir).exists()` before trusting it. Null before setup. |
+| `repo_path` | Absolute path to the target system's repo, recorded at `setup_work_dir` (#239). Used for collision detection when `NOUS_CAMPAIGN_PARENT` is set (refusing to clobber a same-named campaign that targets a different repo) and to identify which target a campaign belongs to. Machine-local; null before setup or when authored without `target_system.repo_path`. |
 
 The orchestrator writes this atomically (temp file + rename) so a crash never leaves a corrupt checkpoint.
+
+**Entry-only semantics (#236).** `last_entered_phase` and `timestamp` are updated *only* when the engine transitions into a new phase. Artifact writes within a phase do not update them. So during a long phase, you'll see the entry-time values linger even though the phase is well underway and may have already produced artifacts. If you need a sub-second progress signal (e.g., for a status dashboard), watch the iteration artifact directory's mtimes (`runs/iter-N/*.json`, `runs/iter-N/*.yaml`) rather than `state.json`. The field was renamed from `phase` in #236 to make the entry-only semantics unambiguous; `orchestrator.engine` accepts the legacy key on load (in-flight pre-#236 runs) and migrates it to the canonical name on the next save.
 
 ## 2. ledger.json — "What happened in each iteration?"
 

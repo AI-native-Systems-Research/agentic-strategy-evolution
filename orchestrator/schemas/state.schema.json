@@ -2,18 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/state.schema.json",
   "title": "Investigation State",
-  "description": "Current phase, family, and iteration — the investigation checkpoint.",
+  "description": "Last-entered phase, family, and iteration — the investigation checkpoint. The phase field reflects what was last entered; it is not updated as artifacts are written within a phase. Operators wanting fine-grained progress should watch the iteration artifact directory's mtimes (#236).",
   "type": "object",
-  "required": ["phase", "iteration", "run_id", "family", "timestamp"],
+  "required": ["last_entered_phase", "iteration", "run_id", "family", "timestamp"],
   "additionalProperties": false,
   "properties": {
-    "phase": {
+    "last_entered_phase": {
       "type": "string",
       "enum": [
-        "INIT", "DESIGN", "HUMAN_DESIGN_GATE",
+        "INIT", "PRE_WORK", "DESIGN", "CRITIC", "HUMAN_DESIGN_GATE",
         "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE", "DONE"
       ],
-      "description": "Current state machine phase."
+      "description": "The last phase the engine entered (#236). NOT necessarily the currently active phase — artifact writes within a phase do not update this field, so during a long phase you'll see the entry-time value linger even though the phase is well underway. Renamed from `phase` in #236 so its semantics aren't conflated with 'currently active phase.' Pre-#236 state.json files used the key `phase` instead; ``orchestrator.engine`` accepts those for backward compat (in-flight runs) and migrates them to this key on the next save, but the schema only describes the canonical post-#236 shape. PRE_WORK (#167) is an opt-in cheap-exploration phase between INIT and DESIGN. CRITIC (#87) is an opt-in falsifiability check between DESIGN and HUMAN_DESIGN_GATE."
     },
     "iteration": {
       "type": "integer",
@@ -37,6 +37,19 @@
     "config_ref": {
       "type": ["string", "null"],
       "description": "Path to the campaign configuration file (campaign.yaml). Null before setup."
+    },
+    "work_dir": {
+      "type": ["string", "null"],
+      "description": "Absolute filesystem path to the campaign's work_dir, recorded at setup_work_dir (#239). Per-campaign source of truth for location, robust to NOUS_CAMPAIGN_PARENT changes between runs. **Machine-local**: tools that travel state.json across machines must validate Path(work_dir).exists() before trusting it (or rederive from the local environment). Null before setup."
+    },
+    "repo_path": {
+      "type": ["string", "null"],
+      "description": "Absolute path to the target system's repo, recorded at setup_work_dir (#239). Used for collision detection (refusing to clobber a same-named campaign that targets a different repo when NOUS_CAMPAIGN_PARENT is set) and to identify which target a campaign belongs to. **Machine-local**, same caveats as work_dir. Null before setup or when the campaign was authored without a target_system.repo_path."
+    },
+    "reproducibility_metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Auto-captured reproducibility metadata (#262 / F17). Populated by setup_work_dir at INIT (target repo HEAD sha, hardware-config sha, language versions, latency-config file paths, gpu_memory_utilization, captured_at). First-capture-wins: re-running INIT on an existing campaign preserves the original block, which is what reviewers want (the state at campaign start, not at iter-3 resume time). See orchestrator/reproducibility.py for the capture logic and orchestrator/schemas/campaign.schema.yaml for the per-field documentation."
     }
   }
 }

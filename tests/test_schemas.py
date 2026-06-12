@@ -9,7 +9,7 @@ class TestStateSchema:
     def test_valid_init_state(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "INIT",
+            "last_entered_phase": "INIT",
             "iteration": 0,
             "run_id": "campaign-001",
             "family": None,
@@ -20,7 +20,7 @@ class TestStateSchema:
     def test_valid_execute_analyze_state(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "EXECUTE_ANALYZE",
+            "last_entered_phase": "EXECUTE_ANALYZE",
             "iteration": 3,
             "run_id": "campaign-001",
             "family": "routing-signals",
@@ -36,7 +36,7 @@ class TestStateSchema:
         ]
         for phase in phases:
             instance = {
-                "phase": phase,
+                "last_entered_phase": phase,
                 "iteration": 0,
                 "run_id": "test",
                 "family": None,
@@ -47,7 +47,7 @@ class TestStateSchema:
     def test_invalid_phase_rejected(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "INVALID_PHASE",
+            "last_entered_phase": "INVALID_PHASE",
             "iteration": 0,
             "run_id": "campaign-001",
             "family": None,
@@ -59,7 +59,7 @@ class TestStateSchema:
     def test_negative_iteration_rejected(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "INIT",
+            "last_entered_phase": "INIT",
             "iteration": -1,
             "run_id": "campaign-001",
             "family": None,
@@ -412,7 +412,7 @@ class TestAdditionalPropertiesRejected:
     def test_state_rejects_extra_field(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "INIT",
+            "last_entered_phase": "INIT",
             "iteration": 0,
             "run_id": "test",
             "family": None,
@@ -641,7 +641,7 @@ class TestStateConfigRef:
     def test_config_ref_string_accepted(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "INIT", "iteration": 0, "run_id": "test",
+            "last_entered_phase": "INIT", "iteration": 0, "run_id": "test",
             "family": None, "timestamp": "2026-04-01T00:00:00Z",
             "config_ref": "campaign.yaml",
         }
@@ -650,7 +650,7 @@ class TestStateConfigRef:
     def test_config_ref_null_accepted(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "INIT", "iteration": 0, "run_id": "test",
+            "last_entered_phase": "INIT", "iteration": 0, "run_id": "test",
             "family": None, "timestamp": "2026-04-01T00:00:00Z",
             "config_ref": None,
         }
@@ -659,7 +659,7 @@ class TestStateConfigRef:
     def test_config_ref_omitted_accepted(self, load_schema):
         schema = load_schema("state.schema.json")
         instance = {
-            "phase": "INIT", "iteration": 0, "run_id": "test",
+            "last_entered_phase": "INIT", "iteration": 0, "run_id": "test",
             "family": None, "timestamp": "2026-04-01T00:00:00Z",
         }
         jsonschema.validate(instance, schema)

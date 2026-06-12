@@ -220,7 +220,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DESIGN"
+        state["last_entered_phase"] = "DESIGN"
         state["iteration"] = 16
         (work_dir / "state.json").write_text(json.dumps(state))
 
@@ -235,7 +235,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "EXECUTE_ANALYZE"
+        state["last_entered_phase"] = "EXECUTE_ANALYZE"
         state["iteration"] = 5
         (work_dir / "state.json").write_text(json.dumps(state))
 
@@ -250,7 +250,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DESIGN"
+        state["last_entered_phase"] = "DESIGN"
         state["iteration"] = 1
         (work_dir / "state.json").write_text(json.dumps(state))
 
@@ -260,19 +260,33 @@ class TestResumeCompletedCampaign:
         assert engine.phase == "DESIGN"  # untouched
 
     def test_mid_flight_corrupt_iteration_falls_back_to_1(self, tmp_path, caplog):
-        """Mid-flight with iteration < 1 in state.json falls back to 1 with a warning."""
+        """Mid-flight with iteration < 1 in state.json falls back to 1.
+
+        #202: the message was rewarded from WARNING ("starting fresh", which
+        sounded like data loss) to INFO with informative wording. After
+        #194 this path is mostly dead — engine.transition increments
+        iteration on leaving INIT — but the safety net stays for any
+        legitimately-corrupt state.json that survives a crash mid-write.
+        """
         import logging
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DESIGN"
+        state["last_entered_phase"] = "DESIGN"
         state["iteration"] = 0
         (work_dir / "state.json").write_text(json.dumps(state))
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.INFO):
             result = _resume_completed_campaign(work_dir, max_iterations=5)
         assert result == 1
-        assert any("iteration=0" in r.message for r in caplog.records)
+        assert any(
+            "iteration=0" in r.message and "preserved" in r.message
+            for r in caplog.records
+        ), (
+            "expected an INFO log mentioning iteration=0 and that artifacts "
+            "are preserved (#202); got: "
+            f"{[r.message for r in caplog.records]}"
+        )
 
     def test_mid_flight_exceeds_max_iterations_warns(self, tmp_path, caplog):
         """Mid-flight iteration > max_iterations logs a warning and returns start."""
@@ -280,7 +294,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DESIGN"
+        state["last_entered_phase"] = "DESIGN"
         state["iteration"] = 16
         (work_dir / "state.json").write_text(json.dumps(state))
 
@@ -297,7 +311,7 @@ class TestResumeCompletedCampaign:
 
         # Simulate a completed single-iteration campaign.
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         ledger = {"iterations": [
             {"iteration": 0, "family": "baseline"},
@@ -313,7 +327,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         ledger = {"iterations": [
             {"iteration": 0, "family": "baseline"},
@@ -331,7 +345,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         ledger = {"iterations": [{"iteration": 0, "family": "baseline"}]}
         (work_dir / "ledger.json").write_text(json.dumps(ledger))
@@ -345,7 +359,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         (work_dir / "ledger.json").write_text("{this is not valid json")
 
@@ -359,7 +373,7 @@ class TestResumeCompletedCampaign:
         from orchestrator.campaign import _resume_completed_campaign
         work_dir = _setup_work_dir(tmp_path)
         state = json.loads((work_dir / "state.json").read_text())
-        state["phase"] = "DONE"
+        state["last_entered_phase"] = "DONE"
         (work_dir / "state.json").write_text(json.dumps(state))
         ledger = {"iterations": [
             {"iteration": 0, "family": "baseline"},
@@ -469,8 +483,12 @@ class TestMetadataEnrichment:
         },
     }
 
-    def test_setup_work_dir_writes_enriched_campaign_yaml(self, tmp_path):
+    def test_setup_work_dir_writes_enriched_campaign_yaml(self, tmp_path, monkeypatch):
         """setup_work_dir writes an enriched campaign.yaml with runtime block."""
+        # repo_path=None + no NOUS_CAMPAIGN_PARENT resolves the work_dir
+        # relative to CWD; chdir into tmp_path so it lands in pytest's
+        # temp dir (auto-cleaned) instead of polluting the repo root.
+        monkeypatch.chdir(tmp_path)
         campaign_path = tmp_path / "campaign.yaml"
         campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
 
@@ -489,8 +507,9 @@ class TestMetadataEnrichment:
         assert "target_repo" in enriched["runtime"]
         assert "target_commit" in enriched["runtime"]
 
-    def test_user_metadata_passes_through(self, tmp_path):
+    def test_user_metadata_passes_through(self, tmp_path, monkeypatch):
         """User-defined metadata from campaign.yaml appears in the enriched copy."""
+        monkeypatch.chdir(tmp_path)
         campaign_path = tmp_path / "campaign.yaml"
         campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
 
@@ -503,8 +522,9 @@ class TestMetadataEnrichment:
         assert enriched["metadata"]["tags"] == ["prefix-caching", "ttft"]
         assert enriched["metadata"]["goal"] == "Determine prefix ratio effect on TTFT"
 
-    def test_enriched_copy_not_overwritten_on_resume(self, tmp_path):
+    def test_enriched_copy_not_overwritten_on_resume(self, tmp_path, monkeypatch):
         """Re-calling setup_work_dir does not clobber the enriched campaign.yaml."""
+        monkeypatch.chdir(tmp_path)
         campaign_path = tmp_path / "campaign.yaml"
         campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
 

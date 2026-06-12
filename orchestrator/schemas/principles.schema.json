@@ -49,6 +49,27 @@
         "status": {
           "type": "string",
           "enum": ["active", "updated", "pruned"]
+        },
+        "confidence_posterior": {
+          "type": "object",
+          "description": "Calibrated Beta-Binomial posterior over P(principle holds | observed citing arms). Issue #164.",
+          "required": ["mean", "ci_low", "ci_high", "n_citations"],
+          "additionalProperties": false,
+          "properties": {
+            "mean": { "type": "number", "minimum": 0, "maximum": 1 },
+            "ci_low": { "type": "number", "minimum": 0, "maximum": 1 },
+            "ci_high": { "type": "number", "minimum": 0, "maximum": 1 },
+            "n_citations": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "empirical_content": {
+          "type": "boolean",
+          "description": "True iff the experiments could have falsified this claim — a genuine discovery. False for mathematical identities and definitions that hold across all experiments by construction. Issue #86."
+        },
+        "derivation_type": {
+          "type": "string",
+          "enum": ["empirical", "algebraic", "definitional"],
+          "description": "How the principle was derived. Empirical = discovered from data; algebraic = follows from math; definitional = restates a definition. Issue #86."
         }
       }
     }

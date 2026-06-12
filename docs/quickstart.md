@@ -76,7 +76,7 @@ prompts:
 nous run campaign.yaml --max-iterations 3
 ```
 
-When `repo_path` is set in `campaign.yaml`, the campaign directory is created inside the target repo at `.nous/<run_id>/`.
+When `repo_path` is set in `campaign.yaml`, the campaign directory is created at `$NOUS_CAMPAIGN_PARENT/<run_id>/` if you've exported that env var (recommended — see [Environment setup](../README.md#environment-setup)), otherwise at the legacy `<repo_path>/.nous/<run_id>/`. Issue #239 gives the rationale.
 
 Each iteration runs the full Nous loop (design → execute+analyze → validate) and pauses at two human gates. Both agents write artifacts directly to disk and run `nous validate` before claiming done — if validation fails, the agent fixes and retries.
 

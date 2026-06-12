@@ -421,7 +421,10 @@ class TestAgentRouting:
     @patch("orchestrator.llm_dispatch.openai")
     @patch("orchestrator.iteration.Engine")
     @patch("orchestrator.iteration.HumanGate")
-    def test_api_mode_uses_llm_dispatcher(self, mock_gate, mock_engine, mock_openai, tmp_path):
+    def test_sdk_mode_routes_through_sdk_dispatcher(
+        self, mock_gate, mock_engine, mock_openai, tmp_path,
+    ):
+        """#183: 'sdk' is the default and only supported code-access path."""
         from orchestrator.iteration import run_iteration
 
         mock_engine_inst = MagicMock()
@@ -433,14 +436,16 @@ class TestAgentRouting:
         (work_dir / "state.json").write_text('{"phase": "DONE"}')
 
         result = run_iteration(
-            campaign, work_dir, iteration=1, agent="api", auto_approve=True,
+            campaign, work_dir, iteration=1, agent="sdk", auto_approve=True,
         )
         assert result is not None
 
     @patch("orchestrator.llm_dispatch.openai")
     @patch("orchestrator.iteration.Engine")
     @patch("orchestrator.iteration.HumanGate")
-    def test_api_mode_accepts_max_cli_retries(self, mock_gate, mock_engine, mock_openai, tmp_path):
+    def test_sdk_mode_accepts_max_cli_retries(
+        self, mock_gate, mock_engine, mock_openai, tmp_path,
+    ):
         from orchestrator.iteration import run_iteration
 
         mock_engine_inst = MagicMock()
@@ -452,10 +457,24 @@ class TestAgentRouting:
         (work_dir / "state.json").write_text('{"phase": "DONE"}')
 
         result = run_iteration(
-            campaign, work_dir, iteration=1, agent="api",
+            campaign, work_dir, iteration=1, agent="sdk",
             auto_approve=True, max_cli_retries=5,
         )
         assert result is not None
+
+    def test_api_mode_raises_migration_error(self, tmp_path):
+        """#183: 'api' was removed; programmatic callers get a clear error."""
+        import pytest as _pytest
+        from orchestrator.iteration import run_iteration
+
+        campaign = SAMPLE_CAMPAIGN.copy()
+        work_dir = tmp_path
+        (work_dir / "state.json").write_text('{"phase": "DONE"}')
+
+        with _pytest.raises(ValueError, match="agent='api'.*was removed"):
+            run_iteration(
+                campaign, work_dir, iteration=1, agent="api", auto_approve=True,
+            )
 
 
 class TestRunCampaignRouting:

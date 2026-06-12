@@ -24,10 +24,333 @@ properties:
       research_question:
         type: string
         minLength: 1
+      # #206: accept complexity_tier / tier_justification under metadata
+      # too (where iteration / family / research_question already live).
+      # The legacy top-level location is still accepted for backward-compat;
+      # readers prefer metadata when both are present.
+      complexity_tier:
+        type: integer
+        minimum: 1
+        maximum: 4
+        description: "See top-level complexity_tier — accepted here for ergonomics (#206)."
+      tier_justification:
+        type: string
+        description: "See top-level tier_justification — accepted here for ergonomics (#206)."
 
   arm_selection_rationale:
     type: string
     description: "Brief explanation of which arms were chosen and why."
+
+  complexity_tier:
+    type: integer
+    minimum: 1
+    maximum: 4
+    description: >
+      Iteration's complexity tier (issue #159). 1 = single mechanism +
+      single knob + treatment-vs-control; 2 = single mechanism + multi-knob
+      OR ablation OR dose-response; 3 = multi-mechanism interactions,
+      super-additivity; 4 = cross-system / cross-workload generalization.
+      Iteration N may use any tier <= N — so iter 1 is forced to tier 1.
+  tier_justification:
+    type: string
+    description: "Brief reason for the chosen tier given the iteration index and prior refutations."
+
+  ground_truth:
+    type: object
+    description: >
+      Optional declaration of how the experiment will judge correctness
+      (issue #85). Forces the designer to make the detector / ground-truth
+      independence explicit so the validator can reject tautological
+      experiments — see #84.
+    required: [definition, shares_computation_with_detector]
+    additionalProperties: false
+    properties:
+      definition:
+        type: string
+        minLength: 1
+        description: "How the ground truth is computed (plain English)."
+      measurement_type:
+        type: string
+        enum: [stock, flow, trend, ratio, count, derived]
+        description: "Kind of signal the ground truth is. Compared against detector_measurement_type to flag potential overlap."
+      detector_measurement_type:
+        type: string
+        enum: [stock, flow, trend, ratio, count, derived]
+        description: "Kind of signal the detector under test produces."
+      independence_argument:
+        type: string
+        minLength: 1
+        description: "Plain-English justification that the ground truth can disagree with the detector. Missing field downgrades to a WARN at validate time."
+      shares_computation_with_detector:
+        type: boolean
+        description: "Author's self-assessment. true ⇒ tautological by construction; validator REJECTS. false ⇒ explicit declaration of independence."
+
+  # ─── #209/#210: operational experiment_spec block ───────────────────────
+  # Optional structured block that lets the DESIGN agent pin operational
+  # decisions (build commands, fan-out template, classification logic,
+  # verified parameters) so the EXECUTE_ANALYZE agent doesn't re-derive
+  # them in a fresh worktree. All fields are optional; freeform
+  # experiment_spec content alongside (top-level allows additional
+  # properties anyway) remains supported for backward compat.
+  experiment_spec:
+    type: object
+    # Locked enum: typo'd field names (e.g. preflight_command singular,
+    # verifid_parameters) would otherwise pass schema validation and
+    # silently fail at runtime when the executor doesn't see them. The
+    # four sub-fields are an enumerated DESIGN→EXECUTE_ANALYZE contract;
+    # adding a new one requires a schema change so executor-side
+    # consumers update in lockstep.
+    additionalProperties: false
+    description: >
+      Operational handoff from DESIGN to EXECUTE_ANALYZE. Pin decisions
+      that don't belong in narrative form: commands the executor must
+      run before the main fan-out (#209), how to classify per-request
+      output when tenant_id isn't reliable (#210), the parallel-fan-out
+      template (#210), and any parameters the DESIGN phase verified
+      against the target system (#210).
+    properties:
+      preflight_commands:
+        type: array
+        items: { type: string, minLength: 1 }
+        description: >
+          Shell commands the EXECUTE_ANALYZE agent must run before the
+          main fan-out (#209). Use for build steps that don't carry
+          across the fresh git worktree (e.g. ``go build -o blis main.go``)
+          and any one-off setup the design agent verified manually.
+      fanout_template:
+        type: string
+        minLength: 1
+        description: >
+          The exact shell template EXECUTE_ANALYZE should use to fan
+          arms out in parallel (#210). Avoids GNU-parallel quoting
+          gotchas that the DESIGN agent already worked through.
+      classification_function:
+        type: string
+        minLength: 1
+        description: >
+          Plain-Python expression or short snippet describing how to
+          label a result row (e.g. cooperators vs adversaries) when
+          the target's per-request output lacks the obvious tag (#210).
+          Frees EXECUTE_ANALYZE from re-grepping the target's source
+          to re-derive what DESIGN already figured out.
+      verified_parameters:
+        type: object
+        additionalProperties: true
+        description: >
+          Parameters the DESIGN phase verified work for the target
+          system, e.g. ``{total_kv_blocks: 1200}``. EXECUTE_ANALYZE
+          treats them as canonical; deviations require an entry in
+          ``bundle_amendments.jsonl`` (#211).
+
+          Issue #246 (F1): each entry is also cross-checked against
+          ``campaign.locked_parameters`` (when present); deviation is a
+          hard validation failure regardless of --auto-approve.
+      unlocked_parameters_audit:
+        type: array
+        description: >
+          Issue #261 (F16): DESIGN agent's enumeration of every
+          campaign-physics-affecting target-system parameter it is
+          leaving at default. Forces explicit inheritance instead of
+          silent inheritance — the failure mode that took five reactive
+          rounds of locking to discover ``total_kv_blocks`` mattered in
+          paper-memorytime-mirage. Empty list is allowed (signals
+          "nothing inheritable"); validators warn when a campaign with
+          ``locked_parameters`` declares an empty audit.
+        items:
+          type: object
+          required: [name, default_value, justification]
+          additionalProperties: false
+          properties:
+            name:
+              type: string
+              minLength: 1
+              description: "Parameter name (e.g. ``MaxModelLen``)."
+            default_value:
+              description: "Default the experiment is inheriting (any JSON-serializable value)."
+            justification:
+              type: string
+              minLength: 1
+              description: "One-sentence reason this default is acceptable for this experiment."
+      physical_realism_check:
+        type: object
+        additionalProperties: false
+        description: >
+          Issue #260 (F15): when ``verified_parameters`` includes any
+          K-class parameter (KV blocks, max_model_len, max_batched_tokens),
+          DESIGN must populate this block. Validator emits a soft
+          warning when ``k_realism_ratio < 0.5`` and ``justification`` is
+          empty/perfunctory — the "you constructed your own contention"
+          reviewer-pushback failure mode.
+        properties:
+          model: { type: string, minLength: 1 }
+          gpu: { type: string, minLength: 1, description: "Hardware target the realistic K is derived for (e.g. ``H100-80GB``)." }
+          gpu_memory_utilization: { type: number, minimum: 0, maximum: 1 }
+          derived_k_realistic:
+            type: number
+            minimum: 0
+            description: "K (in blocks or tokens) computed from realistic (model, GPU, gpu_memory_utilization)."
+          k_used_in_experiment:
+            type: number
+            minimum: 0
+            description: "K actually used by the experiment."
+          k_realism_ratio:
+            type: number
+            minimum: 0
+            description: "k_used_in_experiment / derived_k_realistic. Validator soft-warns when < 0.5 unless justification is concrete."
+          justification:
+            type: string
+            description: >
+              Plain-English defense of the chosen K (and any other
+              K-class deviation) against the realism baseline.
+              Required when k_realism_ratio is far from 1.
+      workload_changes_from_canonical:
+        type: object
+        additionalProperties: false
+        required: [rationale, diff]
+        description: >
+          Issue #265 (F20): DESIGN-declared rewrite of the canonical
+          workload. When ``campaign.locked_workload`` is set and the
+          bundle's workload yaml deviates from it, this block must
+          declare the deviation explicitly. Validator hard-fails on
+          undeclared deviation; declared deviation surfaces in F4's
+          gate-summary diff under --auto-approve.
+        properties:
+          rationale:
+            type: string
+            minLength: 1
+            description: "Plain-English reason for the deviation."
+          diff:
+            type: array
+            description: "Per-field deviations from the canonical workload."
+            items:
+              type: object
+              required: [field, from, to]
+              additionalProperties: true
+              properties:
+                tenant: { type: string, description: "Tenant id when deviation is per-tenant." }
+                field: { type: string, minLength: 1 }
+                from: { description: "Canonical value (any JSON-serializable type)." }
+                to: { description: "Replacement value." }
+      rehearsal_subset:
+        # #222: structured rehearsal scope. When iteration_mode ==
+        # "rehearsal" AND this field is populated, EXECUTE_ANALYZE
+        # executes ONLY this subset (not the full experiment_spec).
+        # Without this field, the rehearsal agent has to infer scope
+        # from prose methodology — which the post-#212 paper-burst
+        # rerun showed is unreliable (the agent fanned out the full
+        # 50-arm bundle anyway).
+        type: object
+        additionalProperties: false
+        description: >
+          Subset of the full experiment to execute in rehearsal mode (#222).
+          DESIGN populates this; EXECUTE_ANALYZE in rehearsal mode runs
+          ONLY this subset. iter-2 (real mode) ignores this field and
+          runs the full experiment_spec.
+        properties:
+          seeds:
+            type: array
+            items: { type: integer }
+            minItems: 1
+            description: >
+              Subset of canonical seeds to execute in rehearsal.
+              Typically the first canonical seed only.
+          arms:
+            type: array
+            items: { type: string, minLength: 1 }
+            minItems: 1
+            description: >
+              Subset of arm IDs to execute in rehearsal — typically
+              the contrast pair (h-main + the most direct control).
+          extra_validation_only:
+            type: boolean
+            description: >
+              When true, rehearsal does NOT make scientific claims —
+              ``findings.json`` is marked ``mode: rehearsal`` regardless
+              of confirmed/refuted status. Iter-2 makes the canonical
+              scientific call.
+          depth_overrides:
+            type: object
+            additionalProperties: true
+            description: >
+              Issue #248 (F3): the **breadth-vs-depth distinction**. The
+              ``seeds`` and ``arms`` fields above narrow rehearsal
+              breadth — the cell physics is preserved. ``depth_overrides``
+              narrows depth (smaller cells: shorter ``duration_seconds``,
+              lower ``concurrency_per_tenant``, etc.) — which silently
+              invalidates scale-dependent apparatus checks (empirical-PMF
+              histograms, 99.9% backlog-nonempty checks, sliding-window
+              arrival-curve checks). When this object is non-empty,
+              ``invalidates_checks`` MUST also be populated — the
+              validator rejects the rehearsal otherwise. Forces
+              authors to be explicit about which guarantees they are
+              surrendering for cheaper rehearsal cost.
+            properties:
+              invalidates_checks:
+                type: array
+                items: { type: string, minLength: 1 }
+                minItems: 1
+                description: "Names of apparatus checks invalidated by these depth overrides."
+      timing_observations:
+        # #226: structured per-policy timing data captured during
+        # rehearsal feasibility probes. Fields are SCHEMA-LOCKED here
+        # (vs verified_parameters which is open by design — that's a
+        # knob namespace; this is a measurement record). Iter-2's
+        # SDKDispatcher reads ``recommended_turn_silence_threshold_seconds``
+        # to calibrate the live watchdog (#205).
+        type: object
+        additionalProperties: false
+        description: >
+          Per-policy wall-time observations from rehearsal feasibility
+          probes (#226). Used by the engine to calibrate iter-2's
+          watchdog thresholds and by the brief_amendments machinery
+          to surface recurring slow-policy patterns across runs.
+        properties:
+          expected_wall_time_seconds_per_policy:
+            type: object
+            description: >
+              Map of policy name → observed wall-time seconds. Recorded
+              during the rehearsal feasibility probe at one canonical
+              seed. EXECUTE_ANALYZE's per-arm timeout (when the runner
+              supports one) and the watchdog threshold derive from this.
+            additionalProperties:
+              type: number
+              minimum: 0
+          recommended_turn_silence_threshold_seconds:
+            oneOf:
+              - type: number
+                minimum: 0
+              - type: object
+                additionalProperties: false
+                properties:
+                  design: { type: number, minimum: 0 }
+                  execute_analyze: { type: number, minimum: 0 }
+                  report: { type: number, minimum: 0 }
+            description: >
+              Suggested override for ``campaign.sdk_timeouts.turn_silence_threshold_seconds``
+              for iter-2 / real iters. Computed by the rehearsal agent
+              as roughly 3× the slowest policy observed, with buffer.
+              ``SDKDispatcher`` reads this in preference to the
+              campaign-level default.
+
+              Issue #264 (F19): may be either a scalar (legacy: same
+              threshold for every phase) or a per-phase map
+              ``{design, execute_analyze, report}``. EXECUTE_ANALYZE-tuned
+              values silently broke DESIGN turns in
+              paper-memorytime-mirage iter-3 — DESIGN's heavy reasoning
+              between tool calls trips a 120s threshold that's
+              appropriate for EXECUTE_ANALYZE's frequent simulator
+              calls. Rehearsal-derived values that vary by phase MUST
+              use the map form; the scalar form is preserved for
+              backward compat with iter-1 rehearsals that ran one
+              phase only.
+          observation_method:
+            type: string
+            minLength: 1
+            description: >
+              How the observations were collected (e.g. "feasibility
+              probe at seed=42, horizon=120s, single arm per policy").
+              Helps iter-2 / future runs interpret the numbers
+              correctly.
 
   arms:
     type: array
@@ -49,6 +372,8 @@ $defs:
           - h-super-additivity
           - h-control-negative
           - h-robustness
+          - h-dose-response
+          - h-tradeoff
       component:
         type: string
         description: "Component name, used for h-ablation arms."
@@ -67,6 +392,124 @@ $defs:
       metadata:
         type: object
         description: "Optional domain-specific metadata for this arm."
+
+      # ─── Adaptive sweep (issue #165) ───────────────────────────────────
+      # Optional adaptive sub-arm sweep block. When present, the runner
+      # delegates to orchestrator.arm_sweep.run_sweep with an Optuna-
+      # backed sampler instead of iterating a fixed condition list.
+      # Use for 1-D scalar searches with monotone or unimodal expected
+      # response (boundary finding, threshold seeking, simple optimization).
+      sweep:
+        type: object
+        required: [param, low, high, budget]
+        additionalProperties: false
+        properties:
+          param:
+            type: string
+            minLength: 1
+            description: "Knob being swept."
+          low:
+            type: number
+            description: "Lower bound of the search domain (inclusive)."
+          high:
+            type: number
+            description: "Upper bound of the search domain (inclusive)."
+          budget:
+            type: integer
+            minimum: 1
+            description: "Maximum number of trials the sampler may run."
+          direction:
+            type: string
+            enum: [minimize, maximize]
+            description: "Optimization direction. Default 'minimize'."
+          sampler_name:
+            type: string
+            description: "Sampler hint (e.g. 'tpe', 'gp'). Default 'tpe'. Informational."
+
+      # ─── Seeds rationale (issue #163) ──────────────────────────────────
+      # Optional power-analysis declaration. When present, the design
+      # phase substitutes the computed N for the literal seed count and
+      # records the calculation in handoff.md. See orchestrator.power.
+      seeds_rationale:
+        type: object
+        required: [effect_size]
+        additionalProperties: false
+        properties:
+          effect_size:
+            type: number
+            exclusiveMinimum: 0
+            description: "Magnitude to detect. Cohen's d for t; Cohen's h for proportions."
+          power:
+            type: number
+            exclusiveMinimum: 0
+            exclusiveMaximum: 1
+            description: "Detection probability if effect exists. Default 0.8."
+          alpha:
+            type: number
+            exclusiveMinimum: 0
+            exclusiveMaximum: 1
+            description: "Two-sided significance level. Default 0.05."
+          kind:
+            type: string
+            enum: [t, proportions]
+            description: "Test family. Default 't' (two-sample t-test)."
+
+      # ─── H-dose-response fields (issue #157) ───────────────────────────
+      # Required when type == h-dose-response (cross-checked in
+      # orchestrator.validate). Schema keeps them optional to preserve
+      # additive-only backward compatibility for existing arm types.
+      knob:
+        type: string
+        minLength: 1
+        description: "Name of the knob being varied. h-dose-response only."
+      values:
+        type: array
+        minItems: 3
+        uniqueItems: true
+        items:
+          oneOf:
+            - { type: number }
+            - { type: string, minLength: 1 }
+        description: "Distinct knob settings to test. h-dose-response only; >= 3 values."
+      metric:
+        type: string
+        minLength: 1
+        description: "Observable metric whose response shape is being tested."
+      expected_shape:
+        type: string
+        enum:
+          - monotone_decreasing
+          - monotone_increasing
+          - u_shaped
+          - inverted_u
+          - saturating
+          - flat
+        description: "Predicted shape of metric vs. knob value."
+
+      # ─── H-tradeoff fields (issue #158) ────────────────────────────────
+      # Required when type == h-tradeoff (cross-checked in
+      # orchestrator.validate). The arm declares an intervention's
+      # improvement on `metric` and the maximum acceptable degradation
+      # of `secondary_metric` (in the named "worse" direction).
+      secondary_metric:
+        type: string
+        minLength: 1
+        description: "Cost metric paired with `metric` for h-tradeoff arms; must differ from `metric`."
+      secondary_budget:
+        type: number
+        minimum: 0
+        description: "Maximum acceptable degradation in secondary_metric, in the worse direction. h-tradeoff only."
+      secondary_direction:
+        type: string
+        enum: [increase, decrease]
+        description: "Which way is 'worse' for secondary_metric (e.g., increase for memory, decrease for accuracy)."
+      primary_change:
+        type: number
+        description: "Predicted directional change in `metric` (signed). h-tradeoff only."
+      intervention_ref:
+        type: string
+        description: "Optional reference to the intervention (other arm id or description)."
+
       code_changes:
         type: array
         description: "Optional code change intents. Planner says what and why, not how."
