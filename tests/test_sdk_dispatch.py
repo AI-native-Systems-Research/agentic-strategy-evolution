@@ -877,3 +877,34 @@ class TestSDKResultInvariant:
         """Whitespace-only is no more useful than empty."""
         with pytest.raises(ValueError, match=r"is_error=True.*requires"):
             SDKResult(text="", is_error=True, error_message="   ")
+
+
+class TestSDKDispatchEffort:
+    """effort threads from SDKDispatcher into the runner call (#282)."""
+
+    def test_effort_passed_to_runner(self, tmp_path):
+        runner = _ScriptedRunner([SDKResult(text="ok")])
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_make_campaign(tmp_path),
+            sdk_runner=runner,
+            effort="medium",
+        )
+        out = tmp_path / "runs" / "iter-1" / "design_log.md"
+        dispatcher.dispatch("planner", "design", output_path=out, iteration=1)
+
+        assert runner.calls[0]["effort"] == "medium"
+
+    def test_effort_defaults_to_none(self, tmp_path):
+        # Behaviour-unchanged guarantee: no effort kwarg -> runner sees None,
+        # which the SDK treats as its default ("high").
+        runner = _ScriptedRunner([SDKResult(text="ok")])
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_make_campaign(tmp_path),
+            sdk_runner=runner,
+        )
+        out = tmp_path / "runs" / "iter-1" / "design_log.md"
+        dispatcher.dispatch("planner", "design", output_path=out, iteration=1)
+
+        assert runner.calls[0]["effort"] is None

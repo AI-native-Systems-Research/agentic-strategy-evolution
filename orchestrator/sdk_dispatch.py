@@ -347,6 +347,7 @@ class SDKRunner(Protocol):
         event_log_path: Path | None = None,
         permission_mode: Literal["bypassPermissions"] | None = None,
         turn_silence_threshold: float | None = None,
+        effort: str | None = None,
     ) -> SDKResult:
         """One SDK turn.
 
@@ -386,6 +387,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
         event_log_path: Path | None = None,
         permission_mode: Literal["bypassPermissions"] | None = "bypassPermissions",
         turn_silence_threshold: float | None = None,
+        effort: str | None = None,
     ) -> SDKResult:
         try:
             import anyio
@@ -418,6 +420,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     system_prompt=system_prompt,
                     settings=str(settings_path) if settings_path else None,
                     permission_mode=permission_mode,  # type: ignore[arg-type]
+                    effort=effort,
                 )
             else:
                 options = ClaudeAgentOptions(
@@ -426,6 +429,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     max_turns=max_turns,
                     system_prompt=system_prompt,
                     settings=str(settings_path) if settings_path else None,
+                    effort=effort,
                 )
             text_chunks: list[str] = []
             usage: dict = {}
@@ -560,6 +564,7 @@ class SDKDispatcher(CLIDispatcher):
         system_prompt: str | None = None,
         settings_path: Path | None = None,
         sandbox: str | None = None,
+        effort: str | None = None,
     ) -> None:
         super().__init__(
             work_dir=work_dir,
@@ -575,6 +580,9 @@ class SDKDispatcher(CLIDispatcher):
             prompts_dir or Path(__file__).parent.parent / "prompts" / "methodology",
         )
         self._settings_path = settings_path
+        # #282: per-phase SDK effort. None means "don't pass effort" — the
+        # SDK applies its own default ("high"), so behaviour is unchanged.
+        self._effort = effort
         # #193: resolve sandbox mode. Order: explicit kwarg > campaign.sandbox
         # > "bypass" default (which maps to permission_mode="bypassPermissions").
         # Pass "default" to keep the SDK's default permission gating.
@@ -938,6 +946,7 @@ class SDKDispatcher(CLIDispatcher):
                     event_log_path=self._event_log_path,
                     permission_mode=self._permission_mode,
                     turn_silence_threshold=self._turn_silence_threshold,
+                    effort=self._effort,
                 )
             except SDKTransientError as exc:
                 failure_count += 1
