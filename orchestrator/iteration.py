@@ -381,7 +381,7 @@ def run_iteration(
                 max_retries=max_cli_retries,
             ) if repo_path else None
         )
-        llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("design"))
+        llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("summarizer"))
     gate = HumanGate(auto_response="approve") if auto_approve else HumanGate()
 
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
