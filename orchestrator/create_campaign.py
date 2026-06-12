@@ -216,6 +216,16 @@ prompts:
 #     execute_analyze: 120
 #     report: 240
 
+# Per-phase SDK effort (#282). design benefits from deep reasoning (high);
+# execute_analyze (coding, simulations, JSON parsing) is often adequate at
+# medium and much cheaper. Omit to use the SDK default (high) everywhere.
+# Valid: low | medium | high | xhigh | max
+# sdk_options:
+#   design:
+#     effort: high
+#   execute_analyze:
+#     effort: medium
+
 # Declarative figure pipeline (#263 / F18). REPORT phase invokes
 # each script with NOUS_RESULTS_DIR + NOUS_FIGURES_DIR env vars.
 # plot_specs:

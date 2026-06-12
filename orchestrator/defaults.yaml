@@ -25,3 +25,12 @@ models:
 max_turns:
   design: 80
   execute_analyze: 120
+
+# Per-phase SDK effort (#282). Controls how hard the model thinks each turn.
+# Valid: low | medium | high (SDK default) | xhigh | max
+# Omit a phase or the effort key to use the SDK default (high) — behaviour
+# is then unchanged. design benefits from high; execute_analyze (coding,
+# simulations, JSON parsing) is often adequate at medium and much cheaper.
+sdk_options:
+  design: {}           # effort unset -> SDK default (high)
+  execute_analyze: {}  # effort unset -> SDK default (high)
