@@ -89,23 +89,35 @@ def _read_json(path: Path) -> Any:
 
 
 def _last_log_event(log_path: Path) -> tuple[dict | None, float | None]:
-    """Return (last_event, mtime_seconds_since_epoch) from a JSONL log."""
+    """Return (last_event, mtime_seconds_since_epoch) from a JSONL log.
+
+    Bounded I/O (PR #279 review): ``nous status --watch`` calls this every
+    1-5s. Reading the whole file (``read_text().splitlines()``) on a 50k-
+    event log meant repeatedly scanning 50-100 MB. Instead stream the file
+    and keep only the last ``_TOOL_WALKBACK_LIMIT`` lines via
+    ``deque(maxlen=...)``, then walk that tail newest-first for the last
+    parseable event — same idiom as ``_walkback_for_tool_name``. The tail
+    window (not ``maxlen=1``) preserves the original behaviour of skipping
+    a trailing partial-write line back to the last complete JSON object.
+    """
     if not log_path.exists():
         return None, None
-    last: dict | None = None
+    from collections import deque
     try:
-        for line in log_path.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                last = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        with open(log_path, "r") as f:
+            tail: deque = deque(f, maxlen=_TOOL_WALKBACK_LIMIT)
         mtime = log_path.stat().st_mtime
     except OSError:
         return None, None
-    return last, mtime
+    for line in reversed(tail):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            return json.loads(line), mtime
+        except json.JSONDecodeError:
+            continue
+    return None, mtime
 
 
 # Walkback window for ``_walkback_for_tool_name``. Most turns produce

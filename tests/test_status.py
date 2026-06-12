@@ -125,6 +125,25 @@ class TestReadSnapshot:
         # middle is skipped.
         assert snap.last_event["tool_name"] == "Edit"
 
+    def test_trailing_partial_write_line_skipped(self, tmp_path):
+        # PR #279 review: _last_log_event now streams a bounded tail via
+        # deque and walks back to the last parseable event. A trailing
+        # partial-write line (no newline, truncated JSON) must not clobber
+        # the last complete event.
+        _write_state(tmp_path, run_id="r1", phase="EXECUTE_ANALYZE", iteration=1)
+        iter_dir = tmp_path / "runs" / "iter-1" / "inputs"
+        iter_dir.mkdir(parents=True)
+        log = iter_dir / "executor_log.jsonl"
+        log.write_text(
+            json.dumps({"tool_name": "Bash"}) + "\n"
+            + json.dumps({"tool_name": "Edit"}) + "\n"
+            + '{"tool_name": "Wri'  # truncated mid-write, no newline
+        )
+        os.utime(log, (1_000_000.0, 1_000_000.0))
+
+        snap = read_status_snapshot(tmp_path, now=1_000_000.0 + 5)
+        assert snap.last_event["tool_name"] == "Edit"
+
 
 # ─── #127 Phase B: SDK event tee wiring ────────────────────────────────────
 
