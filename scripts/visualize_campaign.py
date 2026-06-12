@@ -22,6 +22,7 @@ import json
 import re
 import sys
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -1958,8 +1959,10 @@ def load_campaign(campaign_path: Path):
 def load_llm_metrics(campaign_path: Path, ledger: dict) -> dict:
     """Load LLM cost metrics from llm_metrics.jsonl and group by iteration.
 
-    Returns a dict keyed by iteration ID (e.g., "iter-0") with cost breakdowns.
+    Returns a dict keyed by iteration ID (e.g., "iter-1") with cost breakdowns.
     Each iteration has two phases: design (planner) and execute-analyze (executor).
+    Handles retries correctly by assigning entries to iterations based on
+    timestamps rather than assuming strict design/execute pairs.
     """
     metrics_path = campaign_path / "llm_metrics.jsonl"
     if not metrics_path.exists():
@@ -1969,8 +1972,12 @@ def load_llm_metrics(campaign_path: Path, ledger: dict) -> dict:
     with open(metrics_path) as f:
         for line in f:
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
 
     if not entries:
         return {}
@@ -1978,40 +1985,87 @@ def load_llm_metrics(campaign_path: Path, ledger: dict) -> dict:
     iterations = ledger.get("iterations", [])
     result = {}
 
-    # Entries come in pairs: design (planner) + execute-analyze (executor).
-    # The baseline iteration (iter-0, outcome=None) has no metrics —
-    # pairs map to non-baseline iterations only (iter-1, iter-2, ...).
-    non_baseline = [it for it in iterations if it.get("h_main_result") is not None]
-    for i, it in enumerate(non_baseline):
-        iter_id = f"iter-{it['iteration']}"
-        design_idx = i * 2
-        execute_idx = i * 2 + 1
+    # Include all iterations with a timestamp (excludes only baseline iter-0).
+    # FAILED iterations are included so their costs aren't misattributed to neighbors.
+    non_baseline = [
+        it for it in iterations
+        if isinstance(it.get("iteration"), int) and it["iteration"] > 0 and it.get("timestamp")
+    ]
+    if not non_baseline:
+        return {}
+
+    def parse_ts(ts_str):
+        if not ts_str:
+            return None
+        try:
+            dt = datetime.fromisoformat(ts_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            return None
+
+    # Build sorted iteration end-timestamps for bucketing metrics entries.
+    iter_boundaries = []
+    for it in non_baseline:
+        end_ts = parse_ts(it.get("timestamp"))
+        if end_ts is None:
+            continue
+        iter_boundaries.append({
+            "iter_id": f"iter-{it['iteration']}",
+            "end_ts": end_ts,
+        })
+    iter_boundaries.sort(key=lambda b: b["end_ts"])
+
+    if not iter_boundaries:
+        return {}
+
+    # Assign each metrics entry to the first iteration whose end_ts >= entry_ts.
+    iter_entries = {b["iter_id"]: [] for b in iter_boundaries}
+    for entry in entries:
+        entry_ts = parse_ts(entry.get("timestamp"))
+        if entry_ts is None:
+            continue
+        assigned = None
+        for b in iter_boundaries:
+            if entry_ts <= b["end_ts"]:
+                assigned = b["iter_id"]
+                break
+        if assigned is None:
+            # Entry after last completed iteration (e.g., failed/in-progress subsequent iter)
+            assigned = iter_boundaries[-1]["iter_id"]
+        iter_entries[assigned].append(entry)
+
+    # Aggregate per iteration: sum all design entries and all execute entries.
+    for b in iter_boundaries:
+        iter_id = b["iter_id"]
+        entries_for_iter = iter_entries[iter_id]
+
+        design_entries = [e for e in entries_for_iter if e.get("role") == "planner"]
+        execute_entries = [e for e in entries_for_iter if e.get("role") == "executor"]
 
         iter_metrics = {"design": None, "execute": None, "total_cost": 0, "total_duration_ms": 0, "total_turns": 0}
 
-        if design_idx < len(entries):
-            d = entries[design_idx]
+        if design_entries:
             iter_metrics["design"] = {
-                "model": d.get("model", "unknown"),
-                "cost_usd": d.get("cost_usd") or 0,
-                "duration_ms": d.get("duration_ms") or 0,
-                "num_turns": d.get("num_turns") or 0,
-                "input_tokens": d.get("input_tokens") or 0,
-                "output_tokens": d.get("output_tokens") or 0,
+                "model": design_entries[-1].get("model", "unknown"),
+                "cost_usd": sum(e.get("cost_usd") or 0 for e in design_entries),
+                "duration_ms": sum(e.get("duration_ms") or 0 for e in design_entries),
+                "num_turns": sum(e.get("num_turns") or 0 for e in design_entries),
+                "input_tokens": sum(e.get("input_tokens") or 0 for e in design_entries),
+                "output_tokens": sum(e.get("output_tokens") or 0 for e in design_entries),
             }
 
-        if execute_idx < len(entries):
-            e = entries[execute_idx]
+        if execute_entries:
             iter_metrics["execute"] = {
-                "model": e.get("model", "unknown"),
-                "cost_usd": e.get("cost_usd") or 0,
-                "duration_ms": e.get("duration_ms") or 0,
-                "num_turns": e.get("num_turns") or 0,
-                "input_tokens": e.get("input_tokens") or 0,
-                "output_tokens": e.get("output_tokens") or 0,
+                "model": execute_entries[-1].get("model", "unknown"),
+                "cost_usd": sum(e.get("cost_usd") or 0 for e in execute_entries),
+                "duration_ms": sum(e.get("duration_ms") or 0 for e in execute_entries),
+                "num_turns": sum(e.get("num_turns") or 0 for e in execute_entries),
+                "input_tokens": sum(e.get("input_tokens") or 0 for e in execute_entries),
+                "output_tokens": sum(e.get("output_tokens") or 0 for e in execute_entries),
             }
 
-        # Compute totals
         for phase in ["design", "execute"]:
             if iter_metrics[phase]:
                 iter_metrics["total_cost"] += iter_metrics[phase]["cost_usd"]
