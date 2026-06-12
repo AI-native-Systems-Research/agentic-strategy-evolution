@@ -1139,6 +1139,8 @@ def run_iteration(
     # accepts an object {design, execute_analyze, report}; we read it
     # the same way as `models:`.
     campaign_max_turns = campaign.get("max_turns", {}) or {}
+    # #282: per-phase SDK effort. Same key shape as models/max_turns.
+    campaign_sdk_options = campaign.get("sdk_options", {}) or {}
 
     def _model_for(phase_key: str) -> str:
         return campaign_models.get(phase_key) or default_models.get(phase_key) or model or "aws/claude-sonnet-4-5"
@@ -1152,6 +1154,11 @@ def run_iteration(
         if v is not None:
             return int(v)
         return 25
+
+    def _effort_for(phase_key: str) -> str | None:
+        # #282: campaign.sdk_options[phase].effort, or None (SDK default).
+        phase = campaign_sdk_options.get(phase_key) or {}
+        return phase.get("effort")
 
     from orchestrator.inline_dispatch import InlineDispatcher
     if agent == "inline":
@@ -1169,6 +1176,7 @@ def run_iteration(
                 model=_model_for("design"), timeout=timeout,
                 max_turns=_max_turns_for("design"),
                 max_retries=max_cli_retries,
+                effort=_effort_for("design"),
             ) if repo_path else None
         )
         llm_dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=_model_for("design"))
@@ -1342,6 +1350,7 @@ def run_iteration(
         if cli_dispatcher:
             cli_dispatcher.model = _model_for("execute_analyze")
             cli_dispatcher.max_turns = _max_turns_for("execute_analyze")
+            cli_dispatcher._effort = _effort_for("execute_analyze")
         exec_dispatcher = cli_dispatcher or llm_dispatcher
         live_target = bool(
             campaign.get("target_system", {}).get("live_target", False)
