@@ -503,6 +503,54 @@ class TestTeeEventToolNameExtraction:
         assert rows[0]["tool_name"] == "TopLevelTool"
 
 
+class TestTeeEventResultDiagnostics:
+    """#279 review: _tee_event captures ResultMessage diagnostic fields
+    (stop_reason, num_turns, is_error, subtype, duration_ms) so an
+    unexpected session end is root-causable from executor_log.jsonl."""
+
+    def test_result_message_diagnostics_captured(self, tmp_path: Path) -> None:
+        from orchestrator.sdk_dispatch import _tee_event
+        log = tmp_path / "executor_log.jsonl"
+
+        class _Result:
+            stop_reason = "end_turn"
+            num_turns = 14
+            is_error = False
+            subtype = "success"
+            duration_ms = 34000
+
+        _tee_event(log, _Result(), "ResultMessage")
+        rows = [json.loads(l) for l in log.read_text().splitlines() if l]
+        assert rows[0]["stop_reason"] == "end_turn"
+        assert rows[0]["num_turns"] == 14
+        assert rows[0]["is_error"] is False
+        assert rows[0]["subtype"] == "success"
+        assert rows[0]["duration_ms"] == 34000
+
+    def test_non_result_message_skips_diagnostics(self, tmp_path: Path) -> None:
+        from orchestrator.sdk_dispatch import _tee_event
+        log = tmp_path / "executor_log.jsonl"
+        # An AssistantMessage that happens to carry a stop_reason attr must
+        # NOT get the ResultMessage diagnostic treatment.
+        msg = _FakeAssistantMessage(content=[_FakeTextBlock("hi")])
+        _tee_event(log, msg, "AssistantMessage")
+        rows = [json.loads(l) for l in log.read_text().splitlines() if l]
+        assert "stop_reason" not in rows[0]
+
+    def test_missing_diagnostic_fields_tolerated(self, tmp_path: Path) -> None:
+        from orchestrator.sdk_dispatch import _tee_event
+        log = tmp_path / "executor_log.jsonl"
+
+        class _SparseResult:
+            stop_reason = "end_turn"
+            # num_turns / subtype / duration_ms absent
+
+        _tee_event(log, _SparseResult(), "ResultMessage")
+        rows = [json.loads(l) for l in log.read_text().splitlines() if l]
+        assert rows[0]["stop_reason"] == "end_turn"
+        assert "num_turns" not in rows[0]
+
+
 
 # ─── #205: live mid-turn silence watchdog ─────────────────────────────────
 

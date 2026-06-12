@@ -279,6 +279,22 @@ def _tee_event(event_log_path: Path | None, message: object, cls_name: str) -> N
                         break
                     except (TypeError, ValueError):
                         pass
+    # #279 review (early-termination observability): capture the
+    # ResultMessage diagnostic fields. When a session ends unexpectedly
+    # (e.g. the model emits end_turn after context disruption with
+    # artifacts unwritten), executor_log.jsonl will now show stop_reason
+    # and num_turns directly, instead of forcing forensic analysis.
+    if cls_name == "ResultMessage":
+        for field_name in (
+            "stop_reason", "num_turns", "is_error", "subtype", "duration_ms",
+        ):
+            val = getattr(message, field_name, None)
+            if val is not None and not callable(val):
+                try:
+                    _json.dumps(val)
+                    record[field_name] = val
+                except (TypeError, ValueError):
+                    record[field_name] = repr(val)[:200]
     try:
         with open(event_log_path, "a") as f:
             f.write(_json.dumps(record) + "\n")
