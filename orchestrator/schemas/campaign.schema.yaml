@@ -235,6 +235,33 @@ properties:
         minimum: 1
         description: "Max turns for the report-generation phase. Defaults to 25 if unset everywhere."
 
+  sdk_options:
+    type: object
+    additionalProperties: false
+    description: >
+      Per-phase SDK effort level (#282). Controls how hard the model thinks
+      each turn. design defaults to deep reasoning; execute_analyze (coding,
+      running simulations, parsing JSON) is often adequate at lower effort.
+      Omit the stanza, a phase, or the effort key to use the SDK default
+      ("high") — behaviour is then unchanged.
+    properties:
+      design:
+        type: object
+        additionalProperties: false
+        properties:
+          effort:
+            type: string
+            enum: [low, medium, high, xhigh, max]
+            description: "Effort for the DESIGN phase. Omit for SDK default (high)."
+      execute_analyze:
+        type: object
+        additionalProperties: false
+        properties:
+          effort:
+            type: string
+            enum: [low, medium, high, xhigh, max]
+            description: "Effort for EXECUTE_ANALYZE. Omit for SDK default (high)."
+
   prompts:
     type: object
     required: [methodology_layer]

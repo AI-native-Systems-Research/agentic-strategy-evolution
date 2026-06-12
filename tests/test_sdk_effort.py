@@ -31,3 +31,47 @@ class TestEffortResolution:
     def test_handles_null_sdk_options(self):
         # YAML "sdk_options:" with no body parses to None.
         assert _effort_for({"sdk_options": None}, "design") is None
+
+
+class TestSdkOptionsSchema:
+    def _schema(self):
+        import yaml
+        schemas_dir = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
+        return yaml.safe_load((schemas_dir / "campaign.schema.yaml").read_text())
+
+    def _base_campaign(self):
+        return {
+            "research_question": "q",
+            "target_system": {"name": "x", "description": "d"},
+            "prompts": {"methodology_layer": "p"},
+        }
+
+    def test_accepts_valid_effort(self):
+        import jsonschema
+        campaign = self._base_campaign()
+        campaign["sdk_options"] = {"execute_analyze": {"effort": "medium"}}
+        jsonschema.validate(campaign, self._schema())
+
+    def test_accepts_absent_stanza(self):
+        import jsonschema
+        jsonschema.validate(self._base_campaign(), self._schema())
+
+    def test_accepts_empty_phase(self):
+        import jsonschema
+        campaign = self._base_campaign()
+        campaign["sdk_options"] = {"design": {}}
+        jsonschema.validate(campaign, self._schema())
+
+    def test_rejects_unknown_effort(self):
+        import jsonschema
+        campaign = self._base_campaign()
+        campaign["sdk_options"] = {"execute_analyze": {"effort": "medum"}}
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(campaign, self._schema())
+
+    def test_rejects_unknown_phase_key(self):
+        import jsonschema
+        campaign = self._base_campaign()
+        campaign["sdk_options"] = {"reporting": {"effort": "high"}}
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(campaign, self._schema())
