@@ -483,8 +483,12 @@ class TestMetadataEnrichment:
         },
     }
 
-    def test_setup_work_dir_writes_enriched_campaign_yaml(self, tmp_path):
+    def test_setup_work_dir_writes_enriched_campaign_yaml(self, tmp_path, monkeypatch):
         """setup_work_dir writes an enriched campaign.yaml with runtime block."""
+        # repo_path=None + no NOUS_CAMPAIGN_PARENT resolves the work_dir
+        # relative to CWD; chdir into tmp_path so it lands in pytest's
+        # temp dir (auto-cleaned) instead of polluting the repo root.
+        monkeypatch.chdir(tmp_path)
         campaign_path = tmp_path / "campaign.yaml"
         campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
 
@@ -503,8 +507,9 @@ class TestMetadataEnrichment:
         assert "target_repo" in enriched["runtime"]
         assert "target_commit" in enriched["runtime"]
 
-    def test_user_metadata_passes_through(self, tmp_path):
+    def test_user_metadata_passes_through(self, tmp_path, monkeypatch):
         """User-defined metadata from campaign.yaml appears in the enriched copy."""
+        monkeypatch.chdir(tmp_path)
         campaign_path = tmp_path / "campaign.yaml"
         campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
 
@@ -517,8 +522,9 @@ class TestMetadataEnrichment:
         assert enriched["metadata"]["tags"] == ["prefix-caching", "ttft"]
         assert enriched["metadata"]["goal"] == "Determine prefix ratio effect on TTFT"
 
-    def test_enriched_copy_not_overwritten_on_resume(self, tmp_path):
+    def test_enriched_copy_not_overwritten_on_resume(self, tmp_path, monkeypatch):
         """Re-calling setup_work_dir does not clobber the enriched campaign.yaml."""
+        monkeypatch.chdir(tmp_path)
         campaign_path = tmp_path / "campaign.yaml"
         campaign_path.write_text(yaml.safe_dump(self.CAMPAIGN_WITH_META))
 
