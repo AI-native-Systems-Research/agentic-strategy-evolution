@@ -20,6 +20,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",
+    # Install optional heavy dependencies in CI so their no-live-execution
+    # guard tests run instead of skipping.
+    "optuna>=3.0",
+    "pymc>=5.0",
 ]
 
 [project.scripts]
