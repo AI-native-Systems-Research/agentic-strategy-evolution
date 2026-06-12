@@ -11,6 +11,7 @@ Checks:
   7. Bidirectional consistency: concept.parameters ↔ parameter.parent_concept
   8. No orphaned parameters (not in any concept's parameters array)
   9. No unreachable entities (not in any concept's operates_on)
+  10. No dangling principles (in principles.json but not referenced by any node)
 
 Usage:
     python scripts/validate_concepts.py <path-to-concepts.json>
@@ -107,6 +108,47 @@ def validate(path: Path) -> list[str]:
             full_path = Path(repo_path) / file_part
             if not full_path.exists():
                 errors.append(f"entity '{entity['name']}': source file not found: {full_path}")
+
+    # Dangling principles: every active principle in principles.json must be
+    # referenced by at least one entity, concept, or parameter in concepts.json
+    principles_path = path.parent / "principles.json"
+    if principles_path.exists():
+        try:
+            with open(principles_path) as f:
+                principles_data = json.load(f)
+        except json.JSONDecodeError as e:
+            errors.append(f"principles.json contains invalid JSON: {e}")
+            principles_data = None
+        except OSError as e:
+            errors.append(f"principles.json could not be read: {e}")
+            principles_data = None
+
+        if principles_data is not None:
+            if not isinstance(principles_data, dict):
+                errors.append(
+                    f"principles.json has invalid structure: expected a JSON object, "
+                    f"got {type(principles_data).__name__}"
+                )
+            else:
+                all_principle_ids = {
+                    p["id"]
+                    for p in principles_data.get("principles", [])
+                    if isinstance(p, dict) and "id" in p and p.get("status", "active") == "active"
+                }
+                referenced_principle_ids = set()
+                for entity in data.get("entities", []):
+                    referenced_principle_ids.update(entity.get("principles") or [])
+                for concept in data.get("concepts", []):
+                    referenced_principle_ids.update(concept.get("principles") or [])
+                for param in data.get("parameters", []):
+                    referenced_principle_ids.update(param.get("principles") or [])
+
+                dangling = sorted(all_principle_ids - referenced_principle_ids)
+                if dangling:
+                    errors.append(
+                        f"dangling principles (in principles.json but not referenced by any "
+                        f"entity/concept/parameter): {dangling}"
+                    )
 
     return errors
 

@@ -222,7 +222,7 @@ Index a completed Nous campaign into the shared wiki and generate a visualizatio
     - Extract 5-15 concepts, 3-10 parameters, and 5-10 entities per campaign.
     - Only include parameters that were actively varied during the campaign.
     - Skip common industry terms (TTFT, LLM, GPU, p99, etc.). Focus on campaign-specific vocabulary.
-    - Every active principle should be referenced by at least one concept, parameter, or entity.
+    - Every active principle MUST be referenced by at least one concept, parameter, or entity. The validator will reject dangling principles (present in principles.json but not referenced by any node). If a principle has no natural home, either create a concept that captures the pattern it describes, or attach it to the most relevant existing entity/concept.
     - The `evolution` array for parameters should include every iteration where the parameter's value was meaningfully varied.
 
     **Entity validation (mandatory):** After drafting the entity list, verify each entity is truly pre-existing — NOT something the campaign introduced. You cannot rely on git history (campaign code may not be committed). Instead, use these sources of truth:
@@ -262,6 +262,7 @@ Index a completed Nous campaign into the shared wiki and generate a visualizatio
     - "orphaned parameter" → add it to the owning concept's `parameters` array
     - "unreachable entity" → either add an `operates_on` reference from a concept, or remove the entity
     - "unknown entity/parameter/concept" → fix the spelling to match exactly
+    - "dangling principles" → add the principle ID to the `principles` array of the most relevant entity, concept, or parameter. If no existing node fits, create a new concept that captures the pattern the principle describes.
 
     Do NOT proceed to step 10b until `validate_concepts.py` exits 0.
 
