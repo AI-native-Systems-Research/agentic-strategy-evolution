@@ -213,3 +213,19 @@ class TestValidateDesignIntegration:
         iter_dir = _setup_iter_dir(tmp_path, bundle)
         result = validate_design(iter_dir)
         assert result["status"] == "pass", result.get("errors")
+
+    def test_warnings_are_surfaced_not_dropped(self, tmp_path: Path) -> None:
+        """PR #279 review: WARN-prefixed independence advisories must be
+        returned in result['warnings'], not silently discarded."""
+        bundle = _bundle(ground_truth={
+            "definition": "x",
+            "shares_computation_with_detector": False,
+            # missing independence_argument ⇒ WARN
+        })
+        iter_dir = _setup_iter_dir(tmp_path, bundle)
+        result = validate_design(iter_dir)
+        assert result["status"] == "pass"
+        warnings = result.get("warnings", [])
+        assert any(w.startswith("WARN:") for w in warnings), (
+            f"expected a surfaced WARN entry, got {warnings}"
+        )

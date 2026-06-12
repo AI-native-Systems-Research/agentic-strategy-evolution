@@ -975,6 +975,34 @@ def _emit_high_build_warning(bundle_path: Path, max_turns_execute_analyze: int) 
     )
 
 
+def _surface_design_warnings(
+    warnings: list[str] | None, iter_dir: Path, iteration: int,
+) -> None:
+    """#279 review: surface advisory validator warnings at the design gate.
+
+    Ground-truth-independence (#85) and physical-realism (#260) checks
+    emit ``WARN:``-prefixed advisories that don't fail validation but flag
+    tautological designs or synthetic-regime risk. They were previously
+    dropped. Print them prominently and persist them to
+    ``iter_dir/design_warnings.json`` so the operator (and any auditor
+    reading the iter dir) sees them before approving.
+    """
+    if not warnings:
+        return
+    print(f"\n  DESIGN WARNINGS ({len(warnings)}) — advisory, not blocking:")
+    for w in warnings:
+        print(f"    ⚠ {w}")
+    try:
+        atomic_write(
+            iter_dir / "design_warnings.json",
+            json.dumps(
+                {"iteration": iteration, "warnings": warnings}, indent=2,
+            ) + "\n",
+        )
+    except OSError as exc:
+        logger.warning("could not persist design_warnings.json: %s", exc)
+
+
 def _augment_summary_with_spec_diff(
     summary_path: Path, iter_dir: Path, campaign: dict | None,
     auto_approve: bool, *, stub: bool,
@@ -1235,6 +1263,7 @@ def run_iteration(
                     f"Pre-authored design artifacts failed validation:\n"
                     + "\n".join(f"  - {e}" for e in result["errors"])
                 )
+            _surface_design_warnings(result.get("warnings"), iter_dir, iteration)
             print(f"  -> {iter_dir / 'problem.md'}")
             # Skip the dispatcher path below.
             _skip_design_dispatch = True
@@ -1291,6 +1320,10 @@ def run_iteration(
                 f"Design artifacts failed validation:\n"
                 + "\n".join(f"  - {e}" for e in result["errors"])
             )
+        # #279 review: surface advisory validator warnings (tautology /
+        # synthetic-regime risk) at the design gate. They don't fail
+        # validation, but the operator must see them before approving.
+        _surface_design_warnings(result.get("warnings"), iter_dir, iteration)
         print(f"  -> {iter_dir / 'problem.md'}")
         print(f"  -> {iter_dir / 'bundle.yaml'}")
         # #256 (F11): high-BUILD warning. When the bundle implies many

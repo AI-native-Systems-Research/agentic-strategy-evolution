@@ -531,6 +531,12 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
     """
     iter_dir = Path(iter_dir)
     errors = []
+    # #279 review: WARN-prefixed advisory entries (ground-truth
+    # independence #85, physical realism #260) were detected then dropped.
+    # Collect them and return them so the caller can surface them at the
+    # design gate instead of silently discarding tautology / synthetic-
+    # regime warnings.
+    warnings: list[str] = []
 
     # problem.md
     problem_path = iter_dir / "problem.md"
@@ -559,15 +565,14 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
             # #260 (F15): physical-realism soft warning. WARN-prefixed.
             for entry in _validate_physical_realism(bundle):
                 if entry.startswith("WARN:"):
-                    pass  # surfaced via gate_summary, not validate errors
+                    warnings.append(entry)
                 else:
                     errors.append(entry)
             # Issue #85: WARN-prefixed entries are advisory and don't fail
             # validation (the human gate sees them but the campaign continues).
             for entry in _validate_ground_truth_independence(bundle):
                 if entry.startswith("WARN:"):
-                    # TODO: surface warnings to gate_summary, not as errors.
-                    pass
+                    warnings.append(entry)
                 else:
                     errors.append(entry)
         except yaml.YAMLError as exc:
@@ -591,8 +596,8 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
     errors.extend(_check_unexpected_files(iter_dir, extensions | required))
 
     if errors:
-        return {"status": "fail", "errors": errors}
-    return {"status": "pass"}
+        return {"status": "fail", "errors": errors, "warnings": warnings}
+    return {"status": "pass", "warnings": warnings}
 
 
 def validate_execution(iter_dir: Path, campaign: dict | None = None) -> dict:
