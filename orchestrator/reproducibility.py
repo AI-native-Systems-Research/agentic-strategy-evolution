@@ -26,6 +26,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from orchestrator.util import atomic_write
+
 logger = logging.getLogger(__name__)
 
 # Files we hash and snapshot. Any file in this list that exists in the
@@ -250,4 +252,7 @@ def attach_to_state(work_dir: Path, block: dict) -> None:
         # the start of the campaign).
         return
     state["reproducibility_metadata"] = block
-    state_path.write_text(json.dumps(state, indent=2) + "\n")
+    # Atomic write (PR #279 review): state.json is the campaign's primary
+    # state file. A non-atomic write_text killed mid-write (OOM, SIGKILL,
+    # power loss) would truncate it and halt the campaign permanently.
+    atomic_write(state_path, json.dumps(state, indent=2) + "\n")

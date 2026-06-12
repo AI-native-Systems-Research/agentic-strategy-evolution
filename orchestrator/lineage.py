@@ -33,6 +33,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from orchestrator.util import atomic_write
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,7 +85,12 @@ def emit_cumulative_patch(
             main_ref, branch_name, result.stderr.strip(),
         )
         return None
-    cumulative_path.write_text(result.stdout)
+    # Atomic write (PR #279 review): a truncated cumulative.patch would
+    # still pass resolve_derived_from's "exists + non-empty" check and
+    # `git apply --check` for complete hunks, then apply a partial patch —
+    # running a derived campaign on the wrong code state silently. Atomic
+    # write means the file is either complete or absent.
+    atomic_write(cumulative_path, result.stdout)
     return cumulative_path
 
 
