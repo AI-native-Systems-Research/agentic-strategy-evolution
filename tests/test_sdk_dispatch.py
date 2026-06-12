@@ -242,6 +242,31 @@ class TestSDKDispatchTransientRetry:
         # Three failures = three retry-log rows.
         assert len(retry_log) == 3
 
+    def test_unbounded_mode_still_has_absolute_cap(self, tmp_path):
+        # PR #279 review: max_retries=None (--max-cli-retries -1) must not
+        # loop forever on a permanent error. _exhausted returns False below
+        # the absolute safety cap and True above it.
+        from orchestrator.sdk_dispatch import _UNBOUNDED_RETRY_SAFETY_CAP
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_make_campaign(tmp_path),
+            sdk_runner=_ScriptedRunner([SDKResult(text="ok")]),
+            max_retries=None,
+        )
+        assert dispatcher._exhausted(1) is False
+        assert dispatcher._exhausted(_UNBOUNDED_RETRY_SAFETY_CAP) is False
+        assert dispatcher._exhausted(_UNBOUNDED_RETRY_SAFETY_CAP + 1) is True
+
+    def test_bounded_mode_cap_unchanged(self, tmp_path):
+        dispatcher = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_make_campaign(tmp_path),
+            sdk_runner=_ScriptedRunner([SDKResult(text="ok")]),
+            max_retries=2,
+        )
+        assert dispatcher._exhausted(2) is False
+        assert dispatcher._exhausted(3) is True
+
 
 # ─── #122 Phase B: methodology preamble cached as system_prompt ────────────
 

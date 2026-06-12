@@ -37,6 +37,15 @@ from orchestrator.metrics import log_metrics, log_retry_event
 
 logger = logging.getLogger(__name__)
 
+# #279 review: absolute backstop for "unbounded" retry mode
+# (max_retries=None, opt-in via --max-cli-retries -1). Without a cap, a
+# permanently-erroring API response (model misconfiguration, billing
+# issue) would loop forever at the max backoff. 1000 attempts at the
+# capped backoff is roughly a week of wall-clock — unmistakably a stuck
+# system, not a transient blip — while preserving the intent of letting
+# unattended campaigns ride out long provider outages.
+_UNBOUNDED_RETRY_SAFETY_CAP = 1000
+
 
 class SDKTransientError(RuntimeError):
     """Runner raises this for retryable transport-level failures."""
@@ -982,7 +991,11 @@ class SDKDispatcher(CLIDispatcher):
     # ------------------------------------------------------------------
 
     def _exhausted(self, failure_count: int) -> bool:
-        return self.max_retries is not None and failure_count > self.max_retries
+        if self.max_retries is None:
+            # Unbounded mode still honours an absolute safety cap so a
+            # permanent error can't loop forever (#279 review).
+            return failure_count > _UNBOUNDED_RETRY_SAFETY_CAP
+        return failure_count > self.max_retries
 
     def _log_retry(self, kind: str, attempt: int, exc: BaseException) -> None:
         log_retry_event(self._metrics_path, {
