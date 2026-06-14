@@ -47,7 +47,13 @@ def _translate_to_nous_yaml(
 
 
 def _harvest_metrics(metrics_path: Path) -> tuple[int, int, float]:
-    """Sum tokens + cost across all rows of nous's llm_metrics.jsonl."""
+    """Sum billable tokens + cost across all rows of nous's llm_metrics.jsonl.
+
+    Counts only `input_tokens` (full-rate fresh input) and `output_tokens`.
+    Cache creation/read tokens are billed at different rates and are already
+    reflected in `cost_usd`; counting them here would unfairly inflate
+    variants that benefit from caching (nous's long sessions cache heavily).
+    """
     tokens_in = 0
     tokens_out = 0
     dollars = 0.0
@@ -60,8 +66,6 @@ def _harvest_metrics(metrics_path: Path) -> tuple[int, int, float]:
                 continue
             row = json.loads(line)
             tokens_in += int(row.get("input_tokens", 0))
-            tokens_in += int(row.get("cache_creation_input_tokens", 0))
-            tokens_in += int(row.get("cache_read_input_tokens", 0))
             tokens_out += int(row.get("output_tokens", 0))
             dollars += float(row.get("cost_usd", 0))
     return tokens_in, tokens_out, dollars
@@ -85,7 +89,14 @@ def _read_final_answer(runs_dir: Path) -> str:
             continue
         with open(findings) as f:
             data = json.load(f)
-        for key in ("conclusion", "answer", "summary", "verdict", "result"):
+        for key in (
+            "conclusion",
+            "answer",
+            "summary",
+            "verdict",
+            "result",
+            "discrepancy_analysis",
+        ):
             value = data.get(key)
             if isinstance(value, str) and value:
                 return value

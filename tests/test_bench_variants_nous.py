@@ -60,7 +60,9 @@ def test_harvest_metrics_returns_zeros_when_file_missing(tmp_path):
     assert (tokens_in, tokens_out, dollars) == (0, 0, 0.0)
 
 
-def test_harvest_metrics_sums_across_rows(tmp_path):
+def test_harvest_metrics_counts_billable_input_only(tmp_path):
+    """tokens_in counts input_tokens only; cache fields are reflected in
+    cost_usd and counting them would inflate cache-heavy variants unfairly."""
     path = tmp_path / "metrics.jsonl"
     rows = [
         {
@@ -74,14 +76,14 @@ def test_harvest_metrics_sums_across_rows(tmp_path):
             "input_tokens": 200,
             "output_tokens": 75,
             "cost_usd": 1.0,
-            "cache_creation_input_tokens": 10,
-            "cache_read_input_tokens": 20,
+            "cache_creation_input_tokens": 1000,
+            "cache_read_input_tokens": 5000,
         },
     ]
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     tokens_in, tokens_out, dollars = _harvest_metrics(path)
 
-    assert tokens_in == 100 + 200 + 10 + 20
+    assert tokens_in == 100 + 200
     assert tokens_out == 50 + 75
     assert dollars == pytest.approx(1.5)
 
@@ -132,6 +134,23 @@ def test_read_final_answer_tries_alternate_keys(tmp_path):
     )
 
     assert _read_final_answer(runs) == "the summary text"
+
+
+def test_read_final_answer_recognizes_discrepancy_analysis(tmp_path):
+    """nous's actual findings.json uses 'discrepancy_analysis' as the
+    top-level cross-arm summary."""
+    runs = tmp_path / "runs"
+    (runs / "iter-1").mkdir(parents=True)
+    (runs / "iter-1" / "findings.json").write_text(
+        json.dumps(
+            {
+                "iteration": 1,
+                "arms": [],
+                "discrepancy_analysis": "All arms confirmed. Effect is real.",
+            }
+        )
+    )
+    assert _read_final_answer(runs) == "All arms confirmed. Effect is real."
 
 
 def test_read_final_answer_dumps_json_when_no_known_key(tmp_path):

@@ -212,3 +212,6 @@ docs/plans/
 
 # Git worktrees
 .worktrees/
+
+# nous-bench run outputs (per-variant workspaces, transcripts, reports)
+runs/
