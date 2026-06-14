@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from bench import report
 from bench.isolation import clone_target_repo
 from bench.variants.base import Experiment, VariantResult
 from bench.variants.nous import NousVariant
@@ -174,6 +175,7 @@ def run_experiment(
     combined = {
         "experiment_id": experiment.id,
         "campaign_id": experiment.campaign.id,
+        "research_question": experiment.campaign.research_question,
         "run_id": rid,
         "started_at": started_at,
         "ended_at": ended_at,
@@ -182,4 +184,5 @@ def run_experiment(
     with open(run_dir / "results.json", "w") as f:
         json.dump(combined, f, indent=2)
 
+    report.render(run_dir)
     return run_dir
