@@ -13,12 +13,15 @@ After a campaign completes, run these in order:
 /post-campaign path/to/.nous/my-campaign
 
 # 2. Re-render the campaign visualization (e.g., after script updates)
-/visualize-campaign path/to/.nous/my-campaign
+/visualize-campaign my-campaign
 
-# 3. (Optional) Render the cross-campaign knowledge graph
+# 3. Re-render with a custom style (text is restyled, canonical data untouched)
+/visualize-campaign my-campaign :: explain like I'm a 10 year old
+
+# 4. (Optional) Render the cross-campaign knowledge graph
 /visualize-registry
 
-# 4. Get recommendations for the next campaign
+# 5. Get recommendations for the next campaign
 /suggest-next /path/to/repo "your research question"
 ```
 
@@ -37,10 +40,12 @@ visualization.
 
 ```
 /post-campaign path/to/.nous/my-campaign
+/post-campaign path/to/.nous/my-campaign :: explain like I'm a 10 year old
 ```
 
 If no path is given, the skill searches for campaign directories and asks you
-to pick one.
+to pick one. If a `:: <style>` is appended, it is ignored during extraction
+and forwarded to `/visualize-campaign` at the end.
 
 **What it reads** (from the campaign directory):
 
@@ -78,26 +83,56 @@ It only reads from the campaign directory and writes to `~/.nous/wiki/`.
 ### `/visualize-campaign`
 
 Re-renders a campaign's HTML visualization from existing wiki data. Does not
-extract or modify any knowledge files.
+extract or modify any knowledge files. Optionally restyles all visible text to
+a custom tone/style without touching canonical wiki data.
 
 **Usage:**
 
 ```
-/visualize-campaign path/to/.nous/my-campaign
+/visualize-campaign my-campaign
+/visualize-campaign my-campaign :: <style intent>
 ```
+
+**Style examples:**
+
+| Command | Effect |
+|---------|--------|
+| `/visualize-campaign epp-ttft-slope-detector` | Renders with original canonical text |
+| `/visualize-campaign epp-ttft-slope-detector :: explain like I'm a 10 year old` | All text uses simple analogies (lunch lines, water slides) |
+| `/visualize-campaign epp-ttft-slope-detector :: brief and technical` | Concise, jargon-heavy for expert readers |
+| `/visualize-campaign epp-ttft-slope-detector :: explain like I'm a novice` | Accessible but not childish; avoids assumed knowledge |
+| `/visualize-campaign blis-search-algo2 :: formal academic tone` | Publication-style language |
+
+The `::` delimiter separates the campaign name (left) from the style intent
+(right). Everything after the first `::` is the style — including any
+subsequent `::` characters. Campaign names must not contain `::`.
 
 **Prerequisites:** The campaign must have already been indexed by
 `/post-campaign`. If `concepts.json` or `summaries.json` don't exist in
 `~/.nous/wiki/campaigns/<name>/`, the skill tells you to run `/post-campaign`
 first.
 
-**What it does:**
+**What it does (no style):**
 1. Finds the campaign name from `campaign.yaml` or the directory name
 2. Runs the visualization script on the existing wiki data
 3. Opens the generated HTML in the browser
 
+**What it does (with style):**
+1. Reads canonical wiki files (concepts, summaries, dead-ends, frontiers,
+   interactions, summary.md)
+2. Makes 5 parallel LLM calls to restyle all visible text fields to match the
+   style intent (definitions, narratives, dead-end descriptions, etc.)
+3. Writes restyled files to `/tmp/nous-viz-styled-<name>/`
+4. Runs the visualization script using the restyled temp files
+5. Opens the generated HTML in the browser
+
+**Key property:** Restyling is ephemeral. Canonical wiki data under
+`~/.nous/wiki/campaigns/` is never modified. The temp files are deleted on the
+next run. Running without a style always produces the original text.
+
 Use this when you want to regenerate the HTML (e.g., after updating the
-visualization script) without re-running the full extraction.
+visualization script) without re-running the full extraction, or when you want
+to view a campaign's results at a different reading level or tone.
 
 ---
 
@@ -363,13 +398,30 @@ Exits 0 if valid, non-zero with error messages if not.
 Generates an interactive HTML page from campaign data.
 
 ```bash
+# Basic usage (reads dead-ends/frontiers/interactions from wiki dir automatically)
 python scripts/visualize_campaign.py path/to/.nous/my-campaign \
   --summaries ~/.nous/wiki/campaigns/my-campaign/summaries.json \
   --concepts ~/.nous/wiki/campaigns/my-campaign/concepts.json
+
+# With overrides for restyled content
+python scripts/visualize_campaign.py path/to/.nous/my-campaign \
+  --summaries /tmp/nous-viz-styled-my-campaign/summaries.json \
+  --concepts /tmp/nous-viz-styled-my-campaign/concepts.json \
+  --insights /tmp/nous-viz-styled-my-campaign/insights.json \
+  --summary-md /tmp/nous-viz-styled-my-campaign/summary.md
 ```
 
-Reads `dead-ends.json` from the wiki directory automatically. Produces
-`~/.nous/wiki/viz/<campaign-name>.html` and opens it in the default browser.
+**Flags:**
+
+| Flag | Purpose |
+|------|---------|
+| `--summaries` | Path to summaries.json (overrides wiki lookup) |
+| `--concepts` | Path to concepts.json (overrides wiki lookup) |
+| `--insights` | Path to bundled insights JSON (`{"dead_ends": [...], "frontiers": [...], "interactions": [...]}`) — overrides per-file wiki lookup |
+| `--summary-md` | Path to summary markdown file (overrides wiki lookup) |
+
+Reads `dead-ends.json` from the wiki directory automatically when `--insights`
+is not provided. Produces `~/.nous/wiki/viz/<campaign-name>.html`.
 
 The HTML includes:
 - **Iterations tab** — timeline with clickable nodes showing per-iteration detail
