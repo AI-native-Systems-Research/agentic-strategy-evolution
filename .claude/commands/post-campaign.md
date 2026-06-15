@@ -4,6 +4,7 @@ Index a completed Nous campaign into the shared wiki and generate a visualizatio
 
 1. **Find the campaign**: If `$ARGUMENTS` is provided, use it as the path to the `.nous/<campaign>/` directory. Otherwise, search for directories containing both `ledger.json` and `principles.json` under `.nous/` paths in the project or `~/Downloads/`, and ask the user which to index.
 
+   **Style passthrough**: If `$ARGUMENTS` contains `::`, split on it. The left side is the campaign path. The right side is the style intent — it is ignored during indexing (steps 2-10) and only forwarded to `/visualize-campaign` in step 11.
 2. **Read campaign artifacts**: Read `ledger.json`, `principles.json`, and `campaign.yaml` from the campaign directory. Extract:
    - Campaign name (directory name)
    - Campaign date (earliest non-baseline timestamp from ledger iterations)
@@ -280,14 +281,13 @@ Index a completed Nous campaign into the shared wiki and generate a visualizatio
     ```
     Write a summary for EVERY iteration (including baseline). These appear in the side panel when a user clicks an iteration node. Keep concise but informative.
 
-11. **Generate visualization and open**: Only after ALL indexing steps (4-10) are complete, run the visualization script. The script reads insights from per-campaign JSON files.
-    ```bash
-    python scripts/visualize_campaign.py "<campaign_path>" \
-      --summaries ~/.nous/wiki/campaigns/<campaign-name>/summaries.json \
-      --concepts ~/.nous/wiki/campaigns/<campaign-name>/concepts.json
-    ```
-    The script generates `~/.nous/wiki/viz/<campaign-name>.html` and opens it in the browser.
+11. **Generate visualization and open**: Only after ALL indexing steps (4-10) are complete, invoke `/visualize-campaign` to generate and open the HTML.
 
+    If `$ARGUMENTS` contained a `::` delimiter (style intent), pass it through:
+    - Without style: invoke `/visualize-campaign <campaign-name>`
+    - With style: invoke `/visualize-campaign <campaign-name> :: <style intent>`
+
+    The visualization skill handles running the script, applying any style, and opening the browser.
 12. **Invoke /index-wiki**: After visualization is generated, invoke `/index-wiki <campaign-name>` to merge this campaign's data into the cross-campaign registry.
 
 13. **Report**: Print all output paths and confirm the visualization opened:
