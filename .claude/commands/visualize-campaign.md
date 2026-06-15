@@ -14,9 +14,9 @@ Examples:
 
 ## Steps
 
-1. **Parse arguments**: Split `$ARGUMENTS` on `::`.
+1. **Parse arguments**: Split `$ARGUMENTS` on the **first** occurrence of `::` only.
    - Left side (trimmed) = campaign name. If empty, STOP and tell the user: "Please provide a campaign name. Usage: `/visualize-campaign <name>` or `/visualize-campaign <name> :: <style>`"
-   - Right side (trimmed, if present) = style intent. If no `::` in arguments, style = None.
+   - Right side (trimmed, if present) = style intent. Everything after the first `::` is the style, including any subsequent `::` characters. If no `::` in arguments, style = None. If `::` is present but the right side is empty/whitespace after trimming, treat as no style and warn: "Found `::` but no style intent after it. Proceeding without style."
 
 2. **Resolve paths**:
    - `wiki_dir` = `~/.nous/wiki`
@@ -40,6 +40,8 @@ Examples:
 5. **If no style intent** → go directly to step 7.
 
 6. **Restyle text fields** (only when style intent is present):
+
+   **Prepare temp directory**: Delete `/tmp/nous-viz-styled-<campaign-name>/` if it exists, then recreate it fresh. This prevents stale files from prior runs contaminating output.
 
    Read the canonical files:
    - `<campaign_dir>/concepts.json`
@@ -139,11 +141,24 @@ Examples:
 
    For each successful call:
    - Deep copy the canonical file
-   - Replace only the text fields with the restyled versions (matched by `name` for concepts, by `id` for insights, by key for summaries)
+   - Replace only the text fields with the restyled versions (matched by `name` for concepts, by `id` for insights, by key for summaries). If a returned `name` or `id` does not match any entry in the canonical file, skip that entry and keep canonical text.
    - All structural fields (`principles`, `operates_on`, `parent_concept`, `parameters`, `evolution`, `source`, `related_principles`, `iteration`) remain unchanged
    - Write to `/tmp/nous-viz-styled-<campaign-name>/`
 
-   If a call fails or returns unexpected structure, use the canonical file for that component and emit a warning.
+   **Assemble `insights.json`**: The script's `--insights` flag expects a single JSON object with keys `dead_ends`, `frontiers`, and `interactions`. After Calls 3 and 4 complete, combine the restyled arrays into:
+   ```json
+   {
+     "dead_ends": [<restyled dead-ends array>],
+     "frontiers": [<restyled frontiers array, or empty if file didn't exist>],
+     "interactions": [<restyled interactions array, or empty if file didn't exist>]
+   }
+   ```
+   Write this combined object to `/tmp/nous-viz-styled-<campaign-name>/insights.json`.
+
+   **Failure handling:**
+   - If a call fails or returns unexpected structure (e.g., array length mismatch, missing fields), use the canonical data for that component. Never partial-restyle within a single file — either fully restyled or fully canonical.
+   - Print a visible warning: "WARNING: Could not restyle <component> (<reason>). Showing original text for this section."
+   - If ALL 5 restyle calls fail, STOP and ask the user: "All style calls failed. Would you like to open the canonical (unstyled) visualization instead, or retry?"
 
 7. **Run the visualization script**:
 
@@ -174,5 +189,6 @@ Examples:
 
 - This skill does NOT modify any wiki files or registry data.
 - Style restyling is ephemeral — it only affects the generated HTML, not the stored JSON.
-- If style is present, the 5 LLM calls happen in parallel for speed.
-- If any restyle call fails, that file falls back to canonical text with a warning.
+- If style is present, the 5 LLM calls are independent and can be made in parallel (i.e., as separate tool calls in a single response) for speed.
+- If any restyle call fails, that file falls back to canonical text with a visible warning.
+- Campaign names must not contain `::`. If a campaign directory name contains double colons, rename it before using this skill.

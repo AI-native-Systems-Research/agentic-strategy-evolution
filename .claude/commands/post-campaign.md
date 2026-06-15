@@ -4,7 +4,7 @@ Index a completed Nous campaign into the shared wiki and generate a visualizatio
 
 1. **Find the campaign**: If `$ARGUMENTS` is provided, use it as the path to the `.nous/<campaign>/` directory. Otherwise, search for directories containing both `ledger.json` and `principles.json` under `.nous/` paths in the project or `~/Downloads/`, and ask the user which to index.
 
-   **Style passthrough**: If `$ARGUMENTS` contains `::`, split on it. The left side is the campaign path. The right side is the style intent — it is ignored during indexing (steps 2-10) and only forwarded to `/visualize-campaign` in step 11.
+   **Style passthrough**: If `$ARGUMENTS` contains `::`, split on the **first** occurrence only. The left side is the campaign path (used for indexing steps 2-10). The right side is the style intent — it is ignored during indexing and only forwarded to `/visualize-campaign` in step 11. The campaign **name** (derived from the path's directory name) is what gets passed to `/visualize-campaign`, not the full path.
 2. **Read campaign artifacts**: Read `ledger.json`, `principles.json`, and `campaign.yaml` from the campaign directory. Extract:
    - Campaign name (directory name)
    - Campaign date (earliest non-baseline timestamp from ledger iterations)

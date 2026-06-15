@@ -50,9 +50,9 @@ User provides style intent
    ┌─────────────────┼─────────────────┐
    │                 │                 │
    ▼                 ▼                 ▼
- Call 1           Call 2          Calls 3-5
- concepts.json    summaries.json  dead-ends, frontiers,
- (definitions)    (narratives)    interactions, summary.md
+ Call 1           Call 2          Call 3        Call 4           Call 5
+ concepts.json    summaries.json  dead-ends     frontiers+       summary.md
+ (definitions)    (narratives)    (insights)    interactions
    │                 │                 │
    └─────────────────┼─────────────────┘
                      │  (5 parallel LLM calls)
@@ -125,9 +125,11 @@ Keys are pre-determined from the canonical file. LLM fills the three narrative s
 
 `id` and `iteration` are locked. LLM fills `title`, `what_was_tried`, `why_it_failed`, `avoid_when`.
 
-### Frontiers.json call
+### Frontiers + Interactions call (Call 4)
 
-**Response schema:**
+Combined into a single LLM call. If neither file exists, skip this call entirely.
+
+**Response schema for frontiers:**
 
 ```json
 [
@@ -135,11 +137,7 @@ Keys are pre-determined from the canonical file. LLM fills the three narrative s
 ]
 ```
 
-`id` and `related_principles` are locked. LLM fills the text fields.
-
-### Interactions.json call
-
-**Response schema:**
+**Response schema for interactions:**
 
 ```json
 [
@@ -158,26 +156,27 @@ Single string — the LLM receives the full markdown and returns a restyled vers
 For each file:
 
 1. Deep copy the canonical data
-2. Walk the LLM response and inject rewritten strings at the corresponding positions (matched by `name` for concepts.json items, by `id` for insights, by key for summaries)
+2. Walk the LLM response and inject rewritten strings at the corresponding positions (matched by `name` for concepts.json items, by `id` for insights, by key for summaries). If a returned `name`/`id` doesn't match any canonical entry, skip it.
 3. All non-text fields (`principles`, `operates_on`, `parent_concept`, `parameters`, `evolution`, `source`, `related_principles`, `iteration`) remain from the canonical copy
+4. Assemble `insights.json`: combine restyled dead-ends, frontiers, and interactions arrays into a single `{"dead_ends": [...], "frontiers": [...], "interactions": [...]}` object matching the `--insights` flag's expected format
 
 ## Failure Handling
 
 - If an LLM call fails, returns invalid schema, or array length doesn't match → use canonical text for that file
-- Emit a warning: "Could not restyle <file>, showing canonical text"
+- Print a visible warning: "WARNING: Could not restyle <component> (<reason>). Showing original text for this section."
 - Never partial-restyle within a file: either fully restyled or fully canonical
-- If ALL calls fail → show canonical visualization with a single warning
+- If ALL 5 calls fail → STOP and ask the user: "All style calls failed. Would you like to open the canonical (unstyled) visualization instead, or retry?"
+- Delete and recreate `/tmp/nous-viz-styled-<campaign>/` before each run to prevent stale data from prior runs
 
 ## Changes to `visualize_campaign.py`
 
-The script already accepts `--concepts` and `--summaries` flags. Add:
+The script already accepts `--concepts`, `--summaries`, and `--insights` flags. The `--insights` flag accepts a single JSON file containing `dead_ends`, `frontiers`, and `interactions` arrays (the same structure produced by the script's internal `build_insights_data()` function). Add:
 
-- `--dead-ends <path>` — optional, overrides wiki directory lookup
-- `--frontiers <path>` — optional, overrides wiki directory lookup
-- `--interactions <path>` — optional, overrides wiki directory lookup
-- `--summary-md <path>` — optional, overrides wiki directory lookup
+- `--summary-md <path>` — optional, overrides wiki directory lookup for the Summary tab markdown
 
-When these flags are present, the script reads from the provided paths. When absent, current behavior (auto-discover from wiki dir) is unchanged.
+When this flag is present, the script reads summary markdown from the provided path. When absent, current behavior (auto-discover from `~/.nous/wiki/campaigns/<name>/summary.md`) is unchanged.
+
+The styled workflow assembles restyled dead-ends, frontiers, and interactions into a single `insights.json` matching the `--insights` expected format, so no additional per-file flags are needed.
 
 ## Changes to `/visualize-campaign` Skill
 

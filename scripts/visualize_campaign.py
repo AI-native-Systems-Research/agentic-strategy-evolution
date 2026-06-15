@@ -2431,9 +2431,14 @@ def main():
             campaign_context["nous_version"] = runtime["nous_version"]
         if runtime.get("started_at"):
             campaign_context["started_at"] = runtime["started_at"]
+
     # Load summary.md for the Summary tab
     if args.summary_md:
-        summary_md = Path(args.summary_md).read_text()
+        summary_md_path = Path(args.summary_md)
+        if not summary_md_path.exists():
+            print(f"Error: --summary-md file not found: {args.summary_md}", file=sys.stderr)
+            sys.exit(1)
+        summary_md = summary_md_path.read_text()
     else:
         summary_md = ""
         wiki_campaigns_dir = Path.home() / ".nous" / "wiki" / "campaigns" / campaign_name
