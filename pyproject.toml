@@ -1,6 +1,6 @@
 [project]
 name = "nous"
-version = "0.1.0"
+version = "0.4.0"
 description = "Nous — hypothesis-driven experimentation framework for software systems"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
