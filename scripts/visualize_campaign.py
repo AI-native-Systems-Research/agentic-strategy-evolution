@@ -2367,6 +2367,7 @@ def main():
     parser.add_argument("--summaries", "-s", help="JSON file with iteration summaries (keyed by iter-N)")
     parser.add_argument("--concepts", help="JSON file with concepts and entities for the Knowledge tab")
     parser.add_argument("--no-open", action="store_true", help="Don't open browser")
+    parser.add_argument("--summary-md", help="Markdown file for the Summary tab (overrides wiki lookup)")
     args = parser.parse_args()
 
     campaign_path = Path(args.campaign_path).resolve()
@@ -2430,13 +2431,15 @@ def main():
             campaign_context["nous_version"] = runtime["nous_version"]
         if runtime.get("started_at"):
             campaign_context["started_at"] = runtime["started_at"]
-
     # Load summary.md for the Summary tab
-    summary_md = ""
-    wiki_campaigns_dir = Path.home() / ".nous" / "wiki" / "campaigns" / campaign_name
-    summary_md_path = wiki_campaigns_dir / "summary.md"
-    if summary_md_path.exists():
-        summary_md = summary_md_path.read_text()
+    if args.summary_md:
+        summary_md = Path(args.summary_md).read_text()
+    else:
+        summary_md = ""
+        wiki_campaigns_dir = Path.home() / ".nous" / "wiki" / "campaigns" / campaign_name
+        summary_md_path = wiki_campaigns_dir / "summary.md"
+        if summary_md_path.exists():
+            summary_md = summary_md_path.read_text()
 
     html = HTML_TEMPLATE.format(
         title=campaign_name,
