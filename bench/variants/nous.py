@@ -113,44 +113,151 @@ def _render_findings(data: dict) -> str:
     return "\n".join(parts).strip()
 
 
-def _read_final_answer(runs_dir: Path) -> str:
-    """Read findings.json from the most recent iter-N dir."""
+def _render_findings_or_fallback(data: dict) -> str:
+    """Render one findings.json. Prefers rich arms[] rendering; falls back
+    to simple-key extraction; falls back to truncated JSON dump."""
+    arms = data.get("arms")
+    if isinstance(arms, list) and arms:
+        rendered = _render_findings(data)
+        if rendered:
+            return rendered
+    for key in (
+        "conclusion",
+        "answer",
+        "summary",
+        "verdict",
+        "result",
+        "discrepancy_analysis",
+    ):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return json.dumps(data)[:1000]
+
+
+def _iter_dirs_ascending(runs_dir: Path) -> list[tuple[int, Path]]:
+    """Return (N, iter_dir) pairs for runs/iter-N/, sorted by N ascending."""
     if not runs_dir.exists():
-        return ""
-    iter_dirs = []
+        return []
+    out: list[tuple[int, Path]] = []
     for p in runs_dir.glob("iter-*"):
         try:
             n = int(p.name.split("-", 1)[1])
         except (IndexError, ValueError):
             continue
-        iter_dirs.append((n, p))
-    iter_dirs.sort(reverse=True)
-    for _, iter_dir in iter_dirs:
+        out.append((n, p))
+    out.sort()
+    return out
+
+
+def _render_all_findings(runs_dir: Path) -> str:
+    """Render every iter-N/findings.json (not just latest), in ascending
+    iteration order. Each iter gets a '## Iteration N findings' header.
+    Empty / missing returns ''."""
+    sections: list[str] = []
+    for n, iter_dir in _iter_dirs_ascending(runs_dir):
         findings = iter_dir / "findings.json"
         if not findings.exists():
             continue
         with open(findings) as f:
             data = json.load(f)
+        rendered = _render_findings_or_fallback(data)
+        if rendered:
+            sections.append(f"## Iteration {n} findings\n\n{rendered}")
+    return "\n\n".join(sections)
 
-        arms = data.get("arms")
-        if isinstance(arms, list) and arms:
-            rendered = _render_findings(data)
-            if rendered:
-                return rendered
 
-        for key in (
-            "conclusion",
-            "answer",
-            "summary",
-            "verdict",
-            "result",
-            "discrepancy_analysis",
+def _render_principles(artifacts_dir: Path) -> str:
+    """Render principles.json's active principles. Returns '' if missing
+    or empty. Lenient on `status`: missing/null treated as active."""
+    path = artifacts_dir / "principles.json"
+    if not path.exists():
+        return ""
+    with open(path) as f:
+        data = json.load(f)
+    principles = data.get("principles") or []
+    blocks: list[str] = []
+    for p in principles:
+        status = p.get("status")
+        if isinstance(status, str) and status and status != "active":
+            continue
+        pid = p.get("id", "?")
+        statement = p.get("statement", "")
+        if not statement:
+            continue
+        block_lines = [f"- [{pid}] {statement}"]
+        for label, key in (
+            ("Regime", "regime"),
+            ("Mechanism", "mechanism"),
+            ("Applicability bounds", "applicability_bounds"),
+            ("Confidence", "confidence"),
         ):
-            value = data.get(key)
+            value = p.get(key)
             if isinstance(value, str) and value:
-                return value
-        return json.dumps(data)[:1000]
-    return ""
+                block_lines.append(f"  {label}: {value}")
+        blocks.append("\n".join(block_lines))
+    if not blocks:
+        return ""
+    return "## Principles extracted\n\n" + "\n\n".join(blocks)
+
+
+def _render_ledger(artifacts_dir: Path) -> str:
+    """Render ledger.json as a markdown table. Skips iteration=0 (seed row,
+    always null fields). Returns '' if file missing or no real iters."""
+    path = artifacts_dir / "ledger.json"
+    if not path.exists():
+        return ""
+    with open(path) as f:
+        data = json.load(f)
+    rows = []
+    for entry in data.get("iterations") or []:
+        if entry.get("iteration") == 0:
+            continue
+        iter_n = entry.get("iteration", "?")
+        family = entry.get("family") or "—"
+        h_main = entry.get("h_main_result") or "—"
+        control = entry.get("control_result") or "—"
+        robust = entry.get("robustness_result") or "—"
+        acc = entry.get("prediction_accuracy") or {}
+        if isinstance(acc, dict) and acc.get("arms_total"):
+            acc_str = f"{acc.get('arms_correct', 0)}/{acc['arms_total']} ({acc.get('accuracy_pct', 0)}%)"
+        else:
+            acc_str = "—"
+        rows.append(
+            f"| {iter_n} | {family} | {h_main} | {control} | {robust} | {acc_str} |"
+        )
+    if not rows:
+        return ""
+    header = (
+        "## Iteration ledger\n\n"
+        "| Iter | Family | h-main | control | robustness | Accuracy |\n"
+        "|---|---|---|---|---|---|"
+    )
+    return header + "\n" + "\n".join(rows)
+
+
+def _render_report(artifacts_dir: Path) -> str:
+    """Return contents of report.md prefixed with a header. '' if absent."""
+    path = artifacts_dir / "report.md"
+    if not path.exists():
+        return ""
+    text = path.read_text().strip()
+    if not text:
+        return ""
+    return f"## Campaign report\n\n{text}"
+
+
+def _read_final_answer(artifacts_dir: Path) -> str:
+    """Render the full set of nous artifacts as a single comparison-friendly
+    string. See #292: includes all iters' findings, principles, ledger, and
+    report (each gracefully skipped when absent)."""
+    sections = [
+        _render_all_findings(artifacts_dir / "runs"),
+        _render_principles(artifacts_dir),
+        _render_ledger(artifacts_dir),
+        _render_report(artifacts_dir),
+    ]
+    return "\n\n---\n\n".join(s for s in sections if s.strip())
 
 
 class NousVariant:
@@ -212,7 +319,7 @@ class NousVariant:
         tokens_in, tokens_out, dollars = _harvest_metrics(
             artifacts_dir / "llm_metrics.jsonl"
         )
-        final_answer = _read_final_answer(artifacts_dir / "runs")
+        final_answer = _read_final_answer(artifacts_dir)
         hit_cap = (tokens_in + tokens_out) > budget.max_tokens
 
         return VariantResult(
