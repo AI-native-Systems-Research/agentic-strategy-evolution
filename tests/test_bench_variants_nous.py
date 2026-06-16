@@ -137,8 +137,8 @@ def test_read_final_answer_tries_alternate_keys(tmp_path):
 
 
 def test_read_final_answer_recognizes_discrepancy_analysis(tmp_path):
-    """nous's actual findings.json uses 'discrepancy_analysis' as the
-    top-level cross-arm summary."""
+    """When arms[] is empty, fall through to simple-key extraction so the
+    discrepancy_analysis text is still surfaced."""
     runs = tmp_path / "runs"
     (runs / "iter-1").mkdir(parents=True)
     (runs / "iter-1" / "findings.json").write_text(
@@ -151,6 +151,94 @@ def test_read_final_answer_recognizes_discrepancy_analysis(tmp_path):
         )
     )
     assert _read_final_answer(runs) == "All arms confirmed. Effect is real."
+
+
+def test_read_final_answer_renders_full_arms_when_present(tmp_path):
+    """Phase 2.7 fix: when arms[] has data, the rendered final_answer
+    must include per-arm predicted/observed/status, not just the summary.
+    Otherwise the judge sees a content-free meta-summary while baseline
+    variants get their full prose, biasing the comparison."""
+    runs = tmp_path / "runs"
+    (runs / "iter-1").mkdir(parents=True)
+    (runs / "iter-1" / "findings.json").write_text(
+        json.dumps(
+            {
+                "iteration": 1,
+                "arms": [
+                    {
+                        "arm_type": "h-main",
+                        "predicted": "TTFT decreases by >30% as prefix increases.",
+                        "observed": "Reduction = 53.8% (prefix=0: 338.67ms → prefix=384: 156.47ms).",
+                        "status": "CONFIRMED",
+                        "diagnostic_note": None,
+                    },
+                    {
+                        "arm_type": "h-control",
+                        "predicted": "At low load, prefix has minimal effect.",
+                        "observed": "Max diff = 1.9ms across all prefix levels.",
+                        "status": "CONFIRMED",
+                        "diagnostic_note": "Effect is queue-mediated.",
+                    },
+                ],
+                "experiment_valid": True,
+                "discrepancy_analysis": "Effect confirmed across arms.",
+            }
+        )
+    )
+    answer = _read_final_answer(runs)
+
+    # Cross-arm summary appears
+    assert "Effect confirmed across arms." in answer
+    # Per-arm structure present
+    assert "h-main" in answer and "CONFIRMED" in answer
+    assert "h-control" in answer
+    # Specific numerical evidence preserved
+    assert "53.8%" in answer
+    assert "338.67ms" in answer
+    assert "1.9ms" in answer
+    # Diagnostic note preserved when present
+    assert "queue-mediated" in answer
+
+
+def test_read_final_answer_handles_arms_without_summary(tmp_path):
+    """findings.json with arms but no discrepancy_analysis still renders."""
+    runs = tmp_path / "runs"
+    (runs / "iter-1").mkdir(parents=True)
+    (runs / "iter-1" / "findings.json").write_text(
+        json.dumps(
+            {
+                "arms": [
+                    {
+                        "arm_type": "h-main",
+                        "predicted": "X",
+                        "observed": "Y",
+                        "status": "CONFIRMED",
+                    }
+                ],
+            }
+        )
+    )
+    answer = _read_final_answer(runs)
+    assert "h-main" in answer
+    assert "Predicted: X" in answer
+    assert "Observed: Y" in answer
+
+
+def test_read_final_answer_marks_invalid_experiment(tmp_path):
+    runs = tmp_path / "runs"
+    (runs / "iter-1").mkdir(parents=True)
+    (runs / "iter-1" / "findings.json").write_text(
+        json.dumps(
+            {
+                "arms": [
+                    {"arm_type": "h-x", "predicted": "p", "observed": "o", "status": "FAIL"},
+                ],
+                "experiment_valid": False,
+            }
+        )
+    )
+    answer = _read_final_answer(runs)
+    assert "NOT valid" in answer
 
 
 def test_read_final_answer_dumps_json_when_no_known_key(tmp_path):

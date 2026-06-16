@@ -71,6 +71,48 @@ def _harvest_metrics(metrics_path: Path) -> tuple[int, int, float]:
     return tokens_in, tokens_out, dollars
 
 
+def _render_findings(data: dict) -> str:
+    """Render canonical nous findings.json as a single comparison-friendly string.
+
+    Includes the cross-arm summary (`discrepancy_analysis`) AND per-arm
+    `predicted` / `observed` / `status` / `diagnostic_note`. Stripping
+    these to just `discrepancy_analysis` (as an earlier version did) gave
+    the judge a content-free summary while baseline variants got their
+    full prose, biasing the comparison.
+    """
+    parts: list[str] = []
+    summary = data.get("discrepancy_analysis")
+    if isinstance(summary, str) and summary:
+        parts.append(summary)
+
+    arms = data.get("arms") or []
+    if arms:
+        parts.append("")
+        parts.append("Per-arm results:")
+        for arm in arms:
+            arm_type = arm.get("arm_type", "?")
+            status = arm.get("status", "?")
+            parts.append("")
+            parts.append(f"- {arm_type} (status: {status})")
+            for label, key in (
+                ("Predicted", "predicted"),
+                ("Observed", "observed"),
+                ("Diagnostic", "diagnostic_note"),
+            ):
+                val = arm.get(key)
+                if isinstance(val, str) and val:
+                    parts.append(f"  {label}: {val}")
+            err = arm.get("error_type")
+            if err:
+                parts.append(f"  Error type: {err}")
+
+    if data.get("experiment_valid") is False:
+        parts.append("")
+        parts.append("Experiment marked NOT valid.")
+
+    return "\n".join(parts).strip()
+
+
 def _read_final_answer(runs_dir: Path) -> str:
     """Read findings.json from the most recent iter-N dir."""
     if not runs_dir.exists():
@@ -89,6 +131,13 @@ def _read_final_answer(runs_dir: Path) -> str:
             continue
         with open(findings) as f:
             data = json.load(f)
+
+        arms = data.get("arms")
+        if isinstance(arms, list) and arms:
+            rendered = _render_findings(data)
+            if rendered:
+                return rendered
+
         for key in (
             "conclusion",
             "answer",
