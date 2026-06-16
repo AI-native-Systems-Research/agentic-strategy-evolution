@@ -1,7 +1,6 @@
 """claude_plain variant — single headless Claude Code session, no methodology.
 
-See plan §6 Phase 2 for invocation details. The JSON parser here will be
-promoted to bench/metrics.py:LLMMeter in Phase 2.2.
+See plan §6 Phase 2 for invocation details.
 """
 from __future__ import annotations
 
@@ -9,31 +8,11 @@ import json
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
 
+from bench.metrics import parse_claude_json
 from bench.variants.base import Budget, Campaign, VariantResult
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
-
-
-def _parse_claude_output(stdout: str) -> dict[str, Any]:
-    """Extract metrics + final answer from `claude --output-format json` stdout.
-
-    Counts only `usage.input_tokens` for `tokens_in` (mirrors the Phase 1.7.1
-    fix to the nous variant — cache reads/writes are billed differently and
-    would unfairly inflate cache-heavy variants).
-    """
-    data = json.loads(stdout)
-    usage = data.get("usage") or {}
-    return {
-        "final_answer": str(data.get("result") or ""),
-        "tokens_in": int(usage.get("input_tokens", 0)),
-        "tokens_out": int(usage.get("output_tokens", 0)),
-        "dollars": float(data.get("total_cost_usd", 0)),
-        "is_error": bool(data.get("is_error", False)),
-        "subtype": str(data.get("subtype") or ""),
-        "num_turns": int(data.get("num_turns", 0)),
-    }
 
 
 class ClaudePlainVariant:
@@ -84,7 +63,7 @@ class ClaudePlainVariant:
                 )
             else:
                 try:
-                    parsed = _parse_claude_output(proc.stdout)
+                    parsed = parse_claude_json(proc.stdout)
                 except (json.JSONDecodeError, ValueError) as e:
                     crashed = True
                     error = f"malformed claude json output: {e}"
