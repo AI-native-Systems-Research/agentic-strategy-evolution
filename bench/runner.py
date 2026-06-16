@@ -16,12 +16,14 @@ from bench import judge as judge_mod
 from bench import report
 from bench.isolation import clone_target_repo
 from bench.variants.base import Experiment, VariantResult
+from bench.variants.claude_methodology import ClaudeMethodologyVariant
 from bench.variants.claude_plain import ClaudePlainVariant
 from bench.variants.nous import NousVariant
 
 VARIANT_REGISTRY: dict[str, type] = {
     "nous": NousVariant,
     "claude_plain": ClaudePlainVariant,
+    "claude_methodology": ClaudeMethodologyVariant,
 }
 
 
