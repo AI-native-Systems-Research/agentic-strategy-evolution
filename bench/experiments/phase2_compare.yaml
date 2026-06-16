@@ -1,0 +1,7 @@
+id: phase2_compare
+campaign: campaigns/blis_prefix.yaml
+variants: [claude_plain, nous]
+budget:
+  max_tokens: 200000
+  max_iterations: 1
+  max_wall_seconds: 1800

@@ -35,6 +35,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         variants_override=variants_override,
         budget_overrides=budget_overrides or None,
         run_id=args.run_id,
+        max_parallel_variants=args.max_parallel_variants,
+        skip_judge=args.skip_judge,
     )
     print(f"Run complete: {run_dir}")
     print(f"Report:       {run_dir / 'report.md'}")
@@ -92,6 +94,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-wall-seconds", type=int, help="override budget.max_wall_seconds"
     )
     p_run.add_argument("--run-id", help="override generated run id")
+    p_run.add_argument(
+        "--max-parallel-variants",
+        type=int,
+        help="cap concurrent variants (default min(num_variants, cpu_count))",
+    )
+    p_run.add_argument(
+        "--skip-judge",
+        action="store_true",
+        help="skip the Claude-as-judge accuracy scoring step",
+    )
     p_run.set_defaults(func=_cmd_run)
 
     p_list = sub.add_parser("list", help="list campaigns and variants")

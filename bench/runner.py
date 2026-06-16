@@ -1,15 +1,18 @@
-"""Sequential runner. Phase 2 swaps to ProcessPoolExecutor."""
+"""Parallel runner using ThreadPoolExecutor. See plan §6 Phase 2."""
 from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from bench import judge as judge_mod
 from bench import report
 from bench.isolation import clone_target_repo
 from bench.variants.base import Experiment, VariantResult
@@ -121,11 +124,17 @@ def _run_one_variant(
         )
 
 
+def _default_max_parallel(num_variants: int) -> int:
+    return min(num_variants, os.cpu_count() or 4)
+
+
 def run_experiment(
     experiment_path: Path,
     variants_override: list[str] | None = None,
     budget_overrides: dict[str, Any] | None = None,
     run_id: str | None = None,
+    max_parallel_variants: int | None = None,
+    skip_judge: bool = False,
 ) -> Path:
     """Run an experiment end-to-end. Returns the run directory path."""
     experiment_path = Path(experiment_path).resolve()
@@ -164,25 +173,61 @@ def run_experiment(
 
     started_at = dt.datetime.now(dt.timezone.utc).isoformat()
 
-    results: list[VariantResult] = []
-    for variant_name in variants:
+    max_workers = max_parallel_variants or _default_max_parallel(len(variants))
+    max_workers = max(1, min(max_workers, len(variants)))
+
+    def _run(variant_name: str) -> VariantResult:
+        return _run_one_variant(variant_name, experiment, run_dir / variant_name)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        results = list(ex.map(_run, variants))
+
+    # ex.map preserves input order, so zip is safe and pairs each result
+    # with the variant_name requested (which is the dir we created).
+    for variant_name, result in zip(variants, results):
         variant_dir = run_dir / variant_name
-        result = _run_one_variant(variant_name, experiment, variant_dir)
         with open(variant_dir / "result.json", "w") as f:
             json.dump(result_to_jsonable(result), f, indent=2)
-        results.append(result)
+
+    judge_outcome = None
+    if not skip_judge:
+        judge_outcome = judge_mod.run_judge(
+            experiment.campaign.research_question, results
+        )
 
     ended_at = dt.datetime.now(dt.timezone.utc).isoformat()
 
-    combined = {
+    variant_dicts = [result_to_jsonable(r) for r in results]
+    if judge_outcome is not None:
+        scores_by_variant = {s.variant: s for s in judge_outcome.scores}
+        for v in variant_dicts:
+            score = scores_by_variant.get(v["variant"])
+            if score is None:
+                v["judge_correctness"] = None
+                v["judge_completeness"] = None
+                v["judge_rationale"] = ""
+            else:
+                v["judge_correctness"] = score.correctness
+                v["judge_completeness"] = score.completeness
+                v["judge_rationale"] = score.rationale
+
+    combined: dict[str, Any] = {
         "experiment_id": experiment.id,
         "campaign_id": experiment.campaign.id,
         "research_question": experiment.campaign.research_question,
         "run_id": rid,
         "started_at": started_at,
         "ended_at": ended_at,
-        "variants": [result_to_jsonable(r) for r in results],
+        "variants": variant_dicts,
     }
+    if judge_outcome is not None:
+        combined["judge_usage"] = {
+            "tokens_in": judge_outcome.tokens_in,
+            "tokens_out": judge_outcome.tokens_out,
+            "dollars": judge_outcome.dollars,
+            "crashed": judge_outcome.crashed,
+            "error": judge_outcome.error,
+        }
     with open(run_dir / "results.json", "w") as f:
         json.dump(combined, f, indent=2)
 
