@@ -213,13 +213,13 @@ def test_extract_principles_empty_when_no_section():
 
 
 def test_extract_principles_empty_when_section_has_no_bullets():
+    """Pinned behavior: prose under a Principles header without bullet
+    markers is NOT a principle. The current=None state at the start of
+    the section means the elif branch ('append to current') skips, so
+    no principle is recorded. Returns []."""
     text = "## Principles\n\nSome prose without bullets.\n"
     out = _extract_principles(text)
-    # The prose gets collected as a "subfield" of a None-current; flush guard
-    # filters it. Either way: no real principles surfaced.
-    # Behavior: tries to extract; in absence of bullets, returns whatever
-    # text appears (may be empty list). Document: no bullet → no principle.
-    assert out == [] or out == ["Some prose without bullets."]
+    assert out == []
 
 
 # --- ClaudeMethodologyLoopVariant ---
@@ -401,6 +401,26 @@ def test_run_aggregates_metrics_across_iterations(monkeypatch, tmp_path):
     assert result.tokens_out == 125
     assert result.dollars == pytest.approx(1.5)
     assert result.wall_seconds == pytest.approx(25.0)
+
+
+def test_max_iterations_zero_makes_no_calls(monkeypatch, tmp_path):
+    """Degenerate input: max_iterations=0 should produce a clean no-op
+    result — no invoke_claude calls, no principle accumulation, no crash."""
+    fake_methodology = tmp_path / "methodology.md"
+    fake_methodology.write_text("body")
+    monkeypatch.setattr(cml, "METHODOLOGY_PATH", fake_methodology)
+
+    fake, captured = _make_invoke_recorder([])
+    monkeypatch.setattr(cml, "invoke_claude", fake)
+
+    variant = ClaudeMethodologyLoopVariant()
+    result = variant.run(_campaign(), tmp_path, _budget(max_iterations=0))
+
+    assert len(captured["invocations"]) == 0
+    assert result.tokens_in == 0
+    assert result.tokens_out == 0
+    assert result.crashed is False
+    assert result.final_answer == ""
 
 
 def test_run_per_iter_log_paths_distinct(monkeypatch, tmp_path):

@@ -1,3 +1,14 @@
+<!--
+Provenance: Distilled once on 2026-06-16 from
+prompts/methodology/design.md (~31K) and
+prompts/methodology/execute_analyze.md (~14K) by a one-shot Claude
+Code session. This file is committed once and NEVER regenerated per
+run — drift between runs would invalidate cross-run benchmark
+comparisons. Do not edit by hand without coordinating with the
+bench framework's pinned-prompt convention. See
+docs/bench/walkthrough.md and docs/bench/final-answer-rendering.md.
+-->
+
 # Methodology System Prompt
 
 You are a research scientist running a controlled experiment to answer a research question about a target system. Your methodology is hypothesis-driven and falsifiable. You will produce structured artifacts that can be validated by automated parsers.

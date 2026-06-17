@@ -48,7 +48,7 @@ bench/runner.py
       bench/judge.py:run_judge(...) which scores correctness + completeness
 ```
 
-The judge sees `final_answer` (and only `final_answer`) for every variant. For `nous`, that's the full structured output — findings + principles + ledger + report. For `claude_plain` and future Claude-based variants, it's whatever the agent produced as its last reply, which is what each variant naturally generates.
+The judge sees `final_answer` (and only `final_answer`) for every variant. For `nous`, that's the full structured output — findings + principles + ledger + report. For `claude_plain`, `claude_methodology`, and the loop variants, it's whatever the agent produced as its last reply, which is what each variant naturally generates. (Note: `claude_methodology` does NOT produce structured artifacts like nous — it gets the methodology as a system prompt, but its `final_answer` is still just the agent's prose reply.)
 
 ## How to read a bench `report.md`
 
@@ -63,7 +63,9 @@ The judge's rationale (in the same section) cites these explicitly when scoring 
 
 ## How to extend for future variants
 
-If a future variant (e.g. `claude_methodology` for sub-issue B) also produces structured artifacts, it should implement its own renderer modeled on the `_render_*` pattern in `bench/variants/nous.py` and compose the result into its `VariantResult.final_answer`. The judge sees only the rendered string; the variant decides what goes into it.
+If a future variant produces structured artifacts (the way `nous` produces `findings.json`, `principles.json`, etc.), it should implement its own renderer modeled on the `_render_*` pattern in `bench/variants/nous.py` and compose the result into its `VariantResult.final_answer`. The judge sees only the rendered string; the variant decides what goes into it.
+
+Currently, only `nous` produces structured artifacts. The other 4 variants (`claude_plain`, `claude_loop`, `claude_methodology`, `claude_methodology_loop`) just return the agent's last reply as `final_answer` — that's the right thing for them, since they're prompt-based variants without nous's artifact pipeline.
 
 The design intent is: each variant's `final_answer` is **what an honest reviewer would say that variant produced**. For nous that's the full structured output. For prompt-based variants without structured output, it's the agent's response.
 

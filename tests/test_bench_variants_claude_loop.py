@@ -229,3 +229,36 @@ def test_final_answer_after_partial_crash(monkeypatch, tmp_path):
 
     assert result.final_answer == "first answer"
     assert result.crashed is True
+
+
+def test_short_circuits_when_first_iter_crashes(monkeypatch, tmp_path):
+    """If iter 1 itself crashes, the loop runs exactly one iter — no
+    iter-2 attempt despite max_iterations=3."""
+    fake, captured = _make_invoke_recorder([
+        _ok("", crashed=True, error="iter 1 boom"),
+    ])
+    monkeypatch.setattr(cl, "invoke_claude", fake)
+
+    variant = ClaudeLoopVariant()
+    result = variant.run(_campaign(), tmp_path, _budget(max_iterations=3))
+
+    assert len(captured["invocations"]) == 1
+    assert result.crashed is True
+    assert result.error == "iter 1 boom"
+    assert result.final_answer == ""  # all (one) runs crashed → empty
+
+
+def test_max_iterations_zero_makes_no_calls(monkeypatch, tmp_path):
+    """Degenerate input: max_iterations=0 should produce a clean
+    no-op result — no invoke_claude calls, no crash."""
+    fake, captured = _make_invoke_recorder([])
+    monkeypatch.setattr(cl, "invoke_claude", fake)
+
+    variant = ClaudeLoopVariant()
+    result = variant.run(_campaign(), tmp_path, _budget(max_iterations=0))
+
+    assert len(captured["invocations"]) == 0
+    assert result.tokens_in == 0
+    assert result.tokens_out == 0
+    assert result.crashed is False
+    assert result.final_answer == ""

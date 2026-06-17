@@ -37,13 +37,20 @@ class VariantResult:
 
 ## The 5 variants currently registered
 
-| Variant | What it is | What this isolates |
-|---|---|---|
-| `claude_plain` | Single headless Claude Code session, no methodology, no loop | The floor — ad-hoc agent use with none of nous's structure |
-| `claude_loop` | N sequential `claude_plain` sessions; previous answer prepended to next session's question | The value of *iteration alone* — does running the agent more times help, or does it drift without methodology? |
-| `claude_methodology` | Single Claude session with `bench/methodology/methodology.md` injected as system prompt | The L1 baseline — methodology-as-prompt vs methodology-as-orchestration. Tests whether nous's structural enforcement (schema, deterministic phases, gates) does real work beyond what a system prompt can do |
-| `claude_methodology_loop` | N sequential `claude_methodology` sessions; principles extracted via regex and prepended to next session | Methodology + memory across sessions, *without* nous's deterministic principle merge, schema validation, or git isolation |
-| `nous` | The full orchestrator (`nous run` subprocess) | The reference — multi-iteration, schema-validated artifacts, git-isolated experiments, principle merging in Python (not by the LLM), checkpoint/resume |
+The "Level" column refers to the L0/L1/L2/L3 ladder used in the paper's
+graduated ablation: **L0** = ad-hoc agent (no structure), **L1** =
+methodology-as-prompt (single session), **L2** = methodology + multi-session
+memory (without nous's structural enforcement), **L3** = full nous
+orchestrator. `claude_loop` sits between L0 and L1 — adds the iteration axis
+to L0 without methodology.
+
+| Variant | Level | What it is | What this isolates |
+|---|---|---|---|
+| `claude_plain` | **L0** | Single headless Claude Code session, no methodology, no loop | The floor — ad-hoc agent use with none of nous's structure |
+| `claude_loop` | L0 + iter | N sequential `claude_plain` sessions; previous answer prepended to next session's question | The value of *iteration alone* — does running the agent more times help, or does it drift without methodology? |
+| `claude_methodology` | **L1** | Single Claude session with `bench/methodology/methodology.md` injected as system prompt | The L1 baseline — methodology-as-prompt vs methodology-as-orchestration. Tests whether nous's structural enforcement (schema, deterministic phases, gates) does real work beyond what a system prompt can do |
+| `claude_methodology_loop` | **L2** | N sequential `claude_methodology` sessions; principles extracted via regex and prepended to next session | Methodology + memory across sessions, *without* nous's deterministic principle merge, schema validation, or git isolation |
+| `nous` | **L3** | The full orchestrator (`nous run` subprocess) | The reference — multi-iteration, schema-validated artifacts, git-isolated experiments, principle merging in Python (not by the LLM), checkpoint/resume |
 
 The bench runs them in parallel on the same campaign and grades each on the same metric row. Differences in scores localize *which structural piece of nous* is doing the work.
 
