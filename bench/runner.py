@@ -18,6 +18,7 @@ from bench.isolation import clone_target_repo
 from bench.variants.base import Experiment, VariantResult
 from bench.variants.claude_loop import ClaudeLoopVariant
 from bench.variants.claude_methodology import ClaudeMethodologyVariant
+from bench.variants.claude_methodology_loop import ClaudeMethodologyLoopVariant
 from bench.variants.claude_plain import ClaudePlainVariant
 from bench.variants.nous import NousVariant
 
@@ -26,6 +27,7 @@ VARIANT_REGISTRY: dict[str, type] = {
     "claude_plain": ClaudePlainVariant,
     "claude_methodology": ClaudeMethodologyVariant,
     "claude_loop": ClaudeLoopVariant,
+    "claude_methodology_loop": ClaudeMethodologyLoopVariant,
 }
 
 
