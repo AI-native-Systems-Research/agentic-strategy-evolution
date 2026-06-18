@@ -1,358 +1,139 @@
 # Component 1 ablation — experiments to run
 
-What to run for the Section 5.1 ablation across the 5 systems. Reference. Living doc — update as runs land.
+Living doc for the L0/L1/L2/Nous ablation. Reference; update as runs land.
 
 ---
 
-## Status
+## What this is
 
-| System | Use case | nous iters (existing) | Baselines to run | Status |
-|---|---|---|---|---|
-| flink-torchserve | investigation | (have) | claude_plain, claude_loop, claude_methodology, claude_methodology_loop | not yet started |
-| flow-control-reflective-v2 | evolution | 5 | claude_plain, claude_loop, claude_methodology, claude_methodology_loop | not yet started |
-| pd-disagg-validation | verification | 4 | claude_plain, claude_loop, claude_methodology, claude_methodology_loop | not yet started |
-| blis-search-algo2 | config search | 9 | claude_plain, claude_loop, claude_methodology, claude_methodology_loop | not yet started |
-| Graph-Coloring | discovery | 5 | claude_plain, claude_loop, claude_methodology, claude_methodology_loop | not yet started |
+For each of 5 systems we already have a nous run. We're running 3 baselines per system to fill out the L0/L1/L2 columns of the ablation table. Nous is **not** re-run — its results are imported from the existing campaign directories.
 
-For each system: nous results already exist in `~/Downloads/succesful_campaigns/<campaign>/`. We are NOT re-running nous. We are running the 4 baseline variants on the same research question, with the same iter budget, then re-judging the existing nous output alongside via the bench framework.
-
----
-
-## Pre-flight (do these once before any campaign runs)
-
-### 1. Push the judge code
-
-The 11-metric selectable judge (#295) and the new methodology.md are uncommitted. Commit + push to `origin/bench-framework` first — the campaign-yamls and experiment-yamls below will reference these.
-
-```bash
-cd /Users/naimaabrar/Desktop/nous/agentic-strategy-evolution
-git add bench/judge.py bench/judge_prompt.md bench/__main__.py \
-        bench/runner.py bench/report.py bench/methodology/methodology.md \
-        tests/test_bench_judge.py tests/test_bench_main.py \
-        tests/test_bench_report.py tests/test_bench_runner.py
-git commit -m "feat(bench): 11-metric selectable judge rubric + bench rejudge subcommand (#295)
-
-- judge_prompt.md is now a frame template; per-metric rubric language
-  lives in METRIC_RUBRICS in judge.py.
-- 11 metrics: correctness, completeness, novelty, coverage,
-  diagnostic_value, reproducibility, iter_coherence, principle_yield,
-  causal_explanation_depth, transferability, structured_artifact_production.
-- 6 named presets: default, ablation-single-iter, ablation-multi-iter,
-  case-study, transferability, minimal.
-- Selectable via --judge-metrics (csv) and/or --judge-preset.
-- iter_coherence auto-dropped on single-iter runs.
-- New 'bench rejudge' subcommand for re-judging existing results.json
-  without re-running variants.
-- JudgeScore.scores is now dict[str, int|None] for variable metrics.
-- Validation: rejudged phase4_iter3 under all 11 metrics across Sonnet (3x)
-  and Opus (1x). Rubric directionally captures structural-enforcement wins
-  for nous (reproducibility +3, structured_artifact +3, iter_coherence +2,
-  causal_depth +2) vs methodology's coverage win (-2 completeness, -1 coverage).
-
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
-git push origin bench-framework
-```
-
-### 2. Verify target repos exist locally
-
-The 4 campaigns reference paths from their original authors' machines (`/Users/toslali/...`, `/Users/jchen/...`, etc.). For our reruns, we need accessible target repos.
-
-| Campaign | Target | What we need |
+| Level | Variant | What gets passed to Claude |
 |---|---|---|
-| flow-control-reflective-v2 | BLIS / inference-sim | Use a known checkout. We've been using `~/Desktop/nous/inference-sim` for blis_prefix. Reuse if same commit, otherwise pin to a specific SHA. |
-| pd-disagg-validation | BLIS / inference-sim | Same as above |
-| blis-search-algo2 | BLIS / inference-sim | Same as above |
-| Graph-Coloring | github.com/...graph-coloring | Need to clone. Check the existing nous run's `inputs/` dir for a snapshot. |
-
-```bash
-# Verify BLIS checkout (reuse if exists)
-ls ~/Desktop/nous/inference-sim/ 2>/dev/null && echo "exists" || echo "missing — clone first"
-
-# For Graph-Coloring, check if there's a snapshot in the existing campaign
-ls ~/Downloads/succesful_campaigns/Graph-Coloring/graph-coloring-v1/inputs/ 2>/dev/null
-```
-
-If the BLIS commit needs to be pinned: each existing nous campaign records a `repo_sha` somewhere in its `state.json` or `runs/iter-1/` dir. Match that for fair comparison.
-
-### 3. Confirm the methodology.md change is intentional
-
-Current `bench/methodology/methodology.md` is the *short* version (~570 bytes, no required `## Principles` format).
-
-**Implication for `claude_methodology_loop`:** that variant's regex extracts a `## Principles` section from each iter's text answer to feed into the next iter's prompt. With the new methodology, the agent isn't required to emit that section, so the regex will likely return empty bullets across iters. **The variant degenerates to `claude_loop` with a methodology system prompt** — no principle compounding.
-
-This is a real design choice, not a bug. If intended (more realistic / less coupled to a strict format), keep it. If unintended, restore the strict-format requirement to methodology.md before running.
-
-For the paper's L2-vs-L3 claim, this change *strengthens* the result — methodology becomes a softer baseline, structural enforcement matters more.
+| **L0** | `claude_plain` | research question only — single session |
+| **L1** | `claude_methodology` | research question + `bench/methodology/methodology.md` as system prompt — single session |
+| **L2** | `claude_methodology_loop` | same as L1 but **N sessions**, with previous iters' "Key takeaways" pasted into each next prompt |
+| **Nous** | `nous` | full orchestrator (existing campaign result, imported via `bench import-nous`) |
 
 ---
 
-## Per-campaign experiment plan
+## Per-system parameters
 
-### Authoring pattern
+These come from the original nous campaign — **match these exactly when running baselines** so the comparison is fair.
 
-For each of the 4 systems below, you author 2 small files, then 1 CLI invocation runs all 4 baselines in parallel.
+| System | Use case | Iters | Model | Target repo | Source nous campaign |
+|---|---|---|---|---|---|
+| flink-torchserve | investigation | (existing) | Sonnet | flink + TorchServe pipeline | `~/Downloads/succesful_campaigns/flink-torchserve/` |
+| flow-control-reflective-v2 | evolution | **5** | Sonnet | inference-sim (BLIS) | `~/Downloads/succesful_campaigns/flow-control-reflective-v2/` |
+| pd-disagg-validation | verification | **5** | Sonnet | inference-sim (BLIS) | `~/Downloads/succesful_campaigns/pd-disagg-validation/` |
+| blis-search-algo2 | config search | **10** | Sonnet | inference-sim (BLIS) | `~/Downloads/succesful_campaigns/blis-search-algo2/` |
+| Graph-Coloring | algorithm discovery | **4** | Opus design + Sonnet execute (nous); Sonnet only (baselines) | graph-coloring repo | `~/Downloads/succesful_campaigns/Graph-Coloring/graph-coloring-v1/` |
 
-**File 1: `bench/campaigns/<campaign_id>.yaml`** — campaign definition (research question + target).
-**File 2: `bench/experiments/<experiment_id>.yaml`** — points at the campaign + lists variants + budget.
+**Note on Graph-Coloring models:** the original nous run used Opus for design and Sonnet for execute. Baselines (L0/L1/L2) use Sonnet only — that's the bench's default. Flag this in the paper write-up: nous gets a slight model advantage on this one campaign during its design phase.
 
-Then run:
+---
+
+## Pre-flight (do once)
+
+### Find the research question for each campaign
+
+Each campaign's research_question lives in its source `*.yaml`:
+
 ```bash
-python3 -m bench run bench/experiments/<experiment_id>.yaml \
-  --variants claude_plain,claude_loop,claude_methodology,claude_methodology_loop \
-  --max-iterations <N> \
-  --judge-preset ablation-multi-iter \
-  --run-id ablation_<campaign>_baselines
+ls ~/Downloads/succesful_campaigns/<campaign>/*.yaml
+# Look at the `research_question:` field — copy it verbatim into your bench campaign yaml
 ```
 
-`--max-iterations N` matches nous's actual iter count for that campaign (see Status table above).
+The exact sources:
+- `flow-control-reflective-v2/campaign.yaml`
+- `pd-disagg-validation/pd-disagg-campaign.yaml`
+- `blis-search-algo2/campaign-3.yaml`
+- `Graph-Coloring/graph_coloring_campaign.yaml`
 
-`--judge-preset ablation-multi-iter` selects the 8-metric subset (correctness, completeness, novelty, coverage, diagnostic_value, iter_coherence, principle_yield, structured_artifact_production) — the metrics that defend the paper's structural-enforcement claim.
+### Resolve the target repo path
 
-`--variants ...` lists all 4 baselines (omits nous — its results live separately in `~/Downloads/succesful_campaigns/`).
+The nous campaigns reference the original authors' machine paths (`/Users/toslali/...`, etc.). For the BLIS-based campaigns, point at one canonical local checkout (e.g. `~/Desktop/nous/inference-sim`). For Graph-Coloring, clone the graph-coloring repo or use the snapshot the original campaign captured under `inputs/`.
 
-### Campaign 1 — flow-control-reflective-v2
+---
 
-**Use case:** evolution (policy search).
+## How to run one campaign
 
-**Source nous run:** `~/Downloads/succesful_campaigns/flow-control-reflective-v2/`. 5 iters completed.
+For each system, you author 2 small files then run 1 CLI invocation.
 
-**Research question (verbatim from campaign.yaml):**
-> "Can we discover a per-band dispatch ceiling policy that is parameter-free (no user-tuned thresholds) and automatically prioritizes high-priority requests as load increases — reducing critical-band tail latency with at most 10% overall throughput reduction (≤10% is acceptable)? The policy must be simple enough to migrate into llm-d as a drop-in UsageLimitPolicy plugin..."
-> [full text — copy from `~/Downloads/succesful_campaigns/flow-control-reflective-v2/campaign.yaml`]
+### File 1 — `bench/campaigns/<campaign_id>.yaml`
 
-**Setup files to author:**
-
-`bench/campaigns/flow_control_v2.yaml`:
 ```yaml
-id: flow_control_v2
+id: <campaign_id>           # e.g. flow_control_v2
 research_question: |
-  [paste full RQ from source campaign.yaml]
-target_repo: ~/Desktop/nous/inference-sim
-target_ref: <same commit nous used — check source state.json>
+  <paste verbatim from the source nous campaign yaml>
+target_repo: <local path>
+target_ref: <commit SHA — match nous's, or use main if not pinned>
 ```
 
-`bench/experiments/ablation_flow_control_v2.yaml`:
+### File 2 — `bench/experiments/ablation_<campaign_id>.yaml`
+
 ```yaml
-id: ablation_flow_control_v2
-campaign: flow_control_v2
+id: ablation_<campaign_id>
+campaign: <campaign_id>
 variants:
   - claude_plain
-  - claude_loop
   - claude_methodology
   - claude_methodology_loop
 budget:
   max_tokens: 1000000
-  max_iterations: 5    # match nous's actual iter count
-  max_wall_seconds: 7200
-```
-
-**Run:**
-```bash
-python3 -m bench run bench/experiments/ablation_flow_control_v2.yaml \
-  --judge-preset ablation-multi-iter \
-  --run-id ablation_flow_control_v2_baselines
-```
-
-**Expected cost:** ~$30-60 across the 4 baselines at iter=5. Rough breakdown: claude_plain ~$3, claude_loop ~$15 (5 iters), claude_methodology ~$5, claude_methodology_loop ~$25.
-
-**Wall:** ~60-90 min in parallel.
-
-**After running, where to look:**
-- `runs/ablation_flow_control_v2_baselines/results.json` — per-variant judge scores
-- `runs/ablation_flow_control_v2_baselines/report.md` — rendered table
-- For nous comparison: rejudge the existing nous output under the same metric set:
-  ```bash
-  # First, build a synthetic results.json from the existing nous artifacts
-  # (manual — there's no auto-import yet; copy nous's report.md as final_answer)
-  python3 -m bench rejudge runs/ablation_flow_control_v2_nous/results.json \
-    --judge-preset ablation-multi-iter --multi-iter
-  ```
-
----
-
-### Campaign 2 — pd-disagg-validation
-
-**Use case:** verification of human-designed algorithm.
-
-**Source nous run:** `~/Downloads/succesful_campaigns/pd-disagg-validation/output_dir/`. 4 iters completed.
-
-**Research question:** validates "When to Disaggregate" paper predictions on BLIS — closed-form ITL/TTFT for Always-Local, Always-Disaggregate, Stationary-Randomized, and Drift-Plus-Penalty policies. Full text in source `pd-disagg-campaign.yaml`.
-
-**Setup files:**
-
-`bench/campaigns/pd_disagg.yaml`:
-```yaml
-id: pd_disagg
-research_question: |
-  [paste full RQ from source campaign yaml — large, multi-paragraph]
-target_repo: ~/Desktop/nous/inference-sim
-target_ref: <commit nous used>
-```
-
-`bench/experiments/ablation_pd_disagg.yaml`:
-```yaml
-id: ablation_pd_disagg
-campaign: pd_disagg
-variants:
-  - claude_plain
-  - claude_loop
-  - claude_methodology
-  - claude_methodology_loop
-budget:
-  max_tokens: 1000000
-  max_iterations: 4
-  max_wall_seconds: 7200
-```
-
-**Run:**
-```bash
-python3 -m bench run bench/experiments/ablation_pd_disagg.yaml \
-  --judge-preset ablation-multi-iter \
-  --run-id ablation_pd_disagg_baselines
-```
-
-**Expected cost:** ~$25-50 at iter=4. **Wall:** ~50-75 min.
-
-**Where to look after:** `runs/ablation_pd_disagg_baselines/results.json` + `report.md`.
-
----
-
-### Campaign 3 — blis-search-algo2
-
-**Use case:** multi-objective configuration search.
-
-**Source nous run:** `~/Downloads/succesful_campaigns/blis-search-algo2/`. 9 iters completed (campaign.yaml says max=10 but state.json shows iter=9 was the terminal).
-
-**Research question:** design a generic multi-objective configuration search algorithm for BLIS that discovers Pareto-optimal configs efficiently, with hypervolume ratio ≥95% of exhaustive search within 3 minutes wall time. Iteration strategy specified per-iter (iter 1: random search baseline; later: refinement + portability).
-
-**Setup files:**
-
-`bench/campaigns/blis_search.yaml`:
-```yaml
-id: blis_search
-research_question: |
-  [paste from source campaign-3.yaml]
-target_repo: ~/Desktop/nous/inference-sim
-target_ref: <commit nous used>
-```
-
-`bench/experiments/ablation_blis_search.yaml`:
-```yaml
-id: ablation_blis_search
-campaign: blis_search
-variants:
-  - claude_plain
-  - claude_loop
-  - claude_methodology
-  - claude_methodology_loop
-budget:
-  max_tokens: 2000000   # higher because of 9 iters
-  max_iterations: 9
+  max_iterations: <N>          # match the iter count from the table above
   max_wall_seconds: 14400
 ```
 
-**Run:**
+### Run
+
 ```bash
-python3 -m bench run bench/experiments/ablation_blis_search.yaml \
+python3 -m bench run bench/experiments/ablation_<campaign_id>.yaml \
   --judge-preset ablation-multi-iter \
-  --run-id ablation_blis_search_baselines
+  --run-id ablation_<campaign_id>_baselines
 ```
 
-**Expected cost:** ~$60-100 at iter=9. This is the most expensive of the four. **Wall:** ~3-5 hrs.
-
-**Note:** at 9 iters, claude_methodology_loop is the variant most likely to challenge nous (per-paper-claim test). Watch its iter logs for evidence of cross-iter contradiction or principle drift.
-
-**Where to look after:** `runs/ablation_blis_search_baselines/`.
+The 3 baselines run in parallel. Variant scores under the 8-metric `ablation-multi-iter` preset land in `runs/ablation_<campaign_id>_baselines/results.json`.
 
 ---
 
-### Campaign 4 — Graph-Coloring
+## After the baseline run — bring nous in for comparison
 
-**Use case:** algorithm discovery (non-systems domain — important for breadth claim).
-
-**Source nous run:** `~/Downloads/succesful_campaigns/Graph-Coloring/graph-coloring-v1/`. 5 iters completed (yaml says max=8).
-
-**Note: this campaign used Opus for design, Sonnet for execute** in the original nous run. Our baselines use Sonnet only. This is intentional — the ablation tests prompt-vs-orchestrator at fixed model, not model variation. But flag this in the paper write-up so reviewers know.
-
-**Research question:** vertex ordering and color-selection heuristics for greedy graph coloring on the DIMACS benchmark suite — and whether gains compound super-additively when combined.
-
-**Target repo:** the original `repo_path` was `/Users/tamareilam2022/workprojects/graph-coloring`. We need a working checkout. Check the existing nous campaign's `inputs/` dir for a snapshot, or clone from upstream if known.
-
-**Setup files:**
-
-`bench/campaigns/graph_coloring.yaml`:
-```yaml
-id: graph_coloring
-research_question: |
-  Which vertex ordering and color-selection heuristics most reduce the number
-  of colors used by the greedy graph coloring algorithm across the DIMACS
-  benchmark suite, and do the gains compound (super-additively) when
-  combined — without exceeding the per-graph time budget?
-target_repo: <path to graph-coloring checkout>
-target_ref: <commit>
-```
-
-`bench/experiments/ablation_graph_coloring.yaml`:
-```yaml
-id: ablation_graph_coloring
-campaign: graph_coloring
-variants:
-  - claude_plain
-  - claude_loop
-  - claude_methodology
-  - claude_methodology_loop
-budget:
-  max_tokens: 1000000
-  max_iterations: 5
-  max_wall_seconds: 7200
-```
-
-**Run:**
-```bash
-python3 -m bench run bench/experiments/ablation_graph_coloring.yaml \
-  --judge-preset ablation-multi-iter \
-  --run-id ablation_graph_coloring_baselines
-```
-
-**Expected cost:** ~$25-50 at iter=5. **Wall:** ~50-75 min.
-
-**Where to look after:** `runs/ablation_graph_coloring_baselines/`.
-
----
-
-## Total budget estimate
-
-| Campaign | iters | est. cost | est. wall |
-|---|---|---|---|
-| flow-control-reflective-v2 | 5 | $30-60 | ~75 min |
-| pd-disagg-validation | 4 | $25-50 | ~60 min |
-| blis-search-algo2 | 9 | $60-100 | ~4 hrs |
-| Graph-Coloring | 5 | $25-50 | ~75 min |
-| **Total (sequential)** | | **$140-260** | **~7 hrs** |
-| **Total (parallel by campaign)** | | same $ | ~4 hrs (slowest = blis-search) |
-
-Run all four campaigns in parallel using separate `bench run` invocations in different terminals or via background tasks.
-
----
-
-## After-run analysis
-
-Once all 4 baseline runs complete:
-
-### 1. Rejudge each nous campaign under the same 8-metric rubric
-
-For each existing nous campaign in `~/Downloads/succesful_campaigns/`, build a synthetic `results.json` matching the bench schema (manually copy nous's `report.md` text into a `final_answer` field for the nous variant), then rejudge:
+The baselines `results.json` only has L0/L1/L2. Pull nous's existing campaign output into the same shape and merge:
 
 ```bash
-python3 -m bench rejudge runs/ablation_<campaign>_nous_synthetic/results.json \
+python3 -m bench import-nous \
+  ~/Downloads/succesful_campaigns/<source_campaign_dir> \
+  --merge-baselines runs/ablation_<campaign_id>_baselines/results.json \
+  --out runs/ablation_<campaign_id>_combined/results.json
+```
+
+Then rejudge the combined 4-variant set under the same rubric:
+
+```bash
+python3 -m bench rejudge runs/ablation_<campaign_id>_combined/results.json \
   --judge-preset ablation-multi-iter --multi-iter
 ```
 
-This gives a directly-comparable nous score on the same metrics as the baselines.
+The rejudged file (`results.rejudged.json` next to the input) has all 4 variants scored under the same 8-metric rubric — that's your ablation row for this system.
 
-### 2. Build the Section 5.1 ablation table
+---
 
-For each system, one row × 4 levels × 8 metrics. Pull from each `runs/ablation_<campaign>_baselines/results.json`:
+## Where to look after each run
+
+| File | What's in it |
+|---|---|
+| `runs/ablation_<id>_baselines/results.json` | L0/L1/L2 raw scores |
+| `runs/ablation_<id>_baselines/report.md` | rendered table for the 3 baselines |
+| `runs/ablation_<id>_baselines/<variant>/workspace/.bench-*.log` | per-variant transcript (use to identify L0 failure modes) |
+| `runs/ablation_<id>_combined/results.json` | merged set with nous |
+| `runs/ablation_<id>_combined/results.rejudged.json` | final 4-variant scores, all under the same rubric |
+
+---
+
+## Building the Section 5.1 ablation table
+
+After all 5 systems' rejudged results are in, pull the table:
 
 ```bash
 python3 -c "
@@ -360,9 +141,10 @@ import json, glob
 metrics = ['correctness','completeness','novelty','coverage','diagnostic_value',
            'iter_coherence','principle_yield','structured_artifact_production']
 print('| System | Variant | ' + ' | '.join(metrics) + ' | Sum |')
-for f in sorted(glob.glob('runs/ablation_*_baselines/results.json')):
+print('|' + '---|' * (len(metrics) + 3))
+for f in sorted(glob.glob('runs/ablation_*_combined/results.rejudged.json')):
     r = json.load(open(f))
-    system = r['run_id'].replace('ablation_','').replace('_baselines','')
+    system = r['run_id'].replace('ablation_','').replace('_combined','')
     for v in r['variants']:
         scores = v.get('judge_scores', {})
         row = [str(scores.get(m,'?')) for m in metrics]
@@ -371,32 +153,18 @@ for f in sorted(glob.glob('runs/ablation_*_baselines/results.json')):
 "
 ```
 
-### 3. Pull qualitative L0 failure modes
+---
 
-For each `runs/ablation_<campaign>_baselines/`, read `claude_plain/workspace/.bench-claude_plain.log` to see what L0 actually claimed. Categorize the failure mode per the paper's table:
+## L0 failure mode (qualitative column)
+
+For each system, read `runs/ablation_<id>_baselines/claude_plain/workspace/.bench-claude_plain.log` and categorize what L0 actually got wrong. Per the paper outline, expected failure modes per system:
 
 | System | L0 failure mode |
 |---|---|
-| flow-control | doesn't generalize |
-| pd-disagg | premature confirmation |
-| blis-search | self-contradicting |
+| flink-torchserve | confidently wrong |
+| flow-control-reflective-v2 | doesn't generalize |
+| pd-disagg-validation | premature confirmation |
+| blis-search-algo2 | self-contradicting |
 | Graph-Coloring | textbook default |
-| flink | confidently wrong |
 
-That qualitative column belongs in the Section 5.1 table alongside the score columns.
-
-### 4. Compare iter-by-iter coherence (L1/L2/L3)
-
-For multi-iter variants (claude_loop, claude_methodology_loop, nous), pull each iter's claims from the iter logs / findings.json and check for contradictions across iters. This backs the intro's "L1/L2 contradict by iter 4" claim. The new judge's `iter_coherence` axis will already score this — the manual check is for the qualitative paper write-up.
-
----
-
-## Open questions
-
-1. **methodology.md scope.** The new short methodology (570 bytes) breaks claude_methodology_loop's principle-extraction regex. Should we keep it short (and let meth_loop degenerate to "loop with methodology system prompt") or restore the strict `## Principles` requirement?
-
-2. **target_repo paths.** Each source campaign uses a path from the original author's machine. Need to either (a) reuse a single canonical checkout for all 3 BLIS campaigns, or (b) match each campaign's exact commit. Recommendation: (a) for simplicity, (b) only if a campaign's RQ depends on a specific commit's behavior.
-
-3. **Graph-Coloring repo.** Need to locate or clone the graph-coloring repo. Existing nous campaign's `inputs/` dir might have a snapshot.
-
-4. **Synthetic nous result.json for rejudging.** Right now `bench rejudge` works on a `results.json` produced by `bench run`. The existing nous campaigns have a different artifact layout. We need a small import script that reads `~/Downloads/succesful_campaigns/<campaign>/` and produces a bench-compatible `results.json` so the rejudge command lines up. ~1 hr of work; should add as a tiny sub-issue or do inline before running.
+This goes in the table next to the score columns.
