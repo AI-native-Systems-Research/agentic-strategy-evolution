@@ -23,11 +23,11 @@ These come from the original nous campaign — **match these exactly when runnin
 
 | System | Use case | Iters | Model | Target repo | Source nous campaign |
 |---|---|---|---|---|---|
-| flink-torchserve | investigation | (existing) | Sonnet | flink + TorchServe pipeline | `~/Downloads/succesful_campaigns/flink-torchserve/` |
-| flow-control-reflective-v2 | evolution | **5** | Sonnet | inference-sim (BLIS) | `~/Downloads/succesful_campaigns/flow-control-reflective-v2/` |
-| pd-disagg-validation | verification | **5** | Sonnet | inference-sim (BLIS) | `~/Downloads/succesful_campaigns/pd-disagg-validation/` |
-| blis-search-algo2 | config search | **10** | Sonnet | inference-sim (BLIS) | `~/Downloads/succesful_campaigns/blis-search-algo2/` |
-| Graph-Coloring | algorithm discovery | **4** | Opus design + Sonnet execute (nous); Sonnet only (baselines) | graph-coloring repo | `~/Downloads/succesful_campaigns/Graph-Coloring/graph-coloring-v1/` |
+| flink-torchserve | investigation | (existing) | Sonnet | flink + TorchServe pipeline | `$BENCH_NOUS_CAMPAIGNS/flink-torchserve/` |
+| flow-control-reflective-v2 | evolution | **5** | Sonnet | inference-sim (BLIS) | `$BENCH_NOUS_CAMPAIGNS/flow-control-reflective-v2/` |
+| pd-disagg-validation | verification | **5** | Sonnet | inference-sim (BLIS) | `$BENCH_NOUS_CAMPAIGNS/pd-disagg-validation/` |
+| blis-search-algo2 | config search | **10** | Sonnet | inference-sim (BLIS) | `$BENCH_NOUS_CAMPAIGNS/blis-search-algo2/` |
+| Graph-Coloring | algorithm discovery | **4** | Opus design + Sonnet execute (nous); Sonnet only (baselines) | graph-coloring repo | `$BENCH_NOUS_CAMPAIGNS/Graph-Coloring/graph-coloring-v1/` |
 
 **Note on Graph-Coloring models:** the original nous run used Opus for design and Sonnet for execute. Baselines (L0/L1/L2) use Sonnet only — that's the bench's default. Flag this in the paper write-up: nous gets a slight model advantage on this one campaign during its design phase.
 
@@ -35,24 +35,56 @@ These come from the original nous campaign — **match these exactly when runnin
 
 ## Pre-flight (do once)
 
-### Find the research question for each campaign
+You'll need three things on your machine before running:
 
-Each campaign's research_question lives in its source `*.yaml`:
+1. **The 5 source nous campaign directories** (the existing nous results we're comparing against).
+2. **Local clones of the target repos** the campaigns investigate.
+3. **Two environment variables** pointing at #1 and the BLIS clone, so the commands below stay machine-agnostic.
+
+### 1. Locate the source nous campaigns
+
+The 5 source campaigns are the existing nous runs we're comparing baselines to. They are not regenerated. Get a copy of the directory structure and put it anywhere on your machine; export the parent path so the rest of this doc works without edits:
 
 ```bash
-ls ~/Downloads/succesful_campaigns/<campaign>/*.yaml
-# Look at the `research_question:` field — copy it verbatim into your bench campaign yaml
+export BENCH_NOUS_CAMPAIGNS=/path/to/your/copy/of/succesful_campaigns
+ls "$BENCH_NOUS_CAMPAIGNS"
+# Should show: flow-control-reflective-v2  pd-disagg-validation  blis-search-algo2
+#              Graph-Coloring  flink-torchserve  ...
 ```
 
-The exact sources:
-- `flow-control-reflective-v2/campaign.yaml`
-- `pd-disagg-validation/pd-disagg-campaign.yaml`
-- `blis-search-algo2/campaign-3.yaml`
-- `Graph-Coloring/graph_coloring_campaign.yaml`
+The campaign yamls inside each directory carry the source research_question:
 
-### Resolve the target repo path
+| Campaign | Source yaml inside `$BENCH_NOUS_CAMPAIGNS/<campaign>/` |
+|---|---|
+| flow-control-reflective-v2 | `campaign.yaml` |
+| pd-disagg-validation | `pd-disagg-campaign.yaml` |
+| blis-search-algo2 | `campaign-3.yaml` |
+| Graph-Coloring | `graph_coloring_campaign.yaml` |
+| flink-torchserve | (filename varies — `ls` to find the .yaml) |
 
-The nous campaigns reference the original authors' machine paths (`/Users/toslali/...`, etc.). For the BLIS-based campaigns, point at one canonical local checkout (e.g. `~/Desktop/nous/inference-sim`). For Graph-Coloring, clone the graph-coloring repo or use the snapshot the original campaign captured under `inputs/`.
+### 2. Clone the target repos
+
+Each campaign investigates a real codebase. Clone these once, anywhere on your machine — the bench reads the path you give it and clones a fresh worktree per variant.
+
+```bash
+# BLIS / inference-sim — used by 3 campaigns (flow-control-reflective-v2,
+# pd-disagg-validation, blis-search-algo2)
+git clone <inference-sim repo url> /your/local/path/inference-sim
+export BENCH_BLIS_REPO=/your/local/path/inference-sim
+
+# Graph-Coloring — Python greedy graph coloring on DIMACS
+# If you don't have the repo url, the existing nous campaign captured
+# a snapshot under "$BENCH_NOUS_CAMPAIGNS/Graph-Coloring/graph-coloring-v1/inputs/"
+# — copy that to a writable directory.
+git clone <graph-coloring repo url> /your/local/path/graph-coloring
+export BENCH_GRAPH_COLORING_REPO=/your/local/path/graph-coloring
+
+# flink-torchserve — pipeline used by the flink-torchserve campaign
+git clone <flink-torchserve repo url> /your/local/path/flink-torchserve
+export BENCH_FLINK_REPO=/your/local/path/flink-torchserve
+```
+
+In each `bench/campaigns/<id>.yaml`, set `target_repo:` to one of the env-var-resolved paths (or hardcode your local path — both work; the env var convention just keeps the doc reproducible across machines).
 
 ---
 
@@ -103,7 +135,7 @@ The baselines `results.json` only has L0/L1/L2. Pull nous's existing campaign ou
 
 ```bash
 python3 -m bench import-nous \
-  ~/Downloads/succesful_campaigns/<source_campaign_dir> \
+  "$BENCH_NOUS_CAMPAIGNS/<source_campaign_dir>" \
   --merge-baselines runs/ablation_<campaign_id>_baselines/results.json \
   --out runs/ablation_<campaign_id>_combined/results.json
 ```

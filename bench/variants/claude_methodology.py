@@ -1,12 +1,16 @@
-"""claude_methodology variant — single Claude session with methodology.md as
-system prompt.
+"""claude_methodology variant — single Claude session with scientific
+methodology guidance inlined in the user prompt.
 
-The L1 baseline. Tests whether nous's methodology delivered as a prompt
-produces the same outcomes as nous's methodology delivered through
-orchestration. If this scores close to ``nous``, the orchestrator is "just
-prompt engineering"; if it underperforms — especially on artifact validity —
-nous's structural guarantees (schema enforcement, deterministic phases, etc.)
-are doing real work.
+The L1 baseline. Tests whether telling the agent to be scientific (form
+hypotheses, run controlled experiments, etc.) — delivered as part of the
+single user message, the way an engineer would paste it — produces
+better outcomes than no guidance at all (L0).
+
+Methodology guidance lives in `bench/methodology/methodology.md` and is
+read at run time. We inline it in the user prompt rather than passing it
+as `--append-system-prompt`: the methodology references the research
+question contextually, and the agent reads it the same way an engineer
+would receive it (one message, problem + how-to-think-about-it).
 """
 from __future__ import annotations
 
@@ -21,6 +25,16 @@ from bench.variants._claude_common import (
 from bench.variants.base import Budget, Campaign, VariantResult
 
 METHODOLOGY_PATH = Path(__file__).parent.parent / "methodology" / "methodology.md"
+
+
+def _build_l1_prompt(research_question: str, methodology: str) -> str:
+    """L1 user prompt: research question + methodology bullets + closing
+    'report your findings' instruction."""
+    return (
+        f"{research_question}\n\n"
+        f"{methodology.rstrip()}\n\n"
+        f"Report your findings with the evidence that supports them."
+    )
 
 
 class ClaudeMethodologyVariant:
@@ -58,11 +72,10 @@ class ClaudeMethodologyVariant:
 
         methodology = METHODOLOGY_PATH.read_text()
         inv = ClaudeInvocation(
-            question=campaign.research_question,
+            question=_build_l1_prompt(campaign.research_question, methodology),
             workspace=workspace,
             budget=budget,
             log_path=log_path,
-            system_prompt=methodology,
         )
         result = invoke_claude(inv)
         return variant_result_from(
