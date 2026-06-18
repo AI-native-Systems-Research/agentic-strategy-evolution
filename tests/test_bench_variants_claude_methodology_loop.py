@@ -17,6 +17,7 @@ from bench.variants.base import Budget, Campaign
 from bench.variants.claude_methodology_loop import (
     ClaudeMethodologyLoopVariant,
     _extract_principles,
+    _extract_takeaways,
     _strip_code_blocks,
 )
 
@@ -421,6 +422,170 @@ def test_max_iterations_zero_makes_no_calls(monkeypatch, tmp_path):
     assert result.tokens_out == 0
     assert result.crashed is False
     assert result.final_answer == ""
+
+
+# --- _extract_takeaways: new heading variants (Option B) ---
+
+
+def test_extract_takeaways_recognises_key_takeaways_heading():
+    text = "## Key takeaways\n- A learning\n- Another learning\n"
+    out = _extract_takeaways(text)
+    assert len(out) == 2
+    assert "A learning" in out[0]
+
+
+def test_extract_takeaways_recognises_takeaways_heading():
+    text = "## Takeaways\n- A learning\n"
+    out = _extract_takeaways(text)
+    assert len(out) == 1
+
+
+def test_extract_takeaways_recognises_what_i_learned_heading():
+    text = "## What I learned\n- A learning\n"
+    out = _extract_takeaways(text)
+    assert len(out) == 1
+
+
+def test_extract_takeaways_recognises_lessons_learned_heading():
+    text = "## Lessons Learned\n- A learning\n"
+    out = _extract_takeaways(text)
+    assert len(out) == 1
+
+
+def test_extract_takeaways_recognises_key_findings_heading():
+    text = "## Key Findings\n- A learning\n"
+    out = _extract_takeaways(text)
+    assert len(out) == 1
+
+
+def test_extract_takeaways_recognises_summary_heading():
+    text = "## Summary\n- A learning\n"
+    out = _extract_takeaways(text)
+    assert len(out) == 1
+
+
+def test_extract_takeaways_recognises_principles_heading_for_back_compat():
+    """Old-style methodology output (## Principles) still works."""
+    text = "## Principles\n- A learning\n"
+    out = _extract_takeaways(text)
+    assert len(out) == 1
+
+
+def test_extract_takeaways_recognises_full_phrase_with_iteration_suffix():
+    """Methodology says 'Key takeaways from this iteration' — the regex
+    must match even with the trailing words."""
+    text = "## Key takeaways from this iteration\n- A learning\n"
+    out = _extract_takeaways(text)
+    assert len(out) == 1
+
+
+def test_extract_takeaways_alias_matches_extract_principles():
+    """Backward-compat alias keeps old imports working."""
+    text = "## Key takeaways\n- A learning\n"
+    assert _extract_principles(text) == _extract_takeaways(text)
+
+
+def test_extract_takeaways_does_not_match_unrelated_headings():
+    """A heading like 'Conclusion' or 'Background' must not trigger extraction."""
+    text = "## Conclusion\n- Not a takeaway\n"
+    out = _extract_takeaways(text)
+    assert out == []
+
+
+def test_extract_takeaways_empty_section_returns_empty_list():
+    """Heading present but no bullets — same fallback behaviour as before."""
+    text = "## Key takeaways\n\nSome prose without bullets.\n"
+    out = _extract_takeaways(text)
+    assert out == []
+
+
+def test_extract_takeaways_drops_t_id_prefix():
+    """[T1] / [t-2] style ID prefixes get stripped from bullet content,
+    same as the old [P1] handling."""
+    text = "## Key takeaways\n- [T1] First learning\n- [T2] Second learning\n"
+    out = _extract_takeaways(text)
+    assert out[0] == "First learning"
+    assert out[1] == "Second learning"
+
+
+# --- run() Option B fallback: full prior answer when extraction empty ---
+
+
+def test_run_falls_back_to_full_prior_answer_when_no_takeaways(monkeypatch, tmp_path):
+    """If iter-1 emits no takeaways section, iter-2's prompt should
+    contain the full iter-1 answer text (claude_loop-style fallback) —
+    NOT just the original research question alone."""
+    fake_methodology = tmp_path / "methodology.md"
+    fake_methodology.write_text("body")
+    monkeypatch.setattr(cml, "METHODOLOGY_PATH", fake_methodology)
+
+    iter1_answer = "I worked on the problem but didn't write a takeaways section."
+    fake, captured = _make_invoke_recorder([
+        _ok(iter1_answer),
+        _ok("iter 2 result"),
+    ])
+    monkeypatch.setattr(cml, "invoke_claude", fake)
+
+    variant = ClaudeMethodologyLoopVariant()
+    variant.run(_campaign(), tmp_path, _budget(max_iterations=2))
+
+    iter2_q = captured["invocations"][1].question
+    # Full prior answer is in the prompt (fallback path)
+    assert "didn't write a takeaways section" in iter2_q
+    # Original question is also there
+    assert "Does X reduce Y?" in iter2_q
+    # Prompt acknowledges this is a continuation
+    assert "Previous attempt" in iter2_q or "Continue refining" in iter2_q
+
+
+def test_run_uses_takeaways_when_present_not_full_answer(monkeypatch, tmp_path):
+    """If iter-1 emits a takeaways section, iter-2's prompt prepends
+    the extracted takeaways — NOT the full iter-1 answer dumped in."""
+    fake_methodology = tmp_path / "methodology.md"
+    fake_methodology.write_text("body")
+    monkeypatch.setattr(cml, "METHODOLOGY_PATH", fake_methodology)
+
+    iter1_answer = (
+        "Long preamble about everything I tried and explored.\n\n"
+        "## Key takeaways\n"
+        "- TAKEAWAY_BULLET_ONE\n"
+        "- TAKEAWAY_BULLET_TWO\n"
+    )
+    fake, captured = _make_invoke_recorder([
+        _ok(iter1_answer),
+        _ok("iter 2"),
+    ])
+    monkeypatch.setattr(cml, "invoke_claude", fake)
+
+    variant = ClaudeMethodologyLoopVariant()
+    variant.run(_campaign(), tmp_path, _budget(max_iterations=2))
+
+    iter2_q = captured["invocations"][1].question
+    assert "TAKEAWAY_BULLET_ONE" in iter2_q
+    assert "TAKEAWAY_BULLET_TWO" in iter2_q
+    # Full prior answer is NOT dumped in — that would defeat the purpose of
+    # the takeaway carry-forward (and would be the claude_loop fallback path)
+    assert "Long preamble about everything" not in iter2_q
+    # Prompt uses the new wording
+    assert "Key takeaways from previous iterations" in iter2_q
+
+
+def test_run_first_iter_prompt_includes_takeaways_request(monkeypatch, tmp_path):
+    """Iter-1's prompt should ask the agent to end with a takeaways section
+    (so the L2 carry-forward mechanism has something to extract). This is
+    the user-prompt-level reinforcement of the methodology system prompt."""
+    fake_methodology = tmp_path / "methodology.md"
+    fake_methodology.write_text("body")
+    monkeypatch.setattr(cml, "METHODOLOGY_PATH", fake_methodology)
+    fake, captured = _make_invoke_recorder([_ok()])
+    monkeypatch.setattr(cml, "invoke_claude", fake)
+
+    variant = ClaudeMethodologyLoopVariant()
+    variant.run(_campaign(), tmp_path, _budget(max_iterations=1))
+
+    # Iter-1 just gets the bare research question — methodology system prompt
+    # is what asks for takeaways. This documents the design.
+    assert captured["invocations"][0].question == "Does X reduce Y?"
 
 
 def test_run_per_iter_log_paths_distinct(monkeypatch, tmp_path):
