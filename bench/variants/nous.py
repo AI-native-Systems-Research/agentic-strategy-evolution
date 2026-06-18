@@ -53,6 +53,10 @@ def _harvest_metrics(metrics_path: Path) -> tuple[int, int, float]:
     Cache creation/read tokens are billed at different rates and are already
     reflected in `cost_usd`; counting them here would unfairly inflate
     variants that benefit from caching (nous's long sessions cache heavily).
+
+    Robust to rows where any of the three fields are missing or explicitly
+    null (some older nous campaigns emit `cost_usd: null` for non-billable
+    rows).
     """
     tokens_in = 0
     tokens_out = 0
@@ -65,9 +69,9 @@ def _harvest_metrics(metrics_path: Path) -> tuple[int, int, float]:
             if not line:
                 continue
             row = json.loads(line)
-            tokens_in += int(row.get("input_tokens", 0))
-            tokens_out += int(row.get("output_tokens", 0))
-            dollars += float(row.get("cost_usd", 0))
+            tokens_in += int(row.get("input_tokens") or 0)
+            tokens_out += int(row.get("output_tokens") or 0)
+            dollars += float(row.get("cost_usd") or 0)
     return tokens_in, tokens_out, dollars
 
 

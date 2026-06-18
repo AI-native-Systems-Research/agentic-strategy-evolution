@@ -265,7 +265,7 @@ def test_run_experiment_skip_judge_omits_judge_usage(
         combined = json.load(f)
     assert "judge_usage" not in combined
     for v in combined["variants"]:
-        assert "judge_correctness" not in v
+        assert "judge_scores" not in v
 
 
 def test_run_experiment_judge_runs_by_default_and_attaches_scores(
@@ -276,8 +276,17 @@ def test_run_experiment_judge_runs_by_default_and_attaches_scores(
     from bench.judge import JudgeOutcome, JudgeScore
 
     def _fake_run_judge(question, results, *args, **kwargs):
+        metrics = ["correctness", "completeness"]
         return JudgeOutcome(
-            scores=[JudgeScore(r.variant, 7, 6, "looks fine") for r in results],
+            scores=[
+                JudgeScore(
+                    variant=r.variant,
+                    scores={"correctness": 7, "completeness": 6},
+                    rationale="looks fine",
+                )
+                for r in results
+            ],
+            metrics=metrics,
             tokens_in=100, tokens_out=20, dollars=0.05,
             crashed=False, error=None,
         )
@@ -292,8 +301,9 @@ def test_run_experiment_judge_runs_by_default_and_attaches_scores(
         combined = json.load(f)
     assert combined["judge_usage"]["dollars"] == 0.05
     assert combined["judge_usage"]["crashed"] is False
-    assert combined["variants"][0]["judge_correctness"] == 7
-    assert combined["variants"][0]["judge_completeness"] == 6
+    assert combined["judge_usage"]["metrics"] == ["correctness", "completeness"]
+    assert combined["variants"][0]["judge_scores"]["correctness"] == 7
+    assert combined["variants"][0]["judge_scores"]["completeness"] == 6
     assert combined["variants"][0]["judge_rationale"] == "looks fine"
 
 

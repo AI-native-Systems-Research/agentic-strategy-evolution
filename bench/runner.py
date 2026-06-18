@@ -141,6 +141,9 @@ def run_experiment(
     run_id: str | None = None,
     max_parallel_variants: int | None = None,
     skip_judge: bool = False,
+    judge_metrics: list[str] | None = None,
+    judge_preset: str | None = None,
+    judge_model: str | None = None,
 ) -> Path:
     """Run an experiment end-to-end. Returns the run directory path."""
     experiment_path = Path(experiment_path).resolve()
@@ -197,8 +200,16 @@ def run_experiment(
 
     judge_outcome = None
     if not skip_judge:
+        is_multi_iter = experiment.budget.max_iterations > 1
+        judge_kwargs: dict[str, Any] = {
+            "metrics": judge_metrics,
+            "preset": judge_preset,
+            "is_multi_iter": is_multi_iter,
+        }
+        if judge_model is not None:
+            judge_kwargs["model"] = judge_model
         judge_outcome = judge_mod.run_judge(
-            experiment.campaign.research_question, results
+            experiment.campaign.research_question, results, **judge_kwargs
         )
 
     ended_at = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -209,12 +220,10 @@ def run_experiment(
         for v in variant_dicts:
             score = scores_by_variant.get(v["variant"])
             if score is None:
-                v["judge_correctness"] = None
-                v["judge_completeness"] = None
+                v["judge_scores"] = {m: None for m in judge_outcome.metrics}
                 v["judge_rationale"] = ""
             else:
-                v["judge_correctness"] = score.correctness
-                v["judge_completeness"] = score.completeness
+                v["judge_scores"] = dict(score.scores)
                 v["judge_rationale"] = score.rationale
 
     combined: dict[str, Any] = {
@@ -233,6 +242,7 @@ def run_experiment(
             "dollars": judge_outcome.dollars,
             "crashed": judge_outcome.crashed,
             "error": judge_outcome.error,
+            "metrics": judge_outcome.metrics,
         }
     with open(run_dir / "results.json", "w") as f:
         json.dump(combined, f, indent=2)

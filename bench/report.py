@@ -15,9 +15,32 @@ def _format_status(v: dict[str, Any]) -> str:
     return ", ".join(flags) if flags else "ok"
 
 
-def _format_score(v: dict[str, Any], key: str) -> str:
-    score = v.get(key)
-    return "—" if score is None else str(score)
+def _format_metric(v: dict[str, Any], metric: str) -> str:
+    """Look up a metric in the variant's judge_scores dict."""
+    scores = v.get("judge_scores") or {}
+    val = scores.get(metric)
+    return "—" if val is None else str(val)
+
+
+def _column_header(metric: str) -> str:
+    """Pretty-print a metric name for a markdown column header."""
+    # snake_case → Title Case With Spaces
+    return " ".join(part.capitalize() for part in metric.split("_"))
+
+
+def _resolve_metrics_to_render(results: dict[str, Any]) -> list[str]:
+    """Read the list of metrics from judge_usage; fall back to whatever
+    keys appear in the first scored variant if metrics field is missing."""
+    judge_usage = results.get("judge_usage") or {}
+    metrics = judge_usage.get("metrics")
+    if metrics:
+        return list(metrics)
+    # Fallback: introspect from variants
+    for v in results.get("variants", []):
+        scores = v.get("judge_scores")
+        if scores:
+            return list(scores.keys())
+    return []
 
 
 def render(run_dir: Path) -> Path:
@@ -27,8 +50,9 @@ def render(run_dir: Path) -> Path:
         results = json.load(f)
 
     judge_used = "judge_usage" in results
-    has_judge_scores = judge_used and any(
-        v.get("judge_correctness") is not None for v in results["variants"]
+    metrics = _resolve_metrics_to_render(results) if judge_used else []
+    has_judge_scores = bool(metrics) and any(
+        (v.get("judge_scores") or {}) for v in results["variants"]
     )
 
     lines: list[str] = []
@@ -48,18 +72,22 @@ def render(run_dir: Path) -> Path:
                 f"· spent ${ju.get('dollars', 0):.2f}  "
             )
         else:
+            metrics_str = (
+                f" · metrics: {', '.join(metrics)}" if metrics else ""
+            )
             lines.append(
                 f"**Judge:** {ju['tokens_in']:,} in / {ju['tokens_out']:,} out · "
-                f"${ju['dollars']:.2f}  "
+                f"${ju['dollars']:.2f}{metrics_str}  "
             )
     lines.append("")
     lines.append("## Summary")
     lines.append("")
     if has_judge_scores:
-        lines.append(
-            "| Variant | $ | Wall (s) | Correctness | Completeness | Status |"
-        )
-        lines.append("|---|---|---|---|---|---|")
+        headers = ["Variant", "$", "Wall (s)"] + [
+            _column_header(m) for m in metrics
+        ] + ["Status"]
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("|" + "---|" * len(headers))
     else:
         lines.append("| Variant | $ | Wall (s) | Status |")
         lines.append("|---|---|---|---|")
@@ -69,12 +97,10 @@ def render(run_dir: Path) -> Path:
         wall = f"{v['wall_seconds']:.1f}"
         status = _format_status(v)
         if has_judge_scores:
-            corr = _format_score(v, "judge_correctness")
-            comp = _format_score(v, "judge_completeness")
-            lines.append(
-                f"| {v['variant']} | {dollars} | {wall} | "
-                f"{corr} | {comp} | {status} |"
-            )
+            row = [v["variant"], dollars, wall]
+            row += [_format_metric(v, m) for m in metrics]
+            row.append(status)
+            lines.append("| " + " | ".join(row) + " |")
         else:
             lines.append(
                 f"| {v['variant']} | {dollars} | {wall} | {status} |"
@@ -90,11 +116,11 @@ def render(run_dir: Path) -> Path:
         lines.append(f"**Final answer:** {answer}")
         lines.append("")
         if has_judge_scores and v.get("judge_rationale"):
-            corr = _format_score(v, "judge_correctness")
-            comp = _format_score(v, "judge_completeness")
+            score_parts = [
+                f"{m} {_format_metric(v, m)}/10" for m in metrics
+            ]
             lines.append(
-                f"**Judge:** correctness {corr}/10, completeness {comp}/10 — "
-                f"{v['judge_rationale']}"
+                f"**Judge:** {', '.join(score_parts)} — {v['judge_rationale']}"
             )
             lines.append("")
         lines.append(f"- crashed: `{v['crashed']}`")

@@ -90,8 +90,15 @@ def test_render_handles_empty_final_answer(tmp_path):
     assert "(empty)" in text
 
 
-def _write_results_with_judge(run_dir: Path, variants_data: list[dict], judge_usage: dict) -> None:
+def _write_results_with_judge(
+    run_dir: Path,
+    variants_data: list[dict],
+    judge_usage: dict,
+    metrics: list[str] | None = None,
+) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
+    if metrics is not None and "metrics" not in judge_usage:
+        judge_usage = {**judge_usage, "metrics": metrics}
     results = {
         "experiment_id": "exp1",
         "campaign_id": "c1",
@@ -105,24 +112,44 @@ def _write_results_with_judge(run_dir: Path, variants_data: list[dict], judge_us
     (run_dir / "results.json").write_text(json.dumps(results))
 
 
+def _ok_variant_with_scores(
+    name: str,
+    scores: dict[str, int | None] | None = None,
+    rationale: str = "",
+    **overrides,
+) -> dict:
+    base = _ok_variant(name, **overrides)
+    if scores is not None:
+        base["judge_scores"] = scores
+        base["judge_rationale"] = rationale
+    return base
+
+
 def test_render_with_judge_scores_adds_columns_and_rationale(tmp_path):
     variants = [
-        _ok_variant("nous", judge_correctness=9, judge_completeness=8,
-                    judge_rationale="thorough; numbers cited"),
-        _ok_variant("claude_plain", judge_correctness=4, judge_completeness=5,
-                    judge_rationale="vague; no specific numbers"),
+        _ok_variant_with_scores(
+            "nous",
+            scores={"correctness": 9, "completeness": 8},
+            rationale="thorough; numbers cited",
+        ),
+        _ok_variant_with_scores(
+            "claude_plain",
+            scores={"correctness": 4, "completeness": 5},
+            rationale="vague; no specific numbers",
+        ),
     ]
     _write_results_with_judge(
         tmp_path / "run", variants,
         {"tokens_in": 1000, "tokens_out": 200, "dollars": 0.05,
          "crashed": False, "error": None},
+        metrics=["correctness", "completeness"],
     )
     text = render(tmp_path / "run").read_text()
 
     # Header shows judge usage
     assert "Judge:" in text
     assert "$0.05" in text
-    # Summary table has correctness + completeness columns
+    # Summary table has correctness + completeness columns (pretty-printed)
     assert "Correctness" in text
     assert "Completeness" in text
     assert "| 9 |" in text
@@ -130,6 +157,31 @@ def test_render_with_judge_scores_adds_columns_and_rationale(tmp_path):
     # Rationale appears in per-variant section
     assert "thorough; numbers cited" in text
     assert "vague; no specific numbers" in text
+
+
+def test_render_with_extended_metrics_renders_all_columns(tmp_path):
+    """Variable-column rendering: report shows every metric in
+    judge_usage.metrics, in that order."""
+    metrics = ["correctness", "novelty", "diagnostic_value"]
+    variants = [
+        _ok_variant_with_scores(
+            "nous",
+            scores={"correctness": 9, "novelty": 9, "diagnostic_value": 7},
+            rationale="thorough",
+        ),
+    ]
+    _write_results_with_judge(
+        tmp_path / "run", variants,
+        {"tokens_in": 1000, "tokens_out": 200, "dollars": 0.05,
+         "crashed": False, "error": None},
+        metrics=metrics,
+    )
+    text = render(tmp_path / "run").read_text()
+    assert "Correctness" in text
+    assert "Novelty" in text
+    assert "Diagnostic Value" in text
+    # No metric we didn't score should appear as a column
+    assert "Completeness" not in text
 
 
 def test_render_skips_judge_columns_when_no_scores(tmp_path):
@@ -158,16 +210,23 @@ def test_render_handles_judge_crash(tmp_path):
 def test_render_handles_partial_judge_scores(tmp_path):
     """One variant scored, one crashed (None scores)."""
     variants = [
-        _ok_variant("nous", judge_correctness=8, judge_completeness=7,
-                    judge_rationale="solid"),
-        _ok_variant("claude_plain", crashed=True, error="claude failed",
-                    judge_correctness=None, judge_completeness=None,
-                    judge_rationale="(crashed; not judged)"),
+        _ok_variant_with_scores(
+            "nous",
+            scores={"correctness": 8, "completeness": 7},
+            rationale="solid",
+        ),
+        _ok_variant_with_scores(
+            "claude_plain",
+            scores={"correctness": None, "completeness": None},
+            rationale="(crashed; not judged)",
+            crashed=True, error="claude failed",
+        ),
     ]
     _write_results_with_judge(
         tmp_path / "run", variants,
         {"tokens_in": 500, "tokens_out": 100, "dollars": 0.02,
          "crashed": False, "error": None},
+        metrics=["correctness", "completeness"],
     )
     text = render(tmp_path / "run").read_text()
     # Crashed variant gets — for both score columns
