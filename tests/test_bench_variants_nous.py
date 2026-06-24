@@ -60,8 +60,8 @@ def test_translate_respects_custom_model(tmp_path):
 
 
 def test_harvest_metrics_returns_zeros_when_file_missing(tmp_path):
-    tokens_in, tokens_out, dollars = _harvest_metrics(tmp_path / "missing.jsonl")
-    assert (tokens_in, tokens_out, dollars) == (0, 0, 0.0)
+    tokens_in, tokens_out, dollars, wall = _harvest_metrics(tmp_path / "missing.jsonl")
+    assert (tokens_in, tokens_out, dollars, wall) == (0, 0, 0.0, 0.0)
 
 
 def test_harvest_metrics_counts_billable_input_only(tmp_path):
@@ -85,7 +85,7 @@ def test_harvest_metrics_counts_billable_input_only(tmp_path):
         },
     ]
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-    tokens_in, tokens_out, dollars = _harvest_metrics(path)
+    tokens_in, tokens_out, dollars, _ = _harvest_metrics(path)
 
     assert tokens_in == 100 + 200
     assert tokens_out == 50 + 75
@@ -98,9 +98,35 @@ def test_harvest_metrics_skips_blank_lines(tmp_path):
         json.dumps({"input_tokens": 5, "output_tokens": 3, "cost_usd": 0.1})
         + "\n\n   \n"
     )
-    tokens_in, tokens_out, dollars = _harvest_metrics(path)
+    tokens_in, tokens_out, dollars, _ = _harvest_metrics(path)
     assert (tokens_in, tokens_out) == (5, 3)
     assert dollars == pytest.approx(0.1)
+
+
+def test_harvest_metrics_sums_duration_ms_as_wall_seconds(tmp_path):
+    """wall_seconds = sum(duration_ms)/1000 — gives nous's active LLM
+    compute time, comparable to bench baselines' subprocess wall_seconds."""
+    path = tmp_path / "m.jsonl"
+    rows = [
+        {"input_tokens": 10, "output_tokens": 5, "cost_usd": 0.1, "duration_ms": 30000},
+        {"input_tokens": 20, "output_tokens": 10, "cost_usd": 0.2, "duration_ms": 60000},
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    _, _, _, wall = _harvest_metrics(path)
+    assert wall == pytest.approx(90.0)  # 30s + 60s
+
+
+def test_harvest_metrics_handles_missing_or_null_duration(tmp_path):
+    """Some older campaigns may lack duration_ms; treat as 0 contribution."""
+    path = tmp_path / "m.jsonl"
+    rows = [
+        {"input_tokens": 5, "duration_ms": 5000},
+        {"input_tokens": 5},  # missing duration
+        {"input_tokens": 5, "duration_ms": None},  # null
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    _, _, _, wall = _harvest_metrics(path)
+    assert wall == pytest.approx(5.0)
 
 
 def test_read_final_answer_renders_all_iters_in_ascending_order(tmp_path):

@@ -1,0 +1,122 @@
+id: graph_coloring
+research_question: |
+  Which vertex ordering and color-selection heuristics most reduce the number
+  of colors used by the greedy graph coloring algorithm across the DIMACS
+  benchmark suite, and do the gains compound (super-additively) when
+  combined — without exceeding the per-graph time budget?
+
+  WHAT THE SYSTEM DOES:
+  A Python greedy graph coloring algorithm that assigns integer colors to
+  vertices such that no two adjacent vertices share a color. The goal is to
+  minimize the number of distinct colors used (approaching the chromatic
+  number χ). Lower colors used = better score.
+
+  THE ALGORITHM UNDER STUDY:
+  File: graph_coloring.py, function graph_coloring(graph). The current
+  baseline is naive greedy: processes vertices in natural order (0, 1, 2, ...)
+  and assigns the smallest available color at each step. This is the only
+  code that should be modified — it is delimited by the EVOLVE-BLOCK-START
+  / EVOLVE-BLOCK-END markers. The Graph class and all helper functions
+  below the EVOLVE-BLOCK are fixed and must not be changed.
+
+  GRAPH API (fixed, do not modify):
+    graph.num_vertices          → int
+    graph.get_neighbors(v)      → list[int]   (0-indexed)
+    graph.get_degree(v)         → int
+    graph.get_edges()           → list[(u,v)] (0-indexed, u < v)
+
+  SCORING (evaluator.py):
+  Combined score = weighted average over all test graphs of:
+    graph_score = 0.70 × color_score + 0.30 × time_score
+  where:
+    color_score = chromatic_number / colors_used   (capped at 1.0)
+    time_score  = 1.0 if elapsed ≤ budget, else decays as budget/elapsed
+                  (floor 0.1, so slow-but-good colorings still get partial credit)
+  CRITICAL: any invalid coloring (adjacent vertices same color) → combined_score = 0.
+
+  TIME BUDGET (per graph):
+    budget = 0.001 + 8.8e-7 × (n² + m)  seconds
+  Example budgets:
+    n=30  (dense):  ~2.2ms
+    n=100 (dense): ~14ms
+    n=500 (dense): ~331ms
+  The budget is generous for O(n²) or O(n×m) algorithms but penalizes
+  multi-start restarts that run many full passes. A single DSatur pass
+  (~O(n²)) comfortably fits inside budget for all DIMACS graphs present.
+
+  TEST GRAPHS (DIMACS benchmarks in benchmarks/full/):
+    anna.col, david.col, huck.col, jean.col (register-allocation, χ=10-11)
+    games120.col (game-scheduling, χ=9)
+    miles250.col, miles500.col (distance graphs, χ=8/20)
+    mulsol.i.1.col, inithx.i.1.col (schedule-based, χ=49/54)
+    myciel3..6.col (Mycielski, triangle-free, χ=3..6)
+    queen5_5..queen13_13.col (queen graphs, χ=5..13)
+
+  KNOWN STRUCTURAL CHALLENGES:
+  1. Crown graphs (bipartite, χ=2): naive greedy can use n colors if vertices
+     are interleaved adversarially. Vertex ordering is critical here.
+  2. Mycielski graphs (triangle-free, high χ): no triangles, so local clique
+     detection yields false confidence. Global structure must be used.
+  3. DSatur-adversarial graphs (seeds 19, 70 in evaluator.py): small random
+     graphs (n=15, p=0.5) where DSatur uses 6 colors but optimal is 5.
+     Hybrid or backtrack approaches may help.
+  4. Queen graphs: dense, structured. High-degree vertices should be colored
+     early to avoid cascading color proliferation.
+  5. Register allocation graphs (anna, david, huck, jean): near-perfect graph
+     structure. DSatur typically achieves optimal here.
+
+  KNOWN ALGORITHMS TO CONSIDER (documented in research literature):
+  - Largest-First (LF): sort vertices descending by degree before coloring.
+    Simple O(n log n) preprocessing, proven to reduce colors on many graphs.
+  - DSatur (Brelaz 1979): at each step, pick the uncolored vertex with the
+    highest "saturation" (number of distinct colors among already-colored
+    neighbors); break ties by degree. O(n²) total, fits within budget.
+  - RLFS (Recursive Largest First Smallest): greedily builds independent sets
+    and colors them. More complex but often optimal on structured graphs.
+  - Smallest-Last (SL): reverse of the order produced by iteratively removing
+    the minimum-degree vertex; color in reverse SL order. Good theoretical
+    guarantee (max_color ≤ degeneracy + 1).
+  - Random Restart Greedy: run greedy with random vertex permutations, keep
+    best result. Risky under time budget for large graphs.
+
+  HOW TO RUN EXPERIMENTS:
+  Primary benchmark (matches evaluator Stage 3):
+    python run_benchmarks.py                       # baseline (graph_coloring.py)
+    python run_benchmarks.py <patched_file.py>     # test a modified algorithm
+
+  Full scorer (returns combined_score, per-graph breakdown):
+    python evaluator.py graph_coloring.py
+
+  Quick validity check (Stage 1, fastest):
+    python -c "from evaluator import evaluate_stage1; import json; print(json.dumps(evaluate_stage1('graph_coloring.py'), indent=2))"
+
+  Full 3-stage cascade (most informative):
+    python -c "
+    from evaluator import evaluate_stage1, evaluate_stage2, evaluate_stage3
+    r1 = evaluate_stage1('graph_coloring.py')
+    if r1.get('stage1_passed'):
+        r2 = evaluate_stage2('graph_coloring.py')
+        r3 = evaluate_stage3('graph_coloring.py')
+        for d in r3.get('details', []):
+            print(d['name'], d['colors'], d['score'])
+    "
+
+  BASELINE PERFORMANCE (naive greedy, natural vertex order):
+  Expected combined_score ≈ 0.65–0.75. DSatur is expected to reach
+  ≈ 0.85–0.90 on this benchmark suite. Scores above 0.90 would represent
+  meaningful advancement.
+
+  EXPERIMENTAL PROTOCOL:
+  - All algorithm variants must be tested as standalone replacements of the
+    graph_coloring() function in graph_coloring.py (EVOLVE-BLOCK only).
+  - Each variant must be saved as a separate .py file (copy of full
+    graph_coloring.py with only the EVOLVE-BLOCK replaced).
+  - Run evaluator.py or run_benchmarks.py against each variant file.
+  - Record: combined_score, per-graph color counts, time scores, optimal count.
+  - A valid result requires all_valid=True; otherwise score is 0.
+
+  DEPENDENCIES:
+    pip install networkx matplotlib  (optional, only for visualization)
+    Python standard library is sufficient for all algorithmic work.
+target_repo: "/Users/naimaabrar/Desktop/graph-coloring"
+target_ref: "main"

@@ -1,0 +1,92 @@
+id: flink_torchserve
+research_question: |
+  Building on prior reflective and extension Nous campaigns that validated
+  the paper's directional claims and refined the async-vs-sync result,
+  this campaign goes deeper on the TorchServe / PyTorch side of the
+  pipeline, which the paper treated as a black box.
+
+  Specific themes:
+
+  (A) WHERE DOES PER-REQUEST TIME GO INSIDE TORCHSERVE?
+      The pipeline assembles a subgraph as JSON, sends it to TorchServe
+      via HTTP, and gets back an embedding. The handler is instrumented
+      to log per-stage timing — preprocess (JSON -> tensor), inference
+      (model forward pass), postprocess (return) — for every request.
+      Use this to characterize where time actually goes, how it shifts
+      across the system's operating regime (small vs large subgraphs,
+      cold-vs-warm JIT, single-vs-multi-worker), and whether one stage
+      dominates in ways the paper does not surface.
+
+  (B) HOW DOES PER-REQUEST LATENCY DEPEND ON SUBGRAPH SIZE?
+      Reddit has wide degree variance. The DEBUG_SUBGRAPH log emits
+      hop1_n, hop2_n per query, and the TS_TIMING log emits nodes,
+      edges per request. Cross-correlate: does inference time scale
+      linearly with subgraph node/edge count, super-linearly,
+      sub-linearly? If P99 latency at high fanout is driven by the top
+      few percent of subgraphs by size, that's a publishable mechanism
+      result the paper does not have.
+
+  (C) WHICH PYTORCH OPS ARE ON THE HOT PATH?
+      Setting PROFILE_INFERENCE=true and PROFILE_EVERY=N enables an
+      optional torch.profiler hook that emits a top-ops summary
+      ([TS_PROFILE] log line) every N inference requests. Use this
+      sparingly — profiling itself is expensive — to identify which
+      model layer or aggregation primitive dominates inference time.
+
+  (D) THREADING TUNING.
+      Paper used GPU-aware defaults (TORCH_INTRA_THREADS=1,
+      TORCH_INTER_THREADS=64). On a 16-core CPU these may be far from
+      optimal. Sweep combinations like {(1, 64) baseline, (1, 4),
+      (4, 1), (4, 4), (8, 2)} at TS_WORKERS=4 and characterize the
+      effect on per-request inference_ms (from TS_TIMING) and
+      end-to-end sink throughput.
+
+  (E) BATCHING.
+      Paper said batching does not help and fixed batch_size=1 +
+      max_batch_delay=100ms. Re-test on this CPU-only hardware. The
+      pipeline may benefit from amortized inference across multiple
+      subgraphs at batch_size > 1 if preprocess or model-call overhead
+      is significant compared to per-tensor compute.
+
+  CORRECTNESS IS MANDATORY. Every condition that produces a throughput
+  or latency claim MUST run with DEBUG_SUBGRAPH=true and pass
+  scripts/check_subgraph.py. A throughput number from a stalled or
+  unverified pipeline is not evidence.
+
+  The most interesting outcome would be a finding that links per-stage
+  timing (A) to subgraph size (B) and either threading (D) or batching
+  (E) — for example, "preprocess time scales linearly with node count,
+  dominates inference time at high fanout, and is not improved by
+  batching because each subgraph is independently parsed". That kind of
+  mechanism finding would be paper-worthy on its own.
+
+  ## Setup notes for this run
+
+  WORKING DIRECTORY:
+  You are running in a fresh git clone of the GNN_InferenceStream repo.
+  The clone contains: Java/Flink source under src/, the TorchServe
+  handler and config under ts/ and model/, scripts under scripts/, and
+  the model weights (model/gnnmodeltraced2.mar, reddit_sage_traced_model_cpu.pt).
+
+  REDDIT DATA (gitignored, NOT in this clone):
+  The Reddit edges/features CSV needed for full-scale experiments is at:
+    /Users/naimaabrar/Desktop/flink/GNN_InferenceStream/data/reddit_edges_features.csv
+  If you need it, copy it into your workspace's data/ directory:
+    mkdir -p data && cp /Users/naimaabrar/Desktop/flink/GNN_InferenceStream/data/reddit_edges_features.csv data/
+  Alternatively, use SyntheticNodeSource.java for synthetic input.
+
+  ## Hard constraints
+
+  DO NOT DELETE ANY FILES outside this workspace. In particular, do not
+  delete or modify anything under /Users/naimaabrar/Desktop/flink/
+  GNN_InferenceStream/ — that is the source repo and contains data,
+  logs, and model files that other experiments depend on. Reading from
+  it is fine; writing or deleting is NOT.
+
+  STOP ANY BACKGROUND SERVICES before reporting your final answer. If
+  you start TorchServe (`torchserve --start`), Flink (mvn exec, run-job
+  scripts), or any other daemon, run the corresponding shutdown command
+  before you finish (`torchserve --stop`, etc.). Otherwise the next
+  experiment will conflict with port reservations and worker processes.
+target_repo: "/Users/naimaabrar/Desktop/flink/GNN_InferenceStream"
+target_ref: "main"

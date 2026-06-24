@@ -46,23 +46,32 @@ def _translate_to_nous_yaml(
     }
 
 
-def _harvest_metrics(metrics_path: Path) -> tuple[int, int, float]:
-    """Sum billable tokens + cost across all rows of nous's llm_metrics.jsonl.
+def _harvest_metrics(metrics_path: Path) -> tuple[int, int, float, float]:
+    """Sum billable tokens + cost + duration across all rows of nous's
+    llm_metrics.jsonl.
 
-    Counts only `input_tokens` (full-rate fresh input) and `output_tokens`.
-    Cache creation/read tokens are billed at different rates and are already
-    reflected in `cost_usd`; counting them here would unfairly inflate
-    variants that benefit from caching (nous's long sessions cache heavily).
+    Returns (tokens_in, tokens_out, dollars, wall_seconds).
 
-    Robust to rows where any of the three fields are missing or explicitly
-    null (some older nous campaigns emit `cost_usd: null` for non-billable
-    rows).
+    `wall_seconds` is the sum of per-call `duration_ms`/1000 — the active
+    LLM-call time. This is the right comparison to bench baselines'
+    `wall_seconds` (subprocess time): both measure compute, neither
+    includes human-gate idle time between iterations. (Using
+    `last_iter_ts - first_iter_ts` from ledger.json would inflate by
+    days for campaigns with overnight gaps.)
+
+    Tokens: counts only `input_tokens` (full-rate fresh input) and
+    `output_tokens`. Cache creation/read tokens are billed at different
+    rates and are already reflected in `cost_usd`; counting them here
+    would unfairly inflate variants that benefit from caching.
+
+    Robust to rows where any field is missing or explicitly null.
     """
     tokens_in = 0
     tokens_out = 0
     dollars = 0.0
+    wall_seconds = 0.0
     if not metrics_path.exists():
-        return tokens_in, tokens_out, dollars
+        return tokens_in, tokens_out, dollars, wall_seconds
     with open(metrics_path) as f:
         for line in f:
             line = line.strip()
@@ -72,7 +81,8 @@ def _harvest_metrics(metrics_path: Path) -> tuple[int, int, float]:
             tokens_in += int(row.get("input_tokens") or 0)
             tokens_out += int(row.get("output_tokens") or 0)
             dollars += float(row.get("cost_usd") or 0)
-    return tokens_in, tokens_out, dollars
+            wall_seconds += float(row.get("duration_ms") or 0) / 1000.0
+    return tokens_in, tokens_out, dollars, wall_seconds
 
 
 def _render_findings(data: dict) -> str:
@@ -320,9 +330,12 @@ class NousVariant:
         wall = time.monotonic() - start
 
         artifacts_dir = workspace / ".nous" / campaign.id
-        tokens_in, tokens_out, dollars = _harvest_metrics(
+        tokens_in, tokens_out, dollars, _ = _harvest_metrics(
             artifacts_dir / "llm_metrics.jsonl"
         )
+        # ^ live nous variant uses subprocess wall (`wall` above), not the
+        # llm_metrics.jsonl-derived duration sum, since we already have
+        # accurate subprocess-level timing.
         final_answer = _read_final_answer(artifacts_dir)
         hit_cap = (tokens_in + tokens_out) > budget.max_tokens
 

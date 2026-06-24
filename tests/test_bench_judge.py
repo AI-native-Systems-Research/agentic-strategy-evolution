@@ -371,5 +371,9 @@ def test_judge_prompt_file_exists_and_is_template():
     assert len(text) > 200
 
 
-def test_default_judge_model_is_sonnet_4_6():
-    assert DEFAULT_JUDGE_MODEL == "claude-sonnet-4-6"
+def test_default_judge_model_is_opus_4_7():
+    """Default judge is Opus 4.7 — Sonnet 4.6 was dropping variants from
+    its scores array on multi-variant ablation runs (happened on graph-
+    coloring L1). Opus is reliable for structured output across 4+
+    variants. Override with --judge-model on cheap smoke runs."""
+    assert DEFAULT_JUDGE_MODEL == "claude-opus-4-7"

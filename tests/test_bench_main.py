@@ -111,6 +111,20 @@ def test_run_subcommand_parses_judge_flags():
     assert args.judge_model == "claude-opus-4-7"
 
 
+def test_run_subcommand_parses_variant_model_flag():
+    parser = build_parser()
+    args = parser.parse_args([
+        "run", "exp.yaml", "--variant-model", "claude-opus-4-7",
+    ])
+    assert args.variant_model == "claude-opus-4-7"
+
+
+def test_run_subcommand_variant_model_defaults_none():
+    parser = build_parser()
+    args = parser.parse_args(["run", "exp.yaml"])
+    assert args.variant_model is None
+
+
 def test_run_subcommand_judge_preset_rejects_unknown():
     parser = build_parser()
     with pytest.raises(SystemExit):

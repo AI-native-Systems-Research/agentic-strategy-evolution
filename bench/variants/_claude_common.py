@@ -9,6 +9,7 @@ The seam tests patch is `bench.variants._claude_common.subprocess.run`.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -18,6 +19,13 @@ from bench.metrics import parse_claude_json
 from bench.variants.base import Budget, VariantResult
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
+
+# Optional runtime override for the variant model. Set by the runner when
+# --variant-model is passed on the CLI; otherwise falls back to the
+# per-invocation model field (which itself defaults to DEFAULT_MODEL).
+# Used to run baselines on Opus when matching nous's design model
+# (see #295 / experiments.md).
+_VARIANT_MODEL_ENV = "BENCH_VARIANT_MODEL"
 
 
 @dataclass
@@ -64,6 +72,9 @@ def invoke_claude(inv: ClaudeInvocation) -> ClaudeRunResult:
       - any other exception
     """
     start = time.monotonic()
+    # Env var override takes precedence — lets the runner set a single
+    # variant-model for the whole sweep without changing every Invocation.
+    model = os.environ.get(_VARIANT_MODEL_ENV) or inv.model
     cmd = [
         "claude",
         "--print",
@@ -71,7 +82,7 @@ def invoke_claude(inv: ClaudeInvocation) -> ClaudeRunResult:
         "json",
         "--dangerously-skip-permissions",
         "--model",
-        inv.model,
+        model,
     ]
     if inv.system_prompt:
         cmd.extend(["--append-system-prompt", inv.system_prompt])

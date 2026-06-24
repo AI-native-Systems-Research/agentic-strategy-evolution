@@ -1,0 +1,45 @@
+id: pd_disagg_validation
+research_question: |
+  The paper "When to Disaggregate" (docs/pd-disagg.pdf in the Nous repo)
+  develops a closed-form model of P/D disaggregation under continuous
+  batching and derives three stationary policies (Always-Local AL,
+  Always-Disaggregate AD, Stationary-Randomized SR(f) with Bernoulli
+  routing) and a dynamic drift-plus-penalty policy (DPP, Theorem 1:
+  disaggregate iff η·Q_D + V/2 > Q_P + Z·ΔT/W_P).
+
+  Do the paper's predictions hold inside BLIS? Specifically:
+  (a) Do AL and AD reproduce the predicted ITL and TTFT means
+      (Eqs. 39, 41, 44, 48) and the regime crossover (AL wins when
+      ρ = λ·W_tot ≪ 1; AD required when ρ ≥ 1 but λ·W_P, λ·W_D < 1)?
+  (b) Under SR(f), is mean ITL strictly decreasing in f over the stability
+      region (Eq. 51), and does TTFT trace out a Pareto frontier (Eq. 56)?
+  (c) Does the DPP threshold (Eq. 78) achieve mean ITL within O(1/V) of
+      the best stationary SR(f*) at backlog O(V), as the paper's
+      drift-plus-penalty analysis claims?
+  (d) When V→0, does DPP collapse to work-weighted load balancing
+      (η·Q_D > Q_P)? When the TTFT virtual queue Z is persistently large,
+      does it keep requests local?
+
+  TARGET SYSTEM:
+  BLIS (github.com/inference-sim/inference-sim, on `main`) is a
+  discrete-event simulator for LLM inference serving. It already models
+  prefill/decode disaggregation as disjoint instance pools (PoolRolePrefill,
+  PoolRoleDecode, PoolRolePrefillDecode) connected by a KV-transfer
+  pipeline with configurable bandwidth and base latency.
+
+  Per-arrival routing is via the DisaggregationDecider interface in
+  sim/disaggregation.go. Two of the paper's policies are already
+  implemented: NeverDisaggregate (AL) and AlwaysDisaggregate (AD). A
+  PrefixThresholdDecider also exists. Two policies from the paper need
+  to be added as code patches during the campaign:
+    • BernoulliDisaggregate(f) — independent Bernoulli routing for SR(f).
+    • DriftPlusPenaltyDecider(η, V) — Theorem 1 threshold; needs the
+      RouterState to expose Q_P(t), Q_D(t), and ΔT(t) at decision time.
+
+  Workloads use Poisson arrivals (--rate λ) with fixed (input_tokens,
+  output_tokens) so we can sweep ρ = λ·W_tot across regimes. ITL and
+  TTFT are reported per request in the existing metrics output.
+  Queue-length time series may need to be added to PDMetrics for
+  post-hoc validation of Eqs. 40, 45, 46 and the threshold (78).
+target_repo: "/Users/naimaabrar/Desktop/inference-sim-vishakha"
+target_ref: "main"

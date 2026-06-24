@@ -24,7 +24,7 @@ from typing import Iterable
 from bench.metrics import parse_claude_json
 from bench.variants.base import VariantResult
 
-DEFAULT_JUDGE_MODEL = "claude-sonnet-4-6"
+DEFAULT_JUDGE_MODEL = "claude-opus-4-7"
 JUDGE_PROMPT_PATH = Path(__file__).parent / "judge_prompt.md"
 
 # --- rubric definitions ----------------------------------------------------

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -38,6 +39,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         budget_overrides["max_iterations"] = args.max_iterations
     if args.max_wall_seconds is not None:
         budget_overrides["max_wall_seconds"] = args.max_wall_seconds
+
+    # --variant-model overrides the model used by claude_plain /
+    # claude_methodology / claude_methodology_loop / claude_loop variants.
+    # Plumbed via env var read inside _claude_common.invoke_claude.
+    if args.variant_model:
+        os.environ["BENCH_VARIANT_MODEL"] = args.variant_model
 
     run_dir = runner.run_experiment(
         Path(args.experiment),
@@ -306,6 +313,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-judge",
         action="store_true",
         help="skip the Claude-as-judge accuracy scoring step",
+    )
+    p_run.add_argument(
+        "--variant-model",
+        help=(
+            "model id used by all claude_* variants (overrides "
+            "DEFAULT_MODEL='claude-sonnet-4-6'). Use to match the model "
+            "tier nous had access to for fair ablation; e.g. "
+            "'claude-opus-4-7'. Does not affect the judge model — see "
+            "--judge-model for that."
+        ),
     )
     _add_judge_flags(p_run)
     p_run.set_defaults(func=_cmd_run)

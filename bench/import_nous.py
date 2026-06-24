@@ -130,9 +130,9 @@ def import_nous_campaign(
 
     metrics_path = artifacts_dir / "llm_metrics.jsonl"
     if metrics_path.exists():
-        tokens_in, tokens_out, dollars = _harvest_metrics(metrics_path)
+        tokens_in, tokens_out, dollars, wall_seconds = _harvest_metrics(metrics_path)
     else:
-        tokens_in, tokens_out, dollars = 0, 0, 0.0
+        tokens_in, tokens_out, dollars, wall_seconds = 0, 0, 0.0, 0.0
 
     return NousCampaignSnapshot(
         campaign_id=cid,
@@ -143,7 +143,7 @@ def import_nous_campaign(
         tokens_in=tokens_in,
         tokens_out=tokens_out,
         dollars=dollars,
-        wall_seconds=0.0,
+        wall_seconds=wall_seconds,
     )
 
 

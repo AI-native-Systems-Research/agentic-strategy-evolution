@@ -241,6 +241,8 @@ def test_invoke_claude_uses_default_model_when_unspecified(monkeypatch, tmp_path
         )
 
     monkeypatch.setattr("bench.variants._claude_common.subprocess.run", _fake)
+    # Make sure no env override leaks in from parent test runs
+    monkeypatch.delenv("BENCH_VARIANT_MODEL", raising=False)
     inv = ClaudeInvocation(
         question="q",
         workspace=tmp_path,
@@ -252,6 +254,62 @@ def test_invoke_claude_uses_default_model_when_unspecified(monkeypatch, tmp_path
     assert "--model" in captured["cmd"]
     idx = captured["cmd"].index("--model")
     assert captured["cmd"][idx + 1] == DEFAULT_MODEL
+
+
+def test_bench_variant_model_env_var_overrides_invocation_model(monkeypatch, tmp_path):
+    """When BENCH_VARIANT_MODEL is set, it overrides whatever model the
+    Invocation specifies. This is how --variant-model gets propagated to
+    subprocess calls without changing every variant call site."""
+    captured: dict = {}
+
+    def _fake(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout=_success_payload(), stderr=""
+        )
+
+    monkeypatch.setattr("bench.variants._claude_common.subprocess.run", _fake)
+    monkeypatch.setenv("BENCH_VARIANT_MODEL", "claude-opus-4-7")
+
+    inv = ClaudeInvocation(
+        question="q",
+        workspace=tmp_path,
+        budget=_budget(),
+        log_path=tmp_path / "log",
+        # Even with an explicit model on the Invocation, env var wins
+        model="claude-sonnet-4-6",
+    )
+    invoke_claude(inv)
+
+    idx = captured["cmd"].index("--model")
+    assert captured["cmd"][idx + 1] == "claude-opus-4-7"
+
+
+def test_bench_variant_model_env_var_unset_uses_invocation_model(monkeypatch, tmp_path):
+    """When BENCH_VARIANT_MODEL is unset, the Invocation's model field is
+    used (which itself defaults to DEFAULT_MODEL)."""
+    captured: dict = {}
+
+    def _fake(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout=_success_payload(), stderr=""
+        )
+
+    monkeypatch.setattr("bench.variants._claude_common.subprocess.run", _fake)
+    monkeypatch.delenv("BENCH_VARIANT_MODEL", raising=False)
+
+    inv = ClaudeInvocation(
+        question="q",
+        workspace=tmp_path,
+        budget=_budget(),
+        log_path=tmp_path / "log",
+        model="claude-haiku-4-5",
+    )
+    invoke_claude(inv)
+
+    idx = captured["cmd"].index("--model")
+    assert captured["cmd"][idx + 1] == "claude-haiku-4-5"
 
 
 # --- variant_result_from ---
