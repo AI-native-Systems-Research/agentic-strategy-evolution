@@ -584,3 +584,36 @@ properties:
         items: { type: integer }
         minItems: 1
         description: "Pre-registered seed list. Locking these in advance prevents seed cherry-picking after the fact."
+
+  channels:
+    type: array
+    description: >
+      Issue #130 (Phase A): notification channels POSTed a markdown gate
+      summary at each DESIGN/FINDINGS gate, so reviewers can monitor a run
+      without sitting at the terminal. Fires even under --auto-approve (the
+      notification happens before the gate decision). Consumed by
+      ``orchestrator/channels.py``. Best-effort: a webhook timeout, 5xx, or
+      DNS failure logs a warning and never blocks the gate or campaign.
+    items:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [webhook, slack]
+          description: >
+            Dispatcher. ``webhook`` POSTs ``{"markdown": ...}`` to ``url``;
+            ``slack`` POSTs ``{"text": ...}`` to ``webhook_url``. Defaults to
+            ``webhook`` when omitted.
+        url:
+          type: string
+          minLength: 1
+          description: "Target URL for a ``webhook`` channel."
+        webhook_url:
+          type: string
+          minLength: 1
+          description: "Incoming-webhook URL for a ``slack`` channel."
+        headers:
+          type: object
+          additionalProperties: true
+          description: "Optional extra HTTP headers for a ``webhook`` channel."

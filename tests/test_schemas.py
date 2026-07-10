@@ -581,6 +581,84 @@ class TestCampaignSchema:
         }
         jsonschema.validate(minimal, schema)  # Should not raise
 
+    def test_channels_accepted(self, load_schema):
+        """A campaign declaring channels: validates (#296).
+
+        Regression guard: orchestrator/channels.py reads campaign.channels
+        at every gate, but the schema used to omit the property while
+        forbidding unknown top-level keys, so notify-enabled campaigns were
+        rejected at pre-flight.
+        """
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "research_question": "What affects latency?",
+            "target_system": {
+                "name": "x",
+                "description": "x",
+                "observable_metrics": ["m"],
+                "controllable_knobs": ["k"],
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+            "channels": [
+                {"kind": "slack", "webhook_url": "https://hooks.slack.com/services/X/Y/Z"},
+                {
+                    "kind": "webhook",
+                    "url": "https://example.com/nous/gate",
+                    "headers": {"Authorization": "Bearer t"},
+                },
+            ],
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_channels_default_kind_accepted(self, load_schema):
+        """kind is optional — channels.py defaults it to 'webhook'."""
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "research_question": "What affects latency?",
+            "target_system": {
+                "name": "x",
+                "description": "x",
+                "observable_metrics": ["m"],
+                "controllable_knobs": ["k"],
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+            "channels": [{"url": "https://example.com/nous/gate"}],
+        }
+        jsonschema.validate(instance, schema)
+
+    def test_channels_invalid_kind_rejected(self, load_schema):
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "research_question": "What affects latency?",
+            "target_system": {
+                "name": "x",
+                "description": "x",
+                "observable_metrics": ["m"],
+                "controllable_knobs": ["k"],
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+            "channels": [{"kind": "carrier-pigeon", "url": "https://example.com"}],
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance, schema)
+
+    def test_channels_unknown_field_rejected(self, load_schema):
+        """additionalProperties: false on a channel entry catches typos."""
+        schema = load_schema("campaign.schema.yaml")
+        instance = {
+            "research_question": "What affects latency?",
+            "target_system": {
+                "name": "x",
+                "description": "x",
+                "observable_metrics": ["m"],
+                "controllable_knobs": ["k"],
+            },
+            "prompts": {"methodology_layer": "prompts/"},
+            "channels": [{"kind": "webhook", "url": "https://example.com", "headerz": {}}],
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance, schema)
+
 
 class TestPrinciplesCategoryField:
     def test_domain_category_accepted(self, load_schema):
