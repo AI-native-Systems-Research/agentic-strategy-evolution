@@ -13,6 +13,8 @@ from pathlib import Path
 import jsonschema
 import yaml
 
+from orchestrator.util import atomic_write
+
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 
 
@@ -211,7 +213,7 @@ def validate_principles_have_empirical_content(
 def _validate_locked_parameters(
     bundle: dict, campaign: dict | None,
 ) -> list[str]:
-    """Issue #246 (F1): hard-fail when bundle deviates from campaign.locked_parameters.
+    """Issue #246 (F1): hard-fail when bundle *deviates* from campaign.locked_parameters.
 
     Closes the spec-fidelity gap left by HUMAN_DESIGN_GATE bypass under
     --auto-approve. The bundle's ``experiment_spec.verified_parameters``
@@ -222,6 +224,19 @@ def _validate_locked_parameters(
     guess (paper-memorytime-mirage iter-1: ``model``, ``concurrency``,
     ``duration``, ``warmup`` all overwritten).
 
+    #298: distinguish two very different cases that #246 originally
+    conflated —
+
+    * **Omitted key** — the agent simply didn't echo a value the
+      campaign already declares. No information is lost, so this is not a
+      spec-fidelity violation. The campaign is the unambiguous source of
+      truth, so we **auto-populate** ``verified_parameters[k]`` from
+      ``campaign.locked_parameters[k]`` (mutating ``bundle`` in place so
+      the caller can persist it) and continue.
+    * **Deviating value** — the agent wrote a *different* value than the
+      campaign locked. This is the real anti-mirage violation and still
+      hard-fails.
+
     The error message lists EVERY deviation in one shot, not just the
     first — so a single re-run of the gate sees the full diff.
     """
@@ -230,20 +245,35 @@ def _validate_locked_parameters(
     locked = campaign.get("locked_parameters")
     if not isinstance(locked, dict) or not locked:
         return []
-    spec = bundle.get("experiment_spec") or {}
-    verified = spec.get("verified_parameters") or {}
-    if not isinstance(verified, dict):
+
+    # #298: ensure a real experiment_spec / verified_parameters dict is
+    # attached to the bundle so auto-filled values survive in the object
+    # the caller holds (and can write back to disk). A present-but-wrong
+    # TYPE is still a hard-fail — we auto-fill omissions, not structurally
+    # broken bundles.
+    spec = bundle.get("experiment_spec")
+    if spec is None:
+        spec = bundle["experiment_spec"] = {}
+    elif not isinstance(spec, dict):
         return [
             "campaign.locked_parameters is set but "
-            "bundle.experiment_spec.verified_parameters is missing or "
-            "malformed; cannot verify spec-fidelity (#246)."
+            "bundle.experiment_spec is malformed (not a mapping); "
+            "cannot verify spec-fidelity (#246)."
         ]
+    verified = spec.get("verified_parameters")
+    if verified is None:
+        verified = spec["verified_parameters"] = {}
+    elif not isinstance(verified, dict):
+        return [
+            "campaign.locked_parameters is set but "
+            "bundle.experiment_spec.verified_parameters is malformed "
+            "(not a mapping); cannot verify spec-fidelity (#246)."
+        ]
+
     deviations: list[str] = []
     for key, expected in locked.items():
         if key not in verified:
-            deviations.append(
-                f"  - {key}: campaign={expected!r}, bundle=<missing>"
-            )
+            verified[key] = expected  # #298: auto-populate; campaign wins
             continue
         actual = verified[key]
         if actual != expected:
@@ -501,7 +531,13 @@ def compute_campaign_spec_diff(
     locked = (campaign or {}).get("locked_parameters") or {}
     if isinstance(locked, dict) and isinstance(verified, dict):
         for k, expected in locked.items():
-            actual = verified.get(k, "<missing>")
+            # #298: an omitted key is auto-populated from the campaign by
+            # the hard-fail layer (_validate_locked_parameters), so it is
+            # NOT a spec-fidelity violation. Only a value that is PRESENT
+            # and DIFFERENT is a real deviation.
+            if k not in verified:
+                continue
+            actual = verified[k]
             if actual != expected:
                 diff["locked_parameters_violations"].append(
                     {"param": k, "campaign": expected, "bundle": actual}
@@ -555,9 +591,17 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
             schema = _load_yaml_schema("bundle.schema.yaml")
             jsonschema.validate(bundle, schema)
             errors.extend(_validate_typed_arm_fields(bundle))
+            # #298: _validate_locked_parameters may auto-populate omitted
+            # locked values into the bundle in place. Snapshot first so we
+            # can detect the mutation and persist it back to disk below.
+            bundle_before = json.dumps(bundle, sort_keys=True, default=str)
             # #246 (F1): locked_parameters spec-fidelity. Hard-fail under
             # auto-approve too — that's the whole point.
             errors.extend(_validate_locked_parameters(bundle, campaign))
+            # #298: persist auto-filled verified_parameters so downstream
+            # phases read the campaign's canonical values from bundle.yaml.
+            if json.dumps(bundle, sort_keys=True, default=str) != bundle_before:
+                atomic_write(bundle_path, yaml.safe_dump(bundle, sort_keys=False))
             # #265 (F20): locked_workload diff against bundle.inputs/*.yaml.
             errors.extend(_validate_locked_workload(iter_dir, bundle, campaign))
             # #248 (F3): depth_overrides without invalidates_checks.

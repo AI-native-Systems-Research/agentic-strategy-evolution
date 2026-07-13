@@ -125,6 +125,22 @@ campaign's intent, regardless of ``--auto-approve``. Use them
 liberally — they are the cheapest defense against silent design-
 agent rewrites.
 
+**Omission vs deviation (#298).** The design gate distinguishes two
+cases for a ``locked_parameters`` key:
+
+- **Omitted** — the bundle's ``experiment_spec.verified_parameters``
+  simply doesn't echo the key. No information is lost (the campaign
+  already declares it), so the gate **auto-populates** the value from
+  ``locked_parameters`` and continues, persisting it back to
+  ``bundle.yaml``. Agents no longer have to copy every locked key
+  verbatim just to clear the gate.
+- **Deviating** — the bundle sets a *different* value than the
+  campaign locked. This is the real spec-fidelity violation and still
+  hard-fails, listing every deviation in one shot.
+
+So the campaign is always the source of truth for a locked value; the
+only way to fail is to actively contradict it.
+
 ## Reproducibility (#262 / F17)
 
 nous auto-captures ``reproducibility_metadata`` at INIT (target

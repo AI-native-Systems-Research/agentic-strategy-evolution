@@ -64,30 +64,74 @@ def test_f1_locked_parameters_fail_lists_all_deviations():
     assert "duration_seconds" not in msg.split("\n")[-1]
 
 
-def test_f1_locked_parameters_missing_verified_parameters_fails():
-    """When the locked parameter has no entry in verified_parameters, the
-    validator reports it as a deviation (with bundle=<missing>) — same
-    path as a value mismatch, so the user sees one consistent message
-    format regardless of which side is responsible."""
+def test_298_missing_key_autofills_from_campaign():
+    """#298: a locked parameter with no entry in verified_parameters is
+    NOT a spec-fidelity violation — the campaign is the source of truth.
+    The validator auto-populates the omitted value into the bundle and
+    passes, instead of hard-failing the whole iteration on pure friction.
+    """
     campaign = {"locked_parameters": {"model": "llama"}}
     bundle = {"experiment_spec": {"verified_parameters": {}}}
     errors = _validate_locked_parameters(bundle, campaign)
-    assert len(errors) == 1
-    assert "<missing>" in errors[0]
-    assert "model" in errors[0]
+    assert errors == []
+    # The omitted value is filled in from the campaign, in place.
+    assert bundle["experiment_spec"]["verified_parameters"]["model"] == "llama"
 
 
-def test_f1_locked_parameters_no_verified_parameters_block_fails_with_clear_message():
-    """When experiment_spec lacks verified_parameters entirely (vs an
-    empty dict), surface a structured error pointing the user at the
-    bundle field they must populate."""
-    campaign = {"locked_parameters": {"model": "llama"}}
+def test_298_missing_verified_parameters_block_autofills():
+    """#298: when experiment_spec lacks a verified_parameters block
+    entirely, the validator creates one and auto-populates every locked
+    key rather than hard-failing."""
+    campaign = {"locked_parameters": {"model": "llama", "concurrency": 32}}
     bundle = {"experiment_spec": {}}
     errors = _validate_locked_parameters(bundle, campaign)
+    assert errors == []
+    assert bundle["experiment_spec"]["verified_parameters"] == {
+        "model": "llama", "concurrency": 32,
+    }
+
+
+def test_298_missing_experiment_spec_block_autofills():
+    """#298: even when the bundle has no experiment_spec at all, the
+    locked values are auto-populated (campaign is source of truth)."""
+    campaign = {"locked_parameters": {"model": "llama"}}
+    bundle = {}
+    errors = _validate_locked_parameters(bundle, campaign)
+    assert errors == []
+    assert bundle["experiment_spec"]["verified_parameters"]["model"] == "llama"
+
+
+def test_298_mixed_missing_and_mismatch_fails_only_on_mismatch():
+    """#298: an omitted key auto-fills while a *deviating* value still
+    hard-fails. The error lists only the real deviation, not the
+    auto-filled key."""
+    campaign = {"locked_parameters": {
+        "model": "llama", "concurrency": 32, "duration_seconds": 600,
+    }}
+    bundle = {"experiment_spec": {"verified_parameters": {
+        "model": "qwen",           # deviation → hard-fail
+        "duration_seconds": 600,   # match → fine
+        # concurrency omitted → auto-fill
+    }}}
+    errors = _validate_locked_parameters(bundle, campaign)
     assert len(errors) == 1
-    # Either form is acceptable — the missing dict path or the
-    # listed-as-deviation path. Both surface enough for the user to act.
-    assert "verified_parameters" in errors[0] or "<missing>" in errors[0]
+    msg = errors[0]
+    assert "model" in msg and "qwen" in msg
+    # The auto-filled key must NOT be reported as a deviation.
+    assert "concurrency" not in msg
+    # ...and it was populated from the campaign.
+    assert bundle["experiment_spec"]["verified_parameters"]["concurrency"] == 32
+
+
+def test_298_malformed_verified_parameters_still_fails():
+    """#298: a verified_parameters that is present but the wrong TYPE
+    (not a dict) is still a hard-fail — we only auto-fill omissions, not
+    structurally broken bundles."""
+    campaign = {"locked_parameters": {"model": "llama"}}
+    bundle = {"experiment_spec": {"verified_parameters": ["not", "a", "dict"]}}
+    errors = _validate_locked_parameters(bundle, campaign)
+    assert len(errors) == 1
+    assert "verified_parameters" in errors[0]
 
 
 def test_f1_locked_parameters_no_campaign_block_skips():
@@ -113,6 +157,56 @@ def test_f1_validate_design_hard_fails_under_locked_parameters_deviation(tmp_pat
     }
     (iter_dir / "bundle.yaml").write_text(yaml.safe_dump(bundle))
     campaign = {"locked_parameters": {"model": "llama"}}
+    result = validate_design(iter_dir, campaign=campaign)
+    assert result["status"] == "fail"
+    assert any("locked_parameters" in e for e in result["errors"])
+
+
+def test_298_validate_design_passes_and_persists_autofilled_params(tmp_path: Path):
+    """#298 end-to-end: a bundle that OMITS some locked_parameters keys
+    passes DESIGN, and the auto-filled values are written back to
+    bundle.yaml on disk so downstream phases read the campaign's values.
+    """
+    iter_dir = tmp_path / "iter-1"
+    (iter_dir / "inputs").mkdir(parents=True)
+    (iter_dir / "results").mkdir()
+    (iter_dir / "patches").mkdir()
+    (iter_dir / "problem.md").write_text("test")
+    (iter_dir / "handoff_snapshot.md").write_text("test")
+    bundle = {
+        "metadata": {"iteration": 1, "family": "f", "research_question": "q"},
+        "arms": [{"type": "h-main", "prediction": "p", "mechanism": "m", "diagnostic": "d"}],
+        # verified_parameters omits both locked keys entirely.
+        "experiment_spec": {"verified_parameters": {}},
+    }
+    (iter_dir / "bundle.yaml").write_text(yaml.safe_dump(bundle))
+    campaign = {"locked_parameters": {"model": "llama", "concurrency": 32}}
+    result = validate_design(iter_dir, campaign=campaign)
+    assert result["status"] == "pass", result
+    # Auto-filled values are persisted to disk.
+    on_disk = yaml.safe_load((iter_dir / "bundle.yaml").read_text())
+    assert on_disk["experiment_spec"]["verified_parameters"] == {
+        "model": "llama", "concurrency": 32,
+    }
+
+
+def test_298_validate_design_still_fails_on_deviation(tmp_path: Path):
+    """#298: the anti-mirage protection (#246) is preserved — a bundle
+    that SETS a value different from the campaign still hard-fails, even
+    though sibling keys may be auto-filled."""
+    iter_dir = tmp_path / "iter-1"
+    (iter_dir / "inputs").mkdir(parents=True)
+    (iter_dir / "results").mkdir()
+    (iter_dir / "patches").mkdir()
+    (iter_dir / "problem.md").write_text("test")
+    (iter_dir / "handoff_snapshot.md").write_text("test")
+    bundle = {
+        "metadata": {"iteration": 1, "family": "f", "research_question": "q"},
+        "arms": [{"type": "h-main", "prediction": "p", "mechanism": "m", "diagnostic": "d"}],
+        "experiment_spec": {"verified_parameters": {"model": "qwen"}},  # deviates
+    }
+    (iter_dir / "bundle.yaml").write_text(yaml.safe_dump(bundle))
+    campaign = {"locked_parameters": {"model": "llama", "concurrency": 32}}
     result = validate_design(iter_dir, campaign=campaign)
     assert result["status"] == "fail"
     assert any("locked_parameters" in e for e in result["errors"])
@@ -185,6 +279,26 @@ def test_f4_compute_campaign_spec_diff_clean_when_match(tmp_path: Path):
     assert diff["locked_parameters_violations"] == []
     assert diff["depth_overrides_present"] is False
     assert diff["workload_changes_from_canonical_declared"] is False
+
+
+def test_298_compute_campaign_spec_diff_ignores_omitted_keys(tmp_path: Path):
+    """#298: the soft-audit mirror must not re-flag auto-filled (omitted)
+    keys as violations. Only a value that is PRESENT and DIFFERENT counts.
+    """
+    iter_dir = tmp_path / "iter-1"
+    iter_dir.mkdir()
+    (iter_dir / "bundle.yaml").write_text(yaml.safe_dump({
+        "metadata": {"iteration": 1, "family": "f", "research_question": "q"},
+        "arms": [{"type": "h-main", "prediction": "p", "mechanism": "m", "diagnostic": "d"}],
+        "experiment_spec": {"verified_parameters": {
+            "model": "qwen",   # present + different → violation
+            # concurrency omitted → auto-filled, must NOT be a violation
+        }},
+    }))
+    campaign = {"locked_parameters": {"model": "llama", "concurrency": 32}}
+    diff = compute_campaign_spec_diff(iter_dir, campaign)
+    violated = {v["param"] for v in diff["locked_parameters_violations"]}
+    assert violated == {"model"}
 
 
 # ─── F15 / #260: physical_realism_check soft warning ───────────────────────
