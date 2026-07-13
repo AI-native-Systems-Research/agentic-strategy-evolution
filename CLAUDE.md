@@ -153,10 +153,17 @@ for the schema.
 Every campaign should declare ``locked_parameters`` (and, when
 applicable, ``locked_workload``) for every knob whose deviation
 would invalidate the experiment. The validator hard-fails any
-bundle whose ``experiment_spec.verified_parameters`` deviates from
+bundle whose ``experiment_spec.verified_parameters`` *deviates from*
 ``locked_parameters`` — regardless of ``--auto-approve``. This
 closes the spec-fidelity gap that allowed paper-memorytime-mirage
 iter-1 to silently rewrite four locked workload parameters.
+
+Issue #298 refines the "missing key" case: a locked key that the
+bundle simply *omits* is not a violation (the campaign is the source
+of truth), so the validator **auto-populates** it into
+``verified_parameters`` and persists the bundle, rather than
+hard-failing. Only a value the bundle sets *differently* from the
+campaign fails.
 
 Authoring discipline lives in ``docs/campaign-authoring-guide.md``
 (the "what to lock" inventory + the rehearsal-as-instrument
