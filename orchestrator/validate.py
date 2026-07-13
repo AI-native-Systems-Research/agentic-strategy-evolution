@@ -6,6 +6,7 @@ Usage:
     python -m orchestrator.validate meta-findings --dir <work_dir>/
 """
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -232,13 +233,18 @@ def _validate_locked_parameters(
       spec-fidelity violation. The campaign is the unambiguous source of
       truth, so we **auto-populate** ``verified_parameters[k]`` from
       ``campaign.locked_parameters[k]`` (mutating ``bundle`` in place so
-      the caller can persist it) and continue.
+      the caller can persist it) and emit a ``WARN:``-prefixed advisory
+      naming the injected keys — so the auto-fill is recorded at the gate,
+      not silent.
     * **Deviating value** — the agent wrote a *different* value than the
       campaign locked. This is the real anti-mirage violation and still
       hard-fails.
 
-    The error message lists EVERY deviation in one shot, not just the
-    first — so a single re-run of the gate sees the full diff.
+    Returns a mixed list of hard errors and ``WARN:``-prefixed advisories;
+    the caller (``validate_design``) splits them the same way it splits
+    the physical-realism / ground-truth warnings. The hard-error message
+    lists EVERY deviation in one shot, not just the first — so a single
+    re-run of the gate sees the full diff.
     """
     if not campaign:
         return []
@@ -271,22 +277,36 @@ def _validate_locked_parameters(
         ]
 
     deviations: list[str] = []
+    autofilled: list[str] = []
     for key, expected in locked.items():
         if key not in verified:
             verified[key] = expected  # #298: auto-populate; campaign wins
+            autofilled.append(f"{key}={expected!r}")
             continue
         actual = verified[key]
         if actual != expected:
             deviations.append(
                 f"  - {key}: campaign={expected!r}, bundle={actual!r}"
             )
-    if not deviations:
-        return []
-    return [
-        "bundle.experiment_spec.verified_parameters deviates from "
-        "campaign.locked_parameters (#246/F1). Each entry must match "
-        "exactly:\n" + "\n".join(deviations)
-    ]
+    out: list[str] = []
+    if deviations:
+        out.append(
+            "bundle.experiment_spec.verified_parameters deviates from "
+            "campaign.locked_parameters (#246/F1). Each entry must match "
+            "exactly:\n" + "\n".join(deviations)
+        )
+    if autofilled:
+        # #298: auto-fill is defensible (campaign is source of truth) but
+        # must not be silent — surface it as a WARN so the human gate has
+        # a record of which verified_parameters were gate-injected rather
+        # than agent-authored. WARN: prefix routes it to warnings, not
+        # errors (same convention as _validate_physical_realism / #85).
+        out.append(
+            "WARN: auto-populated verified_parameters from "
+            "campaign.locked_parameters (#298; campaign is source of "
+            "truth for omitted keys): " + ", ".join(autofilled)
+        )
+    return out
 
 
 def _validate_locked_workload(
@@ -531,10 +551,12 @@ def compute_campaign_spec_diff(
     locked = (campaign or {}).get("locked_parameters") or {}
     if isinstance(locked, dict) and isinstance(verified, dict):
         for k, expected in locked.items():
-            # #298: an omitted key is auto-populated from the campaign by
-            # the hard-fail layer (_validate_locked_parameters), so it is
-            # NOT a spec-fidelity violation. Only a value that is PRESENT
-            # and DIFFERENT is a real deviation.
+            # #298: an omitted locked key is not a spec-fidelity violation
+            # (the campaign is the source of truth; the hard-fail layer
+            # auto-populates it). Only a value that is PRESENT and DIFFERENT
+            # is a real deviation. This guard is self-contained — it does
+            # not rely on _validate_locked_parameters having run first, so
+            # it stays correct for a direct or out-of-order caller.
             if k not in verified:
                 continue
             actual = verified[k]
@@ -583,6 +605,13 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
 
     # bundle.yaml
     bundle_path = iter_dir / "bundle.yaml"
+    # #298: _validate_locked_parameters may auto-populate omitted locked
+    # values into the bundle in place. We defer persisting that mutation
+    # until we know the gate PASSES — a failed gate must not leave a
+    # gate-rewritten artifact on disk. These carry the bundle + snapshot
+    # from inside the try to the persist step after the final verdict.
+    bundle_to_persist: dict | None = None
+    bundle_snapshot: dict | None = None
     if not bundle_path.exists():
         errors.append("bundle.yaml not found")
     else:
@@ -591,17 +620,19 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
             schema = _load_yaml_schema("bundle.schema.yaml")
             jsonschema.validate(bundle, schema)
             errors.extend(_validate_typed_arm_fields(bundle))
-            # #298: _validate_locked_parameters may auto-populate omitted
-            # locked values into the bundle in place. Snapshot first so we
-            # can detect the mutation and persist it back to disk below.
-            bundle_before = json.dumps(bundle, sort_keys=True, default=str)
-            # #246 (F1): locked_parameters spec-fidelity. Hard-fail under
-            # auto-approve too — that's the whole point.
-            errors.extend(_validate_locked_parameters(bundle, campaign))
-            # #298: persist auto-filled verified_parameters so downstream
-            # phases read the campaign's canonical values from bundle.yaml.
-            if json.dumps(bundle, sort_keys=True, default=str) != bundle_before:
-                atomic_write(bundle_path, yaml.safe_dump(bundle, sort_keys=False))
+            # #298: deepcopy snapshot so we can detect the in-place
+            # auto-fill by exact structural compare (not string rendering,
+            # which would conflate 1 and "1").
+            bundle_snapshot = copy.deepcopy(bundle)
+            bundle_to_persist = bundle
+            # #246 (F1): locked_parameters spec-fidelity. Hard-fail on
+            # DEVIATION under auto-approve too — that's the whole point.
+            # #298: omitted keys auto-fill and come back as WARN advisories.
+            for entry in _validate_locked_parameters(bundle, campaign):
+                if entry.startswith("WARN:"):
+                    warnings.append(entry)
+                else:
+                    errors.append(entry)
             # #265 (F20): locked_workload diff against bundle.inputs/*.yaml.
             errors.extend(_validate_locked_workload(iter_dir, bundle, campaign))
             # #248 (F3): depth_overrides without invalidates_checks.
@@ -638,6 +669,28 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
     extensions = _campaign_iter_root_extensions(campaign)
     required = _campaign_required_iter_root(campaign)
     errors.extend(_check_unexpected_files(iter_dir, extensions | required))
+
+    # #298: persist the auto-filled bundle ONLY when the whole gate passes,
+    # and only if it was actually mutated (no spurious rewrite when every
+    # locked key was already present). A failing gate leaves the on-disk
+    # bundle exactly as the agent authored it — no gate-injected values.
+    if (
+        not errors
+        and bundle_to_persist is not None
+        and bundle_to_persist != bundle_snapshot
+    ):
+        try:
+            atomic_write(
+                bundle_path, yaml.safe_dump(bundle_to_persist, sort_keys=False)
+            )
+        except OSError as exc:
+            # Keep the {"status", "errors"} contract instead of letting a
+            # raw disk error escape from a validation function.
+            return {
+                "status": "fail",
+                "errors": [f"failed to persist auto-filled bundle.yaml: {exc}"],
+                "warnings": warnings,
+            }
 
     if errors:
         return {"status": "fail", "errors": errors, "warnings": warnings}
