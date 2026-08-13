@@ -287,6 +287,28 @@ optimization:
       {metric: achieved_bandwidth_gbps, value: 21.1}
     noise_estimate_pct: 3.0
 
+  design_space:             # author invariants; Python enforces on EVERY config
+    invariants:
+      - id: I1
+        statement: "connector is peer-to-peer, never staged through host memory"
+        observable: telemetry.transfer_path
+        op: "=="
+        value: p2p
+      - id: I2
+        statement: "workload is single-tier"
+        observable: config.tier_count
+        op: "=="
+        value: 1
+
+  guidance:                 # domain knowledge for the two model-facing stages
+    factor_nomination: >
+      Scheduling policy is the highest-value axis here. Consider at minimum:
+      shortest-job-first, FCFS, EA-WFQ, priority-FCFS. Prefer mechanisms
+      already present in the target over net-new code.
+    interpretation: >
+      A win that depends on multi-tier workloads is out of scope for this
+      campaign; report it as a lead, not a result.
+
   factors:
     # A numeric knob: values between the declared levels are runnable.
     - id: L1
@@ -406,7 +428,61 @@ lazy predicate manufactures false confidence and is worse than none.
 (e.g. "monotone in queue_count at fixed L2..L8"), so a metamorphic relation is
 not confined to one knob in isolation.
 
-### 5.3 Native tests are target-side artifacts
+### 5.3 Steering the campaign: `design_space` vs `guidance`
+
+Existing campaigns carry substantial domain knowledge in
+`target_system.description` — `paper-memorytime-vector`'s runs to ~2600
+characters of "Prime directive", "Scientific framing", "Realization to build",
+and "Honest scope limitation". That field is inherited unchanged and remains the
+right home for narrative framing.
+
+It is not sufficient on its own here, for a reason specific to this kind:
+**`screen` and `refine` make zero model calls (§4.3), so a directive that exists
+only as prose is structurally unenforceable during the two stages that spend the
+benchmark budget.** "Single-tier workload only" written in a description cannot
+stop a matrix row from being generated with two tiers. This is the #221 failure
+mode exactly — a directive honored by the phase that reads prompts and ignored
+by the phase that does the work.
+
+Author intent therefore splits by *who has to act on it*:
+
+**`design_space.invariants` — properties Python enforces on every configuration.**
+Same `{observable, op, value}` vocabulary as `constraints` and `manipulation`.
+Checked on all runs in all stages. Where a violation is statically determinable
+from the matrix row, the row is rejected **before it runs**; where it is only
+observable post-hoc, the config hard-fails after running. Either way the
+guarantee holds across all 60–90 runs, not just the two the model sees.
+
+How this differs from the two neighbouring mechanisms:
+
+| Mechanism | Asserts | Violation means |
+|---|---|---|
+| `locked_parameters` | an **input** you set has a pinned value | the spec was rewritten (#246) |
+| `design_space.invariants` | a **property of the resulting system** holds | the campaign left its declared design space |
+| `response.constraints` | a **measured outcome** is admissible | this config is infeasible; exclude from fitting, keep exploring |
+
+"The connector is P2P" is an invariant rather than a locked parameter because it
+may be an emergent consequence of several settings rather than one flag —
+asserting the observed transfer path is stronger than pinning the flags you
+believe produce it.
+
+**`guidance` — structured prose for the two model-facing stages.** Two named
+slots, because they are consumed at different times and blending them wastes
+tokens in both:
+
+* `factor_nomination` → read at `verify`, when the model proposes factors and
+  levels. This is where "explore scheduling options such as shortest-job-first"
+  and "try parameters in a symphony" belong.
+* `interpretation` → read at `confirm`, when the model interprets the fitted
+  surface. Scope limitations and "report X as a lead, not a result" belong here.
+
+Both are optional; `target_system.description` still applies to both stages.
+
+**The rule for authors:** anything you would be upset to discover was violated
+after 60 runs belongs in `invariants`. `guidance` shapes what the model
+*proposes*; `invariants` bound what Python will *execute*.
+
+### 5.4 Native tests are target-side artifacts
 
 Property, metamorphic, fuzz, and invariant tests for campaign-generated
 mechanism code are written **in the target's native idiom** (`hypothesis` for
@@ -443,7 +519,7 @@ free from factor semantics:
   bandwidth.
 * **monotonicity** — classified `behavioral`, never `correctness` (§6.4).
 
-### 5.4 Artifacts
+### 5.5 Artifacts
 
 New, schema-validated, per iteration:
 
@@ -536,6 +612,7 @@ transfer.
 | `correctness` relation violated | **Hard-fail campaign.** Apparatus broken; measurements meaningless. |
 | `behavioral` relation violated | Recorded finding; campaign continues. |
 | Manipulation predicate fails | Hard-fail that **config**; retry once; if persistent, drop the factor, record it, refit on remaining factors with aliasing recomputed. |
+| `design_space` invariant violated | **Hard-fail.** Rejected before running when statically determinable from the matrix row; hard-fails the config after running when only observable post-hoc. The campaign has left its declared design space, so continuing would answer a different question than the one asked. |
 | Constraint violated | Config marked infeasible; excluded from fitting; retained in `runs.jsonl`. |
 | Response above `ceiling` | Hard-fail config — physically impossible means the instrumentation is lying. |
 | Executed config ≠ matrix row | **Hard-fail regardless of `--auto-approve`.** Same treatment as `locked_parameters` (#246). |
@@ -655,7 +732,14 @@ Contents:
    inventory.
 5. Anti-patterns: trivial manipulation predicates; held-out leakage;
    main-effects-only when interactions are expected; monotonicity misclassified
-   as `correctness`; treating a constrained conjunction as a scalar objective.
+   as `correctness`; treating a constrained conjunction as a scalar objective;
+   **putting an enforceable directive in `guidance` (or
+   `target_system.description`) instead of `design_space.invariants`** — the
+   #221 failure mode, since `screen` and `refine` never read prose.
+6. A steering section mapping the three channels: `guidance` (what the model
+   proposes) vs `design_space.invariants` (what Python executes) vs
+   `target_system.description` (narrative framing), with the "would you be upset
+   to find this violated after 60 runs?" test.
 
 Cross-linked from `README.md`, `CLAUDE.md`, and `docs/data-model.md`. Schema
 descriptions carry a one-line intent plus a concrete example each and point to
@@ -743,6 +827,30 @@ optimization:
     held_out: [walk_forward_blocks_robust]
     noise_estimate_pct: 4.0
 
+  design_space:
+    invariants:
+      - id: I1
+        statement: "every config trades the same instrument set (no survivorship drift)"
+        observable: telemetry.instrument_set_hash
+        op: "=="
+        value: "baseline"
+      - id: I2
+        statement: "no config peeks past the OOS boundary"
+        observable: telemetry.max_bar_date
+        op: "<="
+        value: "2026-06-18"
+
+  guidance:
+    factor_nomination: >
+      tp_low and tp_high interact through the category boundary; treat their
+      interaction as the primary object of interest rather than either main
+      effect. Trailing-stop factors are secondary — screen them, but do not
+      spend refinement budget on them unless the screen says they matter.
+    interpretation: >
+      A config that wins only in the uptrend regime is not a result for this
+      campaign; the robustness conjunction across all three regimes is the
+      claim. Report uptrend-only winners as leads.
+
   factors:
     - id: F1
       name: tp_low
@@ -828,3 +936,9 @@ Three things this example demonstrates that prose does not:
   three `regimes` make a config's admissibility mechanical, and the per-regime
   effect fits show directly whether a factor helps everywhere or trades one leg
   against another.
+* **I2 is a lookahead-bias tripwire that fires on every one of the ~40 runs.**
+  "Don't peek past the OOS boundary" is the kind of instruction that reads as
+  obviously-satisfied in prose and is catastrophic when silently violated —
+  every downstream number becomes meaningless while still looking excellent.
+  As an invariant it is checked mechanically per config, in the stages where no
+  model is watching.
