@@ -232,7 +232,7 @@ and artifacts:
 |---|---|---|---|---|
 | 1 | `verify` | 1 design + mechanism code & native tests | ~2/factor | Levers exist, engage, pass native property tests |
 | 2 | `screen` | 0 | 16–32 | Which factors matter + all 2-factor interactions |
-| 3 | `refine` | 0 | 15–25 | Curvature on surviving continuous factors; stationary point |
+| 3 | `refine` | 0 | 15–25 | Curvature on surviving `numeric` factors; stationary point |
 | 4 | `confirm` | 1 analyze | ~5 × replicates | Predicted optimum reproduces; held-out evaluated |
 
 Plus one gate-summary call per iteration (existing machinery). Substantive
@@ -256,8 +256,8 @@ Because `ordering-theorem` shows that the headline result can *be* an
 interaction (§2), the default is **resolution V**, and the validator warns when
 an author requests resolution IV or III while declaring more than one factor —
 main-effects-only screening is the OFAT failure mode in disguise. Multi-level
-and categorical factors with more than two levels are screened at their
-`screen_levels` pair; their remaining levels are explored only in `refine`.
+Factors with more than two levels are screened at their `screen_levels` pair
+(default: first and last); their remaining levels are explored only in `refine`.
 
 When k is large enough that resolution V exceeds the run budget the author
 declares, the validator fails with the two honest options (raise the budget, or
@@ -289,31 +289,44 @@ optimization:
     noise_estimate_pct: 3.0
 
   factors:
+    # A numeric knob: values between the declared levels are runnable.
     - id: L1
       name: queue_count
-      type: ordinal                 # continuous | ordinal | categorical
-      levels: [2, 4, 8, 16]         # enumerated; >= 2 entries, any length
-      screen_levels: [2, 16]        # which two the screen uses; default = extremes
-      apply:
-        kind: cli_flag              # cli_flag | env_var | config_patch
-        template: "--queues={value}"
-      manipulation:                 # check family A: did the lever engage?
-        observable: telemetry.queue_count
-        assert: "== {value}"
-      relations:                    # check family B: is the mechanism correct?
+      type: numeric                 # numeric | choice
+      levels: [2, 4, 8, 16]         # >= 2 entries; screen uses first & last
+      grid: 1                       # optimum snaps to this step (integers here)
+      apply: "--queues={level}"     # shorthand for {kind: cli_flag, ...}
+      manipulation:                 # family A: did the lever engage?
+        {observable: telemetry.queue_count, op: "==", value: "{level}"}
+      relations:                    # family B: is the mechanism correct?
         - id: R1
           kind: correctness         # violation => hard-fail campaign
-          statement: "baseline level reproduces baseline within noise"
+          statement: "queue_count at baseline reproduces baseline within noise"
           native_test: "tests/prop_queue.py::test_baseline_noop"
         - id: R2
           kind: behavioral          # violation => recorded finding
-          statement: "monotone non-decreasing in queue_count at fixed L2..L8"
+          statement: "throughput monotone non-decreasing in queue_count"
           native_test: "tests/prop_queue.py::test_monotone"
+
+    # A choice knob: nothing lives between the levels.
+    - id: L5
+      name: batching
+      type: choice
+      levels: [off, on]
+      apply: {kind: env_var, name: CERTUS_BATCHING, value: "{level}"}
+      manipulation:
+        {observable: telemetry.mean_batch_size, op: ">", value: 1, when: "on"}
+      relations:
+        - id: R3
+          kind: correctness
+          statement: "batching=off is byte-identical to baseline"
+          native_test: "tests/prop_batch.py::test_off_is_noop"
 
   design:
     screen:  {resolution: 5, center_points: 4}
     refine:  {kind: central_composite, center_points: 5}
     confirm: {replicates: 5}
+    max_runs: 120                   # validator fails rather than downgrade
 
   test_command: "pytest -q tests/prop_*.py --json-report"
   integrity_command: "./scripts/verify_integrity.sh"
@@ -321,29 +334,78 @@ optimization:
 
 ### 5.2 Field semantics
 
+The authoring surface is deliberately small: a factor needs `id`, `name`,
+`type`, `levels`, `apply`, one `manipulation`, and one `correctness` relation.
+Everything else has a default.
+
+**`type` is `numeric` or `choice` — a domain question, not a statistics
+question.** The only thing the author must decide is *whether values between the
+declared levels are runnable*:
+
+* `numeric` — interpolation is meaningful. `escalate_low ∈ {0.015…0.040}` (any
+  threshold ships), `severity_boundary ∈ {0.75, 0.85, 0.95}` (a continuous ratio,
+  coarsely enumerated), `queue_count ∈ {2,4,8,16}`.
+* `choice` — nothing lives between the levels. `scheduler ∈ {vector-kvtime,
+  static-drf, fcfs}`, `batching ∈ {off, on}`, `preemption ∈ {largest-kappa,
+  dumb-tail, none}`.
+
+An earlier draft offered `continuous | ordinal | categorical`. That was dropped:
+"ordinal" is a statistics term that makes the author reason about how fitting
+works, and the fitting question it was trying to answer is fully determined by
+`type` + `grid`.
+
+**`grid` makes the reported optimum runnable.** Refinement fits a continuous
+surface and solves for a stationary point, which may land between levels. With
+`grid: g` the point **snaps** to the nearest multiple of `g` — so `K = 4.7`
+becomes `K = 5`, and `confirm` runs a configuration that actually exists.
+`confirm` validates the *snapped* point, not the theoretical one, and if
+snapping moves the response outside the predicted CI that is recorded as a
+finding rather than hidden. Omit `grid` when any real value ships (thresholds,
+ratios). Ignored for `type: choice`.
+
+This resolves what was open question #3: the alternative — restricting
+refinement to declared levels — throws away the main advantage of the
+response-surface stage (finding interior optima), and plain rounding can report
+an optimum the target cannot run.
+
+**Screen levels default to `levels[0]` and `levels[-1]`.** Declare
+`screen_levels: [lo, hi]` only when the extremes are known-pathological and the
+screen should bracket a narrower span. For the common two-level case, write
+`levels: [off, on]` and omit `screen_levels` entirely.
+
 **`apply` is the seam that removes the LLM from the inner loop.** It declares
-mechanically how a level becomes a runnable configuration. Given `apply`,
-Python expands a matrix row into a command with no model involvement. This is
-the single most load-bearing field in the schema.
+mechanically how a level becomes a runnable configuration; given it, Python
+expands a matrix row into a command with no model involvement. This is the most
+load-bearing field in the schema. A bare string is shorthand for a CLI flag —
+`apply: "--queues={level}"` — with the long forms being
+`{kind: cli_flag, template: ...}`, `{kind: env_var, name: ..., value: ...}`, and
+`{kind: config_patch, path: ..., pointer: ..., value: ...}`. `{level}` is the
+only interpolation token in the entire spec.
 
 **Factor levels are the pre-registered parameters.** `locked_parameters` keeps
 its existing meaning for everything that is *not* a factor. The validator warns
 when a knob listed in `target_system.controllable_knobs` appears in neither
 `factors` nor `locked_parameters` — the "what did you forget to control" check.
 
-**`screen_levels`** defaults to the extremes of `levels`. Declaring it
-explicitly matters when the extremes are known-pathological and the screen
-should bracket a narrower span.
-
 **Both check families are mandatory.** Schema requires ≥1 `manipulation` and
-≥1 `correctness` relation per factor. The validator rejects trivially-true
-predicates (`> 0`, `!= null`, bare truthiness) using the same floor
-`validate_evidence` applies to principles: a lazy predicate manufactures false
-confidence and is worse than none.
+≥1 `correctness` relation per factor. `manipulation` reuses the same
+`{metric|observable, op, value}` comparison shape as `constraints` and `regimes`
+— one comparison vocabulary across the whole spec, no bespoke assertion
+mini-language to learn or mis-type. Two optional guards restrict *which* levels
+the check applies to, because a check is often meaningless at one level:
+`when: <level | [levels]>` applies it only at those levels, and
+`when_not: <level | [levels]>` applies it everywhere else. A batch-size
+assertion holds only at `batching: on` (`when: on`); a
+"decay-guard fired at least once" assertion holds at every level except
+`off` (`when_not: off`). Supplying both on one check is a validation error.
 
-**`relations` may reference other factors** (R2's "at fixed L2..L8"), so a
-metamorphic relation can be stated over the interaction structure rather than
-one knob in isolation.
+The validator rejects trivially-true predicates (`> 0`, `!= null`, bare
+truthiness) using the same floor `validate_evidence` applies to principles: a
+lazy predicate manufactures false confidence and is worse than none.
+
+**`relations` are per-factor but may be stated over the interaction structure**
+(e.g. "monotone in queue_count at fixed L2..L8"), so a metamorphic relation is
+not confined to one knob in isolation.
 
 ### 5.3 Native tests are target-side artifacts
 
@@ -449,8 +511,8 @@ cannot rule out.
 `stage.py`, no model call:
 
 * **After `screen`:** drop factors whose effect CI contains zero. If ≥1
-  continuous/ordinal factor survives → `refine`. If only categorical factors
-  survive → skip to `confirm` at the winning corner.
+  `numeric` factor with >2 levels survives → `refine`. If only `choice` factors
+  (or 2-level `numeric` ones) survive → skip to `confirm` at the winning corner.
 * **After `refine`:** solve the fitted quadratic's stationary point; check it is
   interior to the declared hull and feasible against `constraints`; then
   `confirm`.
@@ -567,7 +629,7 @@ reflective path. Optimization bundles do not declare `complexity_tier` or
 `campaign.schema.yaml` gains `kind` and the `optimization` block, with
 `additionalProperties: false` preserved. Cross-field rules JSON Schema cannot
 express (a factor whose `screen_levels` are not members of `levels`; a
-`refine.kind` requiring ≥2 continuous factors; a `held_out` metric also named
+`refine.kind` requiring ≥2 surviving `numeric` factors; a `held_out` metric also named
 as `primary`) are enforced in `validate.py` alongside the existing
 `_validate_locked_parameters` family, and return **actionable repair messages**
 rather than bare rejections — the validator is read by AI authors.
@@ -635,10 +697,135 @@ mocking discipline.
    verified alias table, or a dependency (`pyDOE3`)? Preference: hand-rolled for
    the standard resolutions, to keep the dependency tree and the alias claims
    auditable.
-3. **Ordinal factors in refinement.** Whether to treat an ordinal factor as
-   continuous during response-surface fitting and round the stationary point, or
-   restrict refinement to declared levels. Affects whether the reported optimum
-   is always runnable.
-4. **Multi-response optimization.** When `regimes` conflict irreconcilably, the
+3. **Multi-response optimization.** When `regimes` conflict irreconcilably, the
    current design reports the trade rather than picking a winner. Whether to add
    desirability functions is deferred until a campaign needs it.
+
+*(A fourth question — how ordinal factors behave in refinement — was resolved
+during review by replacing the three-way type vocabulary with `numeric` +
+`grid`; see §5.2.)*
+
+## 11. Worked example: `alert-threshold-robustness` restated
+
+The corpus campaign that hand-rolled a 5×6×3×5×3 = 1350-cell grid (§2), written
+as an optimization campaign. Resolution V over 5 factors is 16 runs; with 4
+center points and 3 replicates at confirm, the whole campaign is ~40 runs
+against 1350 — and it gains interaction estimates the grid never computed.
+
+```yaml
+kind: optimization
+run_id: alert-threshold-robustness-opt
+research_question: >
+  Is there an escalation-threshold configuration that robustly beats the
+  recorded baseline out-of-sample across both the bursty and the steady
+  stretches of the held-out window?
+
+target_system:
+  name: event-replay
+  description: Threshold-based alert classifier replayed over recorded event streams.
+
+locked_parameters:            # unchanged from the original campaign
+  arming_threshold: 0.40
+  score_floor: 0.0
+  cd: 0
+  weighting: equal_per_window
+  is_start: "2025-03-20"
+  oos_start: "2026-02-01"
+
+optimization:
+  response:
+    primary: {metric: improvement_steady_pct, direction: maximize}
+    constraints:
+      - {metric: trigger_rate_pct, op: ">", value: 0.0}   # not turned off
+    regimes:                  # the robustness conjunction, made explicit
+      - {id: burst,      metric: improvement_burst_pct,      op: ">",  value: 0}
+      - {id: drift, metric: improvement_drift_pct, op: ">",  value: 0}
+      - {id: steady,       metric: improvement_steady_pct,       op: ">=", value: -5}
+    held_out: [held_out_blocks_robust]
+    noise_estimate_pct: 4.0
+
+  factors:
+    - id: F1
+      name: escalate_low
+      type: numeric
+      levels: [0.015, 0.020, 0.025, 0.030, 0.040]
+      apply: "--escalate-low={level}"
+      manipulation: {observable: config.escalate_low, op: "==", value: "{level}"}
+      relations:
+        - {id: R1, kind: correctness,
+           statement: "escalate_low at 0.015 reproduces the recorded baseline run",
+           native_test: "tests/prop_thresholds.py::test_baseline_reproduces"}
+
+    - id: F2
+      name: escalate_high
+      type: numeric
+      levels: [0.030, 0.040, 0.050, 0.060, 0.080, 0.120]
+      apply: "--escalate-high={level}"
+      manipulation: {observable: config.escalate_high, op: "==", value: "{level}"}
+      relations:
+        - {id: R2, kind: correctness,
+           statement: "escalate_high >= escalate_low invariant holds for every accepted config",
+           native_test: "tests/prop_thresholds.py::test_ordering_invariant"}
+
+    - id: F3
+      name: severity_boundary
+      type: numeric
+      levels: [0.75, 0.85, 0.95]
+      apply: "--severity_boundary={level}"
+      manipulation: {observable: config.severity_boundary, op: "==", value: "{level}"}
+      relations:
+        - {id: R3a, kind: correctness,
+           statement: "severity_boundary partitions every bar into exactly one category",
+           native_test: "tests/prop_thresholds.py::test_partition_is_total"}
+        - {id: R3b, kind: behavioral,
+           statement: "trigger_rate is monotone non-increasing in severity_boundary",
+           native_test: "tests/prop_thresholds.py::test_trigger_rate_monotone"}
+
+    - id: F4
+      name: decay_guard_threshold
+      type: choice              # 'off' is not a number; no interpolation
+      levels: [off, 0.004, 0.005, 0.007, 0.010]
+      apply: "--decay-guard={level}"
+      manipulation: {observable: telemetry.decay_guard_events, op: ">", value: 0,
+                     when_not: off}
+      relations:
+        - {id: R4, kind: correctness,
+           statement: "decay_guard=off is byte-identical to the no-stop path",
+           native_test: "tests/prop_stops.py::test_off_is_noop"}
+
+    - id: F5
+      name: decay_guard_min_peak
+      type: numeric
+      levels: [0.006, 0.008, 0.012]
+      apply: "--min-peak={level}"
+      manipulation: {observable: config.min_peak, op: "==", value: "{level}"}
+      relations:
+        - {id: R5, kind: correctness,
+           statement: "min_peak has no effect when decay_guard=off",
+           native_test: "tests/prop_stops.py::test_min_peak_inert_when_off"}
+
+  design:
+    screen:  {resolution: 5, center_points: 4}
+    refine:  {kind: central_composite, center_points: 4}
+    confirm: {replicates: 3}
+    max_runs: 60
+
+  test_command: "pytest -q tests/prop_*.py --json-report"
+```
+
+Three things this example demonstrates that prose does not:
+
+* **`decay_guard` is `choice`, not `numeric`,** because `off` sits in a list of
+  numbers. An author reaching for `numeric` here would be asking the fitter to
+  interpolate between `off` and `0.004`. The `type` question ("is anything
+  between these runnable?") makes the right answer obvious without knowing
+  anything about regression.
+* **R5 encodes a cross-factor inertness relation** — `min_peak` must do nothing
+  when `decay_guard=off`. That is a real bug class in threshold code, it is
+  invisible to any single-factor test, and it would otherwise show up as
+  unexplained noise in the F5 main effect.
+* **The robustness conjunction is declared, not discovered.** The original
+  campaign expressed "robust winner" in prose and checked it by hand; here the
+  three `regimes` make a config's admissibility mechanical, and the per-regime
+  effect fits show directly whether a factor helps everywhere or trades one leg
+  against another.
