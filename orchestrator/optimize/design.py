@@ -63,6 +63,16 @@ class Design:
         return tuple(p for p in self.points if p.role == "corner")
 
 
+def is_tabulated(k: int, resolution: int) -> bool:
+    """Whether a generator set for ``(k, resolution)`` is tabulated here.
+
+    Callers deciding run-budget feasibility must consult this rather than
+    inferring it from ``min_runs_for``, whose untabulated fallback returns
+    ``2**k`` — a conservative upper bound, not the true minimum.
+    """
+    return (k, resolution) in _GENERATORS
+
+
 def min_runs_for(k: int, resolution: int) -> int:
     """Run count of the smallest tabulated design for ``k`` factors.
 
