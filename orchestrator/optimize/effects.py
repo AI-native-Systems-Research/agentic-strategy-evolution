@@ -17,6 +17,24 @@ Confidence intervals come from the pure-error variance supplied by
 replicated center points. Without center points there is no independent
 error estimate, so significance is left as ``None`` rather than guessed:
 reporting a fabricated interval would be worse than reporting none.
+
+Each term's standard error is computed from that term's own model column
+(``sigma / sqrt(sum_i x_ij^2)``), not a single scalar shared across terms
+(see the note at the SE computation in ``fit_effects``). That per-column
+form is the *exact* ``sigma * sqrt((X^T X)^-1_jj)`` only when the term's
+column is orthogonal to every other column — true for main effects and
+two-factor interactions on every design this module generates, but not
+for the intercept or the pure-quadratic terms (``A^2``, ``B^2``, ...) on a
+central composite, whose columns are mutually correlated with each other
+and with the intercept. On a 2-factor central composite, measured against
+an explicit ``(X^T X)^-1`` inverse: main effects and ``AB`` match exactly
+(e.g. 0.353553 vs. 0.353553, 0.500000 vs. 0.500000); the intercept and
+``A^2``/``B^2`` are optimistic by a factor of about 1.46 (0.420813 exact
+vs. 0.288675 from the per-column formula). This is accepted rather than
+fixed with a full matrix inverse: quadratic terms exist to describe
+surface curvature (consumed by ``solve_stationary_point`` as point
+estimates, never gated on their CIs), and ``dropped_factors``/the stage
+rule only ever look at main-effect significance, which is exact.
 """
 from __future__ import annotations
 
@@ -159,6 +177,24 @@ def fit_effects(design: Design, responses, *, factor_ids,
             # squares, so a shared n-based scalar systematically
             # understates the SE of every two-level term whenever
             # non-corner points are present.
+            #
+            # This per-column formula equals the exact
+            # sigma * sqrt((X^T X)^-1_jj) only when the column is
+            # orthogonal to every other column in the model. That holds
+            # for every main effect and two-factor interaction on every
+            # design this module generates — the terms that actually gate
+            # significance in dropped_factors and the stage rule — so
+            # those CIs are exact. It does NOT hold for the intercept or
+            # for pure-quadratic terms (A^2, B^2, ...) on a central
+            # composite: those columns are mutually correlated (with each
+            # other and with the intercept), so their reported SEs are
+            # optimistic (too narrow). Measured on a 2-factor central
+            # composite against an explicit (X^T X)^-1 inverse: A^2/B^2
+            # exact SE is 0.420813 vs. 0.288675 from this formula — about
+            # 1.46x too narrow. Accepted rather than fixed with a full
+            # matrix inverse: quadratic terms describe surface curvature
+            # and are consumed by solve_stationary_point as point
+            # estimates only, never gated on their CIs.
             ss_j = sum(v * v for v in cols[idx])
             se = math.sqrt(pe_var / ss_j)
             lo, hi = est - tcrit * se, est + tcrit * se
