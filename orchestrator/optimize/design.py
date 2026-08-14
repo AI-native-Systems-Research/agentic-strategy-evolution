@@ -64,12 +64,23 @@ class Design:
 
 
 def min_runs_for(k: int, resolution: int) -> int:
-    """Run count of the smallest tabulated design for ``k`` factors."""
+    """Run count of the smallest tabulated design for ``k`` factors.
+
+    Exact only for ``(k, resolution)`` pairs present in ``_GENERATORS``.
+    For an untabulated pair (with ``resolution >= 3``) this returns
+    ``2 ** k`` — the full factorial's run count — as a *conservative upper
+    bound*, not the true minimum. A smaller fractional design may well
+    exist for that combination; it simply isn't tabulated here, and this
+    module has no way to derive one on the fly. Do not treat the fallback
+    value as "the minimum achievable run count" for feasibility decisions —
+    check ``(k, resolution) in _GENERATORS`` first, and treat an untabulated
+    combination as unknown rather than as "needs the full factorial."
+    """
     entry = _GENERATORS.get((k, resolution))
     if entry is None:
         if resolution <= 2:
             raise ValueError("resolution must be >= 3")
-        return 2 ** k          # fall back to the full factorial
+        return 2 ** k          # conservative upper bound, NOT the true minimum
     n_base, _ = entry
     return 2 ** n_base
 

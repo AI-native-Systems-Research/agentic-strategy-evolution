@@ -61,6 +61,17 @@ def test_resolution_v_for_five_factors_needs_sixteen_runs():
     assert len(_corners(d)) == 16
 
 
+def test_min_runs_for_is_exact_only_for_tabulated_cells():
+    # Tabulated: exact, from _GENERATORS' n_base.
+    assert min_runs_for(5, 5) == 16
+    # Untabulated (k=6, resolution=3 has no _GENERATORS entry): the
+    # fallback is 2**k, a conservative upper bound, not a claim that 64
+    # is the true minimum run count achievable at resolution 3 for 6
+    # factors -- it may well be smaller and simply isn't tabulated here.
+    assert (6, 3) not in _GENERATORS
+    assert min_runs_for(6, 3) == 2 ** 6
+
+
 def test_resolution_v_design_has_no_aliasing_among_mains_and_two_factor_terms():
     d = fractional_factorial(FIVE, resolution=5)
     assert alias_pairs(d) == []
