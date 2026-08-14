@@ -894,11 +894,18 @@ optimization:
 
     - id: F4
       name: trailing_stop_threshold
-      type: choice              # 'off' is not a number; no interpolation
-      levels: [off, 0.004, 0.005, 0.007, 0.010]
+      type: choice              # "off" is not a number; no interpolation
+      # QUOTE "off". Unquoted `off` is a YAML 1.1 boolean and parses as False,
+      # so the level list would become [False, 0.004, ...] and `when_not: off`
+      # would guard on the boolean instead of the sentinel string.
+      levels: ["off", 0.004, 0.005, 0.007, 0.010]
       apply: "--trailing-stop={level}"
-      manipulation: {observable: telemetry.trailing_stop_events, op: ">", value: 0,
-                     when_not: off}
+      # The predicate compares against the interpolated level, not a bare
+      # `> 0`. `trailing_stop_events > 0` would be trivially true — it passes
+      # whenever the stop fires at all, so it cannot distinguish 0.004 from
+      # 0.010 and would report a mis-set lever as verified.
+      manipulation: {observable: config.trailing_stop_threshold, op: "==",
+                     value: "{level}", when_not: "off"}
       relations:
         - {id: R4, kind: correctness,
            statement: "trailing_stop=off is byte-identical to the no-stop path",
