@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/design_matrix.schema.json",
+  "title": "Optimization Design Matrix",
+  "description": "The pre-registered plan for an optimization-campaign iteration (design spec 5.5). Written BEFORE any config is executed: rows, generator/alias structure, and a randomized-but-recorded run order so time-ordered drift (thermal effects, cache warming) cannot masquerade as a factor effect. See orchestrator.optimize.matrix.matrix_payload.",
+  "type": "object",
+  "required": ["factor_ids", "kind", "resolution", "generators", "aliases", "run_order", "run_order_seed", "rows"],
+  "additionalProperties": false,
+  "properties": {
+    "factor_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Declared factor ids in design-column order, e.g. [\"A\", \"B\", \"C\"]."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["full", "fractional", "central_composite"],
+      "description": "Design family. \"fractional\" designs carry non-empty aliases; \"central_composite\" adds axial/center points for curvature."
+    },
+    "resolution": {
+      "type": ["integer", "null"],
+      "minimum": 3,
+      "description": "Design resolution (III/IV/V) for a fractional design; null for a full factorial or central composite, which have no aliasing to report at this level."
+    },
+    "generators": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": { "type": "integer", "minimum": 0 }
+      },
+      "description": "Base-column index tuples defining each derived factor's generator, e.g. [[0, 1, 2]] means the 4th factor = product of base columns 0, 1, 2. Empty for a full factorial."
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "minItems": 2,
+        "maxItems": 2
+      },
+      "description": "Confounded term-label pairs, e.g. [[\"AB\", \"C\"]] means the AB interaction is aliased with (indistinguishable from) main effect C. Empty means every main effect and two-factor interaction is separately estimable (resolution-V or full factorial). A fractional design's caveat must survive into this artifact rather than being silently dropped."
+    },
+    "run_order": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 },
+      "description": "A permutation of row indices [0, len(rows)) giving the randomized execution order."
+    },
+    "run_order_seed": {
+      "type": "integer",
+      "description": "RNG seed that reproduces run_order from orchestrator.optimize.matrix.randomized_run_order — recorded so the randomization is reproducible, not just random."
+    },
+    "rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/row" }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "required": ["row_index", "levels", "role", "replicate", "apply"],
+      "additionalProperties": false,
+      "properties": {
+        "row_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position in the design matrix, matching orchestrator.optimize.matrix.ConfigRow.row_index. This is the join key against runs.jsonl for fidelity checking."
+        },
+        "levels": {
+          "type": "object",
+          "description": "Map of factor id -> the real-world level this row runs at, e.g. {\"A\": \"low\", \"B\": 4}."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["corner", "center", "axial"],
+          "description": "Design-point role: a full/fractional-factorial corner, a replicated center point (supplies the pure-error estimate), or a central-composite axial/star point (supplies curvature)."
+        },
+        "replicate": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Replicate index for repeated points (e.g. the 3rd center-point replicate has replicate=2); 0 for unreplicated corners."
+        },
+        "apply": {
+          "type": "object",
+          "required": ["cli_args", "env", "patches"],
+          "additionalProperties": false,
+          "description": "The rendered, mechanical instructions for making this row's levels take effect on the target — no model call is involved in producing this.",
+          "properties": {
+            "cli_args": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "CLI flags to pass to the target's invocation, e.g. [\"--queues=4\"]."
+            },
+            "env": {
+              "type": "object",
+              "description": "Environment variables to set, e.g. {\"NOUS_BATCH_SIZE\": \"4\"}."
+            },
+            "patches": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "pointer", "value"],
+                "additionalProperties": false,
+                "properties": {
+                  "path": { "type": "string", "minLength": 1, "description": "Config file to patch." },
+                  "pointer": { "type": "string", "description": "JSON-pointer-like location within that file." },
+                  "value": {}
+                }
+              },
+              "description": "Config-file patches to apply before running."
+            },
+            "center_choice_pinned": {
+              "type": "object",
+              "description": "Optional map of factor id -> true for a choice-typed factor pinned to its low level at a center point (a choice factor has no interior, so a center row still needs a concrete level)."
+            }
+          }
+        }
+      }
+    }
+  }
+}
