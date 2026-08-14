@@ -2095,7 +2095,7 @@ Run: `/opt/homebrew/bin/pytest tests/test_optimize_artifacts.py -q`
 
 Implementation notes:
 - Use `orchestrator.util.atomic_write` for every whole-file write, matching the rest of the codebase.
-- `runs.jsonl` is append-only; never rewrite it. A crashed run must leave the completed rows intact.
+- `runs.jsonl` is append-only; never rewrite it. A crashed run must leave the completed rows intact **and readable**: `read_runs` must skip a malformed *trailing* line (the only line a crash can tear) and report the skip, returning the rows that parsed. A malformed line in the *middle* must still raise — that is not a crash signature and hiding it would conceal real corruption. Without this, completed rows survive on disk but are unusable, which operationally loses them and defeats the guarantee append-only exists to provide.
 - The findings projection must **not** invent prose. Each `discrepancy_analysis` / evidence string is assembled from numbers: estimate, CI, n, and the factor's declared statement.
 - Determinism: sort effects by descending `abs(estimate)` for stable output ordering.
 
