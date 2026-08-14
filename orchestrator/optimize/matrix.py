@@ -13,7 +13,10 @@ auditable.
 pre-registered plan, including a run order that is randomized (so
 time-ordered drift like thermal effects or cache warming cannot masquerade
 as a factor effect) but recorded against a seed (so the campaign stays
-reproducible). ``check_fidelity`` closes the loop after the fact -- it
+reproducible), and the design's alias structure (from
+``design.alias_pairs``) so a heavily confounded design says so in the
+artifact itself rather than by omission. ``check_fidelity`` closes the
+loop after the fact -- it
 compares what the payload promised against what actually ran, by
 ``row_index``, and reports three distinct hard-failure classes: a level
 that drifted, a planned row nothing ran, and a run that names a row the
@@ -29,7 +32,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
-from orchestrator.optimize.design import Design, DesignPoint
+from orchestrator.optimize.design import Design, DesignPoint, alias_pairs
 from orchestrator.optimize.factors import Factor, decode_coded
 from orchestrator.optimize.predicates import evaluate
 
@@ -147,7 +150,14 @@ def randomized_run_order(n: int, seed: int) -> list[int]:
 
 def matrix_payload(design: Design, factors: list[Factor], *,
                     run_order_seed: int) -> dict:
-    """The full ``design_matrix.json`` body: rows plus design provenance."""
+    """The full ``design_matrix.json`` body: rows plus design provenance.
+
+    ``aliases`` is populated from ``design.alias_pairs(design)`` -- a
+    resolution-III design's payload names its confounded terms rather than
+    recording an empty list that would misrepresent the design as fully
+    resolved. ``alias_pairs`` already returns a sorted list, so this stays
+    deterministic across calls, matching ``rows`` and ``run_order``.
+    """
     rows = expand(design, factors)
     run_order = randomized_run_order(len(rows), run_order_seed)
     return {
@@ -155,7 +165,7 @@ def matrix_payload(design: Design, factors: list[Factor], *,
         "kind": design.kind,
         "resolution": design.resolution,
         "generators": [list(g) for g in design.generators],
-        "aliases": [],
+        "aliases": [list(pair) for pair in alias_pairs(design)],
         "run_order": run_order,
         "run_order_seed": run_order_seed,
         "rows": [
