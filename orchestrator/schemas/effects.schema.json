@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/effects.schema.json",
+  "title": "Optimization Fitted Effects",
+  "description": "effects.json (design spec 5.5): fitted main effects and interactions with confidence intervals, the pure-error estimate, the lack-of-fit test, aliasing caveats, and which factors were dropped as within-noise. Written by orchestrator.optimize.artifacts.write_effects from an orchestrator.optimize.effects.Fit. This is the artifact project_findings() and project_principle_updates() are deterministically derived from -- no LLM call is needed to author findings.json/principle_updates.json at screen/refine because everything a finding needs is already here.",
+  "type": "object",
+  "required": ["stage", "intercept", "n_runs", "pure_error_var", "pure_error_df", "lack_of_fit_f", "lack_of_fit_p", "aliases", "effects", "quadratic", "dropped_factors"],
+  "additionalProperties": false,
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": ["verify", "screen", "refine", "confirm"],
+      "description": "Which of the four optimization-campaign stages produced this fit."
+    },
+    "intercept": {
+      "type": "number",
+      "description": "Fitted model intercept (grand mean at the design center)."
+    },
+    "n_runs": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of rows the fit was estimated from -- orchestrator.optimize.effects.Fit.n_runs."
+    },
+    "pure_error_var": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Sample variance of replicated center-point responses. Null when fewer than 2 center-point replicates exist -- there is then no independent error estimate, so every effect's significance is unknown rather than guessed."
+    },
+    "pure_error_df": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Degrees of freedom backing pure_error_var (replicate count minus 1); 0 when pure_error_var is null."
+    },
+    "lack_of_fit_f": {
+      "type": ["number", "null"],
+      "description": "F statistic for the lack-of-fit test. Null when no pure-error estimate exists or there are no residual degrees of freedom left over."
+    },
+    "lack_of_fit_p": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "p-value for the lack-of-fit test. A significant (small) value means the linear model form is inadequate -- one of the four escalation triggers in design spec 6.3."
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "minItems": 2,
+        "maxItems": 2
+      },
+      "description": "Confounded term-label pairs carried forward from the design (orchestrator.optimize.design.alias_pairs), e.g. [[\"AB\", \"C\"]]. Non-empty here means this fit's estimates for the aliased terms cannot be separated -- the caveat must survive from design_matrix.json into this artifact."
+    },
+    "effects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/effect" },
+      "description": "Main effects and (when include_interactions was true) two-factor interactions, in fit order."
+    },
+    "quadratic": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/effect" },
+      "description": "Pure-quadratic terms (A^2, B^2, ...) fitted only when the design has axial points (central composite, at refine). Empty at screen."
+    },
+    "dropped_factors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Factor ids whose main effect confidence interval contains zero (orchestrator.optimize.effects.dropped_factors) -- measured null, not merely unmeasured."
+    }
+  },
+  "$defs": {
+    "effect": {
+      "type": "object",
+      "required": ["label", "terms", "estimate", "se", "ci_low", "ci_high", "significant"],
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Display label for this term, e.g. \"A\" for a main effect or \"AB\" for an interaction."
+        },
+        "terms": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "maxItems": 2,
+          "description": "Factor id(s) making up this term: one id for a main effect, two for an interaction or a pure-quadratic term (same id twice, e.g. [\"A\", \"A\"])."
+        },
+        "estimate": {
+          "type": "number",
+          "description": "Fitted coefficient (half the effect size in the +/-1 coding)."
+        },
+        "se": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Standard error of the estimate, from the term's own column sum of squares against pure_error_var. Null when pure_error_var is null."
+        },
+        "ci_low": {
+          "type": ["number", "null"],
+          "description": "Lower bound of the confidence interval. Null when se is null."
+        },
+        "ci_high": {
+          "type": ["number", "null"],
+          "description": "Upper bound of the confidence interval. Null when se is null."
+        },
+        "significant": {
+          "type": ["boolean", "null"],
+          "description": "True if the confidence interval excludes zero, false if it contains zero, null when unknown (no pure-error estimate -- an unknown effect is never treated as a measured null)."
+        }
+      }
+    }
+  }
+}
