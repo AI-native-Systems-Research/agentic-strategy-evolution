@@ -36,6 +36,7 @@ class Verdict:
     ok: bool
     detail: str = ""
     skipped: bool = False
+    missing: bool = False
 
 
 def _resolve(path: str, observed: dict) -> Any:
@@ -68,6 +69,12 @@ def evaluate(pred: dict, observed: dict, *, level: Any = None) -> Verdict:
             f"predicate op must be one of {sorted(OPS)} (got {op_name!r})",
         )
 
+    if "when" in pred and "when_not" in pred:
+        raise ValueError(
+            "predicate cannot have both 'when' and 'when_not' — they are complementary "
+            "level guards; supply one or neither",
+        )
+
     if _guard_excludes(pred, level):
         return Verdict(ok=True, skipped=True,
                        detail=f"skipped at level {level!r}")
@@ -82,6 +89,7 @@ def evaluate(pred: dict, observed: dict, *, level: Any = None) -> Verdict:
             ok=False,
             detail=(f"{path!r} not present in the observation — the target did "
                     f"not emit it, so the check cannot pass"),
+            missing=True,
         )
 
     want = pred.get("value")
