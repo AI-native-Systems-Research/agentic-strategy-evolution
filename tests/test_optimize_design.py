@@ -18,6 +18,7 @@ from orchestrator.optimize.design import (
     fractional_factorial,
     full_factorial,
     is_orthogonal,
+    is_tabulated,
     min_runs_for,
     with_center_points,
 )
@@ -70,6 +71,15 @@ def test_min_runs_for_is_exact_only_for_tabulated_cells():
     # factors -- it may well be smaller and simply isn't tabulated here.
     assert (6, 3) not in _GENERATORS
     assert min_runs_for(6, 3) == 2 ** 6
+
+
+def test_is_tabulated_matches_the_generator_table_membership():
+    # Public predicate agrees with the private table for known members...
+    assert is_tabulated(5, 5) is True
+    assert is_tabulated(7, 3) is True
+    # ...and known non-members.
+    assert is_tabulated(6, 3) is False
+    assert is_tabulated(9, 5) is False
 
 
 def test_resolution_v_design_has_no_aliasing_among_mains_and_two_factor_terms():

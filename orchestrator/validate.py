@@ -13,7 +13,7 @@ from pathlib import Path
 import jsonschema
 import yaml
 
-from orchestrator.optimize.design import _GENERATORS, min_runs_for
+from orchestrator.optimize.design import is_tabulated, min_runs_for
 from orchestrator.optimize.factors import is_refinable
 from orchestrator.optimize.predicates import is_trivial
 
@@ -473,7 +473,7 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
     k = len(factors)
     if k == 0:
         return []
-    tabulated = (k, resolution) in _GENERATORS
+    tabulated = is_tabulated(k, resolution)
     if tabulated:
         required = min_runs_for(k, resolution)
         if required <= max_runs:
@@ -493,9 +493,9 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
     full_factorial_runs = 2 ** k
     return [
         f"design.screen.resolution={resolution} is not a tabulated "
-        f"design for {k} factors (orchestrator.optimize.design._GENERATORS "
-        f"has no entry for ({k}, {resolution})). Nous cannot certify a "
-        f"design for this combination, so it cannot say how many runs it "
+        f"design for {k} factors -- Nous has no published generator for "
+        f"this (factor count, resolution) combination, so it cannot "
+        f"certify a design for it, and it cannot say how many runs it "
         f"actually needs -- do NOT assume the {full_factorial_runs}-run "
         f"full-factorial fallback is the true minimum. Options: (1) use "
         f"the full factorial at {full_factorial_runs} runs (guaranteed "
