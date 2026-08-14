@@ -808,6 +808,10 @@ target_system:
   name: event-replay
   description: Threshold-based alert classifier replayed over recorded event streams.
 
+prompts:                      # required by campaign.schema.yaml for every kind
+  methodology_layer: prompts/methodology
+  domain_adapter_layer: null
+
 locked_parameters:            # unchanged from the original campaign
   arming_threshold: 0.40
   score_floor: 0.0
