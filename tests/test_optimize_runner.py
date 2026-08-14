@@ -314,7 +314,17 @@ def test_build_cache_key_differs_when_patch_hash_changes():
 
 # ─── 10. Held-out metric recorded but excluded from fitting inputs ───
 
-def test_held_out_metric_recorded_but_not_in_fitting_inputs():
+def test_held_out_metric_recorded_but_absent_from_response_at_every_level():
+    """The leakage guard is structural, not a filtered view.
+
+    A held-out metric must appear in ``outcome.held_out`` and be absent
+    from ``outcome.response`` -- not just absent from some particular
+    sub-key of ``response``, but absent from the whole structure, so a
+    future refactor that reintroduces a nested copy (e.g. a
+    ``response["fitting_inputs"]`` view) cannot silently resurrect the
+    leak. This is what makes passing ``response`` wholesale to a fitter
+    safe by default.
+    """
     rows = [_row(0, {"L1": "off"})]
     factors = parse_factors([_factor()])
     response_spec = _response_spec(held_out=["held_out_score"])
@@ -329,11 +339,49 @@ def test_held_out_metric_recorded_but_not_in_fitting_inputs():
 
     outcome = outcomes[0]
     assert outcome.status == "complete"
-    # recorded in the outcome's response (belt-and-braces: caller can still
-    # see it happened) ...
-    assert math.isclose(outcome.response["held_out_score"], 0.42, rel_tol=1e-9, abs_tol=1e-12)
-    # ... but never among the fitting inputs.
-    assert "held_out_score" not in outcome.response.get("fitting_inputs", {})
+    # Recorded on the distinctly-named field -- reaching it requires
+    # deliberate intent.
+    assert math.isclose(outcome.held_out["held_out_score"], 0.42, rel_tol=1e-9, abs_tol=1e-12)
+    # Absent from response at the top level ...
+    assert "held_out_score" not in outcome.response
+    # ... and absent from every nested value too (guards against a nested
+    # copy anywhere in the structure, not just the key we expect).
+    def _contains_value(node, value) -> bool:
+        if isinstance(node, dict):
+            return any(_contains_value(v, value) for v in node.values())
+        if isinstance(node, (list, tuple)):
+            return any(_contains_value(v, value) for v in node)
+        return node == value
+    assert not _contains_value(outcome.response, 0.42)
+
+
+def test_primary_and_constraint_metrics_present_in_response_absent_from_held_out():
+    rows = [_row(0, {"L1": "off"})]
+    factors = parse_factors([_factor()])
+    response_spec = _response_spec(
+        constraints=[{"metric": "degradation", "op": ">=", "value": -0.5}],
+        held_out=["held_out_score"],
+    )
+    runner = _RecordingRunner({
+        0: {
+            "throughput": 10.0, "degradation": -0.1, "held_out_score": 0.42,
+            "telemetry": {"L1": "off"},
+        },
+    })
+
+    outcomes = execute_design(
+        rows, runner=runner, response_spec=response_spec, invariants=[],
+        factors=factors,
+    )
+
+    outcome = outcomes[0]
+    assert outcome.status == "complete"
+    # Primary + constraint metrics live in response ...
+    assert math.isclose(outcome.response["throughput"], 10.0, rel_tol=1e-9, abs_tol=1e-12)
+    assert math.isclose(outcome.response["degradation"], -0.1, rel_tol=1e-9, abs_tol=1e-12)
+    # ... and are absent from held_out.
+    assert "throughput" not in outcome.held_out
+    assert "degradation" not in outcome.held_out
 
 
 # ─── 11-13. integrity_check ───
