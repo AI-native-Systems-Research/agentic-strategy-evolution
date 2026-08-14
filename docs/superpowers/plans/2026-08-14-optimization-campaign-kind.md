@@ -1801,7 +1801,7 @@ EOF
 5. A `config_patch` `apply` renders into `apply["patches"]` with `path`, `pointer`, `value`.
 6. Center-point rows carry `role == "center"` and midpoint levels (grid-snapped).
 7. `randomized_run_order(16, seed=42)` is a permutation of `range(16)` and is **identical** across two calls with the same seed, and **differs** for seed 43.
-8. `matrix_payload` includes `factor_ids`, `resolution`, `generators`, `aliases`, `run_order`, `run_order_seed`, and one entry per row.
+8. `matrix_payload` includes `factor_ids`, `resolution`, `generators`, `aliases`, `run_order`, `run_order_seed`, and one entry per row. **`aliases` must be populated from `design.alias_pairs(design)`, not left empty** — `design_matrix.json` is the pre-registered artifact a reader consults to judge what the screen can estimate, so an empty list on a confounded design would assert the opposite of the truth. Assert both directions: a resolution-III design's payload carries a non-empty list matching `len(alias_pairs(design))`, and a resolution-V design's carries an empty one (the res-V property must be visible in the artifact, not merely absent).
 9. `check_fidelity` returns `[]` when every run's `levels` match the payload row at the same `row_index`.
 10. `check_fidelity` reports a violation naming the factor, the expected level, and the observed level when one run drifts.
 11. `check_fidelity` reports a violation when a planned `row_index` has no corresponding run (silently skipped cell).
