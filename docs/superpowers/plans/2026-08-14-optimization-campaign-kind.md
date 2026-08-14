@@ -1408,6 +1408,39 @@ def test_strong_curvature_is_detected_as_lack_of_fit():
     assert fit.lack_of_fit_p is not None and fit.lack_of_fit_p < 0.05
 
 
+def test_significance_uses_the_terms_own_column_not_the_total_row_count():
+    """The defect this guards was invisible to every other test.
+
+    A scalar se = sqrt(pe_var / n_total) understates a main effect's standard
+    error, because centre points inflate n without loading a ±1 column. On
+    this design (16 corners, 21 rows) the CI half-width comes out 1.1456x too
+    narrow, which reports factors as significant when they are inside the
+    noise floor. `dropped_factors` keys off `significant`, and the stage rule
+    keys off `dropped_factors`, so the campaign would carry noise into the
+    refine stage. Every planted effect elsewhere in this file sits far from
+    the boundary, so only a boundary case catches it.
+    """
+    ids = ("A", "B", "C", "D", "E")
+    d = with_center_points(fractional_factorial(ids, resolution=5), 5)
+    perturb = [0.0, 0.02, -0.03, 0.05, -0.01]
+    ys, ci = [], 0
+    for p in d.points:
+        if p.role == "center":
+            ys.append(10.0 + perturb[ci])
+            ci += 1
+        else:
+            ys.append(10.0 + 0.02 * p.coded[0])   # inside the noise floor
+    fit = fit_effects(d, ys, factor_ids=ids)
+    a = next(e for e in fit.effects if e.label == "A")
+    n_corners = len([p for p in d.points if p.role == "corner"])
+    assert math.isclose(a.se, math.sqrt(fit.pure_error_var / n_corners),
+                        rel_tol=1e-9, abs_tol=1e-12)
+    assert a.significant is False, (
+        "a 0.02 effect is inside this design's noise floor; reporting it as "
+        "significant is the false positive the scalar-se bug produced"
+    )
+
+
 def test_no_center_points_means_no_lack_of_fit_verdict():
     ids = ("A", "B")
     d = full_factorial(ids)
@@ -1610,10 +1643,8 @@ def fit_effects(design: Design, responses, *, factor_ids,
     pe_var, pe_df = pure_error(centers)
 
     n = len(pts)
-    se = None
     tcrit = None
     if pe_var is not None and pe_var > 0 and pe_df > 0:
-        se = math.sqrt(pe_var / n)
         tcrit = float(student_t.ppf(1 - alpha / 2, pe_df))
 
     built: list[Effect] = []
@@ -1622,9 +1653,33 @@ def fit_effects(design: Design, responses, *, factor_ids,
         est = coefs[idx]
         lo = hi = None
         sig = None
-        if se is not None and tcrit is not None:
-            lo, hi = est - tcrit * se, est + tcrit * se
-            sig = not (lo <= 0.0 <= hi)
+        se = None
+        if tcrit is not None and pe_var is not None:
+            # Per-term standard error from THIS term's own column sum of
+            # squares. A single scalar sqrt(pe_var/n) is wrong: center points
+            # contribute 0 to a ±1 column, so they inflate n without
+            # informing a main effect, understating its SE (by √2 on a
+            # 2-factor + 4-centre design; 14.6% on res-V 5-factor + 5
+            # centres). That biases `significant` — and therefore
+            # `dropped_factors` and the stage rule — toward false positives.
+            #
+            # sqrt(pe_var / Σx²) equals the exact sigma·sqrt((X'X)⁻¹_jj) only
+            # when the term's column is orthogonal to every other column.
+            # That holds for main effects and 2-factor interactions on every
+            # design this module generates, which are the terms that drive
+            # `dropped_factors` and the stage rule. It does NOT hold for the
+            # intercept or the pure-quadratic terms on a central composite,
+            # where those columns are mutually correlated — verified on a
+            # 2-factor CCD: exact SE 0.4208 vs 0.2887 from this formula.
+            # Quadratic terms therefore carry an OPTIMISTIC (too narrow) CI;
+            # they are reported for surface curvature, never used as a
+            # significance gate. `solve_stationary_point` uses the estimates
+            # themselves, not their intervals.
+            ssq = sum(c * c for c in cols[idx])
+            if ssq > 0:
+                se = math.sqrt(pe_var / ssq)
+                lo, hi = est - tcrit * se, est + tcrit * se
+                sig = not (lo <= 0.0 <= hi)
         eff = Effect(label=labels[idx], terms=terms[idx], estimate=est,
                      se=se, ci_low=lo, ci_high=hi, significant=sig)
         (quads if idx >= quad_start else built).append(eff)
