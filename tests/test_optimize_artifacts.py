@@ -179,6 +179,67 @@ def test_append_run_is_append_only_across_writer_instances(tmp_path):
     assert after.startswith(before)        # prior bytes untouched, only appended
 
 
+def test_read_runs_tolerates_a_torn_trailing_line(tmp_path, caplog):
+    """A crash mid-write can only ever tear the LAST line -- every earlier
+    line was already flushed by a prior, completed append_run call. The
+    whole point of append-only runs.jsonl is that a crashed run leaves
+    completed rows intact; read_runs must actually be able to read them
+    back, not raise and lose all of them to one torn trailing line.
+    """
+    rows = [
+        {"row_index": 0, "levels": {"A": 2}, "role": "corner",
+         "replicate": 0, "status": "complete", "response": {"y": 10.1},
+         "duration_ms": 5},
+        {"row_index": 1, "levels": {"A": 4}, "role": "corner",
+         "replicate": 0, "status": "complete", "response": {"y": 11.0},
+         "duration_ms": 7},
+        {"row_index": 2, "levels": {"A": 8}, "role": "corner",
+         "replicate": 0, "status": "complete", "response": {"y": 12.0},
+         "duration_ms": 6},
+    ]
+    for row in rows:
+        append_run(tmp_path, row)
+
+    # Simulate a crash mid-write of a 4th line: no closing brace, no newline.
+    target = tmp_path / "runs.jsonl"
+    with open(target, "a", encoding="utf-8") as fh:
+        fh.write('{"row_index":3,"lev')
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        got = read_runs(tmp_path)
+
+    assert got == rows                     # all 3 completed rows survive
+    assert any("torn" in r.message.lower() for r in caplog.records), (
+        "the skip must be reported, not silently swallowed"
+    )
+
+
+def test_read_runs_still_raises_on_a_malformed_interior_line(tmp_path):
+    """A malformed line that is NOT the last line is not a crash signature
+    -- a crash can only tear the final line, since every earlier line was
+    already terminated before the next append_run began. Tolerating an
+    interior tear would hide real corruption, so this must still raise.
+    """
+    good_first = {"row_index": 0, "levels": {"A": 2}, "role": "corner",
+                  "replicate": 0, "status": "complete", "response": {"y": 10.1},
+                  "duration_ms": 5}
+    good_last = {"row_index": 2, "levels": {"A": 8}, "role": "corner",
+                 "replicate": 0, "status": "complete", "response": {"y": 12.0},
+                 "duration_ms": 6}
+
+    target = tmp_path / "runs.jsonl"
+    lines = [
+        json.dumps(good_first, sort_keys=True),
+        '{"row_index":1,"lev',              # malformed, but NOT the last line
+        json.dumps(good_last, sort_keys=True),
+    ]
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        read_runs(tmp_path)
+
+
 # ─── 3. Each appended row validates against runs_row.schema.json ──────────
 
 

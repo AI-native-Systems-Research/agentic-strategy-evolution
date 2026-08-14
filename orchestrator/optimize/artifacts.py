@@ -66,6 +66,7 @@ byte-identical files. No timestamps appear inside any payload body.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,8 @@ from orchestrator.optimize.effects import Effect, Fit
 from orchestrator.optimize.factors import Factor
 from orchestrator.optimize.relations import RelationVerdict
 from orchestrator.util import atomic_write
+
+logger = logging.getLogger(__name__)
 
 
 def _dump(payload: Any) -> str:
@@ -106,16 +109,49 @@ def append_run(iter_dir: Path, row: dict) -> None:
 
 
 def read_runs(iter_dir: Path) -> list[dict]:
-    """Read every row of runs.jsonl, in append order."""
+    """Read every row of runs.jsonl, in append order.
+
+    Tolerates a torn **trailing** line: ``append_run`` writes one line at a
+    time, so the only way a line can be malformed is a crash mid-write of
+    the last line in the file -- every earlier line was already flushed by
+    a prior, completed ``append_run`` call. That torn final line is skipped
+    (and reported via ``logger.warning``, naming the file and line number)
+    rather than raising, so completed rows survive a crashed run exactly as
+    the append-only contract promises: the campaign can refit on whatever
+    completed and report the reduced resolution honestly, instead of losing
+    every already-written row.
+
+    A malformed line anywhere *other* than the last is a different failure
+    mode entirely -- a crash cannot tear an interior line, since every line
+    before it was already terminated before the next ``append_run`` began.
+    That case still raises ``json.JSONDecodeError``: silently skipping it
+    would hide real corruption rather than a crash signature.
+    """
     target = Path(iter_dir) / "runs.jsonl"
     if not target.exists():
         return []
+    lines = target.read_text(encoding="utf-8").splitlines()
+    last_nonblank = -1
+    for idx, line in enumerate(lines):
+        if line.strip():
+            last_nonblank = idx
+
     out: list[dict] = []
-    for line in target.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
             continue
-        out.append(json.loads(line))
+        try:
+            out.append(json.loads(stripped))
+        except json.JSONDecodeError:
+            if idx == last_nonblank:
+                logger.warning(
+                    "read_runs: skipping torn trailing line %d in %s "
+                    "(crash mid-append) -- %d completed row(s) still returned",
+                    idx + 1, target, len(out),
+                )
+                break
+            raise
     return out
 
 
