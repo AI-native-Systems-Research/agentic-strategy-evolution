@@ -12,7 +12,14 @@ from __future__ import annotations
 
 import math
 
-from orchestrator.optimize.design import DesignPoint, Design, full_factorial, with_center_points
+from orchestrator.optimize.design import (
+    DesignPoint,
+    Design,
+    alias_pairs,
+    fractional_factorial,
+    full_factorial,
+    with_center_points,
+)
 from orchestrator.optimize.factors import parse_factors
 from orchestrator.optimize.matrix import (
     check_fidelity,
@@ -160,6 +167,25 @@ def test_matrix_payload_has_required_keys_and_one_entry_per_row():
     assert len(payload["rows"]) == len(design.points)
     assert sorted(payload["run_order"]) == list(range(len(design.points)))
     assert payload["run_order_seed"] == 7
+
+
+# --- fix round 1: aliases populated from design.alias_pairs -------------
+
+def test_matrix_payload_reports_alias_pairs_for_a_confounded_design():
+    ids = ("A", "B", "C", "D", "E", "F", "G")
+    fs = parse_factors([_numeric_raw(id=i, name=i) for i in ids])
+    design = fractional_factorial(ids, resolution=3)
+    payload = matrix_payload(design, fs, run_order_seed=1)
+    assert len(payload["aliases"]) == len(alias_pairs(design))
+    assert payload["aliases"], "resolution-III design must report aliasing"
+
+
+def test_matrix_payload_reports_no_aliases_for_a_resolution_v_design():
+    ids = ("A", "B", "C", "D", "E")
+    fs = parse_factors([_numeric_raw(id=i, name=i) for i in ids])
+    design = fractional_factorial(ids, resolution=5)
+    payload = matrix_payload(design, fs, run_order_seed=1)
+    assert payload["aliases"] == []
 
 
 # --- 9. check_fidelity([]) when runs match the payload exactly ---------
