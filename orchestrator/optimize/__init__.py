@@ -11,3 +11,12 @@ hypothesis — property-testing frameworks belong to *target* repos, not to
 the Nous harness.
 """
 from __future__ import annotations
+
+from orchestrator.optimize.stage import Stage
+from orchestrator.optimize.stage_runner import (
+    OptimizationAborted,
+    StageOutcome,
+    run_stage,
+)
+
+__all__ = ["OptimizationAborted", "Stage", "StageOutcome", "run_stage"]

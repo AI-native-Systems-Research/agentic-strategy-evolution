@@ -1146,6 +1146,21 @@ def run_iteration(
             f"Unknown agent backend: {agent!r}. Valid values: 'sdk', 'inline'."
         )
 
+    # ``kind: optimization`` delegates the whole iteration to the factorial
+    # stage runner. Everything below this branch is the reflective path and
+    # is reached only when ``kind`` is absent or ``reflective`` — that is the
+    # architectural guarantee the optimization kind rests on, and
+    # tests/test_optimize_no_regression.py exists to prove it.
+    from orchestrator.validate import campaign_kind
+    if campaign_kind(campaign) == "optimization":
+        from orchestrator.optimize.stage_runner import run_stage
+        return run_stage(
+            campaign, work_dir,
+            iteration=iteration,
+            model=model, timeout=timeout, agent=agent,
+            auto_approve=auto_approve, max_cli_retries=max_cli_retries,
+        )
+
     # Validate the campaign once, up front. The staticmethod on LLMDispatcher
     # is also called from its constructor, but inline-agent mode never builds
     # an LLMDispatcher — without this call, a non-bool `live_target` value
@@ -1350,6 +1365,14 @@ def run_iteration(
         # Issue #159: render complexity-tier panel from the bundle so tier
         # escalations are surfaced for human review (deterministic Python,
         # no LLM cost).
+        #
+        # Reflective kind ONLY. The optimization kind returns early at the
+        # top of run_iteration, so it never reaches here — and it must not:
+        # the graded-complexity tier ladder is scoped to reflective
+        # campaigns (spec §7.2), because a pre-registered design matrix
+        # strengthens the anti-p-hacking property the ladder protects
+        # rather than needing it. Do not add a second call for that path;
+        # validate.py rule 9 rejects tier fields under kind: optimization.
         try:
             from orchestrator.complexity_tier import format_tier_summary
             tier_panel = format_tier_summary(
