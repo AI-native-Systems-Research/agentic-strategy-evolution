@@ -807,6 +807,10 @@ target_system:
   name: vol-backtest
   description: Threshold-based trading strategy evaluated over historical bars.
 
+prompts:                      # required by campaign.schema.yaml for every kind
+  methodology_layer: prompts/methodology
+  domain_adapter_layer: null
+
 locked_parameters:            # unchanged from the original campaign
   arming_threshold: 0.40
   account_gain_floor: 0.0
