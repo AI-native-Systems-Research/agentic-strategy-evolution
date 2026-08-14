@@ -986,8 +986,8 @@ _GENERATORS: dict[tuple[int, int], tuple[int, tuple[tuple[int, ...], ...]]] = {
     # resolution V — no 2fi aliased with a main effect or another 2fi
     (5, 5): (4, ((0, 1, 2, 3),)),                    # E = ABCD, 16 runs
     (6, 5): (5, ((0, 1, 2, 3, 4),)),                 # F = ABCDE, 32 runs
-    (7, 5): (5, ((0, 1, 2, 3), (0, 1, 4))),          # 32 runs
-    (8, 5): (5, ((0, 1, 2, 3), (0, 1, 4), (0, 2, 4))),  # 32 runs
+    (7, 5): (6, ((0, 1, 2, 3),)),                    # G = ABCD, 64 runs
+    (8, 5): (6, ((0, 1, 2, 3), (0, 1, 4, 5))),       # G = ABCD, H = ABEF, 64 runs
     # resolution IV — mains clear of 2fi; 2fi aliased in pairs
     (4, 4): (3, ((0, 1, 2),)),                       # D = ABC, 8 runs
     (5, 4): (4, ((0, 1, 2),)),                       # 16 runs
