@@ -140,19 +140,27 @@ def fit_effects(design: Design, responses, *, factor_ids,
     pe_var, pe_df = pure_error(centers)
 
     n = len(pts)
-    se = None
     tcrit = None
-    if pe_var is not None and pe_var > 0 and pe_df > 0:
-        se = math.sqrt(pe_var / n)
+    have_se = pe_var is not None and pe_var > 0 and pe_df > 0
+    if have_se:
         tcrit = float(student_t.ppf(1 - alpha / 2, pe_df))
 
     built: list[Effect] = []
     quads: list[Effect] = []
     for idx in range(1, len(labels)):
         est = coefs[idx]
-        lo = hi = None
+        se = lo = hi = None
         sig = None
-        if se is not None and tcrit is not None:
+        if have_se:
+            # Per-term SE from that term's own column sum of squares —
+            # sigma / sqrt(sum_i x_ij^2) — NOT a single scalar shared
+            # across terms. Center (and, on a central composite, axial)
+            # points contribute differently to each column's sum of
+            # squares, so a shared n-based scalar systematically
+            # understates the SE of every two-level term whenever
+            # non-corner points are present.
+            ss_j = sum(v * v for v in cols[idx])
+            se = math.sqrt(pe_var / ss_j)
             lo, hi = est - tcrit * se, est + tcrit * se
             sig = not (lo <= 0.0 <= hi)
         eff = Effect(label=labels[idx], terms=terms[idx], estimate=est,
