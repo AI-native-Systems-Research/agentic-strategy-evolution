@@ -2218,14 +2218,14 @@ EOF
 
 **Cross-field rules in `validate_optimization_campaign`:**
 1. `kind: optimization` requires an `optimization` block; `kind: reflective` (or absent) forbids one.
-2. A `held_out` metric must not equal `response.primary.metric` nor appear in `constraints`/`regimes` — the leakage guard.
+2. A `held_out` metric must not equal `response.primary.metric` nor appear in `constraints`/`regimes` — the leakage guard. **Compare on `name.strip().lower()`**, so a whitespace or case variant of the same metric cannot slip past: an author writing `held_out: ["throughput_gbps "]` alongside a constraint on `"throughput_gbps"` means them as one metric and would otherwise get no warning that the guard never engaged. Normalize for **comparison only** — never rewrite the declared strings, which must still match the target's emitted names exactly. Name both spellings in the message so the author can see which to correct.
 3. Every `screen_levels` entry must be a member of that factor's `levels`.
 4. `refine.kind` requires ≥2 factors satisfying `is_refinable`; otherwise the message says to drop `refine` or add levels.
 5. Each factor needs ≥1 `correctness` relation.
 6. No `manipulation` or invariant predicate may be trivially true (`predicates.is_trivial`).
 7. `design.screen.resolution < 5` with >1 factor produces a **warning** naming the aliased pairs — main-effects-only screening is the OFAT failure mode in disguise.
 8. `min_runs_for(k, resolution)` exceeding `design.max_runs` is an **error** offering the two honest options (raise the budget, or accept the lower resolution and its named aliasing) — never a silent downgrade.
-9. `complexity_tier` / `tier_justification` present under `kind: optimization` is an error (§7.2 — the tier ladder is reflective-only; do not half-adopt both disciplines).
+9. `complexity_tier` / `tier_justification` present under `kind: optimization` is an error (§7.2 — the tier ladder is reflective-only; do not half-adopt both disciplines). **Scan BOTH `campaign.metadata` and the legacy top level**, mirroring `orchestrator/complexity_tier.py`'s own resolution order (metadata first, then top level — see its docstring at ~line 42). Checking only one location leaves a silent bypass, and `metadata` is the *canonical* home for these fields since #206, so an author following the repo's documented convention lands precisely on the unchecked path. `metadata` also carries `additionalProperties: true` by design, so JSON Schema cannot catch it — this rule is the only line of defence.
 10. A knob in `target_system.controllable_knobs` appearing in neither `factors` nor `locked_parameters` produces a **warning** (the "what did you forget to control" check).
 
 **Test assertions to write:**
