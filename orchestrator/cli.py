@@ -6,6 +6,42 @@ from pathlib import Path
 import yaml
 
 
+def resolve_gate_mode(args, campaign):
+    """Resolve the effective ``auto_approve`` bool for a run/resume.
+
+    Gate defaults are scoped to campaign ``kind`` (spec §7.1 of the
+    ``kind: optimization`` design): an optimization campaign's stage
+    rule is pure Python with no per-stage human decision that changes
+    what happens next, so prompting only costs wall-clock. Reflective
+    campaigns (or campaigns with no ``kind`` at all) keep the historical
+    default of prompting unless the operator opts in.
+
+    Resolution order (highest precedence first):
+      1. ``--interactive`` forces prompting (``False``) for either kind.
+      2. An explicit ``--auto-approve`` on the command line wins over
+         the kind default, in either direction — this is what keeps
+         existing invocations and scripts behaving exactly as before.
+      3. Otherwise, fall back to the kind default: ``True`` for
+         ``kind: optimization``, ``False`` for ``kind: reflective``
+         (or absent).
+
+    ``args.auto_approve`` must distinguish "flag omitted" (``None``)
+    from "flag explicitly supplied" (``True``) — see the
+    ``action="store_const", const=True, default=None`` wiring on the
+    ``--auto-approve`` argument. A plain ``store_true`` (default
+    ``False``) cannot make that distinction and would let the kind
+    default silently override an explicit user choice.
+    """
+    from orchestrator.validate import campaign_kind
+
+    if getattr(args, "interactive", False):
+        return False
+    explicit_auto_approve = getattr(args, "auto_approve", None)
+    if explicit_auto_approve is not None:
+        return explicit_auto_approve
+    return campaign_kind(campaign) == "optimization"
+
+
 def _find_repo_root(start=None):
     current = Path(start) if start else Path.cwd()
     while True:
@@ -262,7 +298,7 @@ def _cmd_run(args):
         work_dir,
         max_iterations=max_iterations,
         model=args.model,
-        auto_approve=args.auto_approve,
+        auto_approve=resolve_gate_mode(args, campaign),
         timeout=args.timeout,
         agent=args.agent,
         max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
@@ -357,7 +393,7 @@ def _cmd_resume(args):
         work_dir,
         max_iterations=max_iterations,
         model=args.model,
-        auto_approve=args.auto_approve,
+        auto_approve=resolve_gate_mode(args, campaign),
         timeout=args.timeout,
         agent=args.agent,
         max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
@@ -1024,7 +1060,15 @@ def _cmd_package(args):
     print(f"Wrote {output}")
 
 
-def main():
+def build_parser():
+    """Build the ``nous`` argparse parser.
+
+    Factored out of ``main()`` so tests can exercise real flag wiring
+    (e.g. ``--auto-approve`` / ``--interactive`` resolution, #task-11a)
+    via ``build_parser().parse_args([...])`` instead of hand-rolling
+    ``argparse.Namespace`` objects that could silently drift from the
+    actual CLI surface.
+    """
     parser = argparse.ArgumentParser(
         prog="nous",
         description=(
@@ -1069,13 +1113,27 @@ def main():
              "campaign.run_id or a value derived from the file path.",
     )
     p_run.add_argument(
-        "--auto-approve", action="store_true",
+        "--auto-approve", dest="auto_approve",
+        action="store_const", const=True, default=None,
         help="Auto-approve all human gates — required for unattended "
              "runs (CI, agent-driven invocation). See README "
              "'--auto-approve safety preconditions' (#255 / F10) "
              "for when this is safe — at minimum, declare "
              "campaign.locked_parameters (#246 / F1) for every "
-             "campaign-spec-critical knob.",
+             "campaign-spec-critical knob. Default depends on "
+             "campaign kind: 'optimization' campaigns auto-approve "
+             "by default (no per-stage human decision changes the "
+             "pure-Python stage rule); 'reflective' campaigns (or no "
+             "kind) still default to prompting. Omitting this flag "
+             "lets the kind default apply; pass it explicitly to "
+             "force auto-approve for either kind. See --interactive "
+             "to force prompting instead.",
+    )
+    p_run.add_argument(
+        "--interactive", action="store_true",
+        help="Force human-gate prompting regardless of campaign kind "
+             "or --auto-approve. Wins over everything else in gate-"
+             "mode resolution.",
     )
     p_run.add_argument(
         "--timeout", type=int, default=1800,
@@ -1127,7 +1185,11 @@ def main():
     p_resume.add_argument("target")
     p_resume.add_argument("--max-iterations", type=int)
     p_resume.add_argument("--model")
-    p_resume.add_argument("--auto-approve", action="store_true")
+    p_resume.add_argument(
+        "--auto-approve", dest="auto_approve",
+        action="store_const", const=True, default=None,
+    )
+    p_resume.add_argument("--interactive", action="store_true")
     p_resume.add_argument("--timeout", type=int, default=1800)
     p_resume.add_argument("--max-cli-retries", type=int, default=10)
     p_resume.add_argument("--agent", choices=["inline", "sdk"], default="sdk")
@@ -1341,6 +1403,11 @@ def main():
     )
     p_package.set_defaults(func=_cmd_package)
 
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     if not args.command:
         parser.print_help(sys.stderr)
