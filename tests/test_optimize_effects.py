@@ -128,6 +128,35 @@ def test_confidence_interval_excludes_zero_for_a_real_effect():
     assert by["C"].significant is False
 
 
+def test_significance_uses_the_terms_own_column_not_the_total_row_count():
+    """Regression for the per-term SE bug: SE must come from that term's own
+    column sum of squares (corners only, for a two-level design), not from
+    pe_var / n_total_rows. Center points add rows but contribute 0 to a
+    +/-1 column's sum of squares, so an n-based scalar SE is too small and
+    a borderline null effect reads as falsely significant.
+
+    On this res-V 5-factor + 5-center design (16 corners, 21 rows total),
+    the wrong scalar SE gives a CI half-width of ~0.0184; the correct
+    per-column SE gives ~0.0211. A planted main effect of 0.0200 sits
+    between the two: the buggy formula calls it significant, the correct
+    one does not.
+    """
+    ids = ("A", "B", "C", "D", "E")
+    d = with_center_points(fractional_factorial(ids, resolution=5), 5)
+    ys = _synth(d, ids, 10.0, {"A": 0.02, "B": 0.0, "C": 0.0, "D": 0.0, "E": 0.0})
+    centers = [i for i, p in enumerate(d.points) if p.role == "center"]
+    for offset, i in zip([0.02, -0.03, 0.05, -0.01, 0.01], centers):
+        ys[i] = 10.0 + offset
+    fit = fit_effects(d, ys, factor_ids=ids)
+    by = {e.label: e for e in fit.effects}
+    assert by["A"].significant is False, (
+        "0.02 sits inside the correct (per-column) CI half-width ~0.0211 "
+        "but outside the buggy (total-row-count) half-width ~0.0184 -- "
+        "significant=True here would mean the total-row-count SE regressed"
+    )
+    assert math.isclose(by["A"].se, math.sqrt(fit.pure_error_var / 16), rel_tol=1e-9)
+
+
 def test_dropped_factors_are_those_whose_interval_contains_zero():
     ids = ("A", "B", "C", "D", "E")
     d = with_center_points(fractional_factorial(ids, resolution=5), 5)
