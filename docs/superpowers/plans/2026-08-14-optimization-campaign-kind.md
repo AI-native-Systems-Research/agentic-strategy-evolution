@@ -1991,8 +1991,10 @@ EOF
 - `Trigger` str-Enum: `ALL_WITHIN_NOISE`, `LACK_OF_FIT`, `OPTIMUM_OUTSIDE_HULL`, `BEHAVIORAL_VIOLATION`
 - `StageDecision` frozen dataclass: `next_stage: Stage | None`, `triggers: tuple[Trigger, ...]`, `surviving: tuple[str, ...]`, `dropped: tuple[str, ...]`, `rationale: str`
 - `stage_for_iteration(campaign: dict, iteration: int) -> Stage`
-- `decide_after_screen(fit, factors, *, alpha=0.05) -> StageDecision`
-- `decide_after_refine(fit, factors, stationary: dict | None) -> StageDecision`
+- `decide_after_screen(fit, factors, *, alpha=0.05, behavioral_failures: tuple[RelationVerdict, ...] = ()) -> StageDecision`
+- `decide_after_refine(fit, factors, stationary: dict | None, *, behavioral_failures: tuple[RelationVerdict, ...] = ()) -> StageDecision`
+
+`behavioral_failures` is what makes `Trigger.BEHAVIORAL_VIOLATION` reachable. Without it the trigger is dead code — defined but impossible to set — even though the spec (§6.3 trigger 4, §6.4 failure table) requires it. Optional with an empty default so callers that have no relation verdicts yet are unaffected. `stage.py` stays a pure function of its inputs: the caller runs the target's tests and calls `relations.classify_failures`; this module only reports that the signal arrived. A behavioral trigger must NOT stop the campaign — a monotonicity break is a discovery, so the stage still advances.
 
 **Test assertions to write:**
 1. `stage_for_iteration` maps 1→VERIFY, 2→SCREEN, 3→REFINE, 4→CONFIRM by default.
@@ -2008,6 +2010,9 @@ EOF
 11. `decide_after_refine` with any coordinate outside `[-1, 1]` → `OPTIMUM_OUTSIDE_HULL` trigger (ranges were too narrow).
 12. `decide_after_refine` with `stationary is None` → `CONFIRM` at the best observed corner, with a rationale saying so.
 13. `rationale` is non-empty in every decision (it is projected into `findings.json`, so an empty one would produce an evidence-free finding).
+14. A non-empty `behavioral_failures` tuple puts `BEHAVIORAL_VIOLATION` in `triggers`, and the `rationale` mentions it.
+15. An empty `behavioral_failures` (the default) produces no `BEHAVIORAL_VIOLATION` trigger — existing behavior unchanged.
+16. A behavioral-only trigger still advances the stage. It reports "worth interpreting", never "stop": a monotonicity break is a discovery, and halting on one would make the campaign blind to the non-monotonic compounds it exists to find.
 
 - [ ] **Step 1: Write the tests in `tests/test_optimize_stage.py`**
 
