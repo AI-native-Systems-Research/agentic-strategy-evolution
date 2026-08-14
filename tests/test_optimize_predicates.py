@@ -82,3 +82,23 @@ def test_unknown_operator_raises_with_the_allowed_set():
 ])
 def test_is_trivial_flags_predicates_that_cannot_fail(pred, want):
     assert is_trivial(pred) is want
+
+
+def test_both_when_and_when_not_raises():
+    pred = {"observable": "x", "op": ">", "value": 0, "when": "on", "when_not": "off"}
+    with pytest.raises(ValueError, match="when"):
+        evaluate(pred, {"x": 5}, level="on")
+
+
+def test_missing_observable_sets_missing_flag():
+    v = evaluate({"observable": "telemetry.absent", "op": "==", "value": 1},
+                 {"telemetry": {}})
+    assert v.missing is True
+    assert v.ok is False
+
+
+def test_genuine_comparison_failure_has_missing_false():
+    v = evaluate({"observable": "telemetry.queue_count", "op": "==", "value": 8},
+                 {"telemetry": {"queue_count": 2}})
+    assert v.missing is False
+    assert v.ok is False
