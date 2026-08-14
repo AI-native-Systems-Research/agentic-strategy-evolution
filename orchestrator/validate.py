@@ -246,45 +246,75 @@ def _rule1_kind_optimization_block(campaign: dict) -> list[str]:
     return []
 
 
+def _norm_metric(name: object) -> str | None:
+    """Fold a metric/observable name for **comparison only**.
+
+    Two spellings that differ only by leading/trailing whitespace or
+    letter case are the same metric to a human author, even though the
+    runtime resolves metric names by exact string match. Comparing the
+    normalized forms lets rule 2 catch that intent; the declared strings
+    themselves are never rewritten -- doing so would break the exact-match
+    resolution the campaign runs under.
+    """
+    if not isinstance(name, str):
+        return None
+    return name.strip().lower()
+
+
 def _rule2_held_out_leakage(opt: dict) -> list[str]:
     """Rule 2: a held_out metric must not equal response.primary.metric
     nor appear in constraints/regimes -- the leakage guard that prevents
-    a campaign from optimizing against its own generalization check."""
+    a campaign from optimizing against its own generalization check.
+
+    Comparisons are case/whitespace-insensitive (see _norm_metric) so a
+    held_out entry that differs from the colliding name only by spelling
+    (" throughput_gbps" vs "throughput_gbps", "OOS" vs "oos") still trips
+    the guard -- the author meant the same metric in both places, and a
+    silent pass here would be worse than a false positive."""
     response = opt.get("response") or {}
     held_out = response.get("held_out") or []
     if not held_out:
         return []
     errors: list[str] = []
     primary_metric = (response.get("primary") or {}).get("metric")
+    primary_norm = _norm_metric(primary_metric)
     for metric in held_out:
-        if primary_metric and metric == primary_metric:
+        metric_norm = _norm_metric(metric)
+        if primary_norm and metric_norm == primary_norm:
             errors.append(
-                f"response.held_out contains {metric!r}, which is also "
-                f"response.primary.metric -- this is data leakage (the "
-                f"symphony-generation failure class): a held_out metric "
-                f"must never be an input the design matrix fits against. "
-                f"Choose a different held_out metric, or fit on a "
-                f"different primary metric."
+                f"response.held_out contains {metric!r}, which collides "
+                f"with response.primary.metric {primary_metric!r} (same "
+                f"metric name, ignoring case/whitespace) -- this is data "
+                f"leakage (the symphony-generation failure class): a "
+                f"held_out metric must never be an input the design matrix "
+                f"fits against. Choose a different held_out metric, or fit "
+                f"on a different primary metric. If the two spellings were "
+                f"meant to be different metrics, make them unambiguously "
+                f"distinct."
             )
         for constraint in response.get("constraints") or []:
             cmetric = constraint.get("metric") or constraint.get("observable")
-            if cmetric == metric:
+            if _norm_metric(cmetric) == metric_norm:
                 errors.append(
-                    f"response.held_out contains {metric!r}, which also "
-                    f"appears in response.constraints -- this is data "
-                    f"leakage: a held_out metric must never feed fitting "
-                    f"(constraints exclude configs from fitting, but the "
-                    f"metric itself must stay unobserved until confirm). "
-                    f"Remove {metric!r} from constraints or from held_out."
+                    f"response.held_out contains {metric!r}, which collides "
+                    f"with {cmetric!r} in response.constraints (same "
+                    f"metric name, ignoring case/whitespace) -- this is "
+                    f"data leakage: a held_out metric must never feed "
+                    f"fitting (constraints exclude configs from fitting, "
+                    f"but the metric itself must stay unobserved until "
+                    f"confirm). Remove {cmetric!r} from constraints or "
+                    f"{metric!r} from held_out."
                 )
         for regime in response.get("regimes") or []:
             rmetric = regime.get("metric") or regime.get("observable")
-            if rmetric == metric:
+            if _norm_metric(rmetric) == metric_norm:
                 errors.append(
-                    f"response.held_out contains {metric!r}, which also "
-                    f"appears in response.regimes -- this is data "
+                    f"response.held_out contains {metric!r}, which collides "
+                    f"with {rmetric!r} in response.regimes (same metric "
+                    f"name, ignoring case/whitespace) -- this is data "
                     f"leakage: a held_out metric must never feed fitting. "
-                    f"Remove {metric!r} from regimes or from held_out."
+                    f"Remove {rmetric!r} from regimes or {metric!r} from "
+                    f"held_out."
                 )
     return errors
 
@@ -504,24 +534,47 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
     ]
 
 
-def _rule9_no_complexity_tier_under_optimization(opt: dict) -> list[str]:
+def _rule9_no_complexity_tier_under_optimization(
+    campaign: dict, opt: dict,
+) -> list[str]:
     """Rule 9: complexity_tier / tier_justification present under
     kind: optimization is an error -- the #159 tier ladder is scoped to
     the reflective kind, and a pre-registered design matrix already
     strengthens the anti-p-hacking property the ladder protects, so the
-    two disciplines must not be half-adopted together."""
+    two disciplines must not be half-adopted together.
+
+    Checks every location orchestrator.complexity_tier._read_bundle_tier /
+    _read_bundle_justification resolve tier fields from: ``metadata``
+    (canonical since #206) and the legacy top level. ``optimization`` is
+    also checked for symmetry with earlier drafts of this rule, though
+    neither location's own schema currently permits these keys there.
+    Checking only one location would leave the other as a silent bypass
+    for an author following #206's own documented convention.
+    """
     errors: list[str] = []
+    metadata = campaign.get("metadata")
+    locations: list[tuple[str, dict]] = [("optimization", opt)]
+    if isinstance(metadata, dict):
+        locations.append(("metadata", metadata))
+    locations.append(("top level", campaign))
     for field in ("complexity_tier", "tier_justification"):
-        if field in opt:
-            errors.append(
-                f"optimization.{field} is set, but the #159 graded-"
-                f"complexity tier ladder is scoped to kind: reflective "
-                f"only (see design spec §7.2). A pre-registered design "
-                f"matrix already strengthens the anti-p-hacking property "
-                f"the ladder protects, so the two disciplines must not be "
-                f"half-adopted together. Remove {field!r} from the "
-                f"optimization block."
-            )
+        for location_name, container in locations:
+            if field in container:
+                where = (
+                    f"optimization.{field}" if location_name == "optimization"
+                    else f"metadata.{field}" if location_name == "metadata"
+                    else f"{field} (top level)"
+                )
+                errors.append(
+                    f"{where} is set, but the #159 graded-complexity tier "
+                    f"ladder is scoped to kind: reflective only (see design "
+                    f"spec §7.2). A pre-registered design matrix already "
+                    f"strengthens the anti-p-hacking property the ladder "
+                    f"protects, so the two disciplines must not be "
+                    f"half-adopted together. Remove {field!r} from "
+                    f"{location_name} -- this campaign is kind: "
+                    f"optimization, so no tier field belongs anywhere on it."
+                )
     return errors
 
 
@@ -586,7 +639,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule6_no_trivial_predicates(opt, factors))
     errors.extend(_rule7_low_resolution_screen_warning(design, factors))
     errors.extend(_rule8_resolution_run_budget(design, factors))
-    errors.extend(_rule9_no_complexity_tier_under_optimization(opt))
+    errors.extend(_rule9_no_complexity_tier_under_optimization(campaign, opt))
     errors.extend(_rule10_uncontrolled_knob_warning(campaign, opt))
     return errors
 
