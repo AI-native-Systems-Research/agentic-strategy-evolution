@@ -24,7 +24,14 @@
   ```
   Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
   ```
-- **Run the full suite before the final commit of each task:** `.venv/bin/pytest -q`.
+- **Run the full suite before the final commit of each task:** `/opt/homebrew/bin/pytest -q`
+  (expect ~1374 passed, 1 skipped as the pre-existing baseline). Note: pytest is
+  NOT installed in the project venv — `.venv/bin/pytest` does not exist. Use the
+  system binary for tests and `.venv/bin/python` for running Python directly.
+  `numpy` IS importable via the venv (transitively through scipy), so the
+  no-numpy rule cannot be enforced by import failure — verify it statically
+  (AST import extraction, not grep: docstrings legitimately name the forbidden
+  libraries as warnings).
 
 ## File Structure
 
@@ -255,7 +262,7 @@ def test_manipulation_with_both_when_and_when_not_is_rejected():
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_optimize_factors.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_factors.py -q`
 Expected: collection error — `ModuleNotFoundError: No module named 'orchestrator.optimize'`
 
 - [ ] **Step 3: Create the package `__init__.py`**
@@ -492,12 +499,12 @@ def is_refinable(f: Factor) -> bool:
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `.venv/bin/pytest tests/test_optimize_factors.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_factors.py -q`
 Expected: all pass.
 
 - [ ] **Step 6: Run the full suite for regressions**
 
-Run: `.venv/bin/pytest -q`
+Run: `/opt/homebrew/bin/pytest -q`
 Expected: no new failures.
 
 - [ ] **Step 7: Commit**
@@ -627,7 +634,7 @@ def test_is_trivial_flags_predicates_that_cannot_fail(pred, want):
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_optimize_predicates.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_predicates.py -q`
 Expected: `ModuleNotFoundError: ... predicates`
 
 - [ ] **Step 3: Implement `predicates.py`**
@@ -752,7 +759,7 @@ def is_trivial(pred: dict) -> bool:
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `.venv/bin/pytest tests/test_optimize_predicates.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_predicates.py -q`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
@@ -945,7 +952,7 @@ def test_designs_are_deterministic_across_calls():
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_optimize_design.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_design.py -q`
 Expected: `ModuleNotFoundError: ... design`
 
 - [ ] **Step 3: Implement `design.py`**
@@ -1162,7 +1169,7 @@ def alias_pairs(design: Design) -> list[tuple[str, str]]:
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `.venv/bin/pytest tests/test_optimize_design.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_design.py -q`
 Expected: all pass. If `test_resolution_three_aliases...` fails, the generator table is wrong — fix `_GENERATORS`, never the assertion.
 
 - [ ] **Step 5: Cross-check the alias claim independently**
@@ -1446,7 +1453,7 @@ def test_stationary_point_is_none_without_curvature_terms():
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_optimize_effects.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_effects.py -q`
 Expected: `ModuleNotFoundError: ... effects`
 
 - [ ] **Step 3: Implement `effects.py`**
@@ -1702,7 +1709,7 @@ def solve_stationary_point(fit: Fit, factor_ids) -> dict[str, float] | None:
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `.venv/bin/pytest tests/test_optimize_effects.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_effects.py -q`
 Expected: all pass. The L5 test is the one that matters most — if it fails, stop and fix the fitter before proceeding.
 
 - [ ] **Step 5: Independently cross-check the closed form**
@@ -1731,7 +1738,7 @@ Expected: fitted and closed-form values agree to 12 decimals for both terms.
 
 - [ ] **Step 6: Run the full suite**
 
-Run: `.venv/bin/pytest -q`
+Run: `/opt/homebrew/bin/pytest -q`
 Expected: no new failures.
 
 - [ ] **Step 7: Commit**
@@ -1799,7 +1806,7 @@ Follow the house style: module docstring naming the behavior under test, a `_fac
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_optimize_matrix.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_matrix.py -q`
 Expected: `ModuleNotFoundError: ... matrix`
 
 - [ ] **Step 3: Implement `matrix.py`**
@@ -1813,7 +1820,7 @@ Key implementation notes (do not deviate — these are correctness requirements 
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `.venv/bin/pytest tests/test_optimize_matrix.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_matrix.py -q`
 
 - [ ] **Step 5: Commit**
 
@@ -1872,7 +1879,7 @@ Include a docstring paragraph explaining why #8 exists: monotonicity violations 
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_optimize_relations.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_relations.py -q`
 
 - [ ] **Step 3: Implement `relations.py`**
 
@@ -1884,7 +1891,7 @@ Notes:
 - [ ] **Step 4: Run to verify they pass, then commit**
 
 ```bash
-.venv/bin/pytest tests/test_optimize_relations.py -q
+/opt/homebrew/bin/pytest tests/test_optimize_relations.py -q
 git add orchestrator/optimize/relations.py tests/test_optimize_relations.py
 git commit -m "$(cat <<'EOF'
 feat(optimize): relation contracts over target-native property tests
@@ -1944,7 +1951,7 @@ Build `Fit` objects directly here — this is a pure decision rule over a fitted
 
 - [ ] **Step 2–4: Run (fail), implement, run (pass)**
 
-Run: `.venv/bin/pytest tests/test_optimize_stage.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_stage.py -q`
 
 Implementation notes:
 - Pure function of `(Fit, factors)`. No I/O, no LLM, no randomness — this is the "adaptivity is arithmetic" claim from the spec, and it must be testable in isolation.
@@ -2015,7 +2022,7 @@ Model them on the existing `orchestrator/schemas/*.schema.json` house style: `$s
 
 - [ ] **Step 2: Write the tests, run them (fail), implement `artifacts.py`, run again (pass)**
 
-Run: `.venv/bin/pytest tests/test_optimize_artifacts.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_artifacts.py -q`
 
 Implementation notes:
 - Use `orchestrator.util.atomic_write` for every whole-file write, matching the rest of the codebase.
@@ -2082,7 +2089,7 @@ The fake runner is a dict-driven callable: `{row_index: observation}`. Use a `_R
 
 - [ ] **Step 2–4: Run (fail), implement, run (pass)**
 
-Run: `.venv/bin/pytest tests/test_optimize_runner.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_runner.py -q`
 
 Implementation notes:
 - Zero LLM involvement. The runner seam is injected exactly like `parallel_arms.run_units`' `runner` parameter, which is what makes this testable at all.
@@ -2174,7 +2181,7 @@ EOF
 
 - [ ] **Step 1: Write the tests, run them (fail)**
 
-Run: `.venv/bin/pytest tests/test_optimize_campaign_schema.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_campaign_schema.py -q`
 
 - [ ] **Step 2: Add the schema block, run again**
 
@@ -2185,7 +2192,7 @@ Place them beside the existing `_validate_locked_parameters` family and follow i
 - [ ] **Step 4: Run the full suite, then commit**
 
 ```bash
-.venv/bin/pytest -q
+/opt/homebrew/bin/pytest -q
 git add orchestrator/schemas/campaign.schema.yaml orchestrator/validate.py tests/test_optimize_campaign_schema.py
 git commit -m "$(cat <<'EOF'
 feat(schema): kind field and the optimization campaign block
@@ -2255,7 +2262,7 @@ EOF
 
 - [ ] **Step 1: Write both test files, run them (fail)**
 
-Run: `.venv/bin/pytest tests/test_optimize_iteration.py tests/test_optimize_gate_defaults.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_iteration.py tests/test_optimize_gate_defaults.py -q`
 
 - [ ] **Step 2: Add the delegation branch at the top of `run_iteration`**
 
@@ -2313,7 +2320,7 @@ The stage runner composes the earlier tasks and owns the phase transitions:
 - [ ] **Step 6: Run the full suite, then commit**
 
 ```bash
-.venv/bin/pytest -q
+/opt/homebrew/bin/pytest -q
 git add orchestrator/iteration.py orchestrator/cli.py orchestrator/campaign.py orchestrator/optimize/stage_runner.py tests/test_optimize_iteration.py tests/test_optimize_gate_defaults.py
 git commit -m "$(cat <<'EOF'
 feat(optimize): wire the optimization kind into the iteration loop
@@ -2360,12 +2367,12 @@ This task adds no production code. Its only job is to prove the central architec
 
 - [ ] **Step 2: Run them**
 
-Run: `.venv/bin/pytest tests/test_optimize_no_regression.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_no_regression.py -q`
 Expected: all pass. Any failure here means the optimization work leaked into the reflective path — fix the leak, never the test.
 
 - [ ] **Step 3: Run the entire suite one final time**
 
-Run: `.venv/bin/pytest -q`
+Run: `/opt/homebrew/bin/pytest -q`
 Expected: the full suite green, including all 79 pre-existing test files.
 
 - [ ] **Step 4: Commit**
@@ -2435,7 +2442,7 @@ TDD applies to documentation here: the test defines what a correct example is, t
 
 - [ ] **Step 2: Run it (fail — no guide yet)**
 
-Run: `.venv/bin/pytest tests/test_optimize_guide_examples.py -q`
+Run: `/opt/homebrew/bin/pytest tests/test_optimize_guide_examples.py -q`
 Expected: failure on the missing file.
 
 - [ ] **Step 3: Write the guide**
@@ -2453,7 +2460,7 @@ Fix the **guide**, never the test, when an example fails.
 - [ ] **Step 6: Run the full suite, then commit**
 
 ```bash
-.venv/bin/pytest -q
+/opt/homebrew/bin/pytest -q
 git add docs/optimization-campaign-guide.md tests/test_optimize_guide_examples.py README.md CLAUDE.md docs/data-model.md
 git commit -m "$(cat <<'EOF'
 docs: authoring guide for kind: optimization campaigns
@@ -2483,8 +2490,8 @@ EOF
 
 Run before declaring the feature complete:
 
-- [ ] `.venv/bin/pytest -q` — full suite green
-- [ ] `.venv/bin/pytest tests/test_optimize_*.py -q` — all new tests green
+- [ ] `/opt/homebrew/bin/pytest -q` — full suite green
+- [ ] `/opt/homebrew/bin/pytest tests/test_optimize_*.py -q` — all new tests green
 - [ ] Alias oracle: `res V` on 5 factors is 16 runs with **zero** aliases; `res III` on 7 factors is 8 runs with 21 aliases
 - [ ] L5 oracle: `fit_effects` recovers main `-0.95` and interaction `+1.60` from the planted model
 - [ ] Reflective regression: `tests/test_optimize_no_regression.py` green
