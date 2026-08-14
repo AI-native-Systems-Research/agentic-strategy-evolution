@@ -31,16 +31,18 @@ The failure taxonomy is deliberately asymmetric (spec Sec 6.4):
     resolution drops, dropped factors named); it never silently proceeds
     as if nothing happened.
 
-``response.held_out`` metrics are stripped from the fitting-inputs view at
-this observation boundary (belt-and-braces with the schema validator
-elsewhere) so a careless caller cannot leak held-out data into the fitter
-even by accident.
+``response.held_out`` metrics are removed from ``RunOutcome.response``
+entirely at this observation boundary and surface only on the distinctly
+named ``RunOutcome.held_out`` field -- a structural split, not a filtered
+view, so passing ``response`` wholesale to a fitter is safe by default
+(belt-and-braces with the schema validator elsewhere) rather than unsafe
+by default.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from orchestrator.optimize.factors import Factor
@@ -52,9 +54,16 @@ from orchestrator.optimize.predicates import evaluate
 class RunOutcome:
     """The outcome of running one design-matrix row.
 
-    ``response`` carries every metric the runner observed, PLUS a
-    ``fitting_inputs`` sub-dict holding exactly the metrics safe to hand a
-    fitter: the primary response, minus any ``response.held_out`` metric.
+    ``response`` and ``held_out`` are a STRUCTURAL split, not a filtered
+    view: any metric named in ``response.held_out`` is removed from
+    ``response`` entirely and appears only in ``held_out``. This makes
+    ``response`` fitting-safe by construction -- passing it wholesale to a
+    fitter is safe by default, rather than safe only if the caller
+    remembers to reach for a particular sub-key. Reaching held-out data
+    requires the deliberate, distinctly-named ``outcome.held_out`` access
+    (e.g. for the confirm-stage generalization check), never an accident of
+    passing ``response`` as a whole.
+
     ``manipulation`` and ``invariants`` are lists of plain-dict verdicts
     (``{"id":..., "ok":..., "detail":...}``) -- one entry per predicate
     checked, in declaration order, across every attempt (so a retry's
@@ -68,6 +77,7 @@ class RunOutcome:
     invariants: list
     duration_ms: int = 0
     error: str = ""
+    held_out: dict = field(default_factory=dict)
 
 
 class ConfigRunner(Protocol):
@@ -194,16 +204,23 @@ def _check_ceiling(response_spec: dict, observed: dict) -> str | None:
     return None
 
 
-def _fitting_inputs(response_spec: dict, observed: dict) -> dict:
-    """Every observed metric EXCEPT any named in ``response.held_out``.
+def _split_held_out(response_spec: dict, observed: dict) -> tuple[dict, dict]:
+    """Partition ``observed`` into ``(response, held_out)`` -- a STRUCTURAL split.
 
-    Belt-and-braces with the schema validator elsewhere: a held-out metric
-    is recorded (callers can still see it happened, e.g. for the confirm-
-    stage generalization check) but never appears here, so a careless
-    caller cannot leak it into ``fit_effects`` even by accident.
+    Any metric named in ``response.held_out`` is removed from the
+    fitting-safe dict entirely, not merely omitted from a filtered
+    sub-view alongside a copy that still contains it. This is the
+    belt-and-braces guard against the ``symphony-generation`` leakage
+    class: a held-out metric is recorded (in ``held_out``, so callers can
+    still see it happened -- e.g. for the confirm-stage generalization
+    check) but a caller who passes ``response`` wholesale to a fitter,
+    which is the natural first-time idiom, cannot leak it by accident,
+    because it is no longer there to leak.
     """
-    held_out = set(response_spec.get("held_out") or ())
-    return {k: v for k, v in observed.items() if k not in held_out}
+    held_out_keys = set(response_spec.get("held_out") or ())
+    response = {k: v for k, v in observed.items() if k not in held_out_keys}
+    held_out = {k: v for k, v in observed.items() if k in held_out_keys}
+    return response, held_out
 
 
 def _run_once(row: ConfigRow, runner: "ConfigRunner") -> tuple[dict | None, str]:
@@ -294,6 +311,11 @@ def _execute_row(
 
     assert observed is not None  # loop only reaches here via `break` above
 
+    # Structural split, computed once and reused on every remaining exit
+    # path (including the rejected ones) so a held-out metric never
+    # surfaces at the top level of `response` regardless of status.
+    response, held_out = _split_held_out(response_spec, observed)
+
     invariant_verdicts = _check_invariants(invariants, observed)
     if _invariants_failed(invariant_verdicts):
         failed_detail = "; ".join(
@@ -301,42 +323,41 @@ def _execute_row(
             for v in invariant_verdicts if (not v["ok"]) and not v["skipped"]
         )
         return RunOutcome(
-            row_index=row.row_index, status="rejected", response=dict(observed),
+            row_index=row.row_index, status="rejected", response=response,
             manipulation=all_manipulation, invariants=invariant_verdicts,
-            error=failed_detail,
+            error=failed_detail, held_out=held_out,
         )
 
     if integrity_check is not None:
         integrity_ok, integrity_detail = integrity_check(row)
         if not integrity_ok:
             return RunOutcome(
-                row_index=row.row_index, status="rejected", response=dict(observed),
+                row_index=row.row_index, status="rejected", response=response,
                 manipulation=all_manipulation, invariants=invariant_verdicts,
                 error=integrity_detail or "integrity_command exited non-zero",
+                held_out=held_out,
             )
 
     ceiling_error = _check_ceiling(response_spec, observed)
     if ceiling_error is not None:
         return RunOutcome(
-            row_index=row.row_index, status="rejected", response=dict(observed),
+            row_index=row.row_index, status="rejected", response=response,
             manipulation=all_manipulation, invariants=invariant_verdicts,
-            error=ceiling_error,
+            error=ceiling_error, held_out=held_out,
         )
-
-    response = dict(observed)
-    response["fitting_inputs"] = _fitting_inputs(response_spec, observed)
 
     constraint_violations = _check_constraints(response_spec, observed)
     if constraint_violations:
         return RunOutcome(
             row_index=row.row_index, status="infeasible", response=response,
             manipulation=all_manipulation, invariants=invariant_verdicts,
-            error="; ".join(constraint_violations),
+            error="; ".join(constraint_violations), held_out=held_out,
         )
 
     return RunOutcome(
         row_index=row.row_index, status="complete", response=response,
         manipulation=all_manipulation, invariants=invariant_verdicts, error="",
+        held_out=held_out,
     )
 
 
