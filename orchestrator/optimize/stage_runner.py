@@ -275,16 +275,21 @@ def run_stage(
         )
 
     ys = _fitting_responses(outcomes, response_spec, primary)
-    fit = fit_effects(
-        design, ys, factor_ids=tuple(f.id for f in factors),
-    )
+    # The factor_ids MUST match the design's column order and width. At
+    # refine, _build_design builds a central composite over only the
+    # refinable factors, so passing every factor id here would misalign the
+    # model matrix (verified: it raises IndexError). Derive the ids from the
+    # design that was actually built.
+    fitted_ids = _design_factor_ids(factors, design_cfg, stage_name)
+    fit = fit_effects(design, ys, factor_ids=fitted_ids)
     artifacts.write_effects(iter_dir, fit, factors=factors, stage=stage_name)
 
     behavioral = _assert_all_behavioral(behavioral_failures)
     if stage_name == Stage.REFINE.value:
-        stationary = solve_stationary_point(fit, tuple(f.id for f in factors))
+        stationary = solve_stationary_point(fit, fitted_ids)
+        fitted_factors = [f for f in factors if f.id in set(fitted_ids)]
         decision = decide_after_refine(
-            fit, factors, stationary, behavioral_failures=behavioral,
+            fit, fitted_factors, stationary, behavioral_failures=behavioral,
         )
     else:
         decision = decide_after_screen(fit, factors, behavioral_failures=behavioral)
@@ -333,6 +338,22 @@ def run_stage(
         stage_name, iteration, len(outcomes), statuses.count("complete"),
     )
     return IterationOutcome.CONTINUE
+
+
+def _design_factor_ids(factors, design_cfg: dict, stage_name: str) -> tuple[str, ...]:
+    """The factor ids whose columns the stage's design actually contains.
+
+    Must agree with ``_build_design``: at refine the design spans only the
+    refinable factors, so fitting with every declared id would misalign the
+    model matrix.
+    """
+    from orchestrator.optimize.factors import is_refinable
+
+    ids = tuple(f.id for f in factors)
+    if stage_name == Stage.REFINE.value:
+        refinable = tuple(f.id for f in factors if is_refinable(f))
+        return refinable or ids
+    return ids
 
 
 def _build_design(factors, design_cfg: dict, stage_name: str):
