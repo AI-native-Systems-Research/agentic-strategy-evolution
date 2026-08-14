@@ -340,3 +340,56 @@ def test_missing_config_runner_fails_loudly(tmp_path, work_dir):
         run_stage(c, wd, iteration=2, stage="screen", config_runner=None,
                   test_results=_all_tests_pass(c), auto_approve=True)
     assert "config_runner" in str(exc.value)
+
+
+# ─── the refine stage: design width must match the fitted factor ids ──────
+
+def test_refine_stage_fits_only_the_refinable_factors(tmp_path, work_dir):
+    """Regression: refine builds a CCD over the REFINABLE factors only.
+
+    Passing every declared factor id to fit_effects misaligns the model
+    matrix against the design's column width and raises IndexError. Every
+    other test here exercises `screen`, where the two sets coincide — which
+    is exactly why this went unnoticed until the refine path was driven.
+    """
+    c = _campaign(factor_ids=("A", "B"))
+    # A carries >2 levels so it is refinable; B is 2-level so it is not.
+    c["optimization"]["factors"][0]["levels"] = [1, 2, 4, 8]
+    c["optimization"]["factors"][1]["levels"] = [0, 1]
+    wd = _init_work_dir(tmp_path, c)
+
+    outcome = _run(c, wd, stage="refine", iteration=3)
+    assert outcome is not None
+
+    iter_dir = Path(wd) / "runs" / "iter-3"
+    effects = json.loads((iter_dir / "effects.json").read_text())
+    labels = {e["label"] for e in effects["effects"]}
+    # only the refinable factor may appear as a fitted main effect
+    assert "A" in labels
+    assert "B" not in labels, (
+        "B is 2-level and absent from the refine design, so it must not "
+        "appear as a fitted effect"
+    )
+
+
+def test_design_factor_ids_agrees_with_the_built_design_width(tmp_path):
+    """The invariant behind the bug above, asserted directly."""
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import (
+        _build_design,
+        _design_factor_ids,
+    )
+
+    c = _campaign(factor_ids=("A", "B"))
+    c["optimization"]["factors"][0]["levels"] = [1, 2, 4, 8]
+    c["optimization"]["factors"][1]["levels"] = [0, 1]
+    factors = parse_factors(c["optimization"]["factors"])
+    cfg = c["optimization"]["design"]
+
+    for stage in ("screen", "refine"):
+        design = _build_design(factors, cfg, stage)
+        ids = _design_factor_ids(factors, cfg, stage)
+        assert len(ids) == len(design.points[0].coded), (
+            f"{stage}: {len(ids)} factor ids against a design of width "
+            f"{len(design.points[0].coded)}"
+        )
