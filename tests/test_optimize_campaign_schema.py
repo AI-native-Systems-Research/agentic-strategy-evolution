@@ -339,6 +339,31 @@ def test_rule2_held_out_disjoint_from_fitting_inputs_passes():
     assert not any("leak" in e.lower() for e in hard_errors)
 
 
+def test_rule2_held_out_whitespace_variant_of_primary_metric_is_leakage():
+    # Trailing whitespace differs by exact string but is the same metric
+    # to a human author; the runtime resolves by exact match, so this
+    # can never leak data through the pipeline -- the point is that the
+    # author's intent (same metric, protected) is silently defeated
+    # without a warning unless comparison normalizes.
+    campaign = _minimal_optimization_campaign()
+    campaign["optimization"]["response"]["held_out"] = ["throughput_gbps "]
+    errors = validate_optimization_campaign(campaign)
+    assert any(
+        "throughput_gbps " in e and "throughput_gbps" in e and "leak" in e.lower()
+        for e in errors
+    )
+
+
+def test_rule2_held_out_case_variant_of_constraint_metric_is_leakage():
+    campaign = _minimal_optimization_campaign()
+    campaign["optimization"]["response"]["constraints"] = [
+        {"metric": "OOS", "op": ">", "value": 0},
+    ]
+    campaign["optimization"]["response"]["held_out"] = ["oos"]
+    errors = validate_optimization_campaign(campaign)
+    assert any("OOS" in e and "oos" in e and "leak" in e.lower() for e in errors)
+
+
 # Rule 3: every screen_levels entry must be a member of that factor's levels.
 
 
@@ -579,6 +604,48 @@ def test_rule9_absent_tier_fields_pass():
     campaign = _minimal_optimization_campaign()
     errors = validate_optimization_campaign(campaign)
     assert not any("complexity_tier" in e or "tier_justification" in e for e in errors)
+
+
+def test_rule9_complexity_tier_under_metadata_is_an_error():
+    # #206 made `metadata` the canonical location complexity_tier.py reads
+    # from -- an author following that convention must not get silence.
+    campaign = _minimal_optimization_campaign()
+    campaign["metadata"] = {"complexity_tier": 2}
+    errors = validate_optimization_campaign(campaign)
+    assert any(
+        "complexity_tier" in e and "metadata" in e and "reflective" in e.lower()
+        for e in errors
+    )
+
+
+def test_rule9_tier_justification_under_metadata_is_an_error():
+    campaign = _minimal_optimization_campaign()
+    campaign["metadata"] = {"tier_justification": "tier 2 because multi-knob"}
+    errors = validate_optimization_campaign(campaign)
+    assert any(
+        "tier_justification" in e and "metadata" in e and "reflective" in e.lower()
+        for e in errors
+    )
+
+
+def test_rule9_complexity_tier_at_legacy_top_level_is_an_error():
+    campaign = _minimal_optimization_campaign()
+    campaign["complexity_tier"] = 1
+    errors = validate_optimization_campaign(campaign)
+    assert any(
+        "complexity_tier" in e and "top level" in e and "reflective" in e.lower()
+        for e in errors
+    )
+
+
+def test_rule9_tier_fields_under_both_metadata_and_top_level_are_both_errors():
+    campaign = _minimal_optimization_campaign()
+    campaign["metadata"] = {"complexity_tier": 2}
+    campaign["complexity_tier"] = 1
+    errors = validate_optimization_campaign(campaign)
+    hard = [e for e in errors if not e.startswith("WARN:")]
+    assert any("metadata" in e and "complexity_tier" in e for e in hard)
+    assert any("top level" in e and "complexity_tier" in e for e in hard)
 
 
 # Rule 10: a controllable_knob in neither factors nor locked_parameters is a
