@@ -2147,7 +2147,7 @@ EOF
 7. A runner raising an exception yields `status == "failed"` with the exception type in `error`, and does not abort the remaining rows.
 8. `on_row` callback fires once per completed row (this is how `runs.jsonl` gets appended incrementally).
 9. `build_cache_key` is identical for two rows with the same levels and patch hash, and differs when any level or the patch hash changes.
-10. A held-out metric present in the observation is recorded but **not** returned among fitting inputs (leakage guard at the execution boundary).
+10. A held-out metric present in the observation is recorded on a **structurally separate** `RunOutcome.held_out` field and is absent from `response` at **every level** — not merely filtered into a sub-dict. Assert on the whole structure so a refactor cannot reintroduce a nested copy. The point is that `response` is fitting-safe by default: passing it wholesale must be safe, because that is the idiom a first-time caller will reach for. A filtered view inside `response` is not a barrier — it leaks whenever someone passes `response` itself.
 11. When `optimization.integrity_command` is declared, it runs once per config and a non-zero exit marks the row `rejected` with the command's stderr in `error`.
 12. When `integrity_command` is absent, no integrity check runs and rows are unaffected (the field is optional).
 13. An integrity failure is `rejected`, not `infeasible` — corrupt output is not data about the design space, so it must never reach the fitter.
@@ -2164,7 +2164,7 @@ Implementation notes:
 - Zero LLM involvement. The runner seam is injected exactly like `parallel_arms.run_units`' `runner` parameter, which is what makes this testable at all.
 - Retry once on manipulation failure, then drop the **factor** (not the campaign) and let the caller refit with recomputed aliasing, per spec §6.4.
 - Never raise out of the loop for a single bad row: partial failure degrades the claim (reported resolution drops, dropped factors named), it does not silently proceed.
-- The leakage guard here is belt-and-braces with the validator: held-out metrics are stripped from fitting inputs at the point of observation, so they cannot reach `fit_effects` even if a caller is careless.
+- The leakage guard here is belt-and-braces with the validator, and it must be **structural, not advisory**: held-out values live on their own `RunOutcome.held_out` field and never appear in `response`. Make the safe path the default one. A guard that only holds when the caller reaches for the right sub-key fails exactly when someone doesn't know to — and a leaked held-out metric produces a campaign that optimized against its own generalization check while every artifact looks clean.
 - `integrity_command` is the third guardrail alongside manipulation predicates and the ceiling check. Run it per config via the same injected seam as the runner (so tests inject a fake and never shell out), and treat a non-zero exit as `rejected`: corrupt output is not evidence about the design space, and admitting it would contaminate every effect estimate that includes that cell.
 - `execute_design` takes an optional `integrity_check: Callable[[ConfigRow], tuple[bool, str]]`. Production wires it to a subprocess invocation of `integrity_command`; tests inject a callable. Never call `subprocess` directly from `execute_design`.
 
