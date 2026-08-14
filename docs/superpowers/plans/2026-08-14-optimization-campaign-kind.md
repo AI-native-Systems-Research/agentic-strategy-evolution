@@ -1397,8 +1397,13 @@ def test_strong_curvature_is_detected_as_lack_of_fit():
     d = with_center_points(full_factorial(ids), 4)
     ys = _synth(d, ids, 10.0, {"A": 1.0, "B": 0.5})
     centers = [i for i, p in enumerate(d.points) if p.role == "center"]
-    for i in centers:
-        ys[i] = 14.0                       # large, consistent curvature
+    # Center values must be far from the corner mean (that is the curvature)
+    # AND mutually distinct (that is the pure-error estimate). Identical
+    # replicates give pure_error_var == 0, which correctly short-circuits the
+    # F test and would leave lack_of_fit_p as None — the test would then be
+    # asserting against its own setup.
+    for offset, i in zip([0.0, -0.02, 0.02, -0.01], centers):
+        ys[i] = 14.0 + offset
     fit = fit_effects(d, ys, factor_ids=ids)
     assert fit.lack_of_fit_p is not None and fit.lack_of_fit_p < 0.05
 
@@ -1424,7 +1429,11 @@ def test_aliases_are_carried_onto_the_fit_as_a_caveat():
     ids = ("A", "B", "C", "D", "E", "F", "G")
     d = fractional_factorial(ids, resolution=3)
     ys = _synth(d, ids, 1.0, {"A": 1.0})
-    fit = fit_effects(d, ys, factor_ids=ids)
+    # include_interactions=False is REQUIRED here: this saturated design has 8
+    # runs, so a model with 21 two-factor interactions (29 terms total) is not
+    # estimable and fit_effects correctly raises. The property under test is
+    # that aliasing propagates to the Fit, which needs no interaction terms.
+    fit = fit_effects(d, ys, factor_ids=ids, include_interactions=False)
     assert fit.aliases, "a res-III fit must carry its aliasing forward"
 
 
