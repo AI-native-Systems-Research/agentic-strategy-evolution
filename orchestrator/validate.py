@@ -13,6 +13,10 @@ from pathlib import Path
 import jsonschema
 import yaml
 
+from orchestrator.optimize.design import _GENERATORS, min_runs_for
+from orchestrator.optimize.factors import is_refinable
+from orchestrator.optimize.predicates import is_trivial
+
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 
 
@@ -206,6 +210,385 @@ def validate_principles_have_empirical_content(
                 f"'by definition')."
             )
     return warnings
+
+
+def campaign_kind(campaign: dict) -> str:
+    """Return ``campaign.get("kind")`` normalized to its schema default.
+
+    ``"reflective"`` is returned for both an absent ``kind`` and an
+    explicit ``kind: reflective`` -- the schema default means the two
+    are indistinguishable in behavior, so callers should treat them
+    identically rather than branching on presence.
+    """
+    return campaign.get("kind") or "reflective"
+
+
+def _rule1_kind_optimization_block(campaign: dict) -> list[str]:
+    """Rule 1: kind: optimization requires an optimization block;
+    kind: reflective (or absent) forbids one."""
+    kind = campaign_kind(campaign)
+    has_block = "optimization" in campaign
+    if kind == "optimization" and not has_block:
+        return [
+            "kind: optimization requires a top-level 'optimization' block "
+            "(response, factors, design). Add one -- see "
+            "docs/optimization-campaign-guide.md -- or set kind: reflective "
+            "if this campaign doesn't need a pre-registered design matrix."
+        ]
+    if kind == "reflective" and has_block:
+        return [
+            "an 'optimization' block is present but kind is reflective "
+            "(or absent, which defaults to reflective). Either add "
+            "'kind: optimization' to activate it, or remove the "
+            "'optimization' block if this campaign is meant to run the "
+            "reflective flow."
+        ]
+    return []
+
+
+def _rule2_held_out_leakage(opt: dict) -> list[str]:
+    """Rule 2: a held_out metric must not equal response.primary.metric
+    nor appear in constraints/regimes -- the leakage guard that prevents
+    a campaign from optimizing against its own generalization check."""
+    response = opt.get("response") or {}
+    held_out = response.get("held_out") or []
+    if not held_out:
+        return []
+    errors: list[str] = []
+    primary_metric = (response.get("primary") or {}).get("metric")
+    for metric in held_out:
+        if primary_metric and metric == primary_metric:
+            errors.append(
+                f"response.held_out contains {metric!r}, which is also "
+                f"response.primary.metric -- this is data leakage (the "
+                f"symphony-generation failure class): a held_out metric "
+                f"must never be an input the design matrix fits against. "
+                f"Choose a different held_out metric, or fit on a "
+                f"different primary metric."
+            )
+        for constraint in response.get("constraints") or []:
+            cmetric = constraint.get("metric") or constraint.get("observable")
+            if cmetric == metric:
+                errors.append(
+                    f"response.held_out contains {metric!r}, which also "
+                    f"appears in response.constraints -- this is data "
+                    f"leakage: a held_out metric must never feed fitting "
+                    f"(constraints exclude configs from fitting, but the "
+                    f"metric itself must stay unobserved until confirm). "
+                    f"Remove {metric!r} from constraints or from held_out."
+                )
+        for regime in response.get("regimes") or []:
+            rmetric = regime.get("metric") or regime.get("observable")
+            if rmetric == metric:
+                errors.append(
+                    f"response.held_out contains {metric!r}, which also "
+                    f"appears in response.regimes -- this is data "
+                    f"leakage: a held_out metric must never feed fitting. "
+                    f"Remove {metric!r} from regimes or from held_out."
+                )
+    return errors
+
+
+def _rule3_screen_levels_membership(factors: list[dict]) -> list[str]:
+    """Rule 3: every screen_levels entry must be a member of that
+    factor's levels."""
+    errors: list[str] = []
+    for factor in factors:
+        fid = factor.get("id", "<unknown>")
+        screen_levels = factor.get("screen_levels")
+        if screen_levels is None:
+            continue
+        levels = factor.get("levels") or []
+        missing = [lvl for lvl in screen_levels if lvl not in levels]
+        if missing:
+            errors.append(
+                f"factor {fid!r}: screen_levels {missing!r} are not "
+                f"members of levels {list(levels)!r}. screen_levels must "
+                f"name two of the factor's own declared levels."
+            )
+    return errors
+
+
+class _RawFactorView:
+    """Minimal shim exposing ``.type`` / ``.levels`` so raw campaign-dict
+    factors (pre-``parse_factors``) can be checked with the same
+    ``is_refinable`` predicate ``orchestrator.optimize.factors`` uses for
+    parsed ``Factor`` objects -- one definition of "refinable", not two."""
+
+    __slots__ = ("type", "levels")
+
+    def __init__(self, factor: dict):
+        self.type = factor.get("type")
+        self.levels = tuple(factor.get("levels") or ())
+
+
+def _dict_is_refinable(factor: dict) -> bool:
+    return is_refinable(_RawFactorView(factor))
+
+
+def _rule4_refine_needs_two_refinable_factors(
+    design: dict, factors: list[dict],
+) -> list[str]:
+    """Rule 4: refine.kind requires >=2 factors satisfying is_refinable
+    (numeric with more than 2 levels)."""
+    if not isinstance(design, dict) or "refine" not in design:
+        return []
+    refinable = sum(1 for factor in factors if _dict_is_refinable(factor))
+    if refinable >= 2:
+        return []
+    return [
+        f"design.refine is set but only {refinable} factor(s) are "
+        f"refinable (numeric with > 2 levels); refine needs >= 2. Either "
+        f"drop design.refine (skip straight to confirm at the winning "
+        f"corner), or add levels to a second numeric factor so refine has "
+        f"a surface with curvature to fit."
+    ]
+
+
+def _rule5_correctness_relation_required(factors: list[dict]) -> list[str]:
+    """Rule 5: each factor needs >=1 correctness relation.
+
+    parse_factors (orchestrator.optimize.factors) enforces this for
+    already-parsed Factor objects; this checks the raw campaign dict so
+    the campaign-authoring gate catches it before any parse is attempted.
+    """
+    errors: list[str] = []
+    for factor in factors:
+        fid = factor.get("id", "<unknown>")
+        relations = factor.get("relations") or []
+        if not any(
+            isinstance(r, dict) and r.get("kind") == "correctness"
+            for r in relations
+        ):
+            errors.append(
+                f"factor {fid!r} has no relation with kind: correctness. "
+                f"A 'behavioral' relation alone is not enough -- "
+                f"behavioral violations are recorded as findings and "
+                f"never fail the campaign, so nothing would catch a "
+                f"broken lever. Add at least one correctness relation "
+                f"(e.g. 'baseline level reproduces the recorded baseline "
+                f"run within noise')."
+            )
+    return errors
+
+
+def _rule6_no_trivial_predicates(opt: dict, factors: list[dict]) -> list[str]:
+    """Rule 6: no manipulation or invariant predicate may be trivially
+    true (predicates.is_trivial)."""
+    errors: list[str] = []
+    for factor in factors:
+        fid = factor.get("id", "<unknown>")
+        man = factor.get("manipulation")
+        if isinstance(man, dict) and is_trivial(man):
+            errors.append(
+                f"factor {fid!r}: manipulation predicate "
+                f"{{op: {man.get('op')!r}, value: {man.get('value')!r}}} "
+                f"is trivially true -- it cannot meaningfully fail, so it "
+                f"manufactures false confidence that the lever engaged. "
+                f"Tighten it to a check that a broken lever would "
+                f"actually fail (e.g. compare against the interpolated "
+                f"'{{level}}' value rather than a bare > 0 / != null)."
+            )
+    design_space = opt.get("design_space") or {}
+    for inv in design_space.get("invariants") or []:
+        if isinstance(inv, dict) and is_trivial(inv):
+            errors.append(
+                f"design_space.invariants entry {inv.get('id', '<unknown>')!r}: "
+                f"predicate {{op: {inv.get('op')!r}, value: {inv.get('value')!r}}} "
+                f"is trivially true -- it cannot meaningfully fail, so it "
+                f"manufactures false confidence that the campaign stayed "
+                f"inside its declared design space. Tighten it to a check "
+                f"a real violation would actually fail."
+            )
+    return errors
+
+
+def _rule7_low_resolution_screen_warning(
+    design: dict, factors: list[dict],
+) -> list[str]:
+    """Rule 7 (WARNING): design.screen.resolution < 5 with > 1 factor --
+    main-effects-only screening is the OFAT failure mode in disguise.
+    Does not block; names the aliased pairs so an author can consciously
+    accept resolution IV/III."""
+    screen = (design or {}).get("screen") or {}
+    resolution = screen.get("resolution")
+    if not isinstance(resolution, int) or resolution >= 5:
+        return []
+    if len(factors) <= 1:
+        return []
+    try:
+        from orchestrator.optimize.design import fractional_factorial
+
+        ids = tuple(f.get("id", f"F{i}") for i, f in enumerate(factors))
+        design_obj = fractional_factorial(ids, resolution)
+        pairs = design_obj.generators and _alias_pairs_safe(design_obj)
+    except Exception:
+        pairs = None
+    if pairs:
+        pair_text = ", ".join(f"{a}~{b}" for a, b in pairs)
+        detail = f" Aliased pairs: {pair_text}."
+    else:
+        detail = ""
+    return [
+        f"WARN: design.screen.resolution={resolution} with "
+        f"{len(factors)} factors aliases two-factor interactions onto "
+        f"other effects.{detail} Main-effects-only (or partially-"
+        f"confounded) screening is the one-factor-at-a-time failure mode "
+        f"in disguise -- a real campaign's headline finding was an "
+        f"interaction that a resolution-{resolution} screen would have "
+        f"inverted. Consider resolution: 5 unless you have a specific "
+        f"reason to accept this aliasing."
+    ]
+
+
+def _alias_pairs_safe(design_obj) -> list[tuple[str, str]]:
+    from orchestrator.optimize.design import alias_pairs
+
+    return alias_pairs(design_obj)
+
+
+def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]:
+    """Rule 8 (corrected, see task-10 brief): min_runs_for's fallback of
+    2**k for an untabulated (k, resolution) pair is a conservative UPPER
+    BOUND, not a true minimum -- comparing it against max_runs would
+    falsely reject a run budget that a real (untabulated) design could
+    satisfy. So:
+
+      * tabulated (k, resolution): compare the exact minimum against
+        max_runs, error with the two honest options if it's exceeded.
+      * untabulated (k, resolution): a distinct error that Nous cannot
+        certify a design for that combination, offering the full
+        factorial or fewer factors -- never a fabricated run-count
+        comparison against max_runs.
+    """
+    if not isinstance(design, dict):
+        return []
+    max_runs = design.get("max_runs")
+    if max_runs is None:
+        return []
+    screen = design.get("screen") or {}
+    resolution = screen.get("resolution")
+    if not isinstance(resolution, int):
+        return []
+    k = len(factors)
+    if k == 0:
+        return []
+    tabulated = (k, resolution) in _GENERATORS
+    if tabulated:
+        required = min_runs_for(k, resolution)
+        if required <= max_runs:
+            return []
+        return [
+            f"design.screen.resolution={resolution} over {k} factors "
+            f"needs {required} runs, but design.max_runs={max_runs} is "
+            f"lower. Two honest options: (1) raise max_runs to >= "
+            f"{required}, or (2) accept a lower resolution and its named "
+            f"aliasing (see the resolution-{resolution - 1} generator's "
+            f"alias_pairs) that fits within {max_runs} runs. Nous will "
+            f"not silently downgrade resolution to fit the budget."
+        ]
+    # Untabulated: min_runs_for's fallback (2**k) is a conservative upper
+    # bound, not a verified minimum. Do not compare it to max_runs as if
+    # it were the true requirement.
+    full_factorial_runs = 2 ** k
+    return [
+        f"design.screen.resolution={resolution} is not a tabulated "
+        f"design for {k} factors (orchestrator.optimize.design._GENERATORS "
+        f"has no entry for ({k}, {resolution})). Nous cannot certify a "
+        f"design for this combination, so it cannot say how many runs it "
+        f"actually needs -- do NOT assume the {full_factorial_runs}-run "
+        f"full-factorial fallback is the true minimum. Options: (1) use "
+        f"the full factorial at {full_factorial_runs} runs (guaranteed "
+        f"correct, no aliasing), or (2) reduce the factor count to a "
+        f"tabulated combination."
+    ]
+
+
+def _rule9_no_complexity_tier_under_optimization(opt: dict) -> list[str]:
+    """Rule 9: complexity_tier / tier_justification present under
+    kind: optimization is an error -- the #159 tier ladder is scoped to
+    the reflective kind, and a pre-registered design matrix already
+    strengthens the anti-p-hacking property the ladder protects, so the
+    two disciplines must not be half-adopted together."""
+    errors: list[str] = []
+    for field in ("complexity_tier", "tier_justification"):
+        if field in opt:
+            errors.append(
+                f"optimization.{field} is set, but the #159 graded-"
+                f"complexity tier ladder is scoped to kind: reflective "
+                f"only (see design spec §7.2). A pre-registered design "
+                f"matrix already strengthens the anti-p-hacking property "
+                f"the ladder protects, so the two disciplines must not be "
+                f"half-adopted together. Remove {field!r} from the "
+                f"optimization block."
+            )
+    return errors
+
+
+def _rule10_uncontrolled_knob_warning(campaign: dict, opt: dict) -> list[str]:
+    """Rule 10 (WARNING): a knob in target_system.controllable_knobs
+    appearing in neither factors nor locked_parameters -- the "what did
+    you forget to control" check."""
+    target_system = campaign.get("target_system") or {}
+    knobs = target_system.get("controllable_knobs") or []
+    if not knobs:
+        return []
+    factor_names = set()
+    for factor in opt.get("factors") or []:
+        if factor.get("id"):
+            factor_names.add(factor["id"])
+        if factor.get("name"):
+            factor_names.add(factor["name"])
+    locked = campaign.get("locked_parameters") or {}
+    locked_keys = set(locked) if isinstance(locked, dict) else set()
+    warnings: list[str] = []
+    for knob in knobs:
+        if knob in factor_names or knob in locked_keys:
+            continue
+        warnings.append(
+            f"WARN: target_system.controllable_knobs includes {knob!r}, "
+            f"which appears in neither optimization.factors nor "
+            f"locked_parameters. Either declare it as a factor (if the "
+            f"campaign should vary it), add it to locked_parameters (if "
+            f"it must stay pinned), or remove it from controllable_knobs "
+            f"if it's out of scope for this campaign."
+        )
+    return warnings
+
+
+def validate_optimization_campaign(campaign: dict) -> list[str]:
+    """Cross-field rules for ``kind: optimization`` campaigns that JSON
+    Schema cannot express (Task 10).
+
+    Returns a list of strings: plain strings are HARD ERRORS, strings
+    prefixed ``WARN:`` are advisory. Every message names the actionable
+    repair -- these campaigns are authored by AI, so a bare rejection
+    with no next step is a defect, not just an incomplete message.
+
+    Safe to call on ANY campaign dict, including reflective ones with no
+    ``optimization`` block (rule 1 covers that case and everything else
+    is a no-op).
+    """
+    errors: list[str] = []
+    errors.extend(_rule1_kind_optimization_block(campaign))
+
+    opt = campaign.get("optimization")
+    if not isinstance(opt, dict):
+        return errors  # rule 1 already reported (or nothing to check)
+
+    factors = opt.get("factors") or []
+    design = opt.get("design") or {}
+
+    errors.extend(_rule2_held_out_leakage(opt))
+    errors.extend(_rule3_screen_levels_membership(factors))
+    errors.extend(_rule4_refine_needs_two_refinable_factors(design, factors))
+    errors.extend(_rule5_correctness_relation_required(factors))
+    errors.extend(_rule6_no_trivial_predicates(opt, factors))
+    errors.extend(_rule7_low_resolution_screen_warning(design, factors))
+    errors.extend(_rule8_resolution_run_budget(design, factors))
+    errors.extend(_rule9_no_complexity_tier_under_optimization(opt))
+    errors.extend(_rule10_uncontrolled_knob_warning(campaign, opt))
+    return errors
 
 
 def _validate_locked_parameters(

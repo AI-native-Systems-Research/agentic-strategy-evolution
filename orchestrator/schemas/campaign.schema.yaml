@@ -10,7 +10,48 @@ type: object
 required: [target_system, research_question, prompts]
 additionalProperties: false
 
+$defs:
+  comparison:
+    type: object
+    required: [op, value]
+    additionalProperties: false
+    description: >
+      One comparison vocabulary shared by ``optimization.factors[].manipulation``,
+      ``optimization.response.constraints``, and
+      ``optimization.design_space.invariants``: ``{observable | metric,
+      op, value}``, with optional ``when`` / ``when_not`` level guards
+      (supplying both is a validation error). ``value: "{level}"`` is the
+      one interpolation token in the whole spec -- it substitutes the
+      level under test.
+    properties:
+      observable: { type: string, minLength: 1, description: "Dotted path into the run observation (e.g. 'telemetry.queue_count')." }
+      metric: { type: string, minLength: 1, description: "Alternate name for 'observable' when the comparison is over a response metric." }
+      op: { type: string, enum: ["==", "!=", ">", ">=", "<", "<="] }
+      value: {}
+      when:
+        description: "Restrict this check to only these level(s). Mutually exclusive with when_not."
+      when_not:
+        description: "Restrict this check to every level EXCEPT these. Mutually exclusive with when."
+
 properties:
+  kind:
+    type: string
+    enum: [reflective, optimization]
+    default: reflective
+    description: >
+      Campaign type. ``reflective`` (default) is the existing
+      mechanism-discovery flow: an LLM designs each iteration, runs it,
+      and interprets the result to build causal claims. ``optimization``
+      is a factorial/response-surface flow (see
+      ``docs/optimization-campaign-guide.md``): the model proposes
+      factors once, Python drives a pre-registered design matrix through
+      screen -> refine -> confirm with zero LLM calls in between, and the
+      model interprets the fitted surface at the end. Omitting this field
+      is identical to ``kind: reflective`` -- every campaign written
+      before this field existed is unaffected. ``kind: optimization``
+      requires the top-level ``optimization`` block; ``kind: reflective``
+      (or absent) forbids one.
+
   research_question:
     type: string
     minLength: 1
@@ -617,3 +658,414 @@ properties:
           type: object
           additionalProperties: true
           description: "Optional extra HTTP headers for a ``webhook`` channel."
+
+  optimization:
+    type: object
+    required: [response, factors, design]
+    additionalProperties: false
+    description: >
+      The ``kind: optimization`` authoring surface: a factorial /
+      response-surface campaign spec. The model proposes ``factors``
+      once (stage ``verify``); Python then drives ``screen`` -> ``refine``
+      -> ``confirm`` with zero further LLM calls, expanding a
+      pre-registered design matrix, applying levels mechanically via each
+      factor's ``apply``, and checking ``manipulation`` /
+      ``design_space.invariants`` / ``response.constraints`` on every
+      run. See ``docs/optimization-campaign-guide.md`` for the field-by-
+      field walkthrough and worked examples. Cross-field rules this
+      schema cannot express (leakage, refinability, resolution feasibility,
+      trivial predicates, ...) are enforced by
+      ``orchestrator.validate.validate_optimization_campaign``.
+    properties:
+      response:
+        type: object
+        required: [primary]
+        additionalProperties: false
+        description: >
+          What the campaign is optimizing, and the guardrails that keep a
+          winning candidate honest. Example: ``primary: {metric:
+          train_annualized_return, direction: maximize}`` plus a
+          ``constraints`` entry so a config that turns a feature off
+          entirely (and thereby "wins" trivially) is excluded.
+        properties:
+          primary:
+            type: object
+            required: [metric, direction]
+            additionalProperties: false
+            description: "The single response the design matrix fits. Example: {metric: throughput_gbps, direction: maximize}."
+            properties:
+              metric:
+                type: string
+                minLength: 1
+                description: "Metric name as it appears in the run observation (e.g. 'throughput_gbps')."
+              direction:
+                type: string
+                enum: [maximize, minimize]
+                description: "Whether the fitted surface is climbed or descended."
+          constraints:
+            type: array
+            minItems: 1
+            description: >
+              Admissibility filters over the SAME observation each config
+              produces. A config violating any constraint is marked
+              infeasible: excluded from fitting, retained in
+              ``runs.jsonl`` as real data about the space. Example:
+              ``{metric: trigger_rate_pct, op: ">", value: 0.0}`` rejects
+              a config that "wins" by turning the feature off.
+            items: { "$ref": "#/$defs/comparison" }
+          regimes:
+            type: array
+            minItems: 1
+            description: >
+              A conjunction that must hold in EVERY named regime, for
+              responses that are constrained trade-offs rather than a
+              scalar (issue: a scalar objective lets an optimizer win on
+              the average while failing one regime entirely). Example:
+              ``{id: crashleg, metric: improvement_crashleg_pct, op: ">",
+              value: 0}`` alongside a matching ``uptrend`` entry.
+            items:
+              type: object
+              required: [id, metric, op, value]
+              additionalProperties: false
+              description: "One regime's pass condition, same comparison shape as constraints plus a stable id for reporting."
+              properties:
+                id: { type: string, minLength: 1, description: "Stable regime identifier (e.g. 'crashleg')." }
+                metric: { type: string, minLength: 1 }
+                op: { type: string, enum: ["==", "!=", ">", ">=", "<", "<="] }
+                value: {}
+                when: {}
+                when_not: {}
+          held_out:
+            type: array
+            minItems: 1
+            items: { type: string, minLength: 1 }
+            description: >
+              Metric name(s) reserved as a pure generalization check,
+              recorded only at ``confirm`` and NEVER an input to fitting.
+              Example: ``[held_out_annualized_return]``. The validator
+              hard-fails if any held_out metric also equals
+              ``response.primary.metric`` or appears in ``constraints``
+              / ``regimes`` -- that is the leakage class that let
+              ``symphony-generation`` optimize against its own
+              generalization check.
+          ceiling:
+            type: object
+            required: [metric, value]
+            additionalProperties: false
+            description: >
+              Optional physical bound on the primary metric (e.g. a
+              hardware bandwidth limit). A response above ceiling
+              hard-fails that config -- exceeding it means the
+              instrumentation is lying, not that the campaign found a
+              miracle. Example: {metric: achieved_bandwidth_gbps, value: 21.1}.
+            properties:
+              metric: { type: string, minLength: 1 }
+              value: { type: number }
+          noise_estimate_pct:
+            type: number
+            minimum: 0
+            description: >
+              Rough expected measurement noise as a percent of the
+              primary metric, used to size replicate counts (via
+              ``power.required_seeds``). Example: 3.0 for ~3% run-to-run
+              variance.
+
+      factors:
+        type: array
+        minItems: 1
+        description: >
+          The knobs the campaign varies. Each becomes one column of the
+          design matrix. Example: a ``numeric`` factor ``queue_count``
+          with ``levels: [2, 4, 8, 16]``, or a ``choice`` factor
+          ``batching`` with ``levels: [off, on]``. See
+          ``docs/optimization-campaign-guide.md`` for the full
+          "declare as factor vs lock" inventory.
+        items:
+          type: object
+          required: [id, name, type, levels, apply, manipulation, relations]
+          additionalProperties: false
+          properties:
+            id:
+              type: string
+              minLength: 1
+              description: "Short stable identifier used in the design matrix and effect reports (e.g. 'L1')."
+            name:
+              type: string
+              minLength: 1
+              description: "Human-readable name (e.g. 'queue_count')."
+            type:
+              type: string
+              enum: [numeric, choice]
+              description: >
+                A domain question, not a statistics question: are values
+                BETWEEN the declared levels runnable? ``numeric`` --
+                interpolation is meaningful (thresholds, ratios, counts);
+                refinement may report an interior optimum. ``choice`` --
+                nothing lives between the levels (policies, mechanisms,
+                on/off). The retired ``continuous`` / ``ordinal`` /
+                ``categorical`` vocabulary is not accepted.
+            levels:
+              type: array
+              minItems: 2
+              description: >
+                Every runnable setting for this factor, as a flat list.
+                Example: ``[2, 4, 8, 16]`` or ``[off, on]``. Screening
+                uses ``screen_levels`` (default: first and last); the
+                remaining interior levels are explored only in ``refine``.
+              items: {}
+            grid:
+              type: number
+              exclusiveMinimum: 0
+              description: >
+                For ``numeric`` factors only: snaps a fitted interior
+                optimum to the nearest multiple of this step, so
+                ``confirm`` never tries to run a value the target can't
+                actually take (e.g. K=4.7). Example: ``grid: 1`` for an
+                integer-valued knob. Omit when any real value ships
+                (thresholds, ratios). Ignored for ``type: choice``.
+            screen_levels:
+              type: array
+              minItems: 2
+              maxItems: 2
+              description: >
+                The two levels the 2-level screening design uses for this
+                factor. Must both be members of ``levels``. Default (when
+                omitted): ``levels[0]`` and ``levels[-1]``. Declare this
+                only when the extremes are known-pathological and the
+                screen should bracket a narrower span.
+              items: {}
+            apply:
+              description: >
+                The seam that removes the LLM from the inner loop: how a
+                level becomes a runnable configuration, with zero model
+                involvement. A bare string is CLI-flag shorthand, e.g.
+                ``"--queues={level}"``. The long forms are ``{kind:
+                cli_flag, template: ...}``, ``{kind: env_var, name: ...,
+                value: ...}``, and ``{kind: config_patch, path: ...,
+                pointer: ..., value: ...}``. ``{level}`` is the only
+                interpolation token in the entire spec.
+              oneOf:
+                - type: string
+                  minLength: 1
+                - type: object
+                  required: [kind]
+                  additionalProperties: true
+                  properties:
+                    kind:
+                      type: string
+                      enum: [cli_flag, env_var, config_patch]
+            manipulation:
+              "$ref": "#/$defs/comparison"
+              description: >
+                Family A: did the lever actually engage? Checked on every
+                run of this factor. Example:
+                ``{observable: telemetry.queue_count, op: "==", value:
+                "{level}"}``. The validator rejects trivially-true
+                predicates (bare ``> 0``, ``!= null``) -- a lazy check
+                manufactures false confidence.
+            relations:
+              type: array
+              minItems: 1
+              description: >
+                Family B: is the mechanism correct? At least one
+                ``correctness`` relation is required -- a ``behavioral``
+                relation alone is not enough, because behavioral
+                violations are recorded as findings and never fail the
+                campaign, so nothing would catch a broken lever. Example:
+                a ``correctness`` relation asserting the factor's
+                baseline level reproduces the recorded baseline run
+                within noise.
+              items:
+                type: object
+                required: [id, kind, statement, native_test]
+                additionalProperties: false
+                properties:
+                  id:
+                    type: string
+                    minLength: 1
+                    description: "Stable identifier (e.g. 'R1')."
+                  kind:
+                    type: string
+                    enum: [correctness, behavioral]
+                    description: >
+                      ``correctness`` -- a violation hard-fails the
+                      campaign (the apparatus is broken; measurements are
+                      meaningless). ``behavioral`` -- a violation is
+                      recorded as a finding and the campaign continues.
+                      Monotonicity claims MUST be ``behavioral``, never
+                      ``correctness``: a non-monotonic result can be the
+                      campaign's headline discovery, not a bug.
+                  statement:
+                    type: string
+                    minLength: 1
+                    description: "Plain-English statement of the relation (e.g. 'batching=off is byte-identical to baseline')."
+                  native_test:
+                    type: string
+                    minLength: 1
+                    description: >
+                      Identifier of the property/metamorphic test living
+                      in the TARGET repo's own test tree, run by its own
+                      runner (e.g. 'tests/prop_batch.py::test_off_is_noop').
+                      Nous's role is a contract check: this test ran
+                      under ``test_command`` and exited clean.
+
+      design:
+        type: object
+        additionalProperties: false
+        description: >
+          How the design matrix is sized and staged. Run counts are
+          derived from ``screen.resolution`` and the factor count, not
+          chosen freely -- see ``orchestrator.optimize.design``.
+        properties:
+          screen:
+            type: object
+            required: [resolution]
+            additionalProperties: false
+            description: >
+              The 2-level screening stage. Example: ``{resolution: 5,
+              center_points: 4}``. Default resolution is V (estimates all
+              two-factor interactions unconfounded); the validator warns
+              -- but does not block -- resolution < 5 with more than one
+              factor, because main-effects-only screening is the
+              one-factor-at-a-time failure mode in disguise.
+            properties:
+              resolution:
+                type: integer
+                minimum: 3
+                description: "Target design resolution (III, IV, or V). See orchestrator.optimize.design for the tabulated generators."
+              center_points:
+                type: integer
+                minimum: 0
+                description: "Replicated center-point runs, giving a pure-error estimate for the lack-of-fit test. Default: 0."
+          refine:
+            type: object
+            required: [kind]
+            additionalProperties: false
+            description: >
+              The response-surface refinement stage, run only when >=2
+              ``numeric`` factors with more than 2 levels survive
+              screening. Example: ``{kind: central_composite,
+              center_points: 5}``.
+            properties:
+              kind:
+                type: string
+                enum: [central_composite]
+                description: "Response-surface design family."
+              center_points:
+                type: integer
+                minimum: 0
+                description: "Replicated center-point runs at the refine stage."
+          confirm:
+            type: object
+            required: [replicates]
+            additionalProperties: false
+            description: >
+              The confirmation stage: replicate the predicted optimum
+              (snapped to each factor's ``grid``) and evaluate
+              ``held_out`` metrics. Example: ``{replicates: 5}``.
+            properties:
+              replicates:
+                type: integer
+                minimum: 1
+                description: "Number of replicate runs at the confirmed optimum."
+          max_runs:
+            type: integer
+            minimum: 1
+            description: >
+              The author's run budget. The validator fails -- offering
+              the two honest options (raise this budget, or accept a
+              lower resolution and its named aliasing) -- rather than
+              silently downgrading resolution when the requested design
+              would exceed it. Example: ``120``.
+
+      design_space:
+        type: object
+        required: [invariants]
+        additionalProperties: false
+        description: >
+          Properties Python enforces on EVERY configuration, in every
+          stage -- including ``screen`` and ``refine``, which make zero
+          LLM calls and so cannot honor a directive that exists only as
+          prose. Where a violation is statically determinable from the
+          matrix row, the row is rejected before it runs; otherwise it
+          hard-fails after running. See
+          ``docs/optimization-campaign-guide.md``'s "would you be upset
+          to find this violated after 60 runs?" test for what belongs
+          here versus in ``guidance``.
+        properties:
+          invariants:
+            type: array
+            minItems: 1
+            description: >
+              Example: ``{id: I1, statement: "connector is peer-to-peer,
+              never staged through host memory", observable:
+              telemetry.transfer_path, op: "==", value: p2p}``.
+            items:
+              type: object
+              required: [id, statement, observable, op, value]
+              additionalProperties: false
+              properties:
+                id: { type: string, minLength: 1, description: "Stable identifier (e.g. 'I1')." }
+                statement: { type: string, minLength: 1, description: "Plain-English statement of the invariant." }
+                observable: { type: string, minLength: 1, description: "Dotted path into the run observation." }
+                op: { type: string, enum: ["==", "!=", ">", ">=", "<", "<="] }
+                value: {}
+
+      guidance:
+        type: object
+        additionalProperties: false
+        description: >
+          Structured prose for the two model-facing stages -- exactly two
+          named slots, because they're consumed at different times and
+          blending them wastes tokens in both. Contrast with
+          ``design_space.invariants``: guidance shapes what the model
+          PROPOSES, invariants bound what Python EXECUTES. An enforceable
+          directive belongs in ``invariants``, not here -- prose here is
+          not read during ``screen`` / ``refine``.
+        properties:
+          factor_nomination:
+            type: string
+            minLength: 1
+            description: >
+              Read at ``verify``, when the model proposes factors and
+              levels. Example: "Scheduling policy is the highest-value
+              axis here. Consider at minimum: shortest-job-first, FCFS,
+              EA-WFQ, priority-FCFS."
+          interpretation:
+            type: string
+            minLength: 1
+            description: >
+              Read at ``confirm``, when the model interprets the fitted
+              surface. Example: "A win that depends on multi-tier
+              workloads is out of scope for this campaign; report it as
+              a lead, not a result."
+
+      test_command:
+        type: string
+        minLength: 1
+        description: >
+          Shell command that runs every declared relation's
+          ``native_test`` and exits clean iff all pass. Example: "pytest
+          -q tests/prop_*.py --json-report".
+
+      integrity_command:
+        type: string
+        minLength: 1
+        description: >
+          Optional shell command that verifies apparatus integrity
+          independent of any single relation (e.g. a checksum or
+          reconciliation script). Example: "./scripts/verify_integrity.sh".
+
+      stages:
+        type: array
+        minItems: 1
+        description: >
+          Optional override of the default iteration -> stage mapping
+          (1=verify, 2=screen, 3=refine, 4=confirm). Example: ``[verify,
+          screen, confirm]`` to skip refine entirely for a campaign whose
+          factors are all ``choice``. An iteration index beyond the list
+          resolves to ``confirm`` (never a fresh screen, which would
+          re-spend the screening budget).
+        items:
+          type: string
+          enum: [verify, screen, refine, confirm]
