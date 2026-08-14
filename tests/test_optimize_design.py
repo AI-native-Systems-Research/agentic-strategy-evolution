@@ -12,6 +12,7 @@ import math
 import pytest
 
 from orchestrator.optimize.design import (
+    _GENERATORS,
     alias_pairs,
     central_composite,
     fractional_factorial,
@@ -138,3 +139,46 @@ def test_designs_are_deterministic_across_calls():
     a = fractional_factorial(FIVE, resolution=5)
     b = fractional_factorial(FIVE, resolution=5)
     assert [p.coded for p in a.points] == [p.coded for p in b.points]
+
+
+@pytest.mark.parametrize("key", sorted(_GENERATORS))
+def test_every_tabulated_generator_actually_achieves_its_claimed_resolution(key):
+    """Audit the whole table, not just the two spot-checked oracles.
+
+    A generator entry that claims resolution R but doesn't deliver it is
+    the worst kind of bug here: the campaign would report tight confidence
+    intervals on terms that are actually confounded, and nothing downstream
+    can detect it. This test regenerates the alias structure from first
+    principles for every entry so a future addition is audited
+    automatically rather than trusted on the strength of a comment.
+    """
+    k, resolution = key
+    n_base, gens = _GENERATORS[key]
+
+    # n_base must be consistent with the generators: every generator is a
+    # product of base columns, so no index may reach outside [0, n_base).
+    max_idx = max((i for g in gens for i in g), default=-1)
+    assert max_idx < n_base, (
+        f"{key}: generator references column {max_idx} but n_base={n_base}"
+    )
+
+    ids = tuple(chr(ord("A") + i) for i in range(k))
+    d = fractional_factorial(ids, resolution=resolution)
+    corners = _corners(d)
+
+    # Every entry: columns balanced, main effects mutually orthogonal.
+    for j in range(k):
+        assert sum(_column(d, j)) == 0, f"{key}: column {j} unbalanced"
+    assert is_orthogonal(d), f"{key}: main effects not mutually orthogonal"
+
+    pairs = alias_pairs(d)
+    two_fi_on_main = [p for p in pairs if len(p[1]) == 1]
+    two_fi_on_two_fi = [p for p in pairs if len(p[1]) == 2]
+
+    if resolution == 5:
+        assert two_fi_on_main == [], f"{key}: claims res V but has 2fi-on-main aliasing"
+        assert two_fi_on_two_fi == [], f"{key}: claims res V but has 2fi-on-2fi aliasing"
+    elif resolution == 4:
+        assert two_fi_on_main == [], f"{key}: claims res IV but has 2fi-on-main aliasing"
+    elif resolution == 3:
+        assert two_fi_on_main, f"{key}: claims res III but has no main-effect aliasing"
