@@ -41,6 +41,7 @@ from enum import Enum
 
 from orchestrator.optimize.effects import Fit
 from orchestrator.optimize.factors import Factor, is_refinable
+from orchestrator.optimize.relations import RelationVerdict
 
 _HULL_LOW, _HULL_HIGH = -1.0, 1.0
 _LOF_ALPHA = 0.05
@@ -103,6 +104,17 @@ def stage_for_iteration(campaign: dict, iteration: int) -> Stage:
     return Stage.CONFIRM
 
 
+def _behavioral_trigger_note(behavioral_failures: tuple[RelationVerdict, ...]) -> str | None:
+    """Rationale fragment naming the behavioral violation, or None if none."""
+    if not behavioral_failures:
+        return None
+    names = ", ".join(v.relation_id for v in behavioral_failures)
+    return (
+        f"behavioral relation(s) {names} violated -- possible real "
+        f"non-monotonicity worth interpreting (does not fail the campaign)"
+    )
+
+
 def _rationale_screen(surviving: tuple[str, ...], dropped: tuple[str, ...],
                        unknown: tuple[str, ...], next_stage: Stage,
                        triggers: tuple[Trigger, ...]) -> str:
@@ -122,7 +134,8 @@ def _rationale_screen(surviving: tuple[str, ...], dropped: tuple[str, ...],
 
 
 def decide_after_screen(fit: Fit, factors: list[Factor], *,
-                         alpha: float = 0.05) -> StageDecision:
+                         alpha: float = 0.05,
+                         behavioral_failures: tuple[RelationVerdict, ...] = ()) -> StageDecision:
     """Decide the next stage from a screening fit.
 
     Drops factors whose main-effect CI contains zero (``significant is
@@ -141,6 +154,17 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
     ``alpha`` is accepted for interface symmetry with ``fit_effects``, but
     this function does not refit: it only reads the ``significant`` flags
     ``fit_effects`` already computed at whatever alpha it was called with.
+
+    ``behavioral_failures`` are ``RelationVerdict``s (from
+    ``relations.classify_failures``) for ``behavioral``-kind relations that
+    did not pass their native test -- a possible real non-monotonicity
+    (e.g. a lever that measures worse in isolation yet is required for the
+    winning combination). This raises ``BEHAVIORAL_VIOLATION`` but, unlike
+    ``ALL_WITHIN_NOISE`` / ``LACK_OF_FIT``, never by itself blocks the
+    stage from advancing: a behavioral violation is a discovery worth
+    interpreting, not a reason to stop. ``correctness`` relation failures
+    are not this function's concern -- those hard-fail the campaign
+    upstream of stage decisions entirely.
     """
     by_id = {f.id: f for f in factors}
     main_effects = {}
@@ -165,19 +189,25 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
         else:
             surviving.append(f.id)
 
-    triggers: list[Trigger] = []
+    blocking_triggers: list[Trigger] = []
     # Every factor that was actually MEASURED (significant is not None) and
     # found null -- i.e. nothing informative survived, and something was
     # dropped for cause. Distinct from "everything is unknown", which is
     # not evidence the factor set was wrong.
     if not surviving and dropped:
-        triggers.append(Trigger.ALL_WITHIN_NOISE)
+        blocking_triggers.append(Trigger.ALL_WITHIN_NOISE)
 
     if fit.lack_of_fit_p is not None and fit.lack_of_fit_p < _LOF_ALPHA:
-        triggers.append(Trigger.LACK_OF_FIT)
+        blocking_triggers.append(Trigger.LACK_OF_FIT)
+
+    # Behavioral violations are reported but never block advancement: a
+    # monotonicity break is a discovery, not a reason to stop.
+    triggers = list(blocking_triggers)
+    if behavioral_failures:
+        triggers.append(Trigger.BEHAVIORAL_VIOLATION)
 
     refinable_survivors = [fid for fid in surviving if is_refinable(by_id[fid])]
-    if triggers:
+    if blocking_triggers:
         next_stage = None
     elif refinable_survivors:
         next_stage = Stage.REFINE
@@ -186,6 +216,10 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
 
     rationale = _rationale_screen(tuple(surviving), tuple(dropped), tuple(unknown),
                                    next_stage, tuple(triggers))
+    behavioral_note = _behavioral_trigger_note(behavioral_failures)
+    if behavioral_note:
+        rationale = f"{rationale}; {behavioral_note}"
+
     return StageDecision(
         next_stage=next_stage,
         triggers=tuple(triggers),
@@ -200,7 +234,8 @@ def _in_hull(stationary: dict) -> bool:
 
 
 def decide_after_refine(fit: Fit, factors: list[Factor],
-                         stationary: dict | None) -> StageDecision:
+                         stationary: dict | None, *,
+                         behavioral_failures: tuple[RelationVerdict, ...] = ()) -> StageDecision:
     """Decide the next stage from a refinement fit and its stationary point.
 
     ``stationary`` is the coded-space stationary point from
@@ -215,6 +250,12 @@ def decide_after_refine(fit: Fit, factors: list[Factor],
       * stationary is None -> CONFIRM at the best observed corner (there is
         no interior optimum to chase; report the best point actually run).
 
+    ``behavioral_failures`` are ``RelationVerdict``s (from
+    ``relations.classify_failures``) for ``behavioral``-kind relations that
+    did not pass their native test. This raises ``BEHAVIORAL_VIOLATION``
+    but never changes ``next_stage`` -- a behavioral violation is a
+    discovery worth interpreting, not a reason to stop.
+
     Always proceeds to CONFIRM in this module's judgment (the "next stage"
     a caller would take absent escalation) even when OPTIMUM_OUTSIDE_HULL
     fires, because the trigger -- not a missing next_stage -- is what tells
@@ -226,6 +267,9 @@ def decide_after_refine(fit: Fit, factors: list[Factor],
     triggers: list[Trigger] = []
     if fit.lack_of_fit_p is not None and fit.lack_of_fit_p < _LOF_ALPHA:
         triggers.append(Trigger.LACK_OF_FIT)
+    if behavioral_failures:
+        triggers.append(Trigger.BEHAVIORAL_VIOLATION)
+    behavioral_note = _behavioral_trigger_note(behavioral_failures)
 
     if stationary is None:
         rationale = (
@@ -234,6 +278,8 @@ def decide_after_refine(fit: Fit, factors: list[Factor],
         )
         if triggers:
             rationale += f"; triggers: {', '.join(t.value for t in triggers)}"
+        if behavioral_note:
+            rationale += f"; {behavioral_note}"
         return StageDecision(
             next_stage=Stage.CONFIRM,
             triggers=tuple(triggers),
@@ -243,7 +289,7 @@ def decide_after_refine(fit: Fit, factors: list[Factor],
         )
 
     if not _in_hull(stationary):
-        triggers.append(Trigger.OPTIMUM_OUTSIDE_HULL)
+        triggers.insert(0, Trigger.OPTIMUM_OUTSIDE_HULL)
         outside = {k: v for k, v in stationary.items()
                    if not (_HULL_LOW <= v <= _HULL_HIGH)}
         rationale = (
@@ -251,6 +297,8 @@ def decide_after_refine(fit: Fit, factors: list[Factor],
             f"space on {', '.join(sorted(outside))}; ranges were too narrow to "
             f"contain the optimum -- escalate before confirming"
         )
+        if behavioral_note:
+            rationale += f"; {behavioral_note}"
         return StageDecision(
             next_stage=Stage.CONFIRM,
             triggers=tuple(triggers),
@@ -260,6 +308,8 @@ def decide_after_refine(fit: Fit, factors: list[Factor],
         )
 
     rationale = f"stationary point {stationary} is inside the declared design space; confirming"
+    if behavioral_note:
+        rationale += f"; {behavioral_note}"
     if triggers:
         rationale += f"; triggers: {', '.join(t.value for t in triggers)}"
     return StageDecision(
