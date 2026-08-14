@@ -17,6 +17,7 @@ import dataclasses
 
 from orchestrator.optimize.effects import Effect, Fit
 from orchestrator.optimize.factors import parse_factors
+from orchestrator.optimize.relations import RelationVerdict
 from orchestrator.optimize.stage import (
     Stage,
     StageDecision,
@@ -74,6 +75,15 @@ def _effect(label, estimate, *, ci_low=None, ci_high=None, significant=None,
         ci_low=ci_low,
         ci_high=ci_high,
         significant=significant,
+    )
+
+
+def _verdict(relation_id="R9", factor_id="A", passed=False,
+             detail="native_test failed"):
+    """A behavioral RelationVerdict, as relations.classify_failures produces."""
+    return RelationVerdict(
+        relation_id=relation_id, factor_id=factor_id, kind="behavioral",
+        native_test="tests/prop.py::test_monotone", passed=passed, detail=detail,
     )
 
 
@@ -219,6 +229,72 @@ def test_unknown_significance_is_not_treated_as_all_within_noise():
     assert decision.dropped == ()
     assert set(decision.surviving) == {"A", "B"}
     assert Trigger.ALL_WITHIN_NOISE not in decision.triggers
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1: BEHAVIORAL_VIOLATION is reachable via an optional
+# behavioral_failures argument, and never blocks stage advancement.
+# ---------------------------------------------------------------------------
+
+def test_behavioral_failures_raise_the_trigger_and_are_named_in_the_rationale():
+    factors = parse_factors([_numeric_raw(id="A"), _numeric_raw(id="B")])
+    fit = _fit([
+        _effect("A", -0.95, ci_low=-1.2, ci_high=-0.7, significant=True),
+        _effect("B", 2.0, ci_low=1.5, ci_high=2.5, significant=True),
+    ], pure_error_var=0.001, pure_error_df=4)
+    verdict = _verdict(relation_id="R9", factor_id="B")
+    decision = decide_after_screen(fit, factors, behavioral_failures=(verdict,))
+    assert Trigger.BEHAVIORAL_VIOLATION in decision.triggers
+    assert "R9" in decision.rationale
+
+
+def test_no_behavioral_failures_means_no_trigger_default_unchanged():
+    factors = parse_factors([_numeric_raw(id="A"), _numeric_raw(id="B")])
+    fit = _fit([
+        _effect("A", -0.95, ci_low=-1.2, ci_high=-0.7, significant=True),
+        _effect("B", 2.0, ci_low=1.5, ci_high=2.5, significant=True),
+    ], pure_error_var=0.001, pure_error_df=4)
+    decision_default = decide_after_screen(fit, factors)
+    decision_explicit_empty = decide_after_screen(fit, factors, behavioral_failures=())
+    assert Trigger.BEHAVIORAL_VIOLATION not in decision_default.triggers
+    assert Trigger.BEHAVIORAL_VIOLATION not in decision_explicit_empty.triggers
+    assert decision_default == decision_explicit_empty
+
+
+def test_behavioral_violation_alone_does_not_block_stage_advancement():
+    """A behavioral violation is a discovery, not a failure: the motivating
+    case is a lever measured -9.5% alone yet required for the winning
+    combination. Even with BEHAVIORAL_VIOLATION raised, the stage must
+    still advance normally (here: to REFINE, since A survives and is
+    refinable) rather than stalling at next_stage=None as ALL_WITHIN_NOISE
+    or LACK_OF_FIT would.
+    """
+    factors = parse_factors([_numeric_raw(id="A"), _numeric_raw(id="B")])
+    fit = _fit([
+        _effect("A", -0.95, ci_low=-1.2, ci_high=-0.7, significant=True),
+        _effect("B", 0.01, ci_low=-0.05, ci_high=0.07, significant=False),
+    ], pure_error_var=0.001, pure_error_df=4)
+    verdict = _verdict(relation_id="R9", factor_id="A")
+    decision = decide_after_screen(fit, factors, behavioral_failures=(verdict,))
+    assert Trigger.BEHAVIORAL_VIOLATION in decision.triggers
+    assert decision.next_stage == Stage.REFINE
+
+
+def test_decide_after_refine_also_accepts_behavioral_failures():
+    factors = parse_factors([_numeric_raw(id="A"), _numeric_raw(id="B")])
+    fit = _fit([
+        _effect("A", -0.1, terms=("A",)),
+        _effect("B", 0.2, terms=("B",)),
+    ], quadratic=(
+        _effect("A^2", -2.0, terms=("A", "A")),
+        _effect("B^2", -1.0, terms=("B", "B")),
+    ))
+    verdict = _verdict(relation_id="R2", factor_id="A")
+    decision = decide_after_refine(fit, factors, {"A": 0.1, "B": -0.2},
+                                    behavioral_failures=(verdict,))
+    assert Trigger.BEHAVIORAL_VIOLATION in decision.triggers
+    assert "R2" in decision.rationale
+    assert decision.next_stage == Stage.CONFIRM
 
 
 # ---------------------------------------------------------------------------
