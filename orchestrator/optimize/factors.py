@@ -201,7 +201,29 @@ def decode_coded(f: Factor, coded: float) -> Any:
         return high if coded > 0 else low
     mid = (float(low) + float(high)) / 2.0
     half = (float(high) - float(low)) / 2.0
-    return snap_to_grid(mid + coded * half, f.grid)
+    value = snap_to_grid(mid + coded * half, f.grid)
+
+    # CLAMP to the declared range. A central composite places axial points at
+    # |coded| = (2^k)^(1/4) > 1 -- 1.68 for k=3 -- so linear extrapolation
+    # walks OUTSIDE the levels the author declared. Verified on a live
+    # campaign: a factor declared [64, 256] produced MAXRUN=-1 and
+    # MAXRUN=-112, i.e. a negative request cap, and the target rejected 16 of
+    # 80 refine runs with a usage error.
+    #
+    # Clamping is the honest repair rather than widening the range: the
+    # author declared these bounds, and a value outside them is a
+    # configuration they never said was legal (it may be physically
+    # meaningless, as a negative cap is). The cost is that axial points
+    # collapse onto the range edge, so curvature is estimated over a
+    # narrower span than a textbook CCD assumes -- which understates
+    # curvature rather than inventing it, and is reported honestly by the
+    # lack-of-fit test.
+    lo_bound = min(float(low), float(high))
+    hi_bound = max(float(low), float(high))
+    clamped = min(max(float(value), lo_bound), hi_bound)
+    if clamped != float(value):
+        return snap_to_grid(clamped, f.grid)
+    return value
 
 
 def is_refinable(f: Factor) -> bool:
