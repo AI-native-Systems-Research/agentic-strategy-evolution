@@ -224,12 +224,18 @@ def run_stage(
     test_results: dict[str, bool] | None = None,
     auto_approve: bool = True,
     gate=None,
+    model: str | None = None,
+    sdk_runner: Callable | None = None,
     **_ignored,
 ):
     """Run one optimization-kind iteration and return an ``IterationOutcome``.
 
     Imports ``IterationOutcome`` lazily to avoid a circular import:
     ``iteration`` imports this module inside ``run_iteration``.
+
+    ``sdk_runner`` is the injection seam for the ``build`` stage's single
+    agent call, mirroring ``SDKDispatcher(sdk_runner=...)``. Every other
+    stage is pure Python and ignores it.
     """
     from orchestrator.engine import Engine
     from orchestrator.gates import HumanGate
@@ -250,7 +256,34 @@ def run_stage(
     # the injected seam remains the contract — but a real run now resolves
     # both callables from the campaign itself.
     repo = (campaign.get("target_system") or {}).get("repo_path")
-    if test_results is None and opt.get("test_command") and repo:
+
+    # Resolve the stage BEFORE running the test command. On a `build`
+    # iteration the mechanism does not exist yet, so running the target's
+    # tests would burn a test cycle to learn something already known: the
+    # declared identifiers are missing. Worse, `go test -run <pattern>` exits
+    # 0 with "no tests to run" when the pattern matches nothing, so the
+    # pre-build run looks like a pass at the shell level. Deciding the stage
+    # first keeps that noise out of the log and out of the artifacts.
+    _resolved_early = (
+        stage if stage is not None else stage_for_iteration(campaign, iteration)
+    )
+    _stage_early = getattr(_resolved_early, "value", None) or str(_resolved_early)
+    _is_build = _stage_early == Stage.BUILD.value
+
+    if _is_build:
+        from orchestrator.optimize import build as build_mod
+
+        _factors_for_build = parse_factors(opt["factors"])
+        build_mod.run_build(
+            campaign, work_dir,
+            iteration=iteration,
+            declared_tests=build_mod.declared_native_tests(_factors_for_build),
+            model=model,
+            max_turns=_build_max_turns(campaign),
+            sdk_runner=sdk_runner,
+        )
+
+    if not _is_build and test_results is None and opt.get("test_command") and repo:
         raw = runner.run_test_command(opt["test_command"], cwd=Path(repo))
         test_results = runner.match_declared_tests(parse_factors(opt["factors"]), raw)
         logger.info(
@@ -277,6 +310,23 @@ def run_stage(
     iter_dir.mkdir(parents=True, exist_ok=True)
     engine = Engine(work_dir)
     gate = gate or (HumanGate(auto_response="approve") if auto_approve else HumanGate())
+
+    # ── build: the mechanism was just authored; do NOT gate on tests here ──
+    #
+    # The build call already ran (above, before the test command, so the
+    # target's tests are not run against code that did not exist yet). This
+    # stage deliberately makes no correctness judgement: `verify` is the gate,
+    # and letting the stage that wrote the code also certify it would mean the
+    # model grading its own work. Ending the iteration here hands the next
+    # iteration to verify, which runs the real test command against the real
+    # repo and aborts if anything the campaign declared is missing or failing.
+    if stage_name == Stage.BUILD.value:
+        _enter_phase(engine, "DESIGN", work_dir)
+        _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
+        _enter_phase(engine, "EXECUTE_ANALYZE", work_dir)
+        _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
+        append_ledger_row(work_dir, iteration)
+        return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
 
     # ── verify: the native property/metamorphic tests are the gate ──────
     #
@@ -469,6 +519,24 @@ def run_stage(
         stage_name, iteration, len(outcomes), statuses.count("complete"),
     )
     return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
+
+
+def _build_max_turns(campaign: dict) -> int:
+    """Turn ceiling for the build call.
+
+    Honours ``max_turns.build`` when the campaign sets it, since authoring a
+    mechanism in an unfamiliar repo varies enormously in how many turns it
+    needs. Falls back to the module default rather than to the reflective
+    kind's design/execute budgets, which are sized for a different job.
+    """
+    from orchestrator.optimize.build import DEFAULT_MAX_TURNS
+
+    raw = campaign.get("max_turns")
+    if isinstance(raw, dict):
+        val = raw.get("build")
+        if isinstance(val, int) and val > 0:
+            return val
+    return DEFAULT_MAX_TURNS
 
 
 def _terminal_outcome(engine, campaign: dict, stage_name: str, outcome_enum):
