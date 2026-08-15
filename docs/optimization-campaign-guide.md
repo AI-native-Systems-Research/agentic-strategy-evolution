@@ -379,7 +379,23 @@ thing you want guaranteed:
   input space, not at two or three sampled points;
 - a **metamorphic** test when changing one input should move the output in a
   known direction — this catches a mechanism wired to the wrong formula even
-  when each variant independently satisfies every invariant;
+  when each variant independently satisfies every invariant. **Do the algebra
+  before you write the direction down, and put a worked numeric example in the
+  `statement`.** A metamorphic relation pointing the wrong way is worse than
+  no test at all: it fails a correct implementation, or passes a broken one,
+  and it does so with the authority of a declared correctness relation. This
+  is the single easiest thing to get wrong in a campaign, because the wrong
+  direction is often the intuitive one. Real example from this repo's own
+  campaign corpus — an author declared that interior interpolation ceilings
+  satisfy `step <= linear <= exponential`, reasoning that "exponential decays
+  slower so it must sit higher". The truth is the reverse: for a threshold `T`
+  in (0,1), `T^f <= 1 - f*(1 - T)` because the exponential is concave in `f`.
+  At `T=0.6` with three bands the interior ceilings are step `0.600`,
+  exponential `0.775`, linear `0.800`, so the correct relation is
+  `step <= exponential <= linear`. Benchmark numbers taken *before* authoring
+  already contradicted the declared direction and were misread as confirming
+  it — so check the inequality symbolically, then verify it numerically at two
+  or three concrete points, and never infer it from an end-to-end metric;
 - a **loud-failure** test, so an unrecognized value cannot silently fall back
   to the default and turn a typo into a fabricated null result.
 
