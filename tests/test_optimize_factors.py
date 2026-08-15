@@ -166,3 +166,35 @@ def test_manipulation_with_both_when_and_when_not_is_rejected():
     bad = {"observable": "x", "op": "==", "value": 1, "when": "on", "when_not": "off"}
     with pytest.raises(ValueError, match="when"):
         parse_factors([_numeric_raw(manipulation=bad)])
+
+
+def test_decode_coded_clamps_axial_points_to_the_declared_range():
+    """A central composite places axial points OUTSIDE |coded| = 1.
+
+    For k=3 the rotatable alpha is (2^3)^(1/4) = 1.68, so linear
+    extrapolation walks past the levels the author declared. Verified on a
+    live campaign against BLIS: a factor declared [64, 256] produced
+    MAXRUN=-1 and MAXRUN=-112 — a negative request cap — and the target
+    rejected 16 of 80 refine runs with a usage error.
+
+    Clamping is the honest repair rather than widening the range: the author
+    declared these bounds, and a value outside them is a configuration they
+    never said was legal, possibly a physically meaningless one.
+    """
+    f = parse_factors([_numeric_raw(levels=[64, 256], grid=1)])[0]
+    for coded in (-2.5, -1.68, -1.0, 0.0, 1.0, 1.68, 2.5):
+        value = decode_coded(f, coded)
+        assert 64 <= value <= 256, (
+            f"coded={coded} produced {value}, outside the declared [64, 256]"
+        )
+    # the interior still interpolates rather than collapsing to an edge
+    assert math.isclose(decode_coded(f, 0.0), 160.0, rel_tol=1e-9, abs_tol=1e-12)
+
+
+def test_decode_coded_clamps_without_breaking_the_grid():
+    """A clamped value must still land on the declared grid step."""
+    f = parse_factors([_numeric_raw(levels=[1000, 4096], grid=2)])[0]
+    for coded in (-3.0, -1.68, 1.68, 3.0):
+        value = decode_coded(f, coded)
+        assert 1000 <= value <= 4096
+        assert math.isclose(value % 2, 0.0, abs_tol=1e-9) or value in (1000, 4096)
