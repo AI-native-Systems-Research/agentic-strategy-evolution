@@ -818,3 +818,45 @@ def test_design_preflight_passes_a_clean_matrix():
     }])
     rows = expand(full_factorial(("MAXRUN",)), factors)
     _preflight_design(rows, factors, {}, Path("/tmp"))   # must not raise
+
+
+def test_refine_refuses_to_fabricate_a_design_when_nothing_is_refinable():
+    """`refinable or ids` silently built a CCD over every factor.
+
+    Verified on a live campaign: six two-level factors (four `choice`, two
+    `numeric`) meant NOTHING was refinable, but refine ran anyway and fitted
+    quadratic terms for the categorical factors. Two came out exactly 0.0,
+    the Hessian went singular, solve_stationary_point returned None, no
+    confirm_at.json was written, and `confirm` replicated the ORIGIN. The
+    campaign had already observed the true optimum (117.854) and then
+    confirmed a 73.476 centre point instead.
+    """
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import _build_design
+
+    c = _campaign(factor_ids=("A", "B"))
+    for f in c["optimization"]["factors"]:
+        f["levels"] = [64, 256]          # two levels: not refinable
+    factors = parse_factors(c["optimization"]["factors"])
+    cfg = c["optimization"]["design"]
+
+    with pytest.raises(OptimizationAborted) as exc:
+        _build_design(factors, cfg, "refine")
+    msg = str(exc.value)
+    assert "nothing to refine" in msg
+    assert "MORE THAN two levels" in msg
+    assert "screen -> confirm" in msg
+
+
+def test_design_factor_ids_is_empty_at_refine_when_nothing_is_refinable():
+    """No silent fallback to the full factor list."""
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import _design_factor_ids
+
+    c = _campaign(factor_ids=("A", "B"))
+    for f in c["optimization"]["factors"]:
+        f["levels"] = [64, 256]
+    factors = parse_factors(c["optimization"]["factors"])
+    assert _design_factor_ids(factors, c["optimization"]["design"], "refine") == ()
+    # screen still spans everything
+    assert len(_design_factor_ids(factors, c["optimization"]["design"], "screen")) == 2
