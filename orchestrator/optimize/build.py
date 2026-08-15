@@ -55,6 +55,42 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_TURNS = 120
 
 
+def check_build_touched_repo(repo: Path) -> str | None:
+    """Return a warning if a git-tracked ``repo`` shows no local modifications.
+
+    The build stage's whole job is to change files under ``repo``. When it
+    reports success and the tree is still pristine, the likely explanation is
+    that it edited a DIFFERENT checkout of the same project — which is silent,
+    and which corrupts a parallel arm rather than failing. Observed for real
+    against a worktree.
+
+    Returns None when the check does not apply (not a git repo, git absent) so
+    a non-git target is never penalised. Advisory rather than fatal: ``verify``
+    is the authority on whether the mechanism is actually present, and a build
+    that legitimately needed no change should not abort a campaign.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(repo), capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None  # not a git work tree
+    if proc.stdout.strip():
+        return None  # something changed, as expected
+    return (
+        f"build reported success but {repo} has no local modifications. If this "
+        f"path is a git worktree or one of several checkouts of the same "
+        f"project, the build may have edited a different checkout instead — "
+        f"check the other one before trusting any measurement, because two "
+        f"campaigns sharing a tree invalidate both."
+    )
+
+
 class BuildFailed(RuntimeError):
     """The build stage could not author the mechanism.
 
@@ -72,6 +108,16 @@ def build_prompt(campaign: dict, declared_tests: list[str]) -> str:
     prompt is derived from the same ``target_system.description`` and
     ``native_test`` declarations that ``verify`` will later enforce, which
     is what keeps the instruction and the gate in agreement.
+
+    States ``repo_path`` as an explicit, absolute working root. Passing it as
+    ``cwd`` alone is NOT sufficient: when the campaign runs against a git
+    worktree (the standard way to run two arms of a comparison without them
+    colliding) and the description mentions file paths, an agent will happily
+    resolve those paths against whichever checkout of the project it already
+    knows about. Observed for real: a build stage with ``cwd`` set to its
+    worktree read and then EDITED the canonical repo instead, which would
+    have let two supposedly independent campaigns overwrite each other's
+    mechanism.
     """
     target = campaign.get("target_system") or {}
     opt = campaign.get("optimization") or {}
@@ -79,6 +125,7 @@ def build_prompt(campaign: dict, declared_tests: list[str]) -> str:
     description = (target.get("description") or "").strip()
     test_command = (opt.get("test_command") or "").strip()
     run_command = (opt.get("run_command") or "").strip()
+    repo = str(target.get("repo_path") or "").strip()
 
     tests_block = "\n".join(f"  - {t}" for t in declared_tests) or "  (none declared)"
 
@@ -89,6 +136,20 @@ def build_prompt(campaign: dict, declared_tests: list[str]) -> str:
 factorial optimization experiment can then measure it. Write code and tests only.
 Do NOT run the experiment, do not benchmark, do not tune parameters, and do not
 edit the campaign.
+
+WORKING ROOT — READ THIS FIRST
+  {repo}
+
+Every file you read, edit, or create must be under that exact directory. It may
+be a git worktree or a copy of a project you have seen elsewhere; if so, other
+checkouts of the same project exist on this machine and editing one of those
+instead would corrupt a parallel experiment and silently invalidate both. So:
+
+  - resolve every relative path in the specification below against that root;
+  - never substitute a path from a different checkout, even when it looks like
+    the same project and the file names match;
+  - if a path you are about to touch does not start with that root, stop and
+    re-derive it.
 
 RESEARCH QUESTION
 {rq}
@@ -233,6 +294,11 @@ def run_build(
             "build: agent returned no summary text — verify will decide "
             "whether anything was actually authored",
         )
+
+    stray = check_build_touched_repo(Path(repo))
+    if stray:
+        logger.warning("build: %s", stray)
+        (iter_dir / "build_warning.txt").write_text(stray + "\n")
     return row
 
 
