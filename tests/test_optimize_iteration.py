@@ -471,7 +471,7 @@ def test_a_partially_failed_sweep_refuses_to_fit_rather_than_emit_nan(
     with pytest.raises(OptimizationAborted) as exc:
         _run(c, wd, runner=flaky)
     msg = str(exc.value)
-    assert "did not complete" in msg
+    assert "no usable measurement" in msg
     assert "NaN-poison" in msg
 
 
@@ -490,3 +490,39 @@ def test_locked_parameters_is_not_claimed_as_a_wired_check():
     assert "locked_parameters" in doc
     # and it must not be counted among the active checks
     assert "Four checks hard-fail" not in doc
+
+
+def test_infeasible_and_rejected_rows_do_not_block_the_fit(tmp_path):
+    """They are excluded from fitting, not treated as measurement failures.
+
+    An `infeasible` row RAN and produced trustworthy numbers; it just
+    violated a declared constraint, which is real information about the
+    design space (spec §6.4). A constrained design will routinely have
+    inadmissible corners, so aborting on one would make constraints
+    unusable. `rejected` is likewise excluded rather than fatal. Only a row
+    that produced no usable measurement blocks.
+    """
+    import math
+
+    from orchestrator.optimize.stage_runner import _fitting_responses
+
+    class _O:
+        def __init__(self, idx, status, resp):
+            self.row_index, self.status, self.response = idx, status, resp
+
+    spec = {"primary": {"metric": "m", "direction": "maximize"}}
+    for tolerated in ("infeasible", "rejected"):
+        values = _fitting_responses(
+            [_O(0, "complete", {"m": 1.0}), _O(1, tolerated, {"m": 2.0})],
+            spec, "m",
+        )
+        assert not math.isnan(values[0])
+        assert math.isnan(values[1]), (
+            f"a {tolerated} row must be excluded from the fit, which the NaN "
+            f"carries — not abort the campaign"
+        )
+
+    with pytest.raises(OptimizationAborted):
+        _fitting_responses(
+            [_O(0, "complete", {"m": 1.0}), _O(1, "failed", {})], spec, "m",
+        )
