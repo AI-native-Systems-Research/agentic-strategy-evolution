@@ -690,6 +690,60 @@ class TestFormatResultsSummary:
         assert "ea-wfq_seed42.json" in out
         assert "wfq_seed42.json" in out
 
+    def test_optimization_kind_runs_jsonl_is_enumerated(self, tmp_path: Path) -> None:
+        """`kind: optimization` stores measurements as runs.jsonl, not results/.
+
+        Walking only results/ reported "absent" for every iteration of a
+        campaign that had measured everything it planned. Observed for real: a
+        completed campaign's report announced a "storage/persistence gap in the
+        apparatus" and marked every effect low-confidence, while 19 rows of
+        per-configuration telemetry sat in runs.jsonl beside it — the exact
+        search-orientation failure this helper exists to prevent.
+        """
+        import json as _json
+
+        wd = tmp_path / "campaign"
+        it = wd / "runs" / "iter-3"
+        it.mkdir(parents=True)
+        with (it / "runs.jsonl").open("w") as fh:
+            for i in range(19):
+                fh.write(_json.dumps({
+                    "row_index": i,
+                    "status": "complete" if i < 17 else "failed",
+                    "response": {"goodput_rps": 100.0 + i},
+                }) + "\n")
+        (it / "design_matrix.json").write_text("{}")
+        (it / "effects.json").write_text("{}")
+
+        out = _format_results_summary(wd)
+        assert "absent" not in out, "real measurements must not read as absent"
+        assert "19 measured configuration(s)" in out
+        assert "17 complete" in out
+        assert "design_matrix.json" in out
+        assert "effects.json" in out
+
+    def test_malformed_runs_jsonl_still_reports_the_file(self, tmp_path: Path) -> None:
+        """A corrupt line must not make the whole iteration look empty."""
+        wd = tmp_path / "campaign"
+        it = wd / "runs" / "iter-2"
+        it.mkdir(parents=True)
+        (it / "runs.jsonl").write_text('{"status": "complete"}\nnot json\n')
+        out = _format_results_summary(wd)
+        assert "2 measured configuration(s)" in out
+        assert "1 complete" in out
+
+    def test_reflective_results_dir_still_wins_when_present(
+        self, tmp_path: Path,
+    ) -> None:
+        """The reflective layout is unchanged — no regression for existing runs."""
+        wd = tmp_path / "campaign"
+        results = wd / "runs" / "iter-1" / "results"
+        results.mkdir(parents=True)
+        (results / "arm_a.json").write_text("{}")
+        out = _format_results_summary(wd)
+        assert "1 result file" in out
+        assert "arm_a.json" in out
+
     def test_caps_listing_for_huge_dirs(self, tmp_path: Path) -> None:
         """Don't blow the prompt budget when an iter has hundreds of arms."""
         wd = tmp_path / "campaign"
