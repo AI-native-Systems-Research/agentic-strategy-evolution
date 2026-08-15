@@ -321,6 +321,38 @@ def run_stage(
     design = _build_design(factors, design_cfg, stage_name, work_dir)
     payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
     rows = matrix.expand(design, factors)
+
+    if stage_name == Stage.CONFIRM.value and not (
+        design_cfg.get("confirm_at") or _read_confirm_at(work_dir)
+    ):
+        # No fitted stationary point to reproduce, so replicate the best
+        # configuration actually OBSERVED rather than the geometric origin.
+        # `expand` renders coded coordinates, which for a two-level screen
+        # puts the origin at the midpoint of every range — a configuration
+        # nobody measured. Pin the observed winner's levels instead.
+        best = _best_observed(work_dir, primary)
+        if best is not None:
+            import dataclasses
+
+            rows = [
+                dataclasses.replace(
+                    r,
+                    levels=dict(best["levels"]),
+                    apply=matrix.render_apply(factors, best["levels"]),
+                )
+                for r in rows
+            ]
+            payload = dict(payload)
+            payload["rows"] = [
+                {**row, "levels": dict(best["levels"])}
+                for row in payload.get("rows", [])
+            ]
+            payload["confirm_source"] = "best_observed"
+            logger.info(
+                "confirm: no fitted stationary point; replicating the best "
+                "OBSERVED configuration (%s=%.4f) rather than the origin",
+                primary, best[primary],
+            )
     if _enter_phase(engine, "DESIGN", work_dir):
         _preflight_design(rows, factors, opt, iter_dir)
         artifacts.write_design_matrix(iter_dir, payload)
@@ -735,6 +767,47 @@ def _confirm_findings(summary: dict, iteration: int) -> dict:
             "metadata": summary,
         }],
     }
+
+
+def _best_observed(work_dir, primary: str) -> dict | None:
+    """The best COMPLETED configuration observed so far, by primary metric.
+
+    Used by ``confirm`` when there is no fitted stationary point — either
+    refine was skipped (nothing refinable) or its solve was singular. The
+    previous behaviour replicated the ORIGIN, which was actively misleading
+    on a live campaign: the screen stage had observed goodput 117.854 and
+    confirm reproduced a 73.476 centre point, so the campaign found the right
+    answer and reported the wrong one.
+
+    Reproducing the best observed corner is a WEAKER claim than reproducing a
+    fitted optimum — it is the best configuration tried, not an interpolated
+    peak — and ``confirmation.json`` records which of the two it was. But it
+    is a real measured configuration rather than an arbitrary geometric
+    centre.
+    """
+    import json as _json
+
+    best = None
+    for path in sorted(Path(work_dir).glob("runs/iter-*/runs.jsonl")):
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            if row.get("status") != "complete":
+                continue
+            value = (row.get("response") or {}).get(primary)
+            if value is None:
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if best is None or numeric > best[1]:
+                best = (dict(row.get("levels") or {}), numeric)
+    return None if best is None else {"levels": best[0], primary: best[1]}
 
 
 def _read_confirm_at(work_dir) -> dict | None:

@@ -20,6 +20,7 @@ monotonicity break is a discovery, not a broken apparatus.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -860,3 +861,64 @@ def test_design_factor_ids_is_empty_at_refine_when_nothing_is_refinable():
     assert _design_factor_ids(factors, c["optimization"]["design"], "refine") == ()
     # screen still spans everything
     assert len(_design_factor_ids(factors, c["optimization"]["design"], "screen")) == 2
+
+
+def test_confirm_replicates_the_best_observed_config_when_there_is_no_fitted_optimum(
+    tmp_path, work_dir,
+):
+    """Replicating the ORIGIN was actively misleading.
+
+    On a live campaign the screen stage observed goodput 117.854 and confirm
+    reproduced a 73.476 centre point — the campaign found the right answer
+    and reported the wrong one. With no fitted stationary point (refine
+    skipped, or its solve singular), the honest thing to reproduce is the
+    best configuration actually measured.
+    """
+    from orchestrator.iteration import IterationOutcome
+    from orchestrator.optimize.stage_runner import _best_observed
+
+    c = _campaign()
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    wd = _init_work_dir(tmp_path, c)
+
+    # screen first, so there are observations to pick a winner from
+    _run(c, wd, stage="screen", iteration=2)
+    best = _best_observed(wd, "m")
+    assert best is not None
+
+    outcome = _run(c, wd, stage="confirm", iteration=3)
+    assert outcome is IterationOutcome.COMPLETED
+
+    record = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
+    )
+    assert record["confirmed_at_levels"] == best["levels"], (
+        "confirm must replicate the best OBSERVED configuration, not the "
+        "geometric origin"
+    )
+    # and the mean it reports must match what that config actually scores
+    assert math.isclose(record["mean"], best["m"], rel_tol=1e-6)
+
+
+def test_best_observed_ignores_non_complete_rows(tmp_path, work_dir):
+    """A rejected or failed row is not a candidate winner."""
+    from orchestrator.optimize.artifacts import append_run
+    from orchestrator.optimize.stage_runner import _best_observed
+
+    iter_dir = tmp_path / "runs" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    for idx, (status, value) in enumerate(
+        [("complete", 10.0), ("failed", 999.0), ("rejected", 888.0),
+         ("infeasible", 777.0)],
+    ):
+        append_run(iter_dir, {
+            "row_index": idx, "levels": {"A": idx}, "role": "corner",
+            "replicate": 0, "status": status, "response": {"m": value},
+            "held_out": {}, "manipulation": [], "invariants": [],
+            "duration_ms": 1, "error": "",
+        })
+    best = _best_observed(tmp_path, "m")
+    assert best is not None
+    assert math.isclose(best["m"], 10.0), (
+        "only a `complete` row may win; a failed row scoring 999 must not"
+    )
