@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.optimize import build as build_mod
+from orchestrator.optimize.build import build_prompt
 from orchestrator.optimize.factors import parse_factors
 from orchestrator.optimize.stage import Stage, stage_for_iteration
 from orchestrator.sdk_dispatch import SDKResult
@@ -294,3 +295,71 @@ def test_build_stage_does_not_run_the_test_command(tmp_path: Path, monkeypatch):
         sdk_runner=lambda **kw: SDKResult(text="ok"),
     )
     assert not sentinel.exists(), "test_command must not run during build"
+
+
+def test_prompt_states_the_absolute_working_root(tmp_path: Path):
+    """cwd alone is not enough to keep the build inside a worktree.
+
+    Observed for real: a build stage whose cwd was its own worktree read and
+    then EDITED the canonical checkout of the same project, because the
+    specification mentioned file paths and the agent resolved them against the
+    repo it already knew. Two supposedly independent arms would then overwrite
+    each other's mechanism. The prompt must name the root explicitly.
+    """
+    repo = tmp_path / "inference-sim" / ".nous-experiments" / "exp2" / "armA"
+    repo.mkdir(parents=True)
+    prompt = build_prompt(_campaign(repo), [])
+    assert str(repo) in prompt
+    lead = prompt[: prompt.index(str(repo))]
+    assert "WORKING ROOT" in lead, "the root must be stated up front, not buried"
+    assert "worktree" in prompt
+
+
+def test_pristine_git_tree_after_build_is_reported(tmp_path: Path):
+    """A build that changed nothing in a git target is suspicious, not silent."""
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "f.txt").write_text("x\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-qm", "init"],
+        cwd=repo, check=True,
+    )
+
+    assert build_mod.check_build_touched_repo(repo) is not None
+
+    (repo / "f.txt").write_text("changed\n")
+    assert build_mod.check_build_touched_repo(repo) is None
+
+
+def test_non_git_target_is_not_penalised(tmp_path: Path):
+    """A target that is not a git work tree must not trip the check."""
+    repo = tmp_path / "plain"
+    repo.mkdir()
+    assert build_mod.check_build_touched_repo(repo) is None
+
+
+def test_build_writes_a_warning_file_when_the_tree_is_untouched(tmp_path: Path):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "f.txt").write_text("x\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-qm", "init"],
+        cwd=repo, check=True,
+    )
+    work = tmp_path / "work"
+    build_mod.run_build(
+        _campaign(repo), work, iteration=1, declared_tests=[],
+        sdk_runner=_runner(SDKResult(text="claimed success, changed nothing")),
+    )
+    warning = (work / "runs" / "iter-1" / "build_warning.txt").read_text()
+    assert "no local modifications" in warning
