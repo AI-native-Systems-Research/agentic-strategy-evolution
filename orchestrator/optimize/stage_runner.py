@@ -481,8 +481,7 @@ def _design_factor_ids(factors, design_cfg: dict, stage_name: str) -> tuple[str,
 
     ids = tuple(f.id for f in factors)
     if stage_name == Stage.REFINE.value:
-        refinable = tuple(f.id for f in factors if is_refinable(f))
-        return refinable or ids
+        return tuple(f.id for f in factors if is_refinable(f))
     return ids
 
 
@@ -583,8 +582,33 @@ def _build_design(factors, design_cfg: dict, stage_name: str,
     if stage_name == Stage.REFINE.value:
         refinable = tuple(f.id for f in factors if is_refinable(f))
         cfg = design_cfg.get("refine") or {}
+        if not refinable:
+            # Nothing to refine. `is_refinable` requires a NUMERIC factor with
+            # MORE THAN TWO levels, because curvature cannot be estimated from
+            # two points and a `choice` factor has no interior at all. The
+            # previous `refinable or ids` fallback silently built a central
+            # composite over EVERY factor instead, which fitted quadratic
+            # terms for categorical factors — and on a live campaign two of
+            # those came out exactly 0.0, making the Hessian singular, so
+            # solve_stationary_point returned None, no confirm_at.json was
+            # written, and `confirm` replicated the ORIGIN instead of the
+            # optimum. The campaign had already observed the true optimum
+            # (117.854) and then confirmed a 73.476 centre point.
+            #
+            # stage.decide_after_screen already routes straight to `confirm`
+            # when no refinable factor survives, so reaching here means the
+            # stage was forced explicitly. Say so rather than fabricating a
+            # design.
+            raise OptimizationAborted(
+                "refine has nothing to refine: no factor is refinable "
+                "(is_refinable requires type: numeric with MORE THAN two "
+                "levels — curvature cannot be estimated from two points, and "
+                "a choice factor has no interior). Either declare a third "
+                "level on the numeric factor you want curvature for, or drop "
+                "design.refine and let the stage rule go screen -> confirm.",
+            )
         return central_composite(
-            refinable or ids, center_points=int(cfg.get("center_points", 4)),
+            refinable, center_points=int(cfg.get("center_points", 4)),
         )
     if stage_name == Stage.CONFIRM.value:
         # Confirm REPLICATES one configuration — the predicted optimum —
