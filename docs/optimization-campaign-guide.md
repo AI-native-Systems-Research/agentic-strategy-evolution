@@ -140,19 +140,32 @@ prompts during the two stages that spend most of the run budget.
 
 ### Where the tokens go
 
-Substantive model calls per campaign: **about 3** — one design call at
-`verify` to propose factors and write mechanism code with native tests, and
-one analyze call at `confirm` to interpret the fitted surface (plus a
-lightweight gate-summary call per iteration, existing machinery, which
-costs little). Against that: 60-90 benchmark runs, all of them tokenless.
+Substantive model calls per campaign: **about 3** when every factor maps to
+a knob the target already exposes, and **about 4** when the campaign must
+author the mechanism first. Against either: 60-90 benchmark runs, all of
+them tokenless.
 
-The cost curve inverts relative to a reflective campaign: **iter-1 (verify)
-carries nearly all the token cost**, because that is where mechanism code
-and its native property tests get written per lever. Iterations 2 and 3
-are effectively free in tokens — pure compute. This is also, not
-coincidentally, the stage whose output is most durable: mechanism code and
-tests land in the target repo and outlive the campaign, where a reflective
-campaign's prose findings do not.
+| Stage | Model calls | What it costs |
+|---|---|---|
+| `build` (opt-in) | 1 | authors the mechanism + its native tests in the target repo |
+| `verify` | 0 | runs the target's test command; pure Python reconciliation |
+| `screen` | 0 | pre-registered design matrix; tokenless |
+| `refine` | 0 | tokenless |
+| `confirm` | 0 | tokenless |
+| interpretation (at the end) | 1 | reads the fitted surface |
+| gate summaries | 1 per iteration | existing machinery, small |
+
+**Do not add a `build` stage you do not need.** It is the only stage that
+spends an agent call on the target repo, so a campaign varying existing
+flags should omit it and stay at ~3 calls. Add it only when the mechanism
+under study does not exist yet.
+
+The cost curve inverts relative to a reflective campaign: nearly all token
+cost sits in the one authoring call at the front, and every measurement
+iteration after it is free — pure compute. That front-loaded call is also
+the one whose output is most durable: mechanism code and native tests land
+in the target repo and outlive the campaign, where a reflective campaign's
+prose findings do not.
 
 ## 2. Field-by-field walkthrough of the `optimization` block
 
@@ -320,6 +333,64 @@ Optional override of the default iteration -> stage mapping
 an all-`choice` campaign, e.g. `[verify, screen, confirm]`. An iteration
 index beyond the list resolves to `confirm`, never a fresh screen (which
 would re-spend the screening budget).
+
+#### `build` — when the mechanism does not exist yet
+
+`build` is **opt-in and absent from the default order**, so every campaign
+written before it existed behaves identically. Declare it first when the
+campaign has to *extend the target* before it can measure anything:
+
+```yaml
+stages: [build, verify, screen, confirm]
+max_turns:
+  build: 160        # optional; defaults to 120
+```
+
+It spends exactly one agent call in the target repo to write the mechanism
+and the native tests your `relations` declare, then hands control back to
+the tokenless stages. Use it when a factor's `apply` names a flag, policy,
+or algorithm the target does not have yet. Omit it when every factor maps
+to an existing knob.
+
+Three properties are worth understanding before you use it:
+
+1. **`build` makes no correctness judgement.** `verify` is still the gate,
+   and it runs the real `test_command` against the real repo. The stage that
+   writes the mechanism is never the stage that certifies it — otherwise the
+   model would be grading its own work.
+2. **It runs once, first.** The validator rejects `build` anywhere but
+   position 1. Behind `verify` it guarantees an abort (verify would gate
+   tests for code that does not exist yet); behind `screen` it is worse than
+   an abort, because the screen measured the *old* mechanism and the effect
+   table then describes a system the campaign replaced.
+3. **It does not iterate to green.** One call, then the gate. A build-fix
+   loop would both burn tokens and let the model negotiate with its own
+   gate. If `verify` fails, the campaign aborts with the failing relation
+   IDs — fix the spec or the tests and re-run.
+
+Because `verify` is fail-closed — a declared `native_test` that does not
+execute counts as a **failure**, not as "skipped" — the tests you declare in
+`relations` are the actual contract for the build. Write them as the precise
+thing you want guaranteed:
+
+- a **backward-compatibility** test, when the specification says an existing
+  default must not change;
+- a **property-based** test for invariants that must hold across a whole
+  input space, not at two or three sampled points;
+- a **metamorphic** test when changing one input should move the output in a
+  known direction — this catches a mechanism wired to the wrong formula even
+  when each variant independently satisfies every invariant;
+- a **loud-failure** test, so an unrecognized value cannot silently fall back
+  to the default and turn a typo into a fabricated null result.
+
+Those tests are native to the target's language and live in the target repo,
+using its own tooling. Nous never grows a property-testing dependency for
+this; `hypothesis`, `rapid`, and `proptest` belong to target repos.
+
+Run `nous validate campaign FILE` before starting: it warns when declared
+`native_test` files are absent from the target and no `build` stage exists to
+author them — the combination that is otherwise guaranteed to abort at
+`verify`, but only after a real run.
 
 ## 3. Four worked end-to-end examples
 

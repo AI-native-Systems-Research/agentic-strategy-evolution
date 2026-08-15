@@ -48,8 +48,16 @@ _LOF_ALPHA = 0.05
 
 
 class Stage(str, Enum):
-    """The four stages of an optimization campaign, in order."""
+    """The stages of an optimization campaign, in order.
 
+    ``BUILD`` is opt-in and absent from the default order, so every campaign
+    written before it existed behaves exactly as before. Declare it in
+    ``optimization.stages`` when the mechanism under study does not exist yet
+    and the campaign has to author it first; omit it when the campaign only
+    varies knobs the target already exposes.
+    """
+
+    BUILD = "build"
     VERIFY = "verify"
     SCREEN = "screen"
     REFINE = "refine"

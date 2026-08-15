@@ -146,6 +146,16 @@ pre-registered design matrix, and the model interprets the fitted surface
 once at the end. Substantive model calls per campaign: ~3, against 60–90
 tokenless benchmark runs.
 
+When the mechanism under study does not exist in the target yet, add the
+opt-in `build` stage first (`stages: [build, verify, screen, confirm]`).
+It spends **one** agent call authoring the mechanism plus the native tests
+its `relations` declare, taking the campaign to ~4 calls. `build` makes no
+correctness judgement — `verify` remains the gate, so the stage that writes
+the code is never the stage that certifies it. The validator rejects `build`
+anywhere but position 1 and warns when declared `native_test` files are
+absent with no `build` stage to author them. Omit `build` whenever every
+factor maps to a knob the target already exposes.
+
 **The graded-complexity tier ladder above is scoped to `kind: reflective`
 only and does not apply here.** `complexity_tier` / `tier_justification`
 are rejected under `kind: optimization` wherever they appear — top level,

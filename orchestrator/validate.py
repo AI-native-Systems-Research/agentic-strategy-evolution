@@ -375,6 +375,105 @@ def _rule4_refine_needs_two_refinable_factors(
     ]
 
 
+def _rule11_build_stage_position(opt: dict) -> list[str]:
+    """Rule 11: ``build``, if present, must be the first stage and appear once.
+
+    ``build`` authors the mechanism the other stages measure. Placing it after
+    ``verify`` means verify gates code that does not exist yet and aborts the
+    campaign; placing it after ``screen`` means the screen measured the OLD
+    mechanism and its effect table describes a system the campaign then
+    replaced. Both fail in ways that still produce schema-valid artifacts,
+    which is exactly the class of error worth rejecting up front.
+    """
+    stages = opt.get("stages")
+    if not isinstance(stages, list) or not stages:
+        return []
+    names = [str(getattr(s, "value", s)) for s in stages]
+    count = names.count("build")
+    if count == 0:
+        return []
+    errors: list[str] = []
+    if count > 1:
+        errors.append(
+            f"optimization.stages lists 'build' {count} times. The build stage "
+            f"spends an agent call authoring the mechanism; running it again "
+            f"would re-author code that later stages already measured. Keep a "
+            f"single 'build' as the first stage.",
+        )
+    if names[0] != "build":
+        errors.append(
+            f"optimization.stages has 'build' at position {names.index('build') + 1} "
+            f"(stages: {names}). 'build' must come FIRST: it authors the "
+            f"mechanism that every later stage measures. Behind 'verify' it "
+            f"aborts the campaign (verify gates tests for code that does not "
+            f"exist yet); behind 'screen' the screen measures the old mechanism "
+            f"and reports an effect table for a system the campaign replaced. "
+            f"Reorder to {['build'] + [n for n in names if n != 'build']}.",
+        )
+    return errors
+
+
+def _rule12_missing_native_tests_need_build(
+    campaign: dict, opt: dict, factors: list[dict],
+) -> list[str]:
+    """Rule 12: warn when declared ``native_test`` files are absent and no
+    ``build`` stage exists to author them.
+
+    ``relations.reconcile`` is fail-closed: a declared test that did not
+    execute is a FAILED correctness relation, which aborts at verify. So a
+    campaign naming tests that do not exist yet, with no build stage, is
+    guaranteed to abort -- but only after a real run. Checking the paths here
+    turns that into an authoring-time message.
+
+    A WARNING rather than an error: the check is path-based, and a test can
+    legitimately live somewhere the declared locator does not literally name
+    (a helper file, a generated suite). A false hard-fail would be worse than
+    a false warning.
+    """
+    repo = (campaign.get("target_system") or {}).get("repo_path")
+    if not repo:
+        return []
+    stages = opt.get("stages")
+    names = (
+        [str(getattr(s, "value", s)) for s in stages]
+        if isinstance(stages, list) else []
+    )
+    if "build" in names:
+        return []  # the campaign intends to author them
+
+    from pathlib import Path as _Path
+
+    missing: list[str] = []
+    for factor in factors:
+        if not isinstance(factor, dict):
+            continue
+        for rel in factor.get("relations") or []:
+            if not isinstance(rel, dict):
+                continue
+            declared = rel.get("native_test")
+            if not isinstance(declared, str) or not declared:
+                continue
+            rel_path = declared.split("::", 1)[0]
+            if not rel_path.endswith((".go", ".py", ".rs", ".ts", ".js", ".java")):
+                continue
+            if not (_Path(repo) / rel_path).exists():
+                missing.append(declared)
+
+    if not missing:
+        return []
+    shown = ", ".join(sorted(set(missing))[:4])
+    more = "" if len(set(missing)) <= 4 else f" (+{len(set(missing)) - 4} more)"
+    return [
+        f"WARN: {len(set(missing))} declared native_test file(s) do not exist "
+        f"in the target repo: {shown}{more}. A declared test that does not run "
+        f"counts as a FAILED correctness relation, so this campaign will abort "
+        f"at verify. If the mechanism and its tests still need to be written, "
+        f"add 'build' as the first entry in optimization.stages so a single "
+        f"agent call authors them before verify gates them. If the tests exist "
+        f"under a different path, correct the native_test locator.",
+    ]
+
+
 def _rule5_correctness_relation_required(factors: list[dict]) -> list[str]:
     """Rule 5: each factor needs >=1 correctness relation.
 
@@ -660,6 +759,8 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule8_resolution_run_budget(design, factors))
     errors.extend(_rule9_no_complexity_tier_under_optimization(campaign, opt))
     errors.extend(_rule10_uncontrolled_knob_warning(campaign, opt))
+    errors.extend(_rule11_build_stage_position(opt))
+    errors.extend(_rule12_missing_native_tests_need_build(campaign, opt, factors))
     return errors
 
 

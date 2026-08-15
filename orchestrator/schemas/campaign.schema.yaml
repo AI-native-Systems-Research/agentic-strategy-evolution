@@ -263,6 +263,13 @@ properties:
       budgets — a 50-arm fanout may need 200+ design turns while a
       probe-only campaign fits in 30.
     properties:
+      build:
+        type: integer
+        minimum: 1
+        description: >
+          Max turns for the ``build`` stage of a ``kind: optimization``
+          campaign (authoring the mechanism plus its native tests). Ignored
+          by ``kind: reflective``, which has no build stage. Defaults to 120.
       design:
         type: integer
         minimum: 1
@@ -1106,6 +1113,16 @@ properties:
           factors are all ``choice``. An iteration index beyond the list
           resolves to ``confirm`` (never a fresh screen, which would
           re-spend the screening budget).
+
+          ``build`` is opt-in and NOT in the default order. Declare it first
+          --- ``[build, verify, screen, confirm]`` --- when the mechanism
+          under study does not exist in the target yet and the campaign must
+          author it (a new flag, policy, or algorithm) along with the native
+          tests its ``relations`` declare. It spends exactly one agent call
+          and makes no correctness judgement; ``verify`` remains the gate, so
+          the stage that writes the code is never the stage that certifies
+          it. Omit ``build`` when every factor maps to a knob the target
+          already exposes --- then the campaign stays at ~3 model calls.
         items:
           type: string
-          enum: [verify, screen, refine, confirm]
+          enum: [build, verify, screen, refine, confirm]
