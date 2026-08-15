@@ -95,6 +95,15 @@ def stage_for_iteration(campaign: dict, iteration: int) -> Stage:
     would spend the whole benchmark budget re-answering a question the
     campaign already answered.
     """
+    if iteration < 1:
+        # run_campaign is 1-based. Returning a stage here would silently hand
+        # back CONFIRM — the terminal stage — and end a campaign on what the
+        # caller thought was its first iteration. A wrong answer at a
+        # boundary is worse than a raise.
+        raise ValueError(
+            f"iteration must be >= 1 (got {iteration}); campaign iterations "
+            f"are 1-based",
+        )
     raw_stages = (campaign.get("optimization") or {}).get("stages")
     order = tuple(Stage(s) for s in raw_stages) if raw_stages else _DEFAULT_ORDER
 

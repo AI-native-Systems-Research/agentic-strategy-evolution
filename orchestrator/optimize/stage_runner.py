@@ -294,7 +294,7 @@ def run_stage(
     # generators and run-order seed are fixed inputs, so this reproduces the
     # payload just written. check_fidelity below compares the executed runs
     # against THIS payload, which is the same object that was pre-registered.
-    design = _build_design(factors, design_cfg, stage_name)
+    design = _build_design(factors, design_cfg, stage_name, work_dir)
     payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
     rows = matrix.expand(design, factors)
     if _enter_phase(engine, "DESIGN", work_dir):
@@ -330,6 +330,18 @@ def run_stage(
         )
 
     ys = _fitting_responses(outcomes, response_spec, primary)
+
+    if stage_name == Stage.CONFIRM.value:
+        # Confirm does NOT fit a model. It replicates ONE configuration, so
+        # there are no distinct design points to estimate effects from —
+        # attempting it raises "design matrix is singular", correctly. What
+        # confirm reports is whether the predicted optimum REPRODUCED: the
+        # replicate mean, its spread, and the point that was run.
+        return _finish_confirm(
+            engine, campaign, stage_name, iteration, iter_dir, work_dir,
+            rows, outcomes, ys, factors, test_results,
+        )
+
     # The factor_ids MUST match the design's column order and width. At
     # refine, _build_design builds a central composite over only the
     # refinable factors, so passing every factor id here would misalign the
@@ -342,6 +354,13 @@ def run_stage(
     behavioral = _assert_all_behavioral(behavioral_failures)
     if stage_name == Stage.REFINE.value:
         stationary = solve_stationary_point(fit, fitted_ids)
+        # Hand the solved optimum forward so `confirm` replicates THAT point
+        # rather than the origin. Recorded on the artifact rather than mutated
+        # into the campaign dict, so the value is durable and auditable: a
+        # reader of effects.json can see which coded point confirm was asked
+        # to reproduce, which is the whole claim the confirm stage makes.
+        if stationary:
+            _write_json(iter_dir / "confirm_at.json", dict(stationary))
         fitted_factors = [f for f in factors if f.id in set(fitted_ids)]
         decision = decide_after_refine(
             fit, fitted_factors, stationary, behavioral_failures=behavioral,
@@ -442,7 +461,8 @@ def _design_factor_ids(factors, design_cfg: dict, stage_name: str) -> tuple[str,
     return ids
 
 
-def _build_design(factors, design_cfg: dict, stage_name: str):
+def _build_design(factors, design_cfg: dict, stage_name: str,
+                  work_dir: Path | None = None):
     """Design for this stage: a screen matrix, or a response surface."""
     from orchestrator.optimize.design import (
         central_composite,
@@ -460,6 +480,37 @@ def _build_design(factors, design_cfg: dict, stage_name: str):
         return central_composite(
             refinable or ids, center_points=int(cfg.get("center_points", 4)),
         )
+    if stage_name == Stage.CONFIRM.value:
+        # Confirm REPLICATES one configuration — the predicted optimum —
+        # rather than re-running a screen. Without this branch confirm
+        # silently rebuilt the screen design, so the campaign's final stage
+        # repeated stage 2 and reported COMPLETED while the guide claimed it
+        # reproduced the optimum. That is the one defect here that could
+        # mislead a researcher about their own result.
+        #
+        # The point to replicate comes from `confirm_at` (coded coordinates
+        # the refine stage's stationary point, already grid-snapped by
+        # decode_coded downstream). Absent that — a campaign that skipped
+        # refine because nothing was refinable — replicate the origin, which
+        # for a two-level screen is the centre of the declared ranges.
+        cfg = design_cfg.get("confirm") or {}
+        replicates = max(1, int(cfg.get("replicates", 3)))
+        at = design_cfg.get("confirm_at") or _read_confirm_at(work_dir)
+        coded = tuple(
+            float(at[f.id]) if isinstance(at, dict) and f.id in at else 0.0
+            for f in factors
+        )
+        from orchestrator.optimize.design import Design, DesignPoint
+
+        return Design(
+            points=tuple(
+                DesignPoint(coded=coded, role="center", replicate=i)
+                for i in range(replicates)
+            ),
+            factor_ids=tuple(f.id for f in factors),
+            kind="confirm",
+        )
+
     cfg = design_cfg.get("screen") or {}
     resolution = int(cfg.get("resolution", 5))
     # A fractional design only exists where one is tabulated. Below that
@@ -474,6 +525,107 @@ def _build_design(factors, design_cfg: dict, stage_name: str):
         else full_factorial(ids)
     )
     return with_center_points(base, int(cfg.get("center_points", 4)))
+
+
+def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
+                    work_dir, rows, outcomes, ys, factors, test_results):
+    """Record whether the predicted optimum reproduced, then terminate.
+
+    Deliberately writes no ``effects.json``: there is no fit here. The claim
+    confirm makes is narrower and more useful — this exact configuration,
+    replicated N times, produced this mean and this spread.
+    """
+    from statistics import mean, pstdev
+
+    from orchestrator.iteration import (
+        IterationOutcome,
+        _enter_phase,
+        finalize_iteration,
+    )
+    from orchestrator.ledger import append_ledger_row
+    from orchestrator.optimize import artifacts, relations
+
+    usable = [v for v in ys if v == v]
+    levels = dict(rows[0].levels) if rows else {}
+    summary = {
+        "stage": stage_name,
+        "iteration": iteration,
+        "confirmed_at_levels": levels,
+        "replicates": len(outcomes),
+        "usable_replicates": len(usable),
+        "mean": mean(usable) if usable else None,
+        "spread": pstdev(usable) if len(usable) > 1 else 0.0,
+        "observations": usable,
+    }
+    _write_json(iter_dir / "confirmation.json", summary)
+    _write_json(iter_dir / "findings.json", _confirm_findings(summary, iteration))
+    _write_json(iter_dir / "principle_updates.json", [])
+    artifacts.write_relations(
+        iter_dir, relations.reconcile(factors, test_results or {}),
+    )
+    _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
+    finalize_iteration(
+        work_dir=work_dir, iter_dir=iter_dir, iteration=iteration,
+        campaign=campaign,
+    )
+    append_ledger_row(work_dir, iteration)
+    return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
+
+
+def _confirm_findings(summary: dict, iteration: int) -> dict:
+    """A findings.schema.json-conformant record of the confirmation run."""
+    n, usable = summary["replicates"], summary["usable_replicates"]
+    observed = (
+        f"mean={summary['mean']:.6g} over {usable}/{n} usable replicates "
+        f"(spread={summary['spread']:.6g}) at levels {summary['confirmed_at_levels']}"
+        if summary["mean"] is not None
+        else f"no usable replicates out of {n}"
+    )
+    reproduced = summary["mean"] is not None and usable >= 1
+    return {
+        "iteration": iteration,
+        "bundle_ref": f"runs/iter-{iteration}/confirmation.json",
+        "experiment_valid": reproduced,
+        "discrepancy_analysis": (
+            "Confirmation stage: the predicted optimum was replicated and its "
+            "mean and spread recorded. No effects are fitted here — a single "
+            "replicated configuration has no distinct design points to "
+            "estimate from."
+        ),
+        "arms": [{
+            "arm_type": "h-main",
+            "predicted": "the refine stage's solved optimum reproduces",
+            "observed": observed,
+            "status": "CONFIRMED" if reproduced else "REFUTED",
+            "error_type": None,
+            "diagnostic_note": (
+                None if reproduced
+                else "every replicate failed to produce a usable measurement"
+            ),
+            "metadata": summary,
+        }],
+    }
+
+
+def _read_confirm_at(work_dir) -> dict | None:
+    """The most recent refine stage's solved optimum, if any.
+
+    Read from disk rather than threaded through the campaign dict so the
+    value is durable across the process boundary between iterations — each
+    stage is a separate ``run_iteration`` call.
+    """
+    import json
+
+    if work_dir is None:
+        return None
+    candidates = sorted(Path(work_dir).glob("runs/iter-*/confirm_at.json"))
+    if not candidates:
+        return None
+    try:
+        payload = json.loads(candidates[-1].read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _run_row(row, outcome) -> dict:
