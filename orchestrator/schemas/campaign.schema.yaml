@@ -858,11 +858,32 @@ properties:
               "$ref": "#/$defs/comparison"
               description: >
                 Family A: did the lever actually engage? Checked on every
-                run of this factor. Example:
+                run of this factor.
+
+                TWO NAMESPACES are addressable. Prefer the target's own
+                telemetry when it reports the relevant state --
                 ``{observable: telemetry.queue_count, op: "==", value:
-                "{level}"}``. The validator rejects trivially-true
-                predicates (bare ``> 0``, ``!= null``) -- a lazy check
-                manufactures false confidence.
+                "{level}"}`` -- because that is evidence the lever was
+                RECEIVED, not merely sent. When the target emits metrics
+                only and never echoes its configuration back (the common
+                case: BLIS/inference-sim and most benchmark harnesses),
+                assert against the rendered configuration instead:
+                ``{observable: applied.MAXRUN, op: "==", value:
+                "{level}"}``, where ``applied.<FACTOR_ID>`` is the level
+                this run was launched with. ``applied_args`` and
+                ``applied_env`` expose the rendered CLI arguments and
+                environment for the same purpose.
+
+                Without ``applied.*`` a target that does not echo its own
+                config back cannot satisfy this REQUIRED field at all --
+                verified on a live run where all 115 executed
+                configurations failed their manipulation check with "the
+                target did not emit it", producing zero usable
+                measurements.
+
+                The validator rejects trivially-true predicates (bare
+                ``> 0``, ``!= null``) -- a lazy check manufactures false
+                confidence.
             relations:
               type: array
               minItems: 1

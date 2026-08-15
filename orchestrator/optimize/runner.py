@@ -132,14 +132,51 @@ def _verdict_dict(check_id: Any, verdict, *, kind: str) -> dict:
             "skipped": verdict.skipped, "missing": verdict.missing}
 
 
+def _applied_namespace(row: ConfigRow) -> dict:
+    """The rendered configuration, addressable as ``applied.<FACTOR_ID>``.
+
+    Every worked example in the authoring guide writes manipulation
+    predicates against ``config.*`` or ``telemetry.*`` — which silently
+    assumes the target ECHOES ITS CONFIGURATION BACK in its output. Most
+    targets do not: BLIS (inference-sim) emits metrics only, with no
+    ``config`` block, so a predicate like
+    ``{observable: config.routing_policy, op: "==", value: "{level}"}``
+    fails on every run with "the target did not emit it" — and since
+    ``manipulation`` is REQUIRED and must be non-trivial, that made the
+    whole campaign kind unusable against such a target. Confirmed on a live
+    run: 115 configurations executed, every one failed its manipulation
+    check, zero usable measurements.
+
+    So the rendered configuration is now always addressable. An author whose
+    target reports its own state should still prefer that — it is strictly
+    stronger evidence, since it confirms the flag was RECEIVED rather than
+    merely SENT. But an author whose target reports nothing now has a
+    truthful check available instead of an impossible one.
+    """
+    return {
+        "applied": dict(row.levels),
+        "applied_args": list((row.apply or {}).get("cli_args") or []),
+        "applied_env": dict((row.apply or {}).get("env") or {}),
+    }
+
+
 def _check_manipulation(factors: list[Factor], row: ConfigRow, observed: dict) -> list[dict]:
-    """One manipulation verdict per factor whose level appears on this row."""
+    """One manipulation verdict per factor whose level appears on this row.
+
+    Predicates resolve against the target's observation merged with the
+    rendered configuration (``applied.*``), so a target that does not echo
+    its own config back can still be checked. Target-emitted keys win on
+    collision: if the target DOES report a field, its value is the one that
+    matters, since that is evidence the lever engaged rather than evidence
+    it was requested.
+    """
+    scope = {**_applied_namespace(row), **observed}
     verdicts: list[dict] = []
     for f in factors:
         if f.id not in row.levels:
             continue
         level = row.levels[f.id]
-        verdict = evaluate(f.manipulation, observed, level=level)
+        verdict = evaluate(f.manipulation, scope, level=level)
         verdicts.append(_verdict_dict(f.id, verdict, kind="manipulation"))
     return verdicts
 
