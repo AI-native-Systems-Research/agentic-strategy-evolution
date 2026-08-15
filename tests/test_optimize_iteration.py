@@ -922,3 +922,95 @@ def test_best_observed_ignores_non_complete_rows(tmp_path, work_dir):
     assert math.isclose(best["m"], 10.0), (
         "only a `complete` row may win; a failed row scoring 999 must not"
     )
+
+
+def test_confirm_flags_a_fitted_optimum_that_loses_to_an_observed_corner(
+    tmp_path, work_dir, caplog,
+):
+    """A fitted stationary point is an extrapolation and can be WORSE.
+
+    "The prediction reproduced" and "this is the best configuration found"
+    are different claims. When the surface is mis-specified the solved point
+    can land below a corner the screen already measured; replicating it then
+    yields tight agreement between replicates and a status of CONFIRMED,
+    while the campaign quietly reports an inferior configuration as its
+    optimum. confirmation.json must record both facts so the artifact stays
+    honest when they disagree.
+    """
+    import logging
+
+    from orchestrator.optimize.stage_runner import _best_observed
+
+    c = _campaign()
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    wd = _init_work_dir(tmp_path, c)
+
+    _run(c, wd, stage="screen", iteration=2)
+    best = _best_observed(wd, "m")
+    assert best is not None
+
+    # Pin confirm to a point that scores strictly below the observed best.
+    (Path(wd) / "runs" / "iter-2" / "confirm_at.json").write_text(
+        json.dumps({k: -1.0 for k in ("A", "B", "C")}),
+    )
+
+    def poor(row):
+        return {
+            "cfg": {k.lower(): v for k, v in row.levels.items()},
+            "m": best["m"] - 10.0,
+        }
+
+    with caplog.at_level(logging.WARNING):
+        _run(c, wd, stage="confirm", iteration=3, runner=poor)
+
+    record = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
+    )
+    assert record["confirmed_is_best_observed"] is False
+    assert math.isclose(record["best_observed"]["m"], best["m"], rel_tol=1e-9)
+    assert record["regression_vs_best_observed"]["absolute"] > 0
+    assert "WORSE" in caplog.text
+
+
+def test_confirm_marks_the_winner_as_best_observed_when_it_is(
+    tmp_path, work_dir,
+):
+    """The happy path must be labelled too, not just the regression."""
+    c = _campaign()
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    wd = _init_work_dir(tmp_path, c)
+
+    _run(c, wd, stage="screen", iteration=2)
+    _run(c, wd, stage="confirm", iteration=3)
+
+    record = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
+    )
+    assert record["confirmed_is_best_observed"] is True
+    assert "regression_vs_best_observed" not in record
+
+
+def test_confirm_respects_minimize_direction(tmp_path, work_dir):
+    """For a minimize objective, LOWER must count as beating the best."""
+    from orchestrator.optimize.stage_runner import _best_observed
+
+    c = _campaign()
+    c["optimization"]["response"]["primary"]["direction"] = "minimize"
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    wd = _init_work_dir(tmp_path, c)
+
+    _run(c, wd, stage="screen", iteration=2)
+    best = _best_observed(wd, "m")
+    assert best is not None
+
+    _run(
+        c, wd, stage="confirm", iteration=3,
+        runner=lambda row: {
+            "cfg": {k.lower(): v for k, v in row.levels.items()},
+            "m": best["m"] - 5.0,
+        },
+    )
+    record = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
+    )
+    assert record["confirmed_is_best_observed"] is True
