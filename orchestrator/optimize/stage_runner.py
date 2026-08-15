@@ -787,6 +787,54 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "spread": pstdev(usable) if len(usable) > 1 else 0.0,
         "observations": usable,
     }
+
+    # Did the confirmed point actually beat everything the campaign measured?
+    #
+    # A fitted stationary point is an EXTRAPOLATION. When the surface is
+    # mis-specified — curvature the quadratic cannot express, an optimum
+    # outside the design hull, a categorical factor dragged into the fit —
+    # the solved point can land below a corner the screen already measured.
+    # Without this check the campaign replicates that inferior point, records
+    # status CONFIRMED because the replicates agreed with each other, and
+    # reports it as the optimum. "The prediction reproduced" and "this is the
+    # best configuration found" are different claims, and only the second is
+    # what a reader of the report wants. Recording both keeps the artifact
+    # honest when they disagree.
+    primary = (
+        ((campaign.get("optimization") or {}).get("response") or {})
+        .get("primary") or {}
+    )
+    metric = primary.get("metric") or ""
+    maximize = (primary.get("direction") or "maximize") != "minimize"
+    best = _best_observed(work_dir, metric) if metric else None
+    if best is not None and summary["mean"] is not None:
+        best_val = best.get(metric)
+        if isinstance(best_val, (int, float)):
+            confirmed_mean = summary["mean"]
+            beats = (
+                confirmed_mean >= best_val if maximize
+                else confirmed_mean <= best_val
+            )
+            summary["best_observed"] = {
+                "levels": dict(best.get("levels") or {}),
+                metric: best_val,
+            }
+            summary["confirmed_is_best_observed"] = bool(beats)
+            if not beats:
+                gap = abs(best_val - confirmed_mean)
+                pct = (gap / abs(best_val) * 100.0) if best_val else float("nan")
+                summary["regression_vs_best_observed"] = {
+                    "absolute": gap, "percent": pct,
+                }
+                logger.warning(
+                    "confirm: the confirmed configuration (%s=%.6g) is WORSE "
+                    "than the best configuration already observed (%.6g at "
+                    "%s) — a gap of %.6g (%.2f%%). The fitted optimum is an "
+                    "extrapolation; treat the observed corner as the "
+                    "campaign's answer and the surface as mis-specified.",
+                    metric or "response", confirmed_mean, best_val,
+                    best.get("levels"), gap, pct,
+                )
     _write_json(iter_dir / "confirmation.json", summary)
     _write_json(iter_dir / "findings.json", _confirm_findings(summary, iteration))
     _write_json(iter_dir / "principle_updates.json", [])
