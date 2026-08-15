@@ -239,6 +239,95 @@ A human-readable summary produced before each human gate. Designed to help the h
 
 Located at `runs/iter-N/gate_summary_<type>.json`. Generated on the fly before each gate — not persisted across sessions.
 
+## 7. Optimization campaign artifacts (`kind: optimization`)
+
+Four artifacts, additive to the schemas above — every artifact described
+in sections 0-6b is still written, unchanged in schema, for a `kind:
+optimization` campaign. See
+[docs/optimization-campaign-guide.md](optimization-campaign-guide.md) for
+the authoring guide these artifacts support.
+
+### 7a. design_matrix.json — "What configurations are pre-registered?"
+
+**Schema:** `schemas/design_matrix.schema.json`
+
+The pre-registered design matrix, written **before** any execution. Fixing
+every configuration in advance — before any result is seen — is what
+makes the campaign's anti-p-hacking property stronger than sequential
+one-factor-at-a-time search.
+
+| Field | What it means |
+|---|---|
+| `factor_ids` | Which factors (by id) form the matrix's columns |
+| `kind` | Design family (e.g. fractional factorial, central composite) |
+| `resolution` | Achieved resolution (III/IV/V) for a fractional design |
+| `generators` | The published generator columns used to build the fraction |
+| `aliases` | Named aliased effect pairs, if any — the honest cost of resolution < V |
+| `rows` | The matrix rows themselves, in coded (±1) space |
+| `run_order` / `run_order_seed` | Randomized execution order plus the seed that reproduces it — immune to time-ordered drift a sequential grid can't rule out |
+
+### 7b. runs.jsonl — "What did each executed configuration produce?"
+
+**Schema:** `schemas/runs_row.schema.json` (one object per line)
+
+One row per executed configuration: factor levels, response metrics,
+manipulation/constraint/integrity verdicts, and provenance. Configs marked
+infeasible by a constraint are retained here as real data about the space,
+even though they're excluded from fitting.
+
+| Field | What it means |
+|---|---|
+| `row_index` | Which design_matrix.json row this run executed |
+| `levels` | The factor levels actually applied |
+| `role` | `corner` / `center` / `axial` (design-matrix role) |
+| `replicate` | Replicate index for repeated runs |
+| `status` | Whether the run completed, failed, or was retried |
+| `response` | The observed metrics for this run |
+| `manipulation_verdict` | Did the lever actually engage? (Family A check) |
+| `constraint_verdicts` | Per-constraint admissibility results |
+| `integrity_verdict` | Result of `integrity_command`, if declared |
+| `duration_ms` / `build_hash` | Provenance for reproducibility and build-cache validation |
+| `error` | Populated on a failed/retried run |
+
+### 7c. effects.json — "What did the fitted surface find?"
+
+**Schema:** `schemas/effects.schema.json`
+
+Fitted main effects and interactions, with confidence intervals, the
+pure-error estimate, and the lack-of-fit test. Written once per stage
+(`screen` and `refine` each produce one). Authored **without spending
+tokens**: a fitted effect with a confidence interval already contains
+everything `findings.json` requires (a claim, a direction, a magnitude,
+quantitative evidence), so `findings.json` and `principle_updates.json`
+are projected from this file deterministically rather than restated in
+prose.
+
+| Field | What it means |
+|---|---|
+| `stage` | Which stage produced this fit (`screen` or `refine`) |
+| `intercept` / `effects` | Fitted coefficients, with confidence intervals |
+| `quadratic` | Curvature terms and the solved stationary point (refine only) |
+| `n_runs` | How many runs the fit is based on |
+| `pure_error_var` / `pure_error_df` | Pure-error estimate from center-point replicates |
+| `lack_of_fit_f` / `lack_of_fit_p` | Whether the fitted model form is adequate |
+| `aliases` | Aliasing caveats carried over from design_matrix.json |
+| `dropped_factors` | Factors whose effect CI contained zero — the campaign's null results |
+
+### 7d. relations.json — "Did the mechanism check out?"
+
+**Schema:** `schemas/relations.schema.json`
+
+Per-relation verdicts from running `test_command` against the target's own
+native test tree. Nous's role here is a contract check, not a test
+runner: each declared relation names a `native_test` identifier, and this
+file records whether it ran and passed.
+
+| Field | What it means |
+|---|---|
+| `verdicts` | Per-relation pass/fail, keyed by relation id |
+| `correctness_failures` | Any failed `correctness` relation — hard-fails the campaign |
+| `behavioral_failures` | Any failed `behavioral` relation — recorded as a finding, campaign continues |
+
 ## Dispatch and Prompt Templates
 
 The orchestrator invokes agents through a dispatcher. Two implementations exist:

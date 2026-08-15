@@ -130,6 +130,31 @@ tier and prior-iteration tiers, and prominently flags jumps of more than
 one tier across iterations. Humans can override; agents cannot
 silently leap from tier 1 to tier 3.
 
+## Optimization campaigns (kind: optimization)
+
+`kind: optimization` is a second campaign type alongside the default
+`reflective` one: a factorial/response-surface flow where the model
+proposes factors once (stage `verify`), Python then drives
+`screen → refine → confirm` with **zero further LLM calls** through a
+pre-registered design matrix, and the model interprets the fitted surface
+once at the end. Substantive model calls per campaign: ~3, against 60–90
+tokenless benchmark runs.
+
+**The graded-complexity tier ladder above is scoped to `kind: reflective`
+only and does not apply here.** `complexity_tier` / `tier_justification`
+are rejected under `kind: optimization` wherever they appear — top level,
+under `metadata`, or under the `optimization` block — because a
+pre-registered design matrix already gives a *stronger* anti-p-hacking
+guarantee than the tier ladder protects (every configuration is fixed
+before any result is seen), so the two disciplines must not be
+half-adopted together.
+
+These campaigns are authored by AI: see
+`docs/optimization-campaign-guide.md` for the mental model, the
+field-by-field walkthrough of the `optimization` block, four worked
+end-to-end examples, and the anti-patterns to avoid. Cross-field rules
+live in `orchestrator.validate.validate_optimization_campaign`.
+
 ## Meta-findings emit at campaign end (issue #155)
 
 Every campaign's terminal transition writes `meta_findings.json` at the
@@ -171,6 +196,8 @@ worked example). The full friction-report resolution map is in
 - `docs/campaign-authoring-guide.md` — locked_parameters, the
   "what to lock" inventory, rehearsal-as-instrument (#245
   resolution).
+- `docs/optimization-campaign-guide.md` — authoring guide for
+  `kind: optimization` factorial/response-surface campaigns.
 - `docs/friction-245-resolution.md` — F1..F21 → file map for
   paper-memorytime-mirage friction report.
 - `docs/plans/CHECKPOINT.md` — current state of the #120 epic.

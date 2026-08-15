@@ -45,7 +45,7 @@ INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → HUMAN_FINDINGS_GAT
    DONE → DESIGN       Next iteration (increments counter, merges principles)
 ```
 
-See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, and [docs/architecture.md](docs/architecture.md) for system internals.
+See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, [docs/architecture.md](docs/architecture.md) for system internals, and [docs/optimization-campaign-guide.md](docs/optimization-campaign-guide.md) for the factorial/response-surface `kind: optimization` campaign type.
 
 ## Hypothesis Bundle Arms
 
