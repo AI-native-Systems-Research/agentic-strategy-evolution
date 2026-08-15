@@ -241,6 +241,30 @@ def run_stage(
     from orchestrator.ledger import append_ledger_row
 
     opt = _opt_block(campaign)
+
+    # PRODUCTION WIRING (closes the gap that made this kind unusable end to
+    # end). `test_command` was declared in the schema and documented in the
+    # guide, but nothing executed it, so `test_results` was always None,
+    # every relation reconciled as "declared but not executed", and every
+    # real campaign aborted at its verify stage. Tests still inject fakes —
+    # the injected seam remains the contract — but a real run now resolves
+    # both callables from the campaign itself.
+    repo = (campaign.get("target_system") or {}).get("repo_path")
+    if test_results is None and opt.get("test_command") and repo:
+        raw = runner.run_test_command(opt["test_command"], cwd=Path(repo))
+        test_results = runner.match_declared_tests(parse_factors(opt["factors"]), raw)
+        logger.info(
+            "test_command reported %d test(s); %d matched a declared "
+            "native_test", len(raw), len(test_results),
+        )
+    if config_runner is None and opt.get("run_command") and repo:
+        config_runner = runner.make_config_runner(
+            opt["run_command"], cwd=Path(repo),
+            metric_path=((opt.get("response") or {}).get("primary") or {}).get(
+                "metric", "",
+            ),
+        )
+
     resolved = stage if stage is not None else stage_for_iteration(campaign, iteration)
     stage_name = getattr(resolved, "value", None) or str(resolved)
 
