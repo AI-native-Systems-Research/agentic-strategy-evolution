@@ -101,12 +101,18 @@ adoption.
 
 ## PR workflow (project owner: @sriumcp)
 
-1. Branch off `upstream/reflective` (NOT `main`).
+1. Branch off `upstream/main`.
 2. Push to `origin` (the fork at `sriumcp/agentic-strategy-evolution`).
-3. Open PR with base `upstream/reflective`, head `sriumcp:<branch>`.
+3. Open PR with base `upstream/main`, head `sriumcp:<branch>`.
 4. PR body links the issue with `Closes #N` (or `Refs #N` for partials).
 5. Stack PRs when one logical change builds on another rather than waiting
    for merge — see `docs/plans/CHECKPOINT.md` for the pattern.
+
+`main` is the integration branch. `reflective` was the target during the
+#120 epic and is no longer it — do not branch from it or open PRs against
+it. If you find a branch that forked from `reflective`, rebase onto
+`upstream/main` before opening the PR rather than retargeting a diverged
+history.
 
 ## Graded-complexity tier discipline (issue #159)
 

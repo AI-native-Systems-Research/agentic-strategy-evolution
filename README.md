@@ -106,10 +106,10 @@ state.json's recorded `work_dir` will be stale until the campaign's next setup; 
 ### 1. Install Nous
 
 ```bash
-pip install "git+https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git@reflective"
+pip install "git+https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git@main"
 ```
 
-`reflective` is the active integration branch — that's where new work lands first. `main` lags slightly behind. To pin to a release, replace `@reflective` with a tag (`@v0.2.0`).
+`main` is the integration branch — that's where new work lands. To pin to a release, replace `@main` with a tag (`@v0.4.0`).
 
 For development (editable install with test dependencies):
 
