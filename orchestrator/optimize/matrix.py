@@ -100,6 +100,30 @@ def _render_apply(f: Factor, level: Any) -> dict:
     raise ValueError(f"factor {f.id!r}: unknown apply kind {kind!r}")
 
 
+def render_apply(factors, levels: dict) -> dict:
+    """Compose the ``apply`` payload for an explicit set of levels.
+
+    ``expand`` renders ``apply`` from a design point's CODED coordinates.
+    ``confirm`` sometimes needs the same rendering for levels chosen another
+    way — the best configuration actually observed, when there is no fitted
+    stationary point to reproduce — so the per-factor rendering is exposed
+    here rather than duplicated at the call site.
+    """
+    cli_args: list = []
+    env: dict = {}
+    patches: list = []
+    by_id = {f.id: f for f in factors}
+    for fid, level in levels.items():
+        f = by_id.get(fid)
+        if f is None:
+            continue
+        rendered = _render_apply(f, level)
+        cli_args.extend(rendered.get("cli_args", []))
+        env.update(rendered.get("env", {}))
+        patches.extend(rendered.get("patches", []))
+    return {"cli_args": cli_args, "env": env, "patches": patches}
+
+
 def expand(design: Design, factors: list[Factor]) -> list[ConfigRow]:
     """Turn every design point into a runnable :class:`ConfigRow`.
 
