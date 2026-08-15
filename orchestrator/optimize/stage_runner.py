@@ -17,17 +17,26 @@ and how EXECUTE_ANALYZE runs it:
   * ``refine``  — same, plus curvature on the surviving factors.
   * ``confirm`` — one model call interprets the fitted surface.
 
-Four checks hard-fail regardless of gate approval, because auto-approve is
+Three checks hard-fail regardless of gate approval, because auto-approve is
 this kind's default (spec §7.1) and removing the human must not remove the
 checks:
 
-  1. ``locked_parameters`` deviation (existing machinery, #246).
-  2. Executed configs drifting from the pre-registered ``design_matrix.json``
+  1. Executed configs drifting from the pre-registered ``design_matrix.json``
      (``matrix.check_fidelity``) — a silently skipped cell changes the
      design's real resolution, so tolerating it would let the campaign
      overstate what it can estimate.
-  3. A held-out metric reaching a fitting input.
-  4. A ``correctness`` relation violation.
+  2. A held-out metric reaching a fitting input.
+  3. A ``correctness`` relation violation.
+
+NOT YET WIRED — ``locked_parameters`` deviation. The spec lists it as a
+fourth such check, and ``validate._validate_locked_parameters`` exists, but
+it is reached only from bundle validation and this path has no
+``bundle.yaml`` / ``experiment_spec`` to compare against. An earlier version
+of this docstring claimed the check; it did not exist, which is worse than
+omitting it, because the claim would stop the next reader from adding it.
+Wiring it needs a locked-parameters-vs-executed-config comparison built for
+the matrix path. Tracked as a follow-up; do not re-add the claim until the
+code is there.
 
 A ``behavioral`` relation violation is NOT in that list. A monotonicity
 break is a discovery — the motivating case is a lever measured -9.5% alone
@@ -155,6 +164,28 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
                 f"row {o.row_index}; held-out values belong on RunOutcome.held_out",
             )
         values.append(float(resp.get(primary, float("nan"))))
+
+    # Refuse to fit on NaN. A single non-complete run poisons the ENTIRE
+    # fit through the normal equations — verified: one NaN among eight runs
+    # makes every effect estimate and the intercept NaN. The failure is
+    # silent: the artifacts stay schema-valid (jsonschema accepts NaN as
+    # "number"), so a campaign would emit a confident-looking, all-NaN
+    # effects.json. The spec's stance on partial failure is "degrade the
+    # claim, not the data" — refit on the completed rows and report the
+    # reduced resolution honestly — and emitting NaN is neither of those.
+    bad = [
+        o.row_index for o, v in zip(outcomes, values)
+        if v != v  # NaN is the only value unequal to itself
+    ]
+    if bad:
+        raise OptimizationAborted(
+            f"{len(bad)} of {len(values)} runs did not complete (row_index "
+            f"{bad}), so the primary metric is missing for them. Fitting "
+            f"would NaN-poison every coefficient while still producing "
+            f"schema-valid artifacts. Re-run the failed configurations, or "
+            f"refit on the completed subset and report the reduced "
+            f"resolution.",
+        )
     return values
 
 
@@ -223,7 +254,7 @@ def run_stage(
         _enter_phase(engine, "EXECUTE_ANALYZE", work_dir)
         _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
         append_ledger_row(work_dir, iteration)
-        return IterationOutcome.CONTINUE
+        return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
 
     if correctness_failures:
         ids = ", ".join(str(v.relation_id) for v in correctness_failures)
@@ -337,7 +368,38 @@ def run_stage(
         "optimization stage %s (iter %d): %d rows, %d complete",
         stage_name, iteration, len(outcomes), statuses.count("complete"),
     )
-    return IterationOutcome.CONTINUE
+    return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
+
+
+def _terminal_outcome(engine, campaign: dict, stage_name: str, outcome_enum):
+    """Transition to DONE and report COMPLETED on the campaign's last stage.
+
+    run_campaign only stops on COMPLETED / ABORTED / REDESIGN, so returning
+    CONTINUE from the final stage makes it call one more iteration —
+    stage_for_iteration then clamps past the end of the stage list and
+    returns the final stage again, re-running it indefinitely. That looks
+    correct only when max_iterations happens to equal the stage count.
+    """
+    if _is_final_stage(campaign, stage_name):
+        engine.transition("DONE")
+        return outcome_enum.COMPLETED
+    return outcome_enum.CONTINUE
+
+
+def _is_final_stage(campaign: dict, stage_name: str) -> bool:
+    """Whether ``stage_name`` is the last stage this campaign will run.
+
+    An explicit ``optimization.stages`` list wins; otherwise ``confirm`` is
+    terminal. Getting this wrong in either direction is costly: too eager
+    ends the campaign a stage early, too lax means run_campaign never sees
+    COMPLETED and re-runs the final stage forever (since stage_for_iteration
+    clamps past the end).
+    """
+    stages = ((campaign.get("optimization") or {}).get("stages")) or None
+    if isinstance(stages, list) and stages:
+        last = stages[-1]
+        return stage_name == (getattr(last, "value", None) or str(last))
+    return stage_name == Stage.CONFIRM.value
 
 
 def _design_factor_ids(factors, design_cfg: dict, stage_name: str) -> tuple[str, ...]:

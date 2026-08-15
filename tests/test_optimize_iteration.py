@@ -393,3 +393,100 @@ def test_design_factor_ids_agrees_with_the_built_design_width(tmp_path):
             f"{stage}: {len(ids)} factor ids against a design of width "
             f"{len(design.points[0].coded)}"
         )
+
+
+# ─── the three Criticals from independent review ──────────────────────────
+
+def test_the_final_stage_transitions_to_done_and_reports_completed(
+    tmp_path, work_dir,
+):
+    """Otherwise run_campaign never stops.
+
+    run_campaign only terminates on COMPLETED / ABORTED / REDESIGN. A
+    CONTINUE from the last stage makes it call one more iteration;
+    stage_for_iteration then clamps past the end of the stage list and
+    returns the final stage again, re-running it forever. That looks correct
+    only when max_iterations happens to equal the stage count.
+    """
+    from orchestrator.engine import Engine
+    from orchestrator.iteration import IterationOutcome
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    outcome = _run(c, wd, stage="confirm", iteration=4)
+    assert outcome is IterationOutcome.COMPLETED
+    assert Engine(wd).phase == "DONE"
+
+
+def test_a_non_final_stage_reports_continue(tmp_path, work_dir):
+    from orchestrator.iteration import IterationOutcome
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    assert _run(c, wd, stage="screen", iteration=2) is IterationOutcome.CONTINUE
+
+
+def test_an_explicit_stages_list_decides_which_stage_is_terminal(tmp_path):
+    from orchestrator.optimize.stage_runner import _is_final_stage
+
+    default = _campaign()
+    assert _is_final_stage(default, "confirm") is True
+    assert _is_final_stage(default, "refine") is False
+
+    short = _campaign()
+    short["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    assert _is_final_stage(short, "confirm") is True
+    assert _is_final_stage(short, "refine") is False
+
+    no_confirm = _campaign()
+    no_confirm["optimization"]["stages"] = ["verify", "screen"]
+    assert _is_final_stage(no_confirm, "screen") is True
+    assert _is_final_stage(no_confirm, "confirm") is False
+
+
+def test_a_partially_failed_sweep_refuses_to_fit_rather_than_emit_nan(
+    tmp_path, work_dir,
+):
+    """One non-complete run NaN-poisons every coefficient.
+
+    Verified: one NaN among eight runs makes every effect estimate AND the
+    intercept NaN, and the artifacts stay schema-valid because jsonschema
+    accepts NaN as "number". So the campaign would emit a confident-looking,
+    entirely-NaN effects.json with no error at all. Failing loudly is the
+    only honest option short of refitting on the completed subset.
+    """
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+
+    calls = {"n": 0}
+
+    def flaky(row):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise RuntimeError("benchmark crashed")
+        lv = row.levels
+        return {"cfg": {k.lower(): v for k, v in lv.items()},
+                "m": 10.0 + float(lv.get("A", 0))}
+
+    with pytest.raises(OptimizationAborted) as exc:
+        _run(c, wd, runner=flaky)
+    msg = str(exc.value)
+    assert "did not complete" in msg
+    assert "NaN-poison" in msg
+
+
+def test_locked_parameters_is_not_claimed_as_a_wired_check():
+    """The docstring must not advertise a guarantee the code lacks.
+
+    An earlier version listed locked_parameters as one of four hard-fails.
+    It was never wired — the check lives in bundle validation and this path
+    has no bundle. A docstring that overstates the guarantees is worse than
+    an omission, because it stops the next reader from adding the check.
+    """
+    import orchestrator.optimize.stage_runner as sr
+
+    doc = sr.__doc__ or ""
+    assert "NOT YET WIRED" in doc
+    assert "locked_parameters" in doc
+    # and it must not be counted among the active checks
+    assert "Four checks hard-fail" not in doc
