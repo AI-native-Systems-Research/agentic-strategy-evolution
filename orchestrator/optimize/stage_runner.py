@@ -1016,7 +1016,41 @@ def _read_confirm_at(work_dir) -> dict | None:
         payload = json.loads(candidates[-1].read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+
+    # Refuse a stationary point that lies outside the design hull.
+    #
+    # ``decide_after_refine`` already detects this and raises
+    # OPTIMUM_OUTSIDE_HULL with the rationale "ranges were too narrow to
+    # contain the optimum -- escalate before confirming". But Trigger is
+    # documented as reported-not-acted-on, so confirm read the same solve off
+    # disk and replicated it anyway: the system diagnosed the problem, wrote
+    # it into findings, and then did the thing it had just warned against.
+    #
+    # Observed on a real campaign: the surface was monotone in both refined
+    # factors (no interior optimum exists), the quadratic solve landed at
+    # coded BANDCAP=+1.62 / THRESH=-2.30, and confirm reproduced 112.4997
+    # while the campaign had already MEASURED 182.2159 at a corner. Returning
+    # None here makes confirm fall back to the best observed configuration,
+    # which is the weaker claim but the true one.
+    coords = [v for v in payload.values() if isinstance(v, (int, float))]
+    outside = {
+        k: v for k, v in payload.items()
+        if isinstance(v, (int, float)) and not (-1.0 <= float(v) <= 1.0)
+    }
+    if coords and outside:
+        logger.warning(
+            "confirm: ignoring the fitted stationary point %s — it falls "
+            "outside the design hull on %s (coded coordinates must lie in "
+            "[-1, 1]). Extrapolating there would confirm a configuration the "
+            "design never bracketed, so confirm will replicate the best "
+            "OBSERVED configuration instead. Widen those factors' ranges and "
+            "re-run refine to locate a real interior optimum.",
+            payload, ", ".join(sorted(outside)),
+        )
+        return None
+    return payload
 
 
 def _run_row(row, outcome) -> dict:
