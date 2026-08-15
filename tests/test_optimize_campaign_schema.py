@@ -790,3 +790,107 @@ def test_rule8_tabulated_over_budget_still_names_the_exact_requirement():
     errors = _hard_errors(_small_campaign(5, max_runs=10))  # res V needs 16
     assert errors
     assert "16 runs" in errors[0] and "max_runs=10" in errors[0]
+
+
+# ─── `nous validate campaign` — the CLI surface for the cross-field rules ──
+
+def test_validate_campaign_accepts_a_clean_optimization_campaign(tmp_path, capsys):
+    """Before this existed, validate_optimization_campaign had NO production
+    caller — the ten cross-field rules ran only in tests. An author got raw
+    jsonschema messages with no repair path, and a wrong native_test
+    identifier was discovered only when a real campaign aborted at verify.
+    """
+    import yaml
+
+    from orchestrator.cli import _validate_campaign_file
+
+    campaign = _small_campaign(5, max_runs=60)
+    campaign["run_id"] = "cli-validate-ok"
+    path = tmp_path / "campaign.yaml"
+    path.write_text(yaml.safe_dump(campaign))
+
+    _validate_campaign_file(path)          # must not raise or exit
+    out = capsys.readouterr().out
+    assert "kind:     optimization" in out
+    assert "OK — no errors" in out
+    # the native_test caveat must be surfaced, since it is the failure mode
+    # that costs a whole campaign run to discover otherwise
+    assert "native_test" in out
+
+
+def test_validate_campaign_reports_schema_errors_with_the_field_path(
+    tmp_path, capsys,
+):
+    """`60 is not of type 'object'` without a path is not actionable."""
+    import pytest
+    import yaml
+
+    from orchestrator.cli import _validate_campaign_file
+
+    campaign = _small_campaign(3, max_runs=60)
+    campaign["max_turns"] = 60          # must be a per-phase object
+    path = tmp_path / "campaign.yaml"
+    path.write_text(yaml.safe_dump(campaign))
+
+    with pytest.raises(SystemExit) as exc:
+        _validate_campaign_file(path)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "[schema] max_turns" in err
+    assert "campaign-guide" in err        # points at the authoring guide
+
+
+def test_validate_campaign_reports_cross_field_rule_violations(tmp_path, capsys):
+    """A rule JSON Schema cannot express — here, held-out leakage."""
+    import pytest
+    import yaml
+
+    from orchestrator.cli import _validate_campaign_file
+
+    campaign = _small_campaign(3, max_runs=60)
+    # the primary metric declared held_out: optimising against the
+    # generalization check
+    campaign["optimization"]["response"]["held_out"] = ["m"]
+    path = tmp_path / "campaign.yaml"
+    path.write_text(yaml.safe_dump(campaign))
+
+    with pytest.raises(SystemExit) as exc:
+        _validate_campaign_file(path)
+    assert exc.value.code == 1
+    assert "[rules]" in capsys.readouterr().err
+
+
+def test_validate_campaign_rejects_a_missing_file(tmp_path, capsys):
+    import pytest
+
+    from orchestrator.cli import _validate_campaign_file
+
+    with pytest.raises(SystemExit) as exc:
+        _validate_campaign_file(tmp_path / "nope.yaml")
+    assert exc.value.code == 2
+    assert "does not exist" in capsys.readouterr().err
+
+
+def test_validate_campaign_works_for_the_reflective_kind_too(tmp_path, capsys):
+    """The cross-field validator is a no-op on reflective campaigns, but the
+    schema layer still applies — an author of either kind should be able to
+    check their file before spending anything.
+    """
+    import yaml
+
+    from orchestrator.cli import _validate_campaign_file
+
+    campaign = {
+        "run_id": "cli-validate-reflective",
+        "research_question": "does the mechanism explain the effect?",
+        "prompts": {"methodology_layer": "prompts/methodology",
+                    "domain_adapter_layer": None},
+        "target_system": {"name": "t", "description": "d"},
+    }
+    path = tmp_path / "campaign.yaml"
+    path.write_text(yaml.safe_dump(campaign))
+
+    _validate_campaign_file(path)
+    out = capsys.readouterr().out
+    assert "kind:     reflective" in out
+    assert "OK — no errors" in out

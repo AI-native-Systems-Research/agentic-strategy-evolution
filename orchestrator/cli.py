@@ -601,6 +601,23 @@ def _cmd_validate(args):
 
     from orchestrator.validate import validate_design, validate_execution
 
+    if args.phase == "campaign":
+        if args.file is None:
+            print(
+                "validate campaign: pass the campaign.yaml path, e.g.\n"
+                "  nous validate campaign ./campaign.yaml",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        _validate_campaign_file(args.file)
+        return
+    if args.dir is None:
+        print(
+            f"validate {args.phase}: --dir is required (the iteration "
+            f"directory to check).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if args.phase == "design":
         result = validate_design(args.dir)
     else:
@@ -609,6 +626,104 @@ def _cmd_validate(args):
     print(json.dumps(result, indent=2))
     if result["status"] != "pass":
         sys.exit(1)
+
+
+def _validate_campaign_file(path: Path) -> None:
+    """Check a campaign.yaml before spending anything on a run.
+
+    Runs BOTH layers an author can trip: the JSON Schema (shape, required
+    fields, enums) and the cross-field rules that JSON Schema cannot express
+    (``validate_optimization_campaign``). Before this existed the cross-field
+    rules had no production caller at all — they ran only in tests — so an
+    author authoring a ``kind: optimization`` campaign got raw jsonschema
+    messages with no repair path, and a wrong ``native_test`` identifier was
+    only discovered by a real campaign aborting at its verify stage.
+
+    Schema errors are translated from jsonschema's default phrasing into the
+    field path plus what was expected, because "60 is not of type 'object'"
+    without a path is not actionable.
+    """
+    import jsonschema
+    import yaml
+
+    from orchestrator.validate import campaign_kind, validate_optimization_campaign
+
+    target = Path(path)
+    if not target.exists():
+        print(f"validate: {target} does not exist", file=sys.stderr)
+        sys.exit(2)
+    try:
+        campaign = yaml.safe_load(target.read_text())
+    except yaml.YAMLError as exc:
+        print(f"validate: {target} is not valid YAML:\n  {exc}", file=sys.stderr)
+        sys.exit(2)
+    if not isinstance(campaign, dict):
+        print(
+            f"validate: {target} must be a YAML mapping, got "
+            f"{type(campaign).__name__}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    kind = campaign_kind(campaign)
+    print(f"campaign: {target}")
+    print(f"kind:     {kind}")
+
+    schemas_dir = Path(__file__).resolve().parent / "schemas"
+    schema = yaml.safe_load((schemas_dir / "campaign.schema.yaml").read_text())
+    validator = jsonschema.Draft202012Validator(schema)
+    schema_errors = sorted(validator.iter_errors(campaign), key=lambda e: e.path)
+
+    errors: list[str] = []
+    for err in schema_errors:
+        where = ".".join(str(p) for p in err.absolute_path) or "(top level)"
+        errors.append(f"[schema] {where}: {err.message}")
+
+    warnings: list[str] = []
+    if not schema_errors:
+        # Cross-field rules assume a shape-valid document; running them on a
+        # malformed one produces confusing secondary errors.
+        for item in validate_optimization_campaign(campaign):
+            if item.startswith("WARN:"):
+                warnings.append(item[len("WARN:"):].strip())
+            else:
+                errors.append(f"[rules] {item}")
+
+    if warnings:
+        print(f"\n{len(warnings)} warning(s) — not fatal, but worth reading:")
+        for w in warnings:
+            print(f"  ! {w}")
+
+    if errors:
+        print(f"\n{len(errors)} error(s):", file=sys.stderr)
+        for e in errors:
+            print(f"  x {e}", file=sys.stderr)
+        guide = (
+            "docs/optimization-campaign-guide.md"
+            if kind == "optimization"
+            else "docs/campaign-authoring-guide.md"
+        )
+        print(f"\nSee {guide} for the field-by-field walkthrough.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\nOK — no errors. {len(warnings)} warning(s).")
+    if kind == "optimization":
+        opt = campaign.get("optimization") or {}
+        n_factors = len(opt.get("factors") or [])
+        tests = [
+            r.get("native_test")
+            for f in (opt.get("factors") or [])
+            for r in (f.get("relations") or [])
+            if r.get("native_test")
+        ]
+        print(f"  {n_factors} factor(s), {len(tests)} declared native test(s).")
+        print(
+            "  NOTE: a native_test identifier that does not exist in the target "
+            "repo counts as a FAILED correctness relation (reconcile treats "
+            "'declared but not executed' as failure), which aborts the campaign "
+            "at its verify stage. Confirm each one runs under "
+            "optimization.test_command before starting a run."
+        )
 
 
 def _cmd_status(args):
@@ -1215,9 +1330,20 @@ def build_parser():
     )
     p_schema.set_defaults(func=_cmd_schema)
 
-    p_validate = subparsers.add_parser("validate")
-    p_validate.add_argument("phase", choices=["design", "execution"])
-    p_validate.add_argument("--dir", required=True, type=Path)
+    p_validate = subparsers.add_parser(
+        "validate",
+        help="Validate a campaign.yaml before running it (`campaign FILE`), "
+             "or an iteration's on-disk artifacts (`design|execution --dir`).",
+    )
+    p_validate.add_argument("phase", choices=["campaign", "design", "execution"])
+    p_validate.add_argument(
+        "file", nargs="?", type=Path,
+        help="campaign.yaml to check (phase=campaign only).",
+    )
+    p_validate.add_argument(
+        "--dir", type=Path,
+        help="Iteration directory (phase=design|execution only).",
+    )
     p_validate.set_defaults(func=_cmd_validate)
 
     p_stop = subparsers.add_parser(
