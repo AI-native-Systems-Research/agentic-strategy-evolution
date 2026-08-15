@@ -572,3 +572,148 @@ def test_a_null_primary_metric_on_a_complete_row_blocks_but_not_on_an_excluded_o
 
     values = _fitting_responses([_O(0, "infeasible", {"m": None})], spec, "m")
     assert math.isnan(values[0])
+
+
+# ─── confirm actually confirms (F1 from the final whole-branch review) ─────
+
+def test_confirm_replicates_one_configuration_rather_than_rerunning_the_screen(
+    tmp_path, work_dir,
+):
+    """F1: confirm used to silently rebuild the screen design.
+
+    So the campaign's final stage repeated stage 2 and reported COMPLETED
+    while the guide claimed it reproduced the predicted optimum. That is the
+    one defect on this branch that could mislead a researcher about their own
+    result, which is why it is fixed rather than documented.
+    """
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import _build_design
+
+    c = _campaign()
+    factors = parse_factors(c["optimization"]["factors"])
+    cfg = c["optimization"]["design"]
+
+    screen = _build_design(factors, cfg, "screen")
+    confirm = _build_design(factors, cfg, "confirm")
+
+    assert [p.coded for p in screen.points] != [p.coded for p in confirm.points]
+    assert confirm.kind == "confirm"
+    # one configuration, replicated
+    assert len({p.coded for p in confirm.points}) == 1
+    assert len(confirm.points) == cfg["confirm"]["replicates"]
+    assert sorted(p.replicate for p in confirm.points) == [0, 1, 2]
+
+
+def test_confirm_honours_the_refine_stages_solved_optimum(tmp_path, work_dir):
+    """The loop must close: refine solves a point, confirm replicates THAT."""
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import _build_design
+
+    c = _campaign()
+    factors = parse_factors(c["optimization"]["factors"])
+    cfg = dict(c["optimization"]["design"])
+    cfg["confirm_at"] = {"A": 0.5, "B": -0.25, "C": 0.0}
+
+    confirm = _build_design(factors, cfg, "confirm")
+    assert confirm.points[0].coded == (0.5, -0.25, 0.0)
+
+
+def test_confirm_writes_a_confirmation_record_and_no_effects(tmp_path, work_dir):
+    """Confirm reports reproduction; it does not fit a model.
+
+    A single replicated configuration has no distinct design points, so
+    fitting raises "design matrix is singular" — correctly. What confirm
+    claims is narrower and more useful: this exact configuration, replicated
+    N times, produced this mean and this spread.
+    """
+    from orchestrator.iteration import IterationOutcome
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    outcome = _run(c, wd, stage="confirm", iteration=4)
+    assert outcome is IterationOutcome.COMPLETED
+
+    iter_dir = Path(wd) / "runs" / "iter-4"
+    record = json.loads((iter_dir / "confirmation.json").read_text())
+    assert record["replicates"] == 3
+    assert record["usable_replicates"] == 3
+    assert record["mean"] is not None
+    assert "confirmed_at_levels" in record
+    # no fit at confirm
+    assert not (iter_dir / "effects.json").exists()
+
+
+def test_confirm_findings_validate_and_report_reproduction(tmp_path, work_dir):
+    import jsonschema
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="confirm", iteration=4)
+
+    findings = json.loads(
+        (Path(wd) / "runs" / "iter-4" / "findings.json").read_text(),
+    )
+    schema = json.loads(Path("orchestrator/schemas/findings.schema.json").read_text())
+    jsonschema.validate(findings, schema)
+    assert findings["experiment_valid"] is True
+    assert findings["arms"][0]["status"] == "CONFIRMED"
+    assert "replicate" in findings["arms"][0]["observed"]
+
+
+# ─── F4: the survivor-selection path, which nothing else exercises ────────
+
+def test_a_noisy_runner_exercises_significance_and_survivor_selection(
+    tmp_path, work_dir,
+):
+    """F4 from the final review: every other test here leaves this dead.
+
+    The deterministic fake runner returns identical values at all four centre
+    points, so pure-error variance is exactly 0.0, `have_se` is False, every
+    `significant` is None, and `dropped_factors` always returns []. That
+    means the whole screen-to-refine survivor-selection mechanism — the
+    reason the stage rule exists at all — was never driven end to end.
+
+    A tiny deterministic perturbation at the centre points is enough to give
+    a real pure-error estimate without making the test flaky.
+    """
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+
+    nudge = iter([0.0, 0.004, -0.003, 0.005, -0.002, 0.001] * 8)
+
+    def noisy(row):
+        lv = row.levels
+        a, b = float(lv.get("A", 0)), float(lv.get("B", 0))
+        # A and B carry real effects; C carries none.
+        base = 10.0 - 0.05 * a + 0.20 * b
+        if row.role == "center":
+            base += next(nudge)
+        return {"cfg": {k.lower(): v for k, v in lv.items()}, "m": base}
+
+    _run(c, wd, runner=noisy)
+
+    effects = json.loads(
+        (Path(wd) / "runs" / "iter-2" / "effects.json").read_text(),
+    )
+    by_label = {e["label"]: e for e in effects["effects"]}
+
+    # a real pure-error estimate now exists, so significance is decidable
+    assert effects["pure_error_var"] is not None
+    assert effects["pure_error_var"] > 0
+    assert by_label["B"]["significant"] is not None, (
+        "with pure error available, significance must be decided rather than "
+        "left unknown — that is the whole point of the centre points"
+    )
+
+    # and the decision actually discriminates: C has no planted effect
+    assert by_label["B"]["significant"] is True
+    assert by_label["C"]["significant"] is False
+
+    findings = json.loads(
+        (Path(wd) / "runs" / "iter-2" / "findings.json").read_text(),
+    )
+    arm_types = {a["arm_type"] for a in findings["arms"]}
+    assert "h-control-negative" in arm_types, (
+        "a factor found within noise must project as a negative-control arm, "
+        "which only happens once significance is decidable"
+    )

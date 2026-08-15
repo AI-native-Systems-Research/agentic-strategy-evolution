@@ -25,6 +25,10 @@ from dataclasses import dataclass
 _GENERATORS: dict[tuple[int, int], tuple[int, tuple[tuple[int, ...], ...]]] = {
     # resolution V — no 2fi aliased with a main effect or another 2fi
     (5, 5): (4, ((0, 1, 2, 3),)),                    # E = ABCD, 16 runs
+    # F = ABCDE gives a single defining word of length 6, so this design is
+    # actually resolution VI. It is tabulated under 5 because VI implies V:
+    # every claim a resolution-V campaign makes still holds, so this
+    # under-claims rather than over-claims.
     (6, 5): (5, ((0, 1, 2, 3, 4),)),                 # F = ABCDE, 32 runs
     (7, 5): (6, ((0, 1, 2, 3),)),                    # G = ABCD, 64 runs
     (8, 5): (6, ((0, 1, 2, 3), (0, 1, 4, 5))),       # G=ABCD, H=ABEF, 64 runs

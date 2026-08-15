@@ -29,7 +29,8 @@ central composite, whose columns are mutually correlated with each other
 and with the intercept. On a 2-factor central composite, measured against
 an explicit ``(X^T X)^-1`` inverse: main effects and ``AB`` match exactly
 (e.g. 0.353553 vs. 0.353553, 0.500000 vs. 0.500000); the intercept and
-``A^2``/``B^2`` are optimistic by a factor of about 1.46 (0.420813 exact
+``A^2``/``B^2`` are optimistic by a factor of about 1.46 **on a 2-factor
+CCD with 3 centre points** (0.420813 exact
 vs. 0.288675 from the per-column formula). This is accepted rather than
 fixed with a full matrix inverse: quadratic terms exist to describe
 surface curvature (consumed by ``solve_stationary_point`` as point
@@ -190,6 +191,9 @@ def fit_effects(design: Design, responses, *, factor_ids,
             # other and with the intercept), so their reported SEs are
             # optimistic (too narrow). Measured on a 2-factor central
             # composite against an explicit (X^T X)^-1 inverse: A^2/B^2
+            # composite with 3 CENTRE POINTS (the ratio moves with the
+            # centre count: 1.458 at 3 centres, 1.313 at 5 — so the figure
+            # is only reproducible if the configuration is stated), the
             # exact SE is 0.420813 vs. 0.288675 from this formula — about
             # 1.46x too narrow. Accepted rather than fixed with a full
             # matrix inverse: quadratic terms describe surface curvature

@@ -28,6 +28,8 @@ same vocabulary as ``manipulation`` and ``response.constraints``.
 """
 from __future__ import annotations
 
+import math
+
 import random
 from dataclasses import dataclass, field
 from typing import Any
@@ -202,11 +204,43 @@ def check_fidelity(payload: dict, runs: list[dict]) -> list[str]:
                 f"unplanned run: row_index {idx!r} is not in the pre-registered matrix",
             )
             continue
+        if idx in seen:
+            # A fourth violation class the original three missed. On the
+            # REDESIGN path (Engine.force_phase("DESIGN"), campaign.py:462)
+            # a re-run iteration re-appends every row, so runs.jsonl doubles
+            # with every row_index duplicated — and accumulating into `seen`
+            # absorbed that silently. The in-memory fit stays correct, but
+            # the durable pre-registration audit trail is exactly what this
+            # guard exists to protect, so a duplicate must not pass.
+            violations.append(
+                f"duplicate run: row_index {idx!r} appears more than once, "
+                f"so runs.jsonl no longer records one run per planned "
+                f"configuration (a resumed or re-run iteration re-appending "
+                f"its rows will do this)",
+            )
+            continue
         seen.add(idx)
         expected_levels = planned[idx]["levels"]
         observed_levels = run.get("levels", {})
         for factor_id, expected in expected_levels.items():
             observed = observed_levels.get(factor_id)
+            # Levels round-trip through JSON at the stage-runner's
+            # read_runs call, so a float can come back a representation
+            # step away from the planned value. Exact != would report
+            # spurious drift and abort a legitimate campaign — verified:
+            # 0.1 + 0.2 against a planned 0.3. Compare numerics with a
+            # tolerance; anything non-numeric still compares exactly,
+            # since a choice level must match its declared string.
+            if isinstance(expected, (int, float)) and isinstance(
+                observed, (int, float),
+            ) and not isinstance(expected, bool) and not isinstance(
+                observed, bool,
+            ):
+                if math.isclose(
+                    float(observed), float(expected),
+                    rel_tol=1e-9, abs_tol=1e-12,
+                ):
+                    continue
             if observed != expected:
                 violations.append(
                     f"level drift at row_index {idx}: factor {factor_id!r} "
