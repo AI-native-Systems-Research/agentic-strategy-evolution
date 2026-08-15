@@ -724,3 +724,69 @@ def test_spec_worked_example_validates_against_schema_and_cross_field_rules():
         errors = validate_optimization_campaign(example)
         hard_errors = [e for e in errors if not e.startswith("WARN:")]
         assert hard_errors == [], (example.get("run_id"), hard_errors)
+
+
+# ─── rule 8: an untabulated combination the full factorial can satisfy ────
+
+def _small_campaign(n_factors: int, max_runs: int, resolution: int = 5) -> dict:
+    ids = [chr(65 + i) for i in range(n_factors)]
+    return {
+        "kind": "optimization",
+        "research_question": "q",
+        "prompts": {"methodology_layer": "prompts/methodology",
+                    "domain_adapter_layer": None},
+        "target_system": {"name": "t", "description": "d"},
+        "optimization": {
+            "response": {"primary": {"metric": "m", "direction": "maximize"}},
+            "factors": [
+                {"id": i, "name": i, "type": "numeric", "levels": [1, 2, 4, 8],
+                 "apply": f"--{i}={{level}}",
+                 "manipulation": {"observable": f"cfg.{i}", "op": "==",
+                                  "value": "{level}"},
+                 "relations": [{"id": f"R{i}", "kind": "correctness",
+                                "statement": "s", "native_test": "t.py::t"}]}
+                for i in ids
+            ],
+            "design": {"screen": {"resolution": resolution, "center_points": 4},
+                       "confirm": {"replicates": 3}, "max_runs": max_runs},
+        },
+    }
+
+
+def _hard_errors(campaign: dict) -> list[str]:
+    from orchestrator.validate import validate_optimization_campaign
+
+    return [e for e in validate_optimization_campaign(campaign)
+            if not e.startswith("WARN:")]
+
+
+def test_rule8_untabulated_but_full_factorial_fits_the_budget_is_feasible():
+    """The validator must not reject what the runner executes correctly.
+
+    A full factorial aliases nothing, so it achieves ANY requested
+    resolution — verified: alias_pairs() is empty for k=2,3,4. And
+    stage_runner._build_design already falls back to the full factorial for
+    an untabulated (k, resolution). Erroring here forced the guide's small
+    examples to omit design.max_runs entirely, which is where a budget is
+    easiest to state correctly.
+    """
+    from orchestrator.optimize.design import is_tabulated
+
+    for n in (2, 3):
+        assert not is_tabulated(n, 5), f"{n} factors at res V should be untabulated"
+        assert _hard_errors(_small_campaign(n, max_runs=60)) == []
+
+
+def test_rule8_untabulated_and_full_factorial_exceeds_the_budget_still_errors():
+    """2**k is an upper bound on the minimum, so when it does not fit, the
+    honest answer is that Nous cannot certify a design within the budget —
+    not that none exists.
+    """
+    errors = _hard_errors(_small_campaign(3, max_runs=4))  # needs 8
+    assert errors and "not a tabulated" in errors[0]
+
+
+def test_rule8_tabulated_over_budget_still_names_the_exact_requirement():
+    errors = _hard_errors(_small_campaign(5, max_runs=10))  # res V needs 16
+    assert errors
+    assert "16 runs" in errors[0] and "max_runs=10" in errors[0]
