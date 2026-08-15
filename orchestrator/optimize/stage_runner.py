@@ -173,15 +173,22 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
     # effects.json. The spec's stance on partial failure is "degrade the
     # claim, not the data" — refit on the completed rows and report the
     # reduced resolution honestly — and emitting NaN is neither of those.
-    bad = [
+    # `infeasible` is NOT a measurement failure: the config ran, produced
+    # trustworthy numbers, and violated a declared constraint. That is real
+    # information about the design space (spec §6.4), and a constrained
+    # design will routinely have inadmissible corners — aborting on one
+    # would make constraints unusable. Those rows are excluded from the fit
+    # by carrying NaN, which is the same mechanism, so distinguish them from
+    # rows that genuinely failed to measure.
+    unmeasured = [
         o.row_index for o, v in zip(outcomes, values)
-        if v != v  # NaN is the only value unequal to itself
+        if v != v and o.status not in ("infeasible", "rejected")
     ]
-    if bad:
+    if unmeasured:
         raise OptimizationAborted(
-            f"{len(bad)} of {len(values)} runs did not complete (row_index "
-            f"{bad}), so the primary metric is missing for them. Fitting "
-            f"would NaN-poison every coefficient while still producing "
+            f"{len(unmeasured)} of {len(values)} runs produced no usable "
+            f"measurement (row_index {unmeasured}). Fitting would "
+            f"NaN-poison every coefficient while still producing "
             f"schema-valid artifacts. Re-run the failed configurations, or "
             f"refit on the completed subset and report the reduced "
             f"resolution.",
