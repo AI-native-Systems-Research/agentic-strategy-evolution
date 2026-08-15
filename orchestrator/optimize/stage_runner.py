@@ -284,7 +284,14 @@ def run_stage(
         )
 
     if not _is_build and test_results is None and opt.get("test_command") and repo:
-        raw = runner.run_test_command(opt["test_command"], cwd=Path(repo))
+        # Persist the raw test output next to the iteration's artifacts. A
+        # verify abort ends the campaign, so this text is the only record of
+        # WHY, and re-running by hand may not reproduce a timeout or an
+        # ordering-dependent failure.
+        raw = runner.run_test_command(
+            opt["test_command"], cwd=Path(repo),
+            log_path=Path(work_dir) / "runs" / f"iter-{iteration}" / "test_output.log",
+        )
         test_results = runner.match_declared_tests(parse_factors(opt["factors"]), raw)
         logger.info(
             "test_command reported %d test(s); %d matched a declared "
@@ -296,6 +303,7 @@ def run_stage(
             metric_path=((opt.get("response") or {}).get("primary") or {}).get(
                 "metric", "",
             ),
+            log_dir=Path(work_dir) / "runs" / f"iter-{iteration}" / "failed_runs",
         )
 
     resolved = stage if stage is not None else stage_for_iteration(campaign, iteration)
@@ -342,12 +350,7 @@ def run_stage(
                 iter_dir, relations.reconcile(factors, test_results or {}),
             )
         if correctness_failures:
-            ids = ", ".join(str(v.relation_id) for v in correctness_failures)
-            raise OptimizationAborted(
-                f"correctness relation(s) failed at verify: {ids}. The apparatus is "
-                f"broken, so any measurement would describe the wrong system. Fix "
-                f"the mechanism (or its native tests) before spending design budget.",
-            )
+            raise OptimizationAborted(_verify_abort_message(correctness_failures))
         _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
         _enter_phase(engine, "EXECUTE_ANALYZE", work_dir)
         _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
@@ -519,6 +522,62 @@ def run_stage(
         stage_name, iteration, len(outcomes), statuses.count("complete"),
     )
     return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
+
+
+def _verify_abort_message(failures) -> str:
+    """Explain a verify abort in terms of the fix it needs.
+
+    "Relation R_X failed" is not actionable, and after a ``build`` stage it is
+    expensive not to be: the agent call is already spent, so a wrong diagnosis
+    costs a whole second build to rediscover. Two failure modes need OPPOSITE
+    fixes and the old message conflated them:
+
+    - NOT EXECUTED: the test command never ran that identifier. Usually the
+      test was not written, or its name/path does not match the declared
+      locator, or the command's ``-run``/selection filter excludes it. Note
+      that ``go test -run`` with a pattern matching nothing exits 0, so the
+      shell reports success while the relation is unverified.
+    - FAILED: the identifier ran and the assertion did not hold. That is a
+      real defect in the mechanism -- or in the relation itself, which is
+      worth considering when a metamorphic direction was asserted without
+      checking the algebra.
+    """
+    missing, failed = [], []
+    for v in failures:
+        detail = str(getattr(v, "detail", "") or "")
+        entry = (
+            f"{getattr(v, 'relation_id', '?')} "
+            f"({getattr(v, 'native_test', '?')})"
+        )
+        (missing if "not executed" in detail else failed).append(entry)
+
+    parts = [
+        f"verify failed: {len(missing) + len(failed)} correctness relation(s) "
+        f"did not hold. The apparatus is broken, so any measurement would "
+        f"describe the wrong system. No design budget was spent.",
+    ]
+    if failed:
+        parts.append(
+            "\nRAN AND FAILED (" + str(len(failed)) + ") -- the assertion did "
+            "not hold:\n  " + "\n  ".join(failed)
+            + "\n  Fix: correct the mechanism. If you are confident the "
+            "mechanism is right, re-check the relation itself -- a metamorphic "
+            "direction asserted without doing the algebra fails correct code.",
+        )
+    if missing:
+        parts.append(
+            "\nNEVER EXECUTED (" + str(len(missing)) + ") -- the test command "
+            "did not run this identifier, which counts as a failure because "
+            "'not run' is not evidence of correctness:\n  "
+            + "\n  ".join(missing)
+            + "\n  Fix: confirm the test exists with EXACTLY that name, that "
+            "its file path matches the declared locator, and that the test "
+            "command actually selects it. Note `go test -run <pattern>` exits "
+            "0 when the pattern matches nothing, so a green shell here proves "
+            "nothing. Run the command by hand and check the identifier appears "
+            "in its output.",
+        )
+    return "".join(parts)
 
 
 def _build_max_turns(campaign: dict) -> int:

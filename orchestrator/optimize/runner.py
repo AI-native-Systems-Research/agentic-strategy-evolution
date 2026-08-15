@@ -456,6 +456,7 @@ def parse_test_results(payload: Any) -> dict[str, bool]:
 
 def run_test_command(
     command: str, *, cwd: Path, timeout: int = 900,
+    log_path: Path | None = None,
 ) -> dict[str, bool]:
     """Execute a campaign's ``test_command`` and map native tests to verdicts.
 
@@ -470,17 +471,58 @@ def run_test_command(
     both ``go test -v`` and pytest's default output emit. On any failure to
     run at all, returns ``{}`` — which ``reconcile`` treats as "declared but
     not executed", i.e. fails closed rather than silently passing.
+
+    ``log_path`` preserves the command's full stdout/stderr verbatim. The
+    boolean verdicts are what the gate needs, but they are useless for *fixing*
+    anything: a failed assertion's expected-vs-actual, a Go panic and its
+    stack, a compile error naming a file and line, a timeout's partial output
+    all live in the text and were previously discarded the moment the verdicts
+    were parsed. Since a verify abort ends the campaign, that output is the
+    only record of why — and re-running it by hand may not reproduce a
+    timeout or an ordering-dependent failure.
     """
     import re
     import shlex
     import subprocess
+
+    def _persist(stdout: str, stderr: str, note: str = "") -> None:
+        if log_path is None:
+            return
+        try:
+            Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+            body = (
+                f"$ {command}\n"
+                f"# cwd: {cwd}\n"
+                + (f"# {note}\n" if note else "")
+                + "\n--- stdout ---\n" + (stdout or "")
+                + "\n--- stderr ---\n" + (stderr or "")
+            )
+            Path(log_path).write_text(body)
+        except OSError as exc:  # never let logging break the gate
+            logger.warning("could not write test log to %s: %s", log_path, exc)
 
     try:
         proc = subprocess.run(
             shlex.split(command), cwd=str(cwd), capture_output=True,
             text=True, timeout=timeout,
         )
-    except (subprocess.TimeoutExpired, OSError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        # A timeout still carries the partial output, and that is often the
+        # most informative artifact of all (which test hung).
+        _persist(
+            exc.stdout if isinstance(exc.stdout, str) else "",
+            exc.stderr if isinstance(exc.stderr, str) else "",
+            note=f"TIMED OUT after {timeout}s",
+        )
+        logger.warning(
+            "test_command timed out after %ss: every declared relation will "
+            "reconcile as 'declared but not executed', which fails closed.%s",
+            timeout,
+            f" Partial output saved to {log_path}." if log_path else "",
+        )
+        return {}
+    except OSError as exc:
+        _persist("", str(exc), note="FAILED TO EXECUTE")
         logger.warning(
             "test_command failed to run (%s): every declared relation will "
             "reconcile as 'declared but not executed', which fails closed.",
@@ -488,6 +530,7 @@ def run_test_command(
         )
         return {}
 
+    _persist(proc.stdout or "", proc.stderr or "", note=f"exit={proc.returncode}")
     text = (proc.stdout or "") + "\n" + (proc.stderr or "")
 
     # go test -json / pytest --json-report: try the structured shapes first.
@@ -568,9 +611,57 @@ def match_declared_tests(
     return matched
 
 
+def _dump_failed_run(
+    log_dir: Path | None, row, cmd: list[str], cwd: Path,
+    *, proc=None, exc: BaseException | None = None,
+) -> Path | None:
+    """Write a failed configuration's full output to ``log_dir``.
+
+    A failed run is the single most diagnostic-hungry event in a campaign: it
+    is what aborts a fit, and the reason is almost always in the text (a usage
+    error naming the rejected flag, a panic and its stack, a partial run before
+    a timeout). Truncating stderr to a couple of hundred characters loses
+    exactly the part that names the cause, and nothing else preserves it.
+
+    Returns the path written, or None when logging is unavailable — this is a
+    diagnostics aid and must never be the reason a campaign fails.
+    """
+    if log_dir is None:
+        return None
+    try:
+        d = Path(log_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        idx = getattr(row, "row_index", None)
+        name = f"failed_run_{idx if idx is not None else 'unknown'}.log"
+        path = d / name
+        levels = getattr(row, "levels", None)
+        body = [
+            f"$ {' '.join(cmd)}",
+            f"# cwd: {cwd}",
+            f"# row_index: {idx}",
+            f"# levels: {dict(levels) if levels else '(unknown)'}",
+        ]
+        if exc is not None:
+            body.append(f"# exception: {type(exc).__name__}: {exc}")
+            for stream in ("stdout", "stderr"):
+                val = getattr(exc, stream, None)
+                if isinstance(val, str) and val:
+                    body.append(f"\n--- {stream} (partial) ---\n{val}")
+        if proc is not None:
+            body.append(f"# exit: {proc.returncode}")
+            body.append("\n--- stdout ---\n" + (proc.stdout or ""))
+            body.append("\n--- stderr ---\n" + (proc.stderr or ""))
+        path.write_text("\n".join(body))
+        logger.warning("config run failed; full output saved to %s", path)
+        return path
+    except OSError as e:
+        logger.warning("could not write failed-run log: %s", e)
+        return None
+
+
 def make_config_runner(
     command_template: str, *, cwd: Path, metric_path: str,
-    timeout: int = 600,
+    timeout: int = 600, log_dir: Path | None = None,
 ) -> Callable:
     """Build the per-config benchmark callable ``run_stage`` requires.
 
@@ -578,6 +669,10 @@ def make_config_runner(
     ``apply`` arguments are appended. ``metric_path`` is a dotted path into
     the emitted JSON naming the response metric, so this stays agnostic to
     what the target measures.
+
+    ``log_dir`` preserves the full stdout/stderr of any configuration that
+    fails, keyed by row index. Without it, the only surviving trace of a
+    failed run is a truncated stderr tail in an exception message.
     """
     import shlex
     import subprocess
@@ -594,15 +689,26 @@ def make_config_runner(
                 env={**os.environ, **{k: str(v) for k, v in env_extra.items()}},
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
+            _dump_failed_run(log_dir, row, cmd, cwd, exc=exc)
             raise RuntimeError(f"config run failed: {exc}") from exc
         if proc.returncode != 0:
+            path = _dump_failed_run(log_dir, row, cmd, cwd, proc=proc)
             raise RuntimeError(
                 f"config run exited {proc.returncode}: "
-                f"{(proc.stderr or '')[-200:]}",
+                f"{(proc.stderr or '')[-400:]}"
+                + (f" [full output: {path}]" if path else ""),
             )
         obs = _last_json_object(proc.stdout)
         if obs is None:
-            raise RuntimeError("config run emitted no parseable JSON object")
+            # The command "succeeded" but produced nothing parseable. Without
+            # the raw stdout there is no way to tell a silent usage error from
+            # a changed output format, and this is the failure that NaN-poisons
+            # a fit, so keep the text.
+            path = _dump_failed_run(log_dir, row, cmd, cwd, proc=proc)
+            raise RuntimeError(
+                "config run emitted no parseable JSON object"
+                + (f" [full output: {path}]" if path else ""),
+            )
         return obs
 
     return run

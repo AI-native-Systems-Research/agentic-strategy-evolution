@@ -363,3 +363,129 @@ def test_build_writes_a_warning_file_when_the_tree_is_untouched(tmp_path: Path):
     )
     warning = (work / "runs" / "iter-1" / "build_warning.txt").read_text()
     assert "no local modifications" in warning
+
+
+def test_verify_abort_separates_missing_tests_from_failing_ones():
+    """The two failure modes need OPPOSITE fixes, so the message must split them.
+
+    After a build stage the agent call is already spent, so a message that
+    conflates "the test never ran" with "the assertion failed" costs a whole
+    second build to rediscover which one it was.
+    """
+    from orchestrator.optimize.relations import RelationVerdict
+    from orchestrator.optimize.stage_runner import _verify_abort_message
+
+    msg = _verify_abort_message([
+        RelationVerdict(
+            relation_id="R_MISSING", factor_id="A", kind="correctness",
+            native_test="t.go::TestGone", passed=False,
+            detail="declared native_test 't.go::TestGone' but it was not executed",
+        ),
+        RelationVerdict(
+            relation_id="R_BROKEN", factor_id="B", kind="correctness",
+            native_test="t.go::TestReal", passed=False,
+            detail="native_test 't.go::TestReal' failed",
+        ),
+    ])
+    assert "NEVER EXECUTED" in msg and "RAN AND FAILED" in msg
+    # each id must appear under the right heading
+    never = msg.index("NEVER EXECUTED")
+    ran = msg.index("RAN AND FAILED")
+    assert msg.index("R_MISSING") > never
+    assert ran < msg.index("R_BROKEN") < never
+    # the go-test-exits-0 trap is the reason "not executed" is silent
+    assert "matches nothing" in msg
+
+
+def test_verify_abort_message_omits_empty_sections():
+    from orchestrator.optimize.relations import RelationVerdict
+    from orchestrator.optimize.stage_runner import _verify_abort_message
+
+    msg = _verify_abort_message([
+        RelationVerdict(
+            relation_id="R1", factor_id="A", kind="correctness",
+            native_test="t.go::T1", passed=False, detail="native_test failed",
+        ),
+    ])
+    assert "RAN AND FAILED" in msg
+    assert "NEVER EXECUTED" not in msg
+
+
+def test_test_command_output_is_preserved_verbatim(tmp_path: Path):
+    """The gate needs booleans; a human fixing it needs the text.
+
+    A verify abort ends the campaign, so this output is the only record of why
+    — and re-running by hand may not reproduce a timeout or an
+    ordering-dependent failure.
+    """
+    from orchestrator.optimize.runner import run_test_command
+
+    log = tmp_path / "runs" / "iter-1" / "test_output.log"
+    run_test_command(
+        "sh -c 'echo --- FAIL: TestX; echo want=3 got=7; echo boom >&2; exit 1'",
+        cwd=tmp_path, log_path=log,
+    )
+    text = log.read_text()
+    assert "want=3 got=7" in text, "the assertion detail must survive"
+    assert "boom" in text, "stderr must survive"
+    assert "exit=1" in text
+
+
+def test_failed_config_run_keeps_full_output_not_a_200_char_tail(tmp_path: Path):
+    """A failed benchmark run is the most diagnostic-hungry event in a campaign."""
+    import re
+
+    import pytest as _pytest
+
+    from orchestrator.optimize.runner import make_config_runner
+
+    class _Row:
+        row_index = 4
+        levels = {"A": 1}
+        apply = {"cli_args": [], "env": {}}
+
+    logs = tmp_path / "failed_runs"
+    # 600 chars of stderr: more than the old 200-char tail, and the cause is
+    # at the START, which a tail would have dropped.
+    run = make_config_runner(
+        "sh -c 'echo CAUSE: unknown flag --nope >&2; "
+        "python3 -c \"print(\\\"x\\\"*600)\" >&2; exit 2'",
+        cwd=tmp_path, metric_path="m", log_dir=logs,
+    )
+    with _pytest.raises(RuntimeError, match="exited 2"):
+        run(_Row())
+
+    saved = (logs / "failed_run_4.log").read_text()
+    assert "CAUSE: unknown flag --nope" in saved, (
+        "the cause is at the head of stderr and a tail would have lost it"
+    )
+    assert "row_index: 4" in saved
+    assert "levels" in saved
+
+
+def test_unparseable_output_is_kept_because_it_nan_poisons_a_fit(tmp_path: Path):
+    import pytest as _pytest
+
+    from orchestrator.optimize.runner import make_config_runner
+
+    class _Row:
+        row_index = 0
+        levels = {"A": 1}
+        apply = {"cli_args": [], "env": {}}
+
+    logs = tmp_path / "failed_runs"
+    run = make_config_runner(
+        "sh -c 'echo not json at all'", cwd=tmp_path, metric_path="m", log_dir=logs,
+    )
+    with _pytest.raises(RuntimeError, match="no parseable JSON"):
+        run(_Row())
+    assert "not json at all" in (logs / "failed_run_0.log").read_text()
+
+
+def test_logging_is_optional_and_never_breaks_the_run(tmp_path: Path):
+    """log_path/log_dir default to None: existing callers are unaffected."""
+    from orchestrator.optimize.runner import run_test_command
+
+    assert run_test_command("sh -c 'echo --- PASS: TestA'", cwd=tmp_path) == {
+        "TestA": True,
+    }
