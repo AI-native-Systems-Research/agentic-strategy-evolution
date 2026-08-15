@@ -1014,3 +1014,57 @@ def test_confirm_respects_minimize_direction(tmp_path, work_dir):
         (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
     )
     assert record["confirmed_is_best_observed"] is True
+
+
+def test_confirm_refuses_a_stationary_point_outside_the_design_hull(
+    tmp_path, work_dir, caplog,
+):
+    """decide_after_refine already flags this; confirm must now act on it.
+
+    Trigger is documented as reported-not-acted-on, so confirm read the same
+    out-of-hull solve off disk and replicated it anyway — the system diagnosed
+    the problem, wrote it into findings, then did the thing it had just warned
+    against. Observed on a real campaign: the surface was monotone in both
+    refined factors (no interior optimum exists), the quadratic solve landed at
+    coded BANDCAP=+1.62 / THRESH=-2.30, and confirm reproduced 112.4997 while
+    the campaign had already MEASURED 182.2159 at a corner.
+    """
+    import logging
+
+    from orchestrator.optimize.stage_runner import _read_confirm_at
+
+    wd = tmp_path / "wd"
+    (wd / "runs" / "iter-4").mkdir(parents=True)
+    (wd / "runs" / "iter-4" / "confirm_at.json").write_text(
+        json.dumps({"BANDCAP": 1.6189798710528895, "THRESH": -2.296736457110853}),
+    )
+    with caplog.at_level(logging.WARNING):
+        assert _read_confirm_at(wd) is None, (
+            "an out-of-hull solve must not be confirmed; falling back to the "
+            "best observed configuration is the weaker but true claim"
+        )
+    assert "outside the design hull" in caplog.text
+    assert "BANDCAP" in caplog.text and "THRESH" in caplog.text
+
+
+def test_confirm_still_uses_a_stationary_point_inside_the_hull(tmp_path, work_dir):
+    """A legitimate interior optimum is unaffected."""
+    from orchestrator.optimize.stage_runner import _read_confirm_at
+
+    wd = tmp_path / "wd"
+    (wd / "runs" / "iter-4").mkdir(parents=True)
+    payload = {"A": 0.35, "B": -0.8}
+    (wd / "runs" / "iter-4" / "confirm_at.json").write_text(json.dumps(payload))
+    assert _read_confirm_at(wd) == payload
+
+
+def test_hull_check_accepts_the_boundary(tmp_path, work_dir):
+    """+/-1.0 is ON the hull, not outside it — a factorial corner is valid."""
+    from orchestrator.optimize.stage_runner import _read_confirm_at
+
+    wd = tmp_path / "wd"
+    (wd / "runs" / "iter-3").mkdir(parents=True)
+    (wd / "runs" / "iter-3" / "confirm_at.json").write_text(
+        json.dumps({"A": 1.0, "B": -1.0}),
+    )
+    assert _read_confirm_at(wd) == {"A": 1.0, "B": -1.0}
