@@ -198,3 +198,30 @@ def test_decode_coded_clamps_without_breaking_the_grid():
         value = decode_coded(f, coded)
         assert 1000 <= value <= 4096
         assert math.isclose(value % 2, 0.0, abs_tol=1e-9) or value in (1000, 4096)
+
+
+def test_snap_to_grid_returns_int_for_an_integral_grid():
+    """The value is rendered straight into the target's command line.
+
+    Verified on a live campaign: a factor declared [64, 256] with grid: 1
+    produced 160.0, and BLIS rejected `--max-num-running-reqs=160.0` as a
+    usage error — failing 16 of 80 refine runs even though the value was in
+    range and on the grid. `grid: 1` means integral steps, so an integral
+    result must render as an integer.
+    """
+    assert snap_to_grid(160.4, 1) == 160
+    assert isinstance(snap_to_grid(160.4, 1), int)
+    assert isinstance(snap_to_grid(7.2, 2), int)
+    # a fractional grid keeps returning a float — that is what was asked for
+    assert isinstance(snap_to_grid(0.0273, 0.005), float)
+    assert snap_to_grid(4.5, None) == 4.5
+
+
+def test_decoded_levels_render_as_integers_for_an_integral_grid():
+    f = parse_factors([_numeric_raw(levels=[64, 256], grid=1)])[0]
+    for coded in (-1.68, -1.0, 0.0, 1.0, 1.68):
+        value = decode_coded(f, coded)
+        assert isinstance(value, int), (
+            f"coded={coded} produced {value!r}; a float renders as "
+            f"'--flag=160.0', which many targets reject"
+        )

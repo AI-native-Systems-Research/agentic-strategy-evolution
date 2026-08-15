@@ -322,6 +322,7 @@ def run_stage(
     payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
     rows = matrix.expand(design, factors)
     if _enter_phase(engine, "DESIGN", work_dir):
+        _preflight_design(rows, factors, opt, iter_dir)
         artifacts.write_design_matrix(iter_dir, payload)
 
     _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
@@ -483,6 +484,87 @@ def _design_factor_ids(factors, design_cfg: dict, stage_name: str) -> tuple[str,
         refinable = tuple(f.id for f in factors if is_refinable(f))
         return refinable or ids
     return ids
+
+
+
+def _preflight_design(rows, factors, opt: dict, iter_dir: Path) -> None:
+    """Check the design matrix BEFORE the sweep spends anything.
+
+    The reflective kind validates its bundle at DESIGN (``validate_design``,
+    plus a whole CRITIC phase between DESIGN and the gate) precisely so a
+    malformed experiment fails before execution. This path had no equivalent:
+    DESIGN wrote a matrix and EXECUTE_ANALYZE immediately ran it, so every
+    authoring or generation defect cost a FULL campaign to discover.
+
+    Three live-campaign failures motivated each check below, all found this
+    way rather than by any test:
+
+      * 115 configurations executed, every one failing its manipulation
+        predicate, because the predicate named an observable the target never
+        emits. Detectable up front: the ``applied.*`` namespace is known
+        before any run.
+      * 16 of 80 refine runs rejected because axial extrapolation produced a
+        NEGATIVE request cap from a factor declared ``[64, 256]``. Detectable
+        up front: every planned level is in the matrix.
+      * the objective named a metric the target does not emit, so every run
+        parsed but scored NaN. Not fully checkable without a run, but a
+        single probe run answers it -- which is what ``verify`` is for.
+
+    Raises ``OptimizationAborted`` with the offending rows named. Failing
+    here costs one design phase; failing after the sweep costs the campaign.
+    """
+    problems: list[str] = []
+
+    by_id = {f.id: f for f in factors}
+    for row in rows:
+        for fid, level in (row.levels or {}).items():
+            f = by_id.get(fid)
+            if f is None or f.type != "numeric":
+                continue
+            lo, hi = min(f.levels), max(f.levels)
+            try:
+                numeric = float(level)
+            except (TypeError, ValueError):
+                problems.append(
+                    f"row {row.row_index}: factor {fid} level {level!r} is not "
+                    f"numeric, but the factor is declared type: numeric",
+                )
+                continue
+            if not (float(lo) <= numeric <= float(hi)):
+                problems.append(
+                    f"row {row.row_index}: factor {fid} level {numeric} is "
+                    f"outside its declared range [{lo}, {hi}] — the target is "
+                    f"unlikely to accept a configuration the campaign never "
+                    f"declared legal",
+                )
+
+    # A manipulation predicate can only ever pass if it names something that
+    # will exist at check time. `applied.*` always will; anything else is a
+    # bet on the target echoing that field back, which most targets do not.
+    for f in factors:
+        obs = (f.manipulation or {}).get("observable") or (
+            f.manipulation or {}
+        ).get("metric") or ""
+        root = str(obs).split(".", 1)[0]
+        if root not in ("applied", "applied_args", "applied_env"):
+            logger.info(
+                "factor %s asserts manipulation against %r, which requires the "
+                "TARGET to emit that field. If it does not, every run of this "
+                "factor fails its check — see the applied.* namespace.",
+                f.id, obs,
+            )
+
+    if problems:
+        raise OptimizationAborted(
+            "design pre-flight found "
+            f"{len(problems)} problem(s) before spending any runs:\n  "
+            + "\n  ".join(problems[:12])
+            + ("\n  ..." if len(problems) > 12 else ""),
+        )
+    logger.info(
+        "design pre-flight: %d planned configuration(s), all levels within "
+        "their declared ranges", len(rows),
+    )
 
 
 def _build_design(factors, design_cfg: dict, stage_name: str,

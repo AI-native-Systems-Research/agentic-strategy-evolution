@@ -759,3 +759,62 @@ def test_stage_for_iteration_rejects_a_non_positive_iteration():
             stage_for_iteration({}, bad)
     assert stage_for_iteration({}, 1).value == "verify"
     assert stage_for_iteration({}, 4).value == "confirm"
+
+
+# ─── design pre-flight: fail before the sweep, not after ──────────────────
+
+def test_design_preflight_rejects_a_level_outside_its_declared_range():
+    """The reflective kind validates its bundle at DESIGN; this path did not.
+
+    Verified on a live campaign: axial extrapolation produced MAXRUN = -112
+    from a factor declared [64, 256], the target rejected 16 of 80 refine
+    runs, and the NaN guard then discarded the whole stage — after doing all
+    the work. Failing at DESIGN costs one phase; failing after the sweep
+    costs the campaign.
+    """
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.matrix import ConfigRow
+    from orchestrator.optimize.stage_runner import _preflight_design
+
+    factors = parse_factors([{
+        "id": "MAXRUN", "name": "cap", "type": "numeric",
+        "levels": [64, 256], "grid": 1,
+        "apply": "--max-num-running-reqs={level}",
+        "manipulation": {"observable": "applied.MAXRUN", "op": "==",
+                         "value": "{level}"},
+        "relations": [{"id": "R", "kind": "correctness", "statement": "s",
+                       "native_test": "t.go::TestX"}],
+    }])
+    bad = [
+        ConfigRow(row_index=0, levels={"MAXRUN": 160}, role="corner",
+                  replicate=0, apply={"cli_args": [], "env": {}, "patches": []}),
+        ConfigRow(row_index=1, levels={"MAXRUN": -112}, role="axial",
+                  replicate=0, apply={"cli_args": [], "env": {}, "patches": []}),
+    ]
+    with pytest.raises(OptimizationAborted) as exc:
+        _preflight_design(bad, factors, {}, Path("/tmp"))
+    msg = str(exc.value)
+    assert "outside its declared range" in msg
+    assert "-112" in msg
+    assert "row 1" in msg
+    # the in-range row must NOT be reported
+    assert "row 0" not in msg
+
+
+def test_design_preflight_passes_a_clean_matrix():
+    from orchestrator.optimize.design import full_factorial
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.matrix import expand
+    from orchestrator.optimize.stage_runner import _preflight_design
+
+    factors = parse_factors([{
+        "id": "MAXRUN", "name": "cap", "type": "numeric",
+        "levels": [64, 256], "grid": 1,
+        "apply": "--max-num-running-reqs={level}",
+        "manipulation": {"observable": "applied.MAXRUN", "op": "==",
+                         "value": "{level}"},
+        "relations": [{"id": "R", "kind": "correctness", "statement": "s",
+                       "native_test": "t.go::TestX"}],
+    }])
+    rows = expand(full_factorial(("MAXRUN",)), factors)
+    _preflight_design(rows, factors, {}, Path("/tmp"))   # must not raise

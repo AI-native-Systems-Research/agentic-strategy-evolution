@@ -179,13 +179,29 @@ def code_level(f: Factor, level: Any) -> int:
     )
 
 
-def snap_to_grid(value: float, grid: float | None) -> float:
-    """Round ``value`` to the nearest multiple of ``grid``."""
+def snap_to_grid(value: float, grid: float | None) -> float | int:
+    """Round ``value`` to the nearest multiple of ``grid``.
+
+    Returns an ``int`` when the grid is integral and the snapped value lands
+    on a whole number, because the value is rendered straight into the
+    target's command line and many targets accept only integers there.
+    Verified on a live campaign: a factor declared ``[64, 256]`` with
+    ``grid: 1`` produced ``160.0``, and BLIS rejected
+    ``--max-num-running-reqs=160.0`` as a usage error — failing 16 of 80
+    refine runs even though the value was in range and on the grid.
+
+    ``grid: 1`` means "integral steps", so an integral result should render
+    as an integer. A fractional grid (``0.005``) keeps returning a float,
+    which is what that author asked for.
+    """
     if grid is None:
         return float(value)
     if grid <= 0:
         raise ValueError(f"grid must be > 0 (got {grid!r})")
-    return round(float(value) / grid) * grid
+    snapped = round(float(value) / grid) * grid
+    if float(grid).is_integer() and float(snapped).is_integer():
+        return int(snapped)
+    return snapped
 
 
 def decode_coded(f: Factor, coded: float) -> Any:
