@@ -495,3 +495,72 @@ def test_parse_test_results_junit_xml_passthrough():
         '<testsuite><testcase classname="pkg.mod" name="test_a"/></testsuite>'
     )
     assert parse_test_results(xml) == {"pkg.mod.test_a": True}
+
+
+# ─── applied.* : a target that echoes nothing back must still be checkable ──
+
+def test_manipulation_can_assert_against_the_rendered_configuration():
+    """The guide's examples all use config.* / telemetry.*, which assumes the
+    target echoes its configuration back. Most do not.
+
+    Verified on a live campaign against BLIS: 115 configurations executed and
+    every one failed its manipulation check with "the target did not emit
+    it", because BLIS emits metrics only and has no config block. Since
+    `manipulation` is REQUIRED and must be non-trivial, that made the whole
+    campaign kind unusable against such a target.
+    """
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.matrix import expand
+    from orchestrator.optimize.design import full_factorial
+    from orchestrator.optimize.runner import execute_design
+
+    factors = parse_factors([{
+        "id": "ROUTE", "name": "routing", "type": "choice",
+        "levels": ["round-robin", "weighted"],
+        "apply": "--routing-policy={level}",
+        # asserts against the RENDERED config, not target telemetry
+        "manipulation": {"observable": "applied.ROUTE", "op": "==",
+                         "value": "{level}"},
+        "relations": [{"id": "R", "kind": "correctness", "statement": "s",
+                       "native_test": "t.go::TestX"}],
+    }])
+    rows = expand(full_factorial(("ROUTE",)), factors)
+
+    # a target that reports ONLY metrics — no config echo whatsoever
+    def metrics_only(row):
+        return {"goodput_rps": 42.0}
+
+    outcomes = execute_design(
+        rows, runner=metrics_only,
+        response_spec={"primary": {"metric": "goodput_rps",
+                                   "direction": "maximize"}},
+        invariants=[], factors=factors,
+    )
+    assert [o.status for o in outcomes] == ["complete", "complete"], (
+        "a metrics-only target must be able to satisfy a manipulation check "
+        "via applied.*"
+    )
+
+
+def test_target_telemetry_wins_over_applied_on_a_key_collision():
+    """If the target DOES report a field, its value is the one that matters.
+
+    `applied.*` says what was requested; telemetry says what was received.
+    On collision the received value must win, or a lever that was silently
+    ignored by the target would still look verified.
+    """
+    from orchestrator.optimize.matrix import ConfigRow
+    from orchestrator.optimize.predicates import evaluate
+    from orchestrator.optimize.runner import _applied_namespace
+
+    row = ConfigRow(row_index=0, levels={"A": 256}, role="corner", replicate=0,
+                    apply={"cli_args": ["--a=256"], "env": {}, "patches": []})
+    # target reports it received 64, not the 256 that was requested
+    observed = {"applied": {"A": 64}}
+    scope = {**_applied_namespace(row), **observed}
+    verdict = evaluate({"observable": "applied.A", "op": "==",
+                        "value": "{level}"}, scope, level=256)
+    assert verdict.ok is False, (
+        "the target's reported value must override the requested one, so a "
+        "silently-ignored flag fails its check"
+    )
