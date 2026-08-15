@@ -63,6 +63,62 @@ much budget it has. The fix is architectural (fit a design, don't decide
 increment-by-increment), not a matter of trying harder within the OFAT
 frame.
 
+### Does your surface actually have the barrier?
+
+The barrier is a property of the search, but whether it *bites* is a
+property of your system — so it is worth five minutes to find out which
+case you are in, because the answer changes what the optimization kind buys
+you.
+
+The cheap test: pick a modest factor set, evaluate the full space if you
+can afford it, then run greedy steepest-ascent from **every** starting
+point and count how many reach the global optimum.
+
+```python
+# Over a dict of {frozen config -> response}, ascend one factor at a time.
+def traps_greedy(space, ids, levels):
+    best = max(space.values())
+    for start in space:                     # every corner, not just one
+        cur = dict(start)
+        while True:
+            nxt = None
+            for f in ids:
+                alt = dict(cur)
+                alt[f] = levels[f][1] if cur[f] == levels[f][0] else levels[f][0]
+                key = tuple(sorted(alt.items()))
+                if space[key] > space[tuple(sorted(cur.items()))] + 1e-9:
+                    if nxt is None or space[key] > space[tuple(sorted(nxt.items()))]:
+                        nxt = alt
+            if nxt is None:
+                break
+            cur = nxt
+        if space[tuple(sorted(cur.items()))] < best - 1e-9:
+            return True                     # a trap exists: factorial pays off twice
+    return False                            # unimodal: factorial pays off on tokens only
+```
+
+Two outcomes, both actionable:
+
+* **Traps exist.** Sequential search can land on a local optimum and stay
+  there. This is the case the kind was designed for, and the factorial
+  design buys you both a better answer *and* a smaller token bill.
+* **Unimodal — no starting point traps greedy.** Sequential search will
+  find the same optimum you will. The factorial design still wins on
+  tokens (`screen` and `refine` are structurally tokenless, so the saving
+  is architectural rather than incidental), and it still gives you the
+  fitted effect table, the interaction estimates, and the pre-registered
+  audit trail that a hill-climb never produces. But do not claim a
+  better-optimum result you did not get.
+
+A worked instance, measured on `inference-sim`'s `blis`: six two-level
+policy and capacity factors over a saturated three-SLO-class workload,
+goodput spanning 23.45 to 117.85 (a 5x range). The surface has three real
+interactions and one factor showing the textbook sign flip — `MAXRUN` at
+-43.82 alone and +81.03 in the best context — and greedy *still* reached
+the optimum from all 64 starting points. Real interactions and a
+sign-flipping factor are **not sufficient** for a trap; that is exactly why
+this is worth checking rather than assuming.
+
 ### Screen → refine → confirm
 
 Each optimization campaign runs four stages, each a normal Nous iteration
