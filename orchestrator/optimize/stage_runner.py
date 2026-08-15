@@ -618,7 +618,20 @@ def _read_confirm_at(work_dir) -> dict | None:
 
     if work_dir is None:
         return None
-    candidates = sorted(Path(work_dir).glob("runs/iter-*/confirm_at.json"))
+    # Sort NUMERICALLY on the iteration index, not lexicographically on the
+    # path. "iter-10" sorts BEFORE "iter-2" as a string, so a lexicographic
+    # sort silently returns a stale optimum on any campaign reaching double
+    # digits — verified: with confirm_at.json at both iter-2 and iter-10 it
+    # picked iter-2's value. A silent wrong answer, no error.
+    def _iter_index(path: Path) -> int:
+        try:
+            return int(path.parent.name.split("-", 1)[1])
+        except (IndexError, ValueError):
+            return -1
+
+    candidates = sorted(
+        Path(work_dir).glob("runs/iter-*/confirm_at.json"), key=_iter_index,
+    )
     if not candidates:
         return None
     try:

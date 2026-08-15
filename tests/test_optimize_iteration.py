@@ -717,3 +717,45 @@ def test_a_noisy_runner_exercises_significance_and_survivor_selection(
         "a factor found within noise must project as a negative-control arm, "
         "which only happens once significance is decidable"
     )
+
+
+def test_confirm_at_is_read_from_the_latest_iteration_numerically(tmp_path):
+    """Lexicographic path sorting picks iter-2 over iter-10.
+
+    "iter-10" sorts before "iter-2" as a string, so a lexicographic sort
+    silently replicates a STALE optimum on any campaign reaching double-digit
+    iterations — a wrong answer with no error. Found by review of the confirm
+    fix itself, on a path nothing drove.
+    """
+    from orchestrator.optimize.stage_runner import _read_confirm_at
+
+    for iteration, value in ((2, {"A": 0.1}), (9, {"A": 0.5}), (10, {"A": 0.9})):
+        d = tmp_path / "runs" / f"iter-{iteration}"
+        d.mkdir(parents=True)
+        (d / "confirm_at.json").write_text(json.dumps(value))
+
+    assert _read_confirm_at(tmp_path) == {"A": 0.9}
+
+
+def test_confirm_at_survives_a_non_numeric_iteration_directory(tmp_path):
+    from orchestrator.optimize.stage_runner import _read_confirm_at
+
+    (tmp_path / "runs" / "iter-3").mkdir(parents=True)
+    (tmp_path / "runs" / "iter-3" / "confirm_at.json").write_text('{"A": 0.4}')
+    (tmp_path / "runs" / "iter-bogus").mkdir(parents=True)
+    (tmp_path / "runs" / "iter-bogus" / "confirm_at.json").write_text('{"A": 0.0}')
+
+    assert _read_confirm_at(tmp_path) == {"A": 0.4}
+
+
+def test_stage_for_iteration_rejects_a_non_positive_iteration():
+    """Returning a stage for iteration 0 would hand back the TERMINAL stage,
+    ending a campaign on what the caller thought was its first iteration.
+    """
+    from orchestrator.optimize.stage import stage_for_iteration
+
+    for bad in (0, -1):
+        with pytest.raises(ValueError, match="1-based"):
+            stage_for_iteration({}, bad)
+    assert stage_for_iteration({}, 1).value == "verify"
+    assert stage_for_iteration({}, 4).value == "confirm"
