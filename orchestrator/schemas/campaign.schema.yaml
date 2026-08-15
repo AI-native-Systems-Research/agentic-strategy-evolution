@@ -1040,6 +1040,18 @@ properties:
               workloads is out of scope for this campaign; report it as
               a lead, not a result."
 
+      run_command:
+        type: string
+        minLength: 1
+        description: >
+          Shell command that runs ONE configuration of the target and emits
+          the response metrics as JSON on stdout. Each factor's rendered
+          ``apply`` arguments are appended to this command, so it carries
+          only the invariant part. Example: "./blis run --model qwen/qwen3-14b
+          --num-instances 4 --seed 42". Without it, ``run_stage`` has no way
+          to execute the design matrix and aborts asking for a
+          ``config_runner`` — the campaign is not runnable.
+
       test_command:
         type: string
         minLength: 1
@@ -1047,6 +1059,13 @@ properties:
           Shell command that runs every declared relation's
           ``native_test`` and exits clean iff all pass. Example: "pytest
           -q tests/prop_*.py --json-report".
+
+          Must emit PER-TEST results, not just a package-level pass: use
+          ``-v`` for ``go test`` or ``--json-report`` for pytest. A green
+          exit code with no per-test output is not evidence that a specific
+          relation's test ran, so it fails closed — every declared relation
+          reconciles as "declared but not executed", which aborts the
+          campaign at its verify stage.
 
       integrity_command:
         type: string

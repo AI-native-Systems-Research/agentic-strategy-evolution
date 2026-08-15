@@ -42,12 +42,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from orchestrator.optimize.factors import Factor
 from orchestrator.optimize.matrix import ConfigRow
 from orchestrator.optimize.predicates import evaluate
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -399,3 +404,186 @@ def parse_test_results(payload: Any) -> dict[str, bool]:
         except ValueError:
             return {}
     return {}
+
+
+# ── production wiring: the two callables run_stage needs ──────────────────
+#
+# These close the gap that made `kind: optimization` unusable end to end:
+# `test_command` and the per-config benchmark were declared in the schema and
+# documented in the guide, but nothing executed them, so `test_results` was
+# always None, every relation reconciled as "declared but not executed", and
+# every real campaign aborted at its verify stage.
+#
+# They live here rather than in stage_runner so the injected seam stays the
+# contract: tests pass fakes, production passes these.
+
+def run_test_command(
+    command: str, *, cwd: Path, timeout: int = 900,
+) -> dict[str, bool]:
+    """Execute a campaign's ``test_command`` and map native tests to verdicts.
+
+    The target's own runner produces the verdict — Nous only checks the
+    contract, so this needs no knowledge of Go, pytest, or any other
+    ecosystem. It records a pass for each declared test the command reports
+    as passing.
+
+    Go's ``go test`` has no machine-readable report by default, so this
+    prefers ``-json`` output when the command already asks for it and
+    otherwise falls back to scanning per-test ``--- PASS/FAIL`` lines, which
+    both ``go test -v`` and pytest's default output emit. On any failure to
+    run at all, returns ``{}`` — which ``reconcile`` treats as "declared but
+    not executed", i.e. fails closed rather than silently passing.
+    """
+    import re
+    import shlex
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            shlex.split(command), cwd=str(cwd), capture_output=True,
+            text=True, timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning(
+            "test_command failed to run (%s): every declared relation will "
+            "reconcile as 'declared but not executed', which fails closed.",
+            exc,
+        )
+        return {}
+
+    text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+
+    # go test -json / pytest --json-report: try the structured shapes first.
+    if '"Action"' in text or '"outcome"' in text:
+        results: dict[str, bool] = {}
+        for line in text.splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            name = rec.get("Test") or rec.get("nodeid")
+            action = rec.get("Action") or rec.get("outcome")
+            if name and action in ("pass", "passed"):
+                results[str(name)] = True
+            elif name and action in ("fail", "failed"):
+                results[str(name)] = False
+        if results:
+            return results
+
+    # Fallback: per-test PASS/FAIL lines. `go test -v` emits
+    # "--- PASS: TestName (0.00s)"; pytest -v emits "path::test PASSED".
+    results = {}
+    for m in re.finditer(r"---\s+(PASS|FAIL|SKIP):\s+(\S+)", text):
+        results[m.group(2)] = m.group(1) == "PASS"
+    for m in re.finditer(r"^(\S+::\S+)\s+(PASSED|FAILED|ERROR)", text, re.M):
+        results[m.group(1)] = m.group(2) == "PASSED"
+
+    if not results and proc.returncode == 0:
+        # The command succeeded but emitted nothing per-test (e.g. `go test`
+        # without -v prints only a package-level "ok"). A green exit is not
+        # per-test evidence, and inventing one would defeat the whole point
+        # of the correctness gate — so say so and fail closed.
+        logger.warning(
+            "test_command exited 0 but reported no per-test results. Add -v "
+            "(go test) or --json-report (pytest) so individual native_test "
+            "identifiers can be matched; a package-level 'ok' is not evidence "
+            "that a specific relation's test ran.",
+        )
+    return results
+
+
+def match_declared_tests(
+    factors, results: dict[str, bool],
+) -> dict[str, bool]:
+    """Map each declared ``native_test`` onto a verdict from ``results``.
+
+    A campaign declares ``native_test`` as a locator a human can act on —
+    ``sim/scheduler_test.go::TestFCFSScheduler_PreservesOrder`` — while a
+    test runner reports the bare function or node name. This bridges the two
+    by matching on the trailing identifier after ``::``, so an author writes
+    the useful form and the contract check still resolves.
+
+    Only exact trailing-identifier matches count. An unmatched declaration
+    is simply absent from the result, which ``reconcile`` treats as
+    "declared but not executed" — the fail-closed path.
+    """
+    by_tail = {}
+    for name, passed in results.items():
+        by_tail[name] = passed
+        tail = name.rsplit("::", 1)[-1].rsplit("/", 1)[-1]
+        by_tail.setdefault(tail, passed)
+
+    matched: dict[str, bool] = {}
+    for f in factors:
+        for rel in getattr(f, "relations", ()) or ():
+            declared = rel.get("native_test") if isinstance(rel, dict) else None
+            if not declared:
+                continue
+            if declared in by_tail:
+                matched[declared] = by_tail[declared]
+                continue
+            tail = declared.rsplit("::", 1)[-1]
+            if tail in by_tail:
+                matched[declared] = by_tail[tail]
+    return matched
+
+
+def make_config_runner(
+    command_template: str, *, cwd: Path, metric_path: str,
+    timeout: int = 600,
+) -> Callable:
+    """Build the per-config benchmark callable ``run_stage`` requires.
+
+    ``command_template`` is the target's run command; each factor's rendered
+    ``apply`` arguments are appended. ``metric_path`` is a dotted path into
+    the emitted JSON naming the response metric, so this stays agnostic to
+    what the target measures.
+    """
+    import shlex
+    import subprocess
+
+    def run(row) -> dict:
+        cmd = shlex.split(command_template)
+        for args in (row.apply or {}).get("cli_args", []) or []:
+            cmd.append(args)
+        env_extra = (row.apply or {}).get("env") or {}
+        try:
+            proc = subprocess.run(
+                cmd, cwd=str(cwd), capture_output=True, text=True,
+                timeout=timeout,
+                env={**os.environ, **{k: str(v) for k, v in env_extra.items()}},
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise RuntimeError(f"config run failed: {exc}") from exc
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"config run exited {proc.returncode}: "
+                f"{(proc.stderr or '')[-200:]}",
+            )
+        obs = _last_json_object(proc.stdout)
+        if obs is None:
+            raise RuntimeError("config run emitted no parseable JSON object")
+        return obs
+
+    return run
+
+
+def _last_json_object(text: str) -> dict | None:
+    """The last complete JSON object in ``text``, decoded incrementally."""
+    dec = json.JSONDecoder()
+    blocks, idx = [], 0
+    while True:
+        nxt = text.find("{", idx)
+        if nxt < 0:
+            break
+        try:
+            obj, end = dec.raw_decode(text, nxt)
+        except json.JSONDecodeError:
+            idx = nxt + 1
+            continue
+        blocks.append(obj)
+        idx = end
+    return blocks[-1] if blocks else None
