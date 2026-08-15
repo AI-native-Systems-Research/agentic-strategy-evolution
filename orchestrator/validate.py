@@ -486,10 +486,15 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
 
       * tabulated (k, resolution): compare the exact minimum against
         max_runs, error with the two honest options if it's exceeded.
-      * untabulated (k, resolution): a distinct error that Nous cannot
-        certify a design for that combination, offering the full
-        factorial or fewer factors -- never a fabricated run-count
-        comparison against max_runs.
+      * untabulated (k, resolution) where the 2**k full factorial FITS
+        max_runs: feasible, no error. The full factorial aliases nothing,
+        so it achieves any requested resolution, and stage_runner falls
+        back to it -- erroring would reject a campaign the runner runs.
+      * untabulated (k, resolution) where 2**k does NOT fit: a distinct
+        error saying Nous cannot certify a design within the budget,
+        offering the full factorial's cost or fewer factors -- and noting
+        2**k is an upper bound on the minimum, so a smaller untabulated
+        design may exist that Nous cannot name.
     """
     if not isinstance(design, dict):
         return []
@@ -517,10 +522,24 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
             f"alias_pairs) that fits within {max_runs} runs. Nous will "
             f"not silently downgrade resolution to fit the budget."
         ]
-    # Untabulated: min_runs_for's fallback (2**k) is a conservative upper
-    # bound, not a verified minimum. Do not compare it to max_runs as if
-    # it were the true requirement.
+    # Untabulated. The 2**k full factorial ALWAYS achieves the requested
+    # resolution, because it aliases nothing at all -- verified: k=2,3,4
+    # each give alias_pairs() == []. So when 2**k fits the budget the
+    # campaign is feasible and needs no error: that is exactly what
+    # stage_runner._build_design does, falling back to the full factorial
+    # for an untabulated combination. Erroring here would reject a campaign
+    # the runner executes correctly, which is why the small examples in
+    # docs/optimization-campaign-guide.md initially could not declare
+    # max_runs at all.
+    #
+    # What remains true, and is why this branch is still distinct from the
+    # tabulated one: 2**k is an upper bound on the MINIMUM, so a smaller
+    # untabulated fractional design may exist and Nous cannot name it. That
+    # matters only when 2**k does NOT fit -- then the honest answer is that
+    # Nous cannot certify a design within the budget, not that none exists.
     full_factorial_runs = 2 ** k
+    if full_factorial_runs <= max_runs:
+        return []
     return [
         f"design.screen.resolution={resolution} is not a tabulated "
         f"design for {k} factors -- Nous has no published generator for "
