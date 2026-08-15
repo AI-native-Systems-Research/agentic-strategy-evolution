@@ -526,3 +526,49 @@ def test_infeasible_and_rejected_rows_do_not_block_the_fit(tmp_path):
         _fitting_responses(
             [_O(0, "complete", {"m": 1.0}), _O(1, "failed", {})], spec, "m",
         )
+
+
+def test_a_non_numeric_primary_metric_aborts_cleanly(tmp_path):
+    """Raw TypeError/ValueError from float() is not an acceptable failure.
+
+    A target emitting a string, a structure, or null for the response metric
+    is an instrumentation mismatch. It deserves a message naming the row and
+    the offending value, not a stack trace from a float() call.
+    """
+    from orchestrator.optimize.stage_runner import _fitting_responses
+
+    class _O:
+        def __init__(self, idx, status, resp):
+            self.row_index, self.status, self.response = idx, status, resp
+
+    spec = {"primary": {"metric": "m", "direction": "maximize"}}
+    for bad in ("fast", {}, []):
+        with pytest.raises(OptimizationAborted) as exc:
+            _fitting_responses([_O(0, "complete", {"m": bad})], spec, "m")
+        assert "not a number" in str(exc.value)
+        assert "row 0" in str(exc.value)
+
+
+def test_a_null_primary_metric_on_a_complete_row_blocks_but_not_on_an_excluded_one(
+    tmp_path,
+):
+    """`null` means the benchmark ran but could not compute the statistic.
+
+    On a *complete* row that is a measurement failure and must block. On a
+    row already excluded from the fit (infeasible/rejected) it is expected
+    and must not.
+    """
+    import math
+
+    from orchestrator.optimize.stage_runner import _fitting_responses
+
+    class _O:
+        def __init__(self, idx, status, resp):
+            self.row_index, self.status, self.response = idx, status, resp
+
+    spec = {"primary": {"metric": "m", "direction": "maximize"}}
+    with pytest.raises(OptimizationAborted):
+        _fitting_responses([_O(0, "complete", {"m": None})], spec, "m")
+
+    values = _fitting_responses([_O(0, "infeasible", {"m": None})], spec, "m")
+    assert math.isnan(values[0])
