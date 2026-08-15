@@ -163,7 +163,24 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
                 f"held-out metric(s) {sorted(leaked)} reached a fitting input for "
                 f"row {o.row_index}; held-out values belong on RunOutcome.held_out",
             )
-        values.append(float(resp.get(primary, float("nan"))))
+        raw = resp.get(primary)
+        if raw is None:
+            # Distinct from "absent": the target emitted the key with no
+            # value, which a benchmark that ran but could not compute the
+            # statistic will realistically do. Carry NaN so the row is
+            # excluded, and let the guard below report it by row index.
+            values.append(float("nan"))
+            continue
+        try:
+            values.append(float(raw))
+        except (TypeError, ValueError) as exc:
+            raise OptimizationAborted(
+                f"row {o.row_index}: primary metric {primary!r} is "
+                f"{raw!r}, which is not a number. The response metric must "
+                f"be numeric for the fit; a target emitting a string or a "
+                f"structure here is an instrumentation mismatch, not a "
+                f"measurement.",
+            ) from exc
 
     # Refuse to fit on NaN. A single non-complete run poisons the ENTIRE
     # fit through the normal equations — verified: one NaN among eight runs
