@@ -10,6 +10,13 @@
 #   Claude CLI:       sonnet, haiku, opus
 
 models:
+  # BUILD — `kind: optimization` only: authors the mechanism under study plus the
+  # native tests its relations declare, in the target repo. One agent call for the
+  # whole campaign, and every later stage measures whatever it writes, so this is
+  # the highest-leverage call Nous makes and gets the strongest model available.
+  # Ignored by `kind: reflective`, which has no build stage.
+  build: "claude-opus-5"
+
   # DESIGN — explores repo via claude -p, frames problem, designs hypothesis bundle.
   # Uses Opus for better regime validation, parameter selection, and hypothesis quality.
   design: "claude-opus-4-6"

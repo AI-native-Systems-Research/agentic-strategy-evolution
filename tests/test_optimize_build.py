@@ -489,3 +489,53 @@ def test_logging_is_optional_and_never_breaks_the_run(tmp_path: Path):
     assert run_test_command("sh -c 'echo --- PASS: TestA'", cwd=tmp_path) == {
         "TestA": True,
     }
+
+
+def test_optimization_kind_resolves_every_phase_to_opus_5():
+    """`kind: optimization` uses the strongest model for all of its few calls.
+
+    This kind makes only a handful of model calls — one build (which authors the
+    mechanism every later stage measures), one interpretation, and a small gate
+    summary per iteration — while tokenless stages carry the bulk of the work.
+    So the marginal cost of the strongest model is small and the downside of a
+    weaker one on the build call is that every downstream number describes worse
+    code.
+    """
+    from orchestrator.campaign import OPTIMIZATION_MODEL, _resolve_model
+
+    opt = {"kind": "optimization"}
+    for phase in ("build", "design", "execute_analyze", "report"):
+        assert _resolve_model(opt, phase, None) == OPTIMIZATION_MODEL
+
+
+def test_reflective_model_defaults_are_untouched():
+    """The reflective per-phase defaults must not shift under this change."""
+    from orchestrator.campaign import _resolve_model
+
+    assert _resolve_model({}, "design", None) == "claude-opus-4-6"
+    assert _resolve_model({"kind": "reflective"}, "design", None) == "claude-opus-4-6"
+    # and a reflective campaign never picks up the optimization default
+    from orchestrator.campaign import OPTIMIZATION_MODEL
+    assert _resolve_model({}, "report", None) != OPTIMIZATION_MODEL
+
+
+def test_explicit_campaign_model_beats_the_kind_default():
+    """An author can still pin a cheaper model per phase."""
+    from orchestrator.campaign import _resolve_model
+
+    camp = {"kind": "optimization", "models": {"report": "aws/claude-haiku-4-5"}}
+    assert _resolve_model(camp, "report", None) == "aws/claude-haiku-4-5"
+    assert _resolve_model(camp, "build", None) == "claude-opus-5"
+
+
+def test_build_records_the_resolved_model_in_metrics(tmp_path: Path):
+    """The metrics row must name the model actually used, for cost accounting."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    work = tmp_path / "work"
+    build_mod.run_build(
+        _campaign(repo), work, iteration=1, declared_tests=[],
+        sdk_runner=_runner(SDKResult(text="ok", input_tokens=10, output_tokens=5)),
+    )
+    row = json.loads((work / "llm_metrics.jsonl").read_text().splitlines()[0])
+    assert row["model"] == "claude-opus-5"

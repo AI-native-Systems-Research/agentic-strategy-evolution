@@ -53,11 +53,33 @@ from orchestrator.iteration import (
 logger = logging.getLogger(__name__)
 
 
+#: Model used for EVERY phase of a ``kind: optimization`` campaign.
+#:
+#: This kind makes only a handful of model calls — one ``build`` (which authors
+#: the mechanism every later stage measures), one interpretation at the end, and
+#: a small gate summary per iteration. Because the tokenless stages carry the
+#: bulk of the work, the marginal cost of using the strongest model for all of
+#: them is small, while the downside of a weaker model on the build call is that
+#: every downstream number describes worse code. Reflective keeps its own
+#: per-phase defaults, which are tuned for a different call profile.
+OPTIMIZATION_MODEL = "claude-opus-5"
+
+
 def _resolve_model(campaign: dict, phase_key: str, cli_model: str | None) -> str:
-    """Resolve model: campaign.models > defaults.yaml > --model flag."""
+    """Resolve model: campaign.models > kind default > defaults.yaml > --model.
+
+    An explicit ``campaign.models[phase]`` always wins, so a campaign can still
+    pin a cheaper model per phase. Absent that, ``kind: optimization`` resolves
+    every phase to :data:`OPTIMIZATION_MODEL`.
+    """
     campaign_models = campaign.get("models", {})
     if campaign_models.get(phase_key):
         return campaign_models[phase_key]
+
+    from orchestrator.validate import campaign_kind
+    if campaign_kind(campaign) == "optimization":
+        return OPTIMIZATION_MODEL
+
     if DEFAULTS_PATH.exists():
         defaults = yaml.safe_load(DEFAULTS_PATH.read_text()) or {}
         default_model = defaults.get("models", {}).get(phase_key)
