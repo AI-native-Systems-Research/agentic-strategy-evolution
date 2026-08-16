@@ -12,8 +12,10 @@ DONE), so ``Engine``, ``HumanGate``, ``append_ledger_row``,
 are reused rather than reimplemented. What differs is what DESIGN produces
 and how EXECUTE_ANALYZE runs it:
 
-  * ``build``   — the ONLY model call in this kind: authors the mechanism and
-                  its native tests (opt-in; see build.py).
+  * ``build``   — the ONLY substantive model call in this kind: authors the
+                  mechanism and its native tests (opt-in; see build.py).
+                  Gate summaries and the end-of-campaign report use the
+                  existing shared machinery and are not part of the epoch.
   * ``verify``  — pure Python: runs test_command, reconciles relations, and
                   compiles the experimental policy (policy.py).
   * ``screen`` / ``foldover`` / ``refine`` / ``confirm`` — spending states of

@@ -11,6 +11,9 @@ RETIRED = [
     "one model call interprets the fitted surface",
     "one model call authors the mechanism + its native tests.",  # was attributed to verify
     "interpretation (at the end) | 1",
+    "1 design call",     # was the verify row of the iteration table
+    "1 analyze call",    # was the confirm row of the iteration table
+    "Once the model proposes",
 ]
 
 
@@ -24,4 +27,4 @@ def test_docs_do_not_claim_verify_or_confirm_model_calls():
 
 def test_claude_md_states_the_true_call_count():
     text = (ROOT / "CLAUDE.md").read_text()
-    assert "the only model call in the kind is `build`" in text
+    assert "the only substantive model call in the kind is `build`" in text
