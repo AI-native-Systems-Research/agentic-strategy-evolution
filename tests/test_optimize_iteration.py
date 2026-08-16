@@ -1200,3 +1200,78 @@ def test_responses_stay_aligned_with_their_design_rows(tmp_path, work_dir):
             f"row {r['row_index']} response {r['response']['m']} does not match "
             f"its own levels {lv} — responses and design rows are misaligned"
         )
+
+
+def test_infeasible_row_does_not_nan_poison_the_fit(tmp_path, work_dir, caplog):
+    """One infeasible corner must not turn every coefficient into NaN.
+
+    `_fitting_responses` carries NaN for any non-complete row, and the abort
+    guard deliberately exempts `infeasible`/`rejected` — a constrained design
+    routinely has inadmissible corners and aborting on one would make
+    constraints unusable. But those NaNs flowed into fit_effects, where a SINGLE
+    NaN makes EVERY coefficient NaN while still returning a schema-valid Fit.
+    Verified before the fix: [0.1875, -0.5625, -0.0625, 0.1875] became
+    [nan, nan, nan, nan] with no error raised and no warning logged.
+
+    The existing coverage only asserted the NaN was *carried*, not what the fit
+    did with it, which is why this survived.
+    """
+    import logging
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+
+    # make one corner infeasible via an invariant the row violates
+    c["optimization"]["design_space"] = {
+        "invariants": [
+            {"observable": "guard", "op": "==", "value": 1},
+        ],
+    }
+
+    def runner(row):
+        lv = row.levels
+        return {
+            "cfg": {k.lower(): v for k, v in lv.items()},
+            # exactly ONE row violates the invariant
+            "guard": 0 if row.row_index == 3 else 1,
+            "m": 10.0 - 0.05 * float(lv.get("A", 0)) + 0.2 * float(lv.get("B", 0)),
+        }
+
+    with caplog.at_level(logging.WARNING):
+        _run(c, wd, stage="screen", iteration=2, runner=runner)
+
+    eff = json.loads((Path(wd) / "runs" / "iter-2" / "effects.json").read_text())
+    ests = [
+        t.get("estimate") for t in (eff.get("terms") or eff.get("effects") or [])
+        if t.get("estimate") is not None
+    ]
+    assert ests, "no estimates written"
+    assert not all(e != e for e in ests), (
+        "every coefficient is NaN — the infeasible row poisoned the fit"
+    )
+    assert any(e == e for e in ests), "no finite coefficient survived"
+
+
+def test_fit_exclusions_are_recorded_when_rows_are_dropped(tmp_path, work_dir):
+    """A reduced-resolution fit must say which rows it dropped and why."""
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    c["optimization"]["design_space"] = {
+        "invariants": [{"observable": "guard", "op": "==", "value": 1}],
+    }
+
+    def runner(row):
+        lv = row.levels
+        return {
+            "cfg": {k.lower(): v for k, v in lv.items()},
+            "guard": 0 if row.row_index == 3 else 1,
+            "m": 10.0 + 0.2 * float(lv.get("B", 0)),
+        }
+
+    _run(c, wd, stage="screen", iteration=2, runner=runner)
+    p = Path(wd) / "runs" / "iter-2" / "fit_exclusions.json"
+    if p.exists():
+        rec = json.loads(p.read_text())
+        assert rec["fitted_rows"] < rec["planned_rows"]
+        assert rec["excluded_row_indices"]
+        assert "complete" in rec["reason"]

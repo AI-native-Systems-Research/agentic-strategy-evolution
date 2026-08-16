@@ -555,8 +555,62 @@ def run_stage(
     # model matrix (verified: it raises IndexError). Derive the ids from the
     # design that was actually built.
     fitted_ids = _design_factor_ids(factors, design_cfg, stage_name)
-    fit = fit_effects(design, ys, factor_ids=fitted_ids)
+
+    # Fit on the COMPLETE rows only.
+    #
+    # `_fitting_responses` carries NaN for any row that did not complete, and the
+    # guard above deliberately exempts `infeasible`/`rejected` rows from aborting
+    # — a constrained design routinely has inadmissible corners, and aborting on
+    # one would make constraints unusable. But those NaNs then flowed straight
+    # into fit_effects, where a SINGLE NaN turns EVERY coefficient into NaN while
+    # still returning a schema-valid Fit. Verified: one NaN row changed
+    # [0.1875, -0.5625, -0.0625, 0.1875] into [nan, nan, nan, nan] with no error
+    # raised and no warning logged.
+    #
+    # The comment above already states the intended behaviour — "refit on the
+    # completed rows and report the reduced resolution honestly" — but nothing
+    # implemented it. This does. The excluded rows are named in the log and
+    # recorded on the fit's artifact so the reduced resolution is visible rather
+    # than implied.
+    design_for_fit, ys_for_fit = design, ys
+    dropped = [i for i, v in enumerate(ys) if v != v]
+    if dropped:
+        import dataclasses
+
+        keep = [i for i, v in enumerate(ys) if v == v]
+        if len(keep) < 2:
+            raise OptimizationAborted(
+                f"only {len(keep)} of {len(ys)} rows produced a usable "
+                f"measurement, which cannot support a fit. Re-run the failed "
+                f"configurations before fitting.",
+            )
+        design_for_fit = dataclasses.replace(
+            design, points=tuple(design.points[i] for i in keep),
+        )
+        ys_for_fit = [ys[i] for i in keep]
+        logger.warning(
+            "%s: fitting on %d of %d rows; %d row(s) excluded as not complete "
+            "(row_index %s). The fit's resolution is reduced accordingly — a "
+            "single NaN row would otherwise NaN-poison every coefficient "
+            "silently.",
+            stage_name, len(keep), len(ys), len(dropped),
+            [getattr(design.points[i], "label", i) or i for i in dropped],
+        )
+
+    fit = fit_effects(design_for_fit, ys_for_fit, factor_ids=fitted_ids)
     artifacts.write_effects(iter_dir, fit, factors=factors, stage=stage_name)
+    if dropped:
+        _write_json(iter_dir / "fit_exclusions.json", {
+            "stage": stage_name,
+            "planned_rows": len(ys),
+            "fitted_rows": len(ys_for_fit),
+            "excluded_row_indices": dropped,
+            "reason": (
+                "rows did not reach status 'complete' (infeasible, rejected, or "
+                "unmeasured); fitting on the complete subset rather than "
+                "carrying NaN into every coefficient"
+            ),
+        })
 
     behavioral = _assert_all_behavioral(behavioral_failures)
     if stage_name == Stage.REFINE.value:

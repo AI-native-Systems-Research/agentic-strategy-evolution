@@ -248,3 +248,66 @@ def test_stationary_point_is_none_without_curvature_terms():
     ys = _synth(d, ids, 10.0, {"A": 1.0, "B": 0.5})
     fit = fit_effects(d, ys, factor_ids=ids)
     assert solve_stationary_point(fit, ids) is None
+
+
+# ─── D1: resolution-IV designs must fit, with aliasing recorded ────────────
+
+def test_every_tabulated_resolution_iv_design_fits():
+    """`resolution: 4` was documented, validated, and guaranteed to abort.
+
+    fit_effects added one column per two-factor interaction. At resolution IV
+    aliased interactions have IDENTICAL +/-1 columns, so X^T X was singular and
+    every res-IV screen died with "design matrix is singular". Verified before
+    the fix: k=5,6,7,8 all raised; resolution V was fine. A campaign could
+    therefore declare a validator-permitted resolution and never run.
+    """
+    from orchestrator.optimize.design import fractional_factorial, is_tabulated
+    from orchestrator.optimize.effects import fit_effects
+
+    for k in (4, 5, 6, 7, 8):
+        if not is_tabulated(k, 4):
+            continue
+        ids = tuple(chr(65 + i) for i in range(k))
+        design = fractional_factorial(list(ids), 4)
+        ys = [float((i * 7) % 11) for i in range(len(design.points))]
+        fit = fit_effects(design, ys, factor_ids=ids)
+        assert fit.effects, f"k={k} res=4 produced no effects"
+        # every main effect must still be estimable
+        got = {e.label for e in fit.effects}
+        for fid in ids:
+            assert fid in got, f"main effect {fid} missing at k={k} res=4"
+
+
+def test_aliasing_is_recorded_not_silently_dropped():
+    """A fractional design cannot separate aliased terms, but must say so.
+
+    Collapsing aliased columns is the standard reading of a fractional
+    factorial. Dropping them without record would make the confounding
+    invisible, which is what turns aliasing from a resource question into a
+    hidden assumption.
+    """
+    from orchestrator.optimize.design import fractional_factorial
+    from orchestrator.optimize.effects import fit_effects
+
+    ids = ("A", "B", "C", "D")
+    design = fractional_factorial(list(ids), 4)
+    fit = fit_effects(
+        design, [float(i) for i in range(len(design.points))], factor_ids=ids,
+    )
+    assert fit.aliases, "res-IV fit reported no alias pairs"
+
+
+def test_resolution_v_is_unchanged_by_the_alias_collapse():
+    """No regression: at resolution V nothing is aliased, so nothing collapses."""
+    from orchestrator.optimize.design import fractional_factorial
+    from orchestrator.optimize.effects import fit_effects
+
+    ids = ("A", "B", "C", "D", "E")
+    design = fractional_factorial(list(ids), 5)
+    fit = fit_effects(
+        design, [float((i * 3) % 7) + 1 for i in range(len(design.points))],
+        factor_ids=ids,
+    )
+    # 5 main effects + 10 two-factor interactions, all estimable
+    assert len(fit.effects) == 15, f"expected 15 effects, got {len(fit.effects)}"
+    assert not fit.aliases

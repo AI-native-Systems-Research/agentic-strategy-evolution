@@ -140,11 +140,45 @@ def fit_effects(design: Design, responses, *, factor_ids,
         terms.append((fid,))
         cols.append([p.coded[j] for p in pts])
 
+    # Interaction columns, collapsed into ALIAS CLASSES.
+    #
+    # At resolution IV (and below) two-factor interactions are aliased with each
+    # other, which means their ±1 columns are literally identical (or exact
+    # negatives). Adding one column per pair then makes X^T X singular and the
+    # fit dies with "design matrix is singular". Verified on every tabulated
+    # resolution-IV design: k=5,6,7,8 all raise, while resolution V is fine. So
+    # `resolution: 4` was documented, validated, and guaranteed to abort at
+    # screen.
+    #
+    # A fractional design cannot separate aliased terms — no arithmetic can — but
+    # it CAN estimate one coefficient per alias class and say honestly what that
+    # coefficient is confounded with. That is the standard reading of a
+    # fractional factorial, and it is what makes aliasing a resource question
+    # ("resolve it only if it could change the decision") rather than a crash.
+    #
+    # `alias_classes` maps the representative label to every term sharing its
+    # column, so a caller can report the confounding instead of hiding it.
+    alias_classes: dict[str, tuple[tuple[str, ...], ...]] = {}
     if include_interactions and k >= 2:
+        seen: dict[tuple[float, ...], int] = {}
+        for j2, fid in enumerate(ids):          # main-effect columns already added
+            seen.setdefault(tuple(p.coded[j2] for p in pts), 1 + j2)
         for i, j in itertools.combinations(range(k), 2):
+            col = [p.coded[i] * p.coded[j] for p in pts]
+            key = tuple(col)
+            neg = tuple(-v for v in col)
+            hit = seen.get(key, seen.get(neg))
+            if hit is not None:
+                # Aliased with an existing column: record the confounding and do
+                # NOT add a duplicate column.
+                rep = labels[hit]
+                alias_classes.setdefault(rep, ())
+                alias_classes[rep] = alias_classes[rep] + ((ids[i], ids[j]),)
+                continue
+            seen[key] = len(cols)
             labels.append(f"{ids[i]}{ids[j]}")
             terms.append((ids[i], ids[j]))
-            cols.append([p.coded[i] * p.coded[j] for p in pts])
+            cols.append(col)
 
     quad_start = len(labels)
     if has_axial:
