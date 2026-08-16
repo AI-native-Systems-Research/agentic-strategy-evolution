@@ -33,6 +33,18 @@ Likewise the ``path`` (which stages the campaign actually visited) is
 reconstructed from which artifact each iteration wrote, until Task 6 records
 ``transitions.jsonl`` — at which point the recorded path wins, because a
 recorded transition is evidence and an inferred one is a guess.
+
+Driving multiple stages through one work_dir
+--------------------------------------------
+This is the first thing in the repo to do that, so it has to advance the
+phase machine between iterations the way ``run_campaign`` does
+(``HUMAN_FINDINGS_GATE -> DONE -> DESIGN``). That is not bookkeeping:
+``iteration._enter_phase`` returns False once the engine is PAST the phase
+being requested, and the DESIGN block it guards is what writes
+``design_matrix.json`` and runs ``_preflight_design``. Skipping the advance
+silently disabled both from iteration 2 onward — so the instrument diverged
+from production in exactly the direction that hides pre-registration and
+design-validation defects. Mirror production; do not invent a variant.
 """
 from __future__ import annotations
 
@@ -150,6 +162,7 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
     """
     import os
 
+    from orchestrator.engine import Engine
     from orchestrator.iteration import IterationOutcome, setup_work_dir
     from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
 
@@ -181,6 +194,36 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
                 path.append("verify")
             if outcome == IterationOutcome.COMPLETED:
                 break
+
+            # Advance the engine exactly as run_campaign does between
+            # iterations (campaign.py: HUMAN_FINDINGS_GATE -> DONE -> DESIGN).
+            #
+            # NOT optional bookkeeping. `_enter_phase` returns False whenever
+            # the engine's current phase is PAST the requested one, and the
+            # block it guards at DESIGN contains BOTH
+            # `artifacts.write_design_matrix` AND `_preflight_design`. Leave
+            # the engine parked at HUMAN_FINDINGS_GATE after iteration 1 and
+            # every later iteration silently skips both: measured on `bowl`
+            # seed 3, `design_matrix.json` was absent from all four iteration
+            # directories and the pre-flight — whose docstring records three
+            # live-campaign failures it exists to catch — never ran once.
+            #
+            # This harness is the first thing in the repo to drive multiple
+            # stages through ONE work_dir, so it was exercising a code path
+            # production never takes. An instrument that diverges from
+            # production is not an instrument. Mirror run_campaign rather
+            # than inventing a variant.
+            #
+            # Guarded on the phase because `DONE -> DONE` is an invalid
+            # transition and run_campaign only ever reaches this point from
+            # HUMAN_FINDINGS_GATE. A campaign re-driven over a work_dir that
+            # already finished starts at DONE, where the single legal move is
+            # straight to DESIGN — so mirror the state machine's own rule
+            # rather than assuming a phase.
+            engine = Engine(work_dir)
+            if engine.phase != "DONE":
+                engine.transition("DONE")
+            engine.transition("DESIGN")
     finally:
         if prior_parent is None:
             os.environ.pop("NOUS_CAMPAIGN_PARENT", None)

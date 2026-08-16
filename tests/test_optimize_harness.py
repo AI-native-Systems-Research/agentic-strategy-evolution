@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,48 @@ from orchestrator.optimize.synthetic import SURFACES
 
 def _gap_pct(res):
     return abs(res.true_gap) / max(abs(res.true_best), 1e-9) * 100.0
+
+
+def _levels_explored_at_stage(work_dir, stage: str, factor_id: str) -> set:
+    """Every level of ``factor_id`` that ``stage`` actually ran.
+
+    The stage is LOCATED by ``effects.json["stage"]`` rather than by iteration
+    number. Hardcoding ``iter-3`` works only under the legacy index-driven
+    schedule; Task 6 replaces that with ``current_state(policy, work_dir)``,
+    and neither Task 6's brief nor Task 7's tells anyone to revisit this path.
+    A hardcoded path would then raise ``FileNotFoundError`` inside an
+    ``xfail(strict=True)`` test, which pytest reports as a perfectly ordinary
+    XFAIL — the gate would disarm itself without failing anything. Deriving
+    the iteration keeps the assertion pointed at the stage it is about, under
+    any schedule.
+
+    Fails loudly when the stage never ran, for the same reason: silence here
+    is indistinguishable from the bug being fixed.
+    """
+    runs_root = Path(work_dir) / "runs"
+    iters = sorted(
+        (d for d in runs_root.iterdir() if d.name.startswith("iter-")),
+        key=lambda d: int(d.name.split("-")[1]),
+    )
+    seen_stages = []
+    for it in iters:
+        effects = it / "effects.json"
+        if not effects.exists():
+            continue
+        got = json.loads(effects.read_text()).get("stage")
+        seen_stages.append(got)
+        if got != stage:
+            continue
+        runs = it / "runs.jsonl"
+        assert runs.exists(), f"{it.name} fitted a {stage} model but wrote no runs.jsonl"
+        return {
+            json.loads(line)["levels"][factor_id]
+            for line in runs.read_text().splitlines() if line.strip()
+        }
+    raise AssertionError(
+        f"no iteration ran stage {stage!r} (stages found: {seen_stages}); "
+        f"this assertion cannot be evaluated, so it must not pass silently"
+    )
 
 
 def test_additive_surface_recommendation_is_within_two_percent_of_truth(tmp_path):
@@ -47,9 +90,9 @@ def test_choice_x_numeric_recommends_the_on_branch(tmp_path):
     the assertion, not the marker, is what needed strengthening. Measured on
     this branch (seeds 4, 104, 204, all identical):
 
-      * refine (iter-3) holds ``C`` at ``levels[0] == "off"`` for all eight
-        runs — the whole refine stage measures the ANTI-optimal branch, which
-        is exactly the ``levels[0]`` bug Task 7 names.
+      * the refine iteration holds ``C`` at ``levels[0] == "off"`` for all
+        eight runs — the whole refine stage measures the ANTI-optimal branch,
+        which is exactly the ``levels[0]`` bug Task 7 names.
       * the quadratic over that branch solves to coded ``A = +45.8``, far
         outside the hull, so ``_read_confirm_at`` discards it and confirm
         falls back to ``_best_observed``, which reaches back to a SCREEN row
@@ -63,14 +106,13 @@ def test_choice_x_numeric_recommends_the_on_branch(tmp_path):
     Task 7's "refine's held-fixed level is the screen recommendation's level"
     rule delivers. The recommendation assertions are kept alongside it so
     the answer is still checked.
+
+    The refine iteration is LOCATED by ``effects.json["stage"]``, never
+    hardcoded — see ``_levels_explored_at_stage``.
     """
     res = run_synthetic_campaign(SURFACES["choice_x_numeric"](), seed=4, parent_dir=tmp_path)
     assert res.recommendation["C"] == "on" and _gap_pct(res) <= 2.0
-    refine_c = {
-        json.loads(line)["levels"]["C"]
-        for line in (res.work_dir / "runs" / "iter-3" / "runs.jsonl").read_text().splitlines()
-        if line.strip()
-    }
+    refine_c = _levels_explored_at_stage(res.work_dir, "refine", "C")
     assert "on" in refine_c, (
         f"refine explored C={sorted(refine_c)} only; the choice factor was "
         f"held at levels[0] instead of at the screen recommendation's level"
@@ -354,3 +396,119 @@ def test_the_harness_makes_no_llm_call_and_no_subprocess(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", _boom)
     res = run_synthetic_campaign(SURFACES["additive"](), seed=18, parent_dir=tmp_path)
     assert res.recommendation
+
+
+def test_every_measurement_iteration_pre_registers_its_design_matrix(tmp_path):
+    """The harness must advance the engine the way run_campaign does.
+
+    `_enter_phase` returns False when the engine's phase is already PAST the
+    requested one, and the DESIGN block it guards writes
+    ``design_matrix.json`` AND runs ``_preflight_design``. Without the
+    between-iteration ``DONE -> DESIGN`` transition the engine stays parked at
+    HUMAN_FINDINGS_GATE after iteration 1, so both are skipped from iteration
+    2 onward — measured on `bowl` seed 3: design_matrix.json was absent from
+    ALL FOUR iteration directories and the pre-flight never ran once.
+
+    Nothing asserted it, which is exactly why it went unnoticed. Two concrete
+    costs: `check_fidelity` compares executed runs against a pre-registered
+    matrix that was never written, and Task 6's own test reads
+    ``runs/iter-2/design_matrix.json`` while its brief says harness.py needs
+    no change.
+
+    Every iteration that MEASURED something (has runs.jsonl) must therefore
+    have pre-registered what it was going to run. `verify` measures nothing
+    and correctly writes neither.
+    """
+    res = run_synthetic_campaign(SURFACES["bowl"](), seed=3, parent_dir=tmp_path)
+    assert res.path == ["verify", "screen", "refine", "confirm"], res.path
+
+    measured, registered = [], []
+    for it in harness._latest_iter_dirs(res.work_dir):
+        if (it / "runs.jsonl").exists():
+            measured.append(it.name)
+        if (it / "design_matrix.json").exists():
+            registered.append(it.name)
+    assert measured == ["iter-2", "iter-3", "iter-4"], measured
+    assert registered == measured, (
+        f"iterations that measured {measured} but pre-registered {registered}; "
+        f"the engine was not advanced between iterations, so _enter_phase "
+        f"skipped the DESIGN block (design_matrix.json + _preflight_design)"
+    )
+    # The matrices must describe the stage that ran, not a stale re-render.
+    kinds = [json.loads((res.work_dir / "runs" / n / "design_matrix.json").read_text())["kind"]
+             for n in registered]
+    assert kinds == ["full", "central_composite", "confirm"], kinds
+
+
+def test_the_engine_ends_at_done_and_every_iteration_reached_the_ledger(tmp_path):
+    """Mirror of run_campaign's HUMAN_FINDINGS_GATE -> DONE -> DESIGN.
+
+    Asserted through the ledger rather than the live phase mid-run, because
+    the final stage legitimately ends at DONE. The measured shape (`additive`,
+    seed 19) is a ``baseline`` row from the template plus one row per
+    MEASUREMENT iteration — iteration 1 is `verify`, which writes no
+    findings.json, so `append_ledger_row` logs "No findings.json for
+    iteration 1 — skipping" and the baseline row is the template's, not
+    verify's.
+
+    A stuck engine still appends ledger rows, so the design-matrix test above
+    is the load-bearing one for the phase advance; this pins that no
+    iteration was dropped outright and that the run terminates properly.
+    """
+    from orchestrator.engine import Engine
+
+    res = run_synthetic_campaign(SURFACES["additive"](), seed=19, parent_dir=tmp_path)
+    assert res.path == ["verify", "screen", "refine", "confirm"], res.path
+    assert Engine(res.work_dir).phase == "DONE"
+
+    ledger = json.loads((res.work_dir / "ledger.json").read_text())
+    rows = ledger["iterations"] if isinstance(ledger, dict) else ledger
+    ids = [r.get("candidate_id") for r in rows]
+    assert ids == ["baseline", "iter-2", "iter-3", "iter-4"], ids
+
+
+def test_the_refine_stage_is_located_by_effects_json_not_by_iteration_number(tmp_path):
+    """`_levels_explored_at_stage` must survive a schedule change.
+
+    Task 6 replaces index-driven staging with a compiled policy, so any
+    hardcoded ``iter-N`` in this file would silently point at the wrong
+    stage — or at nothing, which inside an xfail(strict=True) test reads as
+    an ordinary XFAIL and disarms the gate. This pins the lookup to the
+    artifact's own ``stage`` key.
+    """
+    res = run_synthetic_campaign(SURFACES["bowl"](), seed=20, parent_dir=tmp_path)
+
+    # Both stages are found, and each is found where its own artifact says.
+    assert _levels_explored_at_stage(res.work_dir, "screen", "A") == {2, 9, 16}
+    assert _levels_explored_at_stage(res.work_dir, "refine", "A") == {2, 9, 16}
+
+    # The per-factor level SETS coincide on this surface (axial points at coded
+    # +/-1 snap to the declared extremes on a grid of 1), so the discriminator
+    # is the COMBINATIONS: the central composite runs the four axial pairs the
+    # two-level screen never does. Asserted so that a helper silently reading
+    # the wrong iteration cannot pass.
+    def _pairs(stage):
+        it = next(
+            d for d in harness._latest_iter_dirs(res.work_dir)
+            if (d / "effects.json").exists()
+            and json.loads((d / "effects.json").read_text()).get("stage") == stage
+        )
+        return {
+            (json.loads(line)["levels"]["A"], json.loads(line)["levels"]["B"])
+            for line in (it / "runs.jsonl").read_text().splitlines() if line.strip()
+        }
+
+    assert _pairs("refine") - _pairs("screen") == {(2, 9), (9, 2), (9, 16), (16, 9)}
+
+
+def test_locating_a_stage_that_never_ran_fails_loudly(tmp_path):
+    """Silence must not be mistaken for success.
+
+    `drift` aborts before any refine stage under the default schedule, so the
+    helper has nothing to read. It must raise rather than return an empty set
+    that an `in` assertion would quietly fail — or, worse, that a `not in`
+    assertion would quietly pass.
+    """
+    res = run_synthetic_campaign(SURFACES["drift"](), seed=21, parent_dir=tmp_path)
+    with pytest.raises(AssertionError, match="no iteration ran stage 'refine'"):
+        _levels_explored_at_stage(res.work_dir, "refine", "A")
