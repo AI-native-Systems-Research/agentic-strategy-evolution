@@ -155,6 +155,16 @@ them tokenless.
 | interpretation (at the end) | 1 | reads the fitted surface |
 | gate summaries | 1 per iteration | existing machinery, small |
 
+**Model.** Every phase of a `kind: optimization` campaign resolves to
+`claude-opus-5` (`orchestrator.campaign.OPTIMIZATION_MODEL`), not to the
+per-phase `defaults.yaml` entries the reflective kind uses. The reasoning is
+that this kind makes only a handful of model calls while the tokenless stages
+carry the bulk of the work, so the marginal cost of the strongest model is
+small — and the downside of a weaker model on the `build` call is that every
+downstream measurement describes worse code. An explicit
+`campaign.models.<phase>` still wins, so pin a cheaper model per phase when you
+want one.
+
 **Do not add a `build` stage you do not need.** It is the only stage that
 spends an agent call on the target repo, so a campaign varying existing
 flags should omit it and stay at ~3 calls. Add it only when the mechanism

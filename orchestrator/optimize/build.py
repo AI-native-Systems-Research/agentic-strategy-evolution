@@ -228,6 +228,16 @@ def run_build(
             "repository to author the mechanism in.",
         )
 
+    # Resolve the build model through the same precedence the rest of Nous
+    # uses (campaign.models > defaults.yaml > --model flag) rather than
+    # hardcoding a fallback here. defaults.yaml pins `build` to the strongest
+    # available model: it is the single agent call of the whole campaign, and
+    # every later stage measures whatever it writes, so a weaker model here
+    # degrades every downstream number.
+    from orchestrator.campaign import _resolve_model
+
+    resolved_model = model or _resolve_model(campaign, "build", None)
+
     prompt = build_prompt(campaign, declared_tests)
     runner = sdk_runner or _default_sdk_runner_factory()
 
@@ -247,12 +257,13 @@ def run_build(
 
     logger.info(
         "build: authoring mechanism in %s (%d declared native test(s), "
-        "max_turns=%d)", repo, len(declared_tests), max_turns,
+        "max_turns=%d, model=%s)", repo, len(declared_tests), max_turns,
+        resolved_model,
     )
 
     result = runner(
         prompt=prompt,
-        model=model or "claude-opus-4-6",
+        model=resolved_model,
         cwd=Path(repo),
         max_turns=max_turns,
         system_prompt=system_prompt,
@@ -273,7 +284,7 @@ def run_build(
         "dispatcher": "sdk",
         "role": "builder",
         "phase": "build",
-        "model": model or "claude-opus-4-6",
+        "model": resolved_model,
         "input_tokens": getattr(result, "input_tokens", 0),
         "output_tokens": getattr(result, "output_tokens", 0),
         "cache_creation_input_tokens": getattr(

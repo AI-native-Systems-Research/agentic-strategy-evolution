@@ -156,6 +156,12 @@ anywhere but position 1 and warns when declared `native_test` files are
 absent with no `build` stage to author them. Omit `build` whenever every
 factor maps to a knob the target already exposes.
 
+**Model:** every phase of a `kind: optimization` campaign resolves to
+`claude-opus-5` (`orchestrator.campaign.OPTIMIZATION_MODEL`) rather than the
+per-phase `defaults.yaml` models the reflective kind uses — few calls, and the
+`build` call determines the quality of every downstream number. An explicit
+`campaign.models.<phase>` still overrides it.
+
 **The graded-complexity tier ladder above is scoped to `kind: reflective`
 only and does not apply here.** `complexity_tier` / `tier_justification`
 are rejected under `kind: optimization` wherever they appear — top level,
