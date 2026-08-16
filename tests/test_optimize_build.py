@@ -539,3 +539,22 @@ def test_build_records_the_resolved_model_in_metrics(tmp_path: Path):
     )
     row = json.loads((work / "llm_metrics.jsonl").read_text().splitlines()[0])
     assert row["model"] == "claude-opus-5"
+
+
+def test_build_prompt_forbids_fitting_reference_numbers(tmp_path: Path):
+    """The build call must not be spent grid-searching to match a spec figure.
+
+    Observed for real across three aborted builds: a spec labelled a baseline leg
+    with a behaviour the target's evaluator did not actually model, alongside an
+    otherwise-correct figure. The agent could not tell a mislabelled spec from a
+    wrong implementation, so it spent twenty-plus shell probes chasing an
+    unclosable gap instead of writing the mechanism. The prompt must tell it to
+    record a divergence and continue.
+    """
+    prompt = build_prompt(_campaign(tmp_path), [])
+    low = prompt.lower()
+    assert "budget discipline" in low
+    assert "not\n    a target to fit" in low or "a target to fit" in low
+    assert "divergence" in low
+    # and it must ask for the divergence back in the summary
+    assert "did not reproduce" in low
