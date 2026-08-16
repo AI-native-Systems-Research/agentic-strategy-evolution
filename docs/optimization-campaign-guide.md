@@ -413,6 +413,34 @@ Those tests are native to the target's language and live in the target repo,
 using its own tooling. Nous never grows a property-testing dependency for
 this; `hypothesis`, `rapid`, and `proptest` belong to target repos.
 
+#### Reference numbers in a spec: verify them, or leave them out
+
+If your mechanism description quotes expected values for the build stage to
+check against, **reproduce every one of them yourself first, with the exact
+code path the build stage will use.** An unverifiable number is the most
+expensive thing you can put in a spec: the agent cannot tell "the author
+mislabelled this" from "my implementation is wrong", so it does the diligent
+thing and searches for a variant that matches — burning the one call the
+campaign has on probes that produce no mechanism and no measurement.
+
+Observed for real, and it cost three aborted build stages. A spec described its
+baseline leg in terms of the *deployed system's* behaviour and quoted an exact
+figure for it. The figure was correct; the **label** was not — one of the
+behaviours named in the label was not modelled by the target's evaluator at all,
+so it could not have contributed. The build agent spent twenty-plus shell probes
+grid-searching variants trying to close a sub-percentage-point gap that was
+unclosable by construction, and never got as far as writing the mechanism.
+
+Two rules follow:
+
+1. **Name the leg by the code path that produces it**, not by what the
+   production system does. "Function `f` called per item with these arguments,
+   results combined this way" is checkable; "production's strategy" is an
+   invitation to go looking for behaviour the evaluator may not model.
+2. **Say what to do on a mismatch.** State explicitly that a divergence should
+   be recorded and the build continued, rather than chased. The build prompt
+   says this too, but a spec that also says it removes the ambiguity.
+
 Run `nous validate campaign FILE` before starting: it warns when declared
 `native_test` files are absent from the target and no `build` stage exists to
 author them — the combination that is otherwise guaranteed to abort at

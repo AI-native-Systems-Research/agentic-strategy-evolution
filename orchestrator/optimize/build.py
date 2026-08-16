@@ -193,8 +193,27 @@ REQUIREMENTS
 5. Follow the plumbing path the specification names rather than inventing a
    parallel one.
 
+BUDGET DISCIPLINE — read this before you start probing
+This is ONE call, and it is the only call in the campaign that spends tokens on
+the target. Everything after it is tokenless. So:
+
+  - Write the mechanism and its tests. That is the deliverable. Exploratory
+    scripts, grid searches, and attribution probes are spend that buys no
+    measurement.
+  - Reference numbers in the specification are for a ONE-TIME sanity check, not
+    a target to fit. Reproduce them once. If your first faithful implementation
+    disagrees with one, say so in your summary and keep going — a documented
+    divergence is a finding for a human to adjudicate, and it is far cheaper
+    than a search for a variant that matches. The specification's author may
+    simply have mislabelled a leg.
+  - If the spec asks for behaviour you cannot find in the target, do not go
+    hunting for it across the codebase. Note it as absent and implement what is
+    specified minus that piece.
+  - Delete any temporary probe scripts you create before you finish.
+
 When you are done, reply with a short plain-text summary: the files you changed,
-the flag or API you added, and the output of the test command. No JSON.
+the flag or API you added, the output of the test command, and any place where a
+reference number in the specification did not reproduce. No JSON.
 """
 
 
