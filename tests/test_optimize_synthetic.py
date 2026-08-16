@@ -191,6 +191,32 @@ def test_cli_rejects_an_unknown_factor_flag():
     assert "zzz" in proc.stderr
 
 
+def test_cli_rejects_a_missing_factor_flag_instead_of_raising_keyerror():
+    # Omitting --b and --c used to reach surface.fn with an incomplete levels
+    # dict and die on a bare KeyError traceback with exit 1.
+    proc = subprocess.run(
+        [sys.executable, "-m", "orchestrator.optimize.synthetic",
+         "--surface", "additive", "--a=4"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "--b" in proc.stderr and "--c" in proc.stderr
+    assert proc.stdout.strip() == ""            # no half-formed observation
+
+
+def test_cli_accepts_flags_in_any_order_once_all_are_present():
+    s = SURFACES["additive"]()
+    proc = subprocess.run(
+        [sys.executable, "-m", "orchestrator.optimize.synthetic",
+         "--surface", "additive", "--seed", "3", "--c=on", "--b=8", "--a=4"],
+        capture_output=True, text=True, check=True,
+    )
+    obs = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert obs["m"] == make_synthetic_runner(s, seed=3)(
+        _row({"A": 4, "B": 8, "C": "on"}))["m"]
+
+
 def test_surface_is_a_frozen_value_type():
     s = SURFACES["additive"]()
     assert isinstance(s, Surface)

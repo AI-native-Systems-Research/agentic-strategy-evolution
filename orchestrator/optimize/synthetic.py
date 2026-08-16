@@ -192,6 +192,23 @@ def candidate_grid(factors_raw: list[dict], *, max_numeric_points: int = 9) -> l
         if f["type"] == "numeric" and f.get("grid") is not None:
             lo, hi = float(min(levels)), float(max(levels))
             n = max(2, int(max_numeric_points))
+            # HAZARD for whoever adds a FRACTIONAL-grid surface: this set mixes
+            # ``snap_to_grid`` output with the raw ``levels``, and the two can
+            # disagree on int-vs-float representation. ``snap_to_grid`` returns
+            # an int only when the grid is integral, so with ``grid: 1`` (all
+            # nine current surfaces) every member is an int and the axis is
+            # uniform. With ``grid: 0.5`` the snapped points are floats while
+            # the declared levels are ints, and since ``pts.update(levels)``
+            # runs SECOND, set insertion keeps the first-seen representative --
+            # so a declared level of 2 that coincides with a snapped 2.0 stays
+            # ``2.0``, while a declared level off the snap sequence enters as
+            # ``2``. The axis is then mostly float with stray ints. This is
+            # deterministic and ``==``-safe (2 == 2.0), so lookups and the
+            # candidate enumeration are correct either way, but a consumer that
+            # compares REPRESENTATIONS (a JSON round-trip diff, a CLI argument
+            # rendered as "2" vs "2.0" -- see snap_to_grid's own note about
+            # BLIS rejecting --max-num-running-reqs=160.0) would see the
+            # inconsistency. Normalise the axis there, not here.
             pts = {snap_to_grid(lo + (hi - lo) * i / (n - 1), float(f["grid"])) for i in range(n)}
             pts.update(levels)
             axes.append(sorted(pts))
@@ -280,6 +297,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"unknown factor flag --{k}", file=sys.stderr)
             return 2
         levels[f["id"]] = int(v) if f["type"] == "numeric" else v
+
+    # Symmetric with the unknown-flag check above. Without this, omitting a
+    # flag reaches ``surface.fn`` with an incomplete ``levels`` dict and dies
+    # on a bare ``KeyError: 'B'`` with a raw traceback and exit 1. This
+    # module's docstring advertises the CLI as the contract every real
+    # target's run_command must meet, so a smoke test that mis-renders one
+    # ``apply`` template deserves a diagnosis naming the flag it forgot, not
+    # a stack trace through a lambda.
+    missing = [f["id"].lower() for f in surface.factors if f["id"] not in levels]
+    if missing:
+        print(
+            "missing factor flag(s) "
+            + ", ".join(f"--{name}" for name in missing)
+            + f"; surface {known.surface!r} declares "
+            + ", ".join(f"--{f['id'].lower()}" for f in surface.factors),
+            file=sys.stderr,
+        )
+        return 2
+
     rng = random.Random(known.seed)
     print(json.dumps(_observe(surface, levels, rng=rng, run_counter=known.run)))
     return 0
