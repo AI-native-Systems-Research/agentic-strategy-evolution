@@ -43,11 +43,16 @@ break is a discovery — the motivating case is a lever measured -9.5% alone
 yet required for the winning compound — so it is recorded as a finding and
 the stage advances.
 
-TODO(follow-up): ``config_runner`` and ``integrity_check`` arrive as
-injected callables. Production wiring to real subprocess invocations of the
-campaign's build/benchmark command and ``integrity_command`` is not built
-here; tests inject fakes. Keeping the seam injected is also what makes this
-module testable without subprocesses at all.
+``config_runner`` and ``integrity_check`` remain injected callables — that
+seam is what makes this module testable without subprocesses — but a real
+run no longer needs a caller to supply them. ``run_stage`` resolves both from
+the campaign itself: ``optimization.run_command`` becomes a config runner via
+``runner.make_config_runner`` and ``optimization.test_command`` is executed by
+``runner.run_test_command``. Until that wiring existed, every real campaign
+aborted at ``verify`` (nothing executed the test command, so every relation
+reconciled as "declared but not executed") or at ``screen`` (no config
+runner), which made the whole kind unusable end to end while 1600+ tests
+stayed green — they inject fakes at exactly the seams that were missing.
 """
 from __future__ import annotations
 
@@ -415,9 +420,13 @@ def run_stage(
     # ── EXECUTE_ANALYZE: the tokenless sweep ────────────────────────────
     if config_runner is None:
         raise OptimizationAborted(
-            "run_stage needs a config_runner callable (row -> observation dict). "
-            "Production wiring to the campaign's build/benchmark command is a "
-            "follow-up; tests inject a fake.",
+            "run_stage has no config_runner (row -> observation dict). A real "
+            "run builds one from optimization.run_command, so reaching this "
+            "means the campaign declares no run_command (or "
+            "target_system.repo_path is unset) and no caller injected a "
+            "substitute. Add optimization.run_command — the target's benchmark "
+            "invocation, without the per-factor flags, which are appended from "
+            "each factor's `apply`.",
         )
     _enter_phase(engine, "EXECUTE_ANALYZE", work_dir)
     by_index = {r.row_index: r for r in rows}
