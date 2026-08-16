@@ -625,3 +625,274 @@ def test_absent_test_still_fails_closed():
 
     decl = _decl("py/tests/t.py::test_never_written")
     assert match_declared_tests(decl, {"test_something_else": True}) == {}
+
+
+# ─── refine must not drop non-designed factors ────────────────────────────
+
+def test_refine_holds_non_designed_factors_fixed(tmp_path, monkeypatch):
+    """A `choice` factor must still reach the target during `refine`.
+
+    refine builds a central composite over REFINABLE (numeric, >2 level)
+    factors only. A factor outside that design contributed no level and so no
+    `apply` fragment, and its CLI flag vanished from the command line. A target
+    that (correctly) requires all of its flags then fails every run on a usage
+    error. Observed for real: 48 of 48 refine and confirm runs died with
+    "the following arguments are required: --enable-a, --enable-b".
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "c"))
+
+    def _num(fid, name, levels):
+        return {
+            "id": fid, "name": name, "type": "numeric", "levels": levels,
+            "grid": 0.1, "apply": f"--{name}={{level}}",
+            "manipulation": {
+                "observable": f"applied.{name}", "op": "==", "value": "{level}",
+            },
+            "relations": [{
+                "id": f"R_{fid}", "kind": "correctness", "statement": "s",
+                "native_test": "t.py::test_ok",
+            }],
+        }
+
+    campaign = {
+        "kind": "optimization", "run_id": "refdrop",
+        "research_question": "q",
+        "target_system": {"name": "T", "repo_path": str(repo)},
+        "optimization": {
+            "response": {"primary": {"metric": "m", "direction": "maximize"}},
+            "factors": [
+                {
+                    "id": "FLAG", "name": "flag", "type": "choice",
+                    "levels": ["off", "on"], "apply": "--flag={level}",
+                    "manipulation": {
+                        "observable": "applied.flag", "op": "==",
+                        "value": "{level}",
+                    },
+                    "relations": [{
+                        "id": "R_FLAG", "kind": "correctness", "statement": "s",
+                        "native_test": "t.py::test_ok",
+                    }],
+                },
+                _num("A", "aaa", [1.0, 2.0, 3.0]),
+                _num("B", "bbb", [1.0, 2.0, 3.0]),
+            ],
+            "stages": ["verify", "screen", "refine", "confirm"],
+            "design": {
+                "screen": {"resolution": 3},
+                "refine": {"kind": "central_composite", "center_points": 1},
+                "confirm": {"replicates": 1},
+            },
+        },
+    }
+    wd = setup_work_dir("refdrop", repo_path=str(repo), campaign=campaign)
+
+    seen: list[dict] = []
+
+    names = {"FLAG": "flag", "A": "aaa", "B": "bbb"}
+
+    def runner(row):
+        seen.append(dict(row.levels))
+        return {
+            "applied": {names[k]: v for k, v in row.levels.items()},
+            "m": 1.0 + float(row.levels.get("A", 0)),
+        }
+
+    run_stage(
+        campaign, wd, iteration=3, stage="refine", config_runner=runner,
+        test_results={"t.py::test_ok": True}, auto_approve=True,
+    )
+    assert seen, "refine executed no rows"
+    for lv in seen:
+        assert "FLAG" in lv, (
+            f"the non-designed choice factor was dropped from the row: {lv}. "
+            "Its CLI flag would be missing from every command line."
+        )
+        assert lv["FLAG"] == "off", "held-fixed value must be the first level"
+
+
+def test_held_fixed_is_recorded_in_the_design_matrix(tmp_path, monkeypatch):
+    """The held-fixed value must be auditable, not implicit."""
+    import json as _json
+
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "c"))
+    campaign = {
+        "kind": "optimization", "run_id": "heldfix",
+        "research_question": "q",
+        "target_system": {"name": "T", "repo_path": str(repo)},
+        "optimization": {
+            "response": {"primary": {"metric": "m", "direction": "maximize"}},
+            "factors": [
+                {
+                    "id": "FLAG", "name": "flag", "type": "choice",
+                    "levels": ["off", "on"], "apply": "--flag={level}",
+                    "manipulation": {
+                        "observable": "applied.flag", "op": "==",
+                        "value": "{level}",
+                    },
+                    "relations": [{
+                        "id": "R1", "kind": "correctness", "statement": "s",
+                        "native_test": "t.py::test_ok",
+                    }],
+                },
+                {
+                    "id": "A", "name": "aaa", "type": "numeric",
+                    "levels": [1.0, 2.0, 3.0], "grid": 0.1,
+                    "apply": "--aaa={level}",
+                    "manipulation": {
+                        "observable": "applied.aaa", "op": "==",
+                        "value": "{level}",
+                    },
+                    "relations": [{
+                        "id": "R2", "kind": "correctness", "statement": "s",
+                        "native_test": "t.py::test_ok",
+                    }],
+                },
+                {
+                    "id": "B", "name": "bbb", "type": "numeric",
+                    "levels": [1.0, 2.0, 3.0], "grid": 0.1,
+                    "apply": "--bbb={level}",
+                    "manipulation": {
+                        "observable": "applied.bbb", "op": "==",
+                        "value": "{level}",
+                    },
+                    "relations": [{
+                        "id": "R3", "kind": "correctness", "statement": "s",
+                        "native_test": "t.py::test_ok",
+                    }],
+                },
+            ],
+            "stages": ["verify", "screen", "refine", "confirm"],
+            "design": {
+                "screen": {"resolution": 3},
+                "refine": {"kind": "central_composite", "center_points": 1},
+                "confirm": {"replicates": 1},
+            },
+        },
+    }
+    wd = setup_work_dir("heldfix", repo_path=str(repo), campaign=campaign)
+    run_stage(
+        campaign, wd, iteration=3, stage="refine",
+        config_runner=lambda row: {
+            "applied": {
+                {"FLAG": "flag", "A": "aaa", "B": "bbb"}[k]: v
+                for k, v in row.levels.items()
+            },
+            "m": 1.0,
+        },
+        test_results={"t.py::test_ok": True}, auto_approve=True,
+    )
+    dm = _json.loads(
+        (Path(wd) / "runs" / "iter-3" / "design_matrix.json").read_text(),
+    )
+    assert dm.get("held_fixed") == {"FLAG": "off"}
+
+
+# ─── nous validate campaign --smoke ───────────────────────────────────────
+
+def _smoke_campaign(repo: Path, *, predicate: dict, metric: str = "m") -> dict:
+    return {
+        "kind": "optimization", "run_id": "smoke",
+        "research_question": "q",
+        "target_system": {"name": "T", "repo_path": str(repo)},
+        "optimization": {
+            "response": {"primary": {"metric": metric, "direction": "maximize"}},
+            "factors": [{
+                "id": "FLAG", "name": "flag", "type": "choice",
+                "levels": ["off", "on"], "apply": "--flag={level}",
+                "manipulation": predicate,
+                "relations": [{
+                    "id": "R1", "kind": "correctness", "statement": "s",
+                    "native_test": "t.py::test_declared",
+                }],
+            }],
+            "stages": ["verify", "screen", "confirm"],
+            "design": {"screen": {"resolution": 3}, "confirm": {"replicates": 1}},
+            "test_command": "sh -c 'echo t.py::test_declared PASSED'",
+            "run_command": (
+                """sh -c 'echo {\\"applied\\": {\\"flag\\": false}, \\"m\\": 1.5}'"""
+            ),
+        },
+    }
+
+
+def test_smoke_catches_a_predicate_type_mismatch(tmp_path: Path):
+    """The failure that killed 67 of 67 runs while the target was correct.
+
+    A level is a string; a target echoing a bool for it can never compare
+    equal. Static validation cannot see this — only executing one
+    configuration can, and the scope must use the target's OWN echo rather
+    than the requested levels or the comparison is trivially true.
+    """
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    camp = _smoke_campaign(repo, predicate={
+        "observable": "applied.flag", "op": "==", "value": "{level}",
+    })
+    issues = _smoke_check_optimization(camp)
+    assert any("manipulation predicate fails" in i for i in issues), issues
+    assert any("TYPE" in i for i in issues), "must name the type as the suspect"
+
+
+def test_smoke_passes_a_sound_contract(tmp_path: Path):
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    camp = _smoke_campaign(repo, predicate={
+        "observable": "m", "op": ">", "value": 0,
+    })
+    assert _smoke_check_optimization(camp) == []
+
+
+def test_smoke_catches_an_absent_objective_metric(tmp_path: Path):
+    """A metric the target never emits makes every run score NaN."""
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    camp = _smoke_campaign(
+        repo, predicate={"observable": "m", "op": ">", "value": 0},
+        metric="not_emitted",
+    )
+    issues = _smoke_check_optimization(camp)
+    assert any("absent from the run's output" in i for i in issues), issues
+
+
+def test_smoke_catches_an_unmatched_native_test(tmp_path: Path):
+    """A declared test the runner never reports fails closed at verify."""
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    camp = _smoke_campaign(repo, predicate={
+        "observable": "m", "op": ">", "value": 0,
+    })
+    camp["optimization"]["test_command"] = "sh -c 'echo t.py::test_other PASSED'"
+    issues = _smoke_check_optimization(camp)
+    assert any("did not appear" in i for i in issues), issues
+
+
+def test_smoke_catches_a_run_command_that_cannot_exec(tmp_path: Path):
+    """An inline VAR=value prefix is parsed by shlex as the binary name."""
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    camp = _smoke_campaign(repo, predicate={
+        "observable": "m", "op": ">", "value": 0,
+    })
+    camp["optimization"]["run_command"] = "PYTHONPATH=x python3 -c pass"
+    issues = _smoke_check_optimization(camp)
+    assert any("run_command failed" in i for i in issues), issues

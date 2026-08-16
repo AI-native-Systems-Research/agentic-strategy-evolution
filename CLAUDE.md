@@ -171,6 +171,14 @@ guarantee than the tier ladder protects (every configuration is fixed
 before any result is seen), so the two disciplines must not be
 half-adopted together.
 
+Before launching any optimization campaign, run
+`nous validate campaign FILE --smoke`. Static validation passes campaigns that
+cannot execute a single configuration; `--smoke` runs the test command and one
+config to check that declared `native_test` identifiers actually resolve, that
+`run_command` execs and emits parseable JSON, that the objective metric is
+present, and that the manipulation predicates hold. Each of those otherwise
+costs a full campaign to discover.
+
 These campaigns are authored by AI: see
 `docs/optimization-campaign-guide.md` for the mental model, the
 field-by-field walkthrough of the `optimization` block, four worked

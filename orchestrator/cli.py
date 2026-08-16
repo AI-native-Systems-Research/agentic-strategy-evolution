@@ -609,7 +609,7 @@ def _cmd_validate(args):
                 file=sys.stderr,
             )
             sys.exit(2)
-        _validate_campaign_file(args.file)
+        _validate_campaign_file(args.file, smoke=getattr(args, 'smoke', False))
         return
     if args.dir is None:
         print(
@@ -628,7 +628,7 @@ def _cmd_validate(args):
         sys.exit(1)
 
 
-def _validate_campaign_file(path: Path) -> None:
+def _validate_campaign_file(path: Path, smoke: bool = False) -> None:
     """Check a campaign.yaml before spending anything on a run.
 
     Runs BOTH layers an author can trip: the JSON Schema (shape, required
@@ -724,6 +724,162 @@ def _validate_campaign_file(path: Path) -> None:
             "at its verify stage. Confirm each one runs under "
             "optimization.test_command before starting a run."
         )
+        if not smoke:
+            print(
+                "  Static checks only. Re-run with --smoke to execute the test "
+                "command and ONE configuration: that is the only way to catch a "
+                "manipulation predicate whose type never matches, an unmatched "
+                "native_test, or a run_command that cannot exec."
+            )
+        else:
+            print("\n  --smoke: executing the contract against the target...")
+            issues = _smoke_check_optimization(campaign)
+            if issues:
+                print(f"\n{len(issues)} smoke failure(s):", file=sys.stderr)
+                for i in issues:
+                    print(f"  x {i}", file=sys.stderr)
+                print(
+                    "\nThese would each have cost a full campaign to discover. "
+                    "Fix them before launching.", file=sys.stderr,
+                )
+                sys.exit(1)
+            print("  smoke: OK — the campaign/target contract holds.")
+
+
+def _smoke_check_optimization(campaign: dict) -> list[str]:
+    """Execute the test command and ONE configuration; report what breaks.
+
+    Static validation cannot see the failures that actually kill campaigns,
+    because they live in the *contract between the campaign and the target*
+    rather than in the campaign's structure. Every one of these was observed on
+    a real run that passed static validation cleanly:
+
+      * a ``run_command`` that cannot exec (an inline ``VAR=value`` prefix is
+        parsed by ``shlex`` as the binary name);
+      * a declared ``native_test`` the test command never reports, so the
+        relation reconciles as "declared but not executed" and fails closed;
+      * a manipulation predicate comparing a level string to a value the target
+        emits as a bool/int, which can never match -- 67 of 67 runs failed this
+        way while the CLI itself was correct;
+      * an objective metric absent from the emitted JSON, so every run parses
+        and scores NaN.
+
+    One probe run costs seconds and catches all four. Returns a list of
+    problems; empty means the contract holds at the first design corner.
+    """
+    from orchestrator.optimize import runner
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.matrix import render_apply
+    from orchestrator.optimize import predicates
+
+    problems: list[str] = []
+    opt = campaign.get("optimization") or {}
+    repo = (campaign.get("target_system") or {}).get("repo_path")
+    if not repo or not Path(repo).is_dir():
+        return [f"target_system.repo_path is not a directory: {repo!r}"]
+
+    factors = parse_factors(opt["factors"])
+
+    # 1. Test command: do the declared identifiers actually resolve?
+    if opt.get("test_command"):
+        raw = runner.run_test_command(opt["test_command"], cwd=Path(repo))
+        matched = runner.match_declared_tests(factors, raw)
+        declared = {
+            r.get("native_test")
+            for f in factors for r in (getattr(f, "relations", ()) or [])
+            if isinstance(r, dict) and r.get("native_test")
+        }
+        missing = sorted(str(x) for x in (declared - set(matched)) if x)
+        print(f"  smoke: test command reported {len(raw)} test(s); "
+              f"{len(matched)}/{len(declared)} declared identifier(s) matched")
+        if missing:
+            problems.append(
+                f"{len(missing)} declared native_test(s) did not appear in the "
+                f"test command's output, so they would fail closed at verify: "
+                f"{', '.join(str(m) for m in missing[:4])}"
+                + ("" if len(missing) <= 4 else f" (+{len(missing)-4} more)")
+                + ". Check the identifier spelling, that the command selects "
+                "them, and that it prints per-test results (-v / --json-report)."
+            )
+        failed = sorted(k for k, v in matched.items() if not v)
+        if failed:
+            problems.append(
+                f"{len(failed)} declared native_test(s) ran and FAILED: "
+                f"{', '.join(failed[:4])}",
+            )
+
+    # 2. One configuration at every factor's first level.
+    if not opt.get("run_command"):
+        return problems
+    levels = {f.id: f.levels[0] for f in factors if getattr(f, "levels", None)}
+    cfg_runner = runner.make_config_runner(
+        opt["run_command"], cwd=Path(repo),
+        metric_path=((opt.get("response") or {}).get("primary") or {}).get(
+            "metric", "",
+        ),
+    )
+
+    class _Row:
+        row_index = 0
+        replicate = 0
+        role = "smoke"
+        levels: dict = {}
+        apply: dict = {}
+
+    row = _Row()
+    row.levels = dict(levels)
+    row.apply = render_apply(factors, levels)
+    try:
+        obs = cfg_runner(row)
+    except Exception as exc:  # noqa: BLE001 — any failure is a finding
+        problems.append(
+            f"run_command failed at the first design corner {levels}: {exc}",
+        )
+        return problems
+
+    print(f"  smoke: ran one configuration {levels} — "
+          f"{len(obs)} observable(s) returned")
+
+    # 3. Is the objective metric present?
+    metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")
+    if metric and metric not in obs:
+        problems.append(
+            f"response.primary.metric {metric!r} is absent from the run's "
+            f"output, so every configuration would score NaN. Emitted keys: "
+            f"{', '.join(sorted(str(k) for k in obs)[:8])}",
+        )
+
+    # 4. Do the manipulation predicates hold at this corner?
+    # Build the scope the way run_stage does: the target's OWN echo of its
+    # configuration wins over the requested levels. Using the requested levels
+    # for `applied` would make `applied.X == "{level}"` trivially true and hide
+    # exactly the type mismatch this check exists to find -- a target echoing a
+    # bool where the level is the string "0" can never compare equal, and that
+    # failed 67 of 67 runs on a real campaign.
+    scope = {"applied": dict(levels)}
+    scope.update({k: v for k, v in obs.items()})
+    if isinstance(obs.get("applied"), dict):
+        merged = dict(levels)
+        merged.update(obs["applied"])
+        scope["applied"] = merged
+    for f in factors:
+        man = getattr(f, "manipulation", None)
+        if not man:
+            continue
+        try:
+            v = predicates.evaluate(man, scope, level=levels.get(f.id))
+            ok, detail = v.ok, v.detail
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"factor {f.id}: manipulation check raised: {exc}")
+            continue
+        if not ok:
+            problems.append(
+                f"factor {f.id}: manipulation predicate fails at its first "
+                f"level ({detail}). Every run would be rejected. Check the "
+                f"observable's TYPE -- a level is a string, and a target that "
+                f"emits a bool or int for it can never compare equal.",
+            )
+    return problems
 
 
 def _cmd_status(args):
@@ -1343,6 +1499,15 @@ def build_parser():
     p_validate.add_argument(
         "--dir", type=Path,
         help="Iteration directory (phase=design|execution only).",
+    )
+    p_validate.add_argument(
+        "--smoke", action="store_true",
+        help="For `validate campaign` on a kind: optimization campaign, also "
+             "EXECUTE the test command and one configuration against the "
+             "target. Catches the failures static checks cannot see: an "
+             "unmatched native_test, a manipulation predicate whose type never "
+             "matches, an objective metric the target does not emit, and a "
+             "run_command that cannot exec.",
     )
     p_validate.set_defaults(func=_cmd_validate)
 
