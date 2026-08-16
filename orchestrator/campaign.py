@@ -57,8 +57,9 @@ logger = logging.getLogger(__name__)
 #:
 #: This kind makes at most one substantive model call — one ``build`` (which
 #: authors the mechanism every later stage measures), and nothing else —
-#: verify/screen/refine/confirm/report are tokenless, apart from a small gate
-#: summary per iteration. Because the tokenless stages carry the
+#: verify/screen/refine/confirm are tokenless, apart from a small gate summary
+#: per iteration and the shared end-of-campaign report (neither is part of the
+#: compiled epoch). Because the tokenless stages carry the
 #: bulk of the work, the marginal cost of using the strongest model for all of
 #: them is small, while the downside of a weaker model on the build call is that
 #: every downstream number describes worse code. Reflective keeps its own

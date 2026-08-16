@@ -126,23 +126,26 @@ with its own gates and artifacts:
 
 | Iter | Stage | LLM calls | Runs | Establishes |
 |---|---|---|---|---|
-| 1 | `verify` | 1 design call + mechanism code & native tests | ~2/factor | Levers exist, engage, pass native property tests |
+| 1 | `verify` | 0 | ~2/factor | pure Python: certifies levers, reconciles relations, compiles the policy |
 | 2 | `screen` | 0 | 16-64 | Which factors matter + all two-factor interactions |
 | 3 | `refine` | 0 | 15-25 | Curvature on surviving `numeric` factors; a stationary point |
-| 4 | `confirm` | 1 analyze call | ~3-5 x replicates | Predicted optimum reproduces; `held_out` evaluated |
+| 4 | `confirm` | 0 | ~3-5 x replicates | Predicted optimum reproduces; `held_out` evaluated |
 
-`screen` and `refine` make **zero** model calls. Once the model proposes
-factors at `verify`, Python drives the pre-registered design matrix straight
-through to a fitted surface with no further model involvement — build,
-run, parse, replicate, fit is deterministic. This is why `design_space`
-exists as a separate mechanism from prose (§5): there is no phase reading
-prompts during the two stages that spend most of the run budget.
+`screen` and `refine` make **zero** model calls. The author declares factors;
+`verify` certifies them and compiles the policy, and Python drives the
+pre-registered design matrix straight through to a fitted surface with no
+model involvement — build, run, parse, replicate, fit is deterministic. This
+is why `design_space` exists as a separate mechanism from prose (§5): there
+is no phase reading prompts during the two stages that spend most of the run
+budget.
 
 ### Where the tokens go
 
-Model calls per campaign: **0** when every factor maps to a knob the target
-already exposes, and **1** when the campaign must author the mechanism first
-— the only model call in the kind is `build`. Against either: 60-90 benchmark
+Substantive model calls per campaign: **0** when every factor maps to a knob
+the target already exposes, and **1** when the campaign must author the
+mechanism first — the only substantive model call in the kind is `build`.
+Gate summaries and the end-of-campaign report use the existing shared
+machinery and are not part of the epoch. Against either: 60-90 benchmark
 runs, all of them tokenless.
 
 | Stage | Model calls | What it costs |
@@ -152,7 +155,7 @@ runs, all of them tokenless.
 | `screen` | 0 | pre-registered design matrix; tokenless |
 | `refine` | 0 | tokenless |
 | `confirm` | 0 | tokenless |
-| `report` (at the end) | 0 | pure Python: recommendation + certificate |
+| `report` state (Tasks 4+) | 0 | pure Python: recommendation + certificate |
 | gate summaries | 1 per iteration | existing machinery, small |
 
 **Model.** Every phase of a `kind: optimization` campaign resolves to
@@ -167,8 +170,8 @@ want one.
 
 **Do not add a `build` stage you do not need.** It is the only stage that
 spends an agent call on the target repo, so a campaign varying existing
-flags should omit it and stay at zero model calls. Add it only when the
-mechanism under study does not exist yet.
+flags should omit it and stay at zero *substantive* model calls. Add it only
+when the mechanism under study does not exist yet.
 
 The cost curve inverts relative to a reflective campaign: nearly all token
 cost sits in the one authoring call at the front, and every measurement
@@ -1030,7 +1033,8 @@ Three things this example demonstrates that the earlier ones don't:
   would silently reintroduce the exact composition barrier this campaign
   kind exists to remove. Naming the risk in `guidance` is not required by
   the schema, but leaving it out invites the failure the design is built
-  to prevent.
+  to prevent. Nothing reads this field today; it documents the author intent
+  a future model-facing stage would honor.
 - **R6 is `behavioral`, not `correctness`, precisely at the lever whose
   main effect is negative.** This is the single highest-stakes
   classification decision in the whole spec — see anti-pattern §6.4.
