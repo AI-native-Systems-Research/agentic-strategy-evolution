@@ -591,10 +591,30 @@ def match_declared_tests(
     "declared but not executed" — the fail-closed path.
     """
     by_tail = {}
+    # A parametrized test is reported once per case: pytest emits
+    # `test_no_rebalancing[0.95-1.05]`, Go subtests emit `TestX/case_name`.
+    # A declaration naming the bare function must match ALL of its cases, and
+    # passes only when EVERY case passed — otherwise a suite with one failing
+    # parametrization would reconcile as a pass on whichever case happened to
+    # be seen last. Observed for real: a campaign whose 68 tests all passed
+    # matched only 2 of 6 declared identifiers, because the other four were
+    # parametrized; the four reconciled as "declared but not executed" and
+    # fail-closed aborted a build that had in fact done everything asked.
+    params: dict[str, list[bool]] = {}
     for name, passed in results.items():
         by_tail[name] = passed
-        tail = name.rsplit("::", 1)[-1].rsplit("/", 1)[-1]
+        tail = name.rsplit("::", 1)[-1]
         by_tail.setdefault(tail, passed)
+        # Strip a pytest parametrization suffix and/or a Go subtest path so the
+        # bare function name aggregates every case.
+        base = tail.split("[", 1)[0].split("/", 1)[0]
+        if base != tail:
+            params.setdefault(base, []).append(passed)
+        by_tail.setdefault(base, passed)
+
+    for base, verdicts in params.items():
+        # all() so one failing case fails the relation.
+        by_tail[base] = all(verdicts)
 
     matched: dict[str, bool] = {}
     for f in factors:
@@ -608,6 +628,10 @@ def match_declared_tests(
             tail = declared.rsplit("::", 1)[-1]
             if tail in by_tail:
                 matched[declared] = by_tail[tail]
+                continue
+            base = tail.split("[", 1)[0].split("/", 1)[0]
+            if base in by_tail:
+                matched[declared] = by_tail[base]
     return matched
 
 
