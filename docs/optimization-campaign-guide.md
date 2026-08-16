@@ -441,6 +441,37 @@ Two rules follow:
    be recorded and the build continued, rather than chased. The build prompt
    says this too, but a spec that also says it removes the ambiguity.
 
+#### Always finish with `--smoke`
+
+`nous validate campaign FILE` is **static**: it checks structure and cross-field
+rules, and it will pass a campaign that cannot execute a single configuration.
+That is not a hypothetical — a campaign passed static validation cleanly and
+then failed every one of its screen runs, because its manipulation predicate
+compared a level (a *string*) against a value the target emits as a *bool*. The
+target was correct; the contract between campaign and target was not, and
+nothing was executing that contract.
+
+    nous validate campaign campaign.yaml --smoke
+
+`--smoke` runs the test command and **one** configuration at every factor's
+first level, then reports four things static checks cannot see:
+
+| Check | Failure it prevents |
+|---|---|
+| declared `native_test` identifiers appear in the runner's output | fail-closed abort at `verify` for tests that exist and pass |
+| `run_command` execs and emits parseable JSON | every run dies on a usage error |
+| `response.primary.metric` is present in the output | every run parses and scores NaN, poisoning the fit |
+| manipulation predicates hold at the first level | every run rejected while the target is fine |
+
+The predicate check builds its scope the way `run_stage` does — the target's own
+`applied` echo wins over the requested levels — because using the requested
+levels would make `applied.X == "{level}"` trivially true and hide the exact
+mismatch worth finding.
+
+It costs one test run plus one configuration, and each of those four failures
+otherwise costs a full campaign to discover. Make it the last thing you do
+before launching.
+
 Run `nous validate campaign FILE` before starting: it warns when declared
 `native_test` files are absent from the target and no `build` stage exists to
 author them — the combination that is otherwise guaranteed to abort at

@@ -380,6 +380,48 @@ def run_stage(
     payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
     rows = matrix.expand(design, factors)
 
+    # At refine the design spans only the REFINABLE factors, so a factor left
+    # out of it contributes no level and therefore no `apply` fragment — its
+    # CLI flag disappears from the command line entirely. A target that
+    # (correctly) requires all of its flags then fails every single run on a
+    # usage error. Observed for real: 48 of 48 refine and confirm runs died with
+    # "the following arguments are required: --enable-a, --enable-b" because
+    # those two factors are `choice` and refine only covers numerics.
+    #
+    # Hold every non-designed factor at a fixed level instead of dropping it:
+    # its first declared level, which for a two-level ablation is the control
+    # and for anything else is the author's stated default. That keeps the
+    # command line complete and the held-fixed value auditable in runs.jsonl,
+    # rather than making the target guess.
+    designed = set(_design_factor_ids(factors, design_cfg, stage_name))
+    held = [f for f in factors if f.id not in designed]
+    if held and rows:
+        import dataclasses
+
+        fixed = {f.id: f.levels[0] for f in held if getattr(f, "levels", None)}
+        if fixed:
+            logger.info(
+                "%s: holding %d non-designed factor(s) fixed at their first "
+                "declared level so the target still receives every flag: %s",
+                stage_name, len(fixed), fixed,
+            )
+            rows = [
+                dataclasses.replace(
+                    r,
+                    levels={**fixed, **dict(r.levels)},
+                    apply=matrix.render_apply(
+                        factors, {**fixed, **dict(r.levels)},
+                    ),
+                )
+                for r in rows
+            ]
+            payload = dict(payload)
+            payload["held_fixed"] = dict(fixed)
+            payload["rows"] = [
+                {**row, "levels": {**fixed, **dict(row.get("levels") or {})}}
+                for row in payload.get("rows", [])
+            ]
+
     if stage_name == Stage.CONFIRM.value and not (
         design_cfg.get("confirm_at") or _read_confirm_at(work_dir)
     ):
