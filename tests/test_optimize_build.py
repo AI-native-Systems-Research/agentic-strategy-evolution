@@ -558,3 +558,70 @@ def test_build_prompt_forbids_fitting_reference_numbers(tmp_path: Path):
     assert "divergence" in low
     # and it must ask for the divergence back in the summary
     assert "did not reproduce" in low
+
+
+def _decl(*names):
+    class _F:
+        def __init__(self, rels):
+            self.relations = rels
+    return [_F([{"native_test": n} for n in names])]
+
+
+def test_parametrized_tests_match_their_bare_declaration():
+    """pytest reports `test_x[case]`; a declaration naming `test_x` must match.
+
+    Observed for real and it aborted a completed build: a campaign's 68 tests
+    all passed, but only 2 of 6 declared identifiers matched because the other
+    four were parametrized. Those four reconciled as "declared but not executed"
+    and the fail-closed path killed a build that had done everything asked.
+    """
+    from orchestrator.optimize.runner import match_declared_tests
+
+    decl = _decl("py/tests/t.py::test_no_rebalancing")
+    res = {
+        "test_no_rebalancing[0.95-1.05]": True,
+        "test_no_rebalancing[0.8-2.0]": True,
+    }
+    assert match_declared_tests(decl, res) == {
+        "py/tests/t.py::test_no_rebalancing": True,
+    }
+
+
+def test_one_failing_parametrization_fails_the_relation():
+    """Aggregation must be all(), not last-seen — fail-closed is the point."""
+    from orchestrator.optimize.runner import match_declared_tests
+
+    decl = _decl("py/tests/t.py::test_inv")
+    res = {"test_inv[a]": True, "test_inv[b]": False, "test_inv[c]": True}
+    assert match_declared_tests(decl, res)["py/tests/t.py::test_inv"] is False
+
+
+def test_go_subtests_aggregate_the_same_way():
+    """Go reports subtests as TestX/case; the same rule applies."""
+    from orchestrator.optimize.runner import match_declared_tests
+
+    decl = _decl("sim/x_test.go::TestCeiling")
+    assert match_declared_tests(
+        decl, {"TestCeiling/linear": True, "TestCeiling/step": True},
+    )["sim/x_test.go::TestCeiling"] is True
+    assert match_declared_tests(
+        decl, {"TestCeiling/linear": True, "TestCeiling/step": False},
+    )["sim/x_test.go::TestCeiling"] is False
+
+
+def test_plain_test_names_still_match_exactly():
+    """No regression for the non-parametrized case."""
+    from orchestrator.optimize.runner import match_declared_tests
+
+    decl = _decl("py/tests/t.py::test_plain")
+    assert match_declared_tests(decl, {"test_plain": True}) == {
+        "py/tests/t.py::test_plain": True,
+    }
+
+
+def test_absent_test_still_fails_closed():
+    """A declaration with no matching result must stay absent, not default True."""
+    from orchestrator.optimize.runner import match_declared_tests
+
+    decl = _decl("py/tests/t.py::test_never_written")
+    assert match_declared_tests(decl, {"test_something_else": True}) == {}
