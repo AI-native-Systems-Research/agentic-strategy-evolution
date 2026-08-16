@@ -12,10 +12,13 @@ DONE), so ``Engine``, ``HumanGate``, ``append_ledger_row``,
 are reused rather than reimplemented. What differs is what DESIGN produces
 and how EXECUTE_ANALYZE runs it:
 
-  * ``verify``  — one model call authors the mechanism + its native tests.
-  * ``screen``  — DESIGN emits a design matrix with ZERO model calls.
-  * ``refine``  — same, plus curvature on the surviving factors.
-  * ``confirm`` — one model call interprets the fitted surface.
+  * ``build``   — the ONLY model call in this kind: authors the mechanism and
+                  its native tests (opt-in; see build.py).
+  * ``verify``  — pure Python: runs test_command, reconciles relations, and
+                  compiles the experimental policy (policy.py).
+  * ``screen`` / ``foldover`` / ``refine`` / ``confirm`` — spending states of
+                  the compiled epoch. ZERO model calls.
+  * ``report`` / ``exception`` — inline terminal states. ZERO model calls.
 
 Three checks hard-fail regardless of gate approval, because auto-approve is
 this kind's default (spec §7.1) and removing the human must not remove the

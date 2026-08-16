@@ -139,17 +139,20 @@ silently leap from tier 1 to tier 3.
 ## Optimization campaigns (kind: optimization)
 
 `kind: optimization` is a second campaign type alongside the default
-`reflective` one: a factorial/response-surface flow where the model
-proposes factors once (stage `verify`), Python then drives
-`screen → refine → confirm` with **zero further LLM calls** through a
-pre-registered design matrix, and the model interprets the fitted surface
-once at the end. Substantive model calls per campaign: ~3, against 60–90
-tokenless benchmark runs.
+`reflective` one: a factorial/response-surface flow where the campaign
+author (human or an AI writing the YAML) declares factors; `verify`
+certifies them and compiles the policy; Python drives the epoch; `report`
+writes the recommendation and its residual-regret certificate.
+**Model calls per campaign: 0 without `build`, 1 with it —
+the only model call in the kind is `build`.** Compilation of the
+experimental policy is deterministic Python; every state inside the
+compiled epoch is tokenless
+(see `docs/superpowers/specs/2026-08-16-compiled-policy-design.md`).
 
 When the mechanism under study does not exist in the target yet, add the
 opt-in `build` stage first (`stages: [build, verify, screen, confirm]`).
 It spends **one** agent call authoring the mechanism plus the native tests
-its `relations` declare, taking the campaign to ~4 calls. `build` makes no
+its `relations` declare — the campaign's only model call. `build` makes no
 correctness judgement — `verify` remains the gate, so the stage that writes
 the code is never the stage that certifies it. The validator rejects `build`
 anywhere but position 1 and warns when declared `native_test` files are

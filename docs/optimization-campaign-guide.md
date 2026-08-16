@@ -140,10 +140,10 @@ prompts during the two stages that spend most of the run budget.
 
 ### Where the tokens go
 
-Substantive model calls per campaign: **about 3** when every factor maps to
-a knob the target already exposes, and **about 4** when the campaign must
-author the mechanism first. Against either: 60-90 benchmark runs, all of
-them tokenless.
+Model calls per campaign: **0** when every factor maps to a knob the target
+already exposes, and **1** when the campaign must author the mechanism first
+— the only model call in the kind is `build`. Against either: 60-90 benchmark
+runs, all of them tokenless.
 
 | Stage | Model calls | What it costs |
 |---|---|---|
@@ -152,7 +152,7 @@ them tokenless.
 | `screen` | 0 | pre-registered design matrix; tokenless |
 | `refine` | 0 | tokenless |
 | `confirm` | 0 | tokenless |
-| interpretation (at the end) | 1 | reads the fitted surface |
+| `report` (at the end) | 0 | pure Python: recommendation + certificate |
 | gate summaries | 1 per iteration | existing machinery, small |
 
 **Model.** Every phase of a `kind: optimization` campaign resolves to
@@ -167,8 +167,8 @@ want one.
 
 **Do not add a `build` stage you do not need.** It is the only stage that
 spends an agent call on the target repo, so a campaign varying existing
-flags should omit it and stay at ~3 calls. Add it only when the mechanism
-under study does not exist yet.
+flags should omit it and stay at zero model calls. Add it only when the
+mechanism under study does not exist yet.
 
 The cost curve inverts relative to a reflective campaign: nearly all token
 cost sits in the one authoring call at the front, and every measurement
@@ -317,17 +317,16 @@ see §5 for the full rationale and the decision test for what belongs here.
 
 ### `guidance`
 
-Structured prose for the two model-facing stages, in exactly two named
-slots because they're read at different times and blending them wastes
-tokens in both.
+Structured prose in two named slots. Both are **reserved, not read by any
+stage** — `verify` and `confirm` are pure Python, so nothing consumes these
+fields today. Keep them accurate: they document author intent for a human
+reader, and they are the slots a future model-facing stage would read.
 
-- **`factor_nomination`** — read at `verify`, when the model proposes
-  factors and levels. Domain knowledge about which axes matter, which
-  mechanisms already exist in the target, and what's out of scope belongs
-  here.
-- **`interpretation`** — read at `confirm`, when the model interprets the
-  fitted surface. Scope limitations and "report X as a lead, not a result"
-  belong here.
+- **`factor_nomination`** — **reserved, not read by any stage.** Domain
+  knowledge about which axes matter, which mechanisms already exist in the
+  target, and what's out of scope belongs here.
+- **`interpretation`** — **reserved, not read by any stage.** Scope
+  limitations and "report X as a lead, not a result" belong here.
 
 ### `test_command` / `integrity_command`
 
@@ -1089,9 +1088,9 @@ consequential mistake an author can make (anti-pattern §6.6).
 
 | Channel | Consumed by | When | Shapes |
 |---|---|---|---|
-| `guidance.factor_nomination` / `guidance.interpretation` | The model | `verify` (nomination) / `confirm` (interpretation) | What the model **proposes** or concludes |
+| `guidance.factor_nomination` / `guidance.interpretation` | Nothing — **reserved, not read by any stage** | never | Author intent, for human readers |
 | `design_space.invariants` | Python | Every run, every stage, including `screen` and `refine` | What Python **executes** |
-| `target_system.description` | The model | Both model-facing stages | Narrative framing, domain context |
+| `target_system.description` | The model | `build`, when present | Narrative framing, domain context |
 
 The reason this split exists — rather than one big prose field, as in the
 reflective kind's `target_system.description` — is structural, not
