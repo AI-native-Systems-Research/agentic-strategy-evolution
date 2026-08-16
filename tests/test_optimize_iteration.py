@@ -1068,3 +1068,135 @@ def test_hull_check_accepts_the_boundary(tmp_path, work_dir):
         json.dumps({"A": 1.0, "B": -1.0}),
     )
     assert _read_confirm_at(wd) == {"A": 1.0, "B": -1.0}
+
+
+def test_confirm_runs_the_fitted_point_not_the_geometric_centre(
+    tmp_path, work_dir,
+):
+    """`role="center"` made confirm discard the coordinates it exists to replay.
+
+    `matrix._decode_level` treats role "center" as "ignore coded coordinates,
+    use the midpoint of every declared range" — correct for a genuine replicated
+    centre point, catastrophic for the fitted stationary point. A stationary
+    point at coded +0.9 of [64, 256] ran 160 (the midpoint) instead of 246, and
+    the campaign then reported "the predicted optimum reproduced" about a
+    configuration the fit never predicted.
+    """
+    from orchestrator.optimize import matrix
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import _build_design
+
+    c = _campaign()
+    c["optimization"]["design"] = {
+        "screen": {"resolution": 3}, "confirm": {"replicates": 2},
+    }
+    wd = tmp_path / "wd"
+    (wd / "runs" / "iter-2").mkdir(parents=True)
+    (wd / "runs" / "iter-2" / "confirm_at.json").write_text(
+        json.dumps({"A": 0.9, "B": 0.9, "C": 0.9}),
+    )
+    factors = parse_factors(c["optimization"]["factors"])
+    design = _build_design(factors, c["optimization"]["design"], "confirm", wd)
+    rows = matrix.expand(design, factors)
+
+    from orchestrator.optimize.factors import decode_coded
+
+    mid = {f.id: decode_coded(f, 0.0) for f in factors}
+    assert rows[0].levels != mid, (
+        f"confirm ran the geometric centre {mid} instead of the fitted point at "
+        f"coded +0.9 — the coordinates were discarded"
+    )
+    # and it should be near the HIGH end, since +0.9 is near +1
+    hi = {f.id: decode_coded(f, 0.9) for f in factors}
+    assert rows[0].levels == hi, f"expected {hi}, got {rows[0].levels}"
+
+
+def test_confirm_with_no_fitted_point_still_yields_the_origin(tmp_path, work_dir):
+    """The no-refine case must be unchanged: coded 0.0 decodes to the midpoint."""
+    from orchestrator.optimize import matrix
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import _build_design
+
+    c = _campaign()
+    c["optimization"]["design"] = {
+        "screen": {"resolution": 3}, "confirm": {"replicates": 1},
+    }
+    wd = tmp_path / "wd"
+    (wd / "runs").mkdir(parents=True)
+    factors = parse_factors(c["optimization"]["factors"])
+    design = _build_design(factors, c["optimization"]["design"], "confirm", wd)
+    assert all(cd == 0.0 for cd in design.points[0].coded)
+    rows = matrix.expand(design, factors)
+    assert rows, "confirm produced no rows"
+
+
+def test_execution_uses_the_recorded_run_order(tmp_path, work_dir):
+    """The artifact's `run_order` must be the order actually executed.
+
+    matrix_payload records a seeded permutation and expand's docstring tells
+    callers to consult it; nothing did, so design_matrix.json asserted a
+    randomization that never happened. Run-order randomization is what protects
+    a factorial against drift confounding, so an artifact claiming a guarantee
+    the run did not provide is worse than one claiming nothing.
+    """
+    import json as _json
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    seen: list[int] = []
+
+    def runner(row):
+        seen.append(row.row_index)
+        lv = row.levels
+        return {
+            "cfg": {k.lower(): v for k, v in lv.items()},
+            "m": 10.0 + float(lv.get("A", 0)),
+        }
+
+    _run(c, wd, stage="screen", iteration=2, runner=runner)
+    dm = _json.loads(
+        (Path(wd) / "runs" / "iter-2" / "design_matrix.json").read_text(),
+    )
+    assert seen == dm["run_order"], (
+        "executed order did not match the pre-registered run_order"
+    )
+    assert seen != sorted(seen), "run_order was not actually a permutation"
+
+
+def test_responses_stay_aligned_with_their_design_rows(tmp_path, work_dir):
+    """Randomized execution must not misalign responses with design points.
+
+    `_fitting_responses` walks outcomes positionally and `fit_effects` pairs
+    value i with design.points[i]. If outcomes were left in execution order
+    every coefficient would be silently wrong — a far worse defect than the
+    provenance gap that motivated randomizing execution.
+    """
+    import json as _json
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+
+    # response is a strict function of the levels, so a misalignment shows up as
+    # a row whose recorded response disagrees with its own levels.
+    def runner(row):
+        lv = row.levels
+        return {
+            "cfg": {k.lower(): v for k, v in lv.items()},
+            "m": 100.0 * float(lv.get("A", 0)) + float(lv.get("B", 0)),
+        }
+
+    _run(c, wd, stage="screen", iteration=2, runner=runner)
+    rows = [
+        _json.loads(line)
+        for line in (Path(wd) / "runs" / "iter-2" / "runs.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    for r in rows:
+        if r.get("status") != "complete":
+            continue
+        lv = r["levels"]
+        expected = 100.0 * float(lv["A"]) + float(lv["B"])
+        assert math.isclose(r["response"]["m"], expected, rel_tol=1e-9), (
+            f"row {r['row_index']} response {r['response']['m']} does not match "
+            f"its own levels {lv} — responses and design rows are misaligned"
+        )

@@ -472,14 +472,60 @@ def run_stage(
         )
     _enter_phase(engine, "EXECUTE_ANALYZE", work_dir)
     by_index = {r.row_index: r for r in rows}
+
+    # EXECUTE in the pre-registered randomized order, not in design order.
+    #
+    # `matrix_payload` generates `run_order` (a seeded permutation) and records
+    # it in design_matrix.json, and `expand`'s docstring tells callers to
+    # consult it. Nothing did: rows went to execute_design in design order, so
+    # the artifact asserted a randomization that never happened. That is a
+    # provenance defect rather than a numerical one — every configuration still
+    # ran and the fit is unaffected — but run-order randomization is what
+    # protects a factorial design against drift confounding (a warming cache, a
+    # thermally throttling machine, a background job), and an artifact claiming
+    # a guarantee the run did not provide is worse than one that claims nothing.
+    #
+    # execute_design returns outcomes in the order it received rows, and every
+    # downstream consumer keys on `row_index` (`by_index`, `_run_row`,
+    # check_fidelity), so permuting the input reorders execution without
+    # reordering any result.
+    order = payload.get("run_order")
+    exec_rows = rows
+    if isinstance(order, list) and sorted(order) == list(range(len(rows))):
+        exec_rows = [by_index[i] for i in order]
+        logger.info(
+            "%s: executing %d row(s) in the pre-registered randomized order "
+            "(seed=%s)", stage_name, len(exec_rows),
+            payload.get("run_order_seed"),
+        )
+    elif order is not None:
+        logger.warning(
+            "%s: design_matrix run_order is not a permutation of 0..%d; "
+            "executing in design order and the artifact's randomization claim "
+            "does not hold", stage_name, len(rows) - 1,
+        )
+
     outcomes = runner.execute_design(
-        rows, runner=config_runner, response_spec=response_spec,
+        exec_rows, runner=config_runner, response_spec=response_spec,
         invariants=invariants, factors=factors,
         integrity_check=integrity_check,
         on_row=lambda outcome: artifacts.append_run(
             iter_dir, _run_row(by_index[outcome.row_index], outcome),
         ),
     )
+
+    # Restore DESIGN order before anything reads these positionally.
+    # `_fitting_responses` walks `outcomes` in sequence and `fit_effects` pairs
+    # value i with `design.points[i]`, so leaving them in execution order would
+    # misalign every response with its design row and produce silently wrong
+    # coefficients — far worse than the provenance gap that motivated
+    # randomizing execution in the first place. runs.jsonl still records the
+    # true execution sequence, because `on_row` fires as each row completes.
+    if exec_rows is not rows:
+        pos = {r.row_index: i for i, r in enumerate(rows)}
+        outcomes = sorted(
+            outcomes, key=lambda o: pos.get(o.row_index, len(rows)),
+        )
 
     # Fidelity: what ran must match what was pre-registered. Hard-fails
     # even under auto-approve — the #246 discipline extended to the matrix.
@@ -842,9 +888,26 @@ def _build_design(factors, design_cfg: dict, stage_name: str,
         )
         from orchestrator.optimize.design import Design, DesignPoint
 
+        # role MUST NOT be "center": `matrix._decode_level` treats that role as
+        # "ignore the coded coordinates and use the midpoint of every declared
+        # range", which is correct for a genuine replicated centre point and
+        # catastrophic here. Labelling the fitted stationary point "center"
+        # silently discarded the coordinates confirm exists to reproduce, so a
+        # stationary point at coded +0.9 of [64, 256] ran level 160 (the
+        # midpoint) instead of 246. The campaign then reported "the predicted
+        # optimum reproduced" about a configuration the fit never predicted.
+        #
+        # Observed on a real campaign: confirm reported a mean 38% below a
+        # corner the screen had already measured. That was diagnosed at the time
+        # as the fit extrapolating badly; it was actually this — confirm never
+        # ran the fitted point at all.
+        #
+        # "axial" routes through `decode_coded`, which interpolates and
+        # grid-snaps any coded value, including 0.0 (so the no-refine case still
+        # yields the origin exactly as before).
         return Design(
             points=tuple(
-                DesignPoint(coded=coded, role="center", replicate=i)
+                DesignPoint(coded=coded, role="axial", replicate=i)
                 for i in range(replicates)
             ),
             factor_ids=tuple(f.id for f in factors),
