@@ -336,3 +336,23 @@ def decide_after_refine(fit: Fit, factors: list[Factor],
         dropped=(),
         rationale=rationale,
     )
+
+
+def observations_from_decision(decision: StageDecision, fit: Fit, *,
+                               refinable_survivors: int | None = None,
+                               stationary_in_hull: bool | None = None) -> dict:
+    """Project a StageDecision onto the policy's closed observation vocabulary.
+
+    Pure. ``stationary_in_hull`` is None at screen (no stationary point yet).
+    """
+    trig = set(decision.triggers)
+    return {
+        "all_within_noise": Trigger.ALL_WITHIN_NOISE in trig,
+        "lack_of_fit": Trigger.LACK_OF_FIT in trig,
+        "behavioral_violation": Trigger.BEHAVIORAL_VIOLATION in trig,
+        "refinable_survivors": (len(decision.surviving) if refinable_survivors is None
+                                else int(refinable_survivors)),
+        "stationary_in_hull": (False if Trigger.OPTIMUM_OUTSIDE_HULL in trig
+                               else stationary_in_hull),
+        "model_adequate": Trigger.LACK_OF_FIT not in trig,
+    }

@@ -233,3 +233,90 @@ def check_policy(policy: dict) -> list[str]:
         if st.get("spends") and "exception" in states and not any(t.get("to") == "exception" for t in outs):
             errs.append(f"spending state {name!r} cannot reach exception")
     return errs
+
+
+# The comparison CALLABLES only. The interpretable vocabulary is this module's
+# own COMPARISON_OPS, which is narrower: `predicates.OPS` also carries `==` and
+# `!=`, and `check_policy` rejects those in a `when` predicate. Gating dispatch
+# on COMPARISON_OPS rather than on this dict's keyset is what keeps checker and
+# interpreter speaking the same language — a policy check_policy refuses must
+# not be one step() can still drive.
+from orchestrator.optimize.predicates import OPS as _OP_FUNCS  # noqa: E402
+
+
+def _match_one(spec, value) -> bool:
+    if isinstance(spec, dict):
+        return all(op in COMPARISON_OPS and value is not None and _OP_FUNCS[op](value, want)
+                   for op, want in spec.items())
+    return value is not None and value == spec
+
+
+def _matches(when: dict, obs: dict) -> bool:
+    return all(k in obs and _match_one(spec, obs[k]) for k, spec in when.items())
+
+
+def step(policy: dict, state: str, observations: dict) -> tuple[str, dict]:
+    """Next state under ``policy`` from ``state`` given ``observations``.
+
+    First conditional rule (in registration order) whose every key is present
+    in ``observations`` and matches wins; otherwise the state's default. A
+    missing or ``None`` observation never matches — unknown is not a fact.
+    """
+    default = None
+    for t in policy.get("transitions") or []:
+        if t.get("from") != state:
+            continue
+        if "when" in t:
+            if _matches(t["when"], observations):
+                return t["to"], t
+        elif "default" in t and default is None:
+            default = t
+    if default is None:
+        raise ValueError(f"policy has no default transition from {state!r}")
+    return default["default"], default
+
+
+def is_terminal(policy: dict, state: str) -> bool:
+    return bool((policy.get("states") or {}).get(state, {}).get("terminal"))
+
+
+def enumerate_paths(policy: dict, *, max_len: int = 12) -> list[list[str]]:
+    """All simple paths (each transition used at most once) from initial to a terminal."""
+    out: list[list[str]] = []
+    trans = policy.get("transitions") or []
+
+    def walk(state, path, used):
+        if is_terminal(policy, state) or len(path) >= max_len:
+            out.append(path)
+            return
+        for i, t in enumerate(trans):
+            if t.get("from") != state or i in used:
+                continue
+            walk(t.get("to") or t.get("default"), path + [t.get("to") or t.get("default")], used | {i})
+    walk(policy["initial"], [policy["initial"]], frozenset())
+    return out
+
+
+def longest_path(policy: dict) -> int:
+    """Iterations an epoch can take: longest simple path plus registered self-loop rounds."""
+    base = max((len(p) for p in enumerate_paths(policy)), default=1)
+    extra = sum(max(0, int((v.get("design") or {}).get("max_rounds", 1)) - 1)
+                for v in (policy.get("states") or {}).values() if v.get("spends"))
+    return base + extra
+
+
+def append_transition(work_dir: Path, row: dict) -> None:
+    with (Path(work_dir) / "transitions.jsonl").open("a") as fh:
+        fh.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def read_transitions(work_dir: Path) -> list[dict]:
+    p = Path(work_dir) / "transitions.jsonl"
+    if not p.exists():
+        return []
+    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+
+
+def current_state(policy: dict, work_dir: Path) -> str:
+    rows = read_transitions(work_dir)
+    return rows[-1]["to"] if rows else policy["initial"]
