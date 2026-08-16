@@ -29,6 +29,17 @@ OBSERVATION_KEYS: frozenset[str] = frozenset({
     "behavioral_violation",
 })
 
+COMPARISON_OPS: frozenset[str] = frozenset({">", ">=", "<", "<="})
+"""The closed operator vocabulary a ``when`` predicate may use.
+
+A ``when`` value is either a bare literal (``True``/``False``/number — bare
+equality against the observation) or a single-entry dict mapping one of these
+operators to a constant. Nothing else is interpretable, which is what makes
+"no free-form expressions" true rather than aspirational: ``check_policy``
+rejects an unknown operator instead of letting ``step`` treat the predicate as
+unsatisfiable and silently strand the branch it guards.
+"""
+
 _PRE = ("build", "verify")
 _DEFAULT_STAGES = ("verify", "screen", "refine", "confirm")
 
@@ -187,9 +198,30 @@ def check_policy(policy: dict) -> list[str]:
         if target not in states:
             errs.append(f"transition to unknown state {target!r}")
         if "when" in t:
+            where = f"transition {t.get('from')}->{t.get('to')}"
             unknown = set(t["when"]) - OBSERVATION_KEYS
             if unknown:
-                errs.append(f"transition {t.get('from')}->{t.get('to')} uses unknown observation key(s) {sorted(unknown)}")
+                errs.append(f"{where} uses unknown observation key(s) {sorted(unknown)}")
+            if not t["when"]:
+                # An empty guard matches vacuously, so it fires unconditionally
+                # and shadows every later rule declared for the same `from`
+                # state. A rule that can never NOT fire is a `default` written
+                # in a way that hides the shadowing from a reader.
+                errs.append(f"{where} has an empty `when` and would match unconditionally")
+            for key, spec in t["when"].items():
+                if not isinstance(spec, dict):
+                    continue  # bare literal: equality against the observation
+                if not spec:
+                    errs.append(f"{where} has an empty predicate for {key!r}")
+                    continue
+                bad_ops = sorted(set(spec) - COMPARISON_OPS)
+                if bad_ops:
+                    # Unreachable-branch defect: `step` cannot interpret the
+                    # operator, so the guarded (registered) branch is dead and
+                    # nothing else reports it.
+                    errs.append(f"{where} uses unknown operator(s) {bad_ops} on {key!r}")
+                if len(spec) > 1:
+                    errs.append(f"{where} has {len(spec)} operators on {key!r}; predicates take exactly one")
             if not t.get("accounting"):
                 errs.append(f"conditional transition {t.get('from')}->{t.get('to')} names no accounting rule")
     for name, st in states.items():
