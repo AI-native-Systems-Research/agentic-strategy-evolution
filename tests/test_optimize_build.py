@@ -797,91 +797,76 @@ def test_held_fixed_is_recorded_in_the_design_matrix(tmp_path, monkeypatch):
     assert dm.get("held_fixed") == {"FLAG": "off"}
 
 
-# ─── nous validate campaign --smoke ───────────────────────────────────────
+# ─── validate --smoke: execute the contract, not just its shape ────────────
 
-def _smoke_campaign(repo: Path, *, predicate: dict, metric: str = "m") -> dict:
+def _smoke_campaign(repo: Path, *, predicate: dict, run_cmd: str,
+                    test_cmd: str = "echo --- PASS: test_present") -> dict:
     return {
-        "kind": "optimization", "run_id": "smoke",
+        "kind": "optimization", "run_id": "smk",
         "research_question": "q",
         "target_system": {"name": "T", "repo_path": str(repo)},
         "optimization": {
-            "response": {"primary": {"metric": metric, "direction": "maximize"}},
+            "response": {"primary": {"metric": "m", "direction": "maximize"}},
             "factors": [{
-                "id": "FLAG", "name": "flag", "type": "choice",
-                "levels": ["off", "on"], "apply": "--flag={level}",
+                "id": "F", "name": "flag", "type": "choice",
+                "levels": ["0", "1"], "apply": "--flag={level}",
                 "manipulation": predicate,
                 "relations": [{
                     "id": "R1", "kind": "correctness", "statement": "s",
-                    "native_test": "t.py::test_declared",
+                    "native_test": "t.py::test_present",
                 }],
             }],
             "stages": ["verify", "screen", "confirm"],
             "design": {"screen": {"resolution": 3}, "confirm": {"replicates": 1}},
-            "test_command": "sh -c 'echo t.py::test_declared PASSED'",
-            "run_command": (
-                """sh -c 'echo {\\"applied\\": {\\"flag\\": false}, \\"m\\": 1.5}'"""
-            ),
+            "run_command": run_cmd,
+            "test_command": test_cmd,
         },
     }
 
 
 def test_smoke_catches_a_predicate_type_mismatch(tmp_path: Path):
-    """The failure that killed 67 of 67 runs while the target was correct.
+    """The failure that rejected 67 of 67 runs while the target was correct.
 
-    A level is a string; a target echoing a bool for it can never compare
-    equal. Static validation cannot see this — only executing one
-    configuration can, and the scope must use the target's OWN echo rather
-    than the requested levels or the comparison is trivially true.
+    A level is a string; a target echoing a bool for the same knob can never
+    compare equal. Static validation cannot see this — the predicate is
+    well-formed and the target is right. Only running one configuration and
+    reading the target's OWN echo exposes it.
     """
     from orchestrator.cli import _smoke_check_optimization
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    camp = _smoke_campaign(repo, predicate={
-        "observable": "applied.flag", "op": "==", "value": "{level}",
-    })
-    issues = _smoke_check_optimization(camp)
+    campaign = _smoke_campaign(
+        repo,
+        predicate={"observable": "applied.flag", "op": "==", "value": "{level}"},
+        # target echoes a BOOLEAN for `flag`, not the string level
+        run_cmd="""python3 -c 'print({"applied":{"flag":False},"m":1.0})'""",
+    )
+    # the CLI prints python-repr above; use JSON so the runner can parse it
+    campaign["optimization"]["run_command"] = (
+        """python3 -c 'import json;print(json.dumps({"applied":{"flag":False},"m":1.0}))'"""
+    )
+    issues = _smoke_check_optimization(campaign)
     assert any("manipulation predicate fails" in i for i in issues), issues
-    assert any("TYPE" in i for i in issues), "must name the type as the suspect"
+    assert any("TYPE" in i for i in issues), "must name the type mismatch"
 
 
-def test_smoke_passes_a_sound_contract(tmp_path: Path):
-    from orchestrator.cli import _smoke_check_optimization
-
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    camp = _smoke_campaign(repo, predicate={
-        "observable": "m", "op": ">", "value": 0,
-    })
-    assert _smoke_check_optimization(camp) == []
-
-
-def test_smoke_catches_an_absent_objective_metric(tmp_path: Path):
+def test_smoke_catches_a_missing_objective_metric(tmp_path: Path):
     """A metric the target never emits makes every run score NaN."""
     from orchestrator.cli import _smoke_check_optimization
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    camp = _smoke_campaign(
-        repo, predicate={"observable": "m", "op": ">", "value": 0},
-        metric="not_emitted",
+    campaign = _smoke_campaign(
+        repo,
+        predicate={"observable": "applied.flag", "op": "==", "value": "{level}"},
+        run_cmd=(
+            """python3 -c 'import json;print(json.dumps("""
+            """{"applied":{"flag":"0"},"other":1.0}))'"""
+        ),
     )
-    issues = _smoke_check_optimization(camp)
-    assert any("absent from the run's output" in i for i in issues), issues
-
-
-def test_smoke_catches_an_unmatched_native_test(tmp_path: Path):
-    """A declared test the runner never reports fails closed at verify."""
-    from orchestrator.cli import _smoke_check_optimization
-
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    camp = _smoke_campaign(repo, predicate={
-        "observable": "m", "op": ">", "value": 0,
-    })
-    camp["optimization"]["test_command"] = "sh -c 'echo t.py::test_other PASSED'"
-    issues = _smoke_check_optimization(camp)
-    assert any("did not appear" in i for i in issues), issues
+    issues = _smoke_check_optimization(campaign)
+    assert any("absent from the run" in i for i in issues), issues
 
 
 def test_smoke_catches_a_run_command_that_cannot_exec(tmp_path: Path):
@@ -890,9 +875,46 @@ def test_smoke_catches_a_run_command_that_cannot_exec(tmp_path: Path):
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    camp = _smoke_campaign(repo, predicate={
-        "observable": "m", "op": ">", "value": 0,
-    })
-    camp["optimization"]["run_command"] = "PYTHONPATH=x python3 -c pass"
-    issues = _smoke_check_optimization(camp)
+    campaign = _smoke_campaign(
+        repo,
+        predicate={"observable": "applied.flag", "op": "==", "value": "{level}"},
+        run_cmd="PYTHONPATH=x python3 -c 'pass'",
+    )
+    issues = _smoke_check_optimization(campaign)
     assert any("run_command failed" in i for i in issues), issues
+
+
+def test_smoke_passes_a_sound_contract(tmp_path: Path):
+    """No false positives when the campaign and target actually agree."""
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    campaign = _smoke_campaign(
+        repo,
+        predicate={"observable": "applied.flag", "op": "==", "value": "{level}"},
+        run_cmd=(
+            """python3 -c 'import json;print(json.dumps("""
+            """{"applied":{"flag":"0"},"m":1.0}))'"""
+        ),
+    )
+    assert _smoke_check_optimization(campaign) == []
+
+
+def test_smoke_reports_an_unmatched_native_test(tmp_path: Path):
+    """A declared test the runner never reports fails closed at verify."""
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    campaign = _smoke_campaign(
+        repo,
+        predicate={"observable": "applied.flag", "op": "==", "value": "{level}"},
+        run_cmd=(
+            """python3 -c 'import json;print(json.dumps("""
+            """{"applied":{"flag":"0"},"m":1.0}))'"""
+        ),
+        test_cmd="python3 -c \"print('--- PASS: test_something_else')\"",
+    )
+    issues = _smoke_check_optimization(campaign)
+    assert any("did not appear in the test command" in i for i in issues), issues
