@@ -11,8 +11,10 @@ import jsonschema
 import pytest
 
 from orchestrator.optimize.policy import (
-    COMPARISON_OPS, OBSERVATION_KEYS, POLICY_SCHEMA_PATH, check_policy,
-    compile_policy, policy_hash, pre_epoch_stages, read_policy, write_policy,
+    COMPARISON_OPS, OBSERVATION_KEYS, POLICY_SCHEMA_PATH, append_transition,
+    check_policy, compile_policy, current_state, enumerate_paths, is_terminal,
+    longest_path, policy_hash, pre_epoch_stages, read_policy, read_transitions,
+    step, write_policy,
 )
 from orchestrator.optimize.synthetic import SURFACES
 from orchestrator.optimize.harness import synthetic_campaign
@@ -137,3 +139,79 @@ def test_every_emitted_operator_is_in_the_closed_vocabulary():
                     assert set(spec) <= COMPARISON_OPS, t
                 else:
                     assert isinstance(spec, (bool, int, float)), t
+
+
+def test_step_takes_the_first_matching_rule_then_the_default():
+    pol = compile_policy(_campaign())
+    nxt, rule = step(pol, "screen", {"correctness_failed": False, "nan_response": False,
+                                     "refinable_survivors": 2})
+    assert nxt == "refine" and rule["to"] == "refine"
+    nxt, rule = step(pol, "screen", {"correctness_failed": False, "nan_response": False,
+                                     "refinable_survivors": 0})
+    assert nxt == "confirm" and "default" in rule
+    nxt, _ = step(pol, "screen", {"correctness_failed": True})
+    assert nxt == "exception"
+
+
+def test_step_treats_a_missing_observation_as_not_matching():
+    pol = compile_policy(_campaign())
+    nxt, _ = step(pol, "screen", {})            # nothing known -> default
+    assert nxt == "confirm"
+
+
+def test_step_supports_comparator_dicts_and_none_never_matches():
+    pol = compile_policy(_campaign())
+    nxt, _ = step(pol, "confirm", {"correctness_failed": False, "certified": None,
+                                   "round": 1, "budget_remaining": 50})
+    assert nxt == "report"                       # round >= max_rounds(1)
+
+
+def test_step_never_interprets_an_operator_check_policy_would_reject():
+    """The interpreter's vocabulary is COMPARISON_OPS, not predicates.OPS.
+
+    `predicates.OPS` supplies the comparison callables, but it also carries
+    `==` / `!=`, which `check_policy` rejects in a `when` predicate. If
+    `step` honoured them, a hand-written policy the checker refuses could
+    still drive the epoch — checker and interpreter would disagree on the
+    language, and "no free-form expressions" would stop being a property of
+    the module and become a property of who happened to call the checker.
+    """
+    pol = compile_policy(_campaign())
+    bad = json.loads(json.dumps(pol))
+    bad["transitions"].insert(0, {"from": "screen", "when": {"round": {"==": 1}},
+                                  "to": "report", "accounting": "a"})
+    assert any("unknown operator" in e for e in check_policy(bad))
+    nxt, _ = step(bad, "screen", {"round": 1})
+    assert nxt == "confirm"                      # the `==` rule did not fire
+
+
+def test_every_enumerated_path_terminates_and_exception_is_reachable_everywhere():
+    pol = compile_policy(_campaign())
+    paths = enumerate_paths(pol)
+    assert paths and all(is_terminal(pol, p[-1]) for p in paths)
+    spending = {s for s, v in pol["states"].items() if v["spends"]}
+    for s in spending:
+        assert any(s in p and p[-1] == "exception" for p in paths), s
+    assert longest_path(pol) >= 3               # screen, refine, confirm
+
+
+def test_transitions_log_round_trips_and_current_state_follows_it(tmp_path):
+    pol = compile_policy(_campaign())
+    assert current_state(pol, tmp_path) == "screen"
+    append_transition(tmp_path, {"iteration": 2, "from": "screen", "to": "refine",
+                                 "rule": {"to": "refine"}, "observations": {}})
+    assert read_transitions(tmp_path)[0]["to"] == "refine"
+    assert current_state(pol, tmp_path) == "refine"
+
+
+def test_observations_from_decision_maps_triggers_to_the_closed_vocabulary():
+    from orchestrator.optimize.stage import (
+        Stage, StageDecision, Trigger, observations_from_decision,
+    )
+    from orchestrator.optimize.effects import Fit
+    d = StageDecision(next_stage=Stage.REFINE, triggers=(Trigger.LACK_OF_FIT,),
+                      surviving=("A", "B"), dropped=("C",), rationale="x")
+    obs = observations_from_decision(d, Fit(intercept=0.0, effects=(), n_runs=8), refinable_survivors=1)
+    assert obs["lack_of_fit"] is True and obs["all_within_noise"] is False
+    assert obs["refinable_survivors"] == 1 and obs["stationary_in_hull"] is None
+    assert set(obs) <= OBSERVATION_KEYS
