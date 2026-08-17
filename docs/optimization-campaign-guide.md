@@ -614,7 +614,7 @@ optimization:
     epsilon: {pct: 2.0}       # indifference width; declare exactly one of abs/pct
     delta_screen: 0.05        # error budget for the MODEL bound
     delta_terminal: 0.05      # error budget for the TERMINAL bound
-    confirm_max_rounds: 2     # rounds of terminal discrimination before reporting uncertified
+    confirm_max_rounds: 1     # rounds of terminal discrimination before reporting uncertified
 ```
 
 Every field is optional and has the default shown. All four are compiled
