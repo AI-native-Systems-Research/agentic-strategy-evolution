@@ -55,9 +55,17 @@ def _campaign(*, factor_ids=("A", "B", "C"), held_out=None,
     opt = {
         "response": response,
         "factors": [_factor(f) for f in factor_ids],
+        # `shortlist_size: 1` is DELIBERATE and explicit. The default is now 3
+        # (terminal discrimination over a shortlist), and every legacy confirm
+        # test in this file was written against single-point confirmation —
+        # "confirm replicates ONE configuration", "confirmed_at_levels equals
+        # the recommendation", "replicates == 3 usable == 3". Pinning 1 here
+        # keeps those assertions MEANING what they were written to mean instead
+        # of silently reinterpreting them against a three-finalist design. The
+        # tests that exercise the new behaviour override this to 3.
         "design": {"screen": {"resolution": 5, "center_points": 4},
                    "refine": {"kind": "central_composite", "center_points": 4},
-                   "confirm": {"replicates": 3}},
+                   "confirm": {"replicates": 3, "shortlist_size": 1}},
     }
     if invariants:
         opt["design_space"] = {"invariants": list(invariants)}
@@ -426,12 +434,22 @@ def test_the_final_stage_transitions_to_done_and_reports_completed(
     policy routes ``confirm -> report`` on its registered round cap, rather
     than ``_is_final_stage`` recognising ``confirm`` as the last list entry —
     but the observable outcome asserted here is deliberately unchanged.
+
+    TASK 9 note: confirm now needs a finalist to measure, so a screen stage
+    runs first. Previously this drove confirm on an empty work_dir and got the
+    design's geometric origin — a configuration nothing recommended and nothing
+    had measured. That fallback is retired (see
+    ``test_confirm_with_no_finalist_at_all_aborts_rather_than_inventing_one``);
+    what this test is about is TERMINATION, so it now sets up the state a
+    terminal stage actually reaches production in.
     """
     from orchestrator.engine import Engine
     from orchestrator.iteration import IterationOutcome
 
     c = _campaign()
     wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=3)
+    _advance_engine(wd)
     outcome = _run(c, wd, stage="confirm", iteration=4)
     assert outcome is IterationOutcome.COMPLETED
     assert Engine(wd).phase == "DONE"
@@ -629,7 +647,7 @@ def test_a_null_primary_metric_on_a_complete_row_blocks_but_not_on_an_excluded_o
 
 # ─── confirm actually confirms (F1 from the final whole-branch review) ─────
 
-def test_confirm_replicates_one_configuration_rather_than_rerunning_the_screen(
+def test_confirm_at_shortlist_one_replicates_a_single_configuration(
     tmp_path, work_dir,
 ):
     """F1: confirm used to silently rebuild the screen design.
@@ -638,23 +656,46 @@ def test_confirm_replicates_one_configuration_rather_than_rerunning_the_screen(
     while the guide claimed it reproduced the predicted optimum. That is the
     one defect on this branch that could mislead a researcher about their own
     result, which is why it is fixed rather than documented.
+
+    TASK 9 rewrote this test's SUBJECT, not its claim. It used to compare
+    ``_build_design(.., "confirm")`` against ``_build_design(.., "screen")`` at
+    the level of coded coordinates. Confirm no longer builds a coded design at
+    all — ``_confirm_rows`` returns real-level rows for a shortlist of
+    finalists — so ``_build_design``'s confirm branch is gone and calling it
+    raises. The claim asserted here is unchanged and now asserted on the
+    artifact that actually ships: at ``shortlist_size: 1`` confirm runs ONE
+    configuration ``replicates`` times, and it is not the screen matrix.
     """
-    from orchestrator.optimize.factors import parse_factors
     from orchestrator.optimize.stage_runner import _build_design
 
-    c = _campaign()
-    factors = parse_factors(c["optimization"]["factors"])
-    cfg = c["optimization"]["design"]
+    c = _campaign()          # shortlist_size: 1, replicates: 3
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=2)
+    screen_rows = [
+        dict(r["levels"])
+        for r in json.loads(
+            (Path(wd) / "runs" / "iter-2" / "design_matrix.json").read_text(),
+        )["rows"]
+    ]
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=3)
 
-    screen = _build_design(factors, cfg, "screen")
-    confirm = _build_design(factors, cfg, "confirm")
-
-    assert [p.coded for p in screen.points] != [p.coded for p in confirm.points]
-    assert confirm.kind == "confirm"
+    payload = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "design_matrix.json").read_text(),
+    )
+    assert payload["kind"] == "shortlist_replicate"
+    assert len(payload["finalists"]) == 1
+    confirm_rows = [dict(r["levels"]) for r in payload["rows"]]
+    assert len(confirm_rows) == c["optimization"]["design"]["confirm"]["replicates"]
     # one configuration, replicated
-    assert len({p.coded for p in confirm.points}) == 1
-    assert len(confirm.points) == cfg["confirm"]["replicates"]
-    assert sorted(p.replicate for p in confirm.points) == [0, 1, 2]
+    assert all(lv == confirm_rows[0] for lv in confirm_rows)
+    assert sorted(r["replicate"] for r in payload["rows"]) == [0, 1, 2]
+    # ...and it is not a re-run of the screen matrix
+    assert confirm_rows != screen_rows[:len(confirm_rows)]
+
+    # `_build_design` no longer has a confirm branch to consult, and says so.
+    with pytest.raises(OptimizationAborted, match="_build_design was called"):
+        _build_design([], c["optimization"]["design"], "confirm")
 
 
 def test_confirm_honours_the_previous_stages_recommendation(tmp_path, work_dir):
@@ -691,7 +732,13 @@ def test_confirm_honours_the_previous_stages_recommendation(tmp_path, work_dir):
     matrix_payload = json.loads(
         (Path(wd) / "runs" / "iter-3" / "design_matrix.json").read_text(),
     )
-    assert matrix_payload["confirm_source"] == "recommendation"
+    # `confirm_source` (one string for the one target) became per-finalist
+    # provenance in Task 9: the shortlist can draw its members from several
+    # sources at once, so a single scalar can no longer say where they came
+    # from. At `shortlist_size: 1` there is exactly one, and it is the model's.
+    assert [f["why"] for f in matrix_payload["finalists"]] == [
+        "screen recommendation",
+    ]
     assert all(row["levels"] == rec["levels"] for row in matrix_payload["rows"])
     # And every replicate ACTUALLY ran there, not just the plan.
     for row in artifacts.read_runs(Path(wd) / "runs" / "iter-3"):
@@ -708,8 +755,10 @@ def test_confirm_writes_a_confirmation_record_and_no_effects(tmp_path, work_dir)
     """
     from orchestrator.iteration import IterationOutcome
 
-    c = _campaign()
+    c = _campaign()          # shortlist_size: 1
     wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=3)
+    _advance_engine(wd)
     outcome = _run(c, wd, stage="confirm", iteration=4)
     assert outcome is IterationOutcome.COMPLETED
 
@@ -724,10 +773,22 @@ def test_confirm_writes_a_confirmation_record_and_no_effects(tmp_path, work_dir)
 
 
 def test_confirm_findings_validate_and_report_reproduction(tmp_path, work_dir):
+    """A single-finalist confirm cannot CERTIFY, and must not claim to.
+
+    At ``shortlist_size: 1`` there is no challenger, so the terminal bound is
+    ``0.0`` by the trivial branch and ``0.0 <= epsilon`` holds — which certifies
+    on the strength of having nothing to compare against. That is honest as far
+    as it goes (the claim is only about the realized shortlist, and a shortlist
+    of one contains its own optimum trivially), and it is exactly why the
+    default shortlist is 3: the useful claim needs rivals. Asserted here so a
+    reader of a single-point campaign's findings knows what the CONFIRMED means.
+    """
     import jsonschema
 
     c = _campaign()
     wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=3)
+    _advance_engine(wd)
     _run(c, wd, stage="confirm", iteration=4)
 
     findings = json.loads(
@@ -737,7 +798,14 @@ def test_confirm_findings_validate_and_report_reproduction(tmp_path, work_dir):
     jsonschema.validate(findings, schema)
     assert findings["experiment_valid"] is True
     assert findings["arms"][0]["status"] == "CONFIRMED"
-    assert "replicate" in findings["arms"][0]["observed"]
+    assert "fresh runs" in findings["arms"][0]["observed"]
+    conf = json.loads(
+        (Path(wd) / "runs" / "iter-4" / "confirmation.json").read_text(),
+    )
+    assert conf["terminal_bound"]["method"] == "trivial", (
+        "a one-member shortlist has no challenger; the bound must say so rather "
+        "than looking like a measured comparison"
+    )
 
 
 # ─── F4: the survivor-selection path, which nothing else exercises ────────
@@ -1072,7 +1140,9 @@ def test_confirm_replicates_the_best_observed_config_when_there_is_no_recommenda
     matrix_payload = json.loads(
         (Path(wd) / "runs" / "iter-3" / "design_matrix.json").read_text(),
     )
-    assert matrix_payload["confirm_source"] == "best_observed"
+    assert [f["why"] for f in matrix_payload["finalists"]] == [
+        "best measured valid configuration",
+    ]
 
 
 def test_best_observed_ignores_non_complete_rows(tmp_path, work_dir):
@@ -1167,6 +1237,32 @@ def test_confirm_marks_the_winner_as_best_observed_when_it_is(
     assert "regression_vs_best_observed" not in record
 
 
+def test_best_observed_respects_minimize_direction(tmp_path, work_dir):
+    """"Best" under minimize is the SMALLEST measured value, not the largest.
+
+    ``_best_observed`` took no direction until Task 9, so it always returned the
+    argmax. Three consumers now read it — the shortlist's measured finalist,
+    ``_finish_confirm``'s regression check, and ``report.json``'s ``measured``
+    rung — and every one of them would have handed a minimising campaign its
+    WORST measured configuration as the answer.
+    """
+    from orchestrator.optimize.artifacts import append_run
+    from orchestrator.optimize.stage_runner import _best_observed
+
+    iter_dir = tmp_path / "runs" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    for idx, value in enumerate((10.0, 3.0, 42.0)):
+        append_run(iter_dir, {
+            "row_index": idx, "levels": {"A": idx}, "role": "corner",
+            "replicate": 0, "status": "complete", "response": {"m": value},
+            "held_out": {}, "manipulation": [], "invariants": [],
+            "duration_ms": 1, "error": "",
+        })
+    assert _best_observed(tmp_path, "m")["m"] == 42.0
+    assert _best_observed(tmp_path, "m", direction="maximize")["m"] == 42.0
+    assert _best_observed(tmp_path, "m", direction="minimize")["m"] == 3.0
+
+
 def test_confirm_respects_minimize_direction(tmp_path, work_dir):
     """For a minimize objective, LOWER must count as beating the best."""
     from orchestrator.optimize.stage_runner import _best_observed
@@ -1177,7 +1273,12 @@ def test_confirm_respects_minimize_direction(tmp_path, work_dir):
     wd = _init_work_dir(tmp_path, c)
 
     _run(c, wd, stage="screen", iteration=2)
-    best = _best_observed(wd, "m")
+    # Direction-correct: under minimize the configuration to beat is the
+    # SMALLEST measured value. Passing the default here (as this test did before
+    # Task 9) compares the confirm mean against the largest measurement instead,
+    # which any confirm run trivially beats — so the assertion below held
+    # without exercising the direction logic at all.
+    best = _best_observed(wd, "m", direction="minimize")
     assert best is not None
 
     _run(
@@ -1352,29 +1453,55 @@ def test_confirm_replicates_the_recommendation_not_the_geometric_centre(
     )
 
 
-def test_confirm_with_nothing_to_replicate_still_yields_the_origin(
+def test_confirm_with_no_finalist_at_all_aborts_rather_than_inventing_one(
     tmp_path, work_dir,
 ):
-    """The empty-work_dir case must be unchanged: coded 0.0 → the midpoint.
+    """BEHAVIOUR CHANGE, Task 9, and the change is the point.
 
-    Neither a recommendation nor a completed run exists, so nothing pins the
-    levels and the design's own origin is what expands. That is the last
-    resort, not the normal path, and it must still produce runnable rows.
+    This test used to assert the opposite: with no recommendation and no
+    completed run, confirm expanded the design's own ORIGIN (coded 0.0 → the
+    midpoint of every declared range) and measured that. It was documented as
+    "the last resort, not the normal path", but the geometric centre of a
+    declared range is not a configuration anyone chose — nothing predicted it,
+    nothing measured it, and the author never named it. Measuring it and then
+    reporting the result as the campaign's answer is exactly the failure that
+    ``role="center"`` produced on a live campaign (a stationary point at coded
+    +0.9 of [64, 256] ran 160 instead of 246, reported as "the predicted
+    optimum reproduced").
+
+    The terminal state has a REAL last resort now — ``known_valid_baseline``,
+    which the author declares and the validator checks. With neither that nor a
+    recommendation nor a measurement, there is genuinely nothing legal to
+    discriminate between, and saying so beats inventing a midpoint. The abort
+    message names all three ways to fix it.
     """
-    from orchestrator.optimize import matrix
-    from orchestrator.optimize.factors import decode_coded, parse_factors
-    from orchestrator.optimize.stage_runner import _build_design
-
     c = _campaign()
-    c["optimization"]["design"] = {
-        "screen": {"resolution": 3}, "confirm": {"replicates": 1},
-    }
-    factors = parse_factors(c["optimization"]["factors"])
-    design = _build_design(factors, c["optimization"]["design"], "confirm")
-    assert all(cd == 0.0 for cd in design.points[0].coded)
-    rows = matrix.expand(design, factors)
-    assert rows, "confirm produced no rows"
-    assert rows[0].levels == {f.id: decode_coded(f, 0.0) for f in factors}
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    wd = _init_work_dir(tmp_path, c)
+    with pytest.raises(OptimizationAborted, match="no finalist to measure"):
+        _run(c, wd, stage="confirm", iteration=3)
+
+
+def test_confirm_falls_back_to_the_declared_baseline_with_nothing_else(
+    tmp_path, work_dir,
+):
+    """The bottom rung of the ladder is reachable at the SHORTLIST too.
+
+    ``known_valid_baseline`` is not only ``report.json``'s last resort: a
+    terminal stage with nothing to compare must still measure something, and the
+    one configuration the author certified as valid is the honest choice.
+    """
+    c = _campaign()
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    c["optimization"]["known_valid_baseline"] = {"A": 2, "B": 2, "C": 2}
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="confirm", iteration=3)
+
+    payload = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "design_matrix.json").read_text(),
+    )
+    assert [f["why"] for f in payload["finalists"]] == ["known_valid_baseline"]
+    assert all(row["levels"] == {"A": 2, "B": 2, "C": 2} for row in payload["rows"])
 
 
 def test_execution_uses_the_recorded_run_order(tmp_path, work_dir):
@@ -1594,6 +1721,8 @@ def test_explicit_confirm_stage_still_reports_completed(tmp_path, work_dir):
 
     c = _campaign()
     wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=3)   # confirm needs a finalist (Task 9)
+    _advance_engine(wd)
     assert _run(c, wd, stage="confirm", iteration=4) == IterationOutcome.COMPLETED
     assert (Path(wd) / "report.json").exists()
 
@@ -1724,3 +1853,479 @@ def test_no_refinable_survivor_routes_screen_past_refine(tmp_path, work_dir):
     row = read_transitions(wd)[-1]
     assert row["observations"]["refinable_survivors"] == 0, row["observations"]
     assert row["to"] == "confirm", row
+
+
+# ─── Task 9: terminal discrimination over a shortlist of finalists ─────────
+#
+# The claim the campaign makes at the end changes here. Before: "this one
+# configuration, replicated N times, reproduced its predicted value" — a
+# statement about repeatability whose "and it is the best" half rested entirely
+# on the fitted surface. After: "these |S| configurations were each measured
+# freshly and compared with each other, and this one won by at least this
+# much" — a comparison the response model plays no part in (spec §3.3, paper
+# §Design). The tests below are about that difference, so they assert on
+# multiple DISTINCT finalists and on measurements overruling predictions.
+
+def test_confirm_compares_a_shortlist_of_finalists_with_fresh_replicates(
+    tmp_path, work_dir,
+):
+    """The shape of the terminal claim: |S| finalists x fresh replicates.
+
+    ``n == replicates`` per finalist is the load-bearing part — it says every
+    finalist was measured the full number of times AFRESH, rather than the
+    shortlist being a relabelling of one configuration's replicates.
+    """
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 3, "shortlist_size": 3}
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1)
+    _advance_engine(wd)
+    _run(c, wd, stage="screen", iteration=2)
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=3)
+
+    conf = json.loads((wd / "runs" / "iter-3" / "confirmation.json").read_text())
+    assert len(conf["finalists"]) == 3 and all(f["n"] == 3 for f in conf["finalists"])
+    # Distinct configurations, not one repeated: a shortlist of three copies
+    # would satisfy every count above while measuring nothing new.
+    keys = [json.dumps(f["levels"], sort_keys=True) for f in conf["finalists"]]
+    assert len(set(keys)) == 3, keys
+    assert conf["residual_regret_terminal"] is not None
+    assert conf["best"] in {f["key"] for f in conf["finalists"]}
+    assert set(conf["bounds"]) == {f["key"] for f in conf["finalists"]} - {conf["best"]}
+
+    rep = json.loads((wd / "report.json").read_text())
+    assert rep["recommendation"]["basis"] in ("certified", "terminal_best")
+    assert rep["residual_regret_terminal"] == conf["residual_regret_terminal"]
+    # Spec §3.5: the two bounds are reported separately, never collapsed.
+    assert rep["delta_screen"] == 0.05 and rep["delta_terminal"] == 0.05
+    assert "residual_regret_model" in rep
+
+
+def test_every_finalist_is_measured_once_before_any_is_measured_twice(
+    tmp_path, work_dir,
+):
+    """Run order is randomized WITHIN each replicate block, not across the matrix.
+
+    A whole-matrix shuffle could schedule all three of one finalist's runs
+    before another finalist's first, which loads any machine drift onto whoever
+    ran late. The terminal comparison is the least able of all the stages to
+    absorb that: it compares finalists DIRECTLY rather than through a fitted
+    surface that could have a drift term.
+    """
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 3, "shortlist_size": 3}
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=2)
+    _advance_engine(wd)
+
+    order: list[int] = []
+    def recording(row):
+        order.append(row.apply["finalist"])
+        return _runner()(row)
+
+    _run(c, wd, stage="confirm", iteration=3, runner=recording)
+    assert len(order) == 9
+    for block in (order[0:3], order[3:6], order[6:9]):
+        assert sorted(block) == [0, 1, 2], (
+            f"block {block} does not contain every finalist exactly once"
+        )
+    assert order[0:3] != order[3:6] or order[3:6] != order[6:9], (
+        "no block was permuted at all; the per-block seed is not being used"
+    )
+
+
+def test_a_finalist_measured_infeasible_is_excluded_from_the_recommendation(
+    tmp_path, work_dir,
+):
+    """MEASURED invalidity overrules PREDICTION — the whole point of the stage.
+
+    The fitted surface has no idea a configuration is inadmissible: it fits the
+    objective, not the constraint. So the model's argmax can be a configuration
+    that violates a declared constraint, and only a measurement can say so. A
+    finalist with any invalid replicate is excluded outright rather than
+    averaged over its survivors, and the report's recommendation therefore
+    satisfies the constraint.
+
+    HOW THE CONFLICT IS ARRANGED, and why it has to be arranged this carefully.
+    ``decide.ranked`` already drops configurations the campaign has MEASURED
+    infeasible, so a constraint the screen stage already violated cannot produce
+    this case — the recommendation would simply avoid it. The gap Task 9 closes
+    is the one the screen cannot see: the fit interpolates INTO A's interior
+    (A has four levels, so the candidate axis has interior points), and the
+    constrained metric ``p99`` blows up exactly there — strictly between the
+    screen's ±1 levels of 2 and 16, so no screen row samples it. The fitted
+    surface has no ``p99`` term at all; only a measurement can say the
+    interpolated candidate is inadmissible. That is the real ``SURFACES["sla"]``
+    shape, and it is the case the harness's ``sla`` test exercises end to end.
+    """
+    def sla_runner(row):
+        lv = row.levels
+        a, b = float(lv.get("A", 0)), float(lv.get("B", 0))
+        return {
+            "cfg": {k.lower(): v for k, v in lv.items()},
+            "m": 20.0 - 0.05 * (a - 9) ** 2 + 0.20 * b,
+            # Violated only strictly INSIDE the screen's ±1 levels (2 and 16),
+            # so every screen row is feasible and only an interpolated
+            # candidate can trip it.
+            "p99": 100.0 if 3 <= a <= 15 else 10.0,
+        }
+
+    c = _campaign()
+    c["optimization"]["factors"][0]["levels"] = [2, 4, 8, 16]
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    c["optimization"]["response"]["constraints"] = [
+        {"metric": "p99", "op": "<", "value": 50},
+    ]
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1, runner=sla_runner)
+    _advance_engine(wd)
+    _run(c, wd, stage="screen", iteration=2, runner=sla_runner)
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=3, runner=sla_runner)
+
+    conf = json.loads((wd / "runs" / "iter-3" / "confirmation.json").read_text())
+    excluded = [f for f in conf["finalists"] if f["status"] == "excluded"]
+    assert excluded, conf["finalists"]
+    assert conf["excluded_infeasible"], conf
+    # The excluded finalist is one the MODEL put on the shortlist, which is the
+    # whole point: prediction proposed it, measurement removed it.
+    assert all(3 <= f["levels"]["A"] <= 15 for f in excluded), excluded
+    assert conf["best"] is not None, "the surviving finalists must still decide"
+
+    rep = json.loads((wd / "report.json").read_text())
+    levels = rep["recommendation"]["levels"]
+    observed = sla_runner(type("R", (), {"levels": levels})())
+    assert observed["p99"] < 50, (
+        f"the report recommends {levels}, which measures p99={observed['p99']} "
+        f"against a declared constraint of p99 < 50"
+    )
+
+
+def test_report_falls_back_to_the_known_valid_baseline_when_nothing_is_valid(
+    tmp_path, work_dir,
+):
+    """The bottom rung (spec §3.6 item 4). Always act.
+
+    Under ``m < -1`` EVERY configuration the campaign can run is infeasible.
+    Nothing measured is valid, so ``_best_observed`` is None (it filters to
+    ``complete``); no fitting stage can have run at all (a design with every row
+    infeasible is singular, which is why this drives verify -> confirm directly,
+    the shape a campaign reaching a hostile target actually takes); and the
+    baseline's own replicates come back infeasible too, so the shortlist has no
+    surviving finalist. Every rung above ``baseline`` is therefore genuinely
+    unavailable rather than merely skipped, and the report still returns a
+    configuration — the author's — and labels it honestly.
+    """
+    c = _campaign()
+    c["optimization"]["known_valid_baseline"] = {"A": 2, "B": 2, "C": 2}
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    c["optimization"]["response"]["constraints"] = [
+        {"metric": "m", "op": "<", "value": -1},
+    ]
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1)
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=2)
+
+    conf = json.loads((wd / "runs" / "iter-2" / "confirmation.json").read_text())
+    assert conf["best"] is None and conf["residual_regret_terminal"] is None
+    assert [f["why"] for f in conf["finalists"]] == ["known_valid_baseline"]
+
+    rep = json.loads((wd / "report.json").read_text())
+    assert rep["recommendation"] == {
+        "levels": {"A": 2, "B": 2, "C": 2}, "basis": "baseline",
+    }
+    assert rep["known_valid_baseline"] == {"A": 2, "B": 2, "C": 2}
+    assert rep["certified"] is False
+    assert rep["residual_regret_terminal"] is None
+
+
+def test_the_model_rung_refuses_a_recommendation_measured_infeasible(
+    tmp_path, work_dir,
+):
+    """``basis: model`` must never name a configuration the campaign watched fail.
+
+    ``decide.ranked`` excludes measured-infeasible points when it PRODUCES a
+    recommendation, but ``report.json`` may be reading a recommendation written
+    before the run that invalidated it — which is exactly what happens when
+    confirm measures the model's argmax infeasible. Asserted directly on the
+    predicate, because arranging that ordering end to end and arranging it for
+    the right reason are different things.
+    """
+    from orchestrator.optimize.artifacts import append_run
+    from orchestrator.optimize.stage_runner import _measured_infeasible_contains
+
+    iter_dir = tmp_path / "runs" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    append_run(iter_dir, {
+        "row_index": 0, "levels": {"A": 16, "B": 16.0}, "role": "corner",
+        "replicate": 0, "status": "infeasible", "response": {"m": 1.0},
+        "held_out": {}, "manipulation": [], "invariants": [],
+        "duration_ms": 1, "error": "",
+    })
+    # Same configuration, int-vs-float across a JSON round trip.
+    assert _measured_infeasible_contains(tmp_path, {"A": 16.0, "B": 16})
+    # A different configuration, and a superset, are not it.
+    assert not _measured_infeasible_contains(tmp_path, {"A": 16, "B": 2})
+    assert not _measured_infeasible_contains(tmp_path, {"A": 16, "B": 16, "C": 2})
+    assert not _measured_infeasible_contains(tmp_path, {})
+
+
+def test_a_second_confirm_round_carries_forward_only_live_challengers(
+    tmp_path, work_dir,
+):
+    """Round r+1 measures the winner plus whoever could still change the answer.
+
+    A finalist whose bound already came in at or below epsilon cannot alter the
+    epsilon-optimal decision no matter how many more runs it gets (paper, Fig.
+    2), so spending the next round's budget on it buys nothing. Driven through
+    ``_confirm_rows`` against a hand-written previous round, because arranging a
+    genuine two-round campaign end to end would make WHICH finalists carry
+    forward depend on the noise rather than on the rule.
+    """
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.policy import append_transition, compile_policy
+    from orchestrator.optimize.stage_runner import _confirm_rows
+
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    pol = compile_policy(c)
+    wd = tmp_path / "wd"
+    (wd / "runs" / "iter-3").mkdir(parents=True)
+    (wd / "runs" / "iter-3" / "confirmation.json").write_text(json.dumps({
+        "round": 1, "best": "f0", "epsilon": 0.5,
+        "bounds": {"f1": 0.9, "f2": 0.1},
+        "finalists": [
+            {"key": "f0", "levels": {"A": 16, "B": 16, "C": 16}, "status": "ok"},
+            {"key": "f1", "levels": {"A": 16, "B": 2, "C": 16}, "status": "ok"},
+            {"key": "f2", "levels": {"A": 2, "B": 16, "C": 16}, "status": "ok"},
+        ],
+    }))
+    append_transition(wd, {"iteration": 3, "from": "confirm", "to": "confirm",
+                           "rule": {}, "observations": {}, "policy_hash": ""})
+
+    rows, payload = _confirm_rows(
+        pol, wd, parse_factors(c["optimization"]["factors"]), "m", "maximize", 4,
+    )
+    assert payload["round"] == 2
+    carried = [f["levels"] for f in payload["finalists"]]
+    assert {"A": 16, "B": 16, "C": 16} in carried, "the winner must be re-measured"
+    assert {"A": 16, "B": 2, "C": 16} in carried, "a bound above epsilon stays live"
+    assert {"A": 2, "B": 16, "C": 16} not in carried, (
+        "f2's bound was 0.1 <= epsilon 0.5, so it cannot change the decision and "
+        "must not consume round 2's budget"
+    )
+    assert len(rows) == len(carried) * 2
+
+
+def test_a_second_round_keeps_a_finalist_whose_bound_was_not_computable(
+    tmp_path, work_dir,
+):
+    """``None`` is UNKNOWN, not "small".
+
+    A challenger whose bound could not be computed (a finalist with fewer than
+    two usable replicates) has not been shown to be out of contention, so
+    retiring it would silently narrow the shortlist on the strength of a missing
+    number — the same "unknown is not zero" rule the certificate itself follows.
+    """
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.policy import append_transition, compile_policy
+    from orchestrator.optimize.stage_runner import _confirm_rows
+
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    pol = compile_policy(c)
+    wd = tmp_path / "wd"
+    (wd / "runs" / "iter-3").mkdir(parents=True)
+    (wd / "runs" / "iter-3" / "confirmation.json").write_text(json.dumps({
+        "round": 1, "best": "f0", "epsilon": 0.5, "bounds": {"f1": None},
+        "finalists": [
+            {"key": "f0", "levels": {"A": 16, "B": 16, "C": 16}, "status": "ok"},
+            {"key": "f1", "levels": {"A": 16, "B": 2, "C": 16}, "status": "ok"},
+        ],
+    }))
+    append_transition(wd, {"iteration": 3, "from": "confirm", "to": "confirm",
+                           "rule": {}, "observations": {}, "policy_hash": ""})
+    _rows, payload = _confirm_rows(
+        pol, wd, parse_factors(c["optimization"]["factors"]), "m", "maximize", 4,
+    )
+    assert {"A": 16, "B": 2, "C": 16} in [f["levels"] for f in payload["finalists"]]
+
+
+def test_an_excluded_finalist_does_not_come_back_in_the_next_round(
+    tmp_path, work_dir,
+):
+    """Measured invalidity is not re-litigated. It was measured; it is out."""
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.policy import append_transition, compile_policy
+    from orchestrator.optimize.stage_runner import _confirm_rows
+
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    pol = compile_policy(c)
+    wd = tmp_path / "wd"
+    (wd / "runs" / "iter-3").mkdir(parents=True)
+    (wd / "runs" / "iter-3" / "confirmation.json").write_text(json.dumps({
+        "round": 1, "best": "f0", "epsilon": 0.5, "bounds": {},
+        "finalists": [
+            {"key": "f0", "levels": {"A": 16, "B": 16, "C": 16}, "status": "ok"},
+            {"key": "f1", "levels": {"A": 2, "B": 2, "C": 2},
+             "status": "excluded"},
+        ],
+    }))
+    append_transition(wd, {"iteration": 3, "from": "confirm", "to": "confirm",
+                           "rule": {}, "observations": {}, "policy_hash": ""})
+    _rows, payload = _confirm_rows(
+        pol, wd, parse_factors(c["optimization"]["factors"]), "m", "maximize", 4,
+    )
+    assert [f["levels"] for f in payload["finalists"]] == [
+        {"A": 16, "B": 16, "C": 16},
+    ]
+
+
+def test_the_shortlist_always_contains_the_best_measured_configuration(
+    tmp_path, work_dir,
+):
+    """Spec §3.6 rung 3, moved from the report INTO the comparison.
+
+    "Never return the largest noisy observation" is only achievable if the best
+    measured configuration is one of the things being re-measured. Putting it in
+    the shortlist is what makes the terminal winner never worse than something
+    the campaign already saw — a report-time comparison could only NOTICE the
+    regression, not prevent it.
+    """
+    from orchestrator.optimize.stage_runner import _best_observed
+
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=2)
+    best = _best_observed(wd, "m", direction="maximize")
+    assert best is not None
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=3)
+
+    payload = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "design_matrix.json").read_text(),
+    )
+    assert best["levels"] in [f["levels"] for f in payload["finalists"]], (
+        f"the best measured configuration {best['levels']} is not on the "
+        f"shortlist {[f['levels'] for f in payload['finalists']]}"
+    )
+
+
+def test_the_shortlist_record_is_written_under_its_spec_name(tmp_path, work_dir):
+    """Spec §3.9's artifact table names ``shortlist.json`` for this stage."""
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=2)
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=3)
+
+    short = json.loads((Path(wd) / "runs" / "iter-3" / "shortlist.json").read_text())
+    conf = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
+    )
+    assert short["finalists"] == conf["finalists"]
+    assert short["best"] == conf["best"] and short["bounds"] == conf["bounds"]
+
+
+def test_confirm_findings_report_partially_confirmed_when_the_bound_is_too_wide(
+    tmp_path, work_dir,
+):
+    """Three statuses, not two.
+
+    A winner with a bound wider than epsilon is neither CONFIRMED (that would
+    overstate the claim, which is precisely what spec §3.5 forbids when it
+    refuses to collapse the two deltas) nor REFUTED (that would throw away a
+    real measured result). ``epsilon: {abs: 0}`` plus a NOISY runner forces the
+    middle case: with real run-to-run variation the challengers' upper bounds
+    are strictly positive, so no bound can be at or below zero and nothing can
+    certify — while a winner is still identified. (The deterministic fake runner
+    would not do: identical replicates give variance 0, the bound collapses to
+    the point estimate, and ``0.0 <= 0.0`` certifies.)
+    """
+    import jsonschema
+
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 3, "shortlist_size": 3}
+    c["optimization"]["policy"] = {"epsilon": {"abs": 0.0}}
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=2, runner=_noisy_runner())
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=3, runner=_noisy_runner())
+
+    conf = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
+    )
+    assert conf["certified"] is False and conf["best"] is not None
+    findings = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "findings.json").read_text(),
+    )
+    jsonschema.validate(
+        findings,
+        json.loads(Path("orchestrator/schemas/findings.schema.json").read_text()),
+    )
+    assert findings["arms"][0]["status"] == "PARTIALLY_CONFIRMED"
+    assert findings["experiment_valid"] is True
+    rep = json.loads((Path(wd) / "report.json").read_text())
+    assert rep["recommendation"]["basis"] == "terminal_best"
+    assert rep["certified"] is False
+
+
+def test_the_terminal_bound_is_not_the_model_bound_under_another_name(
+    tmp_path, work_dir,
+):
+    """Spec §3.5: two bounds, different assumptions, never collapsed.
+
+    They are computed from disjoint inputs — the model bound from fitted
+    coefficients and their standard errors, the terminal bound from finalist
+    sample means and variances — so reporting the same number for both would
+    mean one of the two was not actually computed.
+    """
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 3, "shortlist_size": 3}
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="screen", iteration=2, runner=_noisy_runner())
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=3, runner=_noisy_runner())
+
+    rep = json.loads((Path(wd) / "report.json").read_text())
+    model, terminal = rep["residual_regret_model"], rep["residual_regret_terminal"]
+    assert model is not None and terminal is not None
+    assert model != terminal, (
+        "the two bounds came out identical, which means one of them is the "
+        "other under a different key"
+    )
+    conf = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
+    )
+    assert conf["terminal_bound"]["method"] == "bonferroni_one_sided_welch_t"
+    rec = json.loads(
+        (Path(wd) / "runs" / "iter-2" / "recommendation.json").read_text(),
+    )
+    assert rec["residual_regret_model"]["method"] == "bonferroni_one_sided_t"
+
+
+def _noisy_runner():
+    """A runner with real run-to-run variation, so both bounds are computable.
+
+    The deterministic fake returns identical values at every centre point, so
+    pure error is exactly 0 and the MODEL bound comes back ``None`` — which
+    would make the comparison above vacuous rather than failing.
+    """
+    import random as _random
+    rng = _random.Random(1234)
+
+    def run(row):
+        lv = row.levels
+        a, b = float(lv.get("A", 0)), float(lv.get("B", 0))
+        return {
+            "cfg": {k.lower(): v for k, v in lv.items()},
+            "m": 10.0 - 0.05 * a + 0.20 * b + 0.02 * a * b + rng.gauss(0, 0.4),
+        }
+    return run

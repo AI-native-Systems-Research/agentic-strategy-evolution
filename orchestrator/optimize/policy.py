@@ -99,12 +99,27 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
     if confirm_on:
         states["confirm"] = {
             "spends": True,
+            # `shortlist_size: 3` is the DEFAULT because the terminal state is
+            # discrimination, not replication (spec §3.3): one configuration
+            # replicated only measures how repeatable it is, and whether it is
+            # the BEST configuration then remains a claim about the fitted
+            # surface. Three finalists is the smallest shortlist that can
+            # actually discriminate while keeping the Bonferroni divisor small.
+            # `1` is still legal and reproduces the old single-point confirm
+            # exactly, which is what the legacy tests declare explicitly.
             "design": {"kind": "shortlist_replicate",
-                       "shortlist_size": int(confirm_cfg.get("shortlist_size", 1)),
+                       "shortlist_size": int(confirm_cfg.get("shortlist_size", 3)),
                        "replicates": max(1, int(confirm_cfg.get("replicates", 3))),
                        "max_rounds": int(pol_cfg.get("confirm_max_rounds", 1))},
             "estimator": "sample_means",
-            "accounting": "holm_one_sided_t",
+            # Bonferroni, not Holm. Holm is uniformly more powerful for
+            # TESTING, but the terminal artifact is a BOUND (`R_delta`), and
+            # Holm's step-down thresholds do not invert into a simultaneous
+            # one-sided interval the way a fixed `delta/M` does — the
+            # threshold a hypothesis is judged at depends on how many others
+            # were already rejected, so there is no single level to attach to
+            # the reported number. See certificate.terminal_regret_bound.
+            "accounting": "bonferroni_one_sided_welch_t",
         }
 
     after_refine = "confirm" if confirm_on else "report"
@@ -127,7 +142,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         transitions += [
             {"from": "confirm", "when": {"correctness_failed": True}, "to": "exception", "accounting": sem},
             {"from": "confirm", "when": {"certified": True}, "to": "report",
-             "accounting": "holm_one_sided_t at delta_terminal over |S|-1 finalists"},
+             "accounting": "bonferroni_one_sided_welch_t at delta_terminal over |S|-1 finalists"},
             {"from": "confirm", "when": {"round": {">=": states["confirm"]["design"]["max_rounds"]}},
              "to": "report", "accounting": "registered round cap; report uncertified"},
             {"from": "confirm", "when": {"budget_remaining": {"<": 1}}, "to": "report",

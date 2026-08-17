@@ -988,14 +988,28 @@ properties:
             required: [replicates]
             additionalProperties: false
             description: >
-              The confirmation stage: replicate the predicted optimum
-              (snapped to each factor's ``grid``) and evaluate
-              ``held_out`` metrics. Example: ``{replicates: 5}``.
+              The terminal DISCRIMINATION stage (the paper's ``discriminate``;
+              ``confirm`` is this schema's older name for it). It takes a
+              shortlist of finalists and measures each of them
+              ``replicates`` times FRESHLY, then compares them with each
+              other — so the campaign's final comparison does not rest on
+              the fitted response surface at all. Example:
+              ``{replicates: 5, shortlist_size: 3}``. ``held_out`` metrics
+              are evaluated here.
             properties:
               replicates:
                 type: integer
                 minimum: 1
-                description: "Number of replicate runs at the confirmed optimum."
+                description: "Fresh runs per finalist. Total runs at this stage are shortlist_size * replicates."
+              shortlist_size:
+                type: integer
+                minimum: 1
+                description: >
+                  Finalists compared with fresh replicates at confirm
+                  (paper: terminal discrimination). Default 3; ``1``
+                  reproduces single-point confirmation, which measures only
+                  how REPEATABLE one configuration is and leaves "is it the
+                  best?" as a claim about the fitted model.
           max_runs:
             type: integer
             minimum: 1
@@ -1067,6 +1081,73 @@ properties:
               surface. Example: "A win that depends on multi-tier
               workloads is out of scope for this campaign; report it as
               a lead, not a result."
+
+      known_valid_baseline:
+        type: object
+        minProperties: 1
+        additionalProperties: true
+        description: >
+          Factor id -> level of a configuration KNOWN to be valid: the
+          bottom rung of the report's fallback ladder (spec §3.6). A
+          finite-budget campaign must still act when it cannot certify,
+          and when nothing measured survives the correctness gates this is
+          what ``report.json`` returns rather than nothing. It is also the
+          shortlist's last-resort finalist. Example: ``{QUEUES: 2,
+          BATCHING: off}``. Every id must name a declared factor and every
+          level must be one of that factor's ``levels`` — the validator
+          hard-fails otherwise, because a baseline outside the declared
+          space is not a configuration the campaign is allowed to run.
+          Required when the ``build`` stage is declared: the mechanism
+          being authored has to leave a known-good control unchanged.
+
+      policy:
+        type: object
+        additionalProperties: false
+        description: >
+          The registered decision parameters of the compiled epoch — the
+          numbers that decide when the campaign stops, pre-declared so
+          they cannot be chosen after seeing a result. Compiled verbatim
+          into ``policy.json``'s ``objective`` block and hashed with it.
+        properties:
+          epsilon:
+            type: object
+            additionalProperties: false
+            description: >
+              The indifference width: how much better a challenger would
+              have to be for the campaign to care. Declare EXACTLY ONE of
+              ``abs`` (in the metric's own units) or ``pct`` (a percentage
+              of the recommendation's value). Default ``{pct: 2.0}``.
+              Certification is ``R_delta <= epsilon``, so an epsilon of
+              zero can never be met and one wider than the whole response
+              range certifies immediately.
+            properties:
+              abs: { type: number, description: "Absolute width, in the primary metric's units." }
+              pct: { type: number, exclusiveMinimum: 0, description: "Width as a percent of the recommendation's value." }
+          delta_screen:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 0.5
+            description: >
+              Error budget for the MODEL bound (screen/refine). Default
+              0.05. Reported separately from ``delta_terminal`` because
+              the two bounds rest on different assumptions;
+              ``Pr(wrong global decision) <= delta_screen +
+              delta_terminal`` (spec §3.5).
+          delta_terminal:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 0.5
+            description: >
+              Error budget for the TERMINAL bound, computed from fresh
+              finalist measurements only. Default 0.05.
+          confirm_max_rounds:
+            type: integer
+            minimum: 1
+            description: >
+              How many rounds of terminal discrimination the epoch may
+              spend before reporting uncertified. Default 1. Each further
+              round re-measures the winner plus every finalist whose bound
+              still exceeded epsilon.
 
       run_command:
         type: string

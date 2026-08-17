@@ -894,3 +894,116 @@ def test_validate_campaign_works_for_the_reflective_kind_too(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "kind:     reflective" in out
     assert "OK — no errors" in out
+
+
+# ─── rules 13-14 (Task 9): the baseline and the registered policy numbers ──
+#
+# Both blocks are reached at the WORST possible moment — the baseline when
+# nothing else survived, the policy numbers on every certification decision —
+# so a defect in either is invisible until it matters most.
+
+
+def test_known_valid_baseline_and_policy_block_pass_when_well_formed():
+    c = _minimal_optimization_campaign()
+    c["optimization"]["known_valid_baseline"] = {"L1": 2, "L5": "off"}
+    c["optimization"]["policy"] = {
+        "epsilon": {"pct": 2.0}, "delta_screen": 0.05, "delta_terminal": 0.05,
+        "confirm_max_rounds": 3,
+    }
+    jsonschema.validate(c, _schema())
+    assert _hard_errors(c) == []
+
+
+def test_rule13_known_valid_baseline_outside_declared_levels_is_rejected():
+    c = _minimal_optimization_campaign()
+    c["optimization"]["known_valid_baseline"] = {"L1": 999}
+    errors = _hard_errors(c)
+    assert errors and "known_valid_baseline" in errors[0]
+    assert "999" in errors[0] and "declared levels" in errors[0]
+
+
+def test_rule13_known_valid_baseline_naming_an_unknown_factor_is_rejected():
+    """An unrecognised id renders NO flag at all (``matrix.render_apply`` skips
+    ids it does not know), so the baseline would silently run with that knob at
+    whatever the target defaults to — the least visible of the two failures."""
+    c = _minimal_optimization_campaign()
+    c["optimization"]["known_valid_baseline"] = {"NOPE": 2}
+    errors = _hard_errors(c)
+    assert errors and "NOPE" in errors[0] and "not a declared factor" in errors[0]
+
+
+def test_rule13_an_empty_baseline_is_rejected():
+    c = _minimal_optimization_campaign()
+    c["optimization"]["known_valid_baseline"] = {}
+    assert any("non-empty" in e for e in _hard_errors(c))
+    # ...and the schema refuses it too, so the CLI reports it either way.
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(c, _schema())
+
+
+def test_rule13_an_int_valued_baseline_against_a_float_level_is_accepted():
+    """Numeric levels are compared with a tolerance, matching
+    ``matrix.check_fidelity``: ``2.0`` and ``2`` are the same configuration and
+    rejecting one would fail a campaign over a YAML representation choice."""
+    c = _minimal_optimization_campaign()
+    c["optimization"]["known_valid_baseline"] = {"L1": 2.0}
+    assert _hard_errors(c) == []
+
+
+def test_rule14_policy_delta_outside_the_open_unit_half_is_rejected():
+    for value in (0.9, 0.0, -0.1, 1.0):
+        c = _minimal_optimization_campaign()
+        c["optimization"]["policy"] = {"delta_terminal": value}
+        errors = _hard_errors(c)
+        assert any("delta_terminal" in e for e in errors), (value, errors)
+    c = _minimal_optimization_campaign()
+    c["optimization"]["policy"] = {"delta_screen": 0.6}
+    assert any("delta_screen" in e for e in _hard_errors(c))
+
+
+def test_rule14_epsilon_with_both_abs_and_pct_is_rejected():
+    """``resolve_epsilon`` prefers ``abs`` and silently discards ``pct``, so a
+    campaign declaring both has one of its two stated thresholds quietly
+    ignored — the shape of defect that only shows up as a wrong number."""
+    c = _minimal_optimization_campaign()
+    c["optimization"]["policy"] = {"epsilon": {"abs": 0.5, "pct": 2.0}}
+    errors = _hard_errors(c)
+    assert any("epsilon" in e and "abs" in e for e in errors), errors
+
+
+def test_rule14_epsilon_with_neither_abs_nor_pct_is_rejected():
+    c = _minimal_optimization_campaign()
+    c["optimization"]["policy"] = {"epsilon": {}}
+    assert any("epsilon" in e for e in _hard_errors(c))
+
+
+def test_rule14_confirm_max_rounds_below_one_is_rejected():
+    """The compiled guard is ``round >= max_rounds`` against a 1-BASED counter,
+    so 0 sends the campaign to report before the first round produced anything."""
+    c = _minimal_optimization_campaign()
+    c["optimization"]["policy"] = {"confirm_max_rounds": 0}
+    assert any("confirm_max_rounds" in e for e in _hard_errors(c))
+
+
+def test_shortlist_size_is_accepted_by_the_schema_and_defaults_to_three():
+    """The default is 3 (terminal discrimination); the field stays OPTIONAL so
+    every campaign authored before Task 9 keeps validating."""
+    from orchestrator.optimize.policy import compile_policy
+
+    c = _minimal_optimization_campaign()
+    assert "shortlist_size" not in c["optimization"]["design"]["confirm"]
+    jsonschema.validate(c, _schema())
+    pol = compile_policy(c)
+    assert pol["states"]["confirm"]["design"]["shortlist_size"] == 3
+
+    c["optimization"]["design"]["confirm"]["shortlist_size"] = 1
+    jsonschema.validate(c, _schema())
+    assert compile_policy(c)["states"]["confirm"]["design"]["shortlist_size"] == 1
+    assert _hard_errors(c) == []
+
+
+def test_a_zero_shortlist_size_is_rejected_by_the_schema():
+    c = _minimal_optimization_campaign()
+    c["optimization"]["design"]["confirm"]["shortlist_size"] = 0
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(c, _schema())
