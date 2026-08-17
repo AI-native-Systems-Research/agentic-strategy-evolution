@@ -80,14 +80,17 @@ first-class, common random numbers for paired comparison, and an adapter
 contract a target author can satisfy with a CLI and one JSON line.
 
 ### 2.7 Behaviour-preservation is not a goal (added after Task 6)
-`nous` has not GA'd. Nothing downstream depends on `kind: optimization`'s
-current observable output being stable across this branch. **Correctness
-against this spec and the paper's method outranks matching what `nousko`
-does today.** Where the two conflict — a legacy code path that produces a
-*wrong* answer, an abort that a correct compiled policy would not hit, an
-assertion that encoded the old index-based scheduler's behaviour rather than
-a real requirement — fix it and update the semantic version; do not contort
-the new mechanism to reproduce the old defect.
+**`nous` itself has not GA'd — repo-wide, not just this kind, not just this
+branch.** This is now a top-level rule in `CLAUDE.md` ("Pre-GA: achieving
+goals outranks preserving behaviour"); this subsection is a pointer plus
+its specific bearing on this plan, not a separate or narrower rule.
+**Correctness against this spec and the paper's method outranks matching
+what `nousko` does today.** Where the two
+conflict — a legacy code path that produces a *wrong* answer, an abort that
+a correct compiled policy would not hit, an assertion that encoded the old
+index-based scheduler's behaviour rather than a real requirement — fix it
+and update the semantic version; do not contort the new mechanism to
+reproduce the old defect.
 
 This is a **priority change, not a license to regress silently**: still
 name every observable difference from `nousko`'s current behaviour in the
@@ -96,6 +99,9 @@ reviewer still checks that reasoning — the bar moves from "does not deviate"
 to "deviates for a stated, correct reason." An unexplained behaviour change
 is still a defect; an explained, spec-correct one is no longer a risk to
 justify against a behaviour-preservation bar that does not apply.
+
+This priority reverses only on explicit word from the project owner that
+`nous` has reached GA.
 
 Two things this does NOT touch, because they are different claims:
 - **§5's "no reflective-path change"** is about `orchestrator/iteration.py`

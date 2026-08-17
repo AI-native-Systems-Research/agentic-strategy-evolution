@@ -4,6 +4,26 @@ This file is auto-loaded by Claude Code on every session in this repo. The
 rules below are non-negotiable; when they conflict with general AI/coding
 defaults, **the rules here win**.
 
+## 🚧 Pre-GA: achieving goals outranks preserving behaviour
+
+**`nous` has not reached GA.** Until the project owner (@sriumcp) explicitly
+says otherwise, this applies repo-wide, not to any one branch or kind:
+achieving the stated goal of a piece of work outranks preserving `nous`'s
+existing observable behaviour. Semantic versioning is what covers the
+change for consumers — it is not a reason to avoid making it.
+
+This is **not** a license to regress silently. An unexplained behaviour
+change is still a defect. What changes is the *default when a legacy code
+path and the correct one disagree*: fix it and name the change, rather than
+contorting new work to reproduce an old defect or an incidental artifact of
+how something used to be implemented. Every task/PR that changes observable
+behaviour should still say so and say why the new behaviour is correct — a
+reviewer still checks that reasoning; they just no longer weigh it against
+a preservation requirement that does not apply pre-GA.
+
+This reverses only on explicit word from @sriumcp that `nous` has reached
+GA.
+
 ## 🚫 Tests must NEVER make live LLM calls
 
 **No unit, integration, or end-to-end test in this repo may make a real
