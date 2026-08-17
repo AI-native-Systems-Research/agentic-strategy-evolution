@@ -377,12 +377,16 @@ def observations_from_decision(decision: StageDecision, fit: Fit, *,
     the right test for REPORTING ("the ranges may have been too narrow, look at
     this") because that is all a reader is being asked to consider. It is the
     wrong test for a guard that ENDS THE EPOCH, because a stationary point is not
-    an optimum: on a monotone surface the fitted quadratic's curvature is noise,
-    the solve inverts a near-singular Hessian, and the "stationary point" lands
-    at coded -33 or +6575 — measured on ``SURFACES["additive"]`` (seed 19: coded
-    A=-33.7, B=+57.8) and ``SURFACES["sla"]`` (seed 5: A=+6575). Those campaigns'
-    optima ARE inside the declared ranges, at a corner, and ending their epochs
-    would be a false semantic exception on the most ordinary surface there is.
+    an optimum: on a monotone surface the fitted quadratic's curvature is noise
+    and the solve inverts a near-singular Hessian, so the "stationary point" falls
+    outside the hull with no optimum out there at all — measured on
+    ``SURFACES["additive"]`` (seed 19: coded A=-33.7, B=+57.8, A convex) and
+    ``SURFACES["sla"]`` (seed 5: coded A=+6575 on the default campaign, and
+    A=-3.20 on the constrained one the sla test runs — convex either way). Those
+    campaigns' optima ARE inside the declared ranges, at a corner, and ending
+    their epochs would be a false semantic exception on the most ordinary surface
+    there is. See ``stage_runner._stationary_in_hull`` for the full table and for
+    why the CURVATURE SIGN rather than the excursion magnitude is the test.
 
     So the caller (``stage_runner.run_stage``) computes the stricter fact — out of
     hull AND curving the right way to be an optimum out there — and passes it

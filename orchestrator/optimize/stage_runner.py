@@ -347,14 +347,27 @@ def _stationary_in_hull(fit, stationary: dict | None, direction: str) -> bool:
         already picks. This is the case that makes the naive geometric test
         unusable: on a monotone surface the quadratic coefficients are noise and
         the solve inverts a near-singular Hessian, so the "stationary point"
-        lands absurdly far out. MEASURED — ``SURFACES["additive"]`` seed 19
-        solves to coded ``A=-33.7, B=+57.8`` and ``SURFACES["sla"]`` seed 5 to
-        ``A=+6575`` — and in both the offending axis is CONVEX under a maximize
-        objective, while the genuine case (``SURFACES["bowl_out_of_hull"]``,
-        whose true peak sits at A=30 against a declared [2, 16]) solves to coded
-        ``A=+3.4`` with ``A`` concave at ``-1.85``. So the sign test separates
-        the real semantic exception from the numerical artefact on every surface
-        in the oracle.
+        can land absurdly far out. MEASURED, and the campaign each number comes
+        from is named because the same surface gives different figures under
+        different response blocks:
+
+          - ``SURFACES["additive"]`` seed 19, default campaign: coded
+            ``A=-33.7, B=+57.8``, with ``A`` convex at ``+0.0036``.
+          - ``SURFACES["sla"]`` seed 5, DEFAULT (unconstrained) campaign: coded
+            ``A=+6575, B=+1212``, with ``B`` convex at ``+0.0046``.
+          - ``SURFACES["sla"]`` seed 5, CONSTRAINED campaign — the one
+            ``test_sla_surface_never_recommends_an_invalid_point`` runs, and the
+            one whose regression motivated this function: coded
+            ``A=-3.20, B=+7.33``, with ``A`` convex at ``+0.128``. Note the point
+            is only just out of hull here, so the magnitude of the excursion is
+            NOT what identifies the artefact — the curvature sign is.
+
+        In every one of those the offending axis is CONVEX under a maximize
+        objective. The genuine case (``SURFACES["bowl_out_of_hull"]``, whose true
+        peak sits at A=30 against a declared [2, 16]) solves to coded ``A=+3.4``
+        with ``A`` concave at ``-1.85``. So the sign test separates the real
+        semantic exception from the numerical artefact on every surface in the
+        oracle, and it does so without relying on how far out the point landed.
 
       * out of hull AND curving the right way — FALSE. A genuine optimum outside
         the declared ranges: a defect in the factor's DEFINITION that no
@@ -2224,12 +2237,14 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
 
     UNLESS ``recommendation.json["model_adequate"] is False``, in which case rungs
     1 and 2 are replaced by ``_top_measured``'s leading MEASURED valid candidates
-    (plural — that is the content of spec §3.6 rung 3) and rung 3 still fills
-    whatever slots remain. A lack-of-fit verdict says the response class was
-    rejected, so its argmax must not ANCHOR the comparison; it does not say the
-    ranking carries no information, and cutting the ranking out would leave the
-    campaign unable to seat any point it has not already run. The branch below
-    records what that costs, measured.
+    (plural) and rung 3 still fills whatever seats remain. A lack-of-fit verdict
+    says the response class was rejected, so its argmax must not ANCHOR the
+    comparison; it does not say the ranking may nominate nothing. Spec §3.6 rung 3
+    constrains the REPORT LADDER — what may be returned as the answer — and every
+    member of this shortlist is measured freshly before it can win regardless of
+    who nominated it, so seating a model-ranked point tests the model rather than
+    trusting it. The branch below records what discarding the ranking would cost,
+    measured.
 
     Round r > 1 keeps the previous round's winner plus every finalist whose
     bound still exceeded epsilon: those are exactly the challengers that could
@@ -2339,41 +2354,56 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # entire carry-over was excluded. Both want the same priority order, and
         # both are filtered against measured-invalid levels by `_add`.
         rec = _read_recommendation(work_dir) or {}
-        # ── AN INADEQUATE MODEL DOES NOT GET TO NOMINATE THE ARGMAX ──────────
+        # ── AN INADEQUATE MODEL DOES NOT GET TO ANCHOR THE SHORTLIST ─────────
         #
         # `recommendation.json["model_adequate"] is False` means the fitting
         # stage's lack-of-fit test rejected the registered response class. Its
-        # `x_hat` is then the argmax of a surface the data refused, and seating it
-        # as a finalist would put the terminal budget behind the one point whose
-        # standing rests entirely on that surface. Spec §3.6 rung 3 and the paper
-        # name the alternative: "a small reserved budget remeasures the leading
-        # MEASURED valid candidates rather than choosing the largest noisy
-        # observation" — note the PLURAL, which is the whole content of the rung.
-        # One measured leader IS the largest noisy observation, and re-measuring
-        # it alone only says how repeatable it is; several of them compared
-        # freshly against each other is a model-free answer to which is better.
-        # So `_top_measured` seeds the shortlist instead of `x_hat`.
+        # `x_hat` is then the argmax of a surface the data refused, so it does not
+        # get to be the point the terminal comparison is built around:
+        # `_top_measured` SEEDS the shortlist instead — plural, because one
+        # measured leader IS "the largest noisy observation" and re-measuring it
+        # alone only says how repeatable it is, whereas several compared freshly
+        # against each other is a model-free answer to which is better.
         #
         # WHAT IS DELIBERATELY *NOT* DROPPED: the model's ranked
-        # `top_candidates`, which still fill whatever slots the measured leaders
-        # leave. The paper's rung is qualified — "if the model fails **and cannot
-        # be repaired**" — and this policy's registered repair for a rejected
-        # model is precisely the confirm loop drawing deeper from that ranking as
-        # finalists are excluded on measurement. Cutting the ranking out entirely
-        # would remove the campaign's ONLY source of candidates it has not
-        # already measured, so it could never improve on what it happens to have
-        # run. Measured, not reasoned: with the ranking cut,
-        # `SURFACES["sla"]` certifies at 6.12% off the true constrained optimum
-        # at 3, 5 AND 8 confirm rounds — the extra budget buys literally nothing,
-        # because every candidate it could seat is already on disk — whereas
-        # keeping it reaches 1.02% in three rounds. On `SURFACES["bowl"]` cutting
-        # it discards the interior optimum `{A: 9, B: 11}` that the refine stage
-        # was spent to find and confirms the centre point instead. An "inadequate"
-        # verdict here is a statistical one (F ~ 1000 on these near-noiseless
-        # surfaces, because center-point replication under-states the variance the
-        # campaign actually faces — spec §3.5's own warning), and it is not
-        # licence to throw away the ordering's information content. Ranking the
-        # measured leaders ABOVE it is the honest response to it.
+        # `top_candidates`, which still fill whatever seats the measured leaders
+        # leave. READ THE NEXT PARAGRAPH BEFORE "FIXING" THIS — the obvious
+        # objection ("spec §3.6 rung 3 says MEASURED candidates, so why is a
+        # model-ranked point on the shortlist at all?") rests on applying rung 3
+        # to the wrong mechanism.
+        #
+        # RUNG 3 GOVERNS THE REPORT LADDER, NOT SHORTLIST CONSTRUCTION. "A small
+        # reserved budget remeasures the leading measured valid candidates rather
+        # than choosing the largest noisy observation" is a rule about what
+        # `report.json`'s `basis` may hand back as the campaign's ANSWER, and
+        # `_run_report` already honours it unconditionally: the `model` rung is
+        # the only one resting on the fitted surface, and it is the one suppressed
+        # on `epoch_ended`. Confirm's shortlist is a different mechanism at a
+        # different stage. "Measured" here is a POSTCONDITION, not a
+        # precondition: every finalist is measured freshly before it can win —
+        # that is the entire content of terminal discrimination (spec §3.3, "the
+        # final comparison does not rest on the fitted surface") — so seating a
+        # model-ranked candidate does not TRUST the model's prediction, it TESTS
+        # it, and `_finish_confirm` excludes it outright if a replicate comes back
+        # invalid. Whatever survives confirm is by construction a measured valid
+        # candidate, so rung 3's actual constraint (never return an unmeasured
+        # point) holds regardless of how the candidate was nominated. Turning it
+        # into a nomination filter would be a different, stronger rule that
+        # neither the paper nor the spec states.
+        #
+        # And it would cost the campaign its only way to improve. Measured, not
+        # reasoned: with the ranking cut, `SURFACES["sla"]` certifies at 6.12% off
+        # the true constrained optimum at 3, 5 AND 8 confirm rounds — the extra
+        # budget buys literally nothing, because a measured-only shortlist can only
+        # re-seat what is already on disk — whereas keeping it reaches 1.02% in
+        # three rounds. On `SURFACES["bowl"]` cutting it discards the interior
+        # optimum `{A: 9, B: 11}` that the refine stage was spent to find and
+        # confirms the centre point instead. Note also what an "inadequate" verdict
+        # here actually is: a statistical one, F ~ 1000 on these near-noiseless
+        # surfaces because center-point replication under-states the variance the
+        # campaign faces (spec §3.5's own warning). Seating the measured leaders
+        # ABOVE the ranking discounts it; discarding the ranking would treat that
+        # F as proof the ordering carries no information at all.
         #
         # DEFAULTS TO TRUE for an absent key. Every recommendation written before
         # this field existed came from a stage that had no lack-of-fit verdict
@@ -2392,10 +2422,10 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
                 "leading MEASURED valid configurations rather than from the "
                 "model's argmax — the terminal comparison must not be anchored "
                 "on a surface the data rejected. The model's ranked candidates "
-                "still fill any remaining slot: they are the only source of "
-                "points the campaign has not already measured, and the "
-                "registered repair for a rejected model is this loop drawing "
-                "deeper from that ranking.", rnd,
+                "still fill any remaining seat: every finalist is measured "
+                "freshly before it can win, so seating one TESTS the model "
+                "rather than trusting it, and they are the only source of points "
+                "the campaign has not already run.", rnd,
             )
             for m in _top_measured(
                 work_dir, primary, direction=direction, k=_measured_seats(k),
@@ -2429,8 +2459,10 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             # Same priority as the round-1 ladder: an inadequate model does not
             # get first pick, so measured leaders go in ahead of its ranking. The
             # ranking still follows, for the reason the ladder above records at
-            # length — it is the only source of candidates not already measured,
-            # and this loop IS the registered repair for a rejected model.
+            # length — spec §3.6 rung 3 constrains what the REPORT may return, not
+            # who may be nominated to a shortlist whose members are all measured
+            # freshly anyway, and the ranking is the only source of candidates the
+            # campaign has not already run.
             for m in _top_measured(
                 work_dir, primary, direction=direction, k=_measured_seats(k),
             ):
@@ -3095,26 +3127,42 @@ def _measured_seats(shortlist_size: int) -> int:
     """How many of a ``model_adequate: false`` shortlist's seats go to measured
     leaders, leaving the rest for the model's ranking.
 
-    ``k // 2``, floor 1. Both halves of that are load-bearing:
+    ``k // 2``, floor 1.
 
-      * AT LEAST ONE, so a rejected response class never anchors the comparison
-        on its own argmax — that is the point of spec §3.6 rung 3, and with a
-        registered ``shortlist_size: 1`` the single seat is the measured leader.
-      * NOT ALL OF THEM, so the model's ranking still contributes candidates the
+    WHAT THE ORACLE ACTUALLY FORCES is exactly ``f(3) == 1`` — nothing more, and
+    saying more here would be overclaiming. Read the two ends:
+
+      * AT LEAST ONE seat to a measured leader, so a rejected response class never
+        anchors the comparison on its own argmax. Not a tuning result: at a
+        registered ``shortlist_size: 1`` this single seat IS the whole shortlist,
+        which is the only configuration under which the rule bites at all.
+      * NOT ALL OF THEM, so the model's ranking still nominates candidates the
         campaign has not run. Measured on ``SURFACES["sla"]``: with every seat
         given to measured leaders the campaign certifies 6.12% off the true
         constrained optimum at 3, 5 and 8 confirm rounds alike — the extra budget
-        buys nothing, because a measured-only shortlist can only ever re-measure
-        what is already on disk. Reserving seats for the ranking reaches 1.02% in
-        three rounds. On ``SURFACES["bowl"]`` an all-measured shortlist discards
-        the interior optimum refine was spent to find and confirms the centre
-        point instead.
+        buys nothing, because a measured-only shortlist can only re-seat what is
+        already on disk. Reserving a seat for the ranking reaches 1.02% in three
+        rounds. On ``SURFACES["bowl"]`` an all-measured shortlist discards the
+        interior optimum refine was spent to find and confirms the centre point
+        instead.
 
-    Half rather than a tuned fraction because the two sources answer different
-    questions and neither dominates: the measured leaders bound the answer from
-    below with configurations that definitely work, the ranking supplies the only
-    chance of improving on them. An even split is the statement that a rejected
-    fit is evidence to DISCOUNT the ranking, not evidence to discard it.
+    Those two facts pin ``f(3) == 1`` and nothing else, because at the DEFAULT
+    ``shortlist_size: 3`` the constant ``1``, ``k // 3`` and ``k // 2`` are the
+    SAME FUNCTION — all three return 1 — and every campaign in the oracle runs at
+    that default. So a 5-variant sweep over ``{1, k//3, k//2, 2k//3, k}`` can only
+    separate ``2k//3`` and ``k`` from the rest; it cannot distinguish this
+    implementation from ``return 1``.
+
+    ``k // 2`` BEYOND k=3 IS THEREFORE A FIRST-CUT CHOICE, NOT A DERIVED ONE.
+    Its rationale is that the two sources answer different questions and neither
+    dominates — the measured leaders bound the answer from below with
+    configurations that definitely work, the ranking supplies the only chance of
+    improving on them — so an even split says a rejected fit is evidence to
+    DISCOUNT the ranking rather than to discard it. Spot-checked rather than
+    optimised: on ``SURFACES["sla"]`` at ``shortlist_size`` 5 and 7 (2 and 3
+    measured seats) the campaign still reaches 1.02%, so the shape does not
+    degrade as k grows. A campaign that wants a different split should get an
+    explicit knob rather than have this constant retuned against one surface.
     """
     return max(1, int(shortlist_size) // 2)
 
