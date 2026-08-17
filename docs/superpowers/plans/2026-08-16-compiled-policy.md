@@ -2929,6 +2929,31 @@ Both reviewers' recommendation: narrow the drift hash to a declared allowlist (p
 
 ## Phase 5 — Systems-target readiness
 
+### Task 14.5: Close the `mechanism_paths` follow-ups from Task 13.5
+
+**Inserted mid-plan, not in the original brief set.** Task 13.5's own review stacked three REQUIRED (not optional) carry-forwards that don't naturally fit Task 14 (workload seeds) or Task 15 (example campaigns): a glob-shaped `mechanism_paths` entry (`["src/*"]`, `["*.py"]`, `["."]`) is accepted by the schema and honored by git for the tracked half of the drift hash, but `_in_allowlist` treats it as a literal prefix and silently matches nothing for the untracked half — so an author writing the natural-looking `["src/*"]` gets a half-disabled oracle in production, the same failure family as the defect Task 13.5 exists to fix. Separately, nothing at `nous validate campaign --smoke` time checks that a declared `mechanism_paths` entry resolves to anything real in the target tree — a typo silently produces an allowlist matching nothing. And `docs/optimization-campaign-guide.md` / `docs/campaign-authoring-guide.md` still don't mention `build_checks`, `mechanism_paths`, or oracle 2(b)/(c) at all, so the fix that exists is invisible to the AI authors these campaigns are written by.
+
+**Files:**
+- Modify: `orchestrator/validate.py` (reject glob metacharacters in `mechanism_paths` entries)
+- Modify: `orchestrator/cli.py` (`_smoke_check_optimization`: report a `mechanism_paths` entry that resolves to nothing under the target repo)
+- Modify: `orchestrator/schemas/campaign.schema.yaml` (fix the `build_checks` block-level description, which still says "ignored entirely when build is not in stages" — false for `mechanism_paths`)
+- Modify: `docs/optimization-campaign-guide.md` (document `build_checks`, `mechanism_paths`, oracle 2(b)/(c), and the whole-tree-hash false-positive risk with the remedy)
+- Test: `tests/test_optimize_build_oracles.py` (append, the validator check), `tests/test_optimize_build.py` (append, the smoke check — its existing `_smoke_check_optimization` coverage already lives there, not in `test_optimize_campaign_schema.py`)
+
+**Interfaces:**
+- A new validator check (extend `_rule15_build_requires_baseline` or add a sibling, author's choice, but name it and its rule number so `check_policy`'s rule-numbering convention stays legible) rejects any `mechanism_paths` entry containing `*`, `?`, `[`, or equal to `.` or `""`, with a message stating plainly that this field does not support globs and naming the literal-prefix semantics that do work (`"src/"` for a directory, an exact relative path for a file).
+- `_smoke_check_optimization` gains one more check, in the same style as its existing four: when `optimization.build_checks.mechanism_paths` is declared, for each entry, glob it against the target repo (`Path(repo).glob(entry)` or a plain existence/prefix check, matching whatever the runtime allowlist semantics are) and report any entry matching nothing.
+
+- [ ] **Step 1: Failing tests** — append to `tests/test_optimize_build_oracles.py`: a test asserting `validate_optimization_campaign` (or the appropriate rule) rejects `mechanism_paths: ["src/*"]` and `mechanism_paths: ["."]` with a message naming globs, and accepts `["src/"]`/`["src/mech.py"]`. Append to `tests/test_optimize_build.py` (where `_smoke_check_optimization`'s existing coverage already lives): a test that a `mechanism_paths` entry naming a nonexistent path is reported by the smoke check against a real tmp_path git repo.
+
+- [ ] **Step 2: Run** → FAIL.
+
+- [ ] **Step 3: Implement.** The validator rejection is a straightforward string check on each `mechanism_paths` entry, run wherever `_rule15`-family checks already validate `build_checks`' other fields. The smoke check follows the existing four checks' pattern in `_smoke_check_optimization` exactly — read that function's current body before adding a fifth, matching its style (a `problems.append(...)` with a concrete, actionable message, and a `print` progress line matching the existing ones). The schema description fix is one line. The doc update should cover: what `build_checks.mechanism_paths` is for, the concrete false-positive scenario it prevents (a `.pytest_cache/`/`run.log` triggering a spurious "mechanism drifted" abort), that the field is NOT limited to campaigns declaring `build` (armed by `mechanism.sha256`'s presence), and that literal prefixes are supported but globs are not (with an example of the rejected and accepted forms).
+
+- [ ] **Step 4: Run** `python -m pytest tests/ -q -x` → PASS.
+
+- [ ] **Step 5: Commit** — `git commit -am "fix(optimize): reject glob-shaped mechanism_paths, smoke-check entries exist, document build_checks"`.
+
 ### Task 14: Workload seeds and common random numbers
 
 **Files:**
