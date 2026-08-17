@@ -243,14 +243,28 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     not a workaround. Round 1's shortlist is the model's top three, and on this
     surface all three violate the p99 constraint (the fit has no p99 term, so
     only a measurement can say so). One round therefore leaves exactly one
-    survivor — the feasible corner ``{A: 16, B: 2}``, 6.12% off — and the
-    campaign must NOT certify that: a shortlist the round itself narrowed to a
-    single member gives ``R_terminal = 0.0`` by the trivial branch, which would
-    advertise epsilon-optimality on the strength of having eliminated every
-    rival. So an exclusion suppresses certification and the registered
+    survivor — the feasible corner ``{A: 16, B: 2}``, 6.12% off — whose
+    ``R_terminal`` is ``0.0`` by the trivial branch, and the campaign must NOT
+    report that as ``certified``.
+
+    WHY NOT, precisely — the obvious reason is the wrong one. It is *not* that
+    "the shortlist shrank so the bound is over a narrowed set": the paper scopes
+    the terminal claim to the REALIZED shortlist ("the final comparison within
+    the realized shortlist therefore does not rely on the response model"), so
+    ``R_terminal = 0.0`` over one survivor is a perfectly valid within-shortlist
+    number, and this test does not dispute it. The problem is that ``certified``
+    is the GLOBAL claim — epsilon-optimality over ``X_valid`` — resting on
+    ``Pr(wrong global decision) <= delta_s + delta_t``. Its ``delta_s`` term
+    carries the premise that screening did not exclude the true optimum. Three
+    finalists measured INADMISSIBLE is direct evidence against that premise: the
+    model's ranking is demonstrably not tracking the *constrained* objective, so
+    the shortlist it produced carries no reason to contain the constrained
+    optimum. Premise broken, sum bound void, global label unearned.
+
+    So an exclusion suppresses certification, and the registered
     ``confirm -> confirm`` default sends the campaign back with a shortlist
-    topped up from deeper in the model's ranking, which is where the
-    constrained optimum lives.
+    topped up from deeper in the model's ranking — which is how the premise gets
+    repaired: by finding candidates that survive measurement.
 
     Measured path at ``confirm_max_rounds: 3``: round 1 excludes B=14/B=12 and
     keeps B=2 (uncertified); round 2 tops up with B=11 and A=14/B=16, both

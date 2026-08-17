@@ -1489,11 +1489,46 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
     finalists: list[dict] = []
     provenance: list[str] = []
 
-    def _add(levels, why: str) -> None:
+    def _add(levels, why: str, *, allow_measured_invalid: bool = False) -> None:
+        """Seat a finalist, unless it is a duplicate, the list is full, or the
+        campaign has already MEASURED this exact configuration inadmissible.
+
+        The measured-invalid filter lives HERE, in the one place every seeding
+        path goes through, rather than in the individual branches. It was
+        originally only on the round-r top-up branch, which left a live gap: a
+        round r > 1 whose entire carry-over was excluded produces no finalist,
+        falls through to the round-1 ladder, and that ladder re-seats
+        ``recommendation.levels`` / ``top_candidates`` verbatim — so the round
+        would burn its whole budget re-measuring configurations an earlier round
+        had already proved inadmissible. `SURFACES["sla"]` does not exercise it
+        (``B=2`` always survives there, so the carry-over is never empty), which
+        is exactly why it needed finding by reading rather than by running.
+
+        Filtering unconditionally is also strictly better on round 1: a screen
+        stage with infeasible corners, or a resumed work_dir, can put
+        measured-invalid rows on disk before the first confirm round, and there
+        was never a reason to seat one.
+
+        ``allow_measured_invalid`` is the ONE exemption, and only
+        ``known_valid_baseline`` takes it. That rung is the author's declared
+        "this configuration works", the bottom of spec §3.6's ladder, and it is
+        reached only when nothing else is left — so dropping it on a contrary
+        measurement would leave the campaign with nothing legal to return at
+        all, which is worse than measuring it again and recording the
+        contradiction. `_finish_confirm` still excludes it if it measures
+        invalid, and `_run_report` still reports it as ``basis: baseline``.
+        """
         if not levels:
             return
         lv = dict(levels)
         if any(lv == f for f in finalists) or len(finalists) >= k:
+            return
+        if not allow_measured_invalid and _measured_infeasible_contains(work_dir, lv):
+            logger.info(
+                "confirm round %d: not seating %s (%s) — the campaign has "
+                "already MEASURED this configuration inadmissible, so a round "
+                "spent re-measuring it would learn nothing.", rnd, lv, why,
+            )
             return
         finalists.append(lv)
         provenance.append(why)
@@ -1516,6 +1551,9 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             ):
                 _add(f.get("levels"), f"round {rnd - 1} bound above epsilon")
     if not finalists:
+        # The round-1 ladder, and also the recovery path for a round r > 1 whose
+        # entire carry-over was excluded. Both want the same priority order, and
+        # both are filtered against measured-invalid levels by `_add`.
         rec = _read_recommendation(work_dir) or {}
         _add(rec.get("levels"), f"{rec.get('stage') or 'model'} recommendation")
         best = _best_observed(work_dir, primary, direction=direction)
@@ -1524,16 +1562,17 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         for c in rec.get("top_candidates") or []:
             _add(c.get("levels"), "model top candidate")
         if not finalists:
-            _add(pol.get("known_valid_baseline"), "known_valid_baseline")
+            _add(pol.get("known_valid_baseline"), "known_valid_baseline",
+                 allow_measured_invalid=True)
     elif rnd > 1 and len(finalists) < k:
         # TOP UP a shortlist the previous round shrank.
         #
         # Retiring a finalist (its bound fell below epsilon, or a measurement
         # showed it invalid) leaves room, and re-running a two-member comparison
         # unchanged would spend the round learning nothing. Fill from the
-        # model's ranked candidates, skipping anything already measured
-        # inadmissible — which after a round of exclusions is a strictly better
-        # informed list than the one round 1 drew from.
+        # model's ranked candidates; `_add` skips anything already measured
+        # inadmissible, which after a round of exclusions makes this a strictly
+        # better informed list than the one round 1 drew from.
         #
         # This is the mechanism `SURFACES["sla"]` needs. There the model's whole
         # top-3 violates the p99 constraint (the fit has no p99 term, so only a
@@ -1544,9 +1583,8 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         invalid = _measured_infeasible(work_dir)
         rec = _read_recommendation(work_dir) or {}
         for c in rec.get("top_candidates") or []:
-            lv = c.get("levels") or {}
-            if lv and not _measured_infeasible_contains(work_dir, lv):
-                _add(lv, f"round {rnd} top-up from the model's ranking")
+            _add(c.get("levels") or {},
+                 f"round {rnd} top-up from the model's ranking")
         if len(finalists) < k:
             logger.info(
                 "confirm round %d: shortlist topped up to %d of a requested %d; "
@@ -1557,12 +1595,22 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
                 rnd, len(finalists), k, len(invalid),
             )
     if not finalists:
+        n_invalid = len(_measured_infeasible(work_dir))
         raise OptimizationAborted(
-            "confirm has no finalist to measure: no recommendation.json on "
-            "disk, no completed run to name a best measured configuration, and "
-            "no optimization.known_valid_baseline to fall back on. Run a "
-            "fitting stage first, or declare known_valid_baseline so the "
-            "campaign always has one configuration it may legally return.",
+            f"confirm has no finalist to measure: nothing on the ladder survived "
+            f"— no recommendation.json on disk, no completed run to name a best "
+            f"measured configuration, and no optimization.known_valid_baseline "
+            f"to fall back on. "
+            + (
+                f"{n_invalid} configuration(s) WERE measured inadmissible and "
+                f"are therefore not re-seated; if the model's ranking holds "
+                f"nothing else, the declared design space may contain no valid "
+                f"configuration at all. "
+                if n_invalid else ""
+            )
+            + "Run a fitting stage first, declare known_valid_baseline so the "
+              "campaign always has one configuration it may legally return, or "
+              "relax the constraint that rejected everything.",
         )
 
     # Every finalist must name a level for EVERY declared factor.
@@ -1838,40 +1886,67 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         pol["objective"]["epsilon"], mean(ok[best]) if best else 0.0,
     )
 
-    # A ROUND THAT EXCLUDED A FINALIST HAS NOT FINISHED DISCRIMINATING.
+    # AN EXCLUSION AT CONFIRM IS EVIDENCE THAT THE delta_s PREMISE HAS FAILED,
+    # SO THE GLOBAL CERTIFICATE IS UNEARNED.
     #
-    # The certificate's meaning is "no member of S beats the winner by more than
-    # epsilon". When a finalist is dropped on measured invalidity the REALIZED
-    # shortlist is smaller than the one the round set out to compare, and in the
-    # limit it is `{winner}` alone — whose bound is 0.0 by the trivial branch,
-    # so certifying would claim epsilon-optimality on the strength of having
-    # eliminated every rival. Measured on `SURFACES["sla"]` at the default
-    # shortlist of 3: the model's whole top-3 violates the p99 constraint, all
-    # three are excluded, the lone surviving corner certifies at R=0.0, and the
-    # campaign reports a configuration 6.1% below the true constrained optimum
-    # as CERTIFIED epsilon-optimal. That is the exact failure the terminal stage
-    # exists to prevent, arriving through the stage itself.
+    # Read this carefully, because the obvious reason is the WRONG reason and a
+    # maintainer reasoning from it would delete this interlock as unnecessary.
     #
-    # So an exclusion suppresses certification for THIS round and the policy's
-    # default `confirm -> confirm` sends the campaign back with a re-filled
-    # shortlist (see `_confirm_rows`'s top-up). The round cap and the budget
-    # guard still terminate it; what changes is that the campaign then reports
-    # `terminal_best` — an answer — instead of a certificate it did not earn.
+    # The wrong reason: "the realized shortlist is smaller than the one the round
+    # planned to compare, so the bound is over a narrowed set." That does not
+    # hold. The paper scopes the terminal claim to the REALIZED shortlist — "the
+    # final comparison within the realized shortlist therefore does not rely on
+    # the response model" — so a bound taken over the survivors is a perfectly
+    # valid WITHIN-SHORTLIST claim, even when the survivors number one. Nothing
+    # about shrinkage per se invalidates `R_terminal`, and indeed this code still
+    # reports that number (see below).
     #
-    # `bounds`/`residual_regret_terminal` are unaffected: they are what they
-    # are over the finalists that survived, and suppressing the NUMBER would
-    # hide the comparison that did happen.
+    # The actual reason: `certified` is not a within-shortlist claim. It is the
+    # GLOBAL one — epsilon-optimality over `X_valid` — and it rests on
+    # `Pr(wrong global decision) <= delta_s + delta_t`, whose `delta_s` term
+    # carries a premise: that screening did not exclude the true optimum, i.e.
+    # that the model's candidate ranking tracks the objective well enough for the
+    # top of it to contain the winner. A finalist measured INADMISSIBLE is direct
+    # evidence against that premise. The fit has no constraint term at all, so
+    # when the model's ranking hands the terminal stage configurations that turn
+    # out invalid, the ranking is demonstrably not tracking the CONSTRAINED
+    # objective — and the shortlist it produced carries no reason to contain the
+    # constrained optimum. With the `delta_s` premise broken, the sum bound does
+    # not hold, and `certified: True` asserts something the campaign has just
+    # collected evidence against.
+    #
+    # Measured on `SURFACES["sla"]` at the default shortlist of 3: the model's
+    # whole top-3 violates the p99 constraint, all three are excluded, and the
+    # lone surviving corner would certify at R=0.0 — reporting a configuration
+    # 6.1% below the true constrained optimum as CERTIFIED epsilon-optimal. The
+    # within-shortlist bound of 0.0 is *correct*; it is the global label attached
+    # to it that is false, and it is false precisely because the exclusions show
+    # screening's ordering had failed.
+    #
+    # So an exclusion suppresses CERTIFICATION for this round while the policy's
+    # default `confirm -> confirm` sends the campaign back with a shortlist
+    # re-filled from deeper in the ranking (`_confirm_rows`'s top-up) — which is
+    # how the premise gets repaired: by finding candidates that survive
+    # measurement. The round cap and the budget guard still terminate it; what
+    # changes is that the campaign then reports `terminal_best` — an honest
+    # answer — instead of a global certificate it did not earn.
+    #
+    # `bounds` / `residual_regret_terminal` are deliberately UNAFFECTED. They are
+    # the within-shortlist numbers, they are valid as such, and suppressing them
+    # would hide the comparison that genuinely did happen.
     n_excluded = sum(1 for v in status.values() if v == "excluded")
     certified = bound.value is not None and bound.value <= eps and not n_excluded
     if n_excluded and bound.value is not None and bound.value <= eps:
         logger.info(
-            "confirm: %d finalist(s) were excluded on measured invalidity, so "
-            "the realized shortlist is smaller than the round planned to "
-            "compare. R_terminal=%.6g is at or below epsilon=%.6g over the "
-            "SURVIVORS, but certifying on it would claim epsilon-optimality "
-            "over a shortlist this round itself narrowed. Reporting uncertified "
-            "and looping if the registered round cap allows it.",
-            n_excluded, bound.value, eps,
+            "confirm: R_terminal=%.6g is at or below epsilon=%.6g over the "
+            "surviving finalists, which is a valid WITHIN-SHORTLIST result and "
+            "is reported as such. Not certifying globally: %d finalist(s) were "
+            "measured inadmissible, which is evidence that the model's ranking "
+            "is not tracking the constrained objective — so the delta_screen "
+            "premise behind Pr(wrong global decision) <= delta_s + delta_t does "
+            "not hold, and epsilon-optimality over X_valid is unearned. Looping "
+            "to re-fill the shortlist if the registered round cap allows it.",
+            bound.value, eps, n_excluded,
         )
 
     # Per-challenger bounds, each against the winner alone. These are what
