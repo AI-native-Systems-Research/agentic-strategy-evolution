@@ -6,8 +6,8 @@ defaults, **the rules here win**.
 
 ## 🚧 Pre-GA: achieving goals outranks preserving behaviour
 
-**`nous` has not reached GA.** Until the project owner (@sriumcp) explicitly
-says otherwise, this applies repo-wide, not to any one branch or kind:
+**`nous` has not reached GA.** Until the project owner explicitly says
+otherwise, this applies repo-wide, not to any one branch or kind:
 achieving the stated goal of a piece of work outranks preserving `nous`'s
 existing observable behaviour. Semantic versioning is what covers the
 change for consumers — it is not a reason to avoid making it.
@@ -21,8 +21,8 @@ behaviour should still say so and say why the new behaviour is correct — a
 reviewer still checks that reasoning; they just no longer weigh it against
 a preservation requirement that does not apply pre-GA.
 
-This reverses only on explicit word from @sriumcp that `nous` has reached
-GA.
+This reverses only on explicit word from the project owner that `nous` has
+reached GA.
 
 ## 🚫 Tests must NEVER make live LLM calls
 
