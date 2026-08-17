@@ -147,8 +147,72 @@ writes the recommendation and its residual-regret certificate.
 the only substantive model call in the kind is `build`.** Gate summaries and
 the end-of-campaign report use the existing shared machinery and are not part
 of the epoch. Compilation of the experimental policy is deterministic Python;
-every state inside the compiled epoch is tokenless
-(see `docs/superpowers/specs/2026-08-16-compiled-policy-design.md`).
+every state inside the compiled epoch is tokenless.
+
+### 🔒 The compiled experimental policy — read this before touching `orchestrator/optimize/`
+
+**Binding design authority:** `docs/superpowers/specs/2026-08-16-compiled-policy-design.md`.
+**Implementation plan (16 tasks, TDD, phase-by-phase):**
+`docs/superpowers/plans/2026-08-16-compiled-policy.md`.
+Every claim below is an assertion the spec makes and the plan builds toward —
+if this section and the spec ever disagree, the spec wins; fix this section.
+
+The epoch (`screen`/`foldover`/`refine`/`confirm`/`report`/`exception`) is not
+Python control flow branching on `if`/`elif`. It is an **interpreted state
+machine**:
+
+1. At the end of `verify`, `orchestrator.optimize.policy.compile_policy(campaign)`
+   is a **pure function** (zero model tokens, no measurement read) that
+   compiles the campaign's `optimization` block into `policy.json` — a
+   schema-validated (`orchestrator/schemas/policy.schema.json`), content-hashed
+   (`policy.sha256`) document. This IS the pre-registration: a policy hash
+   written before the first benchmark run means every subsequent branch was
+   fixed before any result was seen.
+2. `check_policy(policy)` structurally validates it — every non-terminal state
+   has a default transition, every conditional transition names its
+   `accounting` rule, every `when` clause's observation key is in the closed
+   `OBSERVATION_KEYS` vocabulary and its comparison operator is in the closed
+   `COMPARISON_OPS` vocabulary (`>`, `>=`, `<`, `<=` only — **no** `==`/`!=`,
+   deliberately narrower than the general-purpose `predicates.OPS` used
+   elsewhere for manipulation checks; see the design spec §3.2 on why the
+   compiled policy's grammar must stay closed).
+3. `step(policy, state, observations) -> (next_state, rule)` is the *only*
+   thing that decides what happens next inside an epoch. It is pure, total
+   (defined for every observation, including an empty dict), and
+   deterministic. A measurement outside the declared vocabulary is a
+   **semantic exception that ends the epoch** — it is never a new branch
+   invented on the fly. Every `step()` call is logged to
+   `transitions.jsonl`, which is the audit trail `enumerate_paths`/
+   `current_state` read back.
+4. **Never add an `if`/`elif` branch to `stage_runner.py` that decides what
+   the NEXT stage is.** That decision belongs in the compiled policy. If a
+   new adaptive branch is needed, it is a new transition in
+   `compile_policy`'s output, gated behind its own named `accounting` rule
+   — not a new code path in the interpreter. An adaptive branch with no
+   named inferential accounting rule (POSI, data splitting, confidence
+   sequences) is explicitly a **non-goal**; it does not ship.
+5. **No model call is ever made inside a compiled epoch state**, for any
+   reason, including "just to interpret a result". A semantic exception ends
+   the epoch instead of improvising. This is the single most important
+   invariant in the kind — it is what makes the token-call table above true.
+
+**Oracle-first discipline (spec §2.1):** no paper-aligned mechanism is
+implemented before a synthetic surface exists (`orchestrator/optimize/synthetic.py`,
+nine closed-form response surfaces with known optima, each named for a past
+real bug) that *fails* without the mechanism and *passes* with it. If you are
+adding a capability to this module and cannot point to which synthetic
+surface would catch its absence, you have not finished specifying it.
+`orchestrator/optimize/harness.py` drives these surfaces through the real
+`stage_runner.run_stage` in-process, with no dispatcher and no LLM.
+
+**Two verified historical defects, fixed in this line of work** (do not
+reintroduce): a tabulated resolution-IV screen crashed at fit because one
+column per two-factor-interaction made `XᵀX` singular under aliasing (fixed
+by fitting one coefficient per **alias class**, spec §4 D1); one infeasible
+row silently NaN-poisoned every fitted coefficient because the abort guard
+excluded infeasible rows from its check but nothing downstream excluded them
+from the fit (fixed by fitting on the complete-row subset and recording
+exclusions, spec §4 D2).
 
 When the mechanism under study does not exist in the target yet, add the
 opt-in `build` stage first (`stages: [build, verify, screen, confirm]`).
@@ -233,6 +297,13 @@ worked example). The full friction-report resolution map is in
   resolution).
 - `docs/optimization-campaign-guide.md` — authoring guide for
   `kind: optimization` factorial/response-surface campaigns.
+- `docs/superpowers/specs/2026-08-16-compiled-policy-design.md` — binding
+  design authority for the compiled experimental policy (`policy.json`,
+  `step()`, the closed observation/operator vocabularies, the residual-regret
+  certificate, the fallback ladder).
+- `docs/superpowers/plans/2026-08-16-compiled-policy.md` — the 16-task
+  implementation plan for the compiled policy, executed via
+  `superpowers:subagent-driven-development`.
 - `docs/friction-245-resolution.md` — F1..F21 → file map for
   paper-memorytime-mirage friction report.
 - `docs/plans/CHECKPOINT.md` — current state of the #120 epic.
