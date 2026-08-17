@@ -164,6 +164,25 @@ def test_step_takes_the_first_matching_rule_then_the_default():
     assert nxt == "exception"
 
 
+def test_a_nan_response_at_confirm_ends_the_epoch_like_every_other_spending_state():
+    """`confirm` must not be the one spending state a NaN cannot escape.
+
+    `screen`/`foldover`/`refine` each register `nan_response: True -> exception`
+    immediately after their `correctness_failed` rule. Without the matching
+    rule for `confirm`, a NaN observed there falls through to `confirm`'s own
+    `"default": "confirm"` — and the caller that reports a NaN at confirm
+    hardcodes `round: 0` (there is no fit, so there is no round to report), so
+    the round-cap guard `{"round": {">=": max_rounds}}` never fires either.
+    The epoch would self-loop at `confirm` until `max_iterations` cuts it off
+    from OUTSIDE the compiled policy — the one outcome `run_campaign` does not
+    register as reachable.
+    """
+    pol = compile_policy(_campaign())
+    nxt, rule = step(pol, "confirm", {"correctness_failed": False, "nan_response": True,
+                                       "round": 0, "budget_remaining": 5, "certified": False})
+    assert nxt == "exception", (nxt, rule)
+
+
 def test_step_treats_a_missing_observation_as_not_matching():
     pol = compile_policy(_campaign())
     nxt, _ = step(pol, "screen", {})            # nothing known -> default

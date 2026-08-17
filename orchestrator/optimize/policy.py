@@ -248,6 +248,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
     if confirm_on:
         transitions += [
             {"from": "confirm", "when": {"correctness_failed": True}, "to": "exception", "accounting": sem},
+            {"from": "confirm", "when": {"nan_response": True}, "to": "exception", "accounting": sem},
             {"from": "confirm", "when": {"certified": True}, "to": "report",
              "accounting": "bonferroni_one_sided_welch_t at delta_terminal over |S|-1 finalists"},
             {"from": "confirm", "when": {"round": {">=": states["confirm"]["design"]["max_rounds"]}},
