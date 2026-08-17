@@ -126,3 +126,9 @@ optimization:
       memory, the third spends per-query latency. Expect the recall constraint
       to bind hardest at low m with scalar quantization — those rows are
       infeasible, not merely bad, and must not be averaged into the surface.
+      Certification arithmetic (docs/targets.md §5): sigma is ~3% of qps, and
+      with 5 PAIRED replicates over 2 challengers the terminal Bonferroni-t
+      bound clears the 2% epsilon once the winner is a couple of percent clear
+      of the field. A near-tie should come back `terminal_best`, not
+      `certified` — read that as "these finalists are indistinguishable at
+      this budget", a real result about the knobs rather than a failed run.
