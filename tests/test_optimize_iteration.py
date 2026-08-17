@@ -110,6 +110,23 @@ def work_dir(tmp_path, monkeypatch):
     return None
 
 
+def _advance_engine(wd) -> None:
+    """Mirror run_campaign's between-iteration HUMAN_FINDINGS_GATE -> DONE -> DESIGN.
+
+    ``_enter_phase`` returns False once the engine is PAST the requested
+    phase, and the block it guards at DESIGN writes ``design_matrix.json``
+    and runs ``_preflight_design``. A test that drives several iterations
+    through ONE work_dir must advance the machine the way production does
+    (see harness.run_synthetic_campaign, which carries the same note).
+    """
+    from orchestrator.engine import Engine
+
+    engine = Engine(wd)
+    if engine.phase != "DONE":
+        engine.transition("DONE")
+    engine.transition("DESIGN")
+
+
 def _run(campaign, wd, *, stage="screen", iteration=2, runner=None,
          test_results=None, integrity_check=None):
     return run_stage(
@@ -404,10 +421,11 @@ def test_the_final_stage_transitions_to_done_and_reports_completed(
     """Otherwise run_campaign never stops.
 
     run_campaign only terminates on COMPLETED / ABORTED / REDESIGN. A
-    CONTINUE from the last stage makes it call one more iteration;
-    stage_for_iteration then clamps past the end of the stage list and
-    returns the final stage again, re-running it forever. That looks correct
-    only when max_iterations happens to equal the stage count.
+    CONTINUE from the last stage makes it call one more iteration, and the
+    campaign never ends. The mechanism changed in Task 6 — the compiled
+    policy routes ``confirm -> report`` on its registered round cap, rather
+    than ``_is_final_stage`` recognising ``confirm`` as the last list entry —
+    but the observable outcome asserted here is deliberately unchanged.
     """
     from orchestrator.engine import Engine
     from orchestrator.iteration import IterationOutcome
@@ -428,21 +446,55 @@ def test_a_non_final_stage_reports_continue(tmp_path, work_dir):
 
 
 def test_an_explicit_stages_list_decides_which_stage_is_terminal(tmp_path):
-    from orchestrator.optimize.stage_runner import _is_final_stage
+    """Same claim as before Task 6, asked of the compiled policy.
+
+    ``_is_final_stage`` answered this from the ``stages`` LIST's last entry —
+    an index question. The policy answers it from what ``step`` routes to,
+    which is the same answer for these three campaigns and a DIFFERENT
+    (correct) one whenever the list order and the registered paths disagree.
+    Asserting through ``step`` is what keeps the assertion about finality
+    rather than about a list position.
+    """
+    from orchestrator.optimize.policy import compile_policy, step
+
+    def _routes_to(campaign, state, **obs):
+        # `round: 1` is the first confirm round under the 1-based convention
+        # (_confirm_round); at the default confirm_max_rounds of 1 that is
+        # already the registered cap, which is what makes one confirm
+        # iteration terminal exactly as it was before Task 6.
+        base = {"correctness_failed": False, "nan_response": False,
+                "certified": False, "round": 1, "budget_remaining": 10 ** 9,
+                "refinable_survivors": 0}
+        return step(compile_policy(campaign), state, {**base, **obs})[0]
 
     default = _campaign()
-    assert _is_final_stage(default, "confirm") is True
-    assert _is_final_stage(default, "refine") is False
+    assert _routes_to(default, "confirm") == "report"
+    # `_campaign`'s factors are all 2-level, so NOTHING is refinable and the
+    # compiled policy omits the refine state entirely — a stronger and more
+    # honest statement than `_is_final_stage(default, "refine") is False`,
+    # which reported "not terminal" about a stage the campaign cannot run.
+    assert "refine" not in compile_policy(default)["states"]
+    assert _routes_to(default, "screen") == "confirm"
+
+    refinable = _campaign()
+    refinable["optimization"]["factors"][0]["levels"] = [1, 2, 4, 8]
+    assert "refine" in compile_policy(refinable)["states"]
+    # a refinable survivor routes screen -> refine, not to a terminal
+    assert _routes_to(refinable, "screen", refinable_survivors=1) == "refine"
+    assert _routes_to(refinable, "refine") == "confirm"
 
     short = _campaign()
+    short["optimization"]["factors"][0]["levels"] = [1, 2, 4, 8]
     short["optimization"]["stages"] = ["verify", "screen", "confirm"]
-    assert _is_final_stage(short, "confirm") is True
-    assert _is_final_stage(short, "refine") is False
+    assert _routes_to(short, "confirm") == "report"
+    # refine is dropped because the STAGES LIST omits it, even though a factor
+    # is refinable — the explicit list still decides, as it always did.
+    assert "refine" not in compile_policy(short)["states"]
 
     no_confirm = _campaign()
     no_confirm["optimization"]["stages"] = ["verify", "screen"]
-    assert _is_final_stage(no_confirm, "screen") is True
-    assert _is_final_stage(no_confirm, "confirm") is False
+    assert _routes_to(no_confirm, "screen") == "report"
+    assert "confirm" not in compile_policy(no_confirm)["states"]
 
 
 def test_a_partially_failed_sweep_refuses_to_fit_rather_than_emit_nan(
@@ -1275,3 +1327,126 @@ def test_fit_exclusions_are_recorded_when_rows_are_dropped(tmp_path, work_dir):
         assert rec["fitted_rows"] < rec["planned_rows"]
         assert rec["excluded_row_indices"]
         assert "complete" in rec["reason"]
+
+
+# ─── Task 6: the compiled policy drives the epoch, not the iteration index ──
+
+def test_verify_compiles_and_writes_the_policy(tmp_path, work_dir):
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1)
+    pol = json.loads((Path(wd) / "policy.json").read_text())
+    assert pol["initial"] == "screen"
+    assert (Path(wd) / "policy.sha256").exists()
+
+
+def test_epoch_iterations_follow_transitions_not_the_iteration_index(
+    tmp_path, work_dir,
+):
+    from orchestrator.iteration import IterationOutcome
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1)
+    _advance_engine(wd)
+    # NO `stage=` from here on: which state each iteration runs must come from
+    # the recorded transitions, not from the iteration index.
+    out2 = run_stage(c, wd, iteration=2, config_runner=_runner(),
+                     test_results=_all_tests_pass(c), auto_approve=True)
+    trans = [
+        json.loads(line)
+        for line in (Path(wd) / "transitions.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert trans[0]["from"] == "screen"
+    assert trans[0]["to"] in ("refine", "confirm")
+    assert "policy_hash" in json.loads(
+        (Path(wd) / "runs" / "iter-2" / "design_matrix.json").read_text(),
+    )
+    # keep going until the policy reports; the harness does the same
+    it, outcome = 3, out2
+    while outcome != IterationOutcome.COMPLETED and it < 8:
+        _advance_engine(wd)
+        outcome = run_stage(c, wd, iteration=it, config_runner=_runner(),
+                            test_results=_all_tests_pass(c), auto_approve=True)
+        it += 1
+    assert outcome == IterationOutcome.COMPLETED
+    assert (Path(wd) / "report.json").exists()
+    trans = [
+        json.loads(line)
+        for line in (Path(wd) / "transitions.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert trans[-1]["to"] == "report"
+
+
+def test_editing_policy_json_after_compilation_hard_fails(tmp_path, work_dir):
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1)
+    p = Path(wd) / "policy.json"
+    pol = json.loads(p.read_text())
+    pol["objective"]["delta_terminal"] = 0.4
+    p.write_text(json.dumps(pol))
+    with pytest.raises(OptimizationAborted, match="edited after compilation"):
+        run_stage(c, wd, iteration=2, config_runner=_runner(),
+                  test_results=_all_tests_pass(c), auto_approve=True)
+
+
+def test_explicit_confirm_stage_still_reports_completed(tmp_path, work_dir):
+    # legacy calling convention used throughout this file
+    from orchestrator.iteration import IterationOutcome
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    assert _run(c, wd, stage="confirm", iteration=4) == IterationOutcome.COMPLETED
+    assert (Path(wd) / "report.json").exists()
+
+
+def test_the_transition_row_records_the_closed_observation_vocabulary(
+    tmp_path, work_dir,
+):
+    """Every guard key the policy can read must be present in the row.
+
+    `step` treats a missing observation as "unknown is not a fact", so a
+    dropped key silently strands the branch it guards. The row on disk is
+    the only durable evidence of what the interpreter actually saw.
+    """
+    from orchestrator.optimize.policy import read_transitions
+
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1)
+    _run(c, wd, stage="screen", iteration=2)
+    rows = read_transitions(wd)
+    obs = rows[-1]["observations"]
+    for key in ("correctness_failed", "nan_response", "budget_remaining",
+                "round", "certified"):
+        assert key in obs, f"{key} missing from the recorded observations"
+    assert obs["round"] == 0, "screen reports round 0 (0-based)"
+    assert obs["budget_remaining"] == 10 ** 9, (
+        "with no declared max_runs the budget is unbounded, not zero"
+    )
+
+
+def test_a_state_outside_the_compiled_policy_fails_with_a_named_mismatch(
+    tmp_path, work_dir,
+):
+    """`step` would raise a bare ValueError about a missing default transition.
+
+    Reachable by forcing a stage the policy does not register — here `refine`
+    on a campaign whose stages list omits it. The symptom ("no default
+    transition from 'refine'") does not name the cause, and the cause is a
+    campaign-authoring mistake a reader can act on.
+    """
+    c = _campaign()
+    # A is refinable, so `_build_design` would happily build a CCD — the only
+    # reason refine is not runnable here is the explicit stages list.
+    c["optimization"]["factors"][0]["levels"] = [1, 2, 4, 8]
+    c["optimization"]["factors"][1]["levels"] = [1, 2, 4, 8]
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1)
+    _advance_engine(wd)
+    with pytest.raises(OptimizationAborted, match="registers only"):
+        _run(c, wd, stage="refine", iteration=3)
