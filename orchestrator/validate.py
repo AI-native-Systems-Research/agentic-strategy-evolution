@@ -929,9 +929,14 @@ def _rule16_workload_seed_env(opt: dict) -> list[str]:
     ``design_matrix.json``, and never read; every replicate then draws a fresh
     workload; and ``confirm`` still computes a PAIRED bound over differences
     whose shared seed term never actually cancelled. That bound is arithmetic
-    performed correctly on the wrong premise — tighter than the data supports,
-    with nothing on disk to indicate it. A regex at authoring time is the only
-    place this is visible.
+    performed correctly on the wrong premise. It is NOT overconfident — the
+    variance comes from the observed differences, so a cancellation that never
+    happened simply never narrows them, and coverage stays nominal. What is lost
+    is efficiency (the paired t spends fewer degrees of freedom for a common
+    term that was not common) and, more importantly, provenance: the artifact
+    records ``bonferroni_one_sided_t_paired`` for an experiment that paired
+    nothing, with nothing on disk to indicate it. A regex at authoring time is
+    the only place this is visible.
 
     ``^[A-Z_][A-Z0-9_]*$`` rather than something more permissive: uppercase is
     the universal convention for an externally-supplied variable, and requiring
@@ -953,8 +958,10 @@ def _rule16_workload_seed_env(opt: dict) -> list[str]:
             f"space, a hyphen, a leading digit or a lowercase letter is "
             f"exported successfully and then unreadable from the target's own "
             f"shell — so every replicate draws a fresh workload while confirm "
-            f"still reports a PAIRED bound, which is tighter than the data "
-            f"supports and shows no error anywhere."
+            f"still reports a PAIRED bound. That bound stays valid (its variance "
+            f"comes from the observed differences), but it is less efficient than "
+            f"the unpaired form and its recorded method claims a pairing that "
+            f"never happened — and nothing errors anywhere to say so."
         )
     seeds = wl.get("seeds")
     if seeds is not None:

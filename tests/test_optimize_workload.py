@@ -91,8 +91,12 @@ def test_illegal_seed_env_names_are_rejected(name):
     successfully and then unreadable — `$bad name` is two words to every POSIX
     shell. Nothing raises; the seed is simply never read, every replicate draws a
     fresh workload, and `confirm` still reports a PAIRED bound over differences
-    whose shared term never cancelled. That bound is tighter than the data
-    supports with no error on disk, which is why the check has to be here.
+    whose shared term never cancelled. That bound remains valid — its variance
+    comes from the observed differences, not from an assumed cancellation — but
+    it is less efficient than the unpaired form and the certificate on disk
+    claims `bonferroni_one_sided_t_paired` for an experiment that paired
+    nothing. Nothing else on disk records that, which is why the check has to be
+    here.
     """
     hits = _workload_errors({"seed_env": name})
     assert hits, f"{name!r} was accepted"
@@ -384,10 +388,13 @@ def test_no_workload_block_changes_nothing(tmp_path):
     """The field is opt-in: an existing campaign's artifacts do not move.
 
     A campaign with no `workload` gets no `env` key it did not have, no
-    `workload_seeds`, and — critically — NO `paired: True`, because pairing a
-    comparison whose finalists did not actually share a workload draw would
-    understate the variance and report a bound that is too tight. An unearned
-    tight bound is worse than a loose one.
+    `workload_seeds`, and — critically — NO `paired: True`. Not because the
+    paired bound would be unsound: it estimates its variance from the observed
+    differences, so an absent cancellation never narrows them and coverage stays
+    nominal. Rather because it would buy nothing (fewer degrees of freedom spent
+    on a common term that was not common) while the certificate on disk would
+    record `bonferroni_one_sided_t_paired` for an experiment that paired
+    nothing — a provenance defect, not an unsound number.
     """
     res = run_synthetic_campaign(
         SURFACES["additive"](), seed=5, parent_dir=tmp_path,

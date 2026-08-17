@@ -1236,10 +1236,18 @@ properties:
           The target must actually READ the variable. Nous exports it and
           records it; it cannot make a benchmark honour it. A target that
           ignores ``seed_env`` still gets a recorded seed and a paired bound
-          computed over differences whose shared term never cancelled — the
-          bound would then be honest about its own arithmetic and wrong about
-          the experiment. Wire the variable into the workload generator's seed
-          before declaring this block.
+          computed over differences whose shared term never cancelled. That
+          bound is still VALID — its variance is estimated from the observed
+          differences, so a cancellation that never occurred never narrows
+          them — but it buys nothing: it is typically LESS efficient than the
+          unpaired form (fewer degrees of freedom spent on a common term that
+          was not common), and the certificate on disk records
+          ``bonferroni_one_sided_t_paired`` for an experiment that paired
+          nothing. That is a provenance problem, not an unsound number. Wire
+          the variable into the workload generator's seed before declaring
+          this block, and verify it took effect: same seed twice should
+          reproduce the trace, different seeds should measurably change it
+          (see ``docs/targets.md``).
         properties:
           seed_env:
             type: string
