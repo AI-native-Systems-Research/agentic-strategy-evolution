@@ -247,3 +247,104 @@ def test_guide_mentions_anti_patterns_section():
     assert re.search(r"anti-pattern", text, re.IGNORECASE), (
         "guide has no anti-patterns section"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 16: the compiled policy is documented, and the section's own example
+# exercises the fields the epoch reads. The needles below are the vocabulary a
+# reader has to be able to search for -- an artifact name they will find on
+# disk, a campaign field they have to declare, and the two bounds they must not
+# confuse. Checked as SUBSTRINGS of the guide rather than by re-parsing the
+# section, because the extraction tests above already hold every campaign block
+# in the section to the real validator: this test only asserts the section
+# exists and names what it must name.
+# ---------------------------------------------------------------------------
+
+
+GUIDE_POLICY_NEEDLES = (
+    "## The compiled policy",
+    "policy.json",
+    "policy.sha256",
+    "known_valid_baseline",
+    "shortlist_size",
+    "residual_regret",
+    # The REAL on-disk name. Spec §3.9's artifact table calls this `epoch.json`;
+    # `stage_runner._close_iteration` writes `epoch_end-<epoch>.json`, one per
+    # epoch, at the work_dir root. The guide documents the name a reader will
+    # actually find, and says so where it transcribes the spec's table.
+    "epoch_end",
+    "transitions.jsonl",
+    "semantic exception",
+    "terminal discrimination",
+)
+
+
+def test_guide_documents_the_compiled_policy():
+    text = _guide_text()
+    for needle in GUIDE_POLICY_NEEDLES:
+        assert needle in text, needle
+
+
+def test_guide_compiled_policy_example_declares_the_epoch_fields():
+    """At least one complete example declares `policy`, `workload`, and a
+    `known_valid_baseline` -- the three blocks the compiled epoch reads that
+    the pre-Task-16 examples did not exercise.
+
+    Asserted over the extracted campaigns rather than as prose needles so the
+    example stays a VALID campaign (checks 1-6 above run over the same list),
+    not just a plausible-looking YAML block.
+    """
+    campaigns = _complete_campaigns()
+    matching = [
+        c for c in campaigns
+        if all(k in (c.get("optimization") or {})
+               for k in ("policy", "workload", "known_valid_baseline"))
+    ]
+    assert matching, (
+        "no complete example declares all of optimization.policy, "
+        "optimization.workload, and optimization.known_valid_baseline; the "
+        "compiled-policy section must ship one so the extraction tests "
+        "validate the fields it documents"
+    )
+    for c in matching:
+        opt = c["optimization"]
+        assert "shortlist_size" in (opt["design"].get("confirm") or {}), (
+            f"example {c.get('run_id')!r} documents the terminal stage but "
+            f"leaves design.confirm.shortlist_size implicit"
+        )
+        assert "seed_env" in opt["workload"], (
+            f"example {c.get('run_id')!r} declares workload without seed_env"
+        )
+
+
+# ---------------------------------------------------------------------------
+# The artifact names the guide and docs/data-model.md promise must be the ones
+# the code actually writes. A doc naming an artifact that does not exist is
+# the same class of defect as the "phantom claims" Phase 0 of the compiled-
+# policy plan removed (spec §1) -- it sends a reader looking for a file that
+# was never written.
+# ---------------------------------------------------------------------------
+
+
+def test_data_model_documents_the_real_epoch_artifact_names():
+    text = (REPO_ROOT / "docs" / "data-model.md").read_text()
+    for needle in ("policy.json", "policy.sha256", "transitions.jsonl",
+                   "recommendation.json", "confirmation.json", "shortlist.json",
+                   "report.json", "epoch_end-", "fit_exclusions.json",
+                   "mechanism.patch", "mechanism.sha256",
+                   "pre_build_tests.json", "baseline_equivalence.json"):
+        assert needle in text, needle
+
+
+def test_docs_reference_the_target_adapter_contract():
+    """`docs/targets.md` is reachable from the guide and from CLAUDE.md.
+
+    It shipped in Task 15 with zero inbound links, which makes an adapter
+    contract that a target author must satisfy findable only by knowing it
+    exists.
+    """
+    for path in ("docs/optimization-campaign-guide.md", "CLAUDE.md"):
+        text = (REPO_ROOT / path).read_text()
+        assert "docs/targets.md" in text or "targets.md" in text, (
+            f"{path} does not link docs/targets.md"
+        )

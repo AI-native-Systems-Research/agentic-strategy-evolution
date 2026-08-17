@@ -1,7 +1,41 @@
 # `kind: optimization` — a factorial/response-surface campaign type for Nous
 
+> **⚠️ SUPERSEDED IN PART by
+> [`2026-08-16-compiled-policy-design.md`](2026-08-16-compiled-policy-design.md).**
+>
+> This spec introduced the kind and remains the authority on its motivation,
+> architecture, data model, steering mechanisms, failure taxonomy, and
+> tier-scoping decision. Two of its sections have been replaced:
+>
+> - **§6.3 "Stage transitions are a pure decision rule"** — the ladder it
+>   describes (`screen → refine → confirm`, with escalation triggers that
+>   "*do* re-consult the model") is no longer how the kind executes. Stage
+>   transitions are now an **interpreted state machine** over a compiled,
+>   content-hashed `policy.json`, and **no model call is ever made inside a
+>   compiled epoch state** — the escalation triggers this section lists are
+>   either registered branches (`foldover`, a further `confirm` round) or
+>   **semantic exceptions that end the epoch**. See the 2026-08-16 spec §3.1
+>   (policy is data), §3.2 (`step()` and the closed observation vocabulary),
+>   §3.3 (states), and §3.6 (the fallback ladder).
+> - **§5.5 "Artifacts"** — still accurate about `design_matrix.json`,
+>   `runs.jsonl`, `effects.json`, and `relations.json`, but incomplete: a
+>   compiled epoch also writes `policy.json`/`policy.sha256`,
+>   `transitions.jsonl`, `recommendation.json`, `fit_exclusions.json`,
+>   `confirmation.json`, `shortlist.json`, `report.json`,
+>   `epoch_end-<epoch>.json`, and the build oracles' records. Its closing
+>   claim that "the model authors prose only at `verify` … and `confirm`" is
+>   **false** and was one of the phantom claims the 2026-08-16 spec §1 called
+>   out: `verify` and `confirm` are pure Python and make **zero** model
+>   calls; the kind's only substantive model call is the opt-in `build`
+>   stage. The complete, code-verified artifact inventory is
+>   `docs/data-model.md` §7.
+>
+> Everything else here stands. Read this spec for *why the kind exists*, and
+> the 2026-08-16 spec for *how the epoch decides*.
+
 **Date:** 2026-08-13
-**Status:** Design approved, pending implementation plan
+**Status:** Design approved; §5.5 and §6.3 superseded by the 2026-08-16
+compiled-policy design (see the note above)
 **Issue:** not yet filed — file as an epic before the first PR, then replace this
 line with the issue number. Related existing issues: #159 (tier discipline),
 #165 (adaptive sweeps), #168 (composite objective), #212/#221 (rehearsal scope
@@ -522,6 +556,13 @@ free from factor semantics:
 
 ### 5.5 Artifacts
 
+> **⚠️ Incomplete, and its closing paragraph is false.** A compiled epoch
+> writes more than the four files below, and the model authors prose at
+> neither `verify` nor `confirm` — both are pure Python with zero model
+> calls. Superseded by
+> [`2026-08-16-compiled-policy-design.md`](2026-08-16-compiled-policy-design.md)
+> §3.9; the code-verified inventory is `docs/data-model.md` §7.
+
 New, schema-validated, per iteration:
 
 * `design_matrix.json` — the pre-registered matrix: rows, generator, alias
@@ -583,6 +624,19 @@ immune to time-ordered drift (thermal, cache warming) that a sequential grid
 cannot rule out.
 
 ### 6.3 Stage transitions are a pure decision rule
+
+> **⚠️ SUPERSEDED by
+> [`2026-08-16-compiled-policy-design.md`](2026-08-16-compiled-policy-design.md)
+> §3.1–§3.3, §3.6.** The transitions below are no longer Python control flow;
+> they are transitions in a compiled, content-hashed `policy.json`
+> interpreted by `step()`. The "escalation triggers that *do* re-consult the
+> model" listed below **do not exist**: no model call is ever made inside a
+> compiled epoch state. Each of those four conditions is now either a
+> registered branch (`foldover` for consequential aliasing, a further
+> `confirm` round) or a **semantic exception that ends the epoch** — and a
+> `behavioral` relation violation is recorded as a finding with the epoch
+> continuing, as §5.2 already said. Read this section for the *shape* of the
+> decision rule the kind started from, not for what it does today.
 
 `stage.py`, no model call:
 

@@ -562,6 +562,473 @@ Run `nous validate campaign FILE` before starting: it warns when declared
 author them — the combination that is otherwise guaranteed to abort at
 `verify`, but only after a real run.
 
+## The compiled policy
+
+Everything in §2 describes what you *declare*. This section describes what
+Nous *compiles that into*, and what it writes to disk while executing it —
+because the artifacts, not the YAML, are what you read when the campaign
+comes back.
+
+The binding design authority is
+[`docs/superpowers/specs/2026-08-16-compiled-policy-design.md`](superpowers/specs/2026-08-16-compiled-policy-design.md).
+Where that spec and this section disagree, the spec wins and this section is
+the bug — except on artifact **names**, where the code is the authority and
+two names are called out below.
+
+### `policy.json` — the pre-registration, compiled at `verify`
+
+At the end of `verify`, `orchestrator.optimize.policy.compile_policy` turns
+your `optimization` block into a **compiled epoch**: a state machine written
+to `policy.json` at the work-dir root, with its content hash in
+`policy.sha256`. Compilation is **pure Python — zero model tokens**, and it
+reads no measurement.
+
+That hash is the whole point. A policy hash written *before the first
+benchmark run* means every branch the campaign could take was fixed before
+any result was seen. There is nothing to p-hack: the adaptivity is real
+(a screen result genuinely changes which state runs next), but the *set of
+possible adaptations* was registered in advance.
+
+Three consequences you will feel as an author:
+
+1. **Never edit `policy.json`.** The next stage compares it against
+   `policy.sha256` and aborts with *"policy.json was edited after
+   compilation… a pre-registered policy cannot change inside an epoch."*
+   To change the design, change the campaign YAML and start a new epoch
+   (below).
+2. **The observation vocabulary is closed.** A `when` guard may read only the
+   keys in `policy.OBSERVATION_KEYS` and compare them with `>`, `>=`, `<`,
+   `<=` (`policy.COMPARISON_OPS`). There is no free-form expression form, so
+   a measurement outside the vocabulary cannot become a new branch —
+   it becomes a **semantic exception** instead.
+3. **Every conditional transition names an inferential accounting rule.**
+   `check_policy` rejects a policy whose conditional branch has no
+   `accounting` string. An adaptive branch with no named accounting rule does
+   not ship — that is a stated non-goal of the design, not an oversight.
+
+### The `policy` block: the numbers that decide when to stop
+
+```yaml
+optimization:
+  policy:
+    epsilon: {pct: 2.0}       # indifference width; declare exactly one of abs/pct
+    delta_screen: 0.05        # error budget for the MODEL bound
+    delta_terminal: 0.05      # error budget for the TERMINAL bound
+    confirm_max_rounds: 2     # rounds of terminal discrimination before reporting uncertified
+```
+
+Every field is optional and has the default shown. All four are compiled
+verbatim into `policy.json`'s `objective` block and covered by the policy
+hash, which is what makes them pre-registered rather than chosen after the
+fact.
+
+`epsilon` is the width below which you would not bother changing production.
+Certification is `R_δ(x̂) ≤ ε`, so `epsilon: {abs: 0}` can never be met and
+an epsilon wider than the whole response range certifies immediately.
+`docs/targets.md` §5 gives the arithmetic for picking one that is reachable
+at your replicate count — it is **not** simply "above the noise floor."
+
+`delta_screen` and `delta_terminal` are separate because the two bounds they
+size rest on different assumptions; `Pr(wrong global decision) ≤ δ_s + δ_t`.
+
+### `known_valid_baseline`: the bottom rung
+
+```yaml
+optimization:
+  known_valid_baseline: {MNS: 256, MBT: 8192, CP: "off", POL: fcfs}
+```
+
+One configuration you know works today, with the mechanism under study at its
+OFF/control level — normally your production setting. Every id must name a
+declared factor and every level must be one of that factor's `levels`; the
+validator hard-fails otherwise, because a baseline outside the declared space
+is not a configuration the campaign is allowed to run.
+
+It does three jobs: it is the report's last-resort answer when nothing
+measured survives the correctness gates, it is the shortlist's last-resort
+finalist, and it is the control that build oracle 2(c) measures before and
+after a `build`. It is **required** whenever `build` is declared.
+
+### `workload`: seeds, and why `confirm` pairs them
+
+```yaml
+optimization:
+  workload:
+    seed_env: NOUS_WORKLOAD_SEED    # required; must match ^[A-Z_][A-Z0-9_]*$
+    seeds: [11, 22, 33, 44]         # optional explicit set, taken modulo the index
+```
+
+Declare this whenever the target is stochastic — a queue, a cache, an
+autoscaler, a sampler, anything whose run-to-run variance is comparable to
+the effect under study. Two things follow.
+
+Every measurement row gets a deterministic seed exported into the run
+subprocess's environment under `seed_env` and recorded in that iteration's
+`design_matrix.json` as `workload_seeds`, so a surprising row can be
+re-measured exactly rather than argued about.
+
+And the terminal comparison uses **common random numbers**: replicate *i* of
+every finalist runs the *same* seed, so the seed's contribution cancels out
+of the finalist-to-finalist difference and the terminal bound is computed on
+paired differences (`bonferroni_one_sided_t_paired`) instead of
+Welch-combining two independent variances. On a noisy systems target that is
+the difference between certifying inside the run budget and not.
+
+**Nous exports the variable; it cannot make your benchmark read it.** A
+target that ignores `seed_env` still gets a recorded seed and a bound
+computed over differences whose shared term never cancelled. That bound is
+still *valid* — its variance is estimated from the observed differences — but
+it buys nothing, and the certificate on disk will record a paired method for
+an experiment that paired nothing. Wire the variable into the workload
+generator's seed, and verify it with the two-run recipe in
+[`docs/targets.md`](targets.md) §3 before you trust any paired bound.
+
+### `design.confirm.shortlist_size`: terminal discrimination, not replication
+
+```yaml
+optimization:
+  design:
+    confirm: {replicates: 4, shortlist_size: 3}
+```
+
+`confirm` is this branch's name for the paper's **`discriminate`** stage
+(design spec §3.3's naming note — same behaviour, older token). It is
+**terminal discrimination**, not replication: it takes a shortlist
+`S ⊆ X_valid` of `shortlist_size` finalists and measures each of them
+`replicates` times *freshly*, then compares them **against each other**. The
+final claim therefore does not rest on the fitted response surface at all.
+The only global claim left is that screening did not exclude the winner.
+
+`shortlist_size` defaults to 3. Setting it to `1` reproduces the old
+single-point confirmation, which measures how *repeatable* one configuration
+is and leaves "is it the best?" as a claim about the fitted model. Total runs
+at this stage are `shortlist_size * replicates`, out of the same `max_runs`
+budget as everything else.
+
+### States and registered branches
+
+`build` and `verify` are **pre-epoch** — `verify` is what compiles the
+policy, so it cannot be a state inside it. The epoch begins at `screen`.
+
+| State | Spends benchmark? | Registered branches out |
+|---|---|---|
+| `screen` | yes | `foldover`, `refine`, `confirm`, `exception` |
+| `foldover` | yes | `refine`, `confirm`, `exception` |
+| `refine` | yes | `confirm`, `exception` |
+| `confirm` | yes | `confirm` (further round), `report`, `exception` |
+| `report` | no | terminal |
+| `exception` | no | terminal; **ends the epoch** |
+
+`step(policy, state, observations) -> (next_state, rule)` is the *only* thing
+that decides what runs next. It is pure, total, and deterministic, and every
+call appends a row to `transitions.jsonl` carrying the state, the full
+observation dict, the rule that fired (including its `accounting` string),
+and the `policy_hash` it ran under. That file — not the log — is the audit
+trail; `report.json`'s `path` is read back from it.
+
+The registered branches worth understanding as an author:
+
+- **`foldover`** — a **registered foldover**, spent only when the screen's
+  aliasing is *consequential* (an alias class could change which
+  configuration wins) **and** the remaining budget covers the fold block.
+  Aliasing is a resource question, not a blanket warning: at resolution IV
+  the design confounds two-factor interactions, and the campaign resolves
+  that confounding only when resolving it can change the answer. One
+  coefficient is fitted per **alias class**, and the classes are recorded
+  (see the artifacts below) whatever the verdict — "the design confounds AB
+  with CD and it does not matter for the winner" is a claim you should be
+  able to check, not an absence you have to trust. There is nothing to
+  declare: the state is registered whenever `screen` exists and gated at
+  **runtime**, deliberately *not* on `design.screen.resolution` — a
+  resolution-V screen aliases nothing, so the branch simply never fires,
+  and making the state's existence depend on the resolution would put the
+  same fact in two places and let them drift.
+- **`refine`** — entered when at least one refinable factor survives
+  screening (numeric, more than two levels). All-`choice` or all-binary
+  campaigns skip it, which is why `stages: [verify, screen, confirm]` is a
+  legitimate schedule rather than a shortcut.
+- **`confirm` → `confirm`** — a further round of terminal discrimination,
+  capped by `confirm_max_rounds`, re-measuring the winner plus every finalist
+  whose bound still exceeded epsilon.
+
+### Reading `report.json`
+
+`report.json` lands at the work-dir root and always names an action. The
+fallback ladder (design spec §3.6) is recorded as
+`recommendation.basis`, so you can tell a certificate from a fallback without
+reading a single log line:
+
+| `recommendation.basis` | What it means |
+|---|---|
+| `certified` | terminal discrimination ran and `R_δ^term ≤ ε`. The strongest claim the kind makes. |
+| `terminal_best` | terminal discrimination ran, bound too wide to certify. The winner is still a *measured* configuration compared against measured rivals. |
+| `model` | no terminal stage ran; the fitted argmax stands with its model bound. **The one rung that rests on the fitted surface** — suppressed when a semantic exception ended the epoch, or when the exact levels were already measured infeasible. |
+| `measured` | the model's answer is unusable; the best measured *valid* configuration is returned. Never the largest noisy observation — only `complete` rows are eligible. |
+| `baseline` | nothing above survived; your `known_valid_baseline` is returned. |
+| `none` | not a rung. No baseline was declared, so there is genuinely nothing legal to return, and saying so beats inventing an origin. |
+
+The spec's §3.6 states four rungs; the artifact has six values because the
+spec's rung 2 ("model adequate, bound too wide") and rung 3 ("model
+inadequate, remeasure") are two distinct `basis` values on disk
+(`terminal_best`, `measured`), plus `none` for the no-baseline case that is
+not a rung at all.
+
+**Two bounds, reported separately, never collapsed:**
+
+- `residual_regret_model` — the **model bound**, a simultaneous one-sided
+  upper bound on how much better any challenger could still be *under the
+  registered response class*, at `delta_screen`. Method
+  `bonferroni_one_sided_t`. It carries the response-model assumption.
+- `residual_regret_terminal` — the **terminal bound**, computed from the
+  fresh finalist measurements only, at `delta_terminal`. Method
+  `bonferroni_one_sided_t_paired` under common random numbers, else
+  `bonferroni_one_sided_welch_t`. It does not depend on the fitted model at
+  all.
+
+They rest on different assumptions, so a single "regret" number would
+advertise the assumption-light guarantee while delivering the
+model-dependent one. `Pr(wrong global decision) ≤ delta_screen +
+delta_terminal` is only meaningful while the two stay apart.
+
+`report.json` carries each bound's *value*; the full record — `challenger`,
+`delta`, `method`, `detail` — is in `recommendation.json` (model) and
+`confirmation.json` / `shortlist.json` (terminal). A `null` bound means the
+variance was not estimable (fewer than two replicates per finalist, or no
+pure-error degrees of freedom), and an unknown is not a zero: treat `null`
+as "cannot certify."
+
+Also in `report.json`: `certified`, `epsilon`, `delta_screen`,
+`delta_terminal`, `finalists` (each with its levels, samples, mean, and
+*why* it made the shortlist), `known_valid_baseline`, `path`, `epoch`,
+`policy_hash`, and — only when a semantic exception ended the epoch —
+`epoch_ended`.
+
+### Artifacts the epoch writes
+
+Work-dir root:
+
+| File | Written by | Contains |
+|---|---|---|
+| `policy.json` + `policy.sha256` | end of `verify` | the compiled policy and its content hash |
+| `transitions.jsonl` | every `step()` | `epoch`, `iteration`, `from`, `to`, full `observations`, the `rule` that fired, `policy_hash` |
+| `report.json` | `report` | recommendation + `basis`, both bounds, both deltas, finalists, `path`, `certified` |
+| `epoch_end-<epoch>.json` | `exception` | why the epoch ended and what a new one would need |
+| `mechanism.patch` + `mechanism.sha256` | `build` (or written by hand) | the mechanism snapshot the drift oracle compares the tree against |
+| `pre_build_tests.json` | before `build` | oracle 2(b): each declared `native_test`'s verdict *before* the mechanism existed |
+| `baseline_equivalence.json` | `verify`, when `build` ran | oracle 2(c): the baseline's replicate vectors before and after the build |
+
+Per iteration, under `runs/iter-N/`:
+
+| File | Written by | Contains |
+|---|---|---|
+| `design_matrix.json` | before execution | the pre-registered rows, generator, randomized run order, RNG seed, `workload_seeds` |
+| `runs.jsonl` | each run, append-only | levels, response metrics, replicate index, manipulation/constraint verdicts, status, duration |
+| `effects.json` | fitting states | fitted effects and interactions, pure error, lack-of-fit, **`aliases`** (the alias classes), dropped factors |
+| `recommendation.json` | fitting states | `levels`, `predicted`, `top_candidates`, `stationary_point`, `residual_regret_model`, `aliases`, **`alias_consequential`** |
+| `fit_exclusions.json` | fitting states, only when rows were excluded | which row indices were left out of the fit, and why |
+| `confirmation.json` | `confirm` | the finalists, their fresh samples, the winner, `residual_regret_terminal`, `epsilon`, `certified` |
+| `shortlist.json` | `confirm` | `S` and why each member is in it, plus a pointer to `confirmation.json` |
+| `relations.json` | every stage | per-relation verdicts from the native test run |
+| `findings.json`, `principle_updates.json` | every stage | projected deterministically from the fit — zero tokens |
+
+Two name notes, because the spec and the code differ and the code is what
+you will find on disk:
+
+- Design spec §3.9's table calls the epoch-ending artifact **`epoch.json`**;
+  the code writes **`epoch_end-<epoch>.json`** (one per epoch, at the
+  work-dir root, so the epoch counter is a glob rather than a directory
+  walk). Same artifact, and the spec's name is the idealized one.
+- Design spec §3.9's table names an **`alias_map.json`**; there is no such
+  file. The same content is carried by `effects.json`'s `aliases` (what is
+  aliased with what, one coefficient per alias class) and
+  `recommendation.json`'s `alias_consequential` (whether it could change the
+  winner) — recorded at *every* fitting state, including `foldover`, where
+  an empty list is how you verify the fold actually resolved the alias it
+  was spent on.
+
+### Semantic exceptions, and how to start epoch 2
+
+A **semantic exception** is a measurement the compiled policy has no
+registered branch for: a `correctness` relation failed, the primary metric
+came back NaN, or the fitted stationary point landed outside the declared
+hull. No further measurement *inside* the epoch can repair it — the epoch's
+own vocabulary does not describe the situation — so the epoch **ends**.
+
+What does *not* happen: a model call to interpret the result. That is the
+single most important invariant in the kind, and it is what makes the
+token-call table in §1 true. A semantic exception ends the epoch instead of
+improvising a branch.
+
+What *does* happen: the campaign still returns an action.
+`epoch_end-<epoch>.json` records the state, the guard that fired, the full
+observation dict, and a `next_epoch_requires` string mapping the observation
+to the revision it calls for (a lookup over the closed vocabulary, not
+prose a model wrote). Then `report.json` is written on the strongest rung
+that does *not* rest on the fitted surface — `measured` or `baseline` — with
+`epoch_ended` set. Uncertainty weakens the claim; it should not prevent a
+decision.
+
+To start epoch 2:
+
+1. Read `epoch_end-<epoch>.json`'s `next_epoch_requires`.
+2. **Revise the campaign YAML** — widen a range whose optimum sat outside
+   the hull, fix the objective metric or the target's instrumentation for a
+   NaN response, repair the mechanism (or the relation, if the asserted
+   algebra was wrong) for a correctness failure.
+3. Re-run `nous validate campaign FILE --smoke`.
+4. `nous run --resume`. The presence of `epoch_end-1.json` is what tells
+   Nous the next run is epoch 2, so it **recompiles** from the revised
+   campaign rather than interpreting the stale policy.
+
+That recompilation is not an escape from the hash check. The hash check
+refuses a policy edited *inside* an epoch; recompiling *across* an epoch
+boundary is the opposite operation — a new pre-registration, freshly hashed,
+whose `epoch` field says which execution it registers. The previous epoch's
+registration survives in `transitions.jsonl`, whose rows carry the
+`policy_hash` they ran under, so "which policy scheduled this design?" stays
+answerable for every epoch.
+
+Two related aborts are *not* semantic exceptions, and their fixes differ:
+tree drift (`mechanism drifted since compile` — restore the tree, or scope
+the oracle with `build_checks.mechanism_paths`, above) and a re-snapshotted
+mechanism whose hash the policy never registered (recompile: a revised
+mechanism is a new experiment).
+
+### A complete example using every field in this section
+
+```yaml
+kind: optimization
+run_id: qdrant-hnsw-epoch
+research_question: >
+  Which HNSW build and search parameters maximize query throughput at a fixed
+  recall floor, and can the winner be certified 2%-optimal within 80 runs?
+prompts:
+  methodology_layer: prompts/methodology
+  domain_adapter_layer: null
+target_system:
+  name: qdrant
+  repo_path: /path/to/qdrant
+  description: >
+    bench/nous_bench.py builds a collection with the given HNSW parameters,
+    replays a seeded query stream (NOUS_WORKLOAD_SEED) against a held-fixed
+    corpus, and prints one JSON object:
+    {qps, recall_at_10, p99_ms, peak_rss_mb, cfg:{...}}.
+  controllable_knobs: [m, ef_construct, ef_search, quantization]
+locked_parameters:
+  corpus: sift-1m
+  vectors: 1000000
+  query_count: 10000
+  threads: 8
+optimization:
+  run_command: "python bench/nous_bench.py --corpus sift-1m --queries 10000"
+  test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
+
+  # The bottom rung of the fallback ladder: production's own settings, with the
+  # mechanism under study at its control level.
+  known_valid_baseline: {M: 16, EFC: 128, EFS: 64, Q: "none"}
+
+  # Stochastic target -> declare the seed contract, so confirm can pair.
+  workload:
+    seed_env: NOUS_WORKLOAD_SEED
+    seeds: [101, 202, 303, 404, 505]
+
+  # The registered decision parameters, hashed into policy.json.
+  policy:
+    epsilon: {pct: 2.0}
+    delta_screen: 0.05
+    delta_terminal: 0.05
+    confirm_max_rounds: 2
+
+  response:
+    primary: {metric: qps, direction: maximize}
+    constraints:
+      - {metric: recall_at_10, op: ">=", value: 0.95}
+      - {metric: p99_ms, op: "<=", value: 25}
+    noise_estimate_pct: 3.0
+  factors:
+    - id: M
+      name: hnsw_m
+      type: numeric
+      levels: [8, 16, 32, 64]
+      grid: 4
+      apply: "--hnsw-m={level}"
+      manipulation: {observable: cfg.m, op: "==", value: "{level}"}
+      relations:
+        - id: R_M
+          kind: correctness
+          statement: "every indexed vector is reachable from the entry point at any m"
+          native_test: "bench/test_nous_props.py::test_graph_fully_reachable"
+    - id: EFC
+      name: ef_construct
+      type: numeric
+      levels: [64, 128, 256, 512]
+      grid: 8
+      apply: "--ef-construct={level}"
+      manipulation: {observable: cfg.ef_construct, op: "==", value: "{level}"}
+      relations:
+        - id: R_EFC
+          kind: correctness
+          statement: "the built collection reports exactly the corpus vector count at any ef_construct"
+          native_test: "bench/test_nous_props.py::test_all_vectors_indexed"
+    - id: EFS
+      name: ef_search
+      type: numeric
+      levels: [32, 64, 128, 256]
+      grid: 8
+      apply: "--ef-search={level}"
+      manipulation: {observable: cfg.ef_search, op: "==", value: "{level}"}
+      relations:
+        - id: R_EFS
+          kind: correctness
+          statement: "ef_search >= k, so every query returns exactly k results"
+          native_test: "bench/test_nous_props.py::test_k_results_returned"
+        - id: B_EFS
+          kind: behavioral
+          statement: "recall@10 is non-decreasing in ef_search at fixed m and ef_construct"
+          native_test: "bench/test_nous_props.py::test_recall_monotone_in_ef_search"
+    - id: Q
+      name: quantization
+      type: choice
+      levels: ["none", "scalar"]
+      apply: {kind: cli_flag, template: "--quantization={level}"}
+      manipulation: {observable: cfg.quantization, op: "==", value: "{level}"}
+      relations:
+        - id: R_Q
+          kind: correctness
+          statement: "quantization none returns byte-identical result ids to the unquantized reference"
+          native_test: "bench/test_nous_props.py::test_quantization_none_is_reference"
+  design:
+    screen: {resolution: 5, center_points: 4}
+    refine: {kind: central_composite, center_points: 4}
+    # Terminal discrimination: 3 finalists x 5 fresh replicates = 15 runs.
+    confirm: {replicates: 5, shortlist_size: 3}
+    max_runs: 80
+  design_space:
+    invariants:
+      - id: I_RSS
+        statement: "peak resident memory stays under the container limit"
+        observable: peak_rss_mb
+        op: "<="
+        value: 12000
+  build_checks:
+    mechanism_paths: ["bench/nous_bench.py", "bench/test_nous_props.py"]
+  guidance:
+    interpretation: >
+      Expect an M x EFS interaction: a sparse graph needs a wide search
+      beam to reach the recall floor, and a dense one does not. Certification
+      arithmetic at these settings: noise_estimate_pct is 3.0, so with 5
+      paired replicates the terminal Bonferroni-t bound over 2 challengers
+      clears the 2% epsilon only when the winner's true margin is a few
+      percent or more. A near-tie among finalists should come back
+      `terminal_best`, not `certified` — that is the instrument working, not
+      failing. Report a `measured` or `baseline` basis as a null result about
+      the factor set, not as a recommendation.
+```
+
+Note what is *not* in that campaign: no stage anywhere in the epoch consults
+a model. `build` is absent because every factor maps to a knob Qdrant
+already exposes, so this campaign's substantive model-call count is **zero**.
+
 ## 3. Four worked end-to-end examples
 
 Each of the following is a complete, valid `kind: optimization` campaign —
@@ -1479,10 +1946,24 @@ and the factor count already express.
 - [`docs/campaign-authoring-guide.md`](campaign-authoring-guide.md) — the
   reflective kind's authoring guide (locked parameters, rehearsal
   discipline, spec fidelity).
+- [`docs/targets.md`](targets.md) — the **target adapter contract**: what
+  `run_command` and `test_command` must emit, the `NOUS_WORKLOAD_SEED`
+  verification recipe, why SLA constraints define validity rather than a
+  penalty, and per-target notes for inference servers, vector databases,
+  analytical query engines, autoscalers, and eBPF datapaths. Read it before
+  writing a campaign against a real system.
+- [`docs/superpowers/specs/2026-08-16-compiled-policy-design.md`](superpowers/specs/2026-08-16-compiled-policy-design.md) —
+  the binding design authority for the compiled policy: `policy.json`,
+  `step()`, the closed observation and operator vocabularies, the two
+  residual-regret bounds, the fallback ladder, and the three oracles. This is
+  what "The compiled policy" section above documents.
 - [`docs/superpowers/specs/2026-08-13-optimization-campaign-kind-design.md`](superpowers/specs/2026-08-13-optimization-campaign-kind-design.md) —
-  the full design spec this guide implements, including the architecture,
-  execution/control-flow, and failure-taxonomy rationale behind every rule
-  cited above.
+  the original design spec for the kind, including the architecture and
+  failure-taxonomy rationale behind most rules cited above. **Superseded in
+  part:** its §5.5 (artifacts) and §6.3 (stage transitions) predate the
+  compiled policy — see the note at the top of that file.
+- [`docs/data-model.md`](data-model.md) §7 — the per-artifact reference for
+  everything the epoch writes.
 - `orchestrator/schemas/campaign.schema.yaml`, the `optimization` block —
   the schema-level source of truth for every field in §2.
 - `orchestrator/validate.py`, `_rule1`..`_rule10` — the cross-field rules
