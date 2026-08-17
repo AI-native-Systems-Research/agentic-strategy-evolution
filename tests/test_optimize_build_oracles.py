@@ -765,3 +765,119 @@ def test_allowlist_matching_agrees_with_gits_own_pathspec(tmp_path):
         ).stdout.split())
         ours = {p for p in ("src/a.py", "srcx/a.py") if _in_allowlist(p, [entry])}
         assert ours == git_says, f"{entry!r}: we say {ours}, git says {git_says}"
+
+
+# ── Task 14.5: a glob-shaped entry must be refused, not half-honoured ────────
+#
+# `_in_allowlist` is a literal path-component prefix match. Git's own pathspec,
+# which scopes the TRACKED half of the same hash, DOES expand `*`. So a
+# natural-looking `mechanism_paths: ["src/*"]` is honoured by one half of the
+# oracle and matches nothing in the other — the untracked half, which is where
+# a new mechanism module lives. That is a silently half-disabled oracle: the
+# same failure family the allowlist exists to fix. Reject at validate time,
+# where the author can still read the message.
+
+
+def _campaign_with_paths(paths):
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+    c = synthetic_campaign(SURFACES["additive"](),
+                           stages=["verify", "screen", "confirm"])
+    c["optimization"].setdefault("build_checks", {})["mechanism_paths"] = paths
+    return c
+
+
+def _mechanism_path_errors(paths):
+    from orchestrator.validate import validate_optimization_campaign
+    return [e for e in validate_optimization_campaign(_campaign_with_paths(paths))
+            if "mechanism_paths" in e and not e.startswith("WARN:")]
+
+
+@pytest.mark.parametrize("entry", ["src/*", "*.py", "mech?.py", "src/[ab].py"])
+def test_glob_shaped_mechanism_paths_are_rejected(entry):
+    """Every shape git would expand but `_in_allowlist` would not."""
+    hits = _mechanism_path_errors([entry])
+    assert hits, f"{entry!r} was accepted"
+    assert any("glob" in h for h in hits), f"message must name globs: {hits}"
+    assert any(entry in h for h in hits), f"message must quote the entry: {hits}"
+
+
+@pytest.mark.parametrize("entry", [".", "./", "/"])
+def test_a_whole_tree_shorthand_entry_is_rejected(entry):
+    """`.` is not a glob metacharacter but it is the same trap.
+
+    Git reads `.` as "the whole tree"; `_in_allowlist` normalises it to a
+    literal component named `.` that matches nothing. Rejected with its own
+    message rather than the glob one, because the repair differs — name the
+    files, or omit the field to keep the whole-tree default deliberately.
+    """
+    hits = _mechanism_path_errors([entry])
+    assert hits, f"{entry!r} was accepted"
+    assert any("matches nothing" in h for h in hits), hits
+
+
+@pytest.mark.parametrize("entry", [
+    "src/", "src", "src/mech.py", "orchestrator/optimize/build.py", "a/b/c/",
+])
+def test_literal_mechanism_paths_are_accepted(entry):
+    """The forms `_in_allowlist` and git's pathspec agree on must pass.
+
+    This is the half that makes the check an oracle rather than a blanket
+    refusal: a validator rejecting every entry would satisfy the test above
+    while making the field unusable.
+    """
+    assert _mechanism_path_errors([entry]) == []
+
+
+def test_an_empty_mechanism_paths_entry_is_rejected():
+    """`""` (or whitespace) is dropped by `_mechanism_text`'s own filter.
+
+    An allowlist of only-empty entries falls back to the whole-tree hash while
+    the campaign file reads as if it were scoped — the quiet version of the
+    same defect.
+    """
+    assert _mechanism_path_errors(["   "]), "a blank entry was accepted"
+
+
+def test_mechanism_paths_absent_reports_nothing():
+    """No false positive on the (backward-compatible) common case."""
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+    from orchestrator.validate import validate_optimization_campaign
+    c = synthetic_campaign(SURFACES["additive"](),
+                           stages=["verify", "screen", "confirm"])
+    assert not any("mechanism_paths" in e
+                   for e in validate_optimization_campaign(c))
+
+
+def test_a_rejected_glob_is_exactly_what_the_runtime_cannot_match(tmp_path):
+    """The rejection set and `_in_allowlist`'s blind spot must coincide.
+
+    Two independent rules ("what the validator refuses" and "what the runtime
+    silently drops") drifting apart is how a check like this rots. Asserted
+    against the real matcher over a real repo layout rather than against a
+    remembered rule: for each rejected entry, `_in_allowlist` matches nothing
+    while git's pathspec matches something — the asymmetry itself.
+    """
+    from orchestrator.optimize.build import _in_allowlist
+    repo = _git_repo(tmp_path)
+    (repo / "src").mkdir()
+    for rel in ("src/mech.py", "src/other.py"):
+        (repo / rel).write_text("V = 1\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    for rel in ("src/mech.py", "src/other.py"):
+        (repo / rel).write_text("V = 2\n")
+
+    for entry in ("src/*", "*.py", "."):
+        git_says = set(subprocess.run(
+            ["git", "diff", "HEAD", "--name-only", "--", entry],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout.split())
+        ours = {p for p in ("src/mech.py", "src/other.py")
+                if _in_allowlist(p, [entry])}
+        assert git_says and not ours, (
+            f"{entry!r}: premise of the rejection no longer holds "
+            f"(git {git_says}, us {ours})"
+        )
+        assert _mechanism_path_errors([entry]), f"{entry!r} was accepted"

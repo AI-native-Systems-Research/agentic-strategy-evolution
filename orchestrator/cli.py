@@ -764,8 +764,13 @@ def _smoke_check_optimization(campaign: dict) -> list[str]:
       * an objective metric absent from the emitted JSON, so every run parses
         and scores NaN.
 
-    One probe run costs seconds and catches all four. Returns a list of
-    problems; empty means the contract holds at the first design corner.
+    One probe run costs seconds and catches all four. Also checked, for free
+    (no subprocess): a declared ``build_checks.mechanism_paths`` entry that
+    resolves to nothing under the target, which silently narrows the drift
+    oracle instead of failing.
+
+    Returns a list of problems; empty means the contract holds at the first
+    design corner.
     """
     from orchestrator.optimize import runner
     from orchestrator.optimize.factors import parse_factors
@@ -779,6 +784,37 @@ def _smoke_check_optimization(campaign: dict) -> list[str]:
         return [f"target_system.repo_path is not a directory: {repo!r}"]
 
     factors = parse_factors(opt["factors"])
+
+    # 0. Declared mechanism_paths: does each entry resolve to something real?
+    # Placed first because it costs no subprocess, and ahead of the early return
+    # for a campaign with no `run_command` so it is reported either way.
+    # A typo'd entry is not a loud failure: it contributes nothing to the drift
+    # allowlist, so the oracle watches less than the campaign says it does, and
+    # if every entry is wrong the mechanism text filters down to nothing and no
+    # edit ever reads as drift. Skipped when `build` is declared -- that stage
+    # AUTHORS the mechanism, so its files legitimately do not exist yet.
+    stage_names = [
+        str(getattr(s, "value", s)) for s in (opt.get("stages") or [])
+    ]
+    mech_paths = (opt.get("build_checks") or {}).get("mechanism_paths") or []
+    if mech_paths and "build" not in stage_names:
+        missing = [
+            str(p) for p in mech_paths
+            if not (Path(repo) / str(p).strip().strip("/")).exists()
+        ]
+        print(f"  smoke: {len(mech_paths) - len(missing)}/{len(mech_paths)} "
+              f"mechanism_paths entr(ies) resolve under the target")
+        if missing:
+            problems.append(
+                f"{len(missing)} build_checks.mechanism_paths entr(ies) do not "
+                f"exist under {repo}: {', '.join(missing[:4])}"
+                + ("" if len(missing) <= 4 else f" (+{len(missing)-4} more)")
+                + ". Each contributes nothing to the drift allowlist, so the "
+                "oracle silently watches less than declared (and watches "
+                "nothing at all if every entry is wrong). Entries are literal "
+                "repo-relative paths -- 'src/' for a directory, 'src/mech.py' "
+                "for a file -- not globs."
+            )
 
     # 1. Test command: do the declared identifiers actually resolve?
     if opt.get("test_command"):

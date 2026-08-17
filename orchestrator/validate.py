@@ -913,6 +913,83 @@ def _rule15_build_requires_baseline(opt: dict) -> list[str]:
     ]
 
 
+#: Characters that make a ``mechanism_paths`` entry a glob for git's pathspec
+#: but a literal (and therefore unmatchable) string for ``_in_allowlist``.
+_MECHANISM_PATH_GLOB_CHARS = "*?[]"
+
+
+def _check_mechanism_paths_are_literal(opt: dict) -> list[str]:
+    """``build_checks.mechanism_paths`` entries must be literal paths, not globs.
+
+    DELIBERATELY UN-NUMBERED. The ``_ruleN`` family is numbered in the order the
+    spec introduced them, and rule 16 is already spoken for (``workload.seed_env``).
+    More importantly, this check does not belong to rule 15's subject: rule 15 is
+    scoped to campaigns that DECLARE ``build``, whereas ``mechanism_paths`` is
+    armed by the mere presence of ``mechanism.sha256`` and so applies to every
+    optimization campaign. Filing it under a function named
+    ``_rule15_build_requires_baseline`` would misfile it.
+
+    THE DEFECT THIS CLOSES. The mechanism hash has two halves, scoped by the
+    same entries through two different matchers:
+
+      * tracked edits, via ``git diff HEAD -- <entries>`` — git's pathspec, which
+        DOES expand ``*``, ``?`` and ``[...]``;
+      * untracked files, via ``orchestrator.optimize.build._in_allowlist`` — a
+        literal path-component prefix, which does NOT.
+
+    So ``mechanism_paths: ["src/*"]`` reads perfectly naturally, is honoured by
+    the tracked half, and matches NOTHING in the untracked half — which is the
+    half where a newly authored mechanism module lives, the common case. The
+    result is an oracle that looks scoped and silently watches half of what the
+    author asked for: the same failure family the allowlist exists to remove,
+    reintroduced by a single character.
+
+    Rejected rather than supported-by-globbing on purpose. Making
+    ``_in_allowlist`` glob would put the two halves' agreement at the mercy of
+    two independent glob dialects (git pathspec magic vs. ``fnmatch``: ``*``
+    crossing ``/``, ``**``, ``:(icase)``), and a wrong allowlist entry silently
+    WIDENS the oracle's blind spot. A rejection the author reads once is cheaper
+    than a mismatch nobody ever sees.
+
+    ``.`` and ``""`` are rejected for the neighbouring reason: git takes ``.``
+    as "the whole tree", ``_in_allowlist`` normalises it to a literal component
+    named ``.`` that matches nothing, and ``_mechanism_text`` drops blank
+    entries outright — so an allowlist of only such entries degrades to the
+    whole-tree hash while the campaign file reads as scoped.
+    """
+    checks = opt.get("build_checks")
+    if not isinstance(checks, dict):
+        return []
+    paths = checks.get("mechanism_paths")
+    if not isinstance(paths, list):
+        return []
+    errors: list[str] = []
+    for entry in paths:
+        raw = str(getattr(entry, "value", entry))
+        bad = sorted({c for c in raw if c in _MECHANISM_PATH_GLOB_CHARS})
+        if bad:
+            errors.append(
+                f"optimization.build_checks.mechanism_paths entry {raw!r} looks "
+                f"like a glob ({', '.join(repr(c) for c in bad)}), and this "
+                f"field does not support globs. It is matched as a plain "
+                f"path-component prefix: use 'src/' for everything under a "
+                f"directory and an exact relative path like 'src/mech.py' for a "
+                f"single file. A glob here would be expanded by git for the "
+                f"tracked half of the drift hash and match nothing in the "
+                f"untracked half, leaving a new mechanism module unwatched."
+            )
+        elif raw.strip().strip("/") in ("", "."):
+            errors.append(
+                f"optimization.build_checks.mechanism_paths entry {raw!r} "
+                f"matches nothing: an empty entry is dropped and '.' is read as "
+                f"a literal path component, not as 'the whole tree'. Name the "
+                f"mechanism's actual files/directories ('src/', "
+                f"'src/mech.py'), or omit mechanism_paths entirely to keep the "
+                f"whole-tree default."
+            )
+    return errors
+
+
 def validate_optimization_campaign(campaign: dict) -> list[str]:
     """Cross-field rules for ``kind: optimization`` campaigns that JSON
     Schema cannot express (Task 10).
@@ -950,6 +1027,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule13_known_valid_baseline(opt, factors))
     errors.extend(_rule14_policy_ranges(opt))
     errors.extend(_rule15_build_requires_baseline(opt))
+    errors.extend(_check_mechanism_paths_are_literal(opt))
     return errors
 
 
