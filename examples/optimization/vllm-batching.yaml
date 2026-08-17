@@ -1,0 +1,115 @@
+# vLLM scheduler batching knobs — response-surface campaign.
+#
+# The adapter contract this campaign assumes (bench/nous_bench.py,
+# bench/test_nous_props.py inside the vLLM checkout) is specified in
+# docs/targets.md. Run `nous validate campaign FILE --smoke` before launching.
+kind: optimization
+run_id: vllm-batching-rsm
+research_question: >
+  Which combination of scheduler batching knobs maximizes decode throughput
+  under a bursty mixed-length trace while keeping p99 TTFT under the SLA?
+prompts:
+  methodology_layer: prompts/methodology
+  domain_adapter_layer: null
+target_system:
+  name: vllm
+  repo_path: /path/to/vllm            # adapter lives at bench/ inside this checkout
+  description: >
+    vLLM OpenAI-compatible server. bench/nous_bench.py starts the server with
+    the given flags, replays a seeded trace (NOUS_WORKLOAD_SEED), and prints
+    one JSON object: {tokens_per_s, p99_ttft_ms, oom, gpu_mem_util, cfg:{...}}.
+  controllable_knobs:
+    - max_num_seqs
+    - max_num_batched_tokens
+    - chunked_prefill
+    - scheduling_policy
+    - gpu_memory_utilization
+    - tensor_parallel_size
+locked_parameters:
+  model: meta-llama/Llama-3.1-8B-Instruct
+  requests: 400
+  gpu_memory_utilization: 0.90
+  tensor_parallel_size: 1
+optimization:
+  run_command: "python bench/nous_bench.py --model meta-llama/Llama-3.1-8B-Instruct --requests 400"
+  test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
+  known_valid_baseline: {MNS: 256, MBT: 8192, CP: "off", POL: fcfs}
+  workload: {seed_env: NOUS_WORKLOAD_SEED}
+  policy: {epsilon: {pct: 2.0}, delta_screen: 0.05, delta_terminal: 0.05, confirm_max_rounds: 2}
+  response:
+    primary: {metric: tokens_per_s, direction: maximize}
+    constraints:
+      - {metric: p99_ttft_ms, op: "<=", value: 500}
+      - {metric: oom, op: "==", value: 0}
+    noise_estimate_pct: 4.0
+  factors:
+    - id: MNS
+      name: max_num_seqs
+      type: numeric
+      levels: [64, 128, 256, 512]
+      grid: 32
+      apply: "--max-num-seqs={level}"
+      manipulation: {observable: cfg.max_num_seqs, op: "==", value: "{level}"}
+      relations:
+        - id: R_MNS
+          kind: correctness
+          statement: "outputs are token-identical to baseline at greedy decoding for any max_num_seqs"
+          native_test: "bench/test_nous_props.py::test_greedy_outputs_invariant_to_max_num_seqs"
+    - id: MBT
+      name: max_num_batched_tokens
+      type: numeric
+      levels: [2048, 4096, 8192, 16384]
+      grid: 512
+      apply: "--max-num-batched-tokens={level}"
+      manipulation: {observable: cfg.max_num_batched_tokens, op: "==", value: "{level}"}
+      relations:
+        - id: R_MBT
+          kind: correctness
+          statement: "no request is truncated: emitted tokens equal requested max_tokens or a stop reason"
+          native_test: "bench/test_nous_props.py::test_no_truncation_under_batched_token_cap"
+    - id: CP
+      name: chunked_prefill
+      type: choice
+      levels: ["off", "on"]
+      apply: {kind: cli_flag, template: "--enable-chunked-prefill={level}"}
+      manipulation: {observable: cfg.chunked_prefill, op: "==", value: "{level}"}
+      relations:
+        - id: R_CP
+          kind: correctness
+          statement: "chunked prefill off is byte-identical to baseline"
+          native_test: "bench/test_nous_props.py::test_chunked_prefill_off_is_baseline"
+        - id: B_CP
+          kind: behavioral
+          statement: "TTFT is non-increasing when chunked prefill is on under long prompts"
+          native_test: "bench/test_nous_props.py::test_ttft_monotone_chunked_prefill"
+    - id: POL
+      name: scheduling_policy
+      type: choice
+      levels: [fcfs, priority]
+      apply: "--scheduling-policy={level}"
+      manipulation: {observable: cfg.scheduling_policy, op: "==", value: "{level}"}
+      relations:
+        - id: R_POL
+          kind: correctness
+          statement: "every request completes exactly once under either policy"
+          native_test: "bench/test_nous_props.py::test_every_request_completes_once"
+  design:
+    screen: {resolution: 5, center_points: 4}
+    refine: {kind: central_composite, center_points: 4}
+    confirm: {replicates: 4, shortlist_size: 3}
+    max_runs: 90
+  design_space:
+    invariants:
+      - id: I_MEM
+        statement: "GPU memory utilisation stays under the configured cap"
+        observable: gpu_mem_util
+        op: "<="
+        value: 0.95
+  guidance:
+    interpretation: >
+      Throughput on this target is dominated by how much prefill work the
+      scheduler can co-schedule with decode. Expect MNS x MBT interaction: a
+      large max_num_seqs with a small batched-token cap starves decode, and the
+      reverse over-admits prefill and blows p99 TTFT. Treat any recommendation
+      whose p99_ttft_ms sits within noise of the 500 ms SLA as infeasible in
+      practice even though the constraint nominally holds.

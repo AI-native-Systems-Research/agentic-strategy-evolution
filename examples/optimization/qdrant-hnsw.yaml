@@ -1,0 +1,128 @@
+# Qdrant HNSW index + search knobs — response-surface campaign.
+#
+# The adapter contract this campaign assumes (bench/nous_bench.py,
+# bench/test_nous_props.py inside the Qdrant checkout) is specified in
+# docs/targets.md. Run `nous validate campaign FILE --smoke` before launching.
+kind: optimization
+run_id: qdrant-hnsw-rsm
+research_question: >
+  Which combination of HNSW graph-construction and search-time knobs maximizes
+  query throughput at a fixed recall floor, without pushing index build time
+  past the nightly reindex window?
+prompts:
+  methodology_layer: prompts/methodology
+  domain_adapter_layer: null
+target_system:
+  name: qdrant
+  repo_path: /path/to/qdrant          # adapter lives at bench/ inside this checkout
+  description: >
+    Qdrant vector search server. bench/nous_bench.py boots a single-node
+    instance, ingests the fixed 1M-vector corpus with the given index flags,
+    replays a seeded query stream (NOUS_WORKLOAD_SEED) against a held-fixed
+    ground-truth top-k, then prints one JSON object:
+    {qps, recall_at_10, index_build_s, segments_optimized, cfg:{...}}.
+  controllable_knobs:
+    - m
+    - ef_construct
+    - quantization
+    - ef_search
+    - segment_number
+    - indexing_threshold
+locked_parameters:
+  corpus: dbpedia-openai-1M-1536d
+  distance: cosine
+  queries: 10000
+  segment_number: 1
+  indexing_threshold: 0
+optimization:
+  run_command: "python bench/nous_bench.py --corpus dbpedia-openai-1M-1536d --queries 10000 --topk 10"
+  test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
+  known_valid_baseline: {M: 16, EFC: 128, Q: none, EFS: 64}
+  workload: {seed_env: NOUS_WORKLOAD_SEED}
+  policy: {epsilon: {pct: 2.0}, delta_screen: 0.05, delta_terminal: 0.05, confirm_max_rounds: 2}
+  response:
+    primary: {metric: qps, direction: maximize}
+    constraints:
+      - {metric: recall_at_10, op: ">=", value: 0.95}
+      - {metric: index_build_s, op: "<=", value: 600}
+    noise_estimate_pct: 3.0
+  factors:
+    - id: M
+      name: m
+      type: numeric
+      levels: [8, 16, 32, 64]
+      grid: 8
+      apply: "--m={level}"
+      manipulation: {observable: cfg.m, op: "==", value: "{level}"}
+      relations:
+        - id: R_M
+          kind: correctness
+          statement: >
+            at every m, the returned top-10 is a subset of the brute-force top-k
+            envelope that the declared recall floor admits — the index never
+            returns a vector that is not in the corpus, and never a duplicate id
+          native_test: "bench/test_nous_props.py::test_search_results_are_a_subset_of_bruteforce_topk_at_recall_floor"
+    - id: EFC
+      name: ef_construct
+      type: numeric
+      levels: [64, 128, 256, 512]
+      grid: 32
+      apply: "--ef-construct={level}"
+      manipulation: {observable: cfg.ef_construct, op: "==", value: "{level}"}
+      relations:
+        - id: R_EFC
+          kind: correctness
+          statement: >
+            every ingested vector is reachable from the graph entry point after
+            the build completes at any ef_construct — no orphaned nodes
+          native_test: "bench/test_nous_props.py::test_every_vector_is_reachable_after_build"
+    - id: Q
+      name: quantization
+      type: choice
+      levels: [none, scalar]
+      apply: {kind: cli_flag, template: "--quantization={level}"}
+      manipulation: {observable: cfg.quantization, op: "==", value: "{level}"}
+      relations:
+        - id: R_Q
+          kind: correctness
+          statement: "quantization=none is byte-identical to the unquantized baseline index"
+          native_test: "bench/test_nous_props.py::test_quantization_none_is_baseline"
+    - id: EFS
+      name: ef_search
+      type: numeric
+      levels: [32, 64, 128, 256]
+      grid: 16
+      apply: "--ef-search={level}"
+      manipulation: {observable: cfg.ef_search, op: "==", value: "{level}"}
+      relations:
+        - id: R_EFS
+          kind: correctness
+          statement: >
+            ef_search never returns fewer than min(topk, collection_size) hits
+            for a non-empty collection
+          native_test: "bench/test_nous_props.py::test_ef_search_returns_full_topk"
+        - id: B_EFS
+          kind: behavioral
+          statement: "recall_at_10 is non-decreasing in ef_search at fixed m and ef_construct"
+          native_test: "bench/test_nous_props.py::test_ef_search_monotone_recall"
+  design:
+    screen: {resolution: 5, center_points: 4}
+    refine: {kind: central_composite, center_points: 4}
+    confirm: {replicates: 5, shortlist_size: 3}
+    max_runs: 80
+  design_space:
+    invariants:
+      - id: I_SEG
+        statement: >
+          the collection is fully optimized into a single segment before queries
+          start, so throughput is never measured mid-compaction
+        observable: segments_optimized
+        op: "=="
+        value: 1
+  guidance:
+    interpretation: >
+      Build-time knobs (m, ef_construct) and the search-time knob (ef_search)
+      trade against different budgets: the first two spend index_build_s and
+      memory, the third spends per-query latency. Expect the recall constraint
+      to bind hardest at low m with scalar quantization — those rows are
+      infeasible, not merely bad, and must not be averaged into the surface.
