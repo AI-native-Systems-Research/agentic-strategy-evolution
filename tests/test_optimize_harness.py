@@ -299,6 +299,105 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     assert single.report["certified"] is False
 
 
+def test_confirm_declines_a_round_the_budget_cannot_finish(tmp_path):
+    """The gap `budget_remaining < 1` alone cannot see.
+
+    Same surface, seed, and `confirm_max_rounds: 3` as the looping test above —
+    the only change is `max_runs: 40`, which leaves 2 runs after confirm round 2.
+    Two runs IS a budget by the blunt guard's standard (`budget_remaining < 1`
+    does not match), so before the affordability guard existed the epoch took
+    its registered `confirm -> confirm` default into a round 3 that needs 3 runs
+    and cannot have them: the round would start, spend what was left, and the
+    shortfall would surface as failed measurements rather than as a decision
+    the policy made.
+
+    With the guard, the decline is a REGISTERED BRANCH: `confirm_affordable`
+    is False, `step` matches it before either budget guard, and the epoch ends
+    at `report` — uncertified, with the winner the completed rounds actually
+    produced. A decline, not a semantic exception: nothing became
+    uninterpretable, the campaign simply stopped buying discrimination it
+    could not pay for.
+    """
+    s = SURFACES["sla"]()
+    res = run_synthetic_campaign(
+        s, seed=5, parent_dir=tmp_path,
+        campaign_overrides={
+            "response": {"primary": {"metric": "m", "direction": "maximize"},
+                         "constraints": [{"metric": "p99_ms", "op": "<=", "value": 40}]},
+            "policy": {"confirm_max_rounds": 3},
+            "design": {"max_runs": 40},
+        },
+        max_iterations=12,
+    )
+    assert res.path[-1] == "report", res.path
+    trans = [
+        json.loads(line)
+        for line in (res.work_dir / "transitions.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    last = next(t for t in trans if t["from"] == "confirm" and t["to"] == "report")
+    obs = last["observations"]
+    assert last["rule"]["when"] == {"confirm_affordable": False}, last["rule"]
+    assert obs["confirm_affordable"] is False
+    # The arithmetic behind the branch, reconstructible from the log alone —
+    # and the reason the blunt guard could not have fired: runs DID remain.
+    assert obs["budget_remaining"] >= 1
+    assert obs["budget_remaining"] < obs["runs_needed_confirm"]
+    # Declined, not aborted: a real answer, honestly labelled uncertified.
+    assert res.report["certified"] is False
+    assert res.basis == "terminal_best", res.report["recommendation"]
+    assert not s.invalid(res.recommendation), res.recommendation
+    # The budget was never overdrawn — which is the whole point of declining
+    # before the round rather than discovering it mid-round.
+    from orchestrator.optimize import artifacts
+    spent = sum(
+        len(artifacts.read_runs(d))
+        for d in sorted((res.work_dir / "runs").glob("iter-*"))
+    )
+    assert spent <= 40, spent
+
+
+def test_an_empty_carry_over_is_costed_at_the_full_shortlist_not_at_one():
+    """The affordability estimate must be an UPPER bound on the next round.
+
+    `_confirm_rows` does not run a smaller round when nothing carries over: its
+    `if not finalists:` branch falls through to the round-1 ladder and re-seats
+    up to `shortlist_size` from `recommendation.json` / `_top_measured`. An
+    estimate of 1 there would under-count the round by up to `shortlist_size`
+    and let the guard admit exactly the round it exists to decline — so the
+    empty case costs the full shortlist, and a partial carry-over costs what it
+    actually carries (capped at the shortlist size, which `_confirm_rows` also
+    caps at).
+    """
+    from orchestrator.optimize.stage_runner import _next_round_finalists
+
+    # Every finalist excluded on measured invalidity -> nothing carries over.
+    none_left = {"epsilon": 1.0, "best": None, "bounds": {},
+                 "finalists": [{"key": "a", "status": "excluded"},
+                               {"key": "b", "status": "excluded"}]}
+    assert _next_round_finalists(none_left, shortlist_size=3) == 3
+
+    # Every challenger's bound already at or below epsilon -> only the winner.
+    settled = {"epsilon": 1.0, "best": "a", "bounds": {"b": 0.1, "c": 0.5},
+               "finalists": [{"key": "a", "status": "ok"},
+                             {"key": "b", "status": "ok"},
+                             {"key": "c", "status": "ok"}]}
+    assert _next_round_finalists(settled, shortlist_size=3) == 1
+
+    # An UNCOMPUTED bound is unknown, not small: that challenger stays.
+    unknown = {"epsilon": 1.0, "best": "a", "bounds": {"b": None, "c": 0.5},
+               "finalists": [{"key": "a", "status": "ok"},
+                             {"key": "b", "status": "ok"},
+                             {"key": "c", "status": "ok"}]}
+    assert _next_round_finalists(unknown, shortlist_size=3) == 2
+
+    # Never over the cap `_confirm_rows` itself enforces.
+    crowded = {"epsilon": 1.0, "best": "a",
+               "bounds": {k: 9.0 for k in "bcde"},
+               "finalists": [{"key": k, "status": "ok"} for k in "abcde"]}
+    assert _next_round_finalists(crowded, shortlist_size=2) == 2
+
+
 def test_bowl_out_of_hull_ends_the_epoch(tmp_path):
     """FLIPPED BY TASK 11 (was xfail(strict=True)).
 

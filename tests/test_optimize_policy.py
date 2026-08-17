@@ -183,6 +183,64 @@ def test_a_nan_response_at_confirm_ends_the_epoch_like_every_other_spending_stat
     assert nxt == "exception", (nxt, rule)
 
 
+def test_confirm_declines_a_round_it_cannot_afford_before_the_budget_is_gone():
+    """`budget_remaining < 1` is too late to be the only resource guard.
+
+    The blunt guard fires only once literally nothing is left, so "2 runs
+    remain but the next confirm round needs 9" falls through to
+    `"default": "confirm"` — the epoch enters a round it cannot complete and
+    the shortfall shows up as failed runs rather than as a registered
+    decline. `confirm_affordable` is the same derived boolean
+    `foldover_affordable` already is (a `when` predicate compares an
+    observation against a CONSTANT, never against another observation), and
+    it must be registered BEFORE the blunter guards so the specific reason
+    reaches `transitions.jsonl`.
+
+    Ends at `report` uncertified, not `exception`: a budget that cannot pay
+    for more discrimination is a decline, exactly like the round cap — the
+    campaign still has an answer, just not a certificate.
+    """
+    pol = compile_policy(_campaign())
+    base = {"correctness_failed": False, "nan_response": False, "certified": False,
+            "round": 0}
+    nxt, rule = step(pol, "confirm", {
+        **base, "budget_remaining": 2, "runs_needed_confirm": 9,
+        "confirm_affordable": False,
+    })
+    assert nxt == "report", (nxt, rule)
+    assert rule["when"] == {"confirm_affordable": False}, rule
+    assert rule["accounting"], rule
+    # The specific guard, not the blunt one: 2 runs DO remain, so
+    # `budget_remaining < 1` cannot be what fired.
+    assert rule["when"] != {"budget_remaining": {"<": 1}}
+    # Affordable -> the round actually happens.
+    nxt, _ = step(pol, "confirm", {
+        **base, "budget_remaining": 20, "runs_needed_confirm": 9,
+        "confirm_affordable": True,
+    })
+    assert nxt == "confirm"
+
+
+def test_confirm_affordable_is_registered_before_the_blunter_budget_guards():
+    """Order is the whole point: `step` takes the FIRST matching rule.
+
+    Registered after `round >= max_rounds` / `budget_remaining < 1`, the
+    affordability decline could never be the reported reason in the one case
+    where both match, and `transitions.jsonl` would attribute a shortfall to
+    an exhausted budget that still had runs in it.
+    """
+    pol = compile_policy(_campaign())
+    confirm_rules = [t for t in pol["transitions"] if t["from"] == "confirm"]
+    keys = [tuple(sorted(t["when"])) if "when" in t else ("__default__",)
+            for t in confirm_rules]
+    i_afford = keys.index(("confirm_affordable",))
+    assert i_afford < keys.index(("round",))
+    assert i_afford < keys.index(("budget_remaining",))
+    # ...and after the semantic exceptions, which outrank any resource fact.
+    assert i_afford > keys.index(("correctness_failed",))
+    assert i_afford > keys.index(("nan_response",))
+
+
 def test_step_treats_a_missing_observation_as_not_matching():
     pol = compile_policy(_campaign())
     nxt, _ = step(pol, "screen", {})            # nothing known -> default

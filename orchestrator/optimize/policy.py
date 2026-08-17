@@ -25,22 +25,68 @@ OBSERVATION_KEYS: frozenset[str] = frozenset({
     "correctness_failed", "nan_response", "all_within_noise", "lack_of_fit",
     "refinable_survivors", "alias_consequential", "stationary_in_hull",
     "model_adequate", "certified", "round", "budget_remaining",
-    "runs_needed_foldover", "foldover_affordable", "runs_needed_confirm",
-    "residual_regret", "epsilon", "behavioral_violation",
+    "runs_needed_foldover", "foldover_affordable",
+    "runs_needed_confirm", "confirm_affordable",
+    "residual_regret", "epsilon",
+    # `behavioral_violation` is INTENTIONALLY never read by a compiled `when`
+    # clause, and the intent is the one `stage.decide_after_screen` states in
+    # its own words: "Behavioral violations are reported but never block
+    # advancement: a monotonicity break is a discovery, not a reason to stop."
+    # Its evidence reaches the campaign through `findings.json` — the note
+    # `stage._behavioral_trigger_note` builds is folded into
+    # `StageDecision.rationale`, which `stage_runner.run_stage` hands to
+    # `artifacts.project_findings` as `decision`, landing in that file's
+    # `discrepancy_analysis` and in every arm's `metadata.decision` — plus the
+    # per-relation verdict in `relations.json`. So it is a REPORTING key, not a
+    # branching one, and its presence here is what lets it be observed and
+    # logged to `transitions.jsonl` without a transition consuming it. Adding a
+    # `when: {"behavioral_violation": True}` rule would reverse that design
+    # decision, not complete it.
+    "behavioral_violation",
 })
 """The closed observation vocabulary a compiled ``when`` predicate may read.
 
-``foldover_affordable`` is a DERIVED boolean rather than a comparison the policy
-performs itself, and the reason is that ``when`` predicates compare an
-observation against a CONSTANT — there is no form that compares two
-observations. "Is the remaining budget at least what the fold block would cost?"
-is exactly such a two-observation comparison (``budget_remaining >=
-runs_needed_foldover``), so the runtime evaluates it where both numbers are known
-and reports the verdict. ``runs_needed_foldover`` is still recorded next to it:
-the verdict is what the guard reads, the count is what a reader of
-``transitions.jsonl`` needs to see WHY it came out that way, and a boolean with
-no accompanying magnitude would make a budget-denied foldover indistinguishable
-from an unaffordable one in the audit trail.
+``foldover_affordable`` and ``confirm_affordable`` are DERIVED booleans rather
+than comparisons the policy performs itself, and the reason is that ``when``
+predicates compare an observation against a CONSTANT — there is no form that
+compares two observations. "Is the remaining budget at least what the fold
+block / the next confirm round would cost?" is exactly such a two-observation
+comparison (``budget_remaining >= runs_needed_foldover``, ``budget_remaining >=
+runs_needed_confirm``), so the runtime evaluates it where both numbers are known
+and reports the verdict. ``runs_needed_foldover`` / ``runs_needed_confirm`` are
+still recorded next to their verdicts: the verdict is what the guard reads, the
+count is what a reader of ``transitions.jsonl`` needs to see WHY it came out
+that way, and a boolean with no accompanying magnitude would make a
+budget-denied block indistinguishable from an irrelevant one in the audit trail.
+
+NOT EVERY KEY HERE IS READ BY A ``when`` CLAUSE, and that is legitimate for
+three distinct reasons, which a maintainer reading this set cold cannot
+otherwise tell apart:
+
+* it is the MAGNITUDE behind a derived verdict, kept for the audit trail
+  (``runs_needed_foldover``, ``runs_needed_confirm``);
+* it is a REPORTED number a downstream artifact consumes rather than a branch
+  (``residual_regret`` / ``epsilon`` in ``report.json``; ``model_adequate``,
+  which ``recommendation.json`` carries and ``_confirm_rows`` reads to decide
+  whether the fitted argmax may anchor the shortlist; ``all_within_noise`` /
+  ``lack_of_fit``, which reach ``findings.json`` through
+  ``StageDecision.triggers`` and ``effects.json`` through ``lack_of_fit_p``,
+  and whose branching consequence the policy expresses through
+  ``refinable_survivors`` and confirm's registered augmentation instead — see
+  the "DELIBERATELY NOT a ``lack_of_fit`` rule" note on refine's transitions
+  below);
+* it is DELIBERATELY non-branching by design, as ``behavioral_violation``'s
+  note above records.
+
+What is NOT legitimate is a key whose comment claims a guard that was never
+compiled. ``runs_needed_confirm`` did exactly that: its comment at the
+producing site said "so a compiled guard can compare it against the remaining
+budget", no such guard existed for six tasks, and the gap it was computed to
+close — a round the budget cannot finish, while ``budget_remaining < 1`` still
+reads as affordable — stayed open the whole time. So when you add a key here,
+name its consumer: a registered transition, an artifact field, or a note like
+``behavioral_violation``'s. A key with none of the three is dead vocabulary
+that reads like a live guard.
 """
 
 COMPARISON_OPS: frozenset[str] = frozenset({">", ">=", "<", "<="})
@@ -251,6 +297,35 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             {"from": "confirm", "when": {"nan_response": True}, "to": "exception", "accounting": sem},
             {"from": "confirm", "when": {"certified": True}, "to": "report",
              "accounting": "bonferroni_one_sided_welch_t at delta_terminal over |S|-1 finalists"},
+            # BEFORE both budget guards below, and the order is load-bearing for
+            # the same reason the foldover rule precedes refine: `step` takes the
+            # FIRST matching rule, and `budget_remaining < 1` only fires once
+            # literally nothing is left. "Two runs remain but the next round of
+            # terminal discrimination needs nine" is affordable by that guard's
+            # standard and unaffordable in fact, so without this rule the epoch
+            # self-loops into a round it cannot complete and the shortfall
+            # surfaces as failed runs instead of as a registered decline.
+            #
+            # `confirm_affordable` is derived in the runtime (stage_runner) for
+            # the reason documented at OBSERVATION_KEYS: a `when` predicate
+            # compares an observation against a constant, never against another
+            # observation, so `budget_remaining >= runs_needed_confirm` is
+            # evaluated where both numbers are known and the VERDICT is what this
+            # guard reads.
+            #
+            # Routes to `report`, not `exception`: this is a REGISTERED BRANCH
+            # declining to spend, not a semantic exception. Nothing about the
+            # measurements became uninterpretable — the campaign has a winner
+            # from the rounds it did run, just no certificate — which is exactly
+            # how the round cap and the exhausted-budget guard below both end,
+            # and how an unaffordable foldover is declined at `screen`.
+            {"from": "confirm", "when": {"confirm_affordable": False}, "to": "report",
+             "accounting": (
+                 "registered decline: the next round of terminal discrimination "
+                 "costs more runs than the budget has left, so no further "
+                 "comparison is made and no inference is drawn from runs not "
+                 "taken; report uncertified on the rounds already completed"
+             )},
             {"from": "confirm", "when": {"round": {">=": states["confirm"]["design"]["max_rounds"]}},
              "to": "report", "accounting": "registered round cap; report uncertified"},
             {"from": "confirm", "when": {"budget_remaining": {"<": 1}}, "to": "report",
