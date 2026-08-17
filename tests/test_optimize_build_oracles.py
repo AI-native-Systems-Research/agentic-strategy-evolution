@@ -1068,3 +1068,278 @@ def test_normalization_check_does_not_reject_ordinary_paths():
     for entry in ("src/", "src", "src/mech.py", "a/b/c/", "a_b/c-d.py",
                   "tests/prop_batch.py", "orchestrator/optimize/build.py"):
         assert _mechanism_path_errors([entry]) == [], entry
+
+
+# ── F3: oracle 2(c) measures its baseline off the epoch's workload regime ─────
+#
+# The gap this section closes: `baseline_runs` built its own `ConfigRow`s and
+# called the runner directly, so it never passed through the design matrix's
+# workload-seeding path. Every measured design row carried
+# `optimization.workload.seed_env`; the oracle's own pre/post CONTROL
+# measurements did not. The pre/post comparison stayed internally consistent
+# (both sides equally seedless), but the tolerance is a hard-abort gate that its
+# own docstring says is not meant to absorb ordinary measurement noise — so on a
+# target whose workload variance dominates its configuration effect (a queue, a
+# cache, an autoscaler: every target this kind exists for), the workload's own
+# entropy could blow the gate and the campaign would blame the mechanism.
+#
+# No test declared BOTH `build` and `workload.seed_env` on one campaign, which
+# is exactly why nothing caught it: the synthetic harness never declares `build`,
+# and every build test used an unseeded runner.
+
+
+def _seeded_campaign(tmp_path, repo, **workload):
+    """A build campaign that declares workload common random numbers."""
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+    s = SURFACES["additive"]()
+    wl = {"seed_env": "NOUS_WORKLOAD_SEED"}
+    wl.update(workload)
+    c = synthetic_campaign(s, stages=["build", "verify", "screen", "confirm"],
+                           known_valid_baseline={"A": 2, "B": 2, "C": "off"},
+                           workload=wl)
+    c["target_system"]["repo_path"] = str(repo)
+    return s, c
+
+
+def _workload_dominated_runner(seen: list, *, offset: float = 0.0):
+    """A target whose metric is dominated by its WORKLOAD draw, not its levels.
+
+    `m` is a large deterministic function of the seed it is handed plus a small
+    `offset` standing in for whatever the build changed. Unseeded (no seed in
+    `apply["env"]`) the draws walk a counter, so consecutive measurements differ
+    by far more than the 5% tolerance; seeded, replicate `i` returns the same
+    workload contribution on both sides of the build and only `offset` survives
+    the difference. That is the regime the fix exists for, modelled in closed
+    form so the test has no dependence on real noise.
+
+    `seen` accumulates the seed each call received (None when unseeded), which is
+    what lets the pairing itself be asserted from the outside.
+    """
+    counter = {"n": 0}
+
+    def run(row):
+        sd = ((getattr(row, "apply", None) or {}).get("env") or {}).get(
+            "NOUS_WORKLOAD_SEED",
+        )
+        seen.append(sd)
+        if sd is None:
+            # Unseeded: a fresh, huge draw per call. The 7-step stride and the
+            # offset base are chosen so an unseeded MEAN cannot coincide with a
+            # seeded one — a stride that happened to line the two up would make
+            # the pairing tests below pass under a mutation that dropped the
+            # seeding entirely (verified: it did, before the stride).
+            counter["n"] += 1
+            draw = 700.0 * counter["n"] + 50.0
+        else:
+            draw = 100.0 * (int(sd) + 1)     # paired: a function of the draw
+        return {"m": draw + offset}
+    return run
+
+
+def test_baseline_oracle_shares_workload_draws_across_the_build(tmp_path, monkeypatch):
+    """THE LOAD-BEARING ASSERTION: pre replicate i and post replicate i pair up.
+
+    Workload common random numbers (spec §3.8) is what makes oracle 2(c)'s
+    tolerance a statement about the MECHANISM rather than about the workload's
+    entropy. The runner reports the seed it was handed, so the pairing is
+    observable from outside: the seed vector the pre-build measurement saw must
+    equal the one the post-build measurement saw, index for index.
+
+    Mutation-verified: hardcoding a different seed base for the post side (or
+    dropping the `workload=` argument at either call site) fails here.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _seeded_campaign(tmp_path, repo)
+    c["optimization"]["build_checks"] = {"baseline_replicates": 4}
+    wd = setup_work_dir("crnbase", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+
+    pre_seen: list = []
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=_workload_dominated_runner(pre_seen),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    assert len(pre_seen) == 4 and all(v is not None for v in pre_seen), (
+        "the pre-build control measurement must carry a workload seed"
+    )
+    assert len(set(pre_seen)) == 4, "replicates must draw DIFFERENT workloads"
+
+    post_seen: list = []
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=_workload_dominated_runner(post_seen),
+              test_results={t: True for t in ids})
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["paired"] is True
+    assert be["workload_seed_env"] == "NOUS_WORKLOAD_SEED"
+    assert [int(v) for v in post_seen[:4]] == [int(v) for v in pre_seen], (
+        "post replicate i must re-run the draw pre replicate i used, or the "
+        "pre/post difference carries the workload's variance"
+    )
+    assert be["workload_seeds"] == [int(v) for v in pre_seen]
+
+
+def test_workload_noise_alone_no_longer_aborts_the_build_campaign(tmp_path, monkeypatch):
+    """The consequence: an inert mechanism on a noisy target must PASS.
+
+    Same campaign, same runner shape, an offset far inside the 5% tolerance —
+    but a per-call workload draw an order of magnitude larger than the
+    tolerance. Without shared draws the pre/post means differ by the workload,
+    the gate trips, and the campaign aborts blaming a mechanism that changed
+    nothing. With them, only the offset survives the difference.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _seeded_campaign(tmp_path, repo)
+    wd = setup_work_dir("crnpass", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=_workload_dominated_runner([]),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    # 1.0 on a metric near 200: ~0.5%, well inside the 5% default tolerance.
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=_workload_dominated_runner([], offset=1.0),
+              test_results={t: True for t in ids})
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["ok"] is True and be["paired"] is True
+    assert be["post_mean"] - be["pre_mean"] == pytest.approx(1.0), (
+        "with shared draws the pre/post difference must be the offset alone"
+    )
+
+
+def test_shared_draws_do_not_hide_a_mechanism_that_moved_the_control(tmp_path, monkeypatch):
+    """Pairing must not weaken the oracle — a real shift must still abort.
+
+    The failure mode worth fearing: a seeding change that made pre and post
+    identical by construction would pass the test above while disabling oracle
+    2(c) entirely, and every campaign would proceed. Same wiring, an offset well
+    outside the tolerance, must still hard-fail.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _seeded_campaign(tmp_path, repo)
+    wd = setup_work_dir("crnabort", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=_workload_dominated_runner([]),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    with pytest.raises(OptimizationAborted, match="changed the baseline"):
+        run_stage(c, wd, iteration=2, stage="verify",
+                  config_runner=_workload_dominated_runner([], offset=80.0),
+                  test_results={t: True for t in ids})
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["ok"] is False and be["paired"] is True
+
+
+def test_declared_workload_seeds_are_used_verbatim_on_both_sides(tmp_path, monkeypatch):
+    """A campaign that PINS its seeds is reproducing specific workload draws.
+
+    `workload.seeds` must not be hashed into something else — same rule the
+    design-matrix path follows — and the pinned set must reach the baseline
+    oracle on both sides of the build, taken modulo the replicate index.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path)
+    s, c = _seeded_campaign(tmp_path, repo, seeds=[7, 11])
+    c["optimization"]["build_checks"] = {"baseline_replicates": 3}
+    wd = setup_work_dir("crnpinned", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    pre_seen: list = []
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=_workload_dominated_runner(pre_seen),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    assert [int(v) for v in pre_seen] == [7, 11, 7]
+    post_seen: list = []
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=_workload_dominated_runner(post_seen),
+              test_results={t: True for t in ids})
+    assert [int(v) for v in post_seen[:3]] == [7, 11, 7]
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["workload_seeds"] == [7, 11, 7] and be["paired"] is True
+
+
+def test_an_undeclared_workload_leaves_the_comparison_unpaired_and_says_so(tmp_path, monkeypatch):
+    """Opt-in, and the artifact must not claim a rigor that was not applied.
+
+    A campaign declaring no `workload.seed_env` gets exactly the behaviour it
+    had before: no seed in the environment, an unpaired comparison. What is new
+    is that the artifact SAYS `paired: false` rather than leaving a reader to
+    assume. Same "provenance, not just soundness" discipline the regret bound's
+    `method` field follows.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("unpaired", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    seen: list = []
+
+    def _watch(inner):
+        def run(row):
+            seen.append(((getattr(row, "apply", None) or {}).get("env") or {})
+                        .get("NOUS_WORKLOAD_SEED"))
+            return inner(row)
+        return run
+
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=_watch(make_synthetic_runner(s, seed=1)),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=_watch(make_synthetic_runner(s, seed=1)),
+              test_results={t: True for t in ids})
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["paired"] is False
+    assert "workload_seeds" not in be and "workload_seed_env" not in be
+    assert seen and all(v is None for v in seen), (
+        "an undeclared workload must export no seed at all"
+    )
+
+
+def test_a_prebuild_measurement_without_recorded_seeds_degrades_to_unpaired(
+        tmp_path, monkeypatch, caplog):
+    """A pre-build record with no seeds cannot be paired against, however we read
+    the campaign today.
+
+    The real shape: a campaign whose pre-build half ran before `workload` was
+    declared (or under an older Nous), then had the block added before verify.
+    The seeds the post side would derive were never used on the pre side, so
+    claiming `paired: true` would label a comparison that never shared a draw.
+    Degrade — log, don't crash — exactly as every other CRN-dependent path in
+    this kind does.
+    """
+    import logging
+
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("latedeclare", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert "workload_seeds" not in be
+    c["optimization"]["workload"] = {"seed_env": "NOUS_WORKLOAD_SEED"}
+    with caplog.at_level(logging.WARNING,
+                         logger="orchestrator.optimize.stage_runner"):
+        run_stage(c, wd, iteration=2, stage="verify",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in ids})
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["paired"] is False, "a pairing that never happened must not be claimed"
+    assert any("UNPAIRED" in r.getMessage() for r in caplog.records), caplog.text

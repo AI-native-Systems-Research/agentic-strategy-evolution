@@ -484,8 +484,52 @@ def run_build(
     return row
 
 
+#: Seed base for the baseline oracle's workload draws. A CONSTANT, and that is
+#: the whole point: oracle 2(c) compares the same configuration measured at two
+#: different moments in the campaign (once at ``build``, before the mechanism
+#: exists; once at ``verify``, after it does), so the only thing that may vary
+#: between the two measurements is the replicate index. Anything
+#: iteration-derived — the base ``confirm`` uses, which is right there because
+#: confirm's rounds are supposed to see FRESH draws — would hand pre and post
+#: different workloads and reintroduce exactly the noise this seeding removes.
+BASELINE_SEED_BASE = 0
+
+
+def baseline_seeds(workload: dict | None, n: int) -> list[int] | None:
+    """The workload common-random-numbers draws for ``n`` baseline replicates.
+
+    Returns None when the campaign declares no ``optimization.workload.
+    seed_env`` — the same opt-in convention every other CRN path in this kind
+    uses (spec §3.8). None means "this comparison is unpaired", and callers must
+    keep saying so in the artifact rather than claiming a pairing that did not
+    happen.
+
+    Seed *i* is a function of the replicate index alone, so replicate *i* of the
+    PRE-build measurement and replicate *i* of the POST-build measurement run
+    the same workload draw. That is what makes the oracle's tolerance mean
+    something on a target whose workload variance dominates its configuration
+    effect (a queue, a cache, an autoscaler — spec §2.6): the draw's
+    contribution cancels out of the pre/post difference instead of being
+    charged to the mechanism.
+
+    The arithmetic is deliberately the same as
+    ``stage_runner._assign_workload_seeds``' — ``workload.seeds`` taken verbatim
+    modulo the index when declared, else ``(base * 7919 + i) % 2**31`` — so a
+    reader comparing a baseline seed against a design-matrix seed is comparing
+    two values produced the same way.
+    """
+    wl = workload or {}
+    if not wl.get("seed_env"):
+        return None
+    declared = wl.get("seeds") or None
+    if declared:
+        return [int(declared[i % len(declared)]) for i in range(n)]
+    return [(BASELINE_SEED_BASE * 7919 + i) % (2 ** 31) for i in range(n)]
+
+
 def baseline_runs(
     config_runner: Callable, factors, baseline: dict, *, n: int, metric: str,
+    workload: dict | None = None,
 ) -> list[float]:
     """Measure the ``known_valid_baseline`` configuration ``n`` times.
 
@@ -502,17 +546,33 @@ def baseline_runs(
     ``failed_runs/failed_run_<idx>.log``. ``role="baseline"`` says the same
     thing to any reader of the observation.
 
+    ``workload`` is the campaign's ``optimization.workload`` block. When it
+    declares ``seed_env``, every replicate carries the workload
+    common-random-numbers draw for its index (:func:`baseline_seeds`) in
+    ``apply["env"]``, exactly as the design-matrix rows and the ``confirm``
+    replicates do. Seeded here rather than through
+    ``stage_runner._assign_workload_seeds`` because these negative-indexed rows
+    are deliberately OUTSIDE design-matrix bookkeeping (see above) and that
+    function's payload cross-check does not apply to them — the seed arithmetic
+    is shared, the bookkeeping is not.
+
     Returns raw floats — no aggregation, no rejection. NaN is passed through as
     NaN so the caller can distinguish "the control did not run" from "the
     control ran and moved", which are different failures with different fixes.
     """
     from orchestrator.optimize.matrix import ConfigRow, render_apply
 
+    env_name = (workload or {}).get("seed_env")
+    seeds = baseline_seeds(workload, n)
     out: list[float] = []
     for i in range(n):
+        apply = render_apply(factors, baseline)
+        if seeds is not None:
+            apply = {**apply,
+                     "env": {**(apply.get("env") or {}), env_name: seeds[i]}}
         row = ConfigRow(
             row_index=-1 - i, levels=dict(baseline), role="baseline",
-            replicate=i, apply=render_apply(factors, baseline),
+            replicate=i, apply=apply,
         )
         obs = config_runner(row)
         out.append(float((obs or {}).get(metric, float("nan"))))

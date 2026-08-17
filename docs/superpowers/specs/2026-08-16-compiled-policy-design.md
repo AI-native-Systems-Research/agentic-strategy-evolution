@@ -224,6 +224,20 @@ This is what makes a systems target (queueing, caching, autoscaling) measurable
 at all — unpaired comparison on a noisy server needs an order of magnitude more
 runs for the same bound.
 
+**"Every configuration in a comparison" includes oracle 2(c)'s pre/post pair**
+(clarification added post-implementation, final whole-branch review; the code
+now matches). The `build` oracle measures the `known_valid_baseline` before and
+after the build and hard-aborts on a relative shift past
+`build_checks.baseline_tolerance_pct`. That is a comparison in exactly this
+section's sense — the same configuration measured twice — so post replicate *i*
+runs the draw pre replicate *i* used, keyed on the replicate index alone
+(`build.baseline_seeds`), the way `confirm` keys on it rather than on the row
+index. Without it, the abort gate spends its whole tolerance on workload
+entropy on precisely the targets named above and blames the mechanism for it.
+`baseline_equivalence.json` records `paired` either way, and degrades to the
+unpaired reading (log, don't crash) when the pre-build half recorded no
+matching seeds.
+
 ### 3.9 Artifacts
 
 | File | Written by | Contains |

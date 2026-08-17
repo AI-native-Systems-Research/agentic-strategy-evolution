@@ -695,6 +695,13 @@ def _check_baseline_equivalence(
     whole epoch's numbers are downstream of it, and a warning arrives after the
     runs are spent.
 
+    When the campaign declares ``optimization.workload.seed_env``, the pre/post
+    pair also shares WORKLOAD COMMON RANDOM NUMBERS (spec §3.8): post replicate
+    *i* re-runs the draw pre replicate *i* used, so the tolerance is spent on
+    the mechanism rather than on the workload's entropy. The artifact records
+    ``paired`` either way — a reader must be able to tell which comparison
+    produced the verdict.
+
     NOT ARMED is a distinct outcome from PASSED, and this function keeps them
     distinguishable. No file at all means the oracle was never attempted (no
     build stage, no declared baseline, no runner); ``pre_unavailable`` means it
@@ -752,34 +759,80 @@ def _check_baseline_equivalence(
         .get("metric") or ""
     )
     tol = float(rec.get("tolerance_pct") or _baseline_tolerance_pct(campaign))
+    # WORKLOAD COMMON RANDOM NUMBERS across the build stage (spec §3.8). The
+    # pre-build replicates were measured with the draws `baseline_seeds` derives
+    # from the replicate index alone, so re-measuring with the same block hands
+    # post replicate `i` the same draw as pre replicate `i`. That pairing is
+    # what makes the tolerance a statement about the MECHANISM: `post_mean -
+    # pre_mean` is then the mean of paired differences, and the workload's own
+    # entropy cancels out of it instead of being charged to the build. Without
+    # it, a target whose workload variance dominates its configuration effect —
+    # a queue, a cache, an autoscaler, i.e. every target this kind exists for —
+    # can blow a 5% hard-abort gate on noise alone, and the campaign blames the
+    # mechanism for a difference the workload produced.
+    #
+    # The seeds are re-derived rather than read back from `rec` so a stale or
+    # hand-edited artifact cannot silently steer the post measurement; the
+    # recorded vector below is then a claim the derivation can be checked
+    # against.
+    _wl = (_opt_block(campaign) or {}).get("workload")
+    seeds = build_mod.baseline_seeds(_wl, len(pre))
+    # A pre-build measurement taken before this campaign declared `workload`
+    # (or by an older Nous) recorded no seeds, so pairing cannot be claimed for
+    # it however the campaign reads today. Degrade to the unpaired reading and
+    # say so, rather than labelling a comparison that never shared a draw.
+    recorded_pre = rec.get("workload_seeds")
+    paired = seeds is not None and list(recorded_pre or ()) == list(seeds)
+    if seeds is not None and not paired:
+        logger.warning(
+            "verify: the campaign declares optimization.workload.seed_env but "
+            "the pre-build control measurement recorded no matching workload "
+            "seeds (%r), so oracle 2(c) is an UNPAIRED comparison — the "
+            "workload's own variance does not cancel out of the pre/post "
+            "difference and the tolerance has to absorb it. Recorded as "
+            "paired: false in baseline_equivalence.json.",
+            recorded_pre,
+        )
     post = build_mod.baseline_runs(
         config_runner, factors, levels, n=len(pre), metric=metric,
+        workload=_wl if paired else None,
     )
     pre_mean, post_mean = _mean(pre), _mean(post)
     ok = _baseline_equivalent(pre_mean, post_mean, tol)
-    _write_json(path, {
+    record = {
         "levels": levels, "pre": pre, "post": post,
         "pre_mean": pre_mean, "post_mean": post_mean,
-        "tolerance_pct": tol, "ok": ok,
-    })
+        "tolerance_pct": tol, "ok": ok, "paired": paired,
+    }
+    if paired:
+        record["workload_seeds"] = seeds
+        record["workload_seed_env"] = (_wl or {}).get("seed_env")
+    _write_json(path, record)
     if ok:
         logger.info(
             "verify: baseline equivalence holds — control %s measured %.6g "
-            "before the build and %.6g after (tolerance %.3g%%)",
+            "before the build and %.6g after (tolerance %.3g%%, %s)",
             levels, pre_mean, post_mean, tol,
+            "paired on workload common random numbers" if paired
+            else "unpaired",
         )
         return
     raise OptimizationAborted(
         f"build changed the baseline: control configuration {levels} moved from "
         f"{pre_mean:.6g} to {post_mean:.6g} on {metric or '<unset metric>'} "
-        f"(> {tol:.3g}% tolerance, {len(pre)} replicate(s) each side) — the "
-        f"mechanism is not inert at its control level, so every effect this "
-        f"epoch would measure is confounded with whatever else the build "
+        f"(> {tol:.3g}% tolerance, {len(pre)} replicate(s) each side, "
+        f"{'paired on workload common random numbers' if paired else 'unpaired'})"
+        f" — the mechanism is not inert at its control level, so every effect "
+        f"this epoch would measure is confounded with whatever else the build "
         f"changed. Make the control path byte-identical to the pre-build "
         f"behaviour, or if the shift is real measurement noise on this target, "
         f"declare it: optimization.response.noise_estimate_pct (the tolerance "
-        f"is 3x it) or optimization.build_checks.baseline_tolerance_pct. See "
-        f"baseline_equivalence.json for both replicate vectors.",
+        f"is 3x it) or optimization.build_checks.baseline_tolerance_pct"
+        + ("" if paired else
+           ", or declare optimization.workload.seed_env so the pre/post "
+           "comparison shares workload draws and the workload's own variance "
+           "cancels out of it")
+        + ". See baseline_equivalence.json for both replicate vectors.",
     )
 
 
@@ -1535,10 +1588,15 @@ def run_stage(
             _metric = (
                 ((opt.get("response") or {}).get("primary") or {}).get("metric") or ""
             )
+            # The workload block reaches the oracle from the campaign rather
+            # than from `pol` — `pol` is None at the pre-epoch stages, and
+            # `compile_policy` copies `optimization.workload` through verbatim,
+            # so both halves of the pre/post pair read the identical block.
+            _wl = opt.get("workload")
             try:
                 _pre = build_mod.baseline_runs(
                     config_runner, _factors_for_build, dict(_pre_baseline),
-                    n=_n, metric=_metric,
+                    n=_n, metric=_metric, workload=_wl,
                 )
             except Exception as exc:  # noqa: BLE001 — see the rationale above
                 # Deliberately broad: the raiser is the TARGET's harness via an
@@ -1565,12 +1623,23 @@ def run_stage(
                     dict(_pre_baseline), _reason,
                 )
             else:
-                _write_json(Path(work_dir) / "baseline_equivalence.json", {
+                # `workload_seeds` records the draws so verify can re-run the
+                # SAME ones, and so a reader can tell a paired comparison from
+                # an unpaired one without re-deriving anything. Omitted (rather
+                # than written as null) when the campaign declares no
+                # `workload.seed_env`, matching the artifact's existing habit of
+                # letting absence mean "not applicable".
+                _pre_seeds = build_mod.baseline_seeds(_wl, _n)
+                _rec = {
                     "levels": dict(_pre_baseline),
                     "pre": _pre,
                     "pre_mean": _mean(_pre),
                     "tolerance_pct": _baseline_tolerance_pct(campaign),
-                })
+                }
+                if _pre_seeds is not None:
+                    _rec["workload_seeds"] = _pre_seeds
+                    _rec["workload_seed_env"] = _wl.get("seed_env")
+                _write_json(Path(work_dir) / "baseline_equivalence.json", _rec)
                 logger.info(
                     "build: measured the known_valid_baseline %s x%d before the "
                     "build (mean %s on %s) — verify re-measures it and hard-fails "

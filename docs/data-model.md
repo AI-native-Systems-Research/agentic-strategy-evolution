@@ -505,6 +505,19 @@ hash check — the check refuses a policy edited *inside* an epoch; recompiling
 | `pre_build_tests.json` | 2(b) | Each declared `native_test`'s verdict **before** the build. A `correctness` test that already passed against a tree without the mechanism is green for some other reason, and stays green if the build wires the mechanism to nothing |
 | `baseline_equivalence.json` | 2(c) | The `known_valid_baseline`'s replicate vectors before and after the build. A mechanism that moves the metric *at its own OFF level* changed something outside its scope and confounds every treatment effect while looking clean |
 
+`baseline_equivalence.json` also records how the pre/post comparison was
+made. When the campaign declares `optimization.workload.seed_env`, the two
+halves share **workload common random numbers** (§3.8): post replicate *i*
+re-runs the draw pre replicate *i* used, so the workload's own entropy cancels
+out of the pre/post difference instead of being charged to the mechanism —
+which is what keeps a 5% hard-abort gate meaningful on a queue, a cache, or an
+autoscaler. `paired` is `true` in that case, with `workload_seeds` (the draws,
+index-aligned to `pre`/`post`) and `workload_seed_env` alongside it. `paired`
+is `false` when the campaign declares no workload block, and also when the
+pre-build half recorded no matching seeds — a campaign that added the block
+between `build` and `verify` degrades to the unpaired reading with a WARNING
+rather than labelling a pairing that never happened.
+
 ### 7a. design_matrix.json — "What configurations are pre-registered?"
 
 **Schema:** `schemas/design_matrix.schema.json`
