@@ -222,9 +222,11 @@ activator in the request path) — those rows are thrown away, not learned from.
   compares effects against; too low and every effect looks real, too high and
   nothing does.
 - **`optimization.policy.epsilon`** is your indifference width — the
-  improvement below which you would not bother changing production. Set it
-  above your noise floor or the campaign cannot certify anything. Declare
-  exactly one of `abs` / `pct`.
+  improvement below which you would not bother changing production. Declare
+  exactly one of `abs` / `pct`. **What it has to clear is the terminal bound
+  at your planned replicate count, not "the noise floor"** — see the
+  arithmetic below, which is the difference between an epsilon that can
+  certify and one that cannot.
 - **`known_valid_baseline`** must be your **production configuration** — a
   setting known to work today, with the mechanism under study at its
   OFF/control level. It is the report's last-resort answer when nothing
@@ -233,6 +235,47 @@ activator in the request path) — those rows are thrown away, not learned from.
 - **`locked_parameters`** pins everything you are *not* varying (model,
   corpus, node count, thread pool). A campaign that silently re-picks these is
   not the experiment you designed.
+
+### Picking an epsilon that can actually certify
+
+Certification is `R_δ^term ≤ ε`, where `R_δ^term` is a **simultaneous**
+one-sided upper bound over the `M = shortlist_size − 1` challengers,
+Bonferroni-corrected. Under common random numbers with `n` paired replicates
+per finalist, its scale is roughly
+
+    R_δ^term  ≈  t_{1−δ/M, n−1} · σ · √( 2(1−ρ) / n )
+
+with `σ` your per-run standard deviation (`noise_estimate_pct` × the metric)
+and `ρ` the seed-induced correlation between finalists that pairing removes.
+Three things follow, and they are not the same as "set epsilon above the
+noise floor":
+
+1. **Replicates buy you `√n`, not `n`.** Halving the bound costs four times
+   the runs. Widening epsilon is usually cheaper than buying the bound down,
+   and it is honest as long as the width is one you would genuinely be
+   indifferent across.
+2. **Pairing is what makes a noisy target affordable.** The `(1−ρ)` factor is
+   the whole benefit of `workload.seed_env`. At `ρ = 0.9` the bound is about
+   a third of its unpaired size — which is why §3's seed check matters before
+   you trust any budget arithmetic.
+3. **An epsilon below your noise floor is not automatically wrong.** What
+   matters is the bound at your `n`, and the bound *floors at zero* once the
+   winner's observed margin exceeds it. A campaign whose winner is genuinely
+   several times `σ` better certifies comfortably at an epsilon under
+   `noise_estimate_pct`; a campaign whose finalists are near-tied will not
+   certify at any epsilon you would be willing to defend — and **that is the
+   instrument working.** `terminal_best` on a near-tie is the correct answer:
+   three configurations you cannot distinguish is real information, and
+   certifying one of them would be the failure.
+
+So the shipped examples are not misconfigured when they pair a 2% epsilon
+with a 4% `noise_estimate_pct`: at 4 paired replicates with `ρ ≈ 0.9`, a
+winner ~5% clear of the field certifies, and a winner inside a percent of the
+field comes back `terminal_best`. Write the arithmetic for *your* target into
+`guidance.interpretation`, so the reader of the report knows in advance which
+outcome would have been the null result. If you would rather certify a
+narrower margin, raise `design.confirm.replicates` — and multiply the extra
+runs by your per-run wall time before you commit to it.
 
 ---
 

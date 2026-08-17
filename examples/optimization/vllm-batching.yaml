@@ -113,3 +113,11 @@ optimization:
       reverse over-admits prefill and blows p99 TTFT. Treat any recommendation
       whose p99_ttft_ms sits within noise of the 500 ms SLA as infeasible in
       practice even though the constraint nominally holds.
+      Certification arithmetic (docs/targets.md §5): sigma is ~4% of
+      tokens_per_s, and with 4 PAIRED replicates over 2 challengers the
+      terminal Bonferroni-t bound clears the 2% epsilon once the winner is a
+      few percent clear of the field. A near-tie among the three finalists
+      should come back `terminal_best`, not `certified` — that is the
+      instrument working. Read that outcome as "these three are
+      indistinguishable at this budget", which is a real result about the
+      knobs, not a failed campaign.
