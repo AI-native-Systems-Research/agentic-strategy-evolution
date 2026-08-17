@@ -153,6 +153,16 @@ without a decreasing budget).
 members freshly, so the final comparison does not rest on the fitted surface.
 The remaining global claim is only that screening did not exclude the winner.
 
+**Naming note:** the paper's Figure 1 names this stage `discriminate`. This
+branch's schema, `policy.py`, `stage_runner.py`, and every test file across
+Tasks 1–6 call it `confirm` — a name that predates this alignment work.
+`confirm`'s *behavior*, as redefined above, already matches the paper's
+`discriminate` exactly; only the token differs. Deliberately not renamed
+(would touch a wide, already-reviewed surface for a naming-only win) — but
+every place this state is introduced should say once that `confirm` is this
+branch's name for the paper's `discriminate`, so a reader moving between the
+paper and the code is not left to infer the mapping.
+
 ### 3.4 `recommend()`
 ```
 recommend(fit, X_valid) -> x̂ = argmax_{x ∈ X_valid} f̂(x)
