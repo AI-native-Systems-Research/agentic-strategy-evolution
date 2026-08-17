@@ -396,6 +396,28 @@ def run_campaign(
         )
         preflight_dispatcher.preflight_check()
 
+    # An optimization campaign's length is a property of its COMPILED POLICY,
+    # not of the caller's default. The longest registered path (plus each
+    # spending state's registered self-loop rounds) is how many iterations the
+    # epoch can legitimately need, so a lower max_iterations would truncate a
+    # pre-registered path mid-epoch — the campaign would stop with no `report`
+    # and no `exception`, which is the one outcome the policy does not register.
+    # Raise to the floor rather than lowering the cap: the caller's value still
+    # wins whenever it is larger.
+    from orchestrator.validate import campaign_kind
+
+    if campaign_kind(campaign) == "optimization":
+        from orchestrator.optimize import policy as _policy
+
+        floor = (len(_policy.pre_epoch_stages(campaign))
+                 + _policy.longest_path(_policy.compile_policy(campaign)))
+        if floor > max_iterations:
+            logger.info(
+                "optimization kind: raising max_iterations %d -> %d "
+                "(longest registered path)", max_iterations, floor,
+            )
+            max_iterations = floor
+
     # #197: persist effective max_iterations into state.json so a later
     # `nous resume` (without --max-iterations) honors the original cap
     # instead of silently defaulting to 10. The state file is the single

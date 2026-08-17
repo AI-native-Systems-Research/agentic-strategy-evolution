@@ -279,15 +279,47 @@ def test_the_result_is_a_frozen_value_type(tmp_path):
 
 
 def test_no_recommendation_gives_an_infinite_gap_rather_than_a_plausible_one(tmp_path):
-    """``drift`` is built from 2-level numerics, so the default schedule's
-    refine stage aborts with "nothing to refine" and no confirmation is
-    written. The gap must then be ``inf``, not a number a later assertion
-    could pass by accident.
+    """``inf``, not a number a later assertion could pass by accident.
+
+    BEHAVIOUR CHANGE, Task 6. Before the compiled policy this test used
+    ``drift`` (all 2-level numerics) under the DEFAULT schedule: the index
+    schedule handed iteration 3 to ``refine`` regardless, ``_build_design``
+    aborted with "refine has nothing to refine", and the campaign produced no
+    recommendation. ``compile_policy`` cannot make that mistake —
+    ``refine_on`` requires ``any(is_refinable(f))``, so ``drift``'s policy has
+    no ``refine`` state at all and ``screen`` defaults straight to ``confirm``.
+    The abort is gone because the schedule that caused it is gone, which is the
+    point of the change.
+
+    So the ``inf`` contract is driven by an abort that Task 6 does NOT remove:
+    ``nan_at_corner`` makes one configuration emit NaN, and
+    ``_fitting_responses`` still refuses to fit on an unmeasured row (rule 8
+    keeps that behaviour; Task 11 is what routes it to ``exception`` instead).
+    Asserting the contract via ``drift``'s old refine abort would be asserting
+    a defect that no longer exists.
     """
-    res = run_synthetic_campaign(SURFACES["drift"](), seed=12, parent_dir=tmp_path)
+    res = run_synthetic_campaign(
+        SURFACES["nan_at_corner"](), seed=12, parent_dir=tmp_path,
+    )
     assert res.recommendation == {}
     assert res.true_gap == float("inf")
     assert res.path[-1].startswith("aborted:")
+
+
+def test_a_surface_with_nothing_refinable_no_longer_aborts_at_refine(tmp_path):
+    """The index schedule's worst failure mode, structurally removed.
+
+    ``stage_for_iteration`` handed iteration 3 to ``refine`` whether or not any
+    factor could carry curvature, so every all-2-level surface died with
+    "refine has nothing to refine" under the DEFAULT schedule and the
+    documented workaround was to hand-edit ``stages``. ``compile_policy`` omits
+    the state instead, so ``screen`` defaults to ``confirm`` and the campaign
+    reaches its answer with no author intervention.
+    """
+    res = run_synthetic_campaign(SURFACES["drift"](), seed=22, parent_dir=tmp_path)
+    assert res.path == ["screen", "confirm", "report"], res.path
+    assert res.recommendation, res.report
+    assert not any(p.startswith("aborted:") for p in res.path)
 
 
 def test_skipping_refine_lets_a_two_level_surface_reach_its_optimum(tmp_path):
@@ -303,21 +335,36 @@ def test_skipping_refine_lets_a_two_level_surface_reach_its_optimum(tmp_path):
         res = run_synthetic_campaign(
             s, seed=13, parent_dir=tmp_path / key, campaign_overrides=stages,
         )
-        assert res.path == ["verify", "screen", "confirm"], (key, res.path)
+        # Task 6: ``path`` comes from ``transitions.jsonl``, which records the
+        # EPOCH's transitions. ``verify`` is pre-epoch (it is what compiles the
+        # policy, so it cannot be a state inside it) and therefore no longer
+        # appears; ``report`` is the terminal the policy routed to and now does.
+        # The stages that spent runs are unchanged.
+        assert res.path == ["screen", "confirm", "report"], (key, res.path)
         assert s.fn(res.recommendation) == pytest.approx(res.true_best, abs=1e-9), (
             key, res.recommendation
         )
 
 
 def test_the_recommendation_basis_names_the_artifact_it_came_from(tmp_path):
-    """Today's only source is ``confirmation.json``; Task 9 adds report.json.
+    """Task 6 makes ``report.json`` the source; the confirm fallback is now dead.
 
-    Recording WHICH artifact answered is what lets a later task tell "the
-    policy produced a recommendation" from "the legacy confirm fallback did".
+    Recording WHICH artifact answered is what lets a later task tell "the policy
+    produced a recommendation" from "the legacy confirm fallback did". Before
+    Task 6 the only source was ``runs/iter-N/confirmation.json`` (basis
+    ``confirmation.json``); now the policy's terminal writes ``report.json``,
+    whose ``basis`` says where the LEVELS inside it came from —
+    ``terminal_best`` when the confirm state handed them over,
+    ``measured``/``baseline`` on the fallback paths in ``_run_report``.
+
+    The regret fields stay ``None``: Task 9 owns the residual-regret
+    certificate, and ``_run_report`` deliberately writes no number it cannot
+    justify rather than a placeholder a reader could mistake for a measurement.
     """
     res = run_synthetic_campaign(SURFACES["bowl"](), seed=14, parent_dir=tmp_path)
-    assert res.basis == "confirmation.json"
-    assert res.report == {}
+    assert res.basis == "terminal_best"
+    assert res.report["recommendation"]["levels"] == res.recommendation
+    assert res.report["policy_hash"] and res.report["epoch"] == 1
     assert res.residual_regret is None and res.residual_regret_terminal is None
 
 
@@ -351,11 +398,12 @@ def test_a_transitions_log_overrides_the_inferred_path(tmp_path):
     """Task 6 records transitions.jsonl; a recorded path must win.
 
     An inferred path is a guess from which artifact each iteration wrote; a
-    recorded transition is evidence. The reader is exercised directly because
-    nothing writes the file yet.
+    recorded transition is evidence. ``run_stage`` now writes the log itself, so
+    the natural path IS the recorded one — the override is still exercised by
+    replacing the log with a different history and re-reading it.
     """
     res = run_synthetic_campaign(SURFACES["bowl"](), seed=16, parent_dir=tmp_path)
-    assert res.path == ["verify", "screen", "refine", "confirm"]
+    assert res.path == ["screen", "refine", "confirm", "report"]
     (res.work_dir / "transitions.jsonl").write_text(
         '{"from": "verify", "to": "screen"}\n'
         '{"from": "screen", "to": "exception"}\n',
@@ -420,7 +468,10 @@ def test_every_measurement_iteration_pre_registers_its_design_matrix(tmp_path):
     and correctly writes neither.
     """
     res = run_synthetic_campaign(SURFACES["bowl"](), seed=3, parent_dir=tmp_path)
-    assert res.path == ["verify", "screen", "refine", "confirm"], res.path
+    # Task 6: the path is the EPOCH's recorded transitions. `verify` is
+    # pre-epoch (it compiles the policy, so it is not a state inside it) and
+    # `report` is the terminal the policy routed to.
+    assert res.path == ["screen", "refine", "confirm", "report"], res.path
 
     measured, registered = [], []
     for it in harness._latest_iter_dirs(res.work_dir):
@@ -458,7 +509,10 @@ def test_the_engine_ends_at_done_and_every_iteration_reached_the_ledger(tmp_path
     from orchestrator.engine import Engine
 
     res = run_synthetic_campaign(SURFACES["additive"](), seed=19, parent_dir=tmp_path)
-    assert res.path == ["verify", "screen", "refine", "confirm"], res.path
+    # Task 6: the path is the EPOCH's recorded transitions. `verify` is
+    # pre-epoch (it compiles the policy, so it is not a state inside it) and
+    # `report` is the terminal the policy routed to.
+    assert res.path == ["screen", "refine", "confirm", "report"], res.path
     assert Engine(res.work_dir).phase == "DONE"
 
     ledger = json.loads((res.work_dir / "ledger.json").read_text())
@@ -512,3 +566,16 @@ def test_locating_a_stage_that_never_ran_fails_loudly(tmp_path):
     res = run_synthetic_campaign(SURFACES["drift"](), seed=21, parent_dir=tmp_path)
     with pytest.raises(AssertionError, match="no iteration ran stage 'refine'"):
         _levels_explored_at_stage(res.work_dir, "refine", "A")
+
+
+def test_harness_path_comes_from_transitions_log(tmp_path):
+    """Task 6: run_stage records transitions.jsonl, so the path is evidence.
+
+    The reader in ``run_synthetic_campaign`` already prefers the log over the
+    artifact-inferred path (``test_a_transitions_log_overrides_the_inferred_path``
+    drove it with a hand-written file). This is the first test where the log is
+    written by the code under test rather than by the test.
+    """
+    res = run_synthetic_campaign(SURFACES["additive"](), seed=11, parent_dir=tmp_path)
+    assert res.path[0] == "screen" and res.path[-1] == "report"
+    assert (res.work_dir / "transitions.jsonl").exists()

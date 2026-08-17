@@ -48,6 +48,55 @@ break is a discovery — the motivating case is a lever measured -9.5% alone
 yet required for the winning compound — so it is recorded as a finding and
 the stage advances.
 
+Which state runs is decided by the COMPILED POLICY, not by the iteration
+index. ``verify`` compiles ``policy.json`` (+ ``policy.sha256``) once, and
+from the first epoch iteration onward ``_resolve_state`` asks
+``policy.current_state`` what the last recorded transition said. Every
+iteration ends by appending a row to ``transitions.jsonl``, so the path a
+campaign took is EVIDENCE rather than an inference from which artifact each
+iteration happened to write. ``stage_for_iteration`` still exists in
+``stage.py`` for the pre-epoch stages' index mapping, but no longer decides
+anything inside the epoch.
+
+OBSERVATION CONVENTIONS (units and base, recorded here so Task 9 and any
+later owner of ``certified`` do not have to reverse-engineer them from
+``_close_iteration``). ``observations_from_decision`` supplies the six
+fit-derived keys; the five guard keys below are supplied by this module and
+are the ones whose base is not self-evident:
+
+  * ``round`` counts the state's own rounds SPENT INCLUDING THE CURRENT ONE.
+    ``screen`` and ``refine`` always report ``round: 0``: neither state
+    self-loops, so no compiled guard reads their value and the key exists only
+    to keep the observation vocabulary complete (``step`` treats an absent key
+    as unknown, which never matches — so an omitted key is not the same as a
+    zero). ``confirm`` is the one self-looping state, and it is **1-based**:
+    the FIRST confirm iteration reports ``round: 1``, the second ``2``, and so
+    on (``_confirm_round`` = ``1 + confirm transitions already in
+    transitions.jsonl``). That is what makes the compiled guard ``{"round":
+    {">=": max_rounds}}`` mean "stop once ``max_rounds`` rounds have been
+    SPENT", and it is what preserves today's behaviour at the default
+    ``confirm_max_rounds: 1``, where a single confirm iteration ends the
+    campaign. Read the two bases together as one rule: ``round`` is
+    "rounds spent by THIS state, this iteration included", and 0 for a state
+    that cannot loop is the vacuous case of it.
+  * ``budget_remaining`` is a raw **RUN COUNT** — benchmark configurations
+    still affordable — NOT a number of confirm rounds. ``_budget_remaining``
+    computes ``max_runs - (rows already recorded across every iter-* dir)``
+    and returns ``10 ** 9`` when the campaign declares no ``design.max_runs``,
+    i.e. "unbounded" rather than "exhausted": a missing cap must never route
+    a campaign to ``report``.
+  * ``certified`` is ``False`` everywhere in this task. Task 9 owns the
+    Holm one-sided-t certification that can make it True.
+  * ``correctness_failed`` is False on any path that reaches a transition at
+    all — a correctness relation failure raises ``OptimizationAborted``
+    upstream, before a transition is recorded. It is set explicitly so the
+    guard is evaluated against a fact rather than against an absent key
+    (``step`` treats a missing observation as unknown, which never matches).
+  * ``nan_response`` is "any row admissible to this stage's fit carried NaN".
+    Today ``_fitting_responses`` still raises on an unmeasured row before the
+    observation can be recorded; Task 11 is what routes it to ``exception``
+    instead.
+
 ``config_runner`` and ``integrity_check`` remain injected callables — that
 seam is what makes this module testable without subprocesses — but a real
 run no longer needs a caller to supply them. ``run_stage`` resolves both from
@@ -67,13 +116,14 @@ from pathlib import Path
 from typing import Callable
 
 from orchestrator.optimize import artifacts, matrix, relations, runner
+from orchestrator.optimize import policy as policy_mod
 from orchestrator.optimize.effects import fit_effects, solve_stationary_point
-from orchestrator.optimize.factors import parse_factors
+from orchestrator.optimize.factors import is_refinable, parse_factors
 from orchestrator.optimize.stage import (
     Stage,
     decide_after_refine,
     decide_after_screen,
-    stage_for_iteration,
+    observations_from_decision,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,6 +273,191 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
     return values
 
 
+def _read_mechanism_hash(work_dir: Path) -> str:
+    p = Path(work_dir) / "mechanism.sha256"
+    return p.read_text().strip() if p.exists() else ""
+
+
+def _epoch_index(work_dir: Path) -> int:
+    return 1 + len(list(Path(work_dir).glob("epoch_end*.json")))
+
+
+def _compile_and_write_policy(campaign: dict, work_dir: Path) -> dict:
+    """Compile, structurally check, and persist the epoch's policy."""
+    pol = policy_mod.compile_policy(
+        campaign, mechanism_patch_hash=_read_mechanism_hash(work_dir),
+        epoch=_epoch_index(work_dir),
+    )
+    errs = policy_mod.check_policy(pol)
+    if errs:
+        raise OptimizationAborted(
+            "compiled policy is structurally invalid:\n  " + "\n  ".join(errs),
+        )
+    policy_mod.write_policy(work_dir, pol)
+    return pol
+
+
+def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
+    """The epoch's policy, compiled lazily if verify has not written one.
+
+    A real campaign always compiles at ``verify``; the lazy branch exists so a
+    unit test that jumps straight to ``stage="screen"`` still has a policy to
+    interpret. Once a policy IS on disk, its recorded hash is checked: a
+    pre-registered policy that changed inside an epoch is not a
+    pre-registration, so an edit hard-fails rather than being interpreted.
+    """
+    pol = policy_mod.read_policy(work_dir)
+    if pol is None:
+        return _compile_and_write_policy(campaign, work_dir)
+    recorded = Path(work_dir) / "policy.sha256"
+    if recorded.exists() and recorded.read_text().strip() != policy_mod.policy_hash(pol):
+        raise OptimizationAborted(
+            "policy.json was edited after compilation (hash mismatch with "
+            "policy.sha256); a pre-registered policy cannot change inside an "
+            "epoch",
+        )
+    return pol
+
+
+def _resolve_state(campaign: dict, work_dir: Path, iteration: int,
+                   stage) -> tuple[str, dict | None]:
+    """Which state this iteration runs, and the policy (None before compile).
+
+    An explicit ``stage`` (tests) wins. Pre-epoch stages are index-driven;
+    from the first epoch iteration onward the state is whatever the last
+    recorded transition says (spec §3.2), which is what replaces
+    ``stage_for_iteration``'s index clamp — the clamp re-ran the final stage
+    forever whenever ``max_iterations`` exceeded the stage count.
+    """
+    pre = policy_mod.pre_epoch_stages(campaign)
+    if stage is not None:
+        name = getattr(stage, "value", None) or str(stage)
+        pol = None if name in pre else _load_or_compile_policy(campaign, work_dir)
+        return name, pol
+    if iteration <= len(pre):
+        return pre[iteration - 1], None
+    pol = _load_or_compile_policy(campaign, work_dir)
+    return policy_mod.current_state(pol, work_dir), pol
+
+
+def _budget_remaining(pol: dict, work_dir: Path) -> int:
+    """Benchmark runs still affordable — a RUN COUNT, not a round count.
+
+    ``10 ** 9`` means "no declared cap", which must read as unbounded: a
+    campaign that never declared ``design.max_runs`` must not be routed to
+    ``report`` for having exhausted a budget it does not have.
+    """
+    cap = (pol.get("budget") or {}).get("max_runs")
+    if not cap:
+        return 10 ** 9
+    spent = sum(
+        len(artifacts.read_runs(d))
+        for d in (Path(work_dir) / "runs").glob("iter-*")
+    )
+    return int(cap) - spent
+
+
+def _confirm_round(work_dir: Path) -> int:
+    """Confirm rounds SPENT INCLUDING this one — so the first confirm is 1.
+
+    The count is ``1 + (confirm transitions already recorded)``, which is what
+    makes the compiled guard ``{"round": {">=": max_rounds}}`` mean "stop once
+    ``max_rounds`` rounds have been spent". Off by one in the other direction
+    (a 0-based count) would let a campaign whose registered ``max_rounds`` is 1
+    run confirm TWICE — and would change today's behaviour, where one confirm
+    iteration ends the campaign.
+    """
+    return 1 + sum(
+        1 for t in policy_mod.read_transitions(work_dir) if t.get("from") == "confirm"
+    )
+
+
+def _close_iteration(engine, campaign, work_dir, iter_dir, iteration, state, pol,
+                     observations: dict, *, recommendation_levels: dict | None):
+    """Record the transition and run inline terminals. Returns IterationOutcome.
+
+    The findings/principles writes and the HUMAN_FINDINGS_GATE ->
+    finalize_iteration -> append_ledger_row sequence stay with the CALLERS
+    rather than moving in here: ``_finish_confirm`` writes a different artifact
+    set from the screen/refine path (``confirmation.json``, no ``effects.json``),
+    and folding both into one closer would have to branch on the state to get
+    that right — reintroducing, inside the shared helper, exactly the
+    per-state knowledge the policy exists to hold.
+
+    ``iter_dir`` is accepted but unused here. It is part of the signature the
+    later terminal-handling tasks are written against (Task 11's
+    ``epoch_end.json`` is placed relative to the iteration that ended the
+    epoch), and threading it now keeps those tasks from having to touch three
+    call sites to get it.
+    """
+    from orchestrator.iteration import IterationOutcome
+
+    if state not in (pol.get("states") or {}):
+        # Reachable only through an explicit `stage=` that the policy does not
+        # register — e.g. forcing `refine` on a campaign where nothing is
+        # refinable, or a stage the `stages` list omits. `step` would raise a
+        # bare ValueError about a missing default transition, which describes
+        # the symptom rather than the mismatch.
+        raise OptimizationAborted(
+            f"state {state!r} was run but the compiled policy registers only "
+            f"{sorted(pol.get('states') or {})}. A state outside the policy has "
+            f"no registered transition, so nothing can decide what follows it — "
+            f"either the campaign's `stages` list omits it or no factor makes it "
+            f"compilable (refine requires a refinable factor).",
+        )
+    nxt, rule = policy_mod.step(pol, state, observations)
+    policy_mod.append_transition(work_dir, {
+        "iteration": iteration,
+        "from": state,
+        "to": nxt,
+        "rule": rule,
+        "observations": observations,
+        "policy_hash": policy_mod.policy_hash(pol),
+    })
+    logger.info(
+        "policy: %s -> %s (%s)", state, nxt,
+        rule.get("accounting") or "default transition",
+    )
+    if nxt == "report":
+        _run_report(engine, campaign, work_dir, iteration, pol,
+                    recommendation_levels=recommendation_levels)
+        return IterationOutcome.COMPLETED
+    if nxt == "exception":
+        # Task 11 replaces this with an epoch_end.json + a new epoch.
+        raise OptimizationAborted(
+            f"policy routed {state} -> exception: {rule.get('when')}",
+        )
+    return IterationOutcome.CONTINUE
+
+
+def _run_report(engine, campaign, work_dir, iteration, pol, *,
+                recommendation_levels) -> None:
+    """Write ``report.json`` and end the campaign at DONE.
+
+    Minimal in this task (Task 9 fills in the residual-regret certificate).
+    ``basis`` names WHERE the recommendation came from, so a later task can
+    tell "the terminal state produced it" from "the best observed corner did".
+    """
+    primary = (((campaign.get("optimization") or {}).get("response") or {})
+               .get("primary") or {})
+    metric = primary.get("metric") or ""
+    levels, basis = recommendation_levels, "terminal_best"
+    if not levels:
+        best = _best_observed(work_dir, metric) if metric else None
+        levels, basis = (dict(best["levels"]) if best else {}), "measured"
+    if not levels and pol.get("known_valid_baseline"):
+        levels, basis = dict(pol["known_valid_baseline"]), "baseline"
+    trans = policy_mod.read_transitions(work_dir)
+    _write_json(Path(work_dir) / "report.json", {
+        "recommendation": {"levels": levels, "basis": basis},
+        "path": [t["from"] for t in trans] + ([trans[-1]["to"]] if trans else []),
+        "epoch": pol["epoch"],
+        "policy_hash": policy_mod.policy_hash(pol),
+        "iteration": iteration,
+    })
+    engine.transition("DONE")
+
+
 def run_stage(
     campaign: dict,
     work_dir: Path,
@@ -274,11 +509,12 @@ def run_stage(
     # 0 with "no tests to run" when the pattern matches nothing, so the
     # pre-build run looks like a pass at the shell level. Deciding the stage
     # first keeps that noise out of the log and out of the artifacts.
-    _resolved_early = (
-        stage if stage is not None else stage_for_iteration(campaign, iteration)
-    )
-    _stage_early = getattr(_resolved_early, "value", None) or str(_resolved_early)
-    _is_build = _stage_early == Stage.BUILD.value
+    #
+    # Resolved ONCE: `_resolve_state` may compile and write policy.json, and
+    # calling it twice would re-read (and re-hash-check) the same file for no
+    # reason. `stage_name`/`pol` below are these same values.
+    stage_name, pol = _resolve_state(campaign, work_dir, iteration, stage)
+    _is_build = stage_name == Stage.BUILD.value
 
     if _is_build:
         from orchestrator.optimize import build as build_mod
@@ -316,9 +552,6 @@ def run_stage(
             log_dir=Path(work_dir) / "runs" / f"iter-{iteration}" / "failed_runs",
         )
 
-    resolved = stage if stage is not None else stage_for_iteration(campaign, iteration)
-    stage_name = getattr(resolved, "value", None) or str(resolved)
-
     factors = parse_factors(opt["factors"])
     response_spec = opt.get("response") or {}
     primary = ((response_spec.get("primary") or {}).get("metric")) or ""
@@ -344,7 +577,9 @@ def run_stage(
         _enter_phase(engine, "EXECUTE_ANALYZE", work_dir)
         _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
         append_ledger_row(work_dir, iteration)
-        return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
+        # A pre-epoch stage is never terminal: the epoch has not started, so
+        # there is no policy path to have reached its end.
+        return IterationOutcome.CONTINUE
 
     # ── verify: the native property/metamorphic tests are the gate ──────
     #
@@ -361,11 +596,19 @@ def run_stage(
             )
         if correctness_failures:
             raise OptimizationAborted(_verify_abort_message(correctness_failures))
+        # The apparatus is certified, so pre-register the epoch's policy: a
+        # JSON document hashed BEFORE the first benchmark run is what makes
+        # the path a pre-registration rather than a story told afterwards.
+        pol = _compile_and_write_policy(campaign, work_dir)
+        logger.info(
+            "verify: compiled experimental policy %s (epoch %d)",
+            policy_mod.policy_hash(pol)[:12], pol["epoch"],
+        )
         _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
         _enter_phase(engine, "EXECUTE_ANALYZE", work_dir)
         _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
         append_ledger_row(work_dir, iteration)
-        return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
+        return IterationOutcome.CONTINUE
 
     if correctness_failures:
         ids = ", ".join(str(v.relation_id) for v in correctness_failures)
@@ -460,6 +703,10 @@ def run_stage(
             )
     if _enter_phase(engine, "DESIGN", work_dir):
         _preflight_design(rows, factors, opt, iter_dir)
+        # Provenance: every matrix materialised inside the epoch cites the
+        # policy that scheduled it, so a reader can check that this design was
+        # produced under the policy that was pre-registered and not a later one.
+        payload["policy_hash"] = policy_mod.policy_hash(pol)
         artifacts.write_design_matrix(iter_dir, payload)
 
     _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
@@ -551,7 +798,7 @@ def run_stage(
         # replicate mean, its spread, and the point that was run.
         return _finish_confirm(
             engine, campaign, stage_name, iteration, iter_dir, work_dir,
-            rows, outcomes, ys, factors, test_results,
+            rows, outcomes, ys, factors, test_results, pol,
         )
 
     # The factor_ids MUST match the design's column order and width. At
@@ -677,7 +924,56 @@ def run_stage(
         "optimization stage %s (iter %d): %d rows, %d complete",
         stage_name, iteration, len(outcomes), statuses.count("complete"),
     )
-    return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
+
+    # ── the policy decides what happens next, not the iteration index ─────
+    #
+    # `observations_from_decision` projects the FIT-derived facts;
+    # `refinable_survivors` is recomputed here rather than taken from
+    # `len(decision.surviving)` because the screen -> refine guard asks how many
+    # survivors carry CURVATURE (is_refinable), and a survivor set of
+    # choice/2-level factors would otherwise route to a refine stage that
+    # `_build_design` correctly refuses to build.
+    by_fid = {f.id: f for f in factors}
+    obs = observations_from_decision(
+        decision, fit,
+        refinable_survivors=sum(
+            1 for fid in decision.surviving
+            if fid in by_fid and is_refinable(by_fid[fid])
+        ),
+        stationary_in_hull=(
+            None if stage_name != Stage.REFINE.value
+            else (stationary is not None
+                  and all(-1.0 <= v <= 1.0 for v in stationary.values()))
+        ),
+    )
+    obs.update({
+        "correctness_failed": False,
+        # Rule 8's "any COMPLETE row whose primary metric is NaN". Scoping to
+        # `complete` is load-bearing, not a nicety: `_fitting_responses` carries
+        # NaN for `infeasible`/`rejected` rows too, and those are trustworthy
+        # measurements of an inadmissible configuration — real information about
+        # the design space (spec §6.4). A bare `any(v != v for v in ys)` routes
+        # one inadmissible corner of a constrained design straight to
+        # `exception`, which would make constraints unusable and would reverse
+        # two existing behaviours (see
+        # test_infeasible_row_does_not_nan_poison_the_fit).
+        "nan_response": any(
+            v != v and getattr(o, "status", None) == "complete"
+            for o, v in zip(outcomes, ys)
+        ),
+        "budget_remaining": _budget_remaining(pol, work_dir),
+        # No compiled guard reads `round` at screen or refine — neither state
+        # self-loops, so there are no rounds to count. Reported as 0 (rather
+        # than omitted) because `step` treats an absent key as unknown, and
+        # "unknown" is a different fact from "zero" for any guard a later task
+        # registers here.
+        "round": 0,
+        "certified": False,
+    })
+    return _close_iteration(
+        engine, campaign, work_dir, iter_dir, iteration, stage_name, pol, obs,
+        recommendation_levels=None,
+    )
 
 
 def _verify_abort_message(failures) -> str:
@@ -754,35 +1050,13 @@ def _build_max_turns(campaign: dict) -> int:
     return DEFAULT_MAX_TURNS
 
 
-def _terminal_outcome(engine, campaign: dict, stage_name: str, outcome_enum):
-    """Transition to DONE and report COMPLETED on the campaign's last stage.
-
-    run_campaign only stops on COMPLETED / ABORTED / REDESIGN, so returning
-    CONTINUE from the final stage makes it call one more iteration —
-    stage_for_iteration then clamps past the end of the stage list and
-    returns the final stage again, re-running it indefinitely. That looks
-    correct only when max_iterations happens to equal the stage count.
-    """
-    if _is_final_stage(campaign, stage_name):
-        engine.transition("DONE")
-        return outcome_enum.COMPLETED
-    return outcome_enum.CONTINUE
-
-
-def _is_final_stage(campaign: dict, stage_name: str) -> bool:
-    """Whether ``stage_name`` is the last stage this campaign will run.
-
-    An explicit ``optimization.stages`` list wins; otherwise ``confirm`` is
-    terminal. Getting this wrong in either direction is costly: too eager
-    ends the campaign a stage early, too lax means run_campaign never sees
-    COMPLETED and re-runs the final stage forever (since stage_for_iteration
-    clamps past the end).
-    """
-    stages = ((campaign.get("optimization") or {}).get("stages")) or None
-    if isinstance(stages, list) and stages:
-        last = stages[-1]
-        return stage_name == (getattr(last, "value", None) or str(last))
-    return stage_name == Stage.CONFIRM.value
+# `_terminal_outcome` / `_is_final_stage` lived here until the compiled policy
+# replaced them. Both answered "is this stage the last one?" from the campaign's
+# `stages` LIST — an index question — and both are now answered by
+# `policy.step`: a state is terminal when the interpreter routes to `report` or
+# `exception`, which is a fact about the observations rather than about a list
+# position. Keeping them as unreachable helpers would leave two definitions of
+# finality in one module, and the index one is the wrong one.
 
 
 def _design_factor_ids(factors, design_cfg: dict, stage_name: str) -> tuple[str, ...]:
@@ -990,20 +1264,22 @@ def _build_design(factors, design_cfg: dict, stage_name: str,
 
 
 def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
-                    work_dir, rows, outcomes, ys, factors, test_results):
-    """Record whether the predicted optimum reproduced, then terminate.
+                    work_dir, rows, outcomes, ys, factors, test_results, pol):
+    """Record whether the predicted optimum reproduced, then close the state.
 
     Deliberately writes no ``effects.json``: there is no fit here. The claim
     confirm makes is narrower and more useful — this exact configuration,
     replicated N times, produced this mean and this spread.
+
+    ``pol`` is the compiled policy, threaded from ``run_stage``: confirm is the
+    one state that can self-loop, so its next state is a policy decision
+    (``certified`` / ``round`` / ``budget_remaining``) rather than "confirm is
+    the last stage in the list", which is what the deleted index-based
+    ``_is_final_stage`` assumed.
     """
     from statistics import mean, pstdev
 
-    from orchestrator.iteration import (
-        IterationOutcome,
-        _enter_phase,
-        finalize_iteration,
-    )
+    from orchestrator.iteration import _enter_phase, finalize_iteration
     from orchestrator.ledger import append_ledger_row
     from orchestrator.optimize import artifacts, relations
 
@@ -1079,7 +1355,22 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         campaign=campaign,
     )
     append_ledger_row(work_dir, iteration)
-    return _terminal_outcome(engine, campaign, stage_name, IterationOutcome)
+
+    obs = {
+        "correctness_failed": False,
+        # No usable replicate is a measurement failure, which the policy routes
+        # the same way it routes a NaN fit input.
+        "nan_response": not usable,
+        # Task 9 owns certification (Holm one-sided t at delta_terminal); until
+        # it lands, confirm terminates on its registered round cap instead.
+        "certified": False,
+        "round": _confirm_round(work_dir),
+        "budget_remaining": _budget_remaining(pol, work_dir),
+    }
+    return _close_iteration(
+        engine, campaign, work_dir, iter_dir, iteration, stage_name, pol, obs,
+        recommendation_levels=levels,
+    )
 
 
 def _confirm_findings(summary: dict, iteration: int) -> dict:
