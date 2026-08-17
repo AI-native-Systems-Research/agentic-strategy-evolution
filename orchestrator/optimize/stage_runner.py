@@ -1048,6 +1048,57 @@ def run_stage(
             max_turns=_build_max_turns(campaign),
             sdk_runner=sdk_runner,
         )
+        # Pre-register WHICH CODE the epoch will measure. `verify` compiles the
+        # policy one iteration later and stamps this hash into it; every epoch
+        # iteration re-checks it (below). Snapshot here rather than at verify
+        # because build is the last moment at which the tree is known to be the
+        # build's own output — anything that edits the target between the two
+        # stages should register as drift, not be absorbed into the baseline.
+        if repo:
+            h = build_mod.snapshot_mechanism(Path(repo), work_dir)
+            logger.info(
+                "build: recorded mechanism.patch (%s)",
+                f"sha256 {h[:12]}" if h
+                else "no hash — target is not a git work tree, so the epoch "
+                     "has no drift oracle",
+            )
+    elif repo and stage_name not in policy_mod.pre_epoch_stages(campaign):
+        # ── drift oracle (spec §3.7, oracle 2) ──────────────────────────────
+        #
+        # A measurement is only about the system that was pre-registered. The
+        # policy's `mechanism_patch_hash` names that system; if the target's
+        # tree no longer hashes to it, the runs this iteration is about to
+        # execute would describe DIFFERENT code while being filed under the
+        # same pre-registration — the design matrix would look honoured and the
+        # numbers would be about something else. There is no partial-credit
+        # recovery from that, so it is a hard abort, not a warning: a warning
+        # in a log the campaign author reads afterwards arrives after the
+        # tokens and the runs are already spent on the wrong system.
+        #
+        # Keyed on the FILE's presence, not on whether `build` ran: a campaign
+        # may snapshot by hand (or a previous resume may have), and either way
+        # the recorded hash is a commitment. Absent file → no commitment was
+        # ever made (e.g. a non-git target) → nothing to check.
+        #
+        # Pre-epoch stages are exempt because `verify` is where the hash is
+        # stamped into the policy: "drifted since compile" is not yet meaningful
+        # before the compile it refers to.
+        recorded = _read_mechanism_hash(work_dir)
+        if recorded:
+            from orchestrator.optimize import build as build_mod
+
+            current = build_mod.current_mechanism_hash(Path(repo))
+            if current != recorded:
+                raise OptimizationAborted(
+                    f"mechanism drifted since compile: the target's working "
+                    f"tree no longer matches mechanism.patch; measurements "
+                    f"would describe a different system "
+                    f"(recorded {recorded[:12]}, now "
+                    f"{current[:12] or '<no git work tree>'}). Either restore "
+                    f"the tree to the recorded patch, or treat the revision as "
+                    f"a new experiment and start a fresh campaign — a revised "
+                    f"mechanism is a new pre-registration, not a resumed one.",
+                )
 
     if not _is_build and test_results is None and opt.get("test_command") and repo:
         # Persist the raw test output next to the iteration's artifacts. A
