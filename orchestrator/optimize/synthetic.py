@@ -254,7 +254,8 @@ def _observe(surface: Surface, levels: dict, *, rng: random.Random,
     return obs
 
 
-def make_synthetic_runner(surface: Surface, *, seed: int, **_extra) -> Callable:
+def make_synthetic_runner(surface: Surface, *, seed: int,
+                          seed_env: str | None = None, **_extra) -> Callable:
     """An in-process ``ConfigRunner``: seeded noise, monotone run counter.
 
     The counter is the surface's notion of wall-clock: ``drift`` adds
@@ -262,12 +263,36 @@ def make_synthetic_runner(surface: Surface, *, seed: int, **_extra) -> Callable:
     a trend that randomized run order spreads across the levels. Keyword-only
     extras are accepted and ignored so later callers can pass options this
     version does not interpret.
+
+    ``seed_env`` makes this a model of a SEEDED target (spec §3.7 oracle 3).
+    When it names an environment key the row carries in ``apply["env"]``, the
+    noise for that row is drawn from ``Random(row_seed)`` instead of from the
+    shared stream — so two rows at the same levels with the same seed return the
+    same number, and the common-random-numbers property the ``confirm`` stage
+    relies on is real rather than asserted.
+
+    That matters for the oracle, not just for tidiness. Without it the harness
+    would report a paired bound over replicates whose "shared" seed changed
+    nothing, i.e. it would confirm the pairing machinery against a target for
+    which pairing was decoration — the one thing an oracle must not do. The
+    shared-stream behaviour is untouched when ``seed_env`` is None, so every
+    existing synthetic campaign's numbers are byte-identical.
+
+    The row seed is combined with ``seed`` rather than used alone, so two
+    campaigns over the same surface with different ``seed=`` still see different
+    workloads: the seed set is the WORKLOAD's identity, and the campaign seed is
+    the instrument's.
     """
     rng = random.Random(seed)
     counter = {"n": 0}
 
     def run(row) -> dict:
-        obs = _observe(surface, row.levels, rng=rng, run_counter=counter["n"])
+        row_seed = ((getattr(row, "apply", None) or {}).get("env") or {}).get(
+            seed_env,
+        ) if seed_env else None
+        draw = (random.Random(f"{seed}:{int(row_seed)}")
+                if row_seed is not None else rng)
+        obs = _observe(surface, row.levels, rng=draw, run_counter=counter["n"])
         counter["n"] += 1
         return obs
     return run

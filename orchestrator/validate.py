@@ -7,6 +7,7 @@ Usage:
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -913,6 +914,69 @@ def _rule15_build_requires_baseline(opt: dict) -> list[str]:
     ]
 
 
+def _rule16_workload_seed_env(opt: dict) -> list[str]:
+    """Rule 16: ``workload.seed_env`` must be a legal environment identifier.
+
+    The name is exported into the run subprocess's environment (``runner``
+    merges ``row.apply["env"]`` over ``os.environ``) and the target reads it
+    from there. ``os.environ`` will happily hold ``"bad name"`` — Python does
+    not police the key — and ``subprocess`` will pass it along, but almost
+    nothing on the far side can read it: ``$bad name`` is two words to every
+    POSIX shell, and a lowercase name collides with the convention every
+    benchmark script's own variables follow.
+
+    So the failure is not an error anywhere. The seed is exported, recorded in
+    ``design_matrix.json``, and never read; every replicate then draws a fresh
+    workload; and ``confirm`` still computes a PAIRED bound over differences
+    whose shared seed term never actually cancelled. That bound is arithmetic
+    performed correctly on the wrong premise — tighter than the data supports,
+    with nothing on disk to indicate it. A regex at authoring time is the only
+    place this is visible.
+
+    ``^[A-Z_][A-Z0-9_]*$`` rather than something more permissive: uppercase is
+    the universal convention for an externally-supplied variable, and requiring
+    it means a reviewer reading the target's benchmark script can tell which
+    names come from outside.
+    """
+    wl = opt.get("workload")
+    if not isinstance(wl, dict):
+        return []
+    errors: list[str] = []
+    raw = wl.get("seed_env")
+    name = str(getattr(raw, "value", raw)) if raw is not None else ""
+    if not name or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name):
+        errors.append(
+            f"optimization.workload.seed_env={raw!r} is not a legal environment "
+            f"variable name (must match ^[A-Z_][A-Z0-9_]*$, e.g. "
+            f"NOUS_WORKLOAD_SEED). Nous exports the per-row seed under this "
+            f"name and the target reads it from its environment; a name with a "
+            f"space, a hyphen, a leading digit or a lowercase letter is "
+            f"exported successfully and then unreadable from the target's own "
+            f"shell — so every replicate draws a fresh workload while confirm "
+            f"still reports a PAIRED bound, which is tighter than the data "
+            f"supports and shows no error anywhere."
+        )
+    seeds = wl.get("seeds")
+    if seeds is not None:
+        if not isinstance(seeds, list) or not seeds:
+            errors.append(
+                f"optimization.workload.seeds={seeds!r} must be a non-empty "
+                f"list of integers, or absent. Seeds are taken modulo the row "
+                f"index (or, at confirm, the replicate index), so an empty list "
+                f"has no element to take and the campaign would fall back to "
+                f"derived seeds while the file reads as if it had pinned them."
+            )
+        elif any(not isinstance(s, int) or isinstance(s, bool) for s in seeds):
+            bad = [s for s in seeds if not isinstance(s, int) or isinstance(s, bool)]
+            errors.append(
+                f"optimization.workload.seeds contains non-integer entr(ies) "
+                f"{bad!r}. A seed is exported as a string into the target's "
+                f"environment, so a float or a bool would arrive as '1.5' or "
+                f"'True' and whatever the target does with that is not a seed."
+            )
+    return errors
+
+
 #: Characters that make a ``mechanism_paths`` entry a glob for git's pathspec
 #: but a literal (and therefore unmatchable) string for ``_in_allowlist``.
 _MECHANISM_PATH_GLOB_CHARS = "*?[]"
@@ -1113,6 +1177,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule13_known_valid_baseline(opt, factors))
     errors.extend(_rule14_policy_ranges(opt))
     errors.extend(_rule15_build_requires_baseline(opt))
+    errors.extend(_rule16_workload_seed_env(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     return errors
 

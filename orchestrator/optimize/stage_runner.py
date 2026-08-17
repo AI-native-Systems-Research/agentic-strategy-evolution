@@ -918,6 +918,108 @@ def _budget_remaining(pol: dict, work_dir: Path) -> int:
     return int(cap) - spent
 
 
+def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool):
+    """Give every measurement row a recorded workload seed. Spec §3.7(3), §3.8.
+
+    Returns ``(rows, payload)`` — NEW objects both, never mutated in place: the
+    caller still holds the originals and ``payload`` was already built by
+    ``matrix.matrix_payload`` / ``_confirm_rows``.
+
+    A no-op unless the campaign declares ``optimization.workload.seed_env``.
+    That default is deliberate: exporting a variable a target does not read is
+    harmless, but recording ``paired: True`` (below) about a comparison whose
+    finalists never shared a workload draw would make the terminal bound TIGHTER
+    than the data supports, and an unearned tight bound is worse than a loose
+    one.
+
+    TWO KEYING RULES, and the difference between them is the whole point.
+
+    * At the SPENDING stages (screen / foldover / refine) the seed varies per
+      ROW. Those stages fit a surface over distinct configurations, so one seed
+      shared across the block would confound the entire fit with a single
+      workload draw — every coefficient would carry that draw's idiosyncrasy and
+      nothing in the design could separate the two.
+
+    * At ``confirm`` the seed varies per REPLICATE, so replicate *i* of EVERY
+      finalist runs the same seed. That is common random numbers: the finalists
+      are compared on the same workload draws, the draw's contribution cancels
+      out of the finalist-to-finalist difference, and
+      ``certificate.terminal_regret_bound`` switches from Welch-combining two
+      independent variances to a t on the paired differences. On a target whose
+      workload variance dominates its configuration effect — a queue, a cache,
+      an autoscaler, i.e. every target this kind exists for — that is the
+      difference between certifying inside the run budget and not; the spec puts
+      it at roughly an order of magnitude in runs.
+
+      The pairing is POSITIONAL downstream: ``_finish_confirm`` appends each
+      finalist's measurements in row order and ``terminal_regret_bound`` zips
+      them, so position *i* must be replicate *i* for every finalist. It is,
+      because ``_confirm_rows`` emits one complete replicate block at a time
+      (the run-order shuffle is INSIDE a block) and ``run_stage`` restores
+      design order before ``_finish_confirm`` reads anything positionally.
+
+    The base for a derived seed is the ITERATION at confirm rather than the
+    run-order seed, so a second confirm round measures fresh draws instead of
+    re-measuring round 1's — the round exists because round 1 did not
+    discriminate, and repeating its exact workload could not fix that.
+
+    ``workload.seeds``, when declared, is taken modulo the index and used
+    verbatim: a campaign that pins its seeds is reproducing a specific set of
+    draws and must not have them hashed into something else.
+    """
+    import dataclasses
+
+    wl = (pol or {}).get("workload") or {}
+    env_name = wl.get("seed_env")
+    if not env_name:
+        return rows, payload
+    seeds = wl.get("seeds") or None
+
+    def _seed(i: int, base: int) -> int:
+        if seeds:
+            return int(seeds[i % len(seeds)])
+        # 7919 is prime and much larger than any plausible row/replicate count,
+        # so consecutive bases cannot collide into overlapping seed runs the way
+        # a small multiplier would (base*2+i aliases base+1 at i=2).
+        return (base * 7919 + i) % (2 ** 31)
+
+    base = iteration if confirm else int(payload.get("run_order_seed", iteration))
+    out, rec = [], {}
+    for r in rows:
+        i = r.replicate if confirm else r.row_index
+        sd = _seed(int(i or 0), base)
+        env = {**((r.apply or {}).get("env") or {}), env_name: sd}
+        out.append(dataclasses.replace(r, apply={**(r.apply or {}), "env": env}))
+        rec[str(r.row_index)] = sd
+
+    # The payload's rows and the ConfigRow list are separate structures built
+    # from the same design, so a divergence here means the caller assembled them
+    # from different row sets — and a pre-registration recording seeds the runs
+    # did not carry is worse than no seeds at all. Say so rather than KeyError.
+    payload_indices = {row.get("row_index") for row in payload.get("rows", [])}
+    if payload_indices != {r.row_index for r in rows}:
+        raise OptimizationAborted(
+            f"workload seeding: design_matrix payload rows "
+            f"{sorted(i for i in payload_indices if i is not None)} do not match "
+            f"the rows about to execute {sorted(r.row_index for r in rows)}, so "
+            f"the recorded seeds could not describe the runs. This is an "
+            f"internal inconsistency in the stage's row assembly, not a campaign "
+            f"authoring error.",
+        )
+    payload = dict(payload)
+    payload["workload_seeds"] = rec
+    payload["rows"] = [
+        {**row,
+         "apply": {**(row.get("apply") or {}),
+                   "env": {**((row.get("apply") or {}).get("env") or {}),
+                           env_name: rec[str(row["row_index"])]}}}
+        for row in payload.get("rows", [])
+    ]
+    if confirm:
+        payload["paired"] = True
+    return out, payload
+
+
 def _confirm_round(work_dir: Path, pol: dict | None = None) -> int:
     """Confirm rounds SPENT INCLUDING this one — so the first confirm is 1.
 
@@ -1787,6 +1889,24 @@ def run_stage(
                 for row in payload.get("rows", [])
             ]
 
+    # ── the workload seed: last thing added to a row, before anything is written ──
+    #
+    # HERE, not inside `_confirm_rows` / the design branches, and not after the
+    # DESIGN phase guard. The rows are final at this point (the held-fixed merge
+    # above rewrites `apply` wholesale via `render_apply`, which would discard an
+    # env added earlier), and the seed must be in the payload that
+    # `write_design_matrix` pre-registers — a seed decided after the matrix was
+    # registered is not a pre-registered seed.
+    #
+    # Outside the `_enter_phase` guard on purpose: that guard is False on a
+    # RESUMED iteration whose design_matrix.json already exists, and the rows
+    # still have to execute with their seeds. Skipping the assignment there would
+    # silently run a resumed confirm round unpaired while `paired: True` sat in
+    # the artifact from the first attempt.
+    rows, payload = _assign_workload_seeds(
+        rows, payload, pol,
+        iteration=iteration, confirm=stage_name == Stage.CONFIRM.value,
+    )
     if _enter_phase(engine, "DESIGN", work_dir):
         _preflight_design(rows, factors, opt, iter_dir)
         # Provenance: every matrix materialised inside the epoch cites the
@@ -3238,11 +3358,29 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     the last stage in the list", which is what the deleted index-based
     ``_is_final_stage`` assumed.
 
-    ``paired`` is False in this task. Task 14 turns it on once
-    ``workload.seeds`` puts the same seed set behind every finalist (spec §3.8),
-    at which point the bound is computed on paired differences and shrinks
-    substantially. Recorded in ``confirmation.json`` so a reader can tell which
-    bound they are looking at rather than inferring it from the branch date.
+    ``paired`` comes from the payload, where ``_assign_workload_seeds`` sets it
+    exactly when the campaign declared ``optimization.workload.seed_env`` — i.e.
+    when replicate *i* of every finalist actually ran the same workload seed
+    (common random numbers, spec §3.8). It is then forwarded to
+    ``certificate.terminal_regret_bound``, which computes the bound on paired
+    DIFFERENCES rather than Welch-combining two independent variances; the
+    workload's contribution cancels and the bound shrinks substantially.
+
+    The forwarding is the load-bearing part: pairing that reached only the
+    artifact would leave the campaign reporting the wider bound while claiming
+    the narrower method. ``RegretBound.method`` records which arithmetic ran
+    (``bonferroni_one_sided_t_paired`` vs ``bonferroni_one_sided_welch_t``), so
+    the two cannot silently disagree on disk.
+
+    A campaign with NO ``workload`` block gets ``paired: False`` and the Welch
+    form — deliberately, and this is not conservatism for its own sake. Pairing
+    measurements whose seeds were never shared removes a variance component that
+    was never common, understating the true variance and producing a bound
+    tighter than the data supports. An unearned tight bound is worse than a loose
+    one: only one of the two misleads its reader.
+
+    Recorded in ``confirmation.json`` so a reader can tell which bound they are
+    looking at rather than inferring it from the branch date.
     """
     from statistics import mean, pstdev
 
