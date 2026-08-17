@@ -1148,6 +1148,21 @@ properties:
               spend before reporting uncertified. Default 1. Each further
               round re-measures the winner plus every finalist whose bound
               still exceeded epsilon.
+          foldover:
+            type: boolean
+            description: >
+              Whether the registered foldover is available at all. Default
+              true, which is almost always right: the branch is registered
+              and then gated at RUNTIME by ``alias_consequential`` and
+              ``foldover_affordable``, so on a screen that aliases nothing
+              it simply never fires. Set false only to remove the state and
+              its branch TOGETHER — which is what a campaign that would
+              rather never spend the extra block wants, because a registered
+              branch that can never fire is worse than an absent one:
+              ``enumerate_paths`` would otherwise report a path the campaign
+              cannot take. Deliberately not inferred from
+              ``design.screen.resolution``, which would put the same fact in
+              two places and let them drift.
 
       run_command:
         type: string

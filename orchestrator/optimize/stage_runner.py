@@ -1304,7 +1304,13 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         else:
             basis, levels, value = "none", {}, None
 
-    trans = policy_mod.read_transitions(work_dir)
+    # EPOCH-SCOPED, like every other consumer of this file. `transitions.jsonl`
+    # is append-only ACROSS epochs (see `policy.epoch_transitions`), so an
+    # unfiltered read would splice the previous epoch's rows into THIS epoch's
+    # reported `path` — a campaign whose epoch 1 ended at `exception` and
+    # recompiled would report `screen -> screen -> confirm -> report`, naming a
+    # state transition that never happened in the epoch the report describes.
+    trans = policy_mod.epoch_transitions(pol, work_dir)
     _write_json(Path(work_dir) / "report.json", {
         "recommendation": {
             "levels": levels, "basis": basis,

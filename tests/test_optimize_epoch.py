@@ -106,6 +106,16 @@ def test_a_fixed_campaign_runs_a_clean_second_epoch_to_report(tmp_path, monkeypa
     assert rep["epoch"] == 2 and rep["path"][-1] == "report", rep["path"]
     assert "epoch_ended" not in rep, rep
     assert rep["recommendation"]["levels"], rep
+    # MUTATION-DRIVEN: `path` must be EPOCH-SCOPED. Asserting only `path[-1]`
+    # above passes either way, because splicing epoch 1's rows in PREPENDS
+    # them — so assert the whole thing. Epoch 1 contributed `screen ->
+    # exception`; reading `transitions.jsonl` unfiltered would report
+    # `["screen", "screen", ...]` here and name `exception` as a state epoch 2
+    # passed through, which it never did.
+    assert rep["path"][0] == "screen" and "exception" not in rep["path"], rep["path"]
+    assert rep["path"] == [r["from"] for r in rows if r["epoch"] == 2] + ["report"], (
+        rep["path"]
+    )
 
 
 def test_every_transition_the_runner_writes_records_its_epoch(tmp_path):

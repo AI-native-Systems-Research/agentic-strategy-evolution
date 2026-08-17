@@ -72,11 +72,17 @@ class SyntheticResult:
     recommendation at all, so a test that forgets to check
     ``recommendation`` still fails rather than dividing by a plausible
     number.
+
+    Both bounds keep their QUALIFIED names (spec §3.5). The bare name
+    ``residual_regret`` is deliberately not used for either: at screen/refine
+    that key carries the MODEL bound and at confirm it carries the TERMINAL
+    one, so an unqualified attribute here would read as "the" regret while
+    holding whichever flavour the last state happened to report.
     """
 
     recommendation: dict
     basis: str
-    residual_regret: float | None
+    residual_regret_model: float | None
     residual_regret_terminal: float | None
     true_optimum: dict
     true_best: float
@@ -269,7 +275,7 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
         gap = -gap
     return SyntheticResult(
         recommendation=rec, basis=basis,
-        residual_regret=report.get("residual_regret_model"),
+        residual_regret_model=report.get("residual_regret_model"),
         residual_regret_terminal=report.get("residual_regret_terminal"),
         true_optimum=opt, true_best=best, true_gap=gap, path=path,
         work_dir=work_dir, report=report,
