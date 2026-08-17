@@ -1207,3 +1207,47 @@ properties:
         items:
           type: string
           enum: [build, verify, screen, refine, confirm]
+
+      build_checks:
+        type: object
+        additionalProperties: false
+        description: >
+          Tuning for the two oracles that check what the ``build`` stage
+          actually produced (spec §3.7, oracle 2). Both are on by default
+          and both HARD-FAIL at ``verify``; this block exists to move
+          their thresholds, not to switch them off casually. Ignored
+          entirely when ``build`` is not in ``stages``.
+        properties:
+          allow_preexisting_tests:
+            type: boolean
+            description: >
+              Default false. When false, ``verify`` aborts if any
+              declared ``correctness`` relation's ``native_test`` ALREADY
+              PASSED before the build ran: a test green against a tree
+              without the mechanism is green for some other reason, and
+              it stays green if the build wires the mechanism to nothing.
+              Set true only when the relation genuinely covers
+              pre-existing behaviour — a backward-compatibility test
+              asserting an existing default did not change is the
+              legitimate case.
+          baseline_replicates:
+            type: integer
+            minimum: 1
+            description: >
+              How many times the ``known_valid_baseline`` configuration
+              is measured before the build and again at ``verify``.
+              Default 3 — the smallest count whose mean is not one
+              outlier away from either verdict. Raise it on a noisy
+              target instead of widening the tolerance.
+          baseline_tolerance_pct:
+            type: number
+            exclusiveMinimum: 0
+            description: >
+              Allowed relative shift of the control's mean across the
+              build, as a percent: the campaign aborts when
+              ``|post_mean - pre_mean| / |pre_mean|`` exceeds it.
+              Defaults to ``3 x response.noise_estimate_pct`` when that
+              is declared, else 5.0. Prefer declaring
+              ``noise_estimate_pct`` — it is a fact about the target that
+              several other calculations use — and set this only when the
+              control's variance genuinely differs from the response's.

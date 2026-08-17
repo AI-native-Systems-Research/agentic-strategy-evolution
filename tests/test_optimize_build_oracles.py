@@ -2,6 +2,7 @@
 the build agent is a fake sdk_runner that edits files."""
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -148,3 +149,297 @@ def test_build_stage_snapshots_the_mechanism_it_authored(tmp_path, monkeypatch):
     patch = (Path(wd) / "mechanism.patch").read_text()
     assert "X = 42" in patch and "untracked: test_mech.py" in patch
     assert (Path(wd) / "mechanism.sha256").read_text().strip() == current_mechanism_hash(repo)
+
+
+# ─── oracle 2(b)/(c): the build's own claims, checked against measurement ───
+#
+# Both oracles below are ONE-SIDED by construction: they assert an abort. A
+# check that aborted unconditionally would satisfy them, so each is paired
+# with a passing-direction test on the same machinery — see
+# `test_a_test_that_failed_before_build_and_passes_after_is_accepted` and
+# `test_an_unchanged_baseline_passes_verify`.
+
+
+def _build_campaign(tmp_path, repo):
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+    s = SURFACES["additive"]()
+    c = synthetic_campaign(s, stages=["build", "verify", "screen", "confirm"],
+                           known_valid_baseline={"A": 2, "B": 2, "C": "off"})
+    c["target_system"]["repo_path"] = str(repo)
+    return s, c
+
+
+def _fake_build(writes: dict):
+    """An sdk_runner that edits the target the way a real build agent would.
+
+    `SDKResult` has no `session_id` field, so the fake constructs only the
+    fields the dataclass declares; `text` is what `run_build` persists as the
+    build summary.
+    """
+    from orchestrator.sdk_dispatch import SDKResult
+
+    def runner(**kw):
+        cwd = kw.get("cwd")
+        if cwd is not None:
+            for rel, text in writes.items():
+                Path(cwd).joinpath(rel).write_text(text)
+        return SDKResult(text="built", cost_usd=0.0, num_turns=1)
+    return runner
+
+
+def _declared_ids(campaign):
+    return [r["native_test"]
+            for f in campaign["optimization"]["factors"]
+            for r in f["relations"]]
+
+
+def test_a_test_that_passed_before_build_fails_verify(tmp_path, monkeypatch):
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("prebuilt", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    all_pass = {t: True for t in ids}
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results=all_pass, sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    assert set(json.loads((wd / "pre_build_tests.json").read_text())["passed"]) == set(ids)
+    with pytest.raises(OptimizationAborted, match="passed before the mechanism existed"):
+        run_stage(c, wd, iteration=2, stage="verify",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results=all_pass)
+
+
+def test_a_test_that_failed_before_build_and_passes_after_is_accepted(tmp_path, monkeypatch):
+    """The discriminating half of oracle 2(b).
+
+    This is the SHAPE A BUILD IS SUPPOSED TO HAVE: the declared tests fail
+    before the mechanism exists and pass after it does. Without this test, a
+    check that rejected every build iteration (or that read `pre["ran"]`
+    instead of `pre["passed"]`) would still satisfy the abort test above.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("honest", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    pre = json.loads((wd / "pre_build_tests.json").read_text())
+    assert pre["passed"] == [] and set(pre["ran"]) == set(ids)
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: True for t in ids})
+    assert (Path(wd) / "policy.json").exists()
+
+
+def test_allow_preexisting_tests_opts_out_of_oracle_2b(tmp_path, monkeypatch):
+    """The escape hatch has to actually work, or authors will delete the check.
+
+    A campaign whose correctness relation genuinely covers PRE-EXISTING
+    behaviour (a backward-compatibility test) legitimately passes before the
+    build. The opt-out is the documented way to say so, so exercise it.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    c["optimization"]["build_checks"] = {"allow_preexisting_tests": True}
+    wd = setup_work_dir("optout", repo_path=str(repo), campaign=c)
+    all_pass = {t: True for t in _declared_ids(c)}
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results=all_pass, sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results=all_pass)
+    assert (Path(wd) / "policy.json").exists()
+
+
+def test_baseline_equivalence_hard_fails_when_build_changed_the_control(tmp_path, monkeypatch):
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("shifted", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    pre = {t: False for t in ids}; post = {t: True for t in ids}
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results=pre, sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    shifted = make_synthetic_runner(s, seed=1)
+
+    def post_runner(row):
+        obs = shifted(row); obs["m"] += 5.0; return obs   # build broke the control
+
+    with pytest.raises(OptimizationAborted, match="baseline"):
+        run_stage(c, wd, iteration=2, stage="verify",
+                  config_runner=post_runner, test_results=post)
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["ok"] is False and len(be["pre"]) == len(be["post"]) == 3
+
+
+def test_an_unchanged_baseline_passes_verify(tmp_path, monkeypatch):
+    """The discriminating half of oracle 2(c).
+
+    Same wiring, same replicate count, no shift. A tolerance comparison with
+    the wrong sign (`< tol` instead of `> tol`) or an absolute-vs-relative
+    mix-up would abort here, and the abort test above cannot see that.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("inert", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=make_synthetic_runner(s, seed=2),
+              test_results={t: True for t in ids})
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["ok"] is True
+    assert len(be["pre"]) == len(be["post"]) == 3
+    assert be["levels"] == {"A": 2, "B": 2, "C": "off"}
+    assert (Path(wd) / "policy.json").exists()
+
+
+def test_baseline_equivalence_records_the_measurement_even_when_it_passes(tmp_path, monkeypatch):
+    """A tolerance the reader cannot see is a tolerance nobody can audit.
+
+    `baseline_equivalence.json` is the certificate that the mechanism is inert
+    at its control level, so the resolved tolerance and both means must be on
+    disk whether or not the check tripped.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    c["optimization"]["build_checks"] = {"baseline_replicates": 2,
+                                         "baseline_tolerance_pct": 25.0}
+    wd = setup_work_dir("recorded", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=make_synthetic_runner(s, seed=2),
+              test_results={t: True for t in ids})
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["tolerance_pct"] == 25.0
+    assert len(be["pre"]) == len(be["post"]) == 2
+    assert be["pre_mean"] == pytest.approx(sum(be["pre"]) / 2)
+    assert be["post_mean"] == pytest.approx(sum(be["post"]) / 2)
+
+
+def test_build_without_known_valid_baseline_is_rejected_by_the_validator():
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+    from orchestrator.validate import validate_optimization_campaign
+    c = synthetic_campaign(SURFACES["additive"](),
+                           stages=["build", "verify", "screen", "confirm"])
+    assert any("known_valid_baseline" in e for e in validate_optimization_campaign(c))
+
+
+def test_a_campaign_without_build_still_needs_no_baseline():
+    """Rule 15 must not become a blanket requirement.
+
+    `known_valid_baseline` stays optional for the ~3-call campaigns that add no
+    mechanism; only the build stage's inertness check makes it load-bearing.
+    """
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+    from orchestrator.validate import validate_optimization_campaign
+    c = synthetic_campaign(SURFACES["additive"](),
+                           stages=["verify", "screen", "confirm"])
+    assert not any("known_valid_baseline" in e
+                   for e in validate_optimization_campaign(c))
+
+
+def test_the_tolerance_is_relative_to_the_metric_not_an_absolute_delta(tmp_path, monkeypatch):
+    """`|post-pre|/|pre| > tol/100`, NOT `|post-pre| > tol/100`.
+
+    A mutation test caught this: on the additive surface the control sits near
+    10.0 and the default tolerance is 5%, so a 5.0 shift trips BOTH forms and a
+    noise-level shift trips neither — the abort/pass pair above cannot tell the
+    relative form from the absolute one. Here the metric is scaled up 1000x and
+    shifted by 0.4% of it. That is far inside 5% relative (must PASS) and far
+    outside 0.05 absolute (the absolute form would abort).
+
+    The distinction is not cosmetic: on a target measuring nanoseconds or bytes
+    the absolute form aborts every campaign, and on one measuring a ratio in
+    [0,1] it never aborts at all.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("scaled", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+
+    def _scaled(seed, bump=0.0):
+        inner = make_synthetic_runner(s, seed=seed)
+
+        def run(row):
+            obs = inner(row); obs["m"] = obs["m"] * 1000.0 + bump; return obs
+        return run
+
+    run_stage(c, wd, iteration=1, stage="build", config_runner=_scaled(1),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    pre_mean = json.loads((wd / "baseline_equivalence.json").read_text())["pre_mean"]
+    # 0.4% of the control: inside the 5% relative band, outside 0.05 absolute.
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=_scaled(1, bump=0.004 * pre_mean),
+              test_results={t: True for t in ids})
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["ok"] is True
+    assert abs(be["post_mean"] - be["pre_mean"]) > be["tolerance_pct"] / 100.0, (
+        "the shift must exceed the ABSOLUTE reading of the tolerance, or this "
+        "test cannot distinguish the two forms"
+    )
+
+
+def test_a_control_that_cannot_be_measured_is_not_equivalence(tmp_path, monkeypatch):
+    """NaN on either side must ABORT, not pass.
+
+    A control that failed to measure was not shown to be inert. Reading NaN as
+    equivalence would make the oracle strongest exactly where the apparatus is
+    weakest — the target emitting no metric for the baseline configuration is a
+    bigger problem than a shifted mean, not a smaller one.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("nanctl", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+
+    def _no_metric(row):
+        return {"other": 1.0}          # the primary metric is simply absent
+
+    with pytest.raises(OptimizationAborted, match="baseline"):
+        run_stage(c, wd, iteration=2, stage="verify", config_runner=_no_metric,
+                  test_results={t: True for t in ids})
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["ok"] is False
