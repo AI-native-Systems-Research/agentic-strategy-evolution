@@ -297,6 +297,74 @@ def test_aliasing_is_recorded_not_silently_dropped():
     assert fit.aliases, "res-IV fit reported no alias pairs"
 
 
+def test_the_collapse_records_which_terms_it_absorbed_on_every_res_iv_design():
+    """`alias_classes` was built by the collapse and then silently discarded.
+
+    The collapse is what makes a res-IV screen fittable; recording WHERE each
+    absorbed term went is what makes the confounding actionable. `Fit.aliases`
+    reports the design-level label pairs, but with no link to the coefficient
+    that carries the shared estimate — and that link is exactly what
+    `decide.alias_consequential` needs to ask whether resolving the alias could
+    change the recommendation. Without it the campaign can report aliasing and
+    can never act on it, which is spec §1's "diagnosis without action".
+    """
+    from orchestrator.optimize.design import fractional_factorial, is_tabulated
+    from orchestrator.optimize.effects import fit_effects
+
+    for k in (4, 5, 6, 7, 8):
+        if not is_tabulated(k, 4):
+            continue
+        ids = tuple(chr(65 + i) for i in range(k))
+        design = fractional_factorial(list(ids), 4)
+        ys = [float((i * 7) % 11) for i in range(len(design.points))]
+        fit = fit_effects(design, ys, factor_ids=ids)
+        recorded = {
+            (e.label, "".join(alt))
+            for e in fit.effects for alt, _sign in e.aliased_with
+        }
+        assert recorded, f"k={k} res=4 collapsed columns but recorded nothing"
+        # Every 2fi the design confounds is accounted for: either it IS a fitted
+        # column, or some fitted effect names it as an absorbed alternative.
+        fitted = {e.label for e in fit.effects}
+        absorbed = {alt for _kept, alt in recorded}
+        import itertools as _it
+        for i, j in _it.combinations(range(k), 2):
+            lab = f"{ids[i]}{ids[j]}"
+            assert lab in fitted or lab in absorbed, (k, lab)
+        # And the sign is always recorded — every tabulated generator word is
+        # positive, so on these designs the aliased columns are IDENTICAL.
+        assert all(
+            sign == 1.0 for e in fit.effects for _alt, sign in e.aliased_with
+        ), f"k={k}: a tabulated res-IV design reported a negated alias"
+
+
+def test_a_res_iii_design_records_the_2fi_on_the_main_effect_it_collapsed_onto():
+    """Resolution III aliases 2fi onto MAINS, so the record lands there.
+
+    `dropped_factors` must be unaffected: it reads `significant` on the main
+    effect, and absorbing an interaction into that column changes what the
+    coefficient MEANS but not whether the fit found it distinguishable from
+    zero.
+    """
+    from orchestrator.optimize.design import fractional_factorial, with_center_points
+    from orchestrator.optimize.effects import dropped_factors, fit_effects
+
+    ids = tuple("ABCDEFG")
+    design = with_center_points(fractional_factorial(list(ids), 3), 4)
+    ys = [float((i * 7) % 11) for i in range(len(design.points))]
+    fit = fit_effects(design, ys, factor_ids=ids)
+    # No 2fi column survives on a saturated res-III design: every one of the 21
+    # is absorbed into a main effect.
+    assert {e.label for e in fit.effects} == set(ids)
+    on_mains = {
+        (e.label, "".join(alt))
+        for e in fit.effects for alt, _s in e.aliased_with
+    }
+    assert ("A", "BD") in on_mains or ("A", "CE") in on_mains, sorted(on_mains)
+    # Unaffected: still a list of factor ids, still drawn from `significant`.
+    assert set(dropped_factors(fit, ids)) <= set(ids)
+
+
 def test_resolution_v_is_unchanged_by_the_alias_collapse():
     """No regression: at resolution V nothing is aliased, so nothing collapses."""
     from orchestrator.optimize.design import fractional_factorial

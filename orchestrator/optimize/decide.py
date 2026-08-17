@@ -190,6 +190,153 @@ def recommend(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict
     return best
 
 
+def alias_resolutions(fit: Fit) -> list[tuple[int, str, str, Fit]]:
+    """Every alternative reading of this fit's confounded coefficients.
+
+    One entry per ``(effect, alternative)`` pair on ``Effect.aliased_with``:
+    ``(effect_index, kept_label, alt_label, alt_fit)`` where ``alt_fit`` is
+    ``fit`` with that one coefficient RE-ATTRIBUTED to the alternative term —
+    relabelled, re-termed, and **re-signed**.
+
+    THE RE-SIGNING IS THE POINT, AND IT IS WHY THIS IS A NAMED FUNCTION RATHER
+    THAN AN INLINE LOOP. A fractional design's aliased columns are either
+    identical or exact negatives of each other. For an orthogonal ±1 design the
+    coefficient is ``sum_i x_ij y_i / N``, so the alternative reading of a
+    NEGATED alias is ``-beta``, not ``beta``. Verified arithmetic: on a 4-run
+    design with ``col_C = -col_AB`` and a response driven purely by ``C`` at
+    ``+2.0``, the fit reports ``beta_C = +2.0`` and ``beta_AB = -2.0``.
+    Re-labelling without re-signing therefore claims the alternative term pushes
+    the response in the OPPOSITE physical direction from what the data says —
+    and since the two readings then differ, the error is not self-cancelling: a
+    consumer would compare the recommendation against a resolution nobody
+    proposed.
+
+    Observable directly: with ``C = +5.0`` aliased onto ``(A, B)``, the
+    alternative reading recommends ``A*B = +1`` at ``sign = +1`` and
+    ``A*B = -1`` at ``sign = -1`` — opposite advice about the same two factors.
+    ``test_alias_resolutions_re_signs_a_negated_alias`` pins exactly that.
+
+    Note what re-signing does NOT change: whether the alias is *consequential*.
+    Dropping the kept term frees every factor it spanned, and when that
+    coefficient is large SOME member of the alternative's optimal set is
+    materially worse under the fitted reading whichever way the sign points. So
+    the boolean verdict is usually sign-invariant while the RECOMMENDED
+    CONFIGURATION is not — which is precisely why the sign must be right even
+    though a boolean-level test cannot see it.
+    """
+    import dataclasses
+
+    out: list[tuple[int, str, str, Fit]] = []
+    for i, e in enumerate(fit.effects):
+        for alt_terms, sign in e.aliased_with:
+            swapped = list(fit.effects)
+            swapped[i] = dataclasses.replace(
+                e, terms=tuple(alt_terms), label="".join(alt_terms),
+                estimate=e.estimate * float(sign), aliased_with=(),
+            )
+            out.append((
+                i, e.label, "".join(alt_terms),
+                dataclasses.replace(fit, effects=tuple(swapped)),
+            ))
+    return out
+
+
+def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
+                        held_fixed: dict, exclude_levels=(),
+                        epsilon_pct: float = 2.0) -> list[tuple[str, str]]:
+    """Aliased pairs whose resolution could change the recommended winner.
+
+    Spec §3.4 / paper §Illustrative: "If every plausible resolution of an alias
+    gives the same winner, resolving it cannot change the decision; if one can
+    change the winner, the policy may spend a registered foldover." This is the
+    test that makes aliasing a RESOURCE question. It costs nothing to run (pure
+    arithmetic over the fitted coefficients and the candidate space) and it is
+    what gates the one state in this kind that spends budget purely to remove an
+    assumption.
+
+    Returns ``(kept_label, alt_label)`` pairs — ``AB``'s estimate could just as
+    truthfully belong to ``CD``, and believing the latter would move the answer.
+    An empty list means the aliasing is real, recorded, and irrelevant to the
+    decision, so a foldover would buy a cleaner model and a worse campaign.
+
+    HOW A RESOLUTION IS CONSTRUCTED. For each alternative on
+    ``Effect.aliased_with``, the kept effect is RELABELLED to the alternative's
+    terms and its estimate multiplied by the recorded ``sign``. Both halves
+    matter:
+
+      * relabelling moves the coefficient onto the alternative's column, which
+        is the whole content of "the shared estimate might belong to CD";
+      * the sign converts the coefficient from "per unit of the kept column" to
+        "per unit of the alternative column". For an orthogonal +/-1 design
+        ``beta = sum_i x_ij y_i / N``, so a column that is the exact negation of
+        the kept one carries exactly ``-beta``. Skipping the multiply on a
+        negated alias would swap in a term pointing the WRONG WAY — the
+        recommendation would then be compared against a resolution nobody
+        proposed, and the test could both fire spuriously and miss a real flip.
+        (No tabulated design produces a negated alias today; a hand-built or
+        folded one can, and ``effects.py`` has always detected the case.)
+
+    WHY THE COMPARISON IS NOT ``alt.levels != base.levels``. Two reasons, both
+    measured on the synthetic oracle:
+
+      1. FALSE POSITIVES. Removing the kept term from the model leaves the
+         factors it spanned unconstrained, so ``recommend`` falls back to its
+         enumeration tie-break for them — and any factor whose main effect is
+         indistinguishable from zero will happily flip level for a difference of
+         1e-2. On ``SURFACES["additive"]`` at four 2-level factors (no
+         interaction anywhere in the truth) a bare level comparison fired on
+         12 of 30 seeds, which would make the "registered" foldover effectively
+         unconditional — the opposite defect from never spending it.
+      2. FALSE NEGATIVES. The same tie-break can also land on the SAME levels by
+         luck, hiding a genuinely consequential alias. On
+         ``SURFACES["interaction_only"]``, where ``AB`` is the entire signal and
+         ``CD`` is noise, a bare level comparison fired on only 16 of 30 seeds.
+
+    So the criterion is the paper's own, quantified over the ALTERNATIVE's
+    optimal set rather than over its arbitrary argmax: take every candidate the
+    alternative resolution rates within its own epsilon of best — those are the
+    configurations that resolution calls "the winner" — and ask whether ANY of
+    them loses more than epsilon under the resolution actually fitted. If some
+    resolution's winner is materially worse under the other reading, the two
+    readings disagree about the winner and a run can settle it. With this
+    criterion the same two surfaces separate completely: 30/30 on
+    ``interaction_only``, 0/30 on the additive control.
+
+    ``epsilon_pct`` is the indifference width as a percentage of the leading
+    prediction, matching ``certificate.resolve_epsilon``'s ``pct`` default. It
+    is a percentage rather than the resolved absolute width because the two
+    resolutions predict different values, so each side is measured against its
+    own scale.
+    """
+    kw = dict(direction=direction, fitted_ids=fitted_ids, held_fixed=held_fixed,
+              exclude_levels=exclude_levels)
+    base_all = ranked(fit, factors, top=None, **kw)
+    if not base_all:
+        return []
+    base = base_all[0]
+    eps = abs(base.predicted) * float(epsilon_pct) / 100.0
+    sign_d = 1.0 if direction != "minimize" else -1.0
+
+    out: list[tuple[str, str]] = []
+    for _i, kept_label, alt_label, alt_fit in alias_resolutions(fit):
+        alt_all = ranked(alt_fit, factors, top=None, **kw)
+        if not alt_all:
+            continue
+        alt_eps = abs(alt_all[0].predicted) * float(epsilon_pct) / 100.0
+        for c in alt_all:
+            # Everything this resolution is indifferent between: its own
+            # epsilon-optimal set. `alt_all` is sorted best-first, so the first
+            # candidate outside that set ends the scan. Anything worse than it is
+            # not a candidate for "the winner under this resolution".
+            if sign_d * (alt_all[0].predicted - c.predicted) > alt_eps:
+                break
+            loss = sign_d * (base.predicted - predict(fit, c.coded))
+            if loss > eps:
+                out.append((kept_label, alt_label))
+                break
+    return out
+
+
 def ranked(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict,
            exclude_levels=(), top: int | None = 5) -> list[Candidate]:
     """The best ``top`` candidates, best first; ``top=None`` for all of them.

@@ -31,9 +31,20 @@ def test_compiled_policy_validates_against_its_schema():
 
 
 def test_default_policy_has_the_documented_states_and_initial():
+    """The state set of spec §3.3's table, `foldover` included.
+
+    `foldover` joined the default set with the registered-foldover work: the
+    branch has to be registered at COMPILE time, because whether the aliasing
+    turns out consequential is a fact about measurements and a policy that read
+    a measurement would not be a pre-registration. It is gated at runtime by
+    `alias_consequential` / `foldover_affordable` instead, and removed entirely
+    by `optimization.policy.foldover: false`.
+    """
     pol = compile_policy(_campaign())
     assert pol["initial"] == "screen"
-    assert set(pol["states"]) == {"screen", "refine", "confirm", "report", "exception"}
+    assert set(pol["states"]) == {
+        "screen", "foldover", "refine", "confirm", "report", "exception",
+    }
     assert pol["states"]["report"]["terminal"] and not pol["states"]["report"]["spends"]
     assert pol["states"]["exception"]["ends_epoch"] is True
 

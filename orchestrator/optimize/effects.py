@@ -52,7 +52,38 @@ from orchestrator.optimize.design import Design, alias_pairs
 
 @dataclass(frozen=True)
 class Effect:
-    """One estimated model term."""
+    """One estimated model term.
+
+    ``aliased_with`` names every term whose design column coincided with this
+    effect's column and which was therefore NOT fitted separately — the
+    confounding a fractional design cannot resolve. Each entry is
+    ``(terms, sign)``:
+
+      * ``terms`` is the alternative term tuple, e.g. ``("C", "D")`` on the
+        ``AB`` effect of a resolution-IV screen;
+      * ``sign`` is ``+1.0`` when the alternative's column is IDENTICAL to the
+        kept column and ``-1.0`` when it is the exact NEGATION of it.
+
+    THE SIGN IS LOAD-BEARING AND IS NOT DECORATION. The coefficient is
+    attributed to the KEPT term's column, and re-attributing it to the
+    alternative means asking "what would the fit have found had it regressed
+    on the alternative's column instead?". For an orthogonal ±1 design the
+    coefficient is ``sum_i x_ij y_i / N``, so regressing on ``-x`` instead of
+    ``x`` returns exactly ``-beta``. Concretely, with a 4-run design where
+    ``col_AB = (1, -1, -1, 1)`` and ``col_C = -col_AB``, a response generated
+    purely by ``C`` at ``+2.0`` fits ``beta_C = +2.0`` and ``beta_AB = -2.0``
+    (verified arithmetic). A consumer that re-labelled ``AB``'s estimate as
+    ``C`` while KEEPING its sign would therefore claim ``C`` pushes the
+    response down when it pushes it up — reversing the physical direction of
+    the effect. ``decide.alias_consequential`` multiplies by ``sign`` for
+    exactly this reason.
+
+    No design ``design.py`` currently tabulates produces a negated alias (every
+    published generator word is positive, so all aliased columns are
+    identical), but the detection loop below has always handled the negated
+    case and a hand-built or folded design can reach it — so the sign is
+    recorded rather than assumed to be ``+1``.
+    """
 
     label: str
     terms: tuple[str, ...]
@@ -61,6 +92,7 @@ class Effect:
     ci_low: float | None = None
     ci_high: float | None = None
     significant: bool | None = None
+    aliased_with: tuple[tuple[tuple[str, ...], float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,8 +189,34 @@ def fit_effects(design: Design, responses, *, factor_ids,
     # ("resolve it only if it could change the decision") rather than a crash.
     #
     # `alias_classes` maps the representative label to every term sharing its
-    # column, so a caller can report the confounding instead of hiding it.
-    alias_classes: dict[str, tuple[tuple[str, ...], ...]] = {}
+    # column, so a caller can report the confounding instead of hiding it. Each
+    # entry carries a SIGN: +1 when the aliased column is identical to the kept
+    # one, -1 when it is its exact negation. See `Effect.aliased_with` for why
+    # the sign cannot be dropped (re-attributing a negated alias's coefficient
+    # without flipping it reverses the effect's physical direction), and
+    # `decide.alias_consequential` for the one consumer that applies it.
+    #
+    # THE COMPARISON IS OVER EVERY DESIGN POINT, NOT OVER CORNERS ONLY.
+    # `alias_pairs` restricts itself to corners because it answers a question
+    # about the design FAMILY's resolution; this loop answers a different
+    # question — "is this column a literal duplicate of one already in X?" —
+    # and that is a question about the matrix actually being solved. Two
+    # consequences of getting it wrong:
+    #
+    #   * corner-only UNDER-detects nothing but OVER-detects catastrophically on
+    #     a design with no corners at all (axial + centre points only, which
+    #     `Design.corners` reports as an empty tuple): every column's corner
+    #     projection is then the empty tuple, so every term would be recorded as
+    #     aliased onto the first main effect and the whole model would collapse
+    #     to one column.
+    #   * on a central composite the axial rows are what keep `AB` distinct from
+    #     `A` in the full matrix; verified that corner-only agrees there (k=2..5,
+    #     no spurious alias either way), so nothing is lost by using every row.
+    #
+    # Centre rows cannot manufacture a false alias: they contribute a matching
+    # 0.0 to every column, so two columns that differ on any other row still
+    # differ, and two that agree everywhere else still agree.
+    alias_classes: dict[str, tuple[tuple[tuple[str, ...], float], ...]] = {}
     if include_interactions and k >= 2:
         seen: dict[tuple[float, ...], int] = {}
         for j2, fid in enumerate(ids):          # main-effect columns already added
@@ -167,13 +225,19 @@ def fit_effects(design: Design, responses, *, factor_ids,
             col = [p.coded[i] * p.coded[j] for p in pts]
             key = tuple(col)
             neg = tuple(-v for v in col)
-            hit = seen.get(key, seen.get(neg))
+            hit = seen.get(key)
+            sign = 1.0
+            if hit is None:
+                hit = seen.get(neg)
+                sign = -1.0
             if hit is not None:
-                # Aliased with an existing column: record the confounding and do
-                # NOT add a duplicate column.
+                # Aliased with an existing column: record the confounding (with
+                # the sign relating the two columns) and do NOT add a duplicate
+                # column.
                 rep = labels[hit]
-                alias_classes.setdefault(rep, ())
-                alias_classes[rep] = alias_classes[rep] + ((ids[i], ids[j]),)
+                alias_classes[rep] = alias_classes.get(rep, ()) + (
+                    ((ids[i], ids[j]), sign),
+                )
                 continue
             seen[key] = len(cols)
             labels.append(f"{ids[i]}{ids[j]}")
@@ -237,8 +301,16 @@ def fit_effects(design: Design, responses, *, factor_ids,
             se = math.sqrt(pe_var / ss_j)
             lo, hi = est - tcrit * se, est + tcrit * se
             sig = not (lo <= 0.0 <= hi)
+        # Surface the confounding on the Effect itself. `alias_classes` was
+        # already being built above and then silently discarded, which left the
+        # aliasing knowable only as `Fit.aliases` — a design-level list of label
+        # pairs with no link to the coefficient that actually carries the shared
+        # estimate. `decide.alias_consequential` needs that link (which
+        # coefficient, which alternatives, at which sign) to ask whether
+        # resolving the alias could change the recommendation.
         eff = Effect(label=labels[idx], terms=terms[idx], estimate=est,
-                     se=se, ci_low=lo, ci_high=hi, significant=sig)
+                     se=se, ci_low=lo, ci_high=hi, significant=sig,
+                     aliased_with=alias_classes.get(labels[idx], ()))
         (quads if idx >= quad_start else built).append(eff)
 
     lof_f = lof_p = None
