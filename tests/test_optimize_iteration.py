@@ -657,18 +657,45 @@ def test_confirm_replicates_one_configuration_rather_than_rerunning_the_screen(
     assert sorted(p.replicate for p in confirm.points) == [0, 1, 2]
 
 
-def test_confirm_honours_the_refine_stages_solved_optimum(tmp_path, work_dir):
-    """The loop must close: refine solves a point, confirm replicates THAT."""
-    from orchestrator.optimize.factors import parse_factors
-    from orchestrator.optimize.stage_runner import _build_design
+def test_confirm_honours_the_previous_stages_recommendation(tmp_path, work_dir):
+    """The loop must close: a stage recommends, confirm replicates THAT.
 
+    Task 7 moved the handoff from ``confirm_at.json`` (the refine stage's
+    stationary point, in CODED coordinates) to ``recommendation.json`` (the
+    argmax over X_valid, in REAL levels). Asserted end to end rather than
+    through ``_build_design``, because the design no longer carries the target
+    at all — ``run_stage`` pins each row's ``levels`` and renders ``apply``
+    from them, which is what makes the coordinate-discarding class of bug
+    (``role="center"``) unexpressible here.
+    """
     c = _campaign()
-    factors = parse_factors(c["optimization"]["factors"])
-    cfg = dict(c["optimization"]["design"])
-    cfg["confirm_at"] = {"A": 0.5, "B": -0.25, "C": 0.0}
+    c["optimization"]["stages"] = ["verify", "screen", "confirm"]
+    wd = _init_work_dir(tmp_path, c)
 
-    confirm = _build_design(factors, cfg, "confirm")
-    assert confirm.points[0].coded == (0.5, -0.25, 0.0)
+    _run(c, wd, stage="screen", iteration=2)
+    rec = json.loads(
+        (Path(wd) / "runs" / "iter-2" / "recommendation.json").read_text(),
+    )
+    assert rec["levels"], rec
+
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=3)
+
+    record = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
+    )
+    assert record["confirmed_at_levels"] == rec["levels"], (
+        f"confirm ran {record['confirmed_at_levels']} but the recommendation "
+        f"was {rec['levels']}"
+    )
+    matrix_payload = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "design_matrix.json").read_text(),
+    )
+    assert matrix_payload["confirm_source"] == "recommendation"
+    assert all(row["levels"] == rec["levels"] for row in matrix_payload["rows"])
+    # And every replicate ACTUALLY ran there, not just the plan.
+    for row in artifacts.read_runs(Path(wd) / "runs" / "iter-3"):
+        assert row["levels"] == rec["levels"], row
 
 
 def test_confirm_writes_a_confirmation_record_and_no_effects(tmp_path, work_dir):
@@ -772,33 +799,100 @@ def test_a_noisy_runner_exercises_significance_and_survivor_selection(
     )
 
 
-def test_confirm_at_is_read_from_the_latest_iteration_numerically(tmp_path):
+def test_the_recommendation_is_read_from_the_latest_iteration_numerically(tmp_path):
     """Lexicographic path sorting picks iter-2 over iter-10.
 
     "iter-10" sorts before "iter-2" as a string, so a lexicographic sort
-    silently replicates a STALE optimum on any campaign reaching double-digit
-    iterations — a wrong answer with no error. Found by review of the confirm
-    fix itself, on a path nothing drove.
+    silently replicates a STALE recommendation on any campaign reaching
+    double-digit iterations — a wrong answer with no error. Found by review of
+    the confirm fix itself, on a path nothing drove; carried forward from
+    ``confirm_at.json`` to ``recommendation.json`` because the hazard is in
+    the directory names, not in the file.
     """
-    from orchestrator.optimize.stage_runner import _read_confirm_at
+    from orchestrator.optimize.stage_runner import _read_recommendation
 
-    for iteration, value in ((2, {"A": 0.1}), (9, {"A": 0.5}), (10, {"A": 0.9})):
+    for iteration, level in ((2, 2), (9, 8), (10, 16)):
         d = tmp_path / "runs" / f"iter-{iteration}"
         d.mkdir(parents=True)
-        (d / "confirm_at.json").write_text(json.dumps(value))
+        (d / "recommendation.json").write_text(
+            json.dumps({"stage": "screen", "levels": {"A": level}}),
+        )
 
-    assert _read_confirm_at(tmp_path) == {"A": 0.9}
+    assert _read_recommendation(tmp_path)["levels"] == {"A": 16}
 
 
-def test_confirm_at_survives_a_non_numeric_iteration_directory(tmp_path):
-    from orchestrator.optimize.stage_runner import _read_confirm_at
+def test_the_recommendation_read_survives_a_non_numeric_iteration_directory(tmp_path):
+    from orchestrator.optimize.stage_runner import _read_recommendation
 
     (tmp_path / "runs" / "iter-3").mkdir(parents=True)
-    (tmp_path / "runs" / "iter-3" / "confirm_at.json").write_text('{"A": 0.4}')
+    (tmp_path / "runs" / "iter-3" / "recommendation.json").write_text(
+        '{"levels": {"A": 4}}',
+    )
     (tmp_path / "runs" / "iter-bogus").mkdir(parents=True)
-    (tmp_path / "runs" / "iter-bogus" / "confirm_at.json").write_text('{"A": 0.0}')
+    (tmp_path / "runs" / "iter-bogus" / "recommendation.json").write_text(
+        '{"levels": {"A": 99}}',
+    )
 
-    assert _read_confirm_at(tmp_path) == {"A": 0.4}
+    assert _read_recommendation(tmp_path)["levels"] == {"A": 4}
+
+
+def test_no_recommendation_anywhere_reads_as_none_rather_than_raising(tmp_path):
+    """Three callers branch on this: refine's held-fixed lookup, confirm's
+    target, and the screen stage (which has no predecessor by construction).
+    A missing artifact is the ordinary first-stage case, not an error."""
+    from orchestrator.optimize.stage_runner import _read_recommendation
+
+    assert _read_recommendation(tmp_path) is None          # no runs/ at all
+    (tmp_path / "runs" / "iter-1").mkdir(parents=True)
+    assert _read_recommendation(tmp_path) is None          # runs/, no artifact
+    assert _read_recommendation(None) is None
+
+
+def test_a_malformed_recommendation_is_skipped_for_an_older_readable_one(tmp_path):
+    """A torn write must not blind the campaign to the recommendation it has.
+
+    ``_write_json`` is not atomic across a crash, so the newest file is the
+    one that can be half-written. Falling back to the previous iteration's
+    recommendation is a stale-but-real answer; raising here would abort a
+    campaign that has a perfectly usable one on disk.
+    """
+    from orchestrator.optimize.stage_runner import _read_recommendation
+
+    (tmp_path / "runs" / "iter-2").mkdir(parents=True)
+    (tmp_path / "runs" / "iter-2" / "recommendation.json").write_text(
+        json.dumps({"stage": "screen", "levels": {"A": 8}}),
+    )
+    (tmp_path / "runs" / "iter-3").mkdir(parents=True)
+    (tmp_path / "runs" / "iter-3" / "recommendation.json").write_text('{"levels":')
+
+    assert _read_recommendation(tmp_path)["levels"] == {"A": 8}
+
+
+def test_measured_infeasible_collects_infeasible_and_rejected_levels(tmp_path):
+    """The exclusion set the argmax subtracts from X_valid.
+
+    ``infeasible`` (a constraint said no) and ``rejected`` (the integrity
+    check said no) are both direct evidence a configuration cannot be
+    recommended. ``complete`` and ``failed`` rows are not: a completed row is
+    admissible, and a failed one says nothing about admissibility.
+    """
+    from orchestrator.optimize.artifacts import append_run
+    from orchestrator.optimize.stage_runner import _measured_infeasible
+
+    iter_dir = tmp_path / "runs" / "iter-2"
+    iter_dir.mkdir(parents=True)
+    for idx, status in enumerate(
+        ("complete", "infeasible", "rejected", "failed"),
+    ):
+        append_run(iter_dir, {
+            "row_index": idx, "levels": {"A": idx}, "role": "corner",
+            "replicate": 0, "status": status, "response": {"m": 1.0},
+            "held_out": {}, "manipulation": [], "invariants": [],
+            "duration_ms": 1, "error": "",
+        })
+
+    assert _measured_infeasible(tmp_path) == [{"A": 1}, {"A": 2}]
+    assert _measured_infeasible(tmp_path / "nowhere") == []
 
 
 def test_stage_for_iteration_rejects_a_non_positive_iteration():
@@ -880,9 +974,13 @@ def test_refine_refuses_to_fabricate_a_design_when_nothing_is_refinable():
     `numeric`) meant NOTHING was refinable, but refine ran anyway and fitted
     quadratic terms for the categorical factors. Two came out exactly 0.0,
     the Hessian went singular, solve_stationary_point returned None, no
-    confirm_at.json was written, and `confirm` replicated the ORIGIN. The
+    confirm target was written, and `confirm` replicated the ORIGIN. The
     campaign had already observed the true optimum (117.854) and then
     confirmed a 73.476 centre point instead.
+
+    Task 7 retired that handoff (confirm replicates ``recommendation.json``
+    now), but the reason to refuse here is unchanged: a quadratic term for a
+    categorical factor is meaningless whatever consumes it.
     """
     from orchestrator.optimize.factors import parse_factors
     from orchestrator.optimize.stage_runner import _build_design
@@ -915,28 +1013,51 @@ def test_design_factor_ids_is_empty_at_refine_when_nothing_is_refinable():
     assert len(_design_factor_ids(factors, c["optimization"]["design"], "screen")) == 2
 
 
-def test_confirm_replicates_the_best_observed_config_when_there_is_no_fitted_optimum(
+def test_confirm_replicates_the_best_observed_config_when_there_is_no_recommendation(
     tmp_path, work_dir,
 ):
     """Replicating the ORIGIN was actively misleading.
 
     On a live campaign the screen stage observed goodput 117.854 and confirm
     reproduced a 73.476 centre point — the campaign found the right answer
-    and reported the wrong one. With no fitted stationary point (refine
-    skipped, or its solve singular), the honest thing to reproduce is the
-    best configuration actually measured.
+    and reported the wrong one. With nothing recommending a configuration,
+    the honest thing to reproduce is the best one actually measured.
+
+    BEHAVIOUR CHANGE, Task 7. The trigger for this fallback used to be "no
+    fitted stationary point", which a screen-only campaign always met — so
+    this test drove it by running screen and then confirm. Every fitting stage
+    now writes ``recommendation.json``, so a screen-only campaign has a
+    recommendation and confirm replicates THAT (see
+    ``test_confirm_honours_the_previous_stages_recommendation``). The fallback
+    survives for the case that genuinely has nothing to go on: measurements on
+    disk from an earlier iteration but no recommendation with them, which is
+    what a resumed or hand-assembled work_dir looks like. Driven by writing
+    the runs directly, because the production path can no longer produce it.
     """
     from orchestrator.iteration import IterationOutcome
+    from orchestrator.optimize.artifacts import append_run
     from orchestrator.optimize.stage_runner import _best_observed
 
     c = _campaign()
     c["optimization"]["stages"] = ["verify", "screen", "confirm"]
     wd = _init_work_dir(tmp_path, c)
 
-    # screen first, so there are observations to pick a winner from
-    _run(c, wd, stage="screen", iteration=2)
+    # Measurements with no recommendation beside them.
+    iter_dir = Path(wd) / "runs" / "iter-2"
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    for idx, (levels, value) in enumerate((
+        ({"A": 2, "B": 2, "C": 2}, 10.0),
+        ({"A": 16, "B": 16, "C": 16}, 42.0),
+        ({"A": 2, "B": 16, "C": 2}, 11.0),
+    )):
+        append_run(iter_dir, {
+            "row_index": idx, "levels": levels, "role": "corner",
+            "replicate": 0, "status": "complete", "response": {"m": value},
+            "held_out": {}, "manipulation": [], "invariants": [],
+            "duration_ms": 1, "error": "",
+        })
     best = _best_observed(wd, "m")
-    assert best is not None
+    assert best is not None and math.isclose(best["m"], 42.0)
 
     outcome = _run(c, wd, stage="confirm", iteration=3)
     assert outcome is IterationOutcome.COMPLETED
@@ -948,8 +1069,10 @@ def test_confirm_replicates_the_best_observed_config_when_there_is_no_fitted_opt
         "confirm must replicate the best OBSERVED configuration, not the "
         "geometric origin"
     )
-    # and the mean it reports must match what that config actually scores
-    assert math.isclose(record["mean"], best["m"], rel_tol=1e-6)
+    matrix_payload = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "design_matrix.json").read_text(),
+    )
+    assert matrix_payload["confirm_source"] == "best_observed"
 
 
 def test_best_observed_ignores_non_complete_rows(tmp_path, work_dir):
@@ -979,15 +1102,22 @@ def test_best_observed_ignores_non_complete_rows(tmp_path, work_dir):
 def test_confirm_flags_a_fitted_optimum_that_loses_to_an_observed_corner(
     tmp_path, work_dir, caplog,
 ):
-    """A fitted stationary point is an extrapolation and can be WORSE.
+    """A model's predicted optimum is an extrapolation and can be WORSE.
 
     "The prediction reproduced" and "this is the best configuration found"
-    are different claims. When the surface is mis-specified the solved point
-    can land below a corner the screen already measured; replicating it then
-    yields tight agreement between replicates and a status of CONFIRMED,
+    are different claims. When the surface is mis-specified the predicted
+    point can land below a corner the screen already measured; replicating it
+    then yields tight agreement between replicates and a status of CONFIRMED,
     while the campaign quietly reports an inferior configuration as its
     optimum. confirmation.json must record both facts so the artifact stays
     honest when they disagree.
+
+    Task 7 note: the disagreement is driven by the RUNNER (which scores 10
+    below the observed best wherever confirm runs), not by pinning confirm at
+    a poor configuration. A ``confirm_at.json`` written here used to do the
+    pinning; that file is no longer read by anything, and the runner alone is
+    what this test needs — the check under test compares the confirm mean
+    against ``_best_observed``, and is indifferent to how they came to differ.
     """
     import logging
 
@@ -1000,11 +1130,6 @@ def test_confirm_flags_a_fitted_optimum_that_loses_to_an_observed_corner(
     _run(c, wd, stage="screen", iteration=2)
     best = _best_observed(wd, "m")
     assert best is not None
-
-    # Pin confirm to a point that scores strictly below the observed best.
-    (Path(wd) / "runs" / "iter-2" / "confirm_at.json").write_text(
-        json.dumps({k: -1.0 for k in ("A", "B", "C")}),
-    )
 
     def poor(row):
         return {
@@ -1068,118 +1193,188 @@ def test_confirm_respects_minimize_direction(tmp_path, work_dir):
     assert record["confirmed_is_best_observed"] is True
 
 
-def test_confirm_refuses_a_stationary_point_outside_the_design_hull(
-    tmp_path, work_dir, caplog,
-):
-    """decide_after_refine already flags this; confirm must now act on it.
-
-    Trigger is documented as reported-not-acted-on, so confirm read the same
-    out-of-hull solve off disk and replicated it anyway — the system diagnosed
-    the problem, wrote it into findings, then did the thing it had just warned
-    against. Observed on a real campaign: the surface was monotone in both
-    refined factors (no interior optimum exists), the quadratic solve landed at
-    coded BANDCAP=+1.62 / THRESH=-2.30, and confirm reproduced 112.4997 while
-    the campaign had already MEASURED 182.2159 at a corner.
-    """
-    import logging
-
-    from orchestrator.optimize.stage_runner import _read_confirm_at
-
-    wd = tmp_path / "wd"
-    (wd / "runs" / "iter-4").mkdir(parents=True)
-    (wd / "runs" / "iter-4" / "confirm_at.json").write_text(
-        json.dumps({"BANDCAP": 1.6189798710528895, "THRESH": -2.296736457110853}),
-    )
-    with caplog.at_level(logging.WARNING):
-        assert _read_confirm_at(wd) is None, (
-            "an out-of-hull solve must not be confirmed; falling back to the "
-            "best observed configuration is the weaker but true claim"
-        )
-    assert "outside the design hull" in caplog.text
-    assert "BANDCAP" in caplog.text and "THRESH" in caplog.text
-
-
-def test_confirm_still_uses_a_stationary_point_inside_the_hull(tmp_path, work_dir):
-    """A legitimate interior optimum is unaffected."""
-    from orchestrator.optimize.stage_runner import _read_confirm_at
-
-    wd = tmp_path / "wd"
-    (wd / "runs" / "iter-4").mkdir(parents=True)
-    payload = {"A": 0.35, "B": -0.8}
-    (wd / "runs" / "iter-4" / "confirm_at.json").write_text(json.dumps(payload))
-    assert _read_confirm_at(wd) == payload
-
-
-def test_hull_check_accepts_the_boundary(tmp_path, work_dir):
-    """+/-1.0 is ON the hull, not outside it — a factorial corner is valid."""
-    from orchestrator.optimize.stage_runner import _read_confirm_at
-
-    wd = tmp_path / "wd"
-    (wd / "runs" / "iter-3").mkdir(parents=True)
-    (wd / "runs" / "iter-3" / "confirm_at.json").write_text(
-        json.dumps({"A": 1.0, "B": -1.0}),
-    )
-    assert _read_confirm_at(wd) == {"A": 1.0, "B": -1.0}
-
-
-def test_confirm_runs_the_fitted_point_not_the_geometric_centre(
+def test_confirm_never_runs_a_level_outside_its_declared_range(
     tmp_path, work_dir,
 ):
-    """`role="center"` made confirm discard the coordinates it exists to replay.
+    """The out-of-hull defect, closed STRUCTURALLY rather than by a guard.
 
-    `matrix._decode_level` treats role "center" as "ignore coded coordinates,
-    use the midpoint of every declared range" — correct for a genuine replicated
-    centre point, catastrophic for the fitted stationary point. A stationary
-    point at coded +0.9 of [64, 256] ran 160 (the midpoint) instead of 246, and
-    the campaign then reported "the predicted optimum reproduced" about a
-    configuration the fit never predicted.
+    History. ``decide_after_refine`` detects an out-of-hull stationary point
+    and raises OPTIMUM_OUTSIDE_HULL, but Trigger is documented as
+    reported-not-acted-on — so confirm read the same solve off disk and
+    replicated it anyway: the system diagnosed the problem, wrote it into
+    findings, then did the thing it had just warned against. Observed on a
+    real campaign: the surface was monotone in both refined factors (no
+    interior optimum exists), the solve landed at coded BANDCAP=+1.62 /
+    THRESH=-2.30, and confirm reproduced 112.4997 while a MEASURED corner
+    stood at 182.2159. The repair at the time was a hull check inside
+    ``_read_confirm_at``, which returned None so confirm fell back to the best
+    observed configuration.
+
+    Task 7 retires both the coded handoff and the check. Confirm replicates
+    ``recommendation.json``'s ``levels``, and every candidate level comes from
+    ``decode_coded``, which CLAMPS to the declared range — so there is no
+    coordinate for a hull check to reject. This asserts the property the check
+    existed to protect, on the whole pipeline rather than on the reader: every
+    level confirm runs is one the author declared runnable.
+
+    The diagnostic is NOT dropped: the stationary point is still solved, still
+    recorded (``recommendation.json["stationary_point"]``), and still raises
+    the trigger. See ``test_the_stationary_point_survives_as_a_diagnostic``.
     """
-    from orchestrator.optimize import matrix
-    from orchestrator.optimize.factors import parse_factors
-    from orchestrator.optimize.stage_runner import _build_design
+    c = _campaign()
+    # A and B carry >2 levels so refine has something to refine; C stays
+    # 2-level and is held fixed there.
+    c["optimization"]["factors"][0]["levels"] = [2, 4, 8, 16]
+    c["optimization"]["factors"][1]["levels"] = [2, 4, 8, 16]
+    wd = _init_work_dir(tmp_path, c)
+
+    _run(c, wd, stage="screen", iteration=2)
+    _advance_engine(wd)
+    _run(c, wd, stage="refine", iteration=3)
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=4)
+
+    declared = {f["id"]: list(f["levels"]) for f in c["optimization"]["factors"]}
+    for row in artifacts.read_runs(Path(wd) / "runs" / "iter-4"):
+        for fid, level in row["levels"].items():
+            lo, hi = min(declared[fid]), max(declared[fid])
+            assert lo <= level <= hi, (
+                f"confirm ran {fid}={level!r}, outside the declared range "
+                f"[{lo}, {hi}] — an extrapolation the author never authorised"
+            )
+
+
+def test_confirm_refuses_a_target_that_names_no_level_for_every_factor(
+    tmp_path, work_dir,
+):
+    """A partial target drops a flag SILENTLY, which is the worst shape of bug.
+
+    ``matrix.render_apply`` renders nothing for a factor it is given no level
+    for, so a confirm target missing one id produces a command line missing
+    that flag — the exact "the following arguments are required" failure the
+    held-fixed block exists to prevent, and invisible in ``runs.jsonl`` because
+    the row's ``levels`` would simply lack the key. Both real sources cover
+    every factor by construction, so this can only happen when the campaign's
+    factor list changed under a resumed work_dir.
+    """
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+
+    iter_dir = Path(wd) / "runs" / "iter-2"
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    (iter_dir / "recommendation.json").write_text(
+        json.dumps({"stage": "screen", "levels": {"A": 16, "B": 16}}),   # no C
+    )
+
+    with pytest.raises(OptimizationAborted, match="names no level for"):
+        _run(c, wd, stage="confirm", iteration=3)
+
+
+def test_the_stationary_point_survives_as_a_diagnostic(tmp_path, work_dir):
+    """It no longer decides what runs, and it must still be reported.
+
+    ``decide_after_refine`` reads it to raise OPTIMUM_OUTSIDE_HULL — "the
+    ranges were too narrow to contain the optimum" is worth telling an author
+    whether or not anything replicates the point — so dropping the solve would
+    silently drop that finding too.
+    """
+    c = _campaign()
+    c["optimization"]["factors"][0]["levels"] = [2, 4, 8, 16]
+    c["optimization"]["factors"][1]["levels"] = [2, 4, 8, 16]
+    wd = _init_work_dir(tmp_path, c)
+
+    _run(c, wd, stage="screen", iteration=2)
+    _advance_engine(wd)
+    _run(c, wd, stage="refine", iteration=3)
+
+    rec = json.loads(
+        (Path(wd) / "runs" / "iter-3" / "recommendation.json").read_text(),
+    )
+    assert rec["stage"] == "refine"
+    assert rec["stationary_point"], (
+        "the refine stage must still solve and record the stationary point"
+    )
+    assert set(rec["stationary_point"]) == set(rec["fitted_ids"])
+    # And it is a DIAGNOSTIC: the levels that will run are the argmax's, in
+    # real units, for every factor — including the ones refine held fixed.
+    assert set(rec["levels"]) == {f["id"] for f in c["optimization"]["factors"]}
+
+
+def test_confirm_replicates_the_recommendation_not_the_geometric_centre(
+    tmp_path, work_dir,
+):
+    """The bug this replaces: confirm ran the MIDPOINT of every range.
+
+    ``matrix._decode_level`` treats ``role="center"`` as "ignore the coded
+    coordinates, use the midpoint of every declared range" — correct for a
+    genuine replicated centre point, catastrophic for a target point carried
+    as coordinates. A point at coded +0.9 of [64, 256] ran 160 (the midpoint)
+    instead of 246, and the campaign reported "the predicted optimum
+    reproduced" about a configuration the fit never predicted.
+
+    Confirm no longer carries coordinates at all — ``run_stage`` writes the
+    recommendation's real ``levels`` onto every row — so this asserts the
+    outcome directly: what ran is the recommendation, and it is not the
+    midpoint.
+    """
+    from orchestrator.optimize.factors import decode_coded, parse_factors
 
     c = _campaign()
-    c["optimization"]["design"] = {
-        "screen": {"resolution": 3}, "confirm": {"replicates": 2},
-    }
-    wd = tmp_path / "wd"
-    (wd / "runs" / "iter-2").mkdir(parents=True)
-    (wd / "runs" / "iter-2" / "confirm_at.json").write_text(
-        json.dumps({"A": 0.9, "B": 0.9, "C": 0.9}),
+    wd = _init_work_dir(tmp_path, c)
+
+    # A response that peaks hard at the high corner, so the argmax is nowhere
+    # near the midpoint and the two are distinguishable.
+    def high_corner(row):
+        lv = row.levels
+        return {
+            "cfg": {k.lower(): v for k, v in lv.items()},
+            "m": float(lv.get("A", 0)) + float(lv.get("B", 0)) + float(lv.get("C", 0)),
+        }
+
+    _run(c, wd, stage="screen", iteration=2, runner=high_corner)
+    _advance_engine(wd)
+    _run(c, wd, stage="confirm", iteration=3, runner=high_corner)
+
+    rec = json.loads(
+        (Path(wd) / "runs" / "iter-2" / "recommendation.json").read_text(),
     )
     factors = parse_factors(c["optimization"]["factors"])
-    design = _build_design(factors, c["optimization"]["design"], "confirm", wd)
-    rows = matrix.expand(design, factors)
-
-    from orchestrator.optimize.factors import decode_coded
-
     mid = {f.id: decode_coded(f, 0.0) for f in factors}
-    assert rows[0].levels != mid, (
-        f"confirm ran the geometric centre {mid} instead of the fitted point at "
-        f"coded +0.9 — the coordinates were discarded"
+    assert rec["levels"] != mid, rec["levels"]
+
+    ran = [row["levels"] for row in artifacts.read_runs(Path(wd) / "runs" / "iter-3")]
+    assert ran, "confirm produced no rows"
+    assert all(levels == rec["levels"] for levels in ran), (
+        f"confirm ran {ran} instead of the recommendation {rec['levels']}"
     )
-    # and it should be near the HIGH end, since +0.9 is near +1
-    hi = {f.id: decode_coded(f, 0.9) for f in factors}
-    assert rows[0].levels == hi, f"expected {hi}, got {rows[0].levels}"
+    assert all(levels != mid for levels in ran), (
+        f"confirm ran the geometric centre {mid} — the target was discarded"
+    )
 
 
-def test_confirm_with_no_fitted_point_still_yields_the_origin(tmp_path, work_dir):
-    """The no-refine case must be unchanged: coded 0.0 decodes to the midpoint."""
+def test_confirm_with_nothing_to_replicate_still_yields_the_origin(
+    tmp_path, work_dir,
+):
+    """The empty-work_dir case must be unchanged: coded 0.0 → the midpoint.
+
+    Neither a recommendation nor a completed run exists, so nothing pins the
+    levels and the design's own origin is what expands. That is the last
+    resort, not the normal path, and it must still produce runnable rows.
+    """
     from orchestrator.optimize import matrix
-    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.factors import decode_coded, parse_factors
     from orchestrator.optimize.stage_runner import _build_design
 
     c = _campaign()
     c["optimization"]["design"] = {
         "screen": {"resolution": 3}, "confirm": {"replicates": 1},
     }
-    wd = tmp_path / "wd"
-    (wd / "runs").mkdir(parents=True)
     factors = parse_factors(c["optimization"]["factors"])
-    design = _build_design(factors, c["optimization"]["design"], "confirm", wd)
+    design = _build_design(factors, c["optimization"]["design"], "confirm")
     assert all(cd == 0.0 for cd in design.points[0].coded)
     rows = matrix.expand(design, factors)
     assert rows, "confirm produced no rows"
+    assert rows[0].levels == {f.id: decode_coded(f, 0.0) for f in factors}
 
 
 def test_execution_uses_the_recorded_run_order(tmp_path, work_dir):
