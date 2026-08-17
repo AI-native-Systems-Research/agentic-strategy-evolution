@@ -7,18 +7,102 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.optimize.decide import candidates, predict, ranked, recommend
+from orchestrator.optimize.decide import _axis, candidates, predict, ranked, recommend
 from orchestrator.optimize.design import central_composite, full_factorial, with_center_points
 from orchestrator.optimize.effects import fit_effects
 from orchestrator.optimize.factors import parse_factors
+from orchestrator.optimize.synthetic import SURFACES, _choice, _numeric
 from orchestrator.optimize.matrix import expand
-from orchestrator.optimize.synthetic import SURFACES
 
 
 def _fit(surface, design, ids):
     factors = parse_factors(list(surface.factors))
     ys = [surface.fn(r.levels) for r in expand(design, factors)]     # noiseless
     return fit_effects(design, ys, factor_ids=ids), factors
+
+
+def _factor(**kwargs):
+    """One parsed Factor from ``synthetic``'s canonical factor-dict builders.
+
+    ``parse_factors`` refuses a factor with no ``apply``, no ``manipulation``,
+    or no ``correctness`` relation, so a bare ``{"id", "type", "levels"}``
+    dict cannot be used here. ``synthetic._numeric`` / ``_choice`` are the
+    shapes campaign YAML actually declares.
+    """
+    builder = _choice if kwargs.pop("choice", False) else _numeric
+    return parse_factors([builder(**kwargs)])[0]
+
+
+# ─── the candidate axis: which levels a factor may take (spec §3.3) ───────
+#
+# `_axis` is where the candidate space is decided, so it is where a level the
+# author never declared runnable would enter. Tested DIRECTLY rather than
+# through `recommend`, because the guard below is currently inert by accident:
+# curvature terms only exist when a design has axial points (central
+# composite, refine only), and refine's `fitted_ids` is already restricted to
+# the refinable factors — so no campaign today calls `_axis` on a 2-level
+# numeric while a quadratic term exists to make interior points win. The
+# argmax of a multilinear function over a box is always at a vertex, so
+# without curvature the extra points change no answer.
+#
+# Mutation-verified: deleting `not is_refinable(f)` from the guard offers a
+# factor declared `[2, 16]` the nine levels 2/4/6/7/9/11/12/14/16, and the
+# ENTIRE 1824-test suite stayed green. Task 8 calls `ranked` with a large
+# `top` over this space and Task 12 sets `fitted_ids` to every factor
+# including 2-level numerics; either can produce curvature over a 2-level
+# factor, at which point the guard becomes load-bearing. These tests are what
+# will fail then instead of a campaign recommending an undeclared level.
+
+
+def test_axis_restricts_a_two_level_numeric_to_its_screen_pair():
+    """A 2-level numeric is NOT refinable: nothing between its levels ran.
+
+    ``is_refinable`` requires type numeric AND more than two levels, because
+    curvature cannot be estimated from two points. Offering interior grid
+    points anyway would recommend a configuration the author never declared —
+    ``[2, 16]`` says "2 or 16", not "anything from 2 to 16" — and no fit built
+    from two levels has any evidence about what happens between them.
+    """
+    f = _factor(fid="A", levels=(2, 16))
+    assert _axis(f) == [(-1.0, 2), (1.0, 16)]
+
+
+def test_axis_gives_a_refinable_numeric_its_interior_grid():
+    """The contrast: >2 declared levels means interpolation is meaningful.
+
+    This is the half that makes an interior optimum reachable at all, and the
+    half that would silently absorb the 2-level case if the guard were lost —
+    so the two are asserted together.
+    """
+    f = _factor(fid="A", levels=(2, 4, 8, 16))
+    axis = _axis(f)
+    assert len(axis) == 9
+    assert axis[0] == (-1.0, 2) and axis[-1] == (1.0, 16)
+    assert [c for c, _ in axis] == sorted(c for c, _ in axis)
+    assert 9 in [lv for _, lv in axis], "the coded origin must be offered"
+
+
+def test_axis_restricts_a_choice_factor_to_its_screen_pair():
+    """A choice factor has no interior — ``decode_coded`` only reads the sign."""
+    f = _factor(fid="C", choice=True)
+    assert _axis(f) == [(-1.0, "off"), (1.0, "on")]
+
+
+def test_a_two_level_numeric_contributes_only_declared_levels_to_the_space():
+    """The consequence the axis guard exists to prevent, at the space level.
+
+    A recommendation must name levels the target can actually run. With a
+    2-level numeric restricted to its pair, every candidate's level for that
+    factor is a DECLARED one — which is the property a reviewer can check
+    without reasoning about whether curvature happens to exist today.
+    """
+    two = _factor(fid="A", levels=(2, 16))
+    refinable = _factor(fid="B", levels=(2, 4, 8, 16))
+    space = candidates(["A", "B"], [two, refinable], held_fixed={})
+    assert {c.levels["A"] for c in space} == {2, 16}, (
+        "a 2-level numeric offered a level it never declared"
+    )
+    assert len({c.levels["B"] for c in space}) == 9
 
 
 def test_predict_reproduces_the_fitted_corners_of_an_additive_surface():
