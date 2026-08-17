@@ -1208,6 +1208,63 @@ properties:
           type: string
           enum: [build, verify, screen, refine, confirm]
 
+      workload:
+        type: object
+        additionalProperties: false
+        required: [seed_env]
+        description: >
+          How the campaign controls the target's workload randomness
+          (spec §3.7 oracle 3, §3.8). Declare this whenever the target is
+          stochastic — a queue, a cache, an autoscaler, a sampler, anything
+          whose run-to-run variance is comparable to the effect under study.
+
+          Two things follow from declaring it. Every measurement row gets a
+          deterministic seed exported into the run subprocess's environment
+          under ``seed_env``, recorded in that iteration's
+          ``design_matrix.json`` as ``workload_seeds`` — so a surprising row
+          can be re-measured exactly rather than argued about. And the
+          terminal ``confirm`` comparison uses COMMON RANDOM NUMBERS:
+          replicate *i* of every finalist runs the SAME seed, so the seed's
+          contribution cancels out of the finalist-to-finalist difference and
+          the residual-regret bound is computed on paired differences
+          (``bonferroni_one_sided_t_paired``) instead of Welch-combining two
+          independent variances. On a noisy target that is the difference
+          between certifying inside the run budget and not: an unpaired
+          comparison needs roughly an order of magnitude more runs for the
+          same bound.
+
+          The target must actually READ the variable. Nous exports it and
+          records it; it cannot make a benchmark honour it. A target that
+          ignores ``seed_env`` still gets a recorded seed and a paired bound
+          computed over differences whose shared term never cancelled — the
+          bound would then be honest about its own arithmetic and wrong about
+          the experiment. Wire the variable into the workload generator's seed
+          before declaring this block.
+        properties:
+          seed_env:
+            type: string
+            minLength: 1
+            description: >
+              Environment-variable name the per-row seed is exported under,
+              e.g. ``NOUS_WORKLOAD_SEED``. Must be a legal shell/POSIX
+              environment identifier (``^[A-Z_][A-Z0-9_]*$``) — the validator
+              rejects anything else, because a name with a space or a lowercase
+              letter is silently unreadable from most shells and the failure
+              surfaces as "the seed had no effect" rather than as an error.
+          seeds:
+            type: array
+            minItems: 1
+            items:
+              type: integer
+            description: >
+              An explicit seed set, taken modulo the index (row index at the
+              spending stages, REPLICATE index at ``confirm``). Declare it to
+              reproduce a specific set of workload draws — the same traces a
+              paper reported, or a previous epoch's. Omit it and seeds are
+              derived deterministically from the iteration and the
+              pre-registered run-order seed, which is reproducible from the
+              artifacts but not chosen by the author.
+
       build_checks:
         type: object
         additionalProperties: false

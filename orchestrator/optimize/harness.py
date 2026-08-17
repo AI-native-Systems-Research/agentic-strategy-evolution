@@ -174,7 +174,16 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
     from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
 
     campaign = synthetic_campaign(surface, **(campaign_overrides or {}))
-    runner = make_synthetic_runner(surface, seed=seed)
+    # The synthetic target honours the campaign's own `workload.seed_env` when
+    # one is declared. Reading it from the CAMPAIGN rather than taking it as a
+    # separate harness argument is what keeps the instrument honest: a mismatch
+    # between the name the campaign exports and the name the target reads is a
+    # real and easy campaign-authoring bug (spec §3.8), and a harness that took
+    # the name twice could never reproduce it.
+    runner = make_synthetic_runner(
+        surface, seed=seed,
+        seed_env=(campaign["optimization"].get("workload") or {}).get("seed_env"),
+    )
     path: list[str] = []
 
     prior_parent = os.environ.get("NOUS_CAMPAIGN_PARENT")
