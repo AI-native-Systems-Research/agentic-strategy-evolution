@@ -2895,6 +2895,38 @@ Validator rule 15 in `validate.py`: if `"build" in (opt.get("stages") or [])` an
 
 ---
 
+### Task 13.5: Drift oracle scoped to mechanism paths (fixes a live Task 12 defect)
+
+**Inserted mid-plan, not in the original brief set.** Task 12's `build.snapshot_mechanism`/`current_mechanism_hash` hash the target's *entire* working tree — `git diff HEAD` plus every untracked-but-not-gitignored file, by content, with no allowlist. Two independent task reviews (Task 12's own, and Task 13's, which read Task 12's code directly) reproduced end-to-end that this false-aborts a live campaign on Nous's *own* pre-existing machinery: `run_test_command`/`make_config_runner` execute the target's `test_command`/`run_command` with the target repo as `cwd`, so any non-gitignored artifact those commands leave behind (a `.pytest_cache/`, a `run.log`, a coverage file) changes the hash, and the very next epoch iteration's drift check (built in Task 12) aborts with "mechanism drifted since compile" — a false positive that reads as a genuine mechanism problem, the worst available misdiagnosis. Reproduced with **zero** `build` stage and **zero** Task 13 code involved — this is a Task 12 defect, exposed further (not caused) by Task 13's added `config_runner` invocations at the same stage.
+
+Both reviewers' recommendation: narrow the drift hash to a declared allowlist (paths the campaign's `factors`/`relations` actually reference, plus an optional explicit `mechanism_paths` override) rather than "document that authors must gitignore everything" — the documentation route puts the burden on AI campaign authors to anticipate every artifact a test runner emits, and its failure mode is the worst one available. Bundle in the already-carried Task 12 finding: `mechanism.patch` is written but never cross-checked against `mechanism.sha256`, and a mid-epoch `build` re-run (test-seam only, not production-reachable) can re-stamp `mechanism.sha256` without updating `policy.json`'s recorded `mechanism_patch_hash` — both close with one comparison against `policy["compiled_from"]["mechanism_patch_hash"]` where a policy already exists.
+
+**Files:**
+- Modify: `orchestrator/optimize/build.py` (`_mechanism_text`, `snapshot_mechanism`, `current_mechanism_hash`)
+- Modify: `orchestrator/optimize/stage_runner.py` (the drift `elif` branch; `_load_or_compile_policy`/`_compile_and_write_policy` cross-check)
+- Modify: `orchestrator/schemas/campaign.schema.yaml` (`optimization.build_checks.mechanism_paths: list[str]`, optional)
+- Test: `tests/test_optimize_build_oracles.py` (append)
+
+**Interfaces:**
+- `_mechanism_text(repo, *, allowlist: list[str] | None = None) -> str | None` — when `allowlist` is given, untracked files are filtered to those matching a path in it (prefix or glob match, author's choice — document which); tracked diff (`git diff HEAD`) is filtered the same way via `git diff HEAD -- <allowlist paths>` when an allowlist is present, unfiltered otherwise. `allowlist=None` preserves Task 12's exact current behavior (whole-tree) — **this is the default, so no existing campaign's semantics change without an explicit opt-in**.
+- `snapshot_mechanism`/`current_mechanism_hash` gain the same `allowlist` parameter, threaded from `optimization.build_checks.mechanism_paths` when declared, else derived from `factors`' `manipulation`/`relations` file references if those name paths, else `None` (whole-tree, backward-compatible).
+- `stage_runner`'s drift `elif` branch and `_load_or_compile_policy`: add one comparison — when a compiled `policy.json` exists, its `compiled_from.mechanism_patch_hash` must equal the on-disk `mechanism.sha256`'s recorded value; mismatch is the same class of hard-fail as today's drift check, with a message distinguishing "the policy's registered hash and the sidecar hash disagree" from "the tree drifted from the sidecar hash."
+
+- [ ] **Step 1: Failing tests** — extend `tests/test_optimize_build_oracles.py` with:
+  1. A test reproducing the false-abort directly (a `test_command` that leaves a non-gitignored file behind; no `mechanism_paths` declared; confirm today's whole-tree behavior still aborts — this PINS the backward-compatible default, it does not remove the hazard by itself).
+  2. A test that declares `optimization.build_checks.mechanism_paths` naming only the mechanism's actual file; the same test-command artifact must NOT trigger a drift abort, because it falls outside the allowlist.
+  3. A test for the `policy.json` vs `mechanism.sha256` cross-check: hand-write a `policy.json` whose `compiled_from.mechanism_patch_hash` disagrees with a freshly-written `mechanism.sha256`, and confirm `_load_or_compile_policy` (or the drift branch, whichever owns the check) raises with a message distinguishing this case from ordinary tree drift.
+
+- [ ] **Step 2: Run** → FAIL.
+
+- [ ] **Step 3: Implement.** Thread the `allowlist` parameter through `_mechanism_text`/`snapshot_mechanism`/`current_mechanism_hash` as described above, defaulting to `None` (today's behavior). Resolve `mechanism_paths` in `stage_runner.py` at the same two call sites Task 12 established (`snapshot_mechanism` in the build branch, `current_mechanism_hash` in the drift `elif`), reading `optimization.build_checks.mechanism_paths` from the campaign. Add the `compiled_from.mechanism_patch_hash` vs. `mechanism.sha256` cross-check in `_load_or_compile_policy`, since that is the function that already reads both `policy.json` (via `read_policy`) and is called at every epoch iteration — the natural, single-owner home both prior reviews pointed at. Do **not** change the default behavior for a campaign that declares no `mechanism_paths` — Task 12's whole-tree hash remains the fallback, since a wrong default (silently narrowing every existing campaign's oracle) would be worse than the status quo bug, per the standing pre-GA principle that behavior may change but only when named and argued, never silently.
+
+- [ ] **Step 4: Run** `python -m pytest tests/test_optimize_build_oracles.py tests/test_optimize_build.py tests/ -q -x` → PASS.
+
+- [ ] **Step 5: Commit** — `git commit -am "fix(optimize): scope the drift oracle to declared mechanism paths; cross-check policy.json against mechanism.sha256"`.
+
+---
+
 ## Phase 5 — Systems-target readiness
 
 ### Task 14: Workload seeds and common random numbers
