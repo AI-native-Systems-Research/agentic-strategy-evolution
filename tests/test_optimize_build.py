@@ -942,3 +942,102 @@ def test_smoke_reports_an_unmatched_native_test(tmp_path: Path):
     )
     issues = _smoke_check_optimization(campaign)
     assert any("did not appear in the test command" in i for i in issues), issues
+
+
+# ── Task 14.5: a mechanism_paths entry that resolves to nothing ───────────────
+#
+# The drift oracle is only as narrow as the allowlist is accurate. A typo'd
+# entry is not a loud failure — it silently contributes nothing, so the oracle
+# watches less than the campaign says it does, and (with every entry typo'd)
+# `_mechanism_text` filters the tree down to nothing and no edit ever reads as
+# drift. Static validation cannot see this: the string is well-formed, and only
+# the target tree knows whether it exists.
+
+
+def _smoke_repo_with_git(tmp_path: Path) -> Path:
+    """A real git work tree — the smoke check resolves paths against the target.
+
+    Real git rather than a bare directory: the runtime allowlist is applied both
+    to `git diff HEAD -- <paths>` and to git's untracked listing, so a check
+    validated only against a plain filesystem could disagree with the thing it
+    is meant to pre-flight.
+    """
+    import subprocess
+    repo = tmp_path / "repo"; repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "src").mkdir()
+    (repo / "src" / "mech.py").write_text("X = 1\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+    return repo
+
+
+def _sound_run_cmd() -> str:
+    return (
+        """python3 -c 'import json;print(json.dumps("""
+        """{"applied":{"flag":"0"},"m":1.0}))'"""
+    )
+
+
+def _smoke_with_mechanism_paths(repo: Path, paths: list[str]) -> dict:
+    campaign = _smoke_campaign(
+        repo,
+        predicate={"observable": "applied.flag", "op": "==", "value": "{level}"},
+        run_cmd=_sound_run_cmd(),
+    )
+    campaign["optimization"]["build_checks"] = {"mechanism_paths": paths}
+    return campaign
+
+
+def test_smoke_reports_a_mechanism_path_that_does_not_exist(tmp_path: Path):
+    """A typo'd entry silently narrows the drift oracle to nothing."""
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = _smoke_repo_with_git(tmp_path)
+    # `src/mech.py` exists; the second entry is the typo. Note the assertion
+    # below deliberately checks the count and the entry LIST, not merely
+    # "src/mech.py is absent from the text" — the message's own remedy sentence
+    # quotes 'src/mech.py' as an example of a well-formed entry, so a naive
+    # substring check would fail for the wrong reason.
+    campaign = _smoke_with_mechanism_paths(repo, ["src/mech.py", "src/typo.py"])
+    issues = _smoke_check_optimization(campaign)
+    hits = [i for i in issues if "mechanism_paths" in i]
+    assert len(hits) == 1, issues
+    assert "1 build_checks.mechanism_paths" in hits[0], (
+        "exactly one entry is broken", hits,
+    )
+    assert "src/typo.py" in hits[0], ("must name the offending entry", hits)
+
+
+def test_smoke_accepts_mechanism_paths_that_resolve(tmp_path: Path):
+    """No false positives: a file and a directory prefix both resolve.
+
+    A check that flagged everything would pass the test above while making the
+    field unreportable — the one-sided oracle worth guarding against here.
+    """
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = _smoke_repo_with_git(tmp_path)
+    campaign = _smoke_with_mechanism_paths(repo, ["src/mech.py", "src/", "src"])
+    assert _smoke_check_optimization(campaign) == []
+
+
+def test_smoke_accepts_a_mechanism_path_that_is_not_yet_authored_under_build(
+    tmp_path: Path,
+):
+    """With a `build` stage the mechanism's file legitimately does not exist yet.
+
+    `build` is the stage that AUTHORS it, so pre-flighting its existence would
+    make the smoke check reject exactly the campaigns it should help most.
+    """
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = _smoke_repo_with_git(tmp_path)
+    campaign = _smoke_with_mechanism_paths(repo, ["src/not_yet.py"])
+    campaign["optimization"]["stages"] = [
+        "build", "verify", "screen", "confirm",
+    ]
+    assert not any("mechanism_paths" in i
+                   for i in _smoke_check_optimization(campaign))

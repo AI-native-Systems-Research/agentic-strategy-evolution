@@ -1215,8 +1215,15 @@ properties:
           Tuning for the two oracles that check what the ``build`` stage
           actually produced (spec §3.7, oracle 2). Both are on by default
           and both HARD-FAIL at ``verify``; this block exists to move
-          their thresholds, not to switch them off casually. Ignored
-          entirely when ``build`` is not in ``stages``.
+          their thresholds, not to switch them off casually.
+          ``allow_preexisting_tests``, ``baseline_replicates`` and
+          ``baseline_tolerance_pct`` are ignored entirely when ``build``
+          is not in ``stages``. ``mechanism_paths`` is the ONE
+          EXCEPTION: it scopes the drift oracle, which is armed by the
+          presence of ``mechanism.sha256`` rather than by the ``build``
+          stage, so it applies to every optimization campaign. Entries
+          are literal repo-relative paths; globs are rejected by the
+          validator (see that field's own description).
         properties:
           allow_preexisting_tests:
             type: boolean
@@ -1267,6 +1274,19 @@ properties:
               ``"src/batching.py"`` is that file, ``"src/"`` is everything
               under that directory, and ``"src/batch"`` matches NEITHER
               (a partial component never matches).
+
+              Glob-shaped entries are REJECTED by the validator rather
+              than expanded: ``"src/*"``, ``"*.py"``, ``"mech?.py"``,
+              ``"src/[ab].py"`` and the whole-tree shorthand ``"."`` all
+              hard-fail ``nous validate campaign``. Git's pathspec would
+              expand them for the tracked half of the hash while the
+              untracked half matched nothing — which is precisely where
+              a newly authored mechanism module lives — so an accepted
+              glob would leave half the oracle silently disarmed.
+              ``nous validate campaign --smoke`` additionally reports an
+              entry that resolves to nothing under the target tree
+              (skipped when ``build`` is declared, since that stage is
+              what authors the file).
 
               DECLARE THIS. The default, when it is omitted, hashes the
               ENTIRE working tree — every tracked edit plus every untracked

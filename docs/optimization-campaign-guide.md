@@ -415,6 +415,88 @@ Those tests are native to the target's language and live in the target repo,
 using its own tooling. Nous never grows a property-testing dependency for
 this; `hypothesis`, `rapid`, and `proptest` belong to target repos.
 
+### `build_checks` — and `mechanism_paths`, which every campaign should declare
+
+`build_checks` tunes the oracles that keep a mechanism honest. Three of its
+fields only matter when you declare `build`; the fourth matters always.
+
+```yaml
+optimization:
+  build_checks:
+    mechanism_paths: ["src/batching.py", "tests/prop_batch.py"]
+    # the three below apply only when `build` is in `stages`:
+    allow_preexisting_tests: false   # oracle 2(b)
+    baseline_replicates: 3           # oracle 2(c)
+    baseline_tolerance_pct: 4.0      # oracle 2(c)
+```
+
+**Oracle 2(b) — the tests must have been red before the build.** A declared
+`correctness` relation whose `native_test` *already passed* against a tree
+without the mechanism is green for some other reason, and it stays green if the
+build wires the mechanism to nothing. `verify` aborts on that. Set
+`allow_preexisting_tests: true` only when the relation genuinely covers
+pre-existing behaviour — a backward-compatibility test asserting an existing
+default did not change is the legitimate case.
+
+**Oracle 2(c) — the control must be unchanged by the build.** Your
+`known_valid_baseline` is measured `baseline_replicates` times before the build
+and again at `verify`; a mean shift past `baseline_tolerance_pct` (relative, as a
+percent) hard-fails. A mechanism that moves the metric *at its own OFF level*
+changed something outside its scope and confounds every treatment effect while
+looking clean. This is why `known_valid_baseline` is **required** whenever `build`
+is declared: without a control there is nothing to measure, and a silently absent
+oracle on the one stage that writes code is the worst place to have one. On a
+noisy target, raise `baseline_replicates` rather than widening the tolerance.
+
+#### `mechanism_paths`: declare it, `build` stage or not
+
+**This one field is not limited to `build` campaigns.** Every epoch iteration
+re-hashes the target tree and hard-aborts if it no longer matches the recorded
+`mechanism.sha256`. That oracle is armed by the *presence* of that hash — which a
+campaign may also write by hand — not by the `build` stage.
+`mechanism_paths` is what that hash covers.
+
+Omit it and the hash covers the **entire working tree**: every tracked edit plus
+every untracked file git does not ignore. Nous runs the target's own
+`test_command` and `run_command` **with the target repo as the working
+directory**, so anything they leave behind that is not gitignored — a
+`.pytest_cache/`, a `run.log`, a `.coverage` file — changes that hash, and the
+next iteration aborts with:
+
+    mechanism drifted since compile
+
+That is a false positive wearing the costume of the worst available true
+positive. It has happened on a real campaign, with zero `build` stage involved.
+Naming the mechanism's files removes the whole class of failure.
+
+The whole-tree default is kept only for backward compatibility — an existing
+campaign's recorded hash stays valid across the change — not because it is the
+better setting.
+
+**Entries are literal paths, not globs.** The matching rule is a plain
+path-component prefix:
+
+| Entry | Means |
+|---|---|
+| `src/batching.py` | that file, exactly |
+| `src/` (or `src`) | everything under that directory |
+| `src/batch` | **nothing** — a partial component never matches |
+| `src/*`, `*.py`, `mech?.py`, `src/[ab].py`, `.` | **rejected by the validator** |
+
+Globs are refused rather than supported, because the hash has two halves scoped
+by the same entries through two different matchers: tracked edits go through
+`git diff HEAD -- <entries>`, whose pathspec *does* expand `*`, while untracked
+files go through Nous's literal prefix match, which does not. A `["src/*"]` that
+was merely accepted would be honoured for tracked edits and match nothing among
+untracked files — and an untracked new module is the common shape of a mechanism.
+Half the oracle would be silently disarmed. `nous validate campaign` hard-fails
+these entries so you find out while you can still read the message.
+
+`--smoke` goes one step further and reports an entry that resolves to nothing
+under the target — a typo'd path is not a loud failure, it just quietly narrows
+the oracle. (That check is skipped when `build` is declared, since `build` is the
+stage that authors the file in the first place.)
+
 #### Reference numbers in a spec: verify them, or leave them out
 
 If your mechanism description quotes expected values for the build stage to
@@ -456,7 +538,7 @@ nothing was executing that contract.
     nous validate campaign campaign.yaml --smoke
 
 `--smoke` runs the test command and **one** configuration at every factor's
-first level, then reports four things static checks cannot see:
+first level, then reports five things static checks cannot see:
 
 | Check | Failure it prevents |
 |---|---|
@@ -464,13 +546,14 @@ first level, then reports four things static checks cannot see:
 | `run_command` execs and emits parseable JSON | every run dies on a usage error |
 | `response.primary.metric` is present in the output | every run parses and scores NaN, poisoning the fit |
 | manipulation predicates hold at the first level | every run rejected while the target is fine |
+| each declared `build_checks.mechanism_paths` entry resolves under the target | a typo'd entry silently narrows the drift oracle to less than declared — to nothing, if every entry is wrong |
 
 The predicate check builds its scope the way `run_stage` does — the target's own
 `applied` echo wins over the requested levels — because using the requested
 levels would make `applied.X == "{level}"` trivially true and hide the exact
 mismatch worth finding.
 
-It costs one test run plus one configuration, and each of those four failures
+It costs one test run plus one configuration, and each of those failures
 otherwise costs a full campaign to discover. Make it the last thing you do
 before launching.
 
