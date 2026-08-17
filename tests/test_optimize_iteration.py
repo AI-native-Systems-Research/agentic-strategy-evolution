@@ -778,10 +778,20 @@ def test_confirm_findings_validate_and_report_reproduction(tmp_path, work_dir):
     At ``shortlist_size: 1`` there is no challenger, so the terminal bound is
     ``0.0`` by the trivial branch and ``0.0 <= epsilon`` holds — which certifies
     on the strength of having nothing to compare against. That is honest as far
-    as it goes (the claim is only about the realized shortlist, and a shortlist
-    of one contains its own optimum trivially), and it is exactly why the
-    default shortlist is 3: the useful claim needs rivals. Asserted here so a
-    reader of a single-point campaign's findings knows what the CONFIRMED means.
+    as it goes: the paper scopes the terminal claim to the REALIZED shortlist,
+    and a shortlist of one contains its own optimum trivially, so nothing here
+    is false. It is also nearly vacuous, which is exactly why the default
+    shortlist is 3 — the useful claim needs rivals.
+
+    Contrast the ``sla`` case (``test_sla_surface_never_recommends_an_invalid_point``),
+    where a bound of ``0.0`` over one survivor must NOT be certified. The
+    difference is not the shortlist size: it is that ``sla`` got there by
+    MEASURING finalists inadmissible, which is evidence the ``delta_screen``
+    premise behind the global claim has failed. Here the author simply asked for
+    one finalist, nothing was excluded, and the screening premise is untouched.
+
+    Asserted here so a reader of a single-point campaign's findings knows what
+    that CONFIRMED does and does not mean.
     """
     import jsonschema
 
@@ -2184,6 +2194,164 @@ def test_an_excluded_finalist_does_not_come_back_in_the_next_round(
     assert [f["levels"] for f in payload["finalists"]] == [
         {"A": 16, "B": 16, "C": 16},
     ]
+
+
+def test_a_round_whose_whole_carry_over_was_excluded_still_filters_the_ladder(
+    tmp_path, work_dir,
+):
+    """The all-excluded carry-over path, which the ``sla`` surface never reaches.
+
+    When round r > 1's carry-over yields NO finalist — every carried candidate was
+    excluded, so there is no ``status == "ok"`` survivor and no winner — control
+    falls through to the round-1 ladder (``recommendation.levels`` →
+    ``_best_observed`` → ``top_candidates``). That ladder originally did no
+    measured-invalid filtering (only the top-up branch did), so such a round would
+    re-seat the exact configurations an earlier round had already proved
+    inadmissible and burn its whole budget re-measuring known-bad points.
+
+    ``SURFACES["sla"]`` does not exercise this: ``{A: 16, B: 2}`` always survives
+    there, so the carry-over is never empty. The gap was found by reading rather
+    than by running, which is why it gets its own test rather than being assumed
+    covered by the end-to-end case.
+
+    The fix moved the filter into ``_add``, so EVERY seeding path is filtered.
+    Here the recommendation and the first two top candidates are all on disk as
+    measured-infeasible, and the shortlist must skip past them to the one
+    candidate that is not.
+    """
+    from orchestrator.optimize.artifacts import append_run
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.policy import append_transition, compile_policy
+    from orchestrator.optimize.stage_runner import _confirm_rows
+
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    pol = compile_policy(c)
+    wd = tmp_path / "wd"
+
+    bad_rec = {"A": 16, "B": 16, "C": 16}
+    bad_top = {"A": 16, "B": 2, "C": 16}
+    good_top = {"A": 2, "B": 16, "C": 2}
+
+    # Round 1's runs: the recommendation and one top candidate measured
+    # inadmissible; nothing completed, so `_best_observed` finds nothing either.
+    iter3 = wd / "runs" / "iter-3"
+    iter3.mkdir(parents=True)
+    for idx, levels in enumerate((bad_rec, bad_top)):
+        append_run(iter3, {
+            "row_index": idx, "levels": levels, "role": "confirm",
+            "replicate": 0, "status": "infeasible", "response": {"m": 1.0},
+            "held_out": {}, "manipulation": [], "invariants": [],
+            "duration_ms": 1, "error": "",
+        })
+    # ...and a recommendation that still names the bad one, because the fitting
+    # stage that wrote it ran BEFORE those measurements existed.
+    (iter3 / "recommendation.json").write_text(json.dumps({
+        "stage": "screen", "levels": bad_rec,
+        "top_candidates": [{"levels": bad_rec}, {"levels": bad_top},
+                           {"levels": good_top}],
+    }))
+    # Round 1's confirmation: EVERY finalist excluded, so no winner carries over.
+    (iter3 / "confirmation.json").write_text(json.dumps({
+        "round": 1, "best": None, "epsilon": 0.5, "bounds": {},
+        "finalists": [
+            {"key": "f0", "levels": bad_rec, "status": "excluded"},
+            {"key": "f1", "levels": bad_top, "status": "excluded"},
+        ],
+    }))
+    append_transition(wd, {"iteration": 3, "from": "confirm", "to": "confirm",
+                           "rule": {}, "observations": {}, "policy_hash": ""})
+
+    _rows, payload = _confirm_rows(
+        pol, wd, parse_factors(c["optimization"]["factors"]), "m", "maximize", 4,
+    )
+    assert payload["round"] == 2
+    seated = [f["levels"] for f in payload["finalists"]]
+    assert bad_rec not in seated, (
+        "the round-1 ladder re-seated the recommendation even though the campaign "
+        "had already measured it infeasible"
+    )
+    assert bad_top not in seated, seated
+    assert seated == [good_top], seated
+
+
+def test_round_one_also_refuses_a_recommendation_already_measured_infeasible(
+    tmp_path, work_dir,
+):
+    """The filter is unconditional, and round 1 is not exempt.
+
+    A screen stage with infeasible corners, or a resumed work_dir, can put
+    measured-invalid rows on disk before the FIRST confirm round ever runs. There
+    was never a reason to seat one, so the filter in ``_add`` applies from round 1
+    rather than only after a carry-over.
+    """
+    from orchestrator.optimize.artifacts import append_run
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.policy import compile_policy
+    from orchestrator.optimize.stage_runner import _confirm_rows
+
+    c = _campaign()
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 2}
+    pol = compile_policy(c)
+    wd = tmp_path / "wd"
+    iter2 = wd / "runs" / "iter-2"
+    iter2.mkdir(parents=True)
+    append_run(iter2, {
+        "row_index": 0, "levels": {"A": 16, "B": 16, "C": 16}, "role": "corner",
+        "replicate": 0, "status": "infeasible", "response": {"m": 99.0},
+        "held_out": {}, "manipulation": [], "invariants": [],
+        "duration_ms": 1, "error": "",
+    })
+    (iter2 / "recommendation.json").write_text(json.dumps({
+        "stage": "screen", "levels": {"A": 16, "B": 16, "C": 16},
+        "top_candidates": [{"levels": {"A": 2, "B": 16, "C": 2}}],
+    }))
+    _rows, payload = _confirm_rows(
+        pol, wd, parse_factors(c["optimization"]["factors"]), "m", "maximize", 3,
+    )
+    assert payload["round"] == 1
+    assert [f["levels"] for f in payload["finalists"]] == [
+        {"A": 2, "B": 16, "C": 2},
+    ]
+
+
+def test_the_baseline_is_the_one_rung_exempt_from_the_measured_invalid_filter(
+    tmp_path, work_dir,
+):
+    """``known_valid_baseline`` is seated even after measuring invalid.
+
+    Every other rung is filtered, but the bottom one must not be. It is the
+    author's declared "this configuration works", it is reached only when nothing
+    else is left, and dropping it on a contrary measurement would leave the
+    campaign with NOTHING legal to return — strictly worse than measuring it again
+    and recording the contradiction. ``_finish_confirm`` still excludes it if it
+    measures invalid, and ``_run_report`` still returns it as ``basis: baseline``,
+    so nothing is being claimed about it that the measurements deny.
+    """
+    from orchestrator.optimize.artifacts import append_run
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.policy import compile_policy
+    from orchestrator.optimize.stage_runner import _confirm_rows
+
+    baseline = {"A": 2, "B": 2, "C": 2}
+    c = _campaign()
+    c["optimization"]["known_valid_baseline"] = baseline
+    c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    pol = compile_policy(c)
+    wd = tmp_path / "wd"
+    iter2 = wd / "runs" / "iter-2"
+    iter2.mkdir(parents=True)
+    append_run(iter2, {
+        "row_index": 0, "levels": baseline, "role": "confirm",
+        "replicate": 0, "status": "infeasible", "response": {"m": 1.0},
+        "held_out": {}, "manipulation": [], "invariants": [],
+        "duration_ms": 1, "error": "",
+    })
+    _rows, payload = _confirm_rows(
+        pol, wd, parse_factors(c["optimization"]["factors"]), "m", "maximize", 3,
+    )
+    assert [f["levels"] for f in payload["finalists"]] == [baseline]
+    assert [f["why"] for f in payload["finalists"]] == ["known_valid_baseline"]
 
 
 def test_the_shortlist_always_contains_the_best_measured_configuration(
