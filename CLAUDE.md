@@ -179,7 +179,21 @@ if this section and the spec ever disagree, the spec wins; fix this section.
 
 The epoch (`screen`/`foldover`/`refine`/`confirm`/`report`/`exception`) is not
 Python control flow branching on `if`/`elif`. It is an **interpreted state
-machine**:
+machine**. Use the paper's own vocabulary consistently in this area of the
+codebase (docstrings, comments, dispatch/review language) rather than
+paraphrasing it: **compiled epoch**, **semantic exception**, `X_valid`,
+**residual regret** `R_δ(x)`, **registered branch** / **registered
+foldover** / **registered augmentation**, **terminal discrimination**,
+**known-valid baseline**, **inferential accounting rule** (the `accounting`
+field) are all load-bearing terms from `../papers/nousko/paper.tex`, not
+synonyms to vary. One deliberate exception: the paper's Figure 1 names the
+terminal-discrimination stage **`discriminate`**; this branch calls the same
+state `confirm` (its behavior already matches the paper's meaning exactly —
+spec §3.3). That name predates this alignment work and stays as-is rather
+than triggering a mechanical rename across six already-reviewed tasks'
+schema, code, and tests — but `confirm` **is** the paper's `discriminate`,
+and any prose introducing it should say so once rather than assume the
+reader already knows.
 
 1. At the end of `verify`, `orchestrator.optimize.policy.compile_policy(campaign)`
    is a **pure function** (zero model tokens, no measurement read) that
