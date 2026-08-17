@@ -3718,12 +3718,6 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "certified": certified,
         "round": summary["round"],
         "budget_remaining": _budget_remaining(pol, work_dir),
-        # What the NEXT round would cost, in the closed observation vocabulary,
-        # so a compiled guard can compare it against the remaining budget
-        # without any code being generated.
-        "runs_needed_confirm": len(fin) * max(
-            1, int((pol["states"]["confirm"]["design"] or {}).get("replicates", 3)),
-        ),
         # `residual_regret` / `epsilon` are the TERMINAL pair here, not the
         # model pair screen and refine report under the same keys. The
         # observation vocabulary is closed and deliberately does not distinguish
@@ -3734,10 +3728,88 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "residual_regret": bound.value,
         "epsilon": eps,
     }
+
+    # ── the confirm-loop's affordability guard, the same shape as foldover's ──
+    #
+    # `budget_remaining < 1` is a real guard but a blunt one: it fires only once
+    # literally nothing is left, so "2 runs remain and the next round needs 9"
+    # reads as affordable and the epoch self-loops into a round it cannot
+    # complete. The next round's cost is knowable HERE and nowhere else, so it is
+    # computed here and the compiled guard reads the verdict.
+    #
+    # Why a Python comparison rather than a `when` predicate: identical to
+    # `foldover_affordable` above — a `when` clause compares an observation
+    # against a CONSTANT, and `budget_remaining >= runs_needed_confirm` compares
+    # two observations, which the closed grammar deliberately cannot express
+    # (spec §3.2). The BOOLEAN is what the guard reads; both operands are logged
+    # beside it so a reader of `transitions.jsonl` can reconstruct the
+    # arithmetic and tell a round declined for cost from one declined for the
+    # round cap.
+    #
+    # `_next_round_finalists` sizes the round with `_confirm_rows`'s OWN
+    # carry-over rule rather than with this round's shortlist size: a round that
+    # retired two of three challengers costs a third of what `len(fin)` would
+    # claim, and over-estimating the cost would decline rounds the budget can
+    # actually pay for.
+    _cfg = pol["states"]["confirm"]["design"] or {}
+    carry = _next_round_finalists(summary, shortlist_size=_cfg.get("shortlist_size", 3))
+    obs["runs_needed_confirm"] = carry * max(1, int(_cfg.get("replicates", 3)))
+    obs["confirm_affordable"] = (
+        obs["budget_remaining"] >= obs["runs_needed_confirm"]
+    )
+    if not certified and not obs["confirm_affordable"]:
+        logger.warning(
+            "confirm round %d: NOT certified and the next round needs %d run(s) "
+            "(%d finalist(s) still in contention x %d replicates) with only %d "
+            "remaining, so the campaign declines the round rather than starting "
+            "one it cannot finish. The winner stands on the rounds already "
+            "completed and report.json carries it uncertified.",
+            summary["round"], obs["runs_needed_confirm"], carry,
+            max(1, int((pol["states"]["confirm"]["design"] or {}).get("replicates", 3))),
+            obs["budget_remaining"],
+        )
     return _close_iteration(
         engine, campaign, work_dir, iter_dir, iteration, stage_name, pol, obs,
         recommendation_levels=dict(winner_levels) or None,
     )
+
+
+def _next_round_finalists(summary: dict, *, shortlist_size) -> int:
+    """How many finalists a round r+1 would seat, by `_confirm_rows`'s own rule.
+
+    Mirrors the ``rnd > 1`` carry-over branch there: the previous round's winner
+    plus every ``ok`` finalist whose per-challenger bound is not KNOWN to be at
+    or below epsilon (``None`` is unknown, not small — an uncomputed bound has
+    not retired its challenger). Kept as a separate function so the cost
+    estimate and the shortlist it estimates cannot drift apart silently: if
+    ``_confirm_rows``'s rule changes, this is the one other place to change.
+
+    AN EMPTY CARRY-OVER COSTS ``shortlist_size``, NOT ZERO AND NOT ONE. When
+    nothing survives — every finalist excluded on measured invalidity, or every
+    bound already at or below epsilon — ``_confirm_rows`` does not run a smaller
+    round; its ``if not finalists:`` branch falls through to the ROUND-1 LADDER
+    and re-seats up to ``shortlist_size`` seats from ``recommendation.json`` /
+    ``_top_measured``. Returning 1 there would under-estimate the round by up to
+    a factor of ``shortlist_size`` and let the affordability guard wave through
+    exactly the round it exists to decline — the same class of defect as
+    ``budget_remaining < 1`` being the only guard. The estimate must be an upper
+    bound on what the next round actually spends, or it is not a guard.
+    """
+    k = max(1, int(shortlist_size or 3))
+    eps = summary.get("epsilon")
+    bounds = summary.get("bounds") or {}
+    best = summary.get("best")
+    carry = {
+        f["key"] for f in (summary.get("finalists") or [])
+        if f.get("status") == "ok" and (
+            eps is None or bounds.get(f["key"]) is None or bounds[f["key"]] > eps
+        )
+    }
+    if best:
+        carry.add(best)
+    # `_confirm_rows` caps the shortlist at `k` regardless of how many the
+    # carry-over rule nominates, so the estimate caps there too.
+    return min(k, len(carry)) if carry else k
 
 
 def _confirm_findings(summary: dict, iteration: int) -> dict:

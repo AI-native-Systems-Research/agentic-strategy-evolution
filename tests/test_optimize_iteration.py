@@ -292,6 +292,38 @@ def test_behavioral_violation_does_not_abort_and_reaches_findings(
     ]
     assert behavioral, "the behavioral failure must be recorded"
 
+    # `behavioral_violation` sits in `policy.OBSERVATION_KEYS` with NO
+    # consuming `when` clause, deliberately — the violation is a discovery to
+    # report, never a reason to end the epoch. That makes THIS the artifact
+    # the evidence has to reach, and the assertion that keeps the vocabulary
+    # entry's "unconsumed on purpose" note honest: the note in
+    # `stage._behavioral_trigger_note` is folded into `StageDecision.rationale`,
+    # which `run_stage` passes to `artifacts.project_findings` as `decision`,
+    # which lands in `findings.json`'s `discrepancy_analysis` and in every
+    # arm's `metadata.decision`. If the note ever stops reaching here, the
+    # signal really would be silently dropped and the key really would need a
+    # transition.
+    findings = json.loads((iter_dir / "findings.json").read_text())
+    rid = behavioral[0]["relation_id"]
+    assert rid in findings["discrepancy_analysis"], findings["discrepancy_analysis"]
+    assert "non-monotonicity" in findings["discrepancy_analysis"]
+    assert any(
+        rid in (a.get("metadata") or {}).get("decision", "")
+        for a in findings["arms"]
+    ), findings["arms"]
+    # ...and the campaign advanced anyway: the finding is valid evidence, and
+    # the transition out of this stage is the one it would have taken with no
+    # violation at all.
+    assert findings["experiment_valid"] is True
+    trans = [
+        json.loads(line)
+        for line in (Path(wd) / "transitions.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    row = next(t for t in trans if t["iteration"] == 2)
+    assert row["observations"]["behavioral_violation"] is True
+    assert row["to"] != "exception", row
+
 
 # ─── the held-out leakage guard, at the stage-runner seam ─────────────────
 
