@@ -128,7 +128,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from orchestrator.optimize import artifacts, decide, matrix, relations, runner
+from orchestrator.optimize import artifacts, certificate, decide, matrix, relations, runner
 from orchestrator.optimize import policy as policy_mod
 from orchestrator.optimize.effects import fit_effects, solve_stationary_point
 from orchestrator.optimize.factors import is_refinable, parse_factors
@@ -1011,6 +1011,20 @@ def run_stage(
             f"them.",
         )
     rec = top[0]
+    # ── how much doubt remains: R_delta(x-hat) (spec §3.5, paper eq. 2) ────
+    #
+    # A recommendation is not a certificate. `scored` is the WHOLE valid space,
+    # which is what eq. (2)'s `max over z in X_valid` requires — computing the
+    # bound over `top` (the five-row shortlist) would be silent about a sixth
+    # candidate whose interval still reaches above x-hat. This reuses the one
+    # enumeration above rather than calling `ranked` again: two enumerations of
+    # the same space could in principle disagree, and the bound must be taken
+    # over exactly the space the argmax was taken over.
+    rb = certificate.model_regret_bound(
+        fit, scored, rec, delta=pol["objective"]["delta_screen"],
+        direction=direction,
+    )
+    epsilon = certificate.resolve_epsilon(pol["objective"]["epsilon"], rec.predicted)
     _write_json(iter_dir / "recommendation.json", {
         "stage": stage_name,
         "iteration": iteration,
@@ -1025,12 +1039,17 @@ def run_stage(
         ],
         "stationary_point": stationary,
         "excluded_measured_infeasible": excluded,
+        "residual_regret_model": certificate._to_dict(rb),
+        "epsilon": epsilon,
     })
     logger.info(
         "%s: recommendation %s (predicted %s=%.6g) — argmax over %d valid "
-        "candidate(s), %d measured-infeasible configuration(s) excluded",
+        "candidate(s), %d measured-infeasible configuration(s) excluded; "
+        "residual regret R_%.3g=%s vs epsilon=%.6g (%s)",
         stage_name, rec.levels, primary or "response", rec.predicted,
-        len(scored), len(excluded),
+        len(scored), len(excluded), rb.delta,
+        "unknown" if rb.value is None else f"{rb.value:.6g}",
+        epsilon, rb.method,
     )
 
     # project_findings takes `decision` as a STRING (it lands in findings
@@ -1121,6 +1140,19 @@ def run_stage(
         # registers here.
         "round": 0,
         "certified": False,
+        # The certificate, in the closed observation vocabulary, so a compiled
+        # guard can read `residual_regret <= epsilon` without any code being
+        # generated. `None` when there is no pure-error estimate, and `step`
+        # treats a None observation as UNKNOWN rather than as a match — which
+        # is the behaviour a certificate needs: a bound that could not be
+        # computed must never satisfy a guard that would certify on it.
+        #
+        # `certified` stays False here regardless: screen and refine never
+        # certify. Only confirm's terminal discrimination does (Task 9), on the
+        # assumption-light terminal bound, and spec §3.5 forbids collapsing the
+        # two deltas into one number.
+        "residual_regret": rb.value,
+        "epsilon": epsilon,
     })
     return _close_iteration(
         engine, campaign, work_dir, iter_dir, iteration, stage_name, pol, obs,
