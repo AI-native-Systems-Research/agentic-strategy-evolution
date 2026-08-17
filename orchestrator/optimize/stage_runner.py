@@ -105,10 +105,25 @@ are the ones whose base is not self-evident:
     upstream, before a transition is recorded. It is set explicitly so the
     guard is evaluated against a fact rather than against an absent key
     (``step`` treats a missing observation as unknown, which never matches).
-  * ``nan_response`` is "any row admissible to this stage's fit carried NaN".
-    Today ``_fitting_responses`` still raises on an unmeasured row before the
-    observation can be recorded; Task 11 is what routes it to ``exception``
-    instead.
+  * ``nan_response`` is "any row that ran to COMPLETION reported a non-numeric
+    primary metric". It is checked in ``run_stage`` BEFORE ``_fitting_responses``
+    is called, because that function raises on exactly these rows and an abort
+    ends the campaign with no report — where the paper's rule is that the
+    condition ends the EPOCH and still returns an action. The two remaining
+    raises in ``_fitting_responses`` are a different failure class and stay:
+    a row that never reached ``complete`` is a MEASUREMENT failure a re-run can
+    repair (nothing semantic to revise), and a non-numeric-but-not-NaN value is
+    an instrumentation mismatch. See ``_primary_is_nan``.
+
+A SEMANTIC EXCEPTION ENDS THE EPOCH, NOT THE CAMPAIGN (spec §3.2, paper "the one
+way back"). ``_close_iteration``'s ``exception`` branch writes
+``epoch_end-<epoch>.json`` at the work_dir root, runs the report on the strongest
+rung that does NOT rest on the fitted surface, and returns COMPLETED. Because
+``transitions.jsonl`` rows carry ``"epoch"`` and ``policy.current_state`` reads
+only this epoch's rows, a later ``nous run --resume`` over the same work_dir
+recompiles (``_load_or_compile_policy`` sees ``_epoch_index`` has advanced) and
+starts a CLEAN epoch at ``initial`` — it does not resume at the terminal
+``exception`` it just left.
 
 ``config_runner`` and ``integrity_check`` remain injected callables — that
 seam is what makes this module testable without subprocesses — but a real
@@ -123,6 +138,7 @@ stayed green — they inject fakes at exactly the seams that were missing.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -135,6 +151,7 @@ from orchestrator.optimize.effects import fit_effects, solve_stationary_point
 from orchestrator.optimize.factors import is_refinable, parse_factors
 from orchestrator.optimize.stage import (
     Stage,
+    Trigger,
     decide_after_refine,
     decide_after_screen,
     observations_from_decision,
@@ -218,6 +235,27 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
     ``infeasible`` rows are trustworthy — they say the config is
     inadmissible, which is real information about the space — but they are
     still excluded from the fit, per spec §6.4.
+
+    THE NaN-ON-A-COMPLETE-ROW CASE NO LONGER REACHES HERE. ``run_stage`` checks
+    for it before calling this function and routes it to the policy's
+    ``nan_response -> exception`` branch, because that condition is SEMANTIC (the
+    objective and the target's instrumentation disagree about what is measurable
+    at that configuration; no re-run repairs it) and the paper's rule is that it
+    ends the epoch while the campaign still returns an action. An abort here would
+    end the campaign with no report at all.
+
+    The remaining aborts are a DIFFERENT failure class each, and all four stay:
+
+      * ``primary`` is also declared ``held_out`` — a campaign misconfiguration,
+        caught before any measurement is interpreted;
+      * a held-out metric reached a fitting input — the leak this path exists to
+        refuse, one of the three checks that hard-fail under auto-approve;
+      * the primary metric is a string or a structure — an instrumentation
+        mismatch, not a measurement, and not a NaN (see ``_primary_is_nan``);
+      * rows that never reached ``complete`` carry no measurement — a MEASUREMENT
+        failure, which re-running the configurations repairs. Nothing semantic has
+        been discovered, so ending the epoch would tell the next agent to revise
+        an interface that is fine.
     """
     held_out = {str(m) for m in (response_spec.get("held_out") or [])}
     if primary in held_out:
@@ -287,6 +325,170 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
     return values
 
 
+def _stationary_in_hull(fit, stationary: dict | None, direction: str) -> bool:
+    """Is the fitted OPTIMUM inside the declared coded hull [-1, 1]?
+
+    This is the observation the compiled policy's ``refine`` exception guard
+    reads, so it has to mean "the declared ranges contain the optimum" and
+    nothing weaker. Three cases, and the middle one is why this is not a
+    one-line hull test:
+
+      * ``stationary is None`` — no curvature terms, so the surface is a plane
+        and has NO interior optimum. TRUE: the argmax is at a hull boundary,
+        which is inside the hull. ``decide_after_refine`` already reads this case
+        as "confirm at the best observed corner"; ending the epoch on it would
+        end every campaign whose refine fit happened to come out linear.
+
+      * out of hull, but the surface CURVES THE WRONG WAY along an offending
+        axis — convex where the campaign maximizes, concave where it minimizes.
+        TRUE. Such a point is a minimum (or a saddle) in that direction, so
+        moving toward it makes the response WORSE and it is not an optimum
+        outside the ranges; the optimum is at the hull boundary the argmax
+        already picks. This is the case that makes the naive geometric test
+        unusable: on a monotone surface the quadratic coefficients are noise and
+        the solve inverts a near-singular Hessian, so the "stationary point"
+        lands absurdly far out. MEASURED — ``SURFACES["additive"]`` seed 19
+        solves to coded ``A=-33.7, B=+57.8`` and ``SURFACES["sla"]`` seed 5 to
+        ``A=+6575`` — and in both the offending axis is CONVEX under a maximize
+        objective, while the genuine case (``SURFACES["bowl_out_of_hull"]``,
+        whose true peak sits at A=30 against a declared [2, 16]) solves to coded
+        ``A=+3.4`` with ``A`` concave at ``-1.85``. So the sign test separates
+        the real semantic exception from the numerical artefact on every surface
+        in the oracle.
+
+      * out of hull AND curving the right way — FALSE. A genuine optimum outside
+        the declared ranges: a defect in the factor's DEFINITION that no
+        measurement inside those ranges repairs, which is what makes it the
+        paper's semantic exception rather than a branch.
+
+    Only the PURE quadratic coefficients are consulted, not the full Hessian's
+    eigenvalues. A rigorous "is this a maximum" test would need the eigenvalues
+    of a k x k matrix, which means an eigensolver, which means numpy — banned in
+    this subpackage. The diagonal test is the right conservative direction
+    anyway: it declares the epoch-ending exception only when EVERY out-of-hull
+    axis independently curves toward an optimum out there, so the failure mode is
+    a missed exception (the campaign confirms and reports a boundary answer,
+    which is what it did before this rule existed) rather than a false one (the
+    epoch ends on a surface whose ranges were fine).
+    """
+    if stationary is None:
+        return True
+    outside = [fid for fid, v in stationary.items() if not -1.0 <= v <= 1.0]
+    if not outside:
+        return True
+    # Negative curvature is what an interior MAXIMUM needs; positive is what an
+    # interior MINIMUM needs. A missing quadratic term for an offending axis
+    # means the fit estimated no curvature there at all, so that axis cannot
+    # carry an optimum outside the hull either.
+    want_negative = direction != "minimize"
+    curvature = {
+        e.terms[0]: e.estimate
+        for e in (getattr(fit, "quadratic", None) or ())
+        if len(e.terms) == 2 and e.terms[0] == e.terms[1]
+    }
+    for fid in outside:
+        c = curvature.get(fid)
+        if c is None or (c >= 0.0 if want_negative else c <= 0.0):
+            logger.info(
+                "refine: the solved stationary point is outside the declared "
+                "hull on %s (coded %.4g) but the fit's curvature there is %s, "
+                "which is the WRONG sign for an optimum under direction %r — so "
+                "this is a stationary point without being an optimum (a "
+                "near-singular solve on a surface with little real curvature), "
+                "not a range that fails to contain the optimum. Treating the "
+                "hull as containing the optimum: the argmax is at a boundary.",
+                fid, stationary[fid],
+                "absent" if c is None else f"{c:+.6g}", direction,
+            )
+            return True
+    logger.warning(
+        "refine: the fitted optimum lies OUTSIDE the declared hull on %s "
+        "(coded %s) and the curvature there (%s) has the sign an optimum needs "
+        "under direction %r. The declared ranges do not contain the optimum, and "
+        "no measurement inside them will find it.",
+        outside, {fid: round(stationary[fid], 4) for fid in outside},
+        {fid: round(curvature[fid], 6) for fid in outside}, direction,
+    )
+    return False
+
+
+def _primary_is_nan(outcome, primary: str) -> bool:
+    """Is this outcome's primary metric a genuine float NaN?
+
+    Narrow on purpose. Only a value that IS a float (or int) and is not equal to
+    itself counts. A missing key, ``None``, a string, or a structure are all
+    different facts with different handling in ``_fitting_responses`` — an absent
+    metric is an unmeasured row, a string is an instrumentation mismatch — and
+    collapsing any of them into "NaN" would route a repairable failure to a
+    terminal state that ends the epoch.
+    """
+    raw = (getattr(outcome, "response", None) or {}).get(primary)
+    return isinstance(raw, float) and raw != raw
+
+
+def _nan_findings(stage_name: str, iteration: int, primary: str,
+                  nan_rows: list[int], n_rows: int) -> dict:
+    """A minimal findings.schema.json-conformant record of a NaN exception.
+
+    Every iteration must leave a schema-valid ``findings.json`` behind, because
+    ``finalize_iteration`` and ``append_ledger_row`` read it and the ledger is
+    what makes the campaign's history reconstructible. One arm, ``REFUTED``,
+    because the stage's premise — that every configuration in the design yields a
+    measurable response — is exactly what the run refuted; and
+    ``experiment_valid: false``, because no effect was estimated at all.
+
+    The diagnostic note NAMES the offending rows. ``validate_evidence`` rejects
+    aspirational prose, and "the run produced NaN" without a row index would be
+    precisely that: the row indices are what let a reader open ``runs.jsonl`` and
+    see the configuration that did it.
+    """
+    return {
+        "iteration": iteration,
+        "bundle_ref": f"runs/iter-{iteration}/design_matrix.json",
+        "experiment_valid": False,
+        "discrepancy_analysis": (
+            f"{len(nan_rows)} of {n_rows} configuration(s) in the {stage_name} "
+            f"design ran to completion but reported a non-numeric "
+            f"{primary!r}, so no response model was fitted and no effect was "
+            f"estimated. This is a semantic exception rather than a measurement "
+            f"failure: the campaign's objective and the target's instrumentation "
+            f"disagree about what is measurable at those configurations, and "
+            f"re-running the same epoch would re-measure the same NaN. The epoch "
+            f"ends; a revision of the metric's definition (or a declared "
+            f"constraint excluding the region) plus a recompilation starts the "
+            f"next one."
+        ),
+        "arms": [{
+            "arm_type": "h-main",
+            "predicted": (
+                f"every configuration in the {stage_name} design yields a "
+                f"measurable {primary!r} the stage can fit"
+            ),
+            "observed": (
+                f"row_index {nan_rows} reported {primary!r} as NaN with "
+                f"status 'complete'"
+            ),
+            "status": "REFUTED",
+            # `None`, not "measurement": the schema's `error_type` enum names
+            # ways a PREDICTION can be wrong (direction, magnitude, regime,
+            # shape_mismatch), and none of them applies to a stage that never
+            # estimated an effect to be wrong about.
+            "error_type": None,
+            "diagnostic_note": (
+                f"see runs/iter-{iteration}/runs.jsonl row_index {nan_rows} for "
+                f"the exact levels; epoch_end-*.json records the guard that "
+                f"ended the epoch and what a new one would need"
+            ),
+            "metadata": {
+                "stage": stage_name,
+                "primary_metric": primary,
+                "nan_row_indices": nan_rows,
+                "rows_planned": n_rows,
+            },
+        }],
+    }
+
+
 def _read_mechanism_hash(work_dir: Path) -> str:
     p = Path(work_dir) / "mechanism.sha256"
     return p.read_text().strip() if p.exists() else ""
@@ -319,8 +521,40 @@ def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
     interpret. Once a policy IS on disk, its recorded hash is checked: a
     pre-registered policy that changed inside an epoch is not a
     pre-registration, so an edit hard-fails rather than being interpreted.
+
+    A NEWER EPOCH RECOMPILES. ``epoch_end-<e>.json`` on disk is the record that
+    epoch ``e`` ended on a semantic exception, so ``_epoch_index`` has already
+    moved on while ``policy.json`` still describes ``e``. That is exactly the
+    paper's one way back: "an agent may then revise the mechanism or interface,
+    and a new compilation starts a new epoch" — the revision happens out of
+    band (a human or an agent widens a range, fixes the metric, redefines a
+    factor), and the NEXT ``nous run --resume`` is what has to notice. Notice it
+    here, where the campaign dict and the work_dir are both in hand, and
+    recompile from the revised campaign rather than interpreting the stale
+    policy.
+
+    This is not an escape from the hash check above: the check refuses a policy
+    edited INSIDE an epoch, and recompiling ACROSS an epoch boundary is the
+    opposite operation — a new pre-registration, freshly hashed, whose
+    ``epoch`` says which execution it registers. Both artifacts are overwritten
+    together (``write_policy`` writes ``policy.json`` and ``policy.sha256``), so
+    the pair never disagrees. The previous epoch's own registration survives in
+    ``transitions.jsonl``, whose rows carry the ``policy_hash`` they ran under —
+    so "which policy scheduled this design?" stays answerable for every epoch,
+    not only the current one.
     """
     pol = policy_mod.read_policy(work_dir)
+    if pol is not None and int(pol.get("epoch", 1)) < _epoch_index(work_dir):
+        logger.info(
+            "epoch %d ended on a semantic exception (%d epoch_end record(s) on "
+            "disk); recompiling the experimental policy to start epoch %d from "
+            "%r. Any revision to the campaign's factors, ranges, or objective "
+            "made since the exception is picked up here — that is what makes a "
+            "new epoch a fresh pre-registration rather than a resumed one.",
+            int(pol.get("epoch", 1)), _epoch_index(work_dir) - 1,
+            _epoch_index(work_dir), pol.get("initial"),
+        )
+        return _compile_and_write_policy(campaign, work_dir)
     if pol is None:
         return _compile_and_write_policy(campaign, work_dir)
     recorded = Path(work_dir) / "policy.sha256"
@@ -371,7 +605,7 @@ def _budget_remaining(pol: dict, work_dir: Path) -> int:
     return int(cap) - spent
 
 
-def _confirm_round(work_dir: Path) -> int:
+def _confirm_round(work_dir: Path, pol: dict | None = None) -> int:
     """Confirm rounds SPENT INCLUDING this one — so the first confirm is 1.
 
     The count is ``1 + (confirm transitions already recorded)``, which is what
@@ -380,10 +614,21 @@ def _confirm_round(work_dir: Path) -> int:
     (a 0-based count) would let a campaign whose registered ``max_rounds`` is 1
     run confirm TWICE — and would change today's behaviour, where one confirm
     iteration ends the campaign.
+
+    SCOPED TO THE EPOCH when ``pol`` is given. ``transitions.jsonl`` is
+    append-only across epochs, so a campaign that ended epoch 1 inside confirm
+    and recompiled would start epoch 2 with its round cap already spent — the new
+    epoch would route ``confirm -> report`` on its FIRST round and never measure
+    the shortlist the recompilation was for. ``pol`` is optional because the
+    legacy unit tests call this with a work_dir alone and their rows carry no
+    epoch; unfiltered is the right answer there (see
+    ``policy.epoch_transitions``, which reads a missing epoch as 1).
     """
-    return 1 + sum(
-        1 for t in policy_mod.read_transitions(work_dir) if t.get("from") == "confirm"
+    rows = (
+        policy_mod.read_transitions(work_dir) if pol is None
+        else policy_mod.epoch_transitions(pol, work_dir)
     )
+    return 1 + sum(1 for t in rows if t.get("from") == Stage.CONFIRM.value)
 
 
 def _close_iteration(engine, campaign, work_dir, iter_dir, iteration, state, pol,
@@ -398,11 +643,16 @@ def _close_iteration(engine, campaign, work_dir, iter_dir, iteration, state, pol
     that right — reintroducing, inside the shared helper, exactly the
     per-state knowledge the policy exists to hold.
 
-    ``iter_dir`` is accepted but unused here. It is part of the signature the
-    later terminal-handling tasks are written against (Task 11's
-    ``epoch_end.json`` is placed relative to the iteration that ended the
-    epoch), and threading it now keeps those tasks from having to touch three
-    call sites to get it.
+    ``iter_dir`` is accepted and still unused, and the epoch-ending work is why
+    it stays that way rather than being removed. It was threaded here for
+    ``epoch_end.json``, on the assumption that file would be placed relative to
+    the iteration that ended the epoch; it is not. The record is about the EPOCH,
+    ``_epoch_index`` counts these files at the work_dir root to know which epoch
+    the next run is, and an epoch-scoped fact buried in an iteration directory
+    would make that count a directory walk. The iteration is recorded INSIDE the
+    file instead, which keeps the iteration identifiable without making the
+    filesystem layout carry the association. Kept in the signature because the
+    callers pass it and a later terminal artifact may well be per-iteration.
     """
     from orchestrator.iteration import IterationOutcome
 
@@ -422,6 +672,12 @@ def _close_iteration(engine, campaign, work_dir, iter_dir, iteration, state, pol
     nxt, rule = policy_mod.step(pol, state, observations)
     policy_mod.append_transition(work_dir, {
         "iteration": iteration,
+        # WHICH EPOCH this transition belongs to. `transitions.jsonl` is
+        # append-only across epochs — that is the audit trail — so without this
+        # field a recompiled epoch would read its predecessor's rows as its own
+        # (see `policy.epoch_transitions`) and resume at the terminal
+        # `exception` it was recompiled to escape.
+        "epoch": pol["epoch"],
         "from": state,
         "to": nxt,
         "rule": rule,
@@ -432,20 +688,111 @@ def _close_iteration(engine, campaign, work_dir, iter_dir, iteration, state, pol
         "policy: %s -> %s (%s)", state, nxt,
         rule.get("accounting") or "default transition",
     )
-    if nxt == "report":
+    if nxt == Stage.REPORT.value:
         _run_report(engine, campaign, work_dir, iteration, pol,
                     recommendation_levels=recommendation_levels)
         return IterationOutcome.COMPLETED
-    if nxt == "exception":
-        # Task 11 replaces this with an epoch_end.json + a new epoch.
-        raise OptimizationAborted(
-            f"policy routed {state} -> exception: {rule.get('when')}",
+    if nxt == Stage.EXCEPTION.value:
+        # ── the paper's orange exit: the EPOCH ends, the campaign does not ──
+        #
+        # An observation exposed a semantic condition the policy did not name.
+        # No further measurement inside this epoch can repair it — that is what
+        # makes it semantic rather than statistical — so the epoch ends here and
+        # a revision plus a recompilation starts the next one
+        # (`_load_or_compile_policy` picks the new epoch up from this file).
+        #
+        # THE CAMPAIGN STILL RETURNS AN ACTION. This used to raise, which meant
+        # `run_campaign` unwound with no `report.json` at all: no recommendation,
+        # no bounds, not even the baseline the author declared as known-good. The
+        # paper is explicit that this is the wrong trade — "uncertainty weakens
+        # the claim; it need not prevent a decision" — and the ladder in
+        # `_run_report` is built precisely for the case where the strongest rungs
+        # are unavailable. What the exception DOES remove is the `model` rung: the
+        # fitted surface is the thing the exception just impeached (an optimum
+        # outside the hull is an extrapolation from it; a NaN response means it
+        # was never validly fitted), so `epoch_ended` skips it and the answer
+        # falls to `measured` or `baseline` — a configuration something actually
+        # ran, or the one the author certified by hand.
+        #
+        # `epoch_end-<e>.json` at the WORK_DIR ROOT, not inside `iter_dir`. The
+        # file is about the EPOCH, and `_epoch_index` counts these files to know
+        # which epoch the next run is; burying it per-iteration would make that
+        # count a directory walk and would put an epoch-scoped fact in an
+        # iteration-scoped place. `iteration` is recorded inside it instead, so
+        # the iteration that ended the epoch is still identifiable.
+        reason = f"{state}: {json.dumps(rule.get('when'), sort_keys=True)}"
+        _write_json(Path(work_dir) / f"epoch_end-{pol['epoch']}.json", {
+            "epoch": pol["epoch"],
+            "iteration": iteration,
+            "state": state,
+            "rule": rule,
+            "observations": observations,
+            "reason": reason,
+            # What a NEW epoch would need (spec §3.9: "why the epoch ended, and
+            # what a new one would need"). Not prose a model wrote — the
+            # observation that fired is the diagnosis, so this maps it to the
+            # revision it calls for.
+            "next_epoch_requires": _epoch_end_remedy(rule.get("when") or {}),
+            "policy_hash": policy_mod.policy_hash(pol),
+        })
+        logger.warning(
+            "SEMANTIC EXCEPTION at %s: %s. Epoch %d ends here — no further "
+            "measurement inside it can repair a condition the policy did not "
+            "name. %s Writing the report anyway on the strongest rung that does "
+            "not rest on the fitted surface; a revision plus `nous run --resume` "
+            "starts epoch %d from %r.",
+            state, reason, pol["epoch"],
+            _epoch_end_remedy(rule.get("when") or {}),
+            pol["epoch"] + 1, pol.get("initial"),
         )
+        _run_report(engine, campaign, work_dir, iteration, pol,
+                    recommendation_levels=None, epoch_ended=reason)
+        return IterationOutcome.COMPLETED
     return IterationOutcome.CONTINUE
 
 
+def _epoch_end_remedy(when: dict) -> str:
+    """What a NEW epoch would need, given the guard that ended this one.
+
+    Spec §3.9 asks the epoch-end record to say "why the epoch ended, and what a
+    new one would need". The "why" is the guard; the "what" is a fixed mapping
+    from the observation that fired to the revision it calls for, because the
+    observation vocabulary is CLOSED — so this is a lookup, not a judgement, and
+    it needs no model call to write.
+    """
+    if when.get("stationary_in_hull") is False:
+        return (
+            "the fitted optimum lies OUTSIDE the declared level hull, so the "
+            "declared ranges do not contain it and no measurement inside them "
+            "ever will: widen the offending factor's `levels` (see "
+            "recommendation.json's `stationary_point` for which axis and how "
+            "far) and recompile."
+        )
+    if when.get("nan_response") is True:
+        return (
+            "a configuration that RAN to completion reported a non-numeric "
+            "primary metric, so the target's instrumentation and the campaign's "
+            "objective disagree about what is measurable at that point: fix the "
+            "metric's definition or exclude the region with a declared "
+            "constraint, then recompile. Re-running the same epoch would "
+            "re-measure the same NaN."
+        )
+    if when.get("correctness_failed") is True:
+        return (
+            "a correctness relation failed, so the apparatus measures the wrong "
+            "system: repair the mechanism (or the relation, if the asserted "
+            "algebra was wrong) and recompile."
+        )
+    return (
+        "the policy routed to `exception` on "
+        f"{json.dumps(when, sort_keys=True)}: revise the mechanism or the "
+        "interface so the condition is either impossible or a named branch, "
+        "then recompile."
+    )
+
+
 def _run_report(engine, campaign, work_dir, iteration, pol, *,
-                recommendation_levels) -> None:
+                recommendation_levels, epoch_ended: str | None = None) -> None:
     """Write ``report.json`` and end the campaign at DONE.
 
     ALWAYS ACT (spec §3.6). A finite-budget system that cannot certify must
@@ -459,7 +806,10 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
                               against measured rivals.
       3. ``model``          — no terminal stage ran; the fitted argmax stands,
                               with its model bound, PROVIDED nothing has
-                              measured those exact levels invalid.
+                              measured those exact levels invalid AND no semantic
+                              exception ended the epoch (``epoch_ended``): this
+                              is the one rung that rests on the fitted surface,
+                              and an exception is evidence against that surface.
       4. ``measured``       — the model's answer is unusable; return the best
                               measured VALID configuration. Never the largest
                               noisy observation — ``_best_observed`` filters to
@@ -499,8 +849,28 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     if conf and conf.get("best"):
         basis = "certified" if conf.get("certified") else "terminal_best"
         levels, value = dict(conf.get("confirmed_at_levels") or {}), conf.get("mean")
-    elif rec.get("levels") and not _measured_infeasible_contains(
-        work_dir, rec["levels"],
+    elif (
+        rec.get("levels")
+        # THE `model` RUNG IS UNAVAILABLE ONCE A SEMANTIC EXCEPTION ENDED THE
+        # EPOCH. Every rung above rests on fresh MEASUREMENTS of the
+        # configuration it returns; this one is the only rung that rests on the
+        # fitted surface, and the semantic exception is evidence against that
+        # surface specifically — an out-of-hull stationary point means the argmax
+        # is an extrapolation past the design's own range, and a NaN response
+        # means the fit's inputs were never all valid numbers. Returning the
+        # model's pick anyway would be reporting the one answer the exception
+        # just impeached, and labelling it `model` would tell the reader nothing
+        # is wrong with it.
+        #
+        # Rungs 1/2 are deliberately NOT suppressed. They are measurements of a
+        # shortlist against itself, they do not consult the surface, and an
+        # exception raised at some LATER state (or in a later epoch over the same
+        # work_dir) does not retract a terminal comparison that actually
+        # happened. When the exception is confirm's own `nan_response`, there is
+        # no `best` to read anyway, so those rungs fall through on their own
+        # facts rather than on a special case.
+        and not epoch_ended
+        and not _measured_infeasible_contains(work_dir, rec["levels"])
     ):
         basis, levels, value = "model", dict(rec["levels"]), rec.get("predicted")
     else:
@@ -533,16 +903,24 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         "known_valid_baseline": pol.get("known_valid_baseline"),
         "path": [t["from"] for t in trans] + ([trans[-1]["to"]] if trans else []),
         "epoch": pol["epoch"],
+        # Present ONLY when a semantic exception ended the epoch, and then it is
+        # the guard that fired. A reader must be able to tell an ordinary report
+        # from one written on the way out of a failed epoch without reading the
+        # log, which is the same reason `basis` exists — and `epoch_end-<e>.json`
+        # carries the full record next to it.
+        **({"epoch_ended": epoch_ended} if epoch_ended else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
     })
     logger.info(
         "report: recommendation %s on basis %r (certified=%s); R_model=%s, "
-        "R_terminal=%s at delta_s=%s / delta_t=%s",
+        "R_terminal=%s at delta_s=%s / delta_t=%s%s",
         levels, basis, bool(conf and conf.get("certified")),
         (rec.get("residual_regret_model") or {}).get("value"),
         conf.get("residual_regret_terminal") if conf else None,
         pol["objective"]["delta_screen"], pol["objective"]["delta_terminal"],
+        f"; epoch ended by semantic exception ({epoch_ended})" if epoch_ended
+        else "",
     )
     engine.transition("DONE")
 
@@ -778,7 +1156,7 @@ def run_stage(
         # `_close_iteration` only routes here after the screen's observations
         # said `alias_consequential` AND `foldover_affordable`, so the pairs are
         # on disk in the screen's recommendation.json.
-        screen_iter = _screen_iteration(work_dir)
+        screen_iter = _screen_iteration(work_dir, pol)
         if screen_iter is None:
             raise OptimizationAborted(
                 "foldover has no screen to fold: transitions.jsonl records no "
@@ -985,6 +1363,85 @@ def run_stage(
         raise OptimizationAborted(
             "executed configurations deviate from the pre-registered "
             "design_matrix.json:\n  " + "\n  ".join(violations),
+        )
+
+    # ── a NaN on a COMPLETE row is a semantic exception, not a fit input ────
+    #
+    # BEFORE `_fitting_responses`, deliberately, and this ordering is the whole
+    # fix. That function's guard raises `OptimizationAborted` on exactly these
+    # rows — correctly, since fitting on them NaN-poisons every coefficient —
+    # but an abort ends the CAMPAIGN with no report at all, and the paper's rule
+    # is that this condition ends the EPOCH and still returns an action. Routing
+    # it to the policy's registered `nan_response -> exception` branch is what
+    # makes the difference; reaching `_fitting_responses` at all would already be
+    # the wrong outcome, so the check cannot live inside it.
+    #
+    # `status == "complete"` is load-bearing and is what separates this from
+    # `_fitting_responses`'s remaining raise conditions. A row the target ran to
+    # completion that reports a non-numeric primary metric is a SEMANTIC defect:
+    # the campaign's objective and the target's instrumentation disagree about
+    # what is measurable at that point, and no re-run repairs it (the target will
+    # report NaN there again). An `infeasible` / `rejected` row is the opposite —
+    # a trustworthy measurement of an inadmissible configuration, real
+    # information about the design space (spec §6.4) — and a row that never
+    # completed at all is a MEASUREMENT failure a re-run can fix. Neither routes
+    # here; both keep their existing handling (excluded from the fit by carrying
+    # NaN, and `_fitting_responses`'s unmeasured guard respectively).
+    #
+    # Note that `float(raw) != float(raw)` is not the test used: `raw` may be the
+    # string "nan" or a structure, and those are `_fitting_responses`'s
+    # non-numeric raise — an instrumentation mismatch rather than a measured NaN.
+    # `_primary_is_nan` accepts only a genuine float NaN.
+    nan_rows = [
+        o.row_index for o in outcomes
+        if getattr(o, "status", None) == "complete" and _primary_is_nan(o, primary)
+    ]
+    if nan_rows:
+        logger.warning(
+            "%s: %d row(s) ran to completion but reported a non-numeric %r "
+            "(row_index %s). That is a SEMANTIC exception, not a datum: the "
+            "objective and the target's instrumentation disagree about what is "
+            "measurable there, and no re-measurement inside this epoch repairs "
+            "it. Routing to the policy's nan_response branch WITHOUT fitting — "
+            "fitting on these rows would NaN-poison every coefficient while "
+            "still producing schema-valid artifacts.",
+            stage_name, len(nan_rows), primary, nan_rows,
+        )
+        _write_json(iter_dir / "findings.json", _nan_findings(
+            stage_name, iteration, primary, nan_rows, len(outcomes),
+        ))
+        # A BARE LIST on disk, as everywhere else in this module:
+        # `iteration._merge_principles` raises on a dict. Empty because a NaN
+        # response supports no principle about the factors — the epoch ended
+        # before any effect was estimated, and inventing a principle from an
+        # unfitted stage is the aspirational-platitude failure `validate_evidence`
+        # exists to reject.
+        _write_json(iter_dir / "principle_updates.json", [])
+        artifacts.write_relations(
+            iter_dir, relations.reconcile(factors, test_results or {}),
+        )
+        _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
+        finalize_iteration(
+            work_dir=work_dir, iter_dir=iter_dir, iteration=iteration,
+            campaign=campaign,
+        )
+        append_ledger_row(work_dir, iteration)
+        return _close_iteration(
+            engine, campaign, work_dir, iter_dir, iteration, stage_name, pol,
+            {
+                "correctness_failed": False,
+                "nan_response": True,
+                "budget_remaining": _budget_remaining(pol, work_dir),
+                # No fit ran, so there is no bound and no round to report. `step`
+                # treats a missing key as unknown (never a match), and the
+                # nan_response guard is registered FIRST out of every spending
+                # state, so nothing else can be reached from here — but state the
+                # facts that ARE known rather than leaving the row silent about
+                # them.
+                "round": 0,
+                "certified": False,
+            },
+            recommendation_levels=None,
         )
 
     ys = _fitting_responses(outcomes, response_spec, primary)
@@ -1218,6 +1675,25 @@ def run_stage(
             for c in top
         ],
         "stationary_point": stationary,
+        # DOES THE TERMINAL STAGE GET TO TRUST THIS RECOMMENDATION?
+        #
+        # `lack_of_fit` says the registered response class does not describe the
+        # measurements, so the argmax over the fitted surface is an artefact of a
+        # model the data rejected. The policy still routes to `confirm` — the
+        # registered augmentation for model inadequacy IS confirm's fresh
+        # measurements, and abandoning the stage would be the "diagnosis without
+        # action" defect — but confirm must not seat the model's pick as a
+        # finalist. `_confirm_rows` reads this flag and builds the shortlist from
+        # MEASURED valid rows only, which is spec §3.6 rung 3 / the paper's
+        # "remeasures the leading measured valid candidates rather than choosing
+        # the largest noisy observation".
+        #
+        # Persisted here rather than recomputed at confirm because confirm is a
+        # separate `run_iteration` call: the `Fit` is gone by then, and re-deriving
+        # inadequacy from effects.json would put the lack-of-fit test in two
+        # places. `observations_from_decision` already computes it for the policy;
+        # this is the same fact written where the consumer can read it.
+        "model_adequate": Trigger.LACK_OF_FIT not in set(decision.triggers),
         "excluded_measured_infeasible": excluded,
         "residual_regret_model": rb.as_dict(),
         "epsilon": epsilon,
@@ -1311,8 +1787,7 @@ def run_stage(
         ),
         stationary_in_hull=(
             None if stage_name != Stage.REFINE.value
-            else (stationary is not None
-                  and all(-1.0 <= v <= 1.0 for v in stationary.values()))
+            else _stationary_in_hull(fit, stationary, direction)
         ),
     )
     obs.update({
@@ -1502,7 +1977,7 @@ def _design_factor_ids(factors, design_cfg: dict, stage_name: str) -> tuple[str,
 
 
 
-def _screen_iteration(work_dir: Path) -> int | None:
+def _screen_iteration(work_dir: Path, pol: dict | None = None) -> int | None:
     """The iteration of the most recent transition OUT of ``screen``.
 
     The foldover state's combined fit needs the screen's responses, and which
@@ -1510,9 +1985,22 @@ def _screen_iteration(work_dir: Path) -> int | None:
     than an inference from the iteration index — a resumed work_dir, an
     exception-and-recompile epoch, or a campaign with pre-epoch ``build`` all
     move the screen away from any fixed position.
+
+    SCOPED TO THE EPOCH when ``pol`` is given, and here the scoping is
+    numerical rather than cosmetic. A foldover combines its own block with the
+    screen's into ONE fit, so pointing it at a previous epoch's screen would fit
+    over runs produced under a different compiled policy — possibly a different
+    factor set, different ranges, or (in the case that ends an epoch most often)
+    a mechanism that has since been revised. The aliasing argument the combined
+    fit rests on is an argument about ONE design; two epochs' blocks are not that
+    design.
     """
+    rows = (
+        policy_mod.read_transitions(work_dir) if pol is None
+        else policy_mod.epoch_transitions(pol, work_dir)
+    )
     hits = [
-        int(t["iteration"]) for t in policy_mod.read_transitions(work_dir)
+        int(t["iteration"]) for t in rows
         if t.get("from") == Stage.SCREEN.value and t.get("iteration") is not None
     ]
     return max(hits) if hits else None
@@ -1734,6 +2222,15 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
       3. ``recommendation.json``'s ``top_candidates`` in order — the near
          misses whose intervals still reach above x-hat.
 
+    UNLESS ``recommendation.json["model_adequate"] is False``, in which case rungs
+    1 and 2 are replaced by ``_top_measured``'s leading MEASURED valid candidates
+    (plural — that is the content of spec §3.6 rung 3) and rung 3 still fills
+    whatever slots remain. A lack-of-fit verdict says the response class was
+    rejected, so its argmax must not ANCHOR the comparison; it does not say the
+    ranking carries no information, and cutting the ranking out would leave the
+    campaign unable to seat any point it has not already run. The branch below
+    records what that costs, measured.
+
     Round r > 1 keeps the previous round's winner plus every finalist whose
     bound still exceeded epsilon: those are exactly the challengers that could
     still change the epsilon-optimal decision (paper, Figure 2), so spending
@@ -1772,7 +2269,7 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
     cfg = (pol["states"]["confirm"] or {})["design"]
     k = max(1, int(cfg.get("shortlist_size", 3)))
     r = max(1, int(cfg.get("replicates", 3)))
-    rnd = _confirm_round(work_dir)
+    rnd = _confirm_round(work_dir, pol)
     finalists: list[dict] = []
     provenance: list[str] = []
 
@@ -1842,10 +2339,69 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # entire carry-over was excluded. Both want the same priority order, and
         # both are filtered against measured-invalid levels by `_add`.
         rec = _read_recommendation(work_dir) or {}
-        _add(rec.get("levels"), f"{rec.get('stage') or 'model'} recommendation")
-        best = _best_observed(work_dir, primary, direction=direction)
-        if best is not None:
-            _add(best["levels"], "best measured valid configuration")
+        # ── AN INADEQUATE MODEL DOES NOT GET TO NOMINATE THE ARGMAX ──────────
+        #
+        # `recommendation.json["model_adequate"] is False` means the fitting
+        # stage's lack-of-fit test rejected the registered response class. Its
+        # `x_hat` is then the argmax of a surface the data refused, and seating it
+        # as a finalist would put the terminal budget behind the one point whose
+        # standing rests entirely on that surface. Spec §3.6 rung 3 and the paper
+        # name the alternative: "a small reserved budget remeasures the leading
+        # MEASURED valid candidates rather than choosing the largest noisy
+        # observation" — note the PLURAL, which is the whole content of the rung.
+        # One measured leader IS the largest noisy observation, and re-measuring
+        # it alone only says how repeatable it is; several of them compared
+        # freshly against each other is a model-free answer to which is better.
+        # So `_top_measured` seeds the shortlist instead of `x_hat`.
+        #
+        # WHAT IS DELIBERATELY *NOT* DROPPED: the model's ranked
+        # `top_candidates`, which still fill whatever slots the measured leaders
+        # leave. The paper's rung is qualified — "if the model fails **and cannot
+        # be repaired**" — and this policy's registered repair for a rejected
+        # model is precisely the confirm loop drawing deeper from that ranking as
+        # finalists are excluded on measurement. Cutting the ranking out entirely
+        # would remove the campaign's ONLY source of candidates it has not
+        # already measured, so it could never improve on what it happens to have
+        # run. Measured, not reasoned: with the ranking cut,
+        # `SURFACES["sla"]` certifies at 6.12% off the true constrained optimum
+        # at 3, 5 AND 8 confirm rounds — the extra budget buys literally nothing,
+        # because every candidate it could seat is already on disk — whereas
+        # keeping it reaches 1.02% in three rounds. On `SURFACES["bowl"]` cutting
+        # it discards the interior optimum `{A: 9, B: 11}` that the refine stage
+        # was spent to find and confirms the centre point instead. An "inadequate"
+        # verdict here is a statistical one (F ~ 1000 on these near-noiseless
+        # surfaces, because center-point replication under-states the variance the
+        # campaign actually faces — spec §3.5's own warning), and it is not
+        # licence to throw away the ordering's information content. Ranking the
+        # measured leaders ABOVE it is the honest response to it.
+        #
+        # DEFAULTS TO TRUE for an absent key. Every recommendation written before
+        # this field existed came from a stage that had no lack-of-fit verdict
+        # recorded here, and treating "not stated" as "inadequate" would silently
+        # switch every such campaign's terminal stage to a different shortlist.
+        model_ok = bool(rec.get("model_adequate", True))
+        if model_ok:
+            _add(rec.get("levels"), f"{rec.get('stage') or 'model'} recommendation")
+            best = _best_observed(work_dir, primary, direction=direction)
+            if best is not None:
+                _add(best["levels"], "best measured valid configuration")
+        else:
+            logger.info(
+                "confirm round %d: the fitting stage reported model_adequate="
+                "false (lack of fit), so the shortlist is SEEDED from the "
+                "leading MEASURED valid configurations rather than from the "
+                "model's argmax — the terminal comparison must not be anchored "
+                "on a surface the data rejected. The model's ranked candidates "
+                "still fill any remaining slot: they are the only source of "
+                "points the campaign has not already measured, and the "
+                "registered repair for a rejected model is this loop drawing "
+                "deeper from that ranking.", rnd,
+            )
+            for m in _top_measured(
+                work_dir, primary, direction=direction, k=_measured_seats(k),
+            ):
+                _add(m["levels"], "leading measured valid candidate "
+                                  "(model inadequate)")
         for c in rec.get("top_candidates") or []:
             _add(c.get("levels"), "model top candidate")
         if not finalists:
@@ -1869,6 +2425,18 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # feasible corner that happened to be on the first shortlist.
         invalid = _measured_infeasible(work_dir)
         rec = _read_recommendation(work_dir) or {}
+        if not rec.get("model_adequate", True):
+            # Same priority as the round-1 ladder: an inadequate model does not
+            # get first pick, so measured leaders go in ahead of its ranking. The
+            # ranking still follows, for the reason the ladder above records at
+            # length — it is the only source of candidates not already measured,
+            # and this loop IS the registered repair for a rejected model.
+            for m in _top_measured(
+                work_dir, primary, direction=direction, k=_measured_seats(k),
+            ):
+                _add(m["levels"],
+                     f"round {rnd} top-up from measured leaders "
+                     f"(model inadequate)")
         for c in rec.get("top_candidates") or []:
             _add(c.get("levels") or {},
                  f"round {rnd} top-up from the model's ranking")
@@ -2278,7 +2846,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     summary = {
         "stage": stage_name,
         "iteration": iteration,
-        "round": payload.get("round", _confirm_round(work_dir)),
+        "round": payload.get("round", _confirm_round(work_dir, pol)),
         "finalists": [
             {"key": f["key"], "levels": f["levels"], "why": f.get("why"),
              "samples": samples[f["key"]],
@@ -2519,17 +3087,71 @@ def _best_observed(work_dir, primary: str, *,
     that took the default would get the WORST configuration handed back as its
     fallback answer, so every production call site now passes it explicitly.
     """
-    import json as _json
+    top = _top_measured(work_dir, primary, direction=direction, k=1)
+    return top[0] if top else None
 
+
+def _measured_seats(shortlist_size: int) -> int:
+    """How many of a ``model_adequate: false`` shortlist's seats go to measured
+    leaders, leaving the rest for the model's ranking.
+
+    ``k // 2``, floor 1. Both halves of that are load-bearing:
+
+      * AT LEAST ONE, so a rejected response class never anchors the comparison
+        on its own argmax — that is the point of spec §3.6 rung 3, and with a
+        registered ``shortlist_size: 1`` the single seat is the measured leader.
+      * NOT ALL OF THEM, so the model's ranking still contributes candidates the
+        campaign has not run. Measured on ``SURFACES["sla"]``: with every seat
+        given to measured leaders the campaign certifies 6.12% off the true
+        constrained optimum at 3, 5 and 8 confirm rounds alike — the extra budget
+        buys nothing, because a measured-only shortlist can only ever re-measure
+        what is already on disk. Reserving seats for the ranking reaches 1.02% in
+        three rounds. On ``SURFACES["bowl"]`` an all-measured shortlist discards
+        the interior optimum refine was spent to find and confirms the centre
+        point instead.
+
+    Half rather than a tuned fraction because the two sources answer different
+    questions and neither dominates: the measured leaders bound the answer from
+    below with configurations that definitely work, the ranking supplies the only
+    chance of improving on them. An even split is the statement that a rejected
+    fit is evidence to DISCOUNT the ranking, not evidence to discard it.
+    """
+    return max(1, int(shortlist_size) // 2)
+
+
+def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
+                  k: int = 3) -> list[dict]:
+    """The ``k`` best COMPLETED configurations observed so far, best first.
+
+    ``_best_observed`` is this with ``k=1``, and the two share one definition on
+    purpose: "the best measured valid configuration" is the report's ``measured``
+    rung AND the shortlist's model-free seed, and two enumerations of the same
+    runs could disagree on the filter (which statuses count, whether a NaN counts
+    as a value) while both looked reasonable.
+
+    DEDUPLICATED BY LEVELS, keeping the best measurement of each configuration.
+    Without that, a confirm round's three replicates of one winner would fill a
+    shortlist of three with the SAME configuration and the terminal comparison
+    would have nothing to discriminate between — which is the failure mode the
+    shortlist exists to retire.
+
+    The caller that needs ``k > 1`` is ``_confirm_rows`` when the fitting stage
+    reported ``model_adequate: false``: spec §3.6 rung 3 / the paper's "a small
+    reserved budget remeasures the leading MEASURED valid candidates rather than
+    choosing the largest noisy observation". Note the plural — one measured
+    leader is the largest noisy observation, and re-measuring it alone only says
+    how repeatable it is. Several of them, compared freshly against each other,
+    is a model-free answer to which is better.
+    """
     sign = 1.0 if direction != "minimize" else -1.0
-    best = None
+    best: dict[str, tuple[dict, float]] = {}
     for path in sorted(Path(work_dir).glob("runs/iter-*/runs.jsonl")):
         for line in path.read_text().splitlines():
             if not line.strip():
                 continue
             try:
-                row = _json.loads(line)
-            except _json.JSONDecodeError:
+                row = json.loads(line)
+            except json.JSONDecodeError:
                 continue
             if row.get("status") != "complete":
                 continue
@@ -2542,9 +3164,15 @@ def _best_observed(work_dir, primary: str, *,
                 continue
             if numeric != numeric:
                 continue
-            if best is None or sign * numeric > sign * best[1]:
-                best = (dict(row.get("levels") or {}), numeric)
-    return None if best is None else {"levels": best[0], primary: best[1]}
+            levels = dict(row.get("levels") or {})
+            if not levels:
+                continue
+            key = json.dumps(levels, sort_keys=True, default=str)
+            prior = best.get(key)
+            if prior is None or sign * numeric > sign * prior[1]:
+                best[key] = (levels, numeric)
+    ranked = sorted(best.values(), key=lambda pair: -sign * pair[1])
+    return [{"levels": lv, primary: v} for lv, v in ranked[:max(1, int(k))]]
 
 
 def _read_recommendation(work_dir) -> dict | None:
