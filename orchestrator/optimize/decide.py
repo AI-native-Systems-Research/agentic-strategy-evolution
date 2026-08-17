@@ -80,6 +80,22 @@ def _axis(f: Factor, *, max_points: int = 9) -> list[tuple[float, object]]:
     the coding of THAT level, not of the unsnapped request.
     """
     low, high = f.screen_levels
+    # `not is_refinable(f)` is the LOAD-BEARING half and it already subsumes
+    # the choice test — `is_refinable` is `type == "numeric" and len(levels) >
+    # 2`, so a choice factor is never refinable (verified exhaustively over
+    # every (type, n_levels) a parsed Factor can hold; VALID_TYPES has two
+    # members and parse_factors enforces len(levels) >= 2). The choice clause
+    # is kept as deliberate redundancy: it says at the read site why a
+    # categorical has no interior, rather than making the reader unfold
+    # `is_refinable` to find out.
+    #
+    # DO NOT "simplify" this by keeping the choice clause and dropping the
+    # other one. That is the mutation that offers a factor declared [2, 16]
+    # the nine levels 2/4/6/7/9/11/12/14/16 — configurations the author never
+    # said were runnable, from a fit built on two points that has no evidence
+    # about anything between them. It went undetected by the entire suite
+    # until `test_axis_restricts_a_two_level_numeric_to_its_screen_pair`;
+    # that test and its space-level sibling are what fail now.
     if f.type == "choice" or not is_refinable(f):
         return [(-1.0, low), (1.0, high)]
     mid = (float(low) + float(high)) / 2.0
