@@ -918,6 +918,24 @@ def _rule15_build_requires_baseline(opt: dict) -> list[str]:
 _MECHANISM_PATH_GLOB_CHARS = "*?[]"
 
 
+def _normalized_mechanism_path(raw: str) -> str:
+    """``raw`` as ``_in_allowlist`` would have to see it to match anything.
+
+    ``posixpath.normpath`` collapses ``//``, drops ``.`` segments and resolves
+    interior ``..``. The trailing slash is restored afterwards because it is
+    MEANINGFUL to a reader of the campaign file (``"src/"`` says "the
+    directory") and ``_in_allowlist`` strips it itself — so normalising
+    ``"src/"`` to ``"src"`` and then reporting a difference would reject the
+    documented directory form, making the field unusable while every rejection
+    test still passed.
+    """
+    import posixpath
+
+    s = raw.replace("\\", "/")
+    trailing = "/" if s.endswith("/") and s.strip("/") else ""
+    return posixpath.normpath(s) + trailing
+
+
 def _check_mechanism_paths_are_literal(opt: dict) -> list[str]:
     """``build_checks.mechanism_paths`` entries must be literal paths, not globs.
 
@@ -956,6 +974,33 @@ def _check_mechanism_paths_are_literal(opt: dict) -> list[str]:
     named ``.`` that matches nothing, and ``_mechanism_text`` drops blank
     entries outright — so an allowlist of only such entries degrades to the
     whole-tree hash while the campaign file reads as scoped.
+
+    NORMALIZATION SHAPES (added in Task 14, from Task 14.5's own review). The
+    same two-matcher asymmetry is reachable without a single glob character.
+    ``"src//mech.py"``, ``"src/./mech.py"``, ``"./src/mech.py"``,
+    ``"src/sub/../mech.py"``, and an entry with surrounding whitespace or a
+    trailing newline are all ordinary literal paths that git's pathspec
+    NORMALISES before matching (so the tracked half finds the file) while
+    ``_in_allowlist`` compares path components verbatim (so the untracked half
+    finds nothing). Every one of them also passes ``nous validate campaign
+    --smoke``, whose check is ``(repo / entry).exists()`` — and the OS
+    normalises too. Verified on all five shapes: git reports ``src/mech.py``,
+    ``_in_allowlist`` reports False, the smoke check reports "resolves".
+
+    Rejected rather than silently normalised, for the same reason the globs are:
+    the runtime defines the semantics and the runtime does not normalise, so a
+    validator that repaired the entry would leave the campaign file and the
+    oracle disagreeing about what was declared.
+
+    ``..`` IS ITS OWN CASE, and worse than a narrowed oracle. Git refuses a
+    pathspec that leaves the work tree ("fatal: '..' is outside repository")
+    with a NON-ZERO exit, so ``_mechanism_text`` takes its ``returncode != 0``
+    branch and returns None; ``snapshot_mechanism`` then returns "" and writes
+    no ``mechanism.patch`` and no ``mechanism.sha256`` at all. The drift check
+    keys on that file's presence, so it never runs: the oracle is not scoped
+    down, it is absent, with no error at any layer. Its message names the escape
+    rather than reusing "matches nothing", because an author told "matches
+    nothing" hunts for a typo in a filename.
     """
     checks = opt.get("build_checks")
     if not isinstance(checks, dict):
@@ -967,6 +1012,7 @@ def _check_mechanism_paths_are_literal(opt: dict) -> list[str]:
     for entry in paths:
         raw = str(getattr(entry, "value", entry))
         bad = sorted({c for c in raw if c in _MECHANISM_PATH_GLOB_CHARS})
+        norm = _normalized_mechanism_path(raw)
         if bad:
             errors.append(
                 f"optimization.build_checks.mechanism_paths entry {raw!r} looks "
@@ -986,6 +1032,46 @@ def _check_mechanism_paths_are_literal(opt: dict) -> list[str]:
                 f"mechanism's actual files/directories ('src/', "
                 f"'src/mech.py'), or omit mechanism_paths entirely to keep the "
                 f"whole-tree default."
+            )
+        elif raw != raw.strip():
+            errors.append(
+                f"optimization.build_checks.mechanism_paths entry {raw!r} has "
+                f"leading or trailing whitespace (a trailing newline from a YAML "
+                f"block scalar looks like this), and it is NOT stripped at "
+                f"runtime. Git takes the padded string as a literal filename "
+                f"containing spaces and matches nothing; the untracked half's "
+                f"literal prefix matches nothing either — so the allowlist is "
+                f"non-empty (which is what turns the scoping ON) and covers no "
+                f"file, leaving the drift oracle watching an empty set. "
+                f"'nous validate campaign --smoke' cannot catch it: its check "
+                f"strips before testing existence, so it reports the entry as "
+                f"resolving. Write {raw.strip()!r}."
+            )
+        elif norm == ".." or norm.startswith("../"):
+            errors.append(
+                f"optimization.build_checks.mechanism_paths entry {raw!r} "
+                f"points OUTSIDE the target repository (it normalises to "
+                f"{norm!r}), which disables the drift oracle ENTIRELY rather "
+                f"than narrowing it: git refuses a pathspec that escapes the "
+                f"work tree with a non-zero exit, so no mechanism text is "
+                f"produced, no mechanism.sha256 is written, and the drift check "
+                f"— which keys on that file's presence — never runs and reports "
+                f"nothing. Entries are repo-relative paths UNDER the target: "
+                f"'src/' for a directory, 'src/mech.py' for a file."
+            )
+        elif norm != raw:
+            errors.append(
+                f"optimization.build_checks.mechanism_paths entry {raw!r} is "
+                f"not in normalised form ({norm!r} is): it carries a redundant "
+                f"separator, a '.' or '..' segment, or surrounding whitespace. "
+                f"Git's pathspec normalises the entry before matching, so the "
+                f"TRACKED half of the drift hash would find the file while the "
+                f"UNTRACKED half — a literal path-component prefix, and where a "
+                f"newly authored mechanism module lives — matches nothing. That "
+                f"leaves half the oracle silently disarmed, and 'nous validate "
+                f"campaign --smoke' cannot catch it either, because the OS "
+                f"normalises the path too and reports it as resolving. Write "
+                f"{norm!r}."
             )
     return errors
 

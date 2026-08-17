@@ -881,3 +881,190 @@ def test_a_rejected_glob_is_exactly_what_the_runtime_cannot_match(tmp_path):
             f"(git {git_says}, us {ours})"
         )
         assert _mechanism_path_errors([entry]), f"{entry!r} was accepted"
+
+
+# ── Task 14: the NORMALIZATION-shaped entries Task 14.5 left open ─────────────
+#
+# Task 14.5 closed the glob shapes. Its own review found the neighbouring family
+# it had not: an entry that is a perfectly ordinary literal path with a
+# redundant separator, a `.` segment, or surrounding whitespace. These are NOT
+# globs, so the glob check passes them; they exist under the target, so
+# `--smoke`'s `(repo / entry).exists()` passes them too; and git's pathspec
+# normalises them and matches the file. `_in_allowlist` does not normalise — it
+# compares path-component prefixes literally — so it matches NOTHING. That is
+# the identical half-disabled oracle Task 14.5 exists to prevent, reached by a
+# double slash instead of a star.
+#
+# `".."` is the sharpest member and is worse than half-disabled. Git rejects it
+# outright ("fatal: '..' is outside repository") with a non-zero exit, so
+# `_mechanism_text` returns None, `snapshot_mechanism` returns "" and writes NO
+# `mechanism.sha256` at all — the drift oracle is not narrowed, it is absent,
+# and nothing anywhere reports that.
+#
+# DECISION: whitespace is REJECTED, not stripped-and-accepted. The runtime is
+# what defines the semantics and the runtime does not strip; a validator that
+# quietly repaired the entry would make the campaign file and the oracle
+# disagree about what was declared, which is the class of gap this whole check
+# family exists to close. One rejection the author reads once is cheaper.
+
+
+@pytest.mark.parametrize("entry", [
+    "src//mech.py",     # a redundant separator: git normalises, we do not
+    "src/./mech.py",    # a `.` segment: same
+    "./src/mech.py",    # a leading `.` segment
+    "src/sub/../mech.py",  # an interior `..` that normalises away
+])
+def test_normalization_shaped_mechanism_paths_are_rejected(entry):
+    """Every literal-looking entry whose normalised form differs from itself."""
+    hits = _mechanism_path_errors([entry])
+    assert hits, f"{entry!r} was accepted"
+    assert any("normal" in h.lower() for h in hits), (
+        f"message must name normalisation: {hits}"
+    )
+    assert any(entry in h or repr(entry) in h for h in hits), (
+        f"message must show the entry: {hits}"
+    )
+    # And it must say what to write instead — a rejection with no repair is a
+    # defect in a file authored by an AI that cannot ask a follow-up question.
+    assert any("src/mech.py" in h for h in hits), f"no repair offered: {hits}"
+
+
+@pytest.mark.parametrize("entry", ["  src/mech.py  ", "src/mech.py\n", "\tsrc/"])
+def test_whitespace_padded_mechanism_paths_are_rejected(entry):
+    """Padding is a DIFFERENT failure from a redundant separator.
+
+    It gets its own message because the mechanics differ in a way that changes
+    the diagnosis. A `//` entry is honoured by git and dropped by
+    `_in_allowlist` (half the oracle). A PADDED entry is dropped by BOTH — git
+    reads it as a filename containing spaces — yet it is non-empty, and
+    non-empty is precisely what switches the scoping on inside
+    `_mechanism_text`. So the allowlist is active and covers nothing: the drift
+    hash is taken over an empty set and no edit anywhere can ever read as drift.
+
+    Rejected rather than stripped-and-accepted. The runtime does not strip, so a
+    validator that silently repaired the entry would leave the campaign file and
+    the oracle disagreeing about what was declared — the exact gap this family of
+    checks exists to close. (`--smoke` DOES strip before its existence test,
+    which is why it reports these entries as resolving and cannot catch them.)
+    """
+    hits = _mechanism_path_errors([entry])
+    assert hits, f"{entry!r} was accepted"
+    assert any("whitespace" in h.lower() for h in hits), (
+        f"message must name the whitespace: {hits}"
+    )
+    assert any(repr(entry.strip()) in h for h in hits), f"no repair offered: {hits}"
+
+
+def test_a_parent_escaping_mechanism_path_is_rejected_by_its_own_message():
+    """`".."` disarms the oracle ENTIRELY, so it gets its own diagnosis.
+
+    Distinct from the generic "matches nothing" message on purpose: the repair
+    and the severity both differ. A `.` entry narrows the allowlist to nothing
+    (bad); a `..` entry makes git exit non-zero, which makes `_mechanism_text`
+    return None, which makes `snapshot_mechanism` write no `mechanism.sha256`
+    file — so there is no recorded hash for any later iteration to compare
+    against and the drift check never runs. An author reading "matches nothing"
+    would look for a typo in a path; the actual problem is that the entry points
+    outside the repository.
+    """
+    for entry in ("..", "../mech.py", "src/../../mech.py"):
+        hits = _mechanism_path_errors([entry])
+        assert hits, f"{entry!r} was accepted"
+        assert any("outside" in h or "escape" in h for h in hits), (
+            f"{entry!r}: message must name the escape hazard, got {hits}"
+        )
+        assert not any("matches nothing" in h for h in hits), (
+            f"{entry!r}: reused the generic message: {hits}"
+        )
+
+
+def test_the_parent_escape_really_disarms_the_oracle(tmp_path):
+    """The premise of the rejection above, reproduced against real git.
+
+    Two independent facts ("what the validator refuses" and "what the runtime
+    does with it") drifting apart is how a check like this rots, so the hazard
+    is measured rather than remembered: with `mechanism_paths: [".."]` the
+    snapshot writes NO hash file, which is strictly worse than a narrow one.
+    """
+    from orchestrator.optimize.build import _mechanism_text, snapshot_mechanism
+    repo = _git_repo(tmp_path)
+    (repo / "src").mkdir()
+    (repo / "src" / "mech.py").write_text("V = 1\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    (repo / "src" / "mech.py").write_text("V = 2\n")
+    wd = tmp_path / "wd"
+    wd.mkdir()
+
+    assert _mechanism_text(repo, allowlist=["src/mech.py"]), "sanity: a good entry hashes something"
+    assert _mechanism_text(repo, allowlist=[".."]) is None
+    assert snapshot_mechanism(repo, wd, allowlist=[".."]) == ""
+    assert not (wd / "mechanism.sha256").exists(), (
+        "the drift oracle is silently absent, not merely narrow"
+    )
+
+
+def test_a_rejected_normalization_entry_is_what_the_runtime_cannot_match(tmp_path):
+    """The asymmetry itself, against the real matcher and real git.
+
+    For each rejected normalisation shape: git's pathspec finds the file and
+    `_in_allowlist` does not. That gap is the whole reason for the rejection, so
+    it is asserted rather than described.
+    """
+    from orchestrator.optimize.build import _in_allowlist
+    repo = _git_repo(tmp_path)
+    (repo / "src").mkdir()
+    (repo / "src" / "mech.py").write_text("V = 1\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    (repo / "src" / "mech.py").write_text("V = 2\n")
+
+    for entry in ("src//mech.py", "src/./mech.py", "./src/mech.py"):
+        git_says = set(subprocess.run(
+            ["git", "diff", "HEAD", "--name-only", "--", entry],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout.split())
+        assert git_says == {"src/mech.py"}, f"{entry!r}: git changed its mind"
+        assert not _in_allowlist("src/mech.py", [entry]), (
+            f"{entry!r}: the runtime now matches it, so the rejection is stale"
+        )
+        assert _mechanism_path_errors([entry]), f"{entry!r} was accepted"
+
+
+def test_a_padded_entry_really_makes_the_oracle_watch_nothing(tmp_path):
+    """The premise behind the whitespace rejection, against real git.
+
+    A padded entry is non-empty, so `_mechanism_text`'s `if paths:` branch turns
+    scoping ON — and then neither half matches, so the hash covers no file. The
+    proof is that a real edit to the named file does NOT change the hash, which
+    is exactly the false NEGATIVE the drift oracle cannot tolerate.
+    """
+    from orchestrator.optimize.build import current_mechanism_hash
+    repo = _git_repo(tmp_path)
+    (repo / "src").mkdir()
+    (repo / "src" / "mech.py").write_text("V = 1\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+
+    padded, clean = ["  src/mech.py  "], ["src/mech.py"]
+    before_pad = current_mechanism_hash(repo, allowlist=padded)
+    before_ok = current_mechanism_hash(repo, allowlist=clean)
+    (repo / "src" / "mech.py").write_text("V = 2\n")
+    assert current_mechanism_hash(repo, allowlist=clean) != before_ok, (
+        "sanity: the clean entry must notice the edit"
+    )
+    assert current_mechanism_hash(repo, allowlist=padded) == before_pad, (
+        "premise of the whitespace rejection no longer holds"
+    )
+
+
+def test_normalization_check_does_not_reject_ordinary_paths():
+    """The forms that ARE already normalised must keep passing.
+
+    A normalisation check is one `os.path.normpath` away from rejecting every
+    directory entry (`normpath("src/")` is `"src"`), which would make the field
+    unusable while satisfying every rejection test above.
+    """
+    for entry in ("src/", "src", "src/mech.py", "a/b/c/", "a_b/c-d.py",
+                  "tests/prop_batch.py", "orchestrator/optimize/build.py"):
+        assert _mechanism_path_errors([entry]) == [], entry
