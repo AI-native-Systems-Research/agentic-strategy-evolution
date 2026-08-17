@@ -219,7 +219,6 @@ def test_refine_holds_a_choice_factor_at_the_screen_recommendation(tmp_path):
     assert refine_rec["held_fixed"] == {"C": "on"}, refine_rec["held_fixed"]
 
 
-@pytest.mark.xfail(strict=True, reason="Task 9: finalists measured infeasible at confirm are excluded from the recommendation")
 def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     """Feasible is necessary but not sufficient — it must be the valid ARGMAX.
 
@@ -232,23 +231,58 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     rather than the exclusion Task 9 adds, and only the gap bound was
     discriminating.
 
-    Task 7 replaced that fallback with the argmax, which now recommends
+    Task 7 replaced that fallback with the argmax, which then recommended
     ``{A: 16, B: 14}`` — closer in objective and INFEASIBLE (``p99_ms = 46``).
-    So the feasibility assertion is now the failing one. That is the honest
+    So the feasibility assertion became the failing one. That was the honest
     state of the mechanism rather than a regression: ``decide.recommend``
     excludes points the campaign has MEASURED infeasible, and B=14 was never
     measured. Making the recommendation respect a constraint it can only
-    predict is exactly Task 9's shortlist-confirm work — measure the finalists
-    and exclude the ones that violate.
+    predict is exactly Task 9's shortlist-confirm work.
+
+    TASK 9 FLIPS IT, and it takes THREE ROUNDS to flip — which is the finding,
+    not a workaround. Round 1's shortlist is the model's top three, and on this
+    surface all three violate the p99 constraint (the fit has no p99 term, so
+    only a measurement can say so). One round therefore leaves exactly one
+    survivor — the feasible corner ``{A: 16, B: 2}``, 6.12% off — and the
+    campaign must NOT certify that: a shortlist the round itself narrowed to a
+    single member gives ``R_terminal = 0.0`` by the trivial branch, which would
+    advertise epsilon-optimality on the strength of having eliminated every
+    rival. So an exclusion suppresses certification and the registered
+    ``confirm -> confirm`` default sends the campaign back with a shortlist
+    topped up from deeper in the model's ranking, which is where the
+    constrained optimum lives.
+
+    Measured path at ``confirm_max_rounds: 3``: round 1 excludes B=14/B=12 and
+    keeps B=2 (uncertified); round 2 tops up with B=11 and A=14/B=16, both
+    excluded (uncertified); round 3 tops up with B=7 and B=6, both feasible, and
+    certifies B=7 at 19.37 — 1.02% off the true constrained optimum
+    ``{A: 16, B: 8}`` (19.6), which the grid cannot hit exactly. At the DEFAULT
+    ``confirm_max_rounds: 1`` the campaign still returns a feasible
+    configuration and labels it ``terminal_best``, uncertified — an honest
+    answer rather than a wrong certificate. Both halves are asserted below.
     """
     s = SURFACES["sla"]()
+    constrained = {"response": {"primary": {"metric": "m", "direction": "maximize"},
+                                "constraints": [{"metric": "p99_ms", "op": "<=", "value": 40}]}}
+
     res = run_synthetic_campaign(
-        s, seed=5, parent_dir=tmp_path,
-        campaign_overrides={"response": {"primary": {"metric": "m", "direction": "maximize"},
-                                          "constraints": [{"metric": "p99_ms", "op": "<=", "value": 40}]}},
+        s, seed=5, parent_dir=tmp_path / "looped",
+        campaign_overrides={**constrained, "policy": {"confirm_max_rounds": 3}},
+        max_iterations=12,
     )
     assert not s.invalid(res.recommendation), res.recommendation
     assert _gap_pct(res) <= 2.0, (res.recommendation, res.true_optimum)
+    assert res.basis == "certified", res.report["recommendation"]
+
+    # One round is not enough on this surface, and the report must say so rather
+    # than certifying the lone survivor of its own exclusions.
+    single = run_synthetic_campaign(
+        s, seed=5, parent_dir=tmp_path / "one_round",
+        campaign_overrides=constrained,
+    )
+    assert not s.invalid(single.recommendation), single.recommendation
+    assert single.basis == "terminal_best", single.report["recommendation"]
+    assert single.report["certified"] is False
 
 
 @pytest.mark.xfail(strict=True, reason="Task 11: an out-of-hull optimum ends the epoch instead of confirming anyway")
@@ -480,15 +514,29 @@ def test_the_recommendation_basis_names_the_artifact_it_came_from(tmp_path):
     ``terminal_best`` when the confirm state handed them over,
     ``measured``/``baseline`` on the fallback paths in ``_run_report``.
 
-    The regret fields stay ``None``: Task 9 owns the residual-regret
-    certificate, and ``_run_report`` deliberately writes no number it cannot
-    justify rather than a placeholder a reader could mistake for a measurement.
+    TASK 9 fills in both regret fields and adds the top rung, ``certified``.
+    ``bowl`` at its declared noise reaches it: three finalists are measured
+    freshly, the winner's Bonferroni-Welch bound over its two challengers falls
+    inside epsilon, and none of them was excluded. ``terminal_best`` is now the
+    rung BELOW that — a winner whose bound is still too wide — which is what
+    ``test_sla_surface_never_recommends_an_invalid_point`` and
+    ``test_confirm_findings_report_partially_confirmed_when_the_bound_is_too_wide``
+    exercise.
+
+    Both bounds are reported, and reported SEPARATELY (spec §3.5). The model
+    number can still be ``None`` — a deterministic surface with bit-identical
+    centre points has no pure error, which the certificate refuses to treat as
+    zero variance — so the assertion below is about the TERMINAL number being
+    present and the two never being conflated.
     """
     res = run_synthetic_campaign(SURFACES["bowl"](), seed=14, parent_dir=tmp_path)
-    assert res.basis == "terminal_best"
+    assert res.basis in ("certified", "terminal_best"), res.report["recommendation"]
     assert res.report["recommendation"]["levels"] == res.recommendation
     assert res.report["policy_hash"] and res.report["epoch"] == 1
-    assert res.residual_regret is None and res.residual_regret_terminal is None
+    assert res.residual_regret_terminal is not None
+    assert res.report["delta_screen"] == 0.05
+    assert res.report["delta_terminal"] == 0.05
+    assert res.report["finalists"], "the shortlist must reach the report"
 
 
 def test_the_recommendation_comes_from_the_LAST_confirmation_not_the_first(tmp_path):
@@ -609,9 +657,13 @@ def test_every_measurement_iteration_pre_registers_its_design_matrix(tmp_path):
         f"skipped the DESIGN block (design_matrix.json + _preflight_design)"
     )
     # The matrices must describe the stage that ran, not a stale re-render.
+    # Task 9 renames confirm's kind from ``confirm`` to ``shortlist_replicate``,
+    # which is what the compiled policy has always called that state's design
+    # (``policy.compile_policy``) and what the matrix now actually is: finalists
+    # x replicates rather than one configuration's coded row repeated.
     kinds = [json.loads((res.work_dir / "runs" / n / "design_matrix.json").read_text())["kind"]
              for n in registered]
-    assert kinds == ["full", "central_composite", "confirm"], kinds
+    assert kinds == ["full", "central_composite", "shortlist_replicate"], kinds
 
 
 def test_the_engine_ends_at_done_and_every_iteration_reached_the_ledger(tmp_path):

@@ -727,6 +727,153 @@ def _rule10_uncontrolled_knob_warning(campaign: dict, opt: dict) -> list[str]:
     return warnings
 
 
+def _rule13_known_valid_baseline(opt: dict, factors: list[dict]) -> list[str]:
+    """Rule 13: ``known_valid_baseline`` must be a configuration the campaign
+    is allowed to run.
+
+    It is the bottom rung of the report's fallback ladder (spec §3.6) and the
+    shortlist's last-resort finalist, so it is reached exactly when nothing
+    else survived — the worst possible moment to discover it names a factor
+    that does not exist or a level the author never declared runnable. Both
+    failures are silent at that point: ``matrix.render_apply`` skips ids it does
+    not recognise, so an unknown id simply drops its flag from the command line,
+    and an out-of-range level is a configuration the target was never promised
+    would work.
+
+    Numerics are compared with a tolerance, matching
+    ``matrix.check_fidelity``: a baseline of ``2.0`` against a declared level of
+    ``2`` is the same configuration, and rejecting it would fail a campaign for
+    a YAML representation choice.
+    """
+    baseline = opt.get("known_valid_baseline")
+    if baseline is None:
+        return []
+    if not isinstance(baseline, dict) or not baseline:
+        return [
+            "optimization.known_valid_baseline must be a non-empty mapping of "
+            "factor id -> level (e.g. {QUEUES: 2, BATCHING: off}). It is the "
+            "configuration report.json returns when nothing measured survives, "
+            "so an empty one leaves the campaign with nothing legal to return."
+        ]
+    by_id = {f.get("id"): f for f in factors if f.get("id")}
+    errors: list[str] = []
+    for fid, level in baseline.items():
+        factor = by_id.get(fid)
+        if factor is None:
+            errors.append(
+                f"optimization.known_valid_baseline names factor {fid!r}, which "
+                f"is not a declared factor (declared: {sorted(by_id)!r}). An "
+                f"unrecognised id renders no flag at all, so the baseline would "
+                f"silently run with that knob at whatever the target defaults "
+                f"to. Fix the id, or drop the entry if the knob is not a factor."
+            )
+            continue
+        levels = list(factor.get("levels") or [])
+        if any(_levels_equal(level, declared) for declared in levels):
+            continue
+        errors.append(
+            f"optimization.known_valid_baseline sets factor {fid!r} to "
+            f"{level!r}, which is not one of its declared levels {levels!r}. The "
+            f"baseline must be a configuration inside the declared design space "
+            f"— it is what the campaign falls back to when nothing else is "
+            f"valid, and a level the author never declared runnable is not a "
+            f"safe answer. Either use a declared level, or add {level!r} to the "
+            f"factor's levels if the target really supports it."
+        )
+    return errors
+
+
+def _levels_equal(a, b) -> bool:
+    """Level equality with numeric tolerance; exact for anything else."""
+    import math
+
+    if (isinstance(a, (int, float)) and isinstance(b, (int, float))
+            and not isinstance(a, bool) and not isinstance(b, bool)):
+        return math.isclose(float(a), float(b), rel_tol=1e-9, abs_tol=1e-12)
+    return a == b
+
+
+def _rule14_policy_ranges(opt: dict) -> list[str]:
+    """Rule 14: the ``policy`` block's registered numbers must be usable.
+
+    These are the decision parameters the compiled epoch runs on, and every
+    failure below produces a campaign that executes without complaint while
+    meaning something other than what the author wrote:
+
+    * ``delta_* <= 0`` makes the t-quantile infinite, so no bound is ever below
+      epsilon and nothing can certify;
+    * ``delta_* > 0.5`` is a one-sided "bound" that is below the point estimate
+      — it would certify a challenger that is measurably AHEAD;
+    * an ``epsilon`` with both ``abs`` and ``pct`` silently ignores ``pct``
+      (``resolve_epsilon`` prefers ``abs``), so a campaign declaring both has
+      one of its two stated thresholds quietly discarded;
+    * an ``epsilon`` with neither falls to the ``pct: 2.0`` default, which is
+      probably right but is not what an author who wrote an empty block meant
+      to say;
+    * ``confirm_max_rounds < 1`` registers a self-looping state that may never
+      run, and the compiled guard ``round >= max_rounds`` would then fire on
+      the FIRST round of a stage the author asked to loop.
+    """
+    pol = opt.get("policy")
+    if pol is None:
+        return []
+    if not isinstance(pol, dict):
+        return ["optimization.policy must be a mapping (epsilon, delta_screen, "
+                "delta_terminal, confirm_max_rounds)."]
+    errors: list[str] = []
+    for key in ("delta_screen", "delta_terminal"):
+        if key not in pol:
+            continue
+        raw = pol[key]
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            errors.append(
+                f"optimization.policy.{key} is {raw!r}, which is not a number. "
+                f"It is an error budget in (0, 0.5]; 0.05 is the default."
+            )
+            continue
+        if not (0.0 < val <= 0.5):
+            errors.append(
+                f"optimization.policy.{key}={val!r} is outside (0, 0.5]. At or "
+                f"below 0 the one-sided t-quantile is infinite and nothing can "
+                f"ever certify; above 0.5 the 'upper bound' falls below the "
+                f"point estimate, so the campaign would certify a challenger it "
+                f"measured as ahead. Use 0.05 (the default) or another value in "
+                f"(0, 0.5]."
+            )
+    eps = pol.get("epsilon")
+    if eps is not None:
+        if not isinstance(eps, dict):
+            errors.append(
+                "optimization.policy.epsilon must be a mapping with exactly one "
+                "of abs (metric units) or pct (percent of the recommendation's "
+                "value), e.g. {pct: 2.0}."
+            )
+        else:
+            has = [k for k in ("abs", "pct") if k in eps]
+            if len(has) != 1:
+                errors.append(
+                    f"optimization.policy.epsilon declares {has or 'neither'} of "
+                    f"abs/pct; it must declare EXACTLY ONE. With both, "
+                    f"resolve_epsilon uses abs and silently discards pct — one "
+                    f"of the two thresholds you wrote would never apply. With "
+                    f"neither, the indifference width falls to the pct: 2.0 "
+                    f"default rather than to anything you stated."
+                )
+    if "confirm_max_rounds" in pol:
+        raw = pol["confirm_max_rounds"]
+        if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
+            errors.append(
+                f"optimization.policy.confirm_max_rounds={raw!r} must be an "
+                f"integer >= 1. The compiled guard is `round >= max_rounds` "
+                f"against a 1-BASED round counter, so a value below 1 sends the "
+                f"campaign to report before the first round of terminal "
+                f"discrimination has produced anything."
+            )
+    return errors
+
+
 def validate_optimization_campaign(campaign: dict) -> list[str]:
     """Cross-field rules for ``kind: optimization`` campaigns that JSON
     Schema cannot express (Task 10).
@@ -761,6 +908,8 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule10_uncontrolled_knob_warning(campaign, opt))
     errors.extend(_rule11_build_stage_position(opt))
     errors.extend(_rule12_missing_native_tests_need_build(campaign, opt, factors))
+    errors.extend(_rule13_known_valid_baseline(opt, factors))
+    errors.extend(_rule14_policy_ranges(opt))
     return errors
 
 

@@ -447,28 +447,143 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
                 recommendation_levels) -> None:
     """Write ``report.json`` and end the campaign at DONE.
 
-    Minimal in this task (Task 9 fills in the residual-regret certificate).
-    ``basis`` names WHERE the recommendation came from, so a later task can
-    tell "the terminal state produced it" from "the best observed corner did".
+    ALWAYS ACT (spec §3.6). A finite-budget system that cannot certify must
+    still return a configuration, and the report must say which rung it came
+    from so a reader can tell a certificate from a fallback without reading the
+    log. The ladder, strongest first:
+
+      1. ``certified``     — terminal discrimination ran and ``R_t <= epsilon``.
+      2. ``terminal_best``  — terminal discrimination ran, bound too wide. The
+                              winner is still a measured configuration compared
+                              against measured rivals.
+      3. ``model``          — no terminal stage ran; the fitted argmax stands,
+                              with its model bound, PROVIDED nothing has
+                              measured those exact levels invalid.
+      4. ``measured``       — the model's answer is unusable; return the best
+                              measured VALID configuration. Never the largest
+                              noisy observation — ``_best_observed`` filters to
+                              ``complete``, and the terminal stage is what
+                              re-measures when there is budget for it.
+      5. ``baseline``       — nothing above survives; return the author's
+                              ``known_valid_baseline``, the one configuration
+                              known to work.
+      6. ``none``           — not a rung. No baseline was declared, so there is
+                              genuinely nothing legal to return, and saying so
+                              is better than inventing an origin.
+
+    ``recommendation_levels`` (threaded from ``_close_iteration``) is
+    deliberately NOT consulted for the top rung: rung 1/2 read
+    ``confirmation.json`` off disk, so a report written on a later iteration
+    than the confirm it describes — a budget-exhausted route to ``report``, or a
+    resumed work_dir — still reports the terminal result rather than an empty
+    one. It stays in the signature because the non-confirm callers pass it and
+    because it is what makes a terminal reached straight from ``screen`` fall to
+    the model rung rather than to ``measured``.
+
+    BOTH BOUNDS, SEPARATELY (spec §3.5). ``residual_regret_model`` and
+    ``residual_regret_terminal`` are distinct fields with distinct deltas
+    (``delta_screen``, ``delta_terminal``) because they rest on different
+    assumptions: the model bound carries the registered response class, the
+    terminal bound carries nothing but the fresh measurements. Collapsing them
+    into one number would advertise the assumption-light guarantee while
+    delivering the model-dependent one.
     """
     primary = (((campaign.get("optimization") or {}).get("response") or {})
                .get("primary") or {})
     metric = primary.get("metric") or ""
-    levels, basis = recommendation_levels, "terminal_best"
-    if not levels:
-        best = _best_observed(work_dir, metric) if metric else None
-        levels, basis = (dict(best["levels"]) if best else {}), "measured"
-    if not levels and pol.get("known_valid_baseline"):
-        levels, basis = dict(pol["known_valid_baseline"]), "baseline"
+    direction = primary.get("direction") or pol["objective"]["direction"]
+    conf = _latest_confirmation(work_dir)
+    rec = _read_recommendation(work_dir) or {}
+
+    if conf and conf.get("best"):
+        basis = "certified" if conf.get("certified") else "terminal_best"
+        levels, value = dict(conf.get("confirmed_at_levels") or {}), conf.get("mean")
+    elif rec.get("levels") and not _measured_infeasible_contains(
+        work_dir, rec["levels"],
+    ):
+        basis, levels, value = "model", dict(rec["levels"]), rec.get("predicted")
+    else:
+        best = (
+            _best_observed(work_dir, metric, direction=direction)
+            if metric else None
+        )
+        if best:
+            basis, levels, value = "measured", dict(best["levels"]), best.get(metric)
+        elif pol.get("known_valid_baseline"):
+            basis, levels, value = "baseline", dict(pol["known_valid_baseline"]), None
+        else:
+            basis, levels, value = "none", {}, None
+
     trans = policy_mod.read_transitions(work_dir)
     _write_json(Path(work_dir) / "report.json", {
-        "recommendation": {"levels": levels, "basis": basis},
+        "recommendation": {
+            "levels": levels, "basis": basis,
+            **({"value": value} if value is not None else {}),
+        },
+        "residual_regret_model": (rec.get("residual_regret_model") or {}).get("value"),
+        "residual_regret_terminal": (
+            conf.get("residual_regret_terminal") if conf else None
+        ),
+        "epsilon": conf.get("epsilon") if conf else rec.get("epsilon"),
+        "delta_screen": pol["objective"]["delta_screen"],
+        "delta_terminal": pol["objective"]["delta_terminal"],
+        "certified": bool(conf and conf.get("certified")),
+        "finalists": (conf.get("finalists") if conf else []) or [],
+        "known_valid_baseline": pol.get("known_valid_baseline"),
         "path": [t["from"] for t in trans] + ([trans[-1]["to"]] if trans else []),
         "epoch": pol["epoch"],
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
     })
+    logger.info(
+        "report: recommendation %s on basis %r (certified=%s); R_model=%s, "
+        "R_terminal=%s at delta_s=%s / delta_t=%s",
+        levels, basis, bool(conf and conf.get("certified")),
+        (rec.get("residual_regret_model") or {}).get("value"),
+        conf.get("residual_regret_terminal") if conf else None,
+        pol["objective"]["delta_screen"], pol["objective"]["delta_terminal"],
+    )
     engine.transition("DONE")
+
+
+def _measured_infeasible_contains(work_dir, levels: dict) -> bool:
+    """Has this exact configuration already been MEASURED inadmissible?
+
+    The model rung of the ladder must not hand back a configuration the campaign
+    watched fail. ``decide.ranked`` already excludes measured-infeasible points
+    from the candidate space when it produces a recommendation, but the report
+    may be reading a recommendation written EARLIER than the run that
+    invalidated it — a confirm round that measured the model's argmax
+    infeasible, most obviously — so the check is repeated at the point of use.
+
+    Compares numerics with a tolerance, for the same reason
+    ``matrix.check_fidelity`` does: levels round-trip through JSON, so an exact
+    ``!=`` on a float would report a mismatch a representation step away and
+    silently promote an infeasible configuration back onto the model rung.
+    """
+    import math as _math
+
+    want = dict(levels or {})
+    if not want:
+        return False
+    for other in _measured_infeasible(work_dir):
+        if set(other) != set(want):
+            continue
+        same = True
+        for k, v in want.items():
+            o = other[k]
+            if (isinstance(v, (int, float)) and isinstance(o, (int, float))
+                    and not isinstance(v, bool) and not isinstance(o, bool)):
+                if not _math.isclose(float(o), float(v), rel_tol=1e-9,
+                                     abs_tol=1e-12):
+                    same = False
+                    break
+            elif o != v:
+                same = False
+                break
+        if same:
+            return True
+    return False
 
 
 def run_stage(
@@ -637,9 +752,25 @@ def run_stage(
     # generators and run-order seed are fixed inputs, so this reproduces the
     # payload just written. check_fidelity below compares the executed runs
     # against THIS payload, which is the same object that was pre-registered.
-    design = _build_design(factors, design_cfg, stage_name)
-    payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
-    rows = matrix.expand(design, factors)
+    #
+    # CONFIRM DOES NOT BUILD A CODED DESIGN AT ALL. It is the terminal
+    # DISCRIMINATION state (spec §3.3; the paper's Figure 1 calls it
+    # `discriminate`): a shortlist of finalists, each measured freshly, so
+    # `_confirm_rows` returns rows and payload directly from real levels and
+    # `design` stays None. `_build_design` is therefore never called for
+    # confirm, and `fit_effects` is never reached on that path either.
+    direction = (
+        (response_spec.get("primary") or {}).get("direction", "maximize")
+    )
+    design = None
+    if stage_name == Stage.CONFIRM.value:
+        rows, payload = _confirm_rows(
+            pol, work_dir, factors, primary, direction, iteration,
+        )
+    else:
+        design = _build_design(factors, design_cfg, stage_name)
+        payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
+        rows = matrix.expand(design, factors)
 
     # At refine the design spans only the REFINABLE factors, so a factor left
     # out of it contributes no level and therefore no `apply` fragment — its
@@ -671,11 +802,18 @@ def run_stage(
     #
     # Scoped to refine on purpose. Screen is the stage that PRODUCES the
     # recommendation, so at screen there is nothing but `levels[0]` to hold
-    # at; and confirm does not use this block at all — it overwrites every
-    # row's levels from the recommendation below.
+    # at.
+    #
+    # CONFIRM IS EXCLUDED EXPLICITLY. Every finalist `_confirm_rows` builds
+    # already names a level for EVERY factor — it validates that and aborts
+    # otherwise — so there is nothing non-designed to hold, and merging a
+    # `levels[0]` default over a finalist could only corrupt it. The
+    # `_design_factor_ids` call below happens to return the full factor set at
+    # confirm, which would make `held` empty anyway; relying on that
+    # coincidence would leave the two facts free to drift apart, so say it.
     designed = set(_design_factor_ids(factors, design_cfg, stage_name))
     held = [f for f in factors if f.id not in designed]
-    if held and rows:
+    if held and rows and stage_name != Stage.CONFIRM.value:
         import dataclasses
 
         prev_levels = (
@@ -715,85 +853,6 @@ def run_stage(
                 for row in payload.get("rows", [])
             ]
 
-    if stage_name == Stage.CONFIRM.value:
-        # WHAT confirm replicates. Every row is pinned to ONE set of real
-        # levels, rendered through `matrix.render_apply` — the design's coded
-        # coordinates are never consulted here.
-        #
-        # That is deliberate, and it retires an entire class of defect rather
-        # than guarding against it. The previous implementation built a
-        # `Design` of coded coordinates and let `matrix.expand` decode them,
-        # which put the row's real levels one indirection away from the point
-        # confirm was asked to reproduce: `_decode_level` treats
-        # `role="center"` as "ignore the coordinates, use the midpoint of
-        # every declared range", so labelling the target point "center"
-        # silently discarded it (a stationary point at coded +0.9 of [64, 256]
-        # ran 160 instead of 246, and the campaign reported "the predicted
-        # optimum reproduced" about a configuration the fit never predicted).
-        # Setting `levels` directly cannot express that bug: there is no
-        # coordinate left to discard.
-        #
-        # The target comes from the recommendation the previous fitting stage
-        # wrote — `decide.recommend`'s argmax over X_valid, which already
-        # names real, grid-snapped, in-range levels for EVERY factor, choice
-        # factors included. `_best_observed` remains the fallback for a
-        # campaign with no fitting stage behind it at all.
-        rec_prev = _read_recommendation(work_dir) or {}
-        target = dict(rec_prev.get("levels") or {})
-        source = "recommendation"
-        if not target:
-            best = _best_observed(work_dir, primary)
-            if best is not None:
-                target, source = dict(best["levels"]), "best_observed"
-                logger.info(
-                    "confirm: no recommendation on disk; replicating the best "
-                    "OBSERVED configuration (%s=%.4f) rather than the origin",
-                    primary, best[primary],
-                )
-        if target:
-            import dataclasses
-
-            # A target must name EVERY declared factor. `render_apply` skips
-            # ids it does not recognise and renders nothing for ids it is not
-            # given, so a partial target silently drops that factor's flag from
-            # the command line — the same "the following arguments are
-            # required" failure that motivated the held-fixed block above, and
-            # invisible in the artifact because the row's `levels` would simply
-            # lack the key. Both sources cover every factor by construction
-            # (a recommendation's levels are held_fixed + fitted; a run row
-            # records what actually executed), so a gap here means the
-            # campaign's factor set changed under a resumed work_dir.
-            missing = [f.id for f in factors if f.id not in target]
-            if missing:
-                raise OptimizationAborted(
-                    f"confirm: the {source} names no level for {missing!r}, so "
-                    f"those factors' flags would be missing from every "
-                    f"replicate's command line. This happens when a campaign's "
-                    f"factor list changed after the recommendation was written "
-                    f"— re-run the fitting stage against the current factors "
-                    f"rather than confirming a partial configuration.",
-                )
-            rows = [
-                dataclasses.replace(
-                    r,
-                    levels=dict(target),
-                    apply=matrix.render_apply(factors, target),
-                )
-                for r in rows
-            ]
-            payload = dict(payload)
-            payload["rows"] = [
-                {**row, "levels": dict(target)}
-                for row in payload.get("rows", [])
-            ]
-            payload["confirm_source"] = source
-            if source == "recommendation":
-                logger.info(
-                    "confirm: replicating the %s stage's recommendation at %s "
-                    "(predicted %s=%s)",
-                    rec_prev.get("stage"), target, primary,
-                    rec_prev.get("predicted"),
-                )
     if _enter_phase(engine, "DESIGN", work_dir):
         _preflight_design(rows, factors, opt, iter_dir)
         # Provenance: every matrix materialised inside the epoch cites the
@@ -884,14 +943,15 @@ def run_stage(
     ys = _fitting_responses(outcomes, response_spec, primary)
 
     if stage_name == Stage.CONFIRM.value:
-        # Confirm does NOT fit a model. It replicates ONE configuration, so
-        # there are no distinct design points to estimate effects from —
-        # attempting it raises "design matrix is singular", correctly. What
-        # confirm reports is whether the predicted optimum REPRODUCED: the
-        # replicate mean, its spread, and the point that was run.
+        # Confirm does NOT fit a model. It compares a SHORTLIST of finalists on
+        # fresh replicates, so there is no coded design to estimate effects
+        # from — and that is the point: the terminal comparison must not rest
+        # on the fitted surface (spec §3.3, paper §Design). `payload` carries
+        # the finalist roster, so `_finish_confirm` groups the outcomes without
+        # re-deriving who was who.
         return _finish_confirm(
             engine, campaign, stage_name, iteration, iter_dir, work_dir,
-            rows, outcomes, ys, factors, test_results, pol,
+            rows, outcomes, ys, factors, test_results, pol, payload,
         )
 
     # The factor_ids MUST match the design's column order and width. At
@@ -990,7 +1050,6 @@ def run_stage(
     # the candidate space before the argmax: the campaign has direct evidence
     # those points are inadmissible, and recommending one anyway would be
     # recommending a configuration it watched fail.
-    direction = (response_spec.get("primary") or {}).get("direction", "maximize")
     held_now = dict(payload.get("held_fixed") or {})
     excluded = _measured_infeasible(work_dir)
     # `top=None` means "no truncation", so one call gives both the shortlist
@@ -1001,7 +1060,20 @@ def run_stage(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded, top=None,
     )
-    top = scored[:5]
+    # `top_candidates` is not only a human-readable "how close was the
+    # runner-up" — it is the POOL `_confirm_rows` draws the terminal shortlist
+    # from, including the round-r top-up after finalists are excluded. Capping
+    # it at 5 while `shortlist_size` may be larger would silently starve the
+    # shortlist: measured on `SURFACES["sla"]` at shortlist 9, the confirm stage
+    # could seat only 6 finalists because the pool held 5. Keep 5 as the floor
+    # (the reporting purpose it has always served) and widen it to whatever the
+    # registered shortlist needs, plus headroom for the candidates the terminal
+    # stage will measure inadmissible and drop.
+    _shortlist = int(
+        ((pol.get("states") or {}).get("confirm") or {}).get("design", {})
+        .get("shortlist_size", 3),
+    )
+    top = scored[:max(5, _shortlist * 2)]
     if not top:
         raise OptimizationAborted(
             f"{stage_name}: every candidate configuration was already measured "
@@ -1039,7 +1111,7 @@ def run_stage(
         ],
         "stationary_point": stationary,
         "excluded_measured_infeasible": excluded,
-        "residual_regret_model": certificate._to_dict(rb),
+        "residual_regret_model": rb.as_dict(),
         "epsilon": epsilon,
     })
     logger.info(
@@ -1339,6 +1411,266 @@ def _preflight_design(rows, factors, opt: dict, iter_dir: Path) -> None:
     )
 
 
+def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
+                  direction: str, iteration: int) -> tuple[list, dict]:
+    """The confirm state's rows: a SHORTLIST of finalists x fresh replicates.
+
+    This is the paper's terminal discrimination (Figure 1 names the state
+    ``discriminate``; ``confirm`` is this branch's older name for it, and the
+    behaviour here is the paper's). Screening produces a shortlist
+    ``S subset of X_valid``; every member of ``S`` is then measured freshly and
+    they are compared with each other, so the final comparison does not rest on
+    the fitted response at all. The remaining global claim is only that
+    screening did not exclude the true optimum — hence spec §3.5's
+    ``Pr(wrong global decision) <= delta_s + delta_t``, two risks kept apart.
+
+    WHAT THIS REPLACES, and why it is not just "more replicates". Until now
+    confirm resolved ONE target — the latest ``recommendation.json``, i.e. the
+    argmax of the FITTED surface — and replicated it. Tight agreement between
+    those replicates was reported as CONFIRMED, but the replicates only ever
+    measured how repeatable one configuration is; whether it was the best
+    configuration remained a claim about the model. Measuring several finalists
+    against each other is what makes the terminal claim model-free, and it is
+    also what lets a finalist the model liked be REJECTED on measurement (see
+    ``_finish_confirm``'s exclusion rule and ``SURFACES["sla"]``, where the
+    fitted argmax is infeasible and only a measurement can say so).
+
+    FINALIST SELECTION. Round 1, dedup'd by levels, in this priority and
+    stopping at ``shortlist_size``:
+
+      1. the latest ``recommendation.json``'s ``levels`` — the model's answer,
+         which the shortlist exists to put on trial rather than to trust;
+      2. the best measured VALID configuration (``_best_observed``, which
+         filters to ``status == "complete"``) — spec §3.6 rung 3's "never
+         return the largest noisy observation" needs it in the comparison, not
+         only in the report;
+      3. ``recommendation.json``'s ``top_candidates`` in order — the near
+         misses whose intervals still reach above x-hat.
+
+    Round r > 1 keeps the previous round's winner plus every finalist whose
+    bound still exceeded epsilon: those are exactly the challengers that could
+    still change the epsilon-optimal decision (paper, Figure 2), so spending
+    the next round's budget anywhere else buys nothing.
+
+    ``known_valid_baseline`` is the last resort — a campaign with no fitting
+    stage behind it and nothing measured has no other legal configuration.
+
+    NO CODED COORDINATES ANYWHERE. Every row's ``levels`` is a finalist's real
+    levels and its ``apply`` is rendered from those levels by
+    ``matrix.render_apply``. That retires a bug class rather than guarding
+    against it: the predecessor carried the target as coded coordinates for
+    ``matrix.expand`` to decode, and ``matrix._decode_level`` treats
+    ``role="center"`` as "ignore the coordinates, use the midpoint of every
+    declared range" — so labelling the target "center" discarded it silently.
+    Observed on a real campaign: a point at coded +0.9 of [64, 256] ran level
+    160 instead of 246, and the campaign reported "the predicted optimum
+    reproduced" about a configuration the fit never predicted. Setting
+    ``levels`` directly cannot express that bug; there is no coordinate left to
+    discard.
+
+    RUN ORDER is randomized WITHIN each replicate block (seed
+    ``iteration * 1000 + i``) rather than across the whole matrix, so every
+    finalist is measured once before any is measured twice. A drifting machine
+    then shifts all the finalists together instead of loading the drift onto
+    whichever one happened to be scheduled late — which is the confound the
+    terminal comparison is least able to absorb, since it compares finalists
+    directly rather than through a fitted surface.
+    """
+    from orchestrator.optimize.matrix import (
+        ConfigRow,
+        randomized_run_order,
+        render_apply,
+    )
+
+    cfg = (pol["states"]["confirm"] or {})["design"]
+    k = max(1, int(cfg.get("shortlist_size", 3)))
+    r = max(1, int(cfg.get("replicates", 3)))
+    rnd = _confirm_round(work_dir)
+    finalists: list[dict] = []
+    provenance: list[str] = []
+
+    def _add(levels, why: str) -> None:
+        if not levels:
+            return
+        lv = dict(levels)
+        if any(lv == f for f in finalists) or len(finalists) >= k:
+            return
+        finalists.append(lv)
+        provenance.append(why)
+
+    if rnd > 1:
+        prev = _latest_confirmation(work_dir) or {}
+        eps = prev.get("epsilon")
+        by_key = {f["key"]: f for f in prev.get("finalists") or []}
+        winner = by_key.get(prev.get("best") or "")
+        if winner:
+            _add(winner.get("levels"), "previous round's best")
+        for f in prev.get("finalists") or []:
+            bound = (prev.get("bounds") or {}).get(f["key"])
+            # `None` is UNKNOWN, not "small": a challenger whose bound could
+            # not be computed has not been shown to be out of contention, so it
+            # stays in the shortlist. Only a bound that was computed AND came
+            # in at or below epsilon retires a finalist.
+            if f.get("status") == "ok" and (
+                eps is None or bound is None or bound > eps
+            ):
+                _add(f.get("levels"), f"round {rnd - 1} bound above epsilon")
+    if not finalists:
+        rec = _read_recommendation(work_dir) or {}
+        _add(rec.get("levels"), f"{rec.get('stage') or 'model'} recommendation")
+        best = _best_observed(work_dir, primary, direction=direction)
+        if best is not None:
+            _add(best["levels"], "best measured valid configuration")
+        for c in rec.get("top_candidates") or []:
+            _add(c.get("levels"), "model top candidate")
+        if not finalists:
+            _add(pol.get("known_valid_baseline"), "known_valid_baseline")
+    elif rnd > 1 and len(finalists) < k:
+        # TOP UP a shortlist the previous round shrank.
+        #
+        # Retiring a finalist (its bound fell below epsilon, or a measurement
+        # showed it invalid) leaves room, and re-running a two-member comparison
+        # unchanged would spend the round learning nothing. Fill from the
+        # model's ranked candidates, skipping anything already measured
+        # inadmissible — which after a round of exclusions is a strictly better
+        # informed list than the one round 1 drew from.
+        #
+        # This is the mechanism `SURFACES["sla"]` needs. There the model's whole
+        # top-3 violates the p99 constraint (the fit has no p99 term, so only a
+        # measurement can say so); round 1 excludes all three, and round 2 draws
+        # the next candidates down the ranking — which is how the campaign
+        # reaches the true CONSTRAINED optimum rather than settling for the one
+        # feasible corner that happened to be on the first shortlist.
+        invalid = _measured_infeasible(work_dir)
+        rec = _read_recommendation(work_dir) or {}
+        for c in rec.get("top_candidates") or []:
+            lv = c.get("levels") or {}
+            if lv and not _measured_infeasible_contains(work_dir, lv):
+                _add(lv, f"round {rnd} top-up from the model's ranking")
+        if len(finalists) < k:
+            logger.info(
+                "confirm round %d: shortlist topped up to %d of a requested %d; "
+                "the model's ranking offers no further candidate that has not "
+                "already been measured inadmissible (%d such configuration(s)). "
+                "`recommendation.json.top_candidates` is the pool, so a wider "
+                "shortlist needs a wider pool.",
+                rnd, len(finalists), k, len(invalid),
+            )
+    if not finalists:
+        raise OptimizationAborted(
+            "confirm has no finalist to measure: no recommendation.json on "
+            "disk, no completed run to name a best measured configuration, and "
+            "no optimization.known_valid_baseline to fall back on. Run a "
+            "fitting stage first, or declare known_valid_baseline so the "
+            "campaign always has one configuration it may legally return.",
+        )
+
+    # Every finalist must name a level for EVERY declared factor.
+    # `render_apply` renders nothing for an id it is not given, so a partial
+    # finalist silently drops that factor's flag from the command line — the
+    # "the following arguments are required" failure, invisible in runs.jsonl
+    # because the row's `levels` would simply lack the key. Every source above
+    # covers every factor by construction (a recommendation's levels are
+    # held_fixed + fitted; a run row records what executed; a baseline is
+    # author-declared and validator-checked), so a gap here means the
+    # campaign's factor set changed under a resumed work_dir.
+    for lv, why in zip(finalists, provenance):
+        missing = [f.id for f in factors if f.id not in lv]
+        if missing:
+            raise OptimizationAborted(
+                f"confirm: the {why} names no level for {missing!r}, so those "
+                f"factors' flags would be missing from every replicate's "
+                f"command line. This happens when a campaign's factor list "
+                f"changed after the recommendation was written — re-run the "
+                f"fitting stage against the current factors rather than "
+                f"confirming a partial configuration.",
+            )
+
+    rows: list[ConfigRow] = []
+    idx = 0
+    for i in range(r):
+        for j in randomized_run_order(len(finalists), seed=iteration * 1000 + i):
+            lv = finalists[j]
+            rows.append(ConfigRow(
+                row_index=idx, levels=dict(lv), role="confirm", replicate=i,
+                # `finalist` rides on `apply` because ConfigRow has no field
+                # for it and `runs.jsonl` records `apply` verbatim — so which
+                # finalist each row measured is durable evidence rather than an
+                # inference from matching level dicts after the fact.
+                apply={**render_apply(factors, lv), "finalist": j},
+            ))
+            idx += 1
+    payload = {
+        "factor_ids": [f.id for f in factors],
+        "kind": "shortlist_replicate",
+        "resolution": None,
+        "generators": [],
+        "aliases": [],
+        # The permutation is INSIDE each block, so the payload's top-level
+        # run_order is the identity: `run_stage` executes `rows` in the order
+        # this function returned them, which already carries the per-block
+        # shuffle. A second permutation over the whole matrix would undo the
+        # "every finalist once before any twice" property.
+        "run_order": list(range(len(rows))),
+        "run_order_seed": iteration,
+        "round": rnd,
+        "finalists": [
+            {"key": f"f{j}", "levels": lv, "why": why}
+            for j, (lv, why) in enumerate(zip(finalists, provenance))
+        ],
+        "rows": [
+            {"row_index": x.row_index, "levels": dict(x.levels), "role": x.role,
+             "replicate": x.replicate, "apply": x.apply}
+            for x in rows
+        ],
+    }
+    logger.info(
+        "confirm round %d: %d finalist(s) x %d replicate(s) = %d fresh runs; "
+        "finalists %s", rnd, len(finalists), r, len(rows),
+        [{"key": f"f{j}", "why": w, "levels": lv}
+         for j, (lv, w) in enumerate(zip(finalists, provenance))],
+    )
+    return rows, payload
+
+
+def _latest_confirmation(work_dir) -> dict | None:
+    """The most recent ``confirmation.json``, if any.
+
+    Mirrors ``_read_recommendation`` — including its NUMERIC iteration sort,
+    for the same reason: ``"iter-10"`` sorts before ``"iter-2"`` as a string,
+    so a lexicographic walk silently returns a STALE record on any campaign
+    reaching double digits. Two consumers: round r > 1's finalist carry-over,
+    and ``_run_report``'s top rung.
+    """
+    import json
+
+    if work_dir is None:
+        return None
+    runs = Path(work_dir) / "runs"
+    if not runs.exists():
+        return None
+
+    def _iter_index(path: Path) -> int:
+        try:
+            return int(path.name.split("-", 1)[1])
+        except (IndexError, ValueError):
+            return -1
+
+    for d in sorted(
+        (p for p in runs.iterdir() if p.is_dir()), key=_iter_index, reverse=True,
+    ):
+        p = d / "confirmation.json"
+        if not p.exists():
+            continue
+        try:
+            payload = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
 def _build_design(factors, design_cfg: dict, stage_name: str):
     """Design for this stage: a screen matrix, or a response surface.
 
@@ -1396,53 +1728,22 @@ def _build_design(factors, design_cfg: dict, stage_name: str):
             refinable, center_points=int(cfg.get("center_points", 4)),
         )
     if stage_name == Stage.CONFIRM.value:
-        # Confirm REPLICATES one configuration — the recommendation — rather
-        # than re-running a screen. Without this branch confirm silently
-        # rebuilt the screen design, so the campaign's final stage repeated
-        # stage 2 and reported COMPLETED while the guide claimed it reproduced
-        # the optimum. That is the one defect here that could mislead a
-        # researcher about their own result.
+        # Unreachable, and deliberately loud rather than silently plausible.
         #
-        # WHICH configuration is no longer encoded here. `run_stage`'s confirm
-        # branch pins every row's real `levels` from `recommendation.json` (or,
-        # with no fitting stage behind it, from `_best_observed`) and renders
-        # `apply` through `matrix.render_apply`. This function supplies only
-        # the SHAPE: `replicates` rows over the full factor set.
-        #
-        # That split is the point. The previous version carried the target as
-        # CODED COORDINATES and relied on `matrix.expand` to decode them,
-        # which put the levels one indirection away from the target — and
-        # `matrix._decode_level` treats `role="center"` as "ignore the coded
-        # coordinates, use the midpoint of every declared range". Labelling
-        # the target point "center" therefore discarded it silently: a
-        # stationary point at coded +0.9 of [64, 256] ran level 160 (the
-        # midpoint) instead of 246, and the campaign reported "the predicted
-        # optimum reproduced" about a configuration the fit never predicted.
-        # Observed on a real campaign as a confirm mean 38% below a corner the
-        # screen had already measured, and misdiagnosed at the time as the fit
-        # extrapolating badly.
-        #
-        # The role stays "axial" rather than "center" all the same. It is not
-        # load-bearing for the levels any more, but `effects.pure_error` and
-        # `matrix.expand`'s `center_choice_pinned` both branch on the role, and
-        # a replicated confirm point is not a centre point of any design.
-        #
-        # The origin (coded 0.0 everywhere, decoded and grid-snapped by
-        # `decode_coded`) is what a caller sees when NOTHING pins the levels —
-        # unchanged from before for the campaign that reaches confirm with no
-        # recommendation and no completed run to name a best.
-        cfg = design_cfg.get("confirm") or {}
-        replicates = max(1, int(cfg.get("replicates", 3)))
-        from orchestrator.optimize.design import Design, DesignPoint
-
-        return Design(
-            points=tuple(
-                DesignPoint(coded=tuple(0.0 for _ in factors), role="axial",
-                            replicate=i)
-                for i in range(replicates)
-            ),
-            factor_ids=tuple(f.id for f in factors),
-            kind="confirm",
+        # Confirm is the terminal DISCRIMINATION state: `_confirm_rows` builds
+        # its rows from real levels (finalists x replicates) and `run_stage`
+        # never routes confirm through here. The branch that used to live at
+        # this spot returned `replicates` rows at coded 0.0 for `run_stage` to
+        # overwrite, and it is retired rather than left in place because a
+        # design that only ever gets discarded is an invitation to consult it.
+        # See `_confirm_rows`'s docstring for the `role="center"` bug class
+        # that history records — the reason confirm carries no coordinates at
+        # all.
+        raise OptimizationAborted(
+            "internal error: _build_design was called for the confirm state. "
+            "Confirm builds no coded design — it measures a shortlist of "
+            "finalists at real levels via _confirm_rows. A caller reaching "
+            "here is reading the wrong seam.",
         )
 
     cfg = design_cfg.get("screen") or {}
@@ -1462,18 +1763,38 @@ def _build_design(factors, design_cfg: dict, stage_name: str):
 
 
 def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
-                    work_dir, rows, outcomes, ys, factors, test_results, pol):
-    """Record whether the predicted optimum reproduced, then close the state.
+                    work_dir, rows, outcomes, ys, factors, test_results, pol,
+                    payload):
+    """Terminal discrimination: compare the finalists, certify or loop.
 
-    Deliberately writes no ``effects.json``: there is no fit here. The claim
-    confirm makes is narrower and more useful — this exact configuration,
-    replicated N times, produced this mean and this spread.
+    Deliberately writes no ``effects.json``: there is no fit here, and that is
+    the whole point of the state. What confirm claims is model-free — these
+    ``|S|`` configurations, each measured ``replicates`` times freshly, produced
+    these means, and the best of them beats the rest by at least this much with
+    probability ``1 - delta_terminal``.
+
+    MEASURED INVALIDITY TRUMPS PREDICTION. A finalist with ANY replicate that
+    came back ``infeasible`` / ``rejected`` / not ``complete`` is EXCLUDED
+    outright rather than averaged over its surviving replicates. The fitted
+    surface has no idea a configuration is inadmissible — on
+    ``SURFACES["sla"]`` the model's argmax violates the p99 constraint — so a
+    single measured violation is stronger evidence than any number of
+    predictions, and averaging it away would let the campaign recommend a
+    configuration it watched fail. Excluding on ANY bad replicate rather than a
+    majority is the conservative direction: a configuration that is admissible
+    only sometimes is not admissible.
 
     ``pol`` is the compiled policy, threaded from ``run_stage``: confirm is the
     one state that can self-loop, so its next state is a policy decision
     (``certified`` / ``round`` / ``budget_remaining``) rather than "confirm is
     the last stage in the list", which is what the deleted index-based
     ``_is_final_stage`` assumed.
+
+    ``paired`` is False in this task. Task 14 turns it on once
+    ``workload.seeds`` puts the same seed set behind every finalist (spec §3.8),
+    at which point the bound is computed on paired differences and shrinks
+    substantially. Recorded in ``confirmation.json`` so a reader can tell which
+    bound they are looking at rather than inferring it from the branch date.
     """
     from statistics import mean, pstdev
 
@@ -1481,40 +1802,157 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     from orchestrator.ledger import append_ledger_row
     from orchestrator.optimize import artifacts, relations
 
-    usable = [v for v in ys if v == v]
-    levels = dict(rows[0].levels) if rows else {}
+    delta_t = pol["objective"]["delta_terminal"]
+    direction = pol["objective"]["direction"]
+    sign = 1.0 if direction != "minimize" else -1.0
+    paired = bool(payload.get("paired"))
+    fin = payload.get("finalists") or []
+
+    by_idx = {r.row_index: r for r in rows}
+    samples: dict[str, list[float]] = {f["key"]: [] for f in fin}
+    status: dict[str, str] = {f["key"]: "ok" for f in fin}
+    for o, y in zip(outcomes, ys):
+        row = by_idx.get(o.row_index)
+        if row is None:
+            continue
+        key = f"f{(row.apply or {}).get('finalist', 0)}"
+        if key not in samples:
+            continue
+        if o.status != "complete" or y != y:
+            status[key] = "excluded"
+        else:
+            samples[key].append(float(y))
+    ok = {k: v for k, v in samples.items() if status[k] == "ok" and v}
+
+    best = max(ok, key=lambda k: sign * mean(ok[k])) if ok else None
+    if best is None:
+        bound = certificate.RegretBound(
+            None, None, delta_t, "none",
+            "no finalist produced a valid measurement",
+        )
+    else:
+        bound = certificate.terminal_regret_bound(
+            ok, best, delta=delta_t, direction=direction, paired=paired,
+        )
+    eps = certificate.resolve_epsilon(
+        pol["objective"]["epsilon"], mean(ok[best]) if best else 0.0,
+    )
+
+    # A ROUND THAT EXCLUDED A FINALIST HAS NOT FINISHED DISCRIMINATING.
+    #
+    # The certificate's meaning is "no member of S beats the winner by more than
+    # epsilon". When a finalist is dropped on measured invalidity the REALIZED
+    # shortlist is smaller than the one the round set out to compare, and in the
+    # limit it is `{winner}` alone — whose bound is 0.0 by the trivial branch,
+    # so certifying would claim epsilon-optimality on the strength of having
+    # eliminated every rival. Measured on `SURFACES["sla"]` at the default
+    # shortlist of 3: the model's whole top-3 violates the p99 constraint, all
+    # three are excluded, the lone surviving corner certifies at R=0.0, and the
+    # campaign reports a configuration 6.1% below the true constrained optimum
+    # as CERTIFIED epsilon-optimal. That is the exact failure the terminal stage
+    # exists to prevent, arriving through the stage itself.
+    #
+    # So an exclusion suppresses certification for THIS round and the policy's
+    # default `confirm -> confirm` sends the campaign back with a re-filled
+    # shortlist (see `_confirm_rows`'s top-up). The round cap and the budget
+    # guard still terminate it; what changes is that the campaign then reports
+    # `terminal_best` — an answer — instead of a certificate it did not earn.
+    #
+    # `bounds`/`residual_regret_terminal` are unaffected: they are what they
+    # are over the finalists that survived, and suppressing the NUMBER would
+    # hide the comparison that did happen.
+    n_excluded = sum(1 for v in status.values() if v == "excluded")
+    certified = bound.value is not None and bound.value <= eps and not n_excluded
+    if n_excluded and bound.value is not None and bound.value <= eps:
+        logger.info(
+            "confirm: %d finalist(s) were excluded on measured invalidity, so "
+            "the realized shortlist is smaller than the round planned to "
+            "compare. R_terminal=%.6g is at or below epsilon=%.6g over the "
+            "SURVIVORS, but certifying on it would claim epsilon-optimality "
+            "over a shortlist this round itself narrowed. Reporting uncertified "
+            "and looping if the registered round cap allows it.",
+            n_excluded, bound.value, eps,
+        )
+
+    # Per-challenger bounds, each against the winner alone. These are what
+    # round r+1 reads to decide which finalists are still in contention (a
+    # bound at or below epsilon cannot change the epsilon-optimal decision), so
+    # they are recorded rather than recomputed from the samples later.
+    #
+    # NOTE ON THE LEVEL. Each entry is computed with M=1, so it is a
+    # PER-CHALLENGER bound at delta_t, not a member of the simultaneous family
+    # `residual_regret_terminal` is the max of. That is the right level for a
+    # "keep measuring this one?" screening decision and the wrong level for a
+    # certificate — which is why the certified/uncertified verdict above reads
+    # `bound.value` (the simultaneous max) and never these.
+    bounds: dict[str, float | None] = {}
+    for k in ok:
+        if k != best:
+            bounds[k] = certificate.terminal_regret_bound(
+                {best: ok[best], k: ok[k]}, best,
+                delta=delta_t, direction=direction, paired=paired,
+            ).value
+
+    winner_levels = next(
+        (f["levels"] for f in fin if f["key"] == best), {},
+    )
     summary = {
         "stage": stage_name,
         "iteration": iteration,
-        "confirmed_at_levels": levels,
+        "round": payload.get("round", _confirm_round(work_dir)),
+        "finalists": [
+            {"key": f["key"], "levels": f["levels"], "why": f.get("why"),
+             "samples": samples[f["key"]],
+             "mean": mean(samples[f["key"]]) if samples[f["key"]] else None,
+             "n": len(samples[f["key"]]), "status": status[f["key"]]}
+            for f in fin
+        ],
+        "best": best,
+        "bounds": bounds,
+        "epsilon": eps,
+        "residual_regret_terminal": bound.value,
+        "terminal_bound": bound.as_dict(),
+        "certified": certified,
+        "paired": paired,
+        "delta_terminal": delta_t,
+        "excluded_infeasible": [
+            f["levels"] for f in fin if status[f["key"]] == "excluded"
+        ],
+        # Legacy fields, kept because readers of the single-point record exist
+        # (the harness's recommendation fallback, the guide's worked output, and
+        # `_close_iteration`'s recommendation_levels). `confirmed_at_levels` is
+        # now the WINNING finalist rather than the only configuration run.
+        "confirmed_at_levels": dict(winner_levels),
         "replicates": len(outcomes),
-        "usable_replicates": len(usable),
-        "mean": mean(usable) if usable else None,
-        "spread": pstdev(usable) if len(usable) > 1 else 0.0,
-        "observations": usable,
+        "usable_replicates": sum(len(v) for v in ok.values()),
+        "mean": mean(ok[best]) if best else None,
+        "spread": pstdev(ok[best]) if best and len(ok[best]) > 1 else 0.0,
+        "observations": list(ok[best]) if best else [],
     }
 
-    # Did the confirmed point actually beat everything the campaign measured?
+    # Did the winning finalist actually beat everything the campaign measured?
     #
-    # A fitted stationary point is an EXTRAPOLATION. When the surface is
-    # mis-specified — curvature the quadratic cannot express, an optimum
-    # outside the design hull, a categorical factor dragged into the fit —
-    # the solved point can land below a corner the screen already measured.
-    # Without this check the campaign replicates that inferior point, records
-    # status CONFIRMED because the replicates agreed with each other, and
-    # reports it as the optimum. "The prediction reproduced" and "this is the
-    # best configuration found" are different claims, and only the second is
-    # what a reader of the report wants. Recording both keeps the artifact
-    # honest when they disagree.
-    primary = (
+    # A fitted argmax is an EXTRAPOLATION, and the shortlist only puts it on
+    # trial against the other finalists — not against every corner the screen
+    # measured. When the surface is mis-specified the winner can still land
+    # below a corner from an earlier stage. "The best finalist" and "the best
+    # configuration found" are different claims, and only the second is what a
+    # reader of the report wants; recording both keeps the artifact honest when
+    # they disagree. (The shortlist now INCLUDES `_best_observed` by
+    # construction, so a disagreement here means the earlier corner was
+    # measured worse this time round — real information about run-to-run
+    # variation, not a bug.)
+    primary_spec = (
         ((campaign.get("optimization") or {}).get("response") or {})
         .get("primary") or {}
     )
-    metric = primary.get("metric") or ""
-    maximize = (primary.get("direction") or "maximize") != "minimize"
-    best = _best_observed(work_dir, metric) if metric else None
-    if best is not None and summary["mean"] is not None:
-        best_val = best.get(metric)
+    metric = primary_spec.get("metric") or ""
+    maximize = direction != "minimize"
+    best_obs = (
+        _best_observed(work_dir, metric, direction=direction) if metric else None
+    )
+    if best_obs is not None and summary["mean"] is not None:
+        best_val = best_obs.get(metric)
         if isinstance(best_val, (int, float)):
             confirmed_mean = summary["mean"]
             beats = (
@@ -1522,7 +1960,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 else confirmed_mean <= best_val
             )
             summary["best_observed"] = {
-                "levels": dict(best.get("levels") or {}),
+                "levels": dict(best_obs.get("levels") or {}),
                 metric: best_val,
             }
             summary["confirmed_is_best_observed"] = bool(beats)
@@ -1533,15 +1971,26 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                     "absolute": gap, "percent": pct,
                 }
                 logger.warning(
-                    "confirm: the confirmed configuration (%s=%.6g) is WORSE "
-                    "than the best configuration already observed (%.6g at "
-                    "%s) — a gap of %.6g (%.2f%%). The fitted optimum is an "
-                    "extrapolation; treat the observed corner as the "
+                    "confirm: the winning finalist (%s=%.6g) is WORSE than the "
+                    "best configuration already observed (%.6g at %s) — a gap "
+                    "of %.6g (%.2f%%). Treat the observed corner as the "
                     "campaign's answer and the surface as mis-specified.",
                     metric or "response", confirmed_mean, best_val,
-                    best.get("levels"), gap, pct,
+                    best_obs.get("levels"), gap, pct,
                 )
+
     _write_json(iter_dir / "confirmation.json", summary)
+    # `shortlist.json` is the name spec §3.9's artifact table gives this
+    # record. Written as a pointer rather than a copy so there is exactly one
+    # source of truth for the finalists and their measurements.
+    _write_json(iter_dir / "shortlist.json", {
+        "round": summary["round"],
+        "finalists": summary["finalists"],
+        "best": best,
+        "bounds": bounds,
+        "epsilon": eps,
+        "see": "confirmation.json",
+    })
     _write_json(iter_dir / "findings.json", _confirm_findings(summary, iteration))
     _write_json(iter_dir / "principle_updates.json", [])
     artifacts.write_relations(
@@ -1554,76 +2003,146 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     )
     append_ledger_row(work_dir, iteration)
 
+    logger.info(
+        "confirm round %d: winner %s (%s) with R_%.3g=%s vs epsilon=%.6g -> %s",
+        summary["round"], best, winner_levels, delta_t,
+        "unknown" if bound.value is None else f"{bound.value:.6g}",
+        eps, "CERTIFIED" if certified else "uncertified",
+    )
+
     obs = {
         "correctness_failed": False,
-        # No usable replicate is a measurement failure, which the policy routes
-        # the same way it routes a NaN fit input.
-        "nan_response": not usable,
-        # Task 9 owns certification (Holm one-sided t at delta_terminal); until
-        # it lands, confirm terminates on its registered round cap instead.
-        "certified": False,
-        "round": _confirm_round(work_dir),
+        # No finalist produced a usable measurement, which the policy routes the
+        # same way it routes a NaN fit input.
+        "nan_response": not ok,
+        "certified": certified,
+        "round": summary["round"],
         "budget_remaining": _budget_remaining(pol, work_dir),
+        # What the NEXT round would cost, in the closed observation vocabulary,
+        # so a compiled guard can compare it against the remaining budget
+        # without any code being generated.
+        "runs_needed_confirm": len(fin) * max(
+            1, int((pol["states"]["confirm"]["design"] or {}).get("replicates", 3)),
+        ),
+        # `residual_regret` / `epsilon` are the TERMINAL pair here, not the
+        # model pair screen and refine report under the same keys. The
+        # observation vocabulary is closed and deliberately does not distinguish
+        # them: a guard reads "the bound this state computed against this
+        # state's indifference width", and which flavour that is follows from
+        # which state is being left. `report.json` keeps them apart, which is
+        # where spec §3.5's "never collapsed" obligation actually bites.
+        "residual_regret": bound.value,
+        "epsilon": eps,
     }
     return _close_iteration(
         engine, campaign, work_dir, iter_dir, iteration, stage_name, pol, obs,
-        recommendation_levels=levels,
+        recommendation_levels=dict(winner_levels) or None,
     )
 
 
 def _confirm_findings(summary: dict, iteration: int) -> dict:
-    """A findings.schema.json-conformant record of the confirmation run."""
+    """A findings.schema.json-conformant record of the terminal discrimination.
+
+    THREE statuses, not two. The old record was binary — the replicates either
+    reproduced or they did not — which cannot express the middle case that
+    terminal discrimination creates and which is now the COMMON one: a winner
+    was identified and measured, but its bound is still wider than epsilon, so
+    the campaign has an answer and not a certificate. Reporting that as
+    CONFIRMED would overstate the claim (the very defect spec §3.5 names by
+    refusing to collapse the two deltas), and reporting it as REFUTED would
+    throw away a real result.
+
+      * CONFIRMED           — a winner AND ``R_terminal <= epsilon``.
+      * PARTIALLY_CONFIRMED — a winner, bound too wide (or not computable).
+      * REFUTED             — no finalist produced a valid measurement at all.
+    """
     n, usable = summary["replicates"], summary["usable_replicates"]
-    observed = (
-        f"mean={summary['mean']:.6g} over {usable}/{n} usable replicates "
-        f"(spread={summary['spread']:.6g}) at levels {summary['confirmed_at_levels']}"
-        if summary["mean"] is not None
-        else f"no usable replicates out of {n}"
+    best, certified = summary.get("best"), bool(summary.get("certified"))
+    r, eps = summary.get("residual_regret_terminal"), summary.get("epsilon")
+    excluded = summary.get("excluded_infeasible") or []
+    kept = [f for f in summary["finalists"] if f["status"] == "ok"]
+
+    if best is None:
+        observed = f"no finalist produced a usable measurement out of {n} runs"
+    else:
+        observed = (
+            f"winner {best} at {summary['confirmed_at_levels']} with "
+            f"mean={summary['mean']:.6g} over {len(kept)} finalist(s) and "
+            f"{usable}/{n} usable fresh runs; "
+            f"R_terminal="
+            + ("unknown" if r is None else f"{r:.6g}")
+            + f" vs epsilon={eps:.6g}"
+            + (f"; {len(excluded)} finalist(s) excluded on measured invalidity"
+               if excluded else "")
+        )
+    status = (
+        "CONFIRMED" if certified
+        else ("PARTIALLY_CONFIRMED" if best is not None else "REFUTED")
     )
-    reproduced = summary["mean"] is not None and usable >= 1
+    note = None
+    if best is None:
+        note = "every fresh run failed to produce a usable measurement"
+    elif not certified:
+        note = (
+            "a winner was identified from fresh measurements but its "
+            "residual-regret bound is not below epsilon, so the result is an "
+            "answer and not a certificate"
+            if r is not None else
+            "the terminal bound was not computable (a finalist has fewer than "
+            "two usable replicates), so nothing is certified — an unknown bound "
+            "is not a small one"
+        )
     return {
         "iteration": iteration,
         "bundle_ref": f"runs/iter-{iteration}/confirmation.json",
-        "experiment_valid": reproduced,
+        "experiment_valid": best is not None,
         "discrepancy_analysis": (
-            "Confirmation stage: the predicted optimum was replicated and its "
-            "mean and spread recorded. No effects are fitted here — a single "
-            "replicated configuration has no distinct design points to "
-            "estimate from."
+            "Terminal discrimination: a shortlist of finalists was measured "
+            "freshly and compared with each other, so this comparison does not "
+            "rest on the fitted response surface. No effects are fitted here — "
+            "there is no coded design to estimate them from. The remaining "
+            "global claim is only that screening did not exclude the true "
+            "optimum."
         ),
         "arms": [{
             "arm_type": "h-main",
-            "predicted": "the refine stage's solved optimum reproduces",
-            "observed": observed,
-            "status": "CONFIRMED" if reproduced else "REFUTED",
-            "error_type": None,
-            "diagnostic_note": (
-                None if reproduced
-                else "every replicate failed to produce a usable measurement"
+            "predicted": (
+                "the shortlist contains the optimum and fresh measurements "
+                "identify it within epsilon"
             ),
+            "observed": observed,
+            "status": status,
+            "error_type": None,
+            "diagnostic_note": note,
             "metadata": summary,
         }],
     }
 
 
-def _best_observed(work_dir, primary: str) -> dict | None:
+def _best_observed(work_dir, primary: str, *,
+                   direction: str = "maximize") -> dict | None:
     """The best COMPLETED configuration observed so far, by primary metric.
 
-    Used by ``confirm`` when there is no fitted stationary point — either
-    refine was skipped (nothing refinable) or its solve was singular. The
-    previous behaviour replicated the ORIGIN, which was actively misleading
-    on a live campaign: the screen stage had observed goodput 117.854 and
-    confirm reproduced a 73.476 centre point, so the campaign found the right
-    answer and reported the wrong one.
+    ``complete`` is load-bearing: an ``infeasible`` or ``rejected`` row is a
+    trustworthy measurement of an INADMISSIBLE configuration, so it is real
+    information about the space and a valid fit exclusion — but never a valid
+    answer. Spec §3.6 rung 3 is "re-measure the leading measured VALID
+    candidates", and this filter is what makes "valid" true of the result.
 
-    Reproducing the best observed corner is a WEAKER claim than reproducing a
-    fitted optimum — it is the best configuration tried, not an interpolated
-    peak — and ``confirmation.json`` records which of the two it was. But it
-    is a real measured configuration rather than an arbitrary geometric
-    centre.
+    Three consumers: ``_confirm_rows`` puts it in the shortlist (so the
+    campaign's answer is never worse than something it already measured),
+    ``_finish_confirm`` compares the winner against it, and ``_run_report``
+    uses it as the ladder's ``measured`` rung.
+
+    ``direction`` decides which way "best" runs. It defaults to ``maximize``
+    because every pre-existing caller and test passes a maximise campaign, and
+    a positional-only call site must keep working — but a minimise campaign
+    that took the default would get the WORST configuration handed back as its
+    fallback answer, so every production call site now passes it explicitly.
     """
     import json as _json
 
+    sign = 1.0 if direction != "minimize" else -1.0
     best = None
     for path in sorted(Path(work_dir).glob("runs/iter-*/runs.jsonl")):
         for line in path.read_text().splitlines():
@@ -1642,7 +2161,9 @@ def _best_observed(work_dir, primary: str) -> dict | None:
                 numeric = float(value)
             except (TypeError, ValueError):
                 continue
-            if best is None or numeric > best[1]:
+            if numeric != numeric:
+                continue
+            if best is None or sign * numeric > sign * best[1]:
                 best = (dict(row.get("levels") or {}), numeric)
     return None if best is None else {"levels": best[0], primary: best[1]}
 

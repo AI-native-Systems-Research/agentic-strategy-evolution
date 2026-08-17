@@ -5,8 +5,10 @@ configuration ``z``, where ``U_delta`` is a SIMULTANEOUS one-sided upper bound
 on the true gap ``f(z) - f(x)``. Two flavours: MODEL-based (screen/refine —
 depends on the registered response class; exact for orthogonal main/2fi
 columns, optimistic for quadratic terms per ``effects.py``) and TERMINAL
-(Task 9 — model free, from fresh replicates of the finalists). They rest on
-different assumptions and are reported separately, never collapsed.
+(``terminal_regret_bound`` — model free, from fresh replicates of the
+finalists). They rest on different assumptions and are reported separately,
+never collapsed: spec §3.5 gives ``Pr(wrong global decision) <= delta_s +
+delta_t``, which is only meaningful while the two numbers stay apart.
 
 Why Bonferroni, and why the word "simultaneous" is load-bearing
 ---------------------------------------------------------------
@@ -53,11 +55,25 @@ assumption, as spec §3.5 says it does.
 No pure-error df (no replicated centre points, or a deterministic target
 returning bit-identical centre values) means there is no variance estimate at
 all, and an unknown is not a zero: ``value=None, method="none"``.
+
+One arithmetic, two callers
+---------------------------
+``_challenger_bounds`` is the single place the per-challenger upper bound is
+computed, for BOTH flavours; ``model_regret_bound`` and
+``terminal_regret_bound`` differ only in how they supply the estimate and the
+standard error for one challenger. It is exposed (module-private but stable)
+so a test asserting the SIMULTANEITY property can drive the shipped code
+rather than reimplementing the arithmetic locally. Task 8 shipped a
+family-wise test that did reimplement it, which meant the test would have
+passed with this module deleted — a test decoupled from its subject measures
+nothing.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from statistics import mean, variance
+from typing import Callable
 
 from scipy.stats import t as student_t
 
@@ -69,21 +85,59 @@ from orchestrator.optimize.effects import Fit
 class RegretBound:
     """``R_delta(x_hat)`` plus the challenger that keeps it large.
 
-    ``challenger`` is the levels dict of the ``z`` attaining the max — the
-    point the next experiment should be directed at (spec §3.6 rung 2), which
-    is why it is carried alongside the number rather than recomputed later.
+    ``challenger`` is the ``z`` whose own bound is the LARGEST — the point the
+    next experiment should be directed at (spec §3.6 rung 2), which is why it
+    is carried alongside the number rather than recomputed later. It is named
+    even when ``value`` has floored at 0.0 (every challenger's bound came out
+    negative, i.e. the winner is clear): "which finalist is closest" is the
+    useful fact either way, and only ``value`` is claimed to be a bound.
+    ``None`` means there was no challenger at all — a single candidate, or no
+    bound computable.
+
+    At the terminal stage the challenger is a finalist KEY (``"f2"``) rather
+    than a levels dict: ``confirmation.json`` already records every finalist's
+    levels against its key, so carrying the dict again would give the same
+    fact two representations that could drift apart.
     """
 
     value: float | None
-    challenger: dict | None
+    challenger: dict | str | None
     delta: float
     method: str
     detail: str
 
+    def as_dict(self) -> dict:
+        """The JSON shape written into ``recommendation.json`` / ``report.json``."""
+        return {"value": self.value, "challenger": self.challenger,
+                "delta": self.delta, "method": self.method, "detail": self.detail}
 
-def _to_dict(b: RegretBound) -> dict:
-    return {"value": b.value, "challenger": b.challenger, "delta": b.delta,
-            "method": b.method, "detail": b.detail}
+
+def _challenger_bounds(
+    challengers: list,
+    contrast: Callable[[object], tuple[float, float, float]],
+    *,
+    delta: float,
+) -> dict:
+    """Every challenger's one-sided upper bound on its true gain, at level
+    ``delta / M`` (Bonferroni), keyed by the challenger itself.
+
+    ``contrast(z)`` returns ``(estimate, standard_error, df)`` for that one
+    challenger — the ONLY thing the model and terminal flavours disagree
+    about. Everything the certificate's guarantee depends on lives here: the
+    divisor ``M = len(challengers)``, so ``Pr(any bound fails) <= delta``, and
+    the per-challenger quantile.
+
+    Returned in ``challengers`` order, unkeyed by any dict, because a levels
+    dict is unhashable. Callers take the max; a test asserting the
+    family-wise property checks every entry.
+    """
+    m = len(challengers)
+    out: dict = {}
+    for i, z in enumerate(challengers):
+        est, se, df = contrast(z)
+        tcrit = float(student_t.ppf(1 - delta / m, max(float(df), 1.0)))
+        out[i] = est + tcrit * se
+    return out
 
 
 def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
@@ -110,21 +164,90 @@ def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
     others = [c for c in cands if c.levels != xhat.levels]
     if not others:
         return RegretBound(0.0, None, delta, "trivial", "single candidate")
-    tcrit = float(student_t.ppf(1 - delta / len(others), fit.pure_error_df))
     fx = predict(fit, xhat.coded)
-    best_u, best_z = 0.0, None
-    for z in others:
+
+    def contrast(z) -> tuple[float, float, float]:
         est = sign * (predict(fit, z.coded) - fx)
         var = 0.0
         for e in terms:
             dz = (math.prod(float(z.coded[t]) for t in e.terms)
                   - math.prod(float(xhat.coded[t]) for t in e.terms))
             var += (e.se or 0.0) ** 2 * dz * dz
-        u = est + tcrit * math.sqrt(var)
-        if u > best_u:
-            best_u, best_z = u, z.levels
-    return RegretBound(best_u, best_z, delta, "bonferroni_one_sided_t",
+        return est, math.sqrt(var), float(fit.pure_error_df)
+
+    bounds = _challenger_bounds(others, contrast, delta=delta)
+    arg = max(bounds, key=lambda i: bounds[i])
+    tcrit = float(student_t.ppf(1 - delta / len(others), fit.pure_error_df))
+    return RegretBound(max(0.0, bounds[arg]), others[arg].levels, delta,
+                       "bonferroni_one_sided_t",
                        f"M={len(others)} challengers, df={fit.pure_error_df}, t={tcrit:.3f}")
+
+
+def terminal_regret_bound(samples: dict[str, list[float]], best: str, *,
+                          delta: float, direction: str,
+                          paired: bool) -> RegretBound:
+    """``R_delta^term`` — model-free, from fresh replicates of the finalists.
+
+    Spec §3.5's second flavour and the paper's terminal stage: screening
+    produces a shortlist ``S``, fresh measurements compare its members
+    DIRECTLY, so this number carries no response-model assumption at all. Its
+    inputs are sample means and sample variances of measurements taken at the
+    finalists themselves; nothing here consults a ``Fit``.
+
+    One-sided upper bounds on each challenger's true improvement over
+    ``best``, Bonferroni over the ``M = |S| - 1`` challengers so the max is a
+    valid bound on the gap to the best member of ``S`` (the same union-bound
+    argument the module docstring gives for the model flavour). Welch's
+    unequal-variance t by default; PAIRED differences when the finalists share
+    a workload seed set (common random numbers, spec §3.8) and the replicate
+    counts match — pairing removes the shared seed effect from the variance,
+    which is what makes a noisy systems target measurable within a realistic
+    budget.
+
+    ``value=None`` when any finalist has fewer than two replicates: a single
+    measurement gives no variance estimate, and an unknown is not a zero.
+    Callers must treat ``None`` as "cannot certify" — ``policy.step`` already
+    does, since a ``None`` observation never matches a guard.
+
+    The bound floors at ``0.0``: ``best`` is the argmax of the observed means,
+    so every challenger's point estimate is ``<= 0`` and the true gap to the
+    best member of ``S`` cannot be negative.
+    """
+    others = [k for k in samples if k != best]
+    if not others:
+        return RegretBound(0.0, None, delta, "trivial", "single finalist")
+    if any(len(v) < 2 for v in samples.values()):
+        return RegretBound(None, None, delta, "none",
+                           "need >= 2 replicates per finalist for a variance estimate")
+    sign = 1.0 if direction != "minimize" else -1.0
+    xb = samples[best]
+    use_paired = paired and all(len(samples[k]) == len(xb) for k in others)
+
+    def contrast(k: str) -> tuple[float, float, float]:
+        xk = samples[k]
+        if use_paired:
+            d = [sign * (b - a) for a, b in zip(xb, xk)]
+            n = len(d)
+            return mean(d), math.sqrt(variance(d) / n), float(n - 1)
+        est = sign * (mean(xk) - mean(xb))
+        vk, vb = variance(xk) / len(xk), variance(xb) / len(xb)
+        se = math.sqrt(vk + vb)
+        df = (
+            (vk + vb) ** 2
+            / ((vk ** 2) / (len(xk) - 1) + (vb ** 2) / (len(xb) - 1))
+            if (vk + vb) > 0 else 1.0
+        )
+        return est, se, df
+
+    bounds = _challenger_bounds(others, contrast, delta=delta)
+    arg = max(bounds, key=lambda i: bounds[i])
+    return RegretBound(
+        max(0.0, bounds[arg]), others[arg], delta,
+        "bonferroni_one_sided_t_paired" if use_paired
+        else "bonferroni_one_sided_welch_t",
+        f"M={len(others)} challengers over fresh replicates "
+        f"(n={ {k: len(v) for k, v in samples.items()} })",
+    )
 
 
 def resolve_epsilon(spec: dict, reference: float) -> float:
