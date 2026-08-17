@@ -1423,7 +1423,9 @@ def test_the_transition_row_records_the_closed_observation_vocabulary(
     for key in ("correctness_failed", "nan_response", "budget_remaining",
                 "round", "certified"):
         assert key in obs, f"{key} missing from the recorded observations"
-    assert obs["round"] == 0, "screen reports round 0 (0-based)"
+    assert obs["round"] == 0, (
+        "screen never self-loops, so it has no rounds to count"
+    )
     assert obs["budget_remaining"] == 10 ** 9, (
         "with no declared max_runs the budget is unbounded, not zero"
     )
@@ -1450,3 +1452,80 @@ def test_a_state_outside_the_compiled_policy_fails_with_a_named_mismatch(
     _advance_engine(wd)
     with pytest.raises(OptimizationAborted, match="registers only"):
         _run(c, wd, stage="refine", iteration=3)
+
+
+def test_refinable_survivors_counts_only_the_factors_that_can_carry_curvature(
+    tmp_path, work_dir,
+):
+    """``len(decision.surviving)`` is the WRONG count for the screen guard.
+
+    The compiled ``screen -> refine`` guard is
+    ``{"refinable_survivors": {">": 0}}``, and the question it asks is how many
+    survivors carry CURVATURE — ``is_refinable``: numeric with MORE THAN two
+    levels. A survivor set made of ``choice`` and 2-level numeric factors has
+    none, and routing it to ``refine`` sends the campaign into a stage
+    ``_build_design`` correctly refuses to build ("refine has nothing to
+    refine").
+
+    Mutation-verified during review: dropping the ``is_refinable`` filter from
+    ``observations_from_decision``'s call — i.e. passing
+    ``refinable_survivors=len(decision.surviving)`` — left the whole optimize
+    suite green, so nothing caught it. This is the test that does.
+
+    A MIX is what discriminates: the deterministic ``_runner`` gives zero
+    pure-error variance, so every ``significant`` is None and all three factors
+    survive as "unknown" (``decide_after_screen`` never drops an unmeasured
+    effect). Only A is refinable, so the filtered count is 1 while the raw
+    survivor count is 3.
+    """
+    from orchestrator.optimize.factors import is_refinable, parse_factors
+    from orchestrator.optimize.policy import read_transitions
+
+    c = _campaign()
+    c["optimization"]["factors"][0]["levels"] = [1, 2, 4, 8]   # A: refinable
+    # B and C keep the 2-level default, so neither can carry curvature.
+    factors = parse_factors(c["optimization"]["factors"])
+    refinable_ids = {f.id for f in factors if is_refinable(f)}
+    assert refinable_ids == {"A"}, (
+        f"the fixture must present a MIX for this test to discriminate; "
+        f"refinable={sorted(refinable_ids)}"
+    )
+
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1)
+    _advance_engine(wd)
+    _run(c, wd, stage="screen", iteration=2)
+
+    row = read_transitions(wd)[-1]
+    surviving = row["rule"] and row["observations"]
+    assert surviving["refinable_survivors"] == 1, (
+        f"expected only A counted; got "
+        f"{surviving['refinable_survivors']}. A count of 3 means the "
+        f"is_refinable filter was dropped and the raw survivor count leaked "
+        f"into the screen -> refine guard."
+    )
+    # And the guard it feeds still fires, so the filter is not merely cosmetic:
+    # one refinable survivor is enough to reach refine.
+    assert row["to"] == "refine", row
+
+
+def test_no_refinable_survivor_routes_screen_past_refine(tmp_path, work_dir):
+    """The other side of the filter: an all-2-level survivor set skips refine.
+
+    Same campaign shape as above with A's extra levels removed, so EVERY
+    survivor is a 2-level numeric. ``refinable_survivors`` must then be 0 and
+    the guard must not fire — otherwise the campaign is routed into a refine
+    stage that aborts. Paired with the test above, this pins both directions of
+    the filter rather than only the one that happens to fire.
+    """
+    from orchestrator.optimize.policy import read_transitions
+
+    c = _campaign()   # all factors 2-level: nothing refinable
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd, stage="verify", iteration=1)
+    _advance_engine(wd)
+    _run(c, wd, stage="screen", iteration=2)
+
+    row = read_transitions(wd)[-1]
+    assert row["observations"]["refinable_survivors"] == 0, row["observations"]
+    assert row["to"] == "confirm", row
