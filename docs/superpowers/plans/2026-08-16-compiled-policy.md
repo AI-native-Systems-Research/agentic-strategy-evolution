@@ -15,7 +15,7 @@
 - **No test may make a live LLM call** (CLAUDE.md). The synthetic target and every harness test are zero-LLM by construction. `build` remains the only model call; tests of it use `sdk_runner=` fakes.
 - **Behavioral tests only**: assert artifacts on disk, returned dataclasses, schema conformance. Never assert mock call shapes.
 - **No numpy** in `orchestrator/optimize/` (existing convention: closed-form/Gaussian elimination; `scipy.stats` is allowed for distributions).
-- **Backward compatibility**: every existing test in `tests/test_optimize_*.py` must keep passing after each task unless the task explicitly lists the test it changes and why. Legacy `optimization.stages` lists keep working.
+- **Backward compatibility is not the goal; correctness against the spec is** (spec §2.7, added after Task 6: `nous` has not GA'd, so nothing depends on today's observable output being stable). Every existing test in `tests/test_optimize_*.py` must keep passing OR have its assertion consciously changed with a stated, spec-correct reason in the task report — silent weakening is still forbidden, but an explained behaviour change is no longer a risk to justify against a preservation bar. Legacy `optimization.stages` lists keep working because the spec requires it (§3.1's registration guarantee), not because of a backward-compat rule.
 - **Zero model tokens inside an epoch**: no task may add a dispatcher/SDK call to any state other than `build`.
 - **Every hard-fail fires under `auto_approve=True`** (the kind's default).
 - Run the full suite with `python -m pytest tests/ -q -x` before every commit. Branch: `nousko`. Commit messages follow the existing `feat(optimize):` / `fix(optimize):` / `test(optimize):` / `docs(optimize):` style.
@@ -767,7 +767,7 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
 
 ---
 
-## Phase 2 — The policy is data (behaviour-preserving)
+## Phase 2 — The policy is data (spec-correct over old-behaviour-preserving; see spec §2.7)
 
 ### Task 4: `policy.json` — schema, compiler, hash, structural checks
 
@@ -1358,7 +1358,7 @@ def observations_from_decision(decision: StageDecision, fit: Fit, *,
 
 - [ ] **Step 5: Commit** — `git commit -am "feat(optimize): pure step() interpreter, path enumeration and transition log for policy.json"`.
 
-### Task 6: Wire the interpreter into `run_stage` (behaviour-preserving)
+### Task 6: Wire the interpreter into `run_stage` (spec-correct over old-behaviour-preserving; see spec §2.7)
 
 **Files:**
 - Modify: `orchestrator/optimize/stage_runner.py` (stage resolution ~L262-266 and ~L318; verify branch ~L340-352; the tail after `decision = ...` ~L560-620; `_finish_confirm` ~L933; `_terminal_outcome`/`_is_final_stage` ~L698-727)
