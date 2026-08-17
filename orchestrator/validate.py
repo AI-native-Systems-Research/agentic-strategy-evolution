@@ -874,6 +874,45 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
     return errors
 
 
+def _rule15_build_requires_baseline(opt: dict) -> list[str]:
+    """Rule 15: a declared ``build`` stage requires ``known_valid_baseline``.
+
+    Rule 13 checks that a baseline, IF PRESENT, is a configuration the campaign
+    may run. This is the complementary question — must one be present at all —
+    and the answer changes when ``build`` is declared, for a reason rule 13 has
+    nothing to do with.
+
+    ``build`` writes a mechanism that every later number describes. Oracle 2(c)
+    (spec §3.7) is what keeps that mechanism honest: the campaign's declared
+    control is measured before the build and again at ``verify``, and a shift
+    beyond tolerance hard-fails, because a mechanism that moves the metric at
+    its OFF level has changed something outside its own scope and confounds
+    every treatment effect while looking clean. The baseline IS that control.
+    Without it there is nothing to measure, so the check silently does not run —
+    and a silently absent oracle on the one stage that authors code is the worst
+    place in this kind to have one.
+
+    (The baseline is also the report's last-resort action, per spec §3.6. That
+    matters on every campaign; it is the build stage that makes it mandatory.)
+    """
+    stages = opt.get("stages")
+    if not isinstance(stages, list):
+        return []
+    names = [str(getattr(s, "value", s)) for s in stages]
+    if "build" not in names or opt.get("known_valid_baseline"):
+        return []
+    return [
+        "optimization.known_valid_baseline is required when the build stage is "
+        "declared: it is the control the build must leave unchanged (baseline "
+        "equivalence, spec §3.7 oracle 2(c) — the control is measured before "
+        "the build and again at verify, and a shift beyond tolerance aborts) "
+        "and the report's last-resort action. Add a mapping of factor id -> "
+        "level naming a configuration that is known to work today, with the "
+        "mechanism under study at its OFF/control level, e.g. "
+        "{QUEUES: 2, NEW_MECHANISM: off}.",
+    ]
+
+
 def validate_optimization_campaign(campaign: dict) -> list[str]:
     """Cross-field rules for ``kind: optimization`` campaigns that JSON
     Schema cannot express (Task 10).
@@ -910,6 +949,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule12_missing_native_tests_need_build(campaign, opt, factors))
     errors.extend(_rule13_known_valid_baseline(opt, factors))
     errors.extend(_rule14_policy_ranges(opt))
+    errors.extend(_rule15_build_requires_baseline(opt))
     return errors
 
 

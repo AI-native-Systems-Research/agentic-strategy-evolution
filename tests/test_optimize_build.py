@@ -270,31 +270,55 @@ def test_build_then_verify_end_to_end(tmp_path: Path, monkeypatch):
         run_stage(campaign, work, iteration=2, auto_approve=True)
 
 
-def test_build_stage_does_not_run_the_test_command(tmp_path: Path, monkeypatch):
-    """On a build iteration the target's tests must not run.
+def test_build_stage_runs_the_test_command_before_authoring(tmp_path: Path, monkeypatch):
+    """The build iteration DOES run the target's tests — before it builds.
 
-    The mechanism does not exist yet, so the run could only report the already
-    known fact that the declared identifiers are missing. Worse, `go test -run`
-    with a non-matching pattern exits 0 with "no tests to run", so a pre-build
-    run looks like a pass at the shell level.
+    This inverts an earlier rule, and the reason is oracle 2(b) (spec §3.7): a
+    declared correctness test that ALREADY PASSES before the mechanism exists
+    does not test the mechanism, and `verify` cannot ask that question later
+    because by then the code is there. So the pre-build verdicts are recorded in
+    `pre_build_tests.json` and read at verify.
+
+    The old rationale's real point — `go test -run <pattern>` exits 0 with "no
+    tests to run", so a shell-level pass means nothing — is handled rather than
+    avoided: verdicts come from the PER-TEST parse, where an identifier that
+    never ran is absent, not passing. Asserted here on exactly that command
+    shape (a command that exits 0 having reported no per-test result).
+
+    The build iteration still makes no correctness judgement: it CONTINUEs
+    regardless of what the pre-build run said.
     """
-    from orchestrator.iteration import setup_work_dir
+    from orchestrator.iteration import IterationOutcome, setup_work_dir
     from orchestrator.optimize.stage_runner import run_stage
 
     repo = tmp_path / "repo"
     repo.mkdir()
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "campaigns"))
     campaign = _campaign(repo)
-    campaign["run_id"] = "nobuildtest"
+    campaign["run_id"] = "prebuildtest"
     sentinel = tmp_path / "ran.txt"
     campaign["optimization"]["test_command"] = f"touch {sentinel}"
 
-    work = setup_work_dir("nobuildtest", repo_path=str(repo), campaign=campaign)
-    run_stage(
-        campaign, work, iteration=1, auto_approve=True,
-        sdk_runner=lambda **kw: SDKResult(text="ok"),
+    # BEFORE, not merely "at some point": the sentinel must already exist by the
+    # time the build agent is called, or the recorded verdicts describe a tree
+    # the mechanism was already in.
+    seen_at_build_time: list[bool] = []
+
+    def _sdk(**kw):
+        seen_at_build_time.append(sentinel.exists())
+        return SDKResult(text="ok")
+
+    work = setup_work_dir("prebuildtest", repo_path=str(repo), campaign=campaign)
+    outcome = run_stage(
+        campaign, work, iteration=1, auto_approve=True, sdk_runner=_sdk,
     )
-    assert not sentinel.exists(), "test_command must not run during build"
+    assert outcome is IterationOutcome.CONTINUE
+    assert sentinel.exists(), "test_command must run on a build iteration"
+    assert seen_at_build_time == [True], "test_command must run BEFORE the build call"
+    pre = json.loads((work / "pre_build_tests.json").read_text())
+    # A command that exits 0 reporting nothing per-test yields NO passes, which
+    # is the whole point: a shell-level green must not read as "already passing".
+    assert pre["passed"] == [] and pre["ran"] == []
 
 
 def test_prompt_states_the_absolute_working_root(tmp_path: Path):

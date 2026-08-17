@@ -507,6 +507,234 @@ def _read_mechanism_hash(work_dir: Path) -> str:
     return p.read_text().strip() if p.exists() else ""
 
 
+#: Fallback tolerance for baseline equivalence, as a percent of the pre-build
+#: control mean, used when the campaign declares neither
+#: ``build_checks.baseline_tolerance_pct`` nor
+#: ``response.noise_estimate_pct``. 5% is deliberately loose: this oracle
+#: exists to catch a mechanism that MOVED the control, not to police
+#: run-to-run noise, and a tight default would abort honest campaigns on a
+#: noisy target — which teaches authors to disable the check.
+DEFAULT_BASELINE_TOLERANCE_PCT = 5.0
+
+#: Replicates of the control measured before and after the build. Three is the
+#: smallest count whose mean is not one outlier away from either verdict.
+DEFAULT_BASELINE_REPLICATES = 3
+
+
+def _build_checks(campaign: dict) -> dict:
+    raw = (_opt_block(campaign) or {}).get("build_checks")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _baseline_replicates(campaign: dict) -> int:
+    raw = _build_checks(campaign).get("baseline_replicates")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return DEFAULT_BASELINE_REPLICATES
+
+
+def _baseline_tolerance_pct(campaign: dict) -> float:
+    """Resolved percent tolerance for ``|post_mean - pre_mean| / |pre_mean|``.
+
+    Precedence: the campaign's explicit ``build_checks.baseline_tolerance_pct``
+    beats a value derived from ``response.noise_estimate_pct``, which beats the
+    module default. The derived value is ``3 x`` the declared noise: a
+    difference of means smaller than three noise widths is not evidence the
+    control moved, and the author already told us how noisy the target is, so
+    deriving beats making them state the same fact twice.
+    """
+    explicit = _build_checks(campaign).get("baseline_tolerance_pct")
+    if isinstance(explicit, (int, float)) and not isinstance(explicit, bool):
+        val = float(explicit)
+        if val > 0:
+            return val
+    noise = ((_opt_block(campaign) or {}).get("response") or {}).get(
+        "noise_estimate_pct",
+    )
+    if isinstance(noise, (int, float)) and not isinstance(noise, bool):
+        derived = 3.0 * float(noise)
+        if derived > 0:
+            return derived
+    return DEFAULT_BASELINE_TOLERANCE_PCT
+
+
+def _mean(values) -> float:
+    vals = [float(v) for v in values]
+    return sum(vals) / len(vals) if vals else float("nan")
+
+
+def _baseline_equivalent(
+    pre_mean: float, post_mean: float, tolerance_pct: float,
+) -> bool:
+    """True when the control did NOT move beyond ``tolerance_pct``.
+
+    RELATIVE, not absolute: a 0.4 shift is nothing on a metric of 10,000 and
+    everything on a metric of 1. A NaN on either side is NOT equivalence — a
+    control that failed to measure is a control that was not shown to be inert,
+    and treating an unmeasurable baseline as a pass would make the oracle
+    strongest exactly where the apparatus is weakest.
+
+    ``pre_mean == 0`` falls back to an absolute comparison against the
+    tolerance fraction, because the relative form is undefined there and
+    dividing anyway would either raise or declare every shift infinite.
+    """
+    import math as _math
+
+    if _math.isnan(pre_mean) or _math.isnan(post_mean):
+        return False
+    frac = tolerance_pct / 100.0
+    if pre_mean == 0.0:
+        return abs(post_mean) <= frac
+    return abs(post_mean - pre_mean) / abs(pre_mean) <= frac
+
+
+def _check_tests_failed_before_build(
+    campaign: dict, work_dir: Path, factors, test_results: dict | None,
+) -> None:
+    """Oracle 2(b): a correctness test that already passed proves nothing.
+
+    Spec §3.7 states the requirement as "have its declared tests FAIL before the
+    build and pass after, or the test proves nothing". The failure condition is
+    therefore a test that PASSED pre-build — the opposite direction from every
+    other test check in this module, where passing is the good outcome. A test
+    green against a tree where the mechanism did not exist is green for some
+    other reason, and it will stay green if the build wires the mechanism to
+    nothing at all. That is the single most expensive way for a campaign to be
+    wrong, because every downstream number is real, reproducible, and about the
+    wrong system.
+
+    Scoped to ``correctness`` relations. A ``behavioral`` relation may
+    legitimately hold before and after (a monotonicity that the mechanism only
+    sharpens), and behavioral verdicts never gate this kind anyway.
+
+    Silent no-op when ``pre_build_tests.json`` is absent: no build stage ran, so
+    there is no before-state and nothing was claimed. Absence disables the
+    check, exactly as it does for the drift oracle.
+    """
+    path = Path(work_dir) / "pre_build_tests.json"
+    if not path.exists():
+        return
+    if _build_checks(campaign).get("allow_preexisting_tests"):
+        logger.info(
+            "verify: build_checks.allow_preexisting_tests is set — not checking "
+            "whether declared correctness tests already passed before the build",
+        )
+        return
+    try:
+        pre = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise OptimizationAborted(
+            f"pre_build_tests.json exists but could not be read ({exc}). It is "
+            f"the record of which declared tests passed BEFORE the mechanism "
+            f"existed, and that question is unanswerable now that it does — "
+            f"delete the work_dir and re-run the build stage rather than "
+            f"proceeding without the check.",
+        ) from exc
+    already = set(pre.get("passed") or ())
+    if not already:
+        return
+    bad = sorted({
+        v.native_test for v in relations.reconcile(factors, test_results or {})
+        if v.kind == "correctness" and v.native_test in already
+    })
+    if not bad:
+        return
+    raise OptimizationAborted(
+        f"native test(s) {', '.join(bad)} passed before the mechanism existed "
+        f"— a test that passes without the mechanism does not test it, so it "
+        f"cannot certify the apparatus every later measurement rests on. Either "
+        f"strengthen the test so it fails against the pre-build tree, or set "
+        f"optimization.build_checks.allow_preexisting_tests: true if the test "
+        f"genuinely covers pre-existing behaviour (a backward-compatibility "
+        f"relation is the legitimate case).",
+    )
+
+
+def _check_baseline_equivalence(
+    campaign: dict, work_dir: Path, factors, config_runner: Callable | None,
+) -> None:
+    """Oracle 2(c): ``control == known_valid_baseline`` after the build.
+
+    The build authored a mechanism. At the mechanism's control level the target
+    must behave exactly as it did before — that is what makes the control a
+    control. A mechanism that moves the metric at its OFF setting has changed
+    something outside its own scope (a shared code path, a default, an
+    allocation), and every treatment effect the epoch then measures is
+    confounded with that change while looking perfectly clean.
+
+    Measured, not argued: the pre-build replicate values were recorded in the
+    build iteration; this re-measures the SAME configuration with the SAME
+    runner and compares means relatively. A hard abort, not a warning — the
+    whole epoch's numbers are downstream of it, and a warning arrives after the
+    runs are spent.
+
+    Silent no-op when ``baseline_equivalence.json`` has no ``pre`` (no build
+    stage, no declared baseline, or no runner at build time) or when no runner
+    is available now. Both are "the oracle was never armed", not "the oracle
+    passed", and the file records which.
+    """
+    path = Path(work_dir) / "baseline_equivalence.json"
+    if not path.exists():
+        return
+    try:
+        rec = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise OptimizationAborted(
+            f"baseline_equivalence.json exists but could not be read ({exc}). It "
+            f"holds the pre-build control measurement, which cannot be retaken "
+            f"now that the mechanism is in the tree — re-run the build stage "
+            f"rather than proceeding without the check.",
+        ) from exc
+    pre = list(rec.get("pre") or ())
+    levels = dict(rec.get("levels") or {})
+    if not pre or not levels:
+        return
+    if config_runner is None:
+        logger.warning(
+            "verify: a pre-build control measurement exists but no config_runner "
+            "is available, so baseline equivalence cannot be re-measured. The "
+            "epoch will run without oracle 2(c).",
+        )
+        return
+
+    from orchestrator.optimize import build as build_mod
+
+    metric = (
+        (((_opt_block(campaign) or {}).get("response") or {}).get("primary") or {})
+        .get("metric") or ""
+    )
+    tol = float(rec.get("tolerance_pct") or _baseline_tolerance_pct(campaign))
+    post = build_mod.baseline_runs(
+        config_runner, factors, levels, n=len(pre), metric=metric,
+    )
+    pre_mean, post_mean = _mean(pre), _mean(post)
+    ok = _baseline_equivalent(pre_mean, post_mean, tol)
+    _write_json(path, {
+        "levels": levels, "pre": pre, "post": post,
+        "pre_mean": pre_mean, "post_mean": post_mean,
+        "tolerance_pct": tol, "ok": ok,
+    })
+    if ok:
+        logger.info(
+            "verify: baseline equivalence holds — control %s measured %.6g "
+            "before the build and %.6g after (tolerance %.3g%%)",
+            levels, pre_mean, post_mean, tol,
+        )
+        return
+    raise OptimizationAborted(
+        f"build changed the baseline: control configuration {levels} moved from "
+        f"{pre_mean:.6g} to {post_mean:.6g} on {metric or '<unset metric>'} "
+        f"(> {tol:.3g}% tolerance, {len(pre)} replicate(s) each side) — the "
+        f"mechanism is not inert at its control level, so every effect this "
+        f"epoch would measure is confounded with whatever else the build "
+        f"changed. Make the control path byte-identical to the pre-build "
+        f"behaviour, or if the shift is real measurement noise on this target, "
+        f"declare it: optimization.response.noise_estimate_pct (the tolerance "
+        f"is 3x it) or optimization.build_checks.baseline_tolerance_pct. See "
+        f"baseline_equivalence.json for both replicate vectors.",
+    )
+
+
 def _epoch_index(work_dir: Path) -> int:
     return 1 + len(list(Path(work_dir).glob("epoch_end*.json")))
 
@@ -1036,10 +1264,89 @@ def run_stage(
     stage_name, pol = _resolve_state(campaign, work_dir, iteration, stage)
     _is_build = stage_name == Stage.BUILD.value
 
+    if test_results is None and opt.get("test_command") and repo:
+        # Runs on the BUILD iteration too, and deliberately so (oracle 2(b),
+        # spec §3.7). An earlier version skipped it here on the grounds that
+        # testing code which does not exist yet learns nothing — but that is
+        # exactly what it learns, and the answer is load-bearing: a declared
+        # correctness test that ALREADY PASSES before the mechanism exists does
+        # not test the mechanism. `verify` cannot ask that question afterwards,
+        # because by then the mechanism is there. The old rationale's other
+        # point stands and is now handled rather than avoided: `go test -run
+        # <pattern>` exits 0 with "no tests to run", so the pre-build verdicts
+        # come from `match_declared_tests`' PER-TEST parse, where an identifier
+        # that never ran is absent rather than passing.
+        #
+        # Persist the raw test output next to the iteration's artifacts. A
+        # verify abort ends the campaign, so this text is the only record of
+        # WHY, and re-running by hand may not reproduce a timeout or an
+        # ordering-dependent failure.
+        raw = runner.run_test_command(
+            opt["test_command"], cwd=Path(repo),
+            log_path=Path(work_dir) / "runs" / f"iter-{iteration}" / "test_output.log",
+        )
+        test_results = runner.match_declared_tests(parse_factors(opt["factors"]), raw)
+        logger.info(
+            "test_command reported %d test(s); %d matched a declared "
+            "native_test", len(raw), len(test_results),
+        )
+    # Resolved before the build branch, not after it: the pre-build control
+    # measurement below needs the same runner the post-build one at `verify`
+    # will use. Resolving only afterwards would measure `post` in production
+    # while silently skipping `pre`, which turns oracle 2(c) off precisely on
+    # the real campaigns it exists for.
+    if config_runner is None and opt.get("run_command") and repo:
+        config_runner = runner.make_config_runner(
+            opt["run_command"], cwd=Path(repo),
+            metric_path=((opt.get("response") or {}).get("primary") or {}).get(
+                "metric", "",
+            ),
+            log_dir=Path(work_dir) / "runs" / f"iter-{iteration}" / "failed_runs",
+        )
+
     if _is_build:
         from orchestrator.optimize import build as build_mod
 
         _factors_for_build = parse_factors(opt["factors"])
+        # ── oracle 2(b), first half: what passed BEFORE the mechanism existed ──
+        #
+        # Recorded here and read at `verify`, because this is the only moment at
+        # which the question is answerable. Both keys matter: `passed` is what
+        # verify rejects, and `ran` is what distinguishes "the test existed and
+        # failed" (the shape a build is supposed to have) from "the test command
+        # never mentioned it", which is the fail-closed case verify already owns.
+        _write_json(Path(work_dir) / "pre_build_tests.json", {
+            "passed": sorted(t for t, ok in (test_results or {}).items() if ok),
+            "ran": sorted(test_results or {}),
+        })
+        # ── oracle 2(c), first half: the control, measured before the build ──
+        #
+        # Skipped (and the file left absent) when the campaign declares no
+        # baseline or no runner is available. Absence is what disables the check
+        # at verify — the same convention `mechanism.sha256` uses — rather than a
+        # recorded value that could never match.
+        _pre_baseline = opt.get("known_valid_baseline")
+        if _pre_baseline and config_runner is not None:
+            _n = _baseline_replicates(campaign)
+            _metric = (
+                ((opt.get("response") or {}).get("primary") or {}).get("metric") or ""
+            )
+            _pre = build_mod.baseline_runs(
+                config_runner, _factors_for_build, dict(_pre_baseline),
+                n=_n, metric=_metric,
+            )
+            _write_json(Path(work_dir) / "baseline_equivalence.json", {
+                "levels": dict(_pre_baseline),
+                "pre": _pre,
+                "pre_mean": _mean(_pre),
+                "tolerance_pct": _baseline_tolerance_pct(campaign),
+            })
+            logger.info(
+                "build: measured the known_valid_baseline %s x%d before the "
+                "build (mean %s on %s) — verify re-measures it and hard-fails "
+                "if the mechanism moved it",
+                dict(_pre_baseline), _n, f"{_mean(_pre):.6g}", _metric or "<unset>",
+            )
         build_mod.run_build(
             campaign, work_dir,
             iteration=iteration,
@@ -1100,29 +1407,6 @@ def run_stage(
                     f"mechanism is a new pre-registration, not a resumed one.",
                 )
 
-    if not _is_build and test_results is None and opt.get("test_command") and repo:
-        # Persist the raw test output next to the iteration's artifacts. A
-        # verify abort ends the campaign, so this text is the only record of
-        # WHY, and re-running by hand may not reproduce a timeout or an
-        # ordering-dependent failure.
-        raw = runner.run_test_command(
-            opt["test_command"], cwd=Path(repo),
-            log_path=Path(work_dir) / "runs" / f"iter-{iteration}" / "test_output.log",
-        )
-        test_results = runner.match_declared_tests(parse_factors(opt["factors"]), raw)
-        logger.info(
-            "test_command reported %d test(s); %d matched a declared "
-            "native_test", len(raw), len(test_results),
-        )
-    if config_runner is None and opt.get("run_command") and repo:
-        config_runner = runner.make_config_runner(
-            opt["run_command"], cwd=Path(repo),
-            metric_path=((opt.get("response") or {}).get("primary") or {}).get(
-                "metric", "",
-            ),
-            log_dir=Path(work_dir) / "runs" / f"iter-{iteration}" / "failed_runs",
-        )
-
     factors = parse_factors(opt["factors"])
     response_spec = opt.get("response") or {}
     primary = ((response_spec.get("primary") or {}).get("metric")) or ""
@@ -1167,6 +1451,15 @@ def run_stage(
             )
         if correctness_failures:
             raise OptimizationAborted(_verify_abort_message(correctness_failures))
+        # ── oracle 2(b)/(c): the two build claims that "tests pass" cannot make ──
+        #
+        # Run BEFORE the policy is compiled, deliberately. A compiled policy is
+        # a pre-registration; writing one and then discovering the apparatus was
+        # never actually tested (2(b)) or is not the system the control
+        # describes (2(c)) would leave a signed commitment to a broken
+        # experiment on disk for a later resume to pick up.
+        _check_tests_failed_before_build(campaign, work_dir, factors, test_results)
+        _check_baseline_equivalence(campaign, work_dir, factors, config_runner)
         # The apparatus is certified, so pre-register the epoch's policy: a
         # JSON document hashed BEFORE the first benchmark run is what makes
         # the path a pre-registration rather than a story told afterwards.

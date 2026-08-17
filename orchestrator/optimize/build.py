@@ -410,6 +410,41 @@ def run_build(
     return row
 
 
+def baseline_runs(
+    config_runner: Callable, factors, baseline: dict, *, n: int, metric: str,
+) -> list[float]:
+    """Measure the ``known_valid_baseline`` configuration ``n`` times.
+
+    Oracle 2(c) (spec §3.7): the campaign's declared control must behave the
+    same before and after ``build``. If the mechanism the build authored moves
+    the metric even at its OFF level, it is not inert, and every treatment
+    effect the epoch measures is confounded with whatever else the build
+    changed. Measured rather than argued: the same configuration, the same
+    runner, before and after.
+
+    ``row_index`` is NEGATIVE (``-1 - i``) on purpose. These runs are not part
+    of the pre-registered design matrix, and a non-negative index would collide
+    with a real design row in ``check_fidelity``'s bookkeeping and in
+    ``failed_runs/failed_run_<idx>.log``. ``role="baseline"`` says the same
+    thing to any reader of the observation.
+
+    Returns raw floats — no aggregation, no rejection. NaN is passed through as
+    NaN so the caller can distinguish "the control did not run" from "the
+    control ran and moved", which are different failures with different fixes.
+    """
+    from orchestrator.optimize.matrix import ConfigRow, render_apply
+
+    out: list[float] = []
+    for i in range(n):
+        row = ConfigRow(
+            row_index=-1 - i, levels=dict(baseline), role="baseline",
+            replicate=i, apply=render_apply(factors, baseline),
+        )
+        obs = config_runner(row)
+        out.append(float((obs or {}).get(metric, float("nan"))))
+    return out
+
+
 def declared_native_tests(factors) -> list[str]:
     """Every distinct ``native_test`` declared across all factors' relations.
 
