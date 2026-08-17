@@ -79,6 +79,33 @@ autoscalers without per-target Python. That means: workload seeds as
 first-class, common random numbers for paired comparison, and an adapter
 contract a target author can satisfy with a CLI and one JSON line.
 
+### 2.7 Behaviour-preservation is not a goal (added after Task 6)
+`nous` has not GA'd. Nothing downstream depends on `kind: optimization`'s
+current observable output being stable across this branch. **Correctness
+against this spec and the paper's method outranks matching what `nousko`
+does today.** Where the two conflict — a legacy code path that produces a
+*wrong* answer, an abort that a correct compiled policy would not hit, an
+assertion that encoded the old index-based scheduler's behaviour rather than
+a real requirement — fix it and update the semantic version; do not contort
+the new mechanism to reproduce the old defect.
+
+This is a **priority change, not a license to regress silently**: still
+name every observable difference from `nousko`'s current behaviour in the
+task report, still explain why the new behaviour is correct, and the task
+reviewer still checks that reasoning — the bar moves from "does not deviate"
+to "deviates for a stated, correct reason." An unexplained behaviour change
+is still a defect; an explained, spec-correct one is no longer a risk to
+justify against a behaviour-preservation bar that does not apply.
+
+Two things this does NOT touch, because they are different claims:
+- **§5's "no reflective-path change"** is about `orchestrator/iteration.py`
+  (the unrelated `kind: reflective` loop) staying untouched by this branch —
+  that constraint is about blast radius on a different kind, not about
+  `kind: optimization`'s own behaviour, and it stands.
+- **The correctness gates (§2.3)** and the fallback ladder (§3.6) are not
+  "behaviour to preserve" either way — they are requirements this spec
+  imposes regardless of what `nousko` did before.
+
 ## 3. Locked decisions
 
 ### 3.1 The policy is data
@@ -238,6 +265,8 @@ on the complete-row subset and recording the excluded rows.
   (`hypothesis`, `rapid`, `proptest`) belong to target repos.
 - **No reflective-path change.** `orchestrator/iteration.py` stays at 23
   insertions / 0 deletions against `main`; `tests/test_optimize_no_regression.py`
-  proves it.
+  proves it. (This is scoped to the *reflective* kind and is unrelated to
+  §2.7 — it is not a behaviour-preservation requirement on `kind:
+  optimization` itself.)
 - **Not a paper reproduction.** This implements the method, not the paper's
   experiments.
