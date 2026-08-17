@@ -64,6 +64,28 @@ def _levels_explored_at_stage(work_dir, stage: str, factor_id: str) -> set:
     )
 
 
+def _read_recommendation(work_dir, *, stage: str | None = None) -> dict:
+    """A campaign's ``recommendation.json`` — the LAST one, or a named stage's.
+
+    Located by the artifact's own ``stage`` key rather than by iteration
+    number, for the reason ``_levels_explored_at_stage`` documents: a
+    hardcoded ``iter-N`` silently points at the wrong stage under any
+    schedule change. Raises when the stage never wrote one, so a missing
+    artifact cannot read as a satisfied assertion.
+    """
+    found: list[dict] = []
+    for it in harness._latest_iter_dirs(Path(work_dir)):
+        payload = harness._read_json(it / "recommendation.json")
+        if payload and (stage is None or payload.get("stage") == stage):
+            found.append(payload)
+    if not found:
+        raise AssertionError(
+            f"no recommendation.json for stage {stage or '<any>'} under "
+            f"{work_dir}; this assertion cannot be evaluated",
+        )
+    return found[-1]
+
+
 def test_additive_surface_recommendation_is_within_two_percent_of_truth(tmp_path):
     res = run_synthetic_campaign(SURFACES["additive"](), seed=1, parent_dir=tmp_path)
     assert res.recommendation, res.report
@@ -75,68 +97,149 @@ def test_bowl_surface_confirms_near_the_interior_maximum(tmp_path):
     assert abs(res.recommendation["A"] - 9) <= 1 and abs(res.recommendation["B"] - 11) <= 1
 
 
-@pytest.mark.xfail(strict=True, reason="Task 7: argmax over X_valid replaces the stationary point")
 def test_saddle_surface_recommends_a_corner_not_the_saddle_point(tmp_path):
+    """FLIPPED BY TASK 7 (was xfail(strict=True)).
+
+    A stationary point is where the gradient vanishes, which on this surface
+    is the SADDLE at ``{A: 9, B: 11}`` — worth 10.0 against a true optimum of
+    12.45. ``decide.recommend`` compares predictions over the candidate space
+    instead, so the sign of the curvature is accounted for without ever
+    forming a Hessian.
+
+    The two axes are asserted separately because the surface is
+    ``10 + 0.05(A-9)^2 - 0.05(B-11)^2``: it curves UP in A (so the argmax is
+    pushed to an A corner, either one — the surface is symmetric about A=9)
+    and DOWN in B (so the argmax sits at B's interior peak near 11, which a
+    two-level screen pair could never have proposed). Getting both directions
+    right is what says the curvature's sign was read rather than ignored.
+    """
     res = run_synthetic_campaign(SURFACES["saddle"](), seed=3, parent_dir=tmp_path)
     assert _gap_pct(res) <= 2.0, (res.recommendation, res.true_optimum)
+    # The discriminating half: the stationary point is still SOLVED and kept as
+    # a diagnostic, and the recommendation must not be it.
+    rec = _read_recommendation(res.work_dir)
+    assert rec["stationary_point"], (
+        "the stationary point must still be recorded — OPTIMUM_OUTSIDE_HULL "
+        "fires from it and a reader needs to see what the quadratic claimed"
+    )
+    levels = rec["levels"]
+    assert levels["A"] in (2, 16), (
+        f"A curves UP, so its argmax is a corner; got {levels}"
+    )
+    assert abs(levels["B"] - 11) <= 1, (
+        f"B curves DOWN, so its argmax is the interior peak near 11; got {levels}"
+    )
+    s = SURFACES["saddle"]()
+    assert s.fn(levels) > s.fn({"A": 9, "B": 11}), (
+        f"the recommendation must beat the saddle point itself: "
+        f"{s.fn(levels)} vs {s.fn({'A': 9, 'B': 11})}"
+    )
 
 
-@pytest.mark.xfail(strict=True, reason="Task 7: choice factors enter the argmax instead of being held at levels[0]")
 def test_choice_x_numeric_recommends_the_on_branch(tmp_path):
-    """The `on` branch must be recommended BECAUSE the model chose it.
+    """FLIPPED BY TASK 7 (was xfail(strict=True)).
 
-    The brief's assertion (``recommendation["C"] == "on"`` plus a 2% gap)
-    XPASSes today, and strict xfail makes an unexpected pass a failure — so
-    the assertion, not the marker, is what needed strengthening. Measured on
-    this branch (seeds 4, 104, 204, all identical):
+    The `on` branch must be recommended BECAUSE the model chose it.
 
-      * the refine iteration holds ``C`` at ``levels[0] == "off"`` for all
-        eight runs — the whole refine stage measures the ANTI-optimal branch,
-        which is exactly the ``levels[0]`` bug Task 7 names.
-      * the quadratic over that branch solves to coded ``A = +45.8``, far
-        outside the hull, so ``_read_confirm_at`` discards it and confirm
-        falls back to ``_best_observed``, which reaches back to a SCREEN row
-        and happens to be ``{A: 16, C: "on"}``.
+    The bare assertion (``recommendation["C"] == "on"`` plus a 2% gap) XPASSed
+    before Task 7, so it cannot be the whole test: the right answer used to
+    arrive by accident, from ``_best_observed`` reaching back to a screen row
+    after an out-of-hull solve was discarded. What distinguishes mechanism
+    from accident is the RECOMMENDATION ARTIFACT — ``recommendation.json``
+    must show ``C`` among ``fitted_ids`` and carry a coding for it, i.e. the
+    choice factor was a dimension of the argmax rather than a level held
+    aside while the numerics were optimized around it. A gradient solve
+    cannot produce that artifact at all: there is no derivative in a
+    categorical direction.
 
-    So the right answer arrives by accident of a fallback, with a gap of 0%.
-    Asserting on the recommendation alone therefore cannot distinguish "the
-    argmax included the choice factor" from "refine wasted itself on the
-    wrong branch and a guard rescued the campaign". This test asserts the
-    mechanism instead: refine must have EXPLORED ``C = "on"``, which is what
-    Task 7's "refine's held-fixed level is the screen recommendation's level"
-    rule delivers. The recommendation assertions are kept alongside it so
-    the answer is still checked.
-
-    The refine iteration is LOCATED by ``effects.json["stage"]``, never
-    hardcoded — see ``_levels_explored_at_stage``.
+    HISTORY, since this docstring previously asserted something else. It used
+    to require that the REFINE stage explored ``C = "on"``, on a measurement
+    that refine runs here at all. It does not, and has not since Task 6: A's
+    entire effect on this surface lives in the A×C interaction, so its main
+    effect over the screen pair is exactly zero, A is correctly dropped as
+    insignificant, ``refinable_survivors`` is 0, and the compiled policy sends
+    ``screen`` straight to ``confirm``. Verified on this branch and on its
+    parent commit — the path is ``screen -> confirm -> report`` either way, so
+    the refine assertion was unevaluatable rather than merely unmet. The
+    refine held-fixed rule it was reaching for is real and is tested where it
+    actually runs: ``test_refine_holds_a_choice_factor_at_the_screen_
+    recommendation``, on ``additive``.
     """
     res = run_synthetic_campaign(SURFACES["choice_x_numeric"](), seed=4, parent_dir=tmp_path)
     assert res.recommendation["C"] == "on" and _gap_pct(res) <= 2.0
-    refine_c = _levels_explored_at_stage(res.work_dir, "refine", "C")
-    assert "on" in refine_c, (
-        f"refine explored C={sorted(refine_c)} only; the choice factor was "
-        f"held at levels[0] instead of at the screen recommendation's level"
+    rec = _read_recommendation(res.work_dir)
+    assert "C" in rec["fitted_ids"], (
+        f"the choice factor was not a dimension of the argmax: "
+        f"fitted_ids={rec['fitted_ids']}"
     )
+    assert rec["levels"]["C"] == "on"
+    assert rec["coded"]["C"] == 1.0, (
+        f"C entered the argmax as a coordinate, so it must carry the coding of "
+        f"the level chosen (+1 == the screen pair's high level, 'on'); "
+        f"got {rec['coded']}"
+    )
+    # And the choice was made against the ALTERNATIVE, not assumed: the "off"
+    # branch is in the candidate space and predicts worse. `top_candidates` is
+    # truncated to five and A has nine grid points, so the off-branch runner-up
+    # need not appear there — this checks the space, not the shortlist.
+    from orchestrator.optimize import decide
+    from orchestrator.optimize.factors import parse_factors
+
+    factors = parse_factors(list(SURFACES["choice_x_numeric"]().factors))
+    space = decide.candidates(rec["fitted_ids"], factors, held_fixed={})
+    assert {c.levels["C"] for c in space} == {"on", "off"}, (
+        "both branches must be enumerable, or the argmax had no choice to make"
+    )
+
+
+def test_refine_holds_a_choice_factor_at_the_screen_recommendation(tmp_path):
+    """Task 7's rule 3, on a surface where refine actually runs.
+
+    ``refine``'s design spans only the refinable factors, so every ``choice``
+    factor is held at a single level for the whole stage. Holding it at
+    ``levels[0]`` picks a level by DECLARATION ORDER — and on ``additive``
+    that is ``C = "off"``, the branch worth 2.0 less than the other. Measured
+    on the parent commit: all eight refine runs sat at ``"off"``, so refine
+    fitted its quadratic over the wrong branch. Holding at the screen
+    recommendation's level instead puts refine on ``"on"``, which is the
+    level the screen's own argmax chose.
+
+    The stage is LOCATED by ``effects.json["stage"]``, never hardcoded — see
+    ``_levels_explored_at_stage``.
+    """
+    res = run_synthetic_campaign(SURFACES["additive"](), seed=23, parent_dir=tmp_path)
+    assert "refine" in res.path, res.path
+    assert _levels_explored_at_stage(res.work_dir, "refine", "C") == {"on"}, (
+        "refine held the choice factor at levels[0] ('off') instead of at the "
+        "screen recommendation's level"
+    )
+    screen_rec = _read_recommendation(res.work_dir, stage="screen")
+    assert screen_rec["levels"]["C"] == "on"
+    refine_rec = _read_recommendation(res.work_dir, stage="refine")
+    assert refine_rec["held_fixed"] == {"C": "on"}, refine_rec["held_fixed"]
 
 
 @pytest.mark.xfail(strict=True, reason="Task 9: finalists measured infeasible at confirm are excluded from the recommendation")
 def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     """Feasible is necessary but not sufficient — it must be the valid ARGMAX.
 
-    The brief's assertion (feasibility alone) XPASSes today, and strict xfail
-    makes an unexpected pass a failure. Measured on this branch (seeds 5, 105,
-    205, all identical): the campaign recommends ``{A: 16, B: 2}``, which is
-    feasible (``p99_ms = 34 <= 40``) but 6.12% below the true constrained
-    optimum ``{A: 16, B: 8}`` (19.6). Feasibility comes for free because
-    ``_best_observed`` already filters to ``status == "complete"`` and the
-    runner marks the constraint-violating rows ``infeasible`` — so the
-    brief's assertion tests a filter that already exists, not the exclusion
-    Task 9 adds.
+    WHICH HALF FAILS MOVED IN TASK 7, so both halves are stated. Before Task
+    7 the campaign recommended ``{A: 16, B: 2}``: feasible (``p99_ms = 34 <=
+    40``) but 6.12% below the true constrained optimum ``{A: 16, B: 8}``
+    (19.6). Feasibility came for free — ``_best_observed`` filters to
+    ``status == "complete"`` and the runner marks constraint violations
+    ``infeasible`` — so the feasibility assertion tested an existing filter
+    rather than the exclusion Task 9 adds, and only the gap bound was
+    discriminating.
 
-    The paper's claim is the argmax over X_valid, so the gap bound is the
-    discriminating half. Both halves are asserted: Task 9's shortlist confirm
-    must land on a point that is BOTH valid and within 2% of the constrained
-    truth.
+    Task 7 replaced that fallback with the argmax, which now recommends
+    ``{A: 16, B: 14}`` — closer in objective and INFEASIBLE (``p99_ms = 46``).
+    So the feasibility assertion is now the failing one. That is the honest
+    state of the mechanism rather than a regression: ``decide.recommend``
+    excludes points the campaign has MEASURED infeasible, and B=14 was never
+    measured. Making the recommendation respect a constraint it can only
+    predict is exactly Task 9's shortlist-confirm work — measure the finalists
+    and exclude the ones that violate.
     """
     s = SURFACES["sla"]()
     res = run_synthetic_campaign(
@@ -190,12 +293,19 @@ def test_the_default_campaign_is_valid_except_where_refine_has_too_few_factors()
 
     The finding it pins: the default ``design.refine`` block is unsupportable
     on four of the nine surfaces, because rule 4 requires at least two
-    refinable factors and those surfaces declare 0 or 1. ``choice_x_numeric``
-    is the consequential one — its xfail test is ABOUT refine's held-fixed
-    level, and it runs a refine stage the validator would reject. Recorded
-    rather than papered over: the fix belongs to whichever task owns the
-    default (see the task-3 report), not to an assertion that pretends the
-    campaign is clean.
+    refinable factors and those surfaces declare 0 or 1. Recorded rather than
+    papered over: the fix belongs to whichever task owns the default (see the
+    task-3 report), not to an assertion that pretends the campaign is clean.
+
+    Task 7 note. ``choice_x_numeric`` used to be called out here as the
+    consequential case, because its test asserted something about the refine
+    stage on a campaign the validator would reject. It no longer does — refine
+    never runs on that surface under the compiled policy (A's whole effect is
+    in the A×C interaction, so its main effect is null and it is dropped as
+    insignificant), and Task 7's refine held-fixed rule is tested on
+    ``additive`` instead, where refine genuinely runs and the validator is
+    satisfied. The offender list below is unchanged; only the reading of which
+    entry matters is.
     """
     from orchestrator.validate import validate_optimization_campaign
 

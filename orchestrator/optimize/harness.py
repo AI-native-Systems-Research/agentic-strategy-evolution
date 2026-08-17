@@ -22,12 +22,19 @@ either. The whole campaign is arithmetic.
 
 Reading the recommendation
 --------------------------
-Until the policy emits a ``report.json`` (Task 9+), the campaign's answer
-lives in the last iteration's ``runs/iter-N/confirmation.json`` as
-``confirmed_at_levels``. The reader below prefers ``report.json`` when it
-exists and falls back to the confirmation artifact, so the same harness
+The campaign's answer is ``report.json``'s ``recommendation.levels``, written
+by the policy's terminal state. The reader below falls back to the last
+iteration's ``runs/iter-N/confirmation.json`` (``confirmed_at_levels``) for a
+campaign that aborted before reaching the terminal, so the same harness
 measures the branch before and after that change and the tests written
 against it do not move.
+
+Not to be confused with ``runs/iter-N/recommendation.json``, which each
+FITTING stage writes (``decide.recommend``'s argmax over the candidate
+space). That is the per-stage answer confirm replicates and refine holds its
+non-designed factors at; ``report.json`` is the campaign's. A test asserting
+on the mechanism rather than the answer wants the per-stage artifact — see
+``test_optimize_harness._read_recommendation``.
 
 Likewise the ``path`` (which stages the campaign actually visited) is
 reconstructed from which artifact each iteration wrote, until Task 6 records

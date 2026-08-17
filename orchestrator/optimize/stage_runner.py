@@ -48,6 +48,19 @@ break is a discovery — the motivating case is a lever measured -9.5% alone
 yet required for the winning compound — so it is recorded as a finding and
 the stage advances.
 
+THE ANSWER IS AN ARGMAX, NOT A SOLVE (spec §3.3, ``decide.py``). Every
+fitting stage writes ``runs/iter-N/recommendation.json``: the best-predicted
+point of the candidate space, in REAL levels, for every factor. Two
+consumers read it — ``confirm`` replicates its ``levels``, and ``refine``
+holds each non-designed factor at the level the previous recommendation
+named — and both used to read the refine stage's stationary point instead.
+That point is still solved and still recorded (as
+``recommendation.json["stationary_point"]``, which is where
+``decide_after_refine``'s OPTIMUM_OUTSIDE_HULL still comes from); it just no
+longer decides what runs, because the point where a quadratic's gradient
+vanishes is a saddle or a minimum as readily as a maximum and is blind to
+``choice`` factors entirely.
+
 Which state runs is decided by the COMPILED POLICY, not by the iteration
 index. ``verify`` compiles ``policy.json`` (+ ``policy.sha256``) once, and
 from the first epoch iteration onward ``_resolve_state`` asks
@@ -115,7 +128,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from orchestrator.optimize import artifacts, matrix, relations, runner
+from orchestrator.optimize import artifacts, decide, matrix, relations, runner
 from orchestrator.optimize import policy as policy_mod
 from orchestrator.optimize.effects import fit_effects, solve_stationary_point
 from orchestrator.optimize.factors import is_refinable, parse_factors
@@ -624,7 +637,7 @@ def run_stage(
     # generators and run-order seed are fixed inputs, so this reproduces the
     # payload just written. check_fidelity below compares the executed runs
     # against THIS payload, which is the same object that was pre-registered.
-    design = _build_design(factors, design_cfg, stage_name, work_dir)
+    design = _build_design(factors, design_cfg, stage_name)
     payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
     rows = matrix.expand(design, factors)
 
@@ -641,17 +654,49 @@ def run_stage(
     # and for anything else is the author's stated default. That keeps the
     # command line complete and the held-fixed value auditable in runs.jsonl,
     # rather than making the target guess.
+    #
+    # AT REFINE, `levels[0]` is the wrong level and the failure is total.
+    # Refine spans only the refinable factors, so every `choice` factor is
+    # held — and `levels[0]` is an arbitrary declaration order, not a
+    # measurement. Measured on `synthetic.SURFACES["choice_x_numeric"]`, whose
+    # numeric optimum flips sign with the choice level: all eight refine runs
+    # sat at C="off", so the whole refine stage measured the ANTI-optimal
+    # branch and the quadratic it fitted described a surface the campaign had
+    # no interest in.
+    #
+    # The screen stage already answered which level to hold: its
+    # recommendation is the argmax of the screen fit over the WHOLE candidate
+    # space, choice factors included. Hold at that, and fall back to
+    # `levels[0]` only when no recommendation exists yet.
+    #
+    # Scoped to refine on purpose. Screen is the stage that PRODUCES the
+    # recommendation, so at screen there is nothing but `levels[0]` to hold
+    # at; and confirm does not use this block at all — it overwrites every
+    # row's levels from the recommendation below.
     designed = set(_design_factor_ids(factors, design_cfg, stage_name))
     held = [f for f in factors if f.id not in designed]
     if held and rows:
         import dataclasses
 
-        fixed = {f.id: f.levels[0] for f in held if getattr(f, "levels", None)}
+        prev_levels = (
+            (_read_recommendation(work_dir) or {}).get("levels")
+            if stage_name == Stage.REFINE.value else None
+        )
+        fixed = {
+            f.id: (
+                prev_levels[f.id]
+                if prev_levels and f.id in prev_levels else f.levels[0]
+            )
+            for f in held if getattr(f, "levels", None)
+        }
         if fixed:
             logger.info(
-                "%s: holding %d non-designed factor(s) fixed at their first "
-                "declared level so the target still receives every flag: %s",
-                stage_name, len(fixed), fixed,
+                "%s: holding %d non-designed factor(s) fixed at %s so the "
+                "target still receives every flag: %s",
+                stage_name, len(fixed),
+                "the previous stage's recommendation" if prev_levels
+                else "their first declared level",
+                fixed,
             )
             rows = [
                 dataclasses.replace(
@@ -670,37 +715,85 @@ def run_stage(
                 for row in payload.get("rows", [])
             ]
 
-    if stage_name == Stage.CONFIRM.value and not (
-        design_cfg.get("confirm_at") or _read_confirm_at(work_dir)
-    ):
-        # No fitted stationary point to reproduce, so replicate the best
-        # configuration actually OBSERVED rather than the geometric origin.
-        # `expand` renders coded coordinates, which for a two-level screen
-        # puts the origin at the midpoint of every range — a configuration
-        # nobody measured. Pin the observed winner's levels instead.
-        best = _best_observed(work_dir, primary)
-        if best is not None:
+    if stage_name == Stage.CONFIRM.value:
+        # WHAT confirm replicates. Every row is pinned to ONE set of real
+        # levels, rendered through `matrix.render_apply` — the design's coded
+        # coordinates are never consulted here.
+        #
+        # That is deliberate, and it retires an entire class of defect rather
+        # than guarding against it. The previous implementation built a
+        # `Design` of coded coordinates and let `matrix.expand` decode them,
+        # which put the row's real levels one indirection away from the point
+        # confirm was asked to reproduce: `_decode_level` treats
+        # `role="center"` as "ignore the coordinates, use the midpoint of
+        # every declared range", so labelling the target point "center"
+        # silently discarded it (a stationary point at coded +0.9 of [64, 256]
+        # ran 160 instead of 246, and the campaign reported "the predicted
+        # optimum reproduced" about a configuration the fit never predicted).
+        # Setting `levels` directly cannot express that bug: there is no
+        # coordinate left to discard.
+        #
+        # The target comes from the recommendation the previous fitting stage
+        # wrote — `decide.recommend`'s argmax over X_valid, which already
+        # names real, grid-snapped, in-range levels for EVERY factor, choice
+        # factors included. `_best_observed` remains the fallback for a
+        # campaign with no fitting stage behind it at all.
+        rec_prev = _read_recommendation(work_dir) or {}
+        target = dict(rec_prev.get("levels") or {})
+        source = "recommendation"
+        if not target:
+            best = _best_observed(work_dir, primary)
+            if best is not None:
+                target, source = dict(best["levels"]), "best_observed"
+                logger.info(
+                    "confirm: no recommendation on disk; replicating the best "
+                    "OBSERVED configuration (%s=%.4f) rather than the origin",
+                    primary, best[primary],
+                )
+        if target:
             import dataclasses
 
+            # A target must name EVERY declared factor. `render_apply` skips
+            # ids it does not recognise and renders nothing for ids it is not
+            # given, so a partial target silently drops that factor's flag from
+            # the command line — the same "the following arguments are
+            # required" failure that motivated the held-fixed block above, and
+            # invisible in the artifact because the row's `levels` would simply
+            # lack the key. Both sources cover every factor by construction
+            # (a recommendation's levels are held_fixed + fitted; a run row
+            # records what actually executed), so a gap here means the
+            # campaign's factor set changed under a resumed work_dir.
+            missing = [f.id for f in factors if f.id not in target]
+            if missing:
+                raise OptimizationAborted(
+                    f"confirm: the {source} names no level for {missing!r}, so "
+                    f"those factors' flags would be missing from every "
+                    f"replicate's command line. This happens when a campaign's "
+                    f"factor list changed after the recommendation was written "
+                    f"— re-run the fitting stage against the current factors "
+                    f"rather than confirming a partial configuration.",
+                )
             rows = [
                 dataclasses.replace(
                     r,
-                    levels=dict(best["levels"]),
-                    apply=matrix.render_apply(factors, best["levels"]),
+                    levels=dict(target),
+                    apply=matrix.render_apply(factors, target),
                 )
                 for r in rows
             ]
             payload = dict(payload)
             payload["rows"] = [
-                {**row, "levels": dict(best["levels"])}
+                {**row, "levels": dict(target)}
                 for row in payload.get("rows", [])
             ]
-            payload["confirm_source"] = "best_observed"
-            logger.info(
-                "confirm: no fitted stationary point; replicating the best "
-                "OBSERVED configuration (%s=%.4f) rather than the origin",
-                primary, best[primary],
-            )
+            payload["confirm_source"] = source
+            if source == "recommendation":
+                logger.info(
+                    "confirm: replicating the %s stage's recommendation at %s "
+                    "(predicted %s=%s)",
+                    rec_prev.get("stage"), target, primary,
+                    rec_prev.get("predicted"),
+                )
     if _enter_phase(engine, "DESIGN", work_dir):
         _preflight_design(rows, factors, opt, iter_dir)
         # Provenance: every matrix materialised inside the epoch cites the
@@ -865,21 +958,80 @@ def run_stage(
         })
 
     behavioral = _assert_all_behavioral(behavioral_failures)
+    stationary = None
     if stage_name == Stage.REFINE.value:
+        # The stationary point survives as a DIAGNOSTIC, not as an answer.
+        # `decide_after_refine` still reads it, because OPTIMUM_OUTSIDE_HULL is
+        # a real and useful finding — "the ranges were too narrow to contain
+        # the optimum" is worth reporting whether or not anything replicates
+        # the point. What no longer happens is confirm reproducing it: see
+        # `recommendation.json` below and the confirm branch above.
         stationary = solve_stationary_point(fit, fitted_ids)
-        # Hand the solved optimum forward so `confirm` replicates THAT point
-        # rather than the origin. Recorded on the artifact rather than mutated
-        # into the campaign dict, so the value is durable and auditable: a
-        # reader of effects.json can see which coded point confirm was asked
-        # to reproduce, which is the whole claim the confirm stage makes.
-        if stationary:
-            _write_json(iter_dir / "confirm_at.json", dict(stationary))
         fitted_factors = [f for f in factors if f.id in set(fitted_ids)]
         decision = decide_after_refine(
             fit, fitted_factors, stationary, behavioral_failures=behavioral,
         )
     else:
         decision = decide_after_screen(fit, factors, behavioral_failures=behavioral)
+
+    # ── the recommendation: x-hat = argmax over X_valid (spec §3.3) ────────
+    #
+    # This REPLACES "solve grad = 0 and replicate the result". Two defects the
+    # solve could not avoid, both measured on the synthetic oracle:
+    #
+    #   * a SADDLE point is a stationary point. On `SURFACES["saddle"]` the
+    #     solve returns the centre of the surface, which is the WORST place to
+    #     sit along one of the two axes; the argmax returns a corner.
+    #   * a CHOICE factor has no gradient, so the solve simply cannot see it.
+    #     On `SURFACES["choice_x_numeric"]`, where the numeric optimum flips
+    #     sign with the choice level, that loses the optimum outright.
+    #
+    # Configurations already MEASURED infeasible or rejected are removed from
+    # the candidate space before the argmax: the campaign has direct evidence
+    # those points are inadmissible, and recommending one anyway would be
+    # recommending a configuration it watched fail.
+    direction = (response_spec.get("primary") or {}).get("direction", "maximize")
+    held_now = dict(payload.get("held_fixed") or {})
+    excluded = _measured_infeasible(work_dir)
+    # `top=None` means "no truncation", so one call gives both the shortlist
+    # and the size of the space it was chosen from. Ordering stays in `decide`
+    # — re-deriving the argmax here would put the tie-break and the direction
+    # sign in two places.
+    scored = decide.ranked(
+        fit, factors, direction=direction, fitted_ids=fitted_ids,
+        held_fixed=held_now, exclude_levels=excluded, top=None,
+    )
+    top = scored[:5]
+    if not top:
+        raise OptimizationAborted(
+            f"{stage_name}: every candidate configuration was already measured "
+            f"infeasible or rejected ({len(excluded)} such row(s)), so the "
+            f"valid space is empty and no recommendation exists. Widen the "
+            f"factors' declared levels or relax the constraint that rejected "
+            f"them.",
+        )
+    rec = top[0]
+    _write_json(iter_dir / "recommendation.json", {
+        "stage": stage_name,
+        "iteration": iteration,
+        "levels": rec.levels,
+        "coded": rec.coded,
+        "predicted": rec.predicted,
+        "fitted_ids": list(fitted_ids),
+        "held_fixed": held_now,
+        "top_candidates": [
+            {"levels": c.levels, "coded": c.coded, "predicted": c.predicted}
+            for c in top
+        ],
+        "stationary_point": stationary,
+        "excluded_measured_infeasible": excluded,
+    })
+    logger.info(
+        "%s: recommendation %s (predicted %s=%.6g) — argmax over %d valid "
+        "candidate(s), %d measured-infeasible configuration(s) excluded",
+        stage_name, rec.levels, primary or "response", rec.predicted,
+        len(scored), len(excluded),
+    )
 
     # project_findings takes `decision` as a STRING (it lands in findings
     # metadata and in the discrepancy_analysis prose). Pass the rationale,
@@ -1155,9 +1307,17 @@ def _preflight_design(rows, factors, opt: dict, iter_dir: Path) -> None:
     )
 
 
-def _build_design(factors, design_cfg: dict, stage_name: str,
-                  work_dir: Path | None = None):
-    """Design for this stage: a screen matrix, or a response surface."""
+def _build_design(factors, design_cfg: dict, stage_name: str):
+    """Design for this stage: a screen matrix, or a response surface.
+
+    Takes no ``work_dir``. It used to, solely so the confirm branch could read
+    the previous stage's stationary point off disk and encode it as coded
+    coordinates — the indirection that let ``role="center"`` discard the point
+    silently. Confirm's target is now applied to the ROWS by ``run_stage``
+    (from ``recommendation.json``), so design generation is a pure function of
+    the factors and the config again, which is what makes it comparable across
+    stages in a test without a filesystem.
+    """
     from orchestrator.optimize.design import (
         central_composite,
         fractional_factorial,
@@ -1179,10 +1339,14 @@ def _build_design(factors, design_cfg: dict, stage_name: str,
             # composite over EVERY factor instead, which fitted quadratic
             # terms for categorical factors — and on a live campaign two of
             # those came out exactly 0.0, making the Hessian singular, so
-            # solve_stationary_point returned None, no confirm_at.json was
+            # solve_stationary_point returned None, no confirm target was
             # written, and `confirm` replicated the ORIGIN instead of the
             # optimum. The campaign had already observed the true optimum
-            # (117.854) and then confirmed a 73.476 centre point.
+            # (117.854) and then confirmed a 73.476 centre point. (Task 7
+            # retired the stationary-point handoff — confirm now replicates
+            # `recommendation.json` — but the reason NOT to fabricate a design
+            # over non-refinable factors is unchanged: a quadratic term for a
+            # categorical factor is meaningless whatever consumes it.)
             #
             # stage.decide_after_screen already routes straight to `confirm`
             # when no refinable factor survives, so reaching here means the
@@ -1200,47 +1364,49 @@ def _build_design(factors, design_cfg: dict, stage_name: str,
             refinable, center_points=int(cfg.get("center_points", 4)),
         )
     if stage_name == Stage.CONFIRM.value:
-        # Confirm REPLICATES one configuration — the predicted optimum —
-        # rather than re-running a screen. Without this branch confirm
-        # silently rebuilt the screen design, so the campaign's final stage
-        # repeated stage 2 and reported COMPLETED while the guide claimed it
-        # reproduced the optimum. That is the one defect here that could
-        # mislead a researcher about their own result.
+        # Confirm REPLICATES one configuration — the recommendation — rather
+        # than re-running a screen. Without this branch confirm silently
+        # rebuilt the screen design, so the campaign's final stage repeated
+        # stage 2 and reported COMPLETED while the guide claimed it reproduced
+        # the optimum. That is the one defect here that could mislead a
+        # researcher about their own result.
         #
-        # The point to replicate comes from `confirm_at` (coded coordinates
-        # the refine stage's stationary point, already grid-snapped by
-        # decode_coded downstream). Absent that — a campaign that skipped
-        # refine because nothing was refinable — replicate the origin, which
-        # for a two-level screen is the centre of the declared ranges.
+        # WHICH configuration is no longer encoded here. `run_stage`'s confirm
+        # branch pins every row's real `levels` from `recommendation.json` (or,
+        # with no fitting stage behind it, from `_best_observed`) and renders
+        # `apply` through `matrix.render_apply`. This function supplies only
+        # the SHAPE: `replicates` rows over the full factor set.
+        #
+        # That split is the point. The previous version carried the target as
+        # CODED COORDINATES and relied on `matrix.expand` to decode them,
+        # which put the levels one indirection away from the target — and
+        # `matrix._decode_level` treats `role="center"` as "ignore the coded
+        # coordinates, use the midpoint of every declared range". Labelling
+        # the target point "center" therefore discarded it silently: a
+        # stationary point at coded +0.9 of [64, 256] ran level 160 (the
+        # midpoint) instead of 246, and the campaign reported "the predicted
+        # optimum reproduced" about a configuration the fit never predicted.
+        # Observed on a real campaign as a confirm mean 38% below a corner the
+        # screen had already measured, and misdiagnosed at the time as the fit
+        # extrapolating badly.
+        #
+        # The role stays "axial" rather than "center" all the same. It is not
+        # load-bearing for the levels any more, but `effects.pure_error` and
+        # `matrix.expand`'s `center_choice_pinned` both branch on the role, and
+        # a replicated confirm point is not a centre point of any design.
+        #
+        # The origin (coded 0.0 everywhere, decoded and grid-snapped by
+        # `decode_coded`) is what a caller sees when NOTHING pins the levels —
+        # unchanged from before for the campaign that reaches confirm with no
+        # recommendation and no completed run to name a best.
         cfg = design_cfg.get("confirm") or {}
         replicates = max(1, int(cfg.get("replicates", 3)))
-        at = design_cfg.get("confirm_at") or _read_confirm_at(work_dir)
-        coded = tuple(
-            float(at[f.id]) if isinstance(at, dict) and f.id in at else 0.0
-            for f in factors
-        )
         from orchestrator.optimize.design import Design, DesignPoint
 
-        # role MUST NOT be "center": `matrix._decode_level` treats that role as
-        # "ignore the coded coordinates and use the midpoint of every declared
-        # range", which is correct for a genuine replicated centre point and
-        # catastrophic here. Labelling the fitted stationary point "center"
-        # silently discarded the coordinates confirm exists to reproduce, so a
-        # stationary point at coded +0.9 of [64, 256] ran level 160 (the
-        # midpoint) instead of 246. The campaign then reported "the predicted
-        # optimum reproduced" about a configuration the fit never predicted.
-        #
-        # Observed on a real campaign: confirm reported a mean 38% below a
-        # corner the screen had already measured. That was diagnosed at the time
-        # as the fit extrapolating badly; it was actually this — confirm never
-        # ran the fitted point at all.
-        #
-        # "axial" routes through `decode_coded`, which interpolates and
-        # grid-snaps any coded value, including 0.0 (so the no-refine case still
-        # yields the origin exactly as before).
         return Design(
             points=tuple(
-                DesignPoint(coded=coded, role="axial", replicate=i)
+                DesignPoint(coded=tuple(0.0 for _ in factors), role="axial",
+                            replicate=i)
                 for i in range(replicates)
             ),
             factor_ids=tuple(f.id for f in factors),
@@ -1449,72 +1615,84 @@ def _best_observed(work_dir, primary: str) -> dict | None:
     return None if best is None else {"levels": best[0], primary: best[1]}
 
 
-def _read_confirm_at(work_dir) -> dict | None:
-    """The most recent refine stage's solved optimum, if any.
+def _read_recommendation(work_dir) -> dict | None:
+    """The most recent stage's ``recommendation.json``, if any.
 
     Read from disk rather than threaded through the campaign dict so the
     value is durable across the process boundary between iterations — each
-    stage is a separate ``run_iteration`` call.
+    stage is a separate ``run_iteration`` call. Two consumers: ``confirm``
+    replicates ``levels``, and ``refine`` holds its non-designed factors at
+    the screen recommendation's levels rather than at ``levels[0]``.
+
+    Sort NUMERICALLY on the iteration index, not lexicographically on the
+    path. "iter-10" sorts BEFORE "iter-2" as a string, so a lexicographic
+    sort silently returns a STALE recommendation on any campaign reaching
+    double digits — verified on the predecessor of this function, which read
+    ``confirm_at.json``: with a file at both iter-2 and iter-10 it picked
+    iter-2's value. A silent wrong answer, no error.
+
+    NO HULL CHECK, unlike that predecessor. It refused a stationary point
+    whose coded coordinates fell outside [-1, 1], because confirm would
+    otherwise have extrapolated to a configuration the design never
+    bracketed (observed on a real campaign: a solve at coded BANDCAP=+1.62 /
+    THRESH=-2.30, confirmed at 112.4997 while a measured corner stood at
+    182.2159). ``recommendation.json`` cannot express that point: every
+    candidate level comes from ``decode_coded``, which CLAMPS to the declared
+    range, so a recommendation is in-hull by construction. The out-of-hull
+    stationary point is still detected and reported — ``decide_after_refine``
+    raises OPTIMUM_OUTSIDE_HULL from it, and it is kept in
+    ``recommendation.json`` as ``stationary_point`` — it just no longer
+    decides what runs.
     """
     import json
 
     if work_dir is None:
         return None
-    # Sort NUMERICALLY on the iteration index, not lexicographically on the
-    # path. "iter-10" sorts BEFORE "iter-2" as a string, so a lexicographic
-    # sort silently returns a stale optimum on any campaign reaching double
-    # digits — verified: with confirm_at.json at both iter-2 and iter-10 it
-    # picked iter-2's value. A silent wrong answer, no error.
+    runs = Path(work_dir) / "runs"
+    if not runs.exists():
+        return None
+
     def _iter_index(path: Path) -> int:
         try:
-            return int(path.parent.name.split("-", 1)[1])
+            return int(path.name.split("-", 1)[1])
         except (IndexError, ValueError):
             return -1
 
-    candidates = sorted(
-        Path(work_dir).glob("runs/iter-*/confirm_at.json"), key=_iter_index,
-    )
-    if not candidates:
-        return None
-    try:
-        payload = json.loads(candidates[-1].read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
+    for d in sorted(
+        (p for p in runs.iterdir() if p.is_dir()), key=_iter_index, reverse=True,
+    ):
+        p = d / "recommendation.json"
+        if not p.exists():
+            continue
+        try:
+            payload = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
 
-    # Refuse a stationary point that lies outside the design hull.
-    #
-    # ``decide_after_refine`` already detects this and raises
-    # OPTIMUM_OUTSIDE_HULL with the rationale "ranges were too narrow to
-    # contain the optimum -- escalate before confirming". But Trigger is
-    # documented as reported-not-acted-on, so confirm read the same solve off
-    # disk and replicated it anyway: the system diagnosed the problem, wrote
-    # it into findings, and then did the thing it had just warned against.
-    #
-    # Observed on a real campaign: the surface was monotone in both refined
-    # factors (no interior optimum exists), the quadratic solve landed at
-    # coded BANDCAP=+1.62 / THRESH=-2.30, and confirm reproduced 112.4997
-    # while the campaign had already MEASURED 182.2159 at a corner. Returning
-    # None here makes confirm fall back to the best observed configuration,
-    # which is the weaker claim but the true one.
-    coords = [v for v in payload.values() if isinstance(v, (int, float))]
-    outside = {
-        k: v for k, v in payload.items()
-        if isinstance(v, (int, float)) and not (-1.0 <= float(v) <= 1.0)
-    }
-    if coords and outside:
-        logger.warning(
-            "confirm: ignoring the fitted stationary point %s — it falls "
-            "outside the design hull on %s (coded coordinates must lie in "
-            "[-1, 1]). Extrapolating there would confirm a configuration the "
-            "design never bracketed, so confirm will replicate the best "
-            "OBSERVED configuration instead. Widen those factors' ranges and "
-            "re-run refine to locate a real interior optimum.",
-            payload, ", ".join(sorted(outside)),
-        )
-        return None
-    return payload
+
+def _measured_infeasible(work_dir) -> list[dict]:
+    """Level sets the campaign has already MEASURED as inadmissible.
+
+    ``infeasible`` (a constraint or invariant said no) and ``rejected`` (the
+    integrity check said no) are both direct evidence that a configuration
+    cannot be recommended. They are excluded from the fit already (spec §6.4)
+    — which removes their influence on the coefficients but leaves the
+    candidate space free to hand one of them back as the argmax, because the
+    fitted surface has no idea they are off limits. This closes that: the
+    campaign never recommends a point it watched fail.
+    """
+    out: list[dict] = []
+    runs = Path(work_dir) / "runs" if work_dir is not None else None
+    if runs is None or not runs.exists():
+        return out
+    for d in sorted(runs.glob("iter-*")):
+        for row in artifacts.read_runs(d):
+            if row.get("status") in ("infeasible", "rejected") and row.get("levels"):
+                out.append(dict(row["levels"]))
+    return out
 
 
 def _run_row(row, outcome) -> dict:
