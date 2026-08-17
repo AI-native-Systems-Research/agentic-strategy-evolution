@@ -235,6 +235,28 @@ runs for the same bound.
 | `report.json` | `report` | `x̂`, both bounds, `δ_s`, `δ_t`, `decision_basis`, `certified` |
 | `epoch.json` | `exception` | why the epoch ended, and what a new one would need |
 
+**Naming notes (post-implementation, final whole-branch review).** The
+branch's actual artifact names diverge from this table in three places,
+verified against the code rather than assumed:
+- `epoch.json` above is `epoch_end-<epoch>.json` on disk (`_close_iteration`,
+  work-dir root) — same artifact, this branch's name for it.
+- `alias_map.json` does not exist as a separate file. Its content is split
+  across `effects.json`'s `aliases` (which coefficients were fit per alias
+  class) and `recommendation.json`'s `alias_consequential` (whether the
+  unresolved alias mattered to the answer).
+- `decision_basis` above is `recommendation.basis` in the actual
+  `report.json` — six values (certified / terminal_best / model / measured /
+  baseline / none), not a bare boolean; see `docs/data-model.md` §7j and
+  `CLAUDE.md`'s optimization section for the full mapping.
+- `branch_id` was never implemented; every `transitions.jsonl` row carries
+  `policy_hash` instead, plus the complete fired `rule` dict (including its
+  `accounting` string). This is not a gap: `branch_id` does not appear in
+  the paper at all, and `rule` + `policy_hash` is strictly more informative
+  than a bare id — a reader needs no cross-reference into `policy.json` to
+  know which registered branch produced a row, because the fired rule is
+  already inlined in it. Treat `rule` + `policy_hash` as superseding
+  `branch_id` in this table, not as a missing field.
+
 ## 4. Two latent defects, verified now
 
 Both reproduced on `nousko` at `9e7983d` before the plan was written. Neither is
