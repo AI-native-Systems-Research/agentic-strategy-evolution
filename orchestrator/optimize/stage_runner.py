@@ -668,10 +668,13 @@ def _check_baseline_equivalence(
     whole epoch's numbers are downstream of it, and a warning arrives after the
     runs are spent.
 
-    Silent no-op when ``baseline_equivalence.json`` has no ``pre`` (no build
-    stage, no declared baseline, or no runner at build time) or when no runner
-    is available now. Both are "the oracle was never armed", not "the oracle
-    passed", and the file records which.
+    NOT ARMED is a distinct outcome from PASSED, and this function keeps them
+    distinguishable. No file at all means the oracle was never attempted (no
+    build stage, no declared baseline, no runner); ``pre_unavailable`` means it
+    was attempted and the pre-build measurement could not be taken, which is a
+    normal pre-build state (see the build branch) but must not read as a pass.
+    Every not-armed path says so at WARNING, because the alternative is a
+    campaign author assuming a check ran when nothing did.
     """
     path = Path(work_dir) / "baseline_equivalence.json"
     if not path.exists():
@@ -687,6 +690,24 @@ def _check_baseline_equivalence(
         ) from exc
     pre = list(rec.get("pre") or ())
     levels = dict(rec.get("levels") or {})
+    unavailable = rec.get("pre_unavailable")
+    if unavailable and not pre:
+        # The build stage tried and could not. Say so loudly and proceed: the
+        # pre-build measurement is gone for good (the mechanism is in the tree
+        # now), so there is nothing to compare against and no way to recover it
+        # without re-running the build.
+        logger.warning(
+            "verify: ORACLE 2(c) IS NOT ARMED for this campaign. The control "
+            "configuration %s could not be measured before the build (%s), so "
+            "nothing verifies that the mechanism is inert at its control level "
+            "— a mechanism that shifts the metric at its OFF setting would "
+            "confound every effect this epoch measures, and that would not be "
+            "detected. The epoch proceeds. To arm the oracle, make the "
+            "run_command able to execute the control configuration BEFORE the "
+            "build stage runs, then start a fresh campaign.",
+            levels or "<unrecorded>", unavailable,
+        )
+        return
     if not pre or not levels:
         return
     if config_runner is None:
@@ -1250,13 +1271,12 @@ def run_stage(
     # both callables from the campaign itself.
     repo = (campaign.get("target_system") or {}).get("repo_path")
 
-    # Resolve the stage BEFORE running the test command. On a `build`
-    # iteration the mechanism does not exist yet, so running the target's
-    # tests would burn a test cycle to learn something already known: the
-    # declared identifiers are missing. Worse, `go test -run <pattern>` exits
-    # 0 with "no tests to run" when the pattern matches nothing, so the
-    # pre-build run looks like a pass at the shell level. Deciding the stage
-    # first keeps that noise out of the log and out of the artifacts.
+    # Resolve the stage FIRST: what the pre-epoch work below does depends on
+    # which stage this is (`build` records a before-state; `verify` reads it).
+    # An earlier version resolved here so it could SKIP the test command on a
+    # build iteration; that is no longer the rule — see the block below, which
+    # runs it deliberately, and oracle 2(b) for why the pre-build outcome is the
+    # whole point.
     #
     # Resolved ONCE: `_resolve_state` may compile and write policy.json, and
     # calling it twice would re-read (and re-hash-check) the same file for no
@@ -1321,32 +1341,80 @@ def run_stage(
         })
         # ── oracle 2(c), first half: the control, measured before the build ──
         #
-        # Skipped (and the file left absent) when the campaign declares no
+        # Not attempted at all (file left absent) when the campaign declares no
         # baseline or no runner is available. Absence is what disables the check
         # at verify — the same convention `mechanism.sha256` uses — rather than a
         # recorded value that could never match.
+        #
+        # THE ATTEMPT MUST NOT BE ABLE TO KILL THE CAMPAIGN. This measurement is
+        # the one place in the kind that runs the target's `run_command` against
+        # a tree where the mechanism does NOT exist yet — and frequently where
+        # the benchmark harness itself does not exist yet either, because `build`
+        # is often what authors it. `render_apply` renders the new mechanism's
+        # flag even at its control level, so a strict CLI parser exits non-zero
+        # on a flag it has never heard of, and `make_config_runner` raises on a
+        # harness that emits no parseable JSON. Both are NORMAL pre-build states,
+        # not campaign errors. Letting either propagate aborted the campaign
+        # before `run_build` — i.e. the oracle's setup destroyed the one
+        # substantive model call the whole kind is built around, and authored
+        # nothing. (Verified as a real A/B regression against the previous
+        # commit, not a hypothetical.)
+        #
+        # So a failure here DEGRADES the oracle instead of failing the campaign:
+        # the reason is recorded as `pre_unavailable` and `verify` says out loud
+        # that 2(c) could not be armed. Recorded rather than merely logged
+        # because a silently absent oracle on the one stage that authors code is
+        # indistinguishable from an oracle that passed, and a campaign author
+        # reading the artifacts afterwards must be able to tell those apart.
         _pre_baseline = opt.get("known_valid_baseline")
         if _pre_baseline and config_runner is not None:
             _n = _baseline_replicates(campaign)
             _metric = (
                 ((opt.get("response") or {}).get("primary") or {}).get("metric") or ""
             )
-            _pre = build_mod.baseline_runs(
-                config_runner, _factors_for_build, dict(_pre_baseline),
-                n=_n, metric=_metric,
-            )
-            _write_json(Path(work_dir) / "baseline_equivalence.json", {
-                "levels": dict(_pre_baseline),
-                "pre": _pre,
-                "pre_mean": _mean(_pre),
-                "tolerance_pct": _baseline_tolerance_pct(campaign),
-            })
-            logger.info(
-                "build: measured the known_valid_baseline %s x%d before the "
-                "build (mean %s on %s) — verify re-measures it and hard-fails "
-                "if the mechanism moved it",
-                dict(_pre_baseline), _n, f"{_mean(_pre):.6g}", _metric or "<unset>",
-            )
+            try:
+                _pre = build_mod.baseline_runs(
+                    config_runner, _factors_for_build, dict(_pre_baseline),
+                    n=_n, metric=_metric,
+                )
+            except Exception as exc:  # noqa: BLE001 — see the rationale above
+                # Deliberately broad: the raiser is the TARGET's harness via an
+                # injected callable, so the exception type is whatever that
+                # target's failure mode produces. Narrowing to RuntimeError
+                # would let the next harness's OSError/ValueError re-introduce
+                # exactly the regression this guard exists to prevent.
+                _reason = f"{type(exc).__name__}: {exc}"
+                _write_json(Path(work_dir) / "baseline_equivalence.json", {
+                    "levels": dict(_pre_baseline),
+                    "pre_unavailable": _reason,
+                    "tolerance_pct": _baseline_tolerance_pct(campaign),
+                })
+                logger.warning(
+                    "build: could NOT measure the known_valid_baseline %s before "
+                    "the build (%s). This is expected when the run_command or the "
+                    "mechanism's flag does not exist yet — the build proceeds, but "
+                    "oracle 2(c) (control must be unchanged across the build) is "
+                    "NOT armed for this campaign, so nothing will check that the "
+                    "mechanism is inert at its control level. To arm it, make the "
+                    "run_command accept the control configuration before the build "
+                    "runs. Recorded as pre_unavailable in "
+                    "baseline_equivalence.json.",
+                    dict(_pre_baseline), _reason,
+                )
+            else:
+                _write_json(Path(work_dir) / "baseline_equivalence.json", {
+                    "levels": dict(_pre_baseline),
+                    "pre": _pre,
+                    "pre_mean": _mean(_pre),
+                    "tolerance_pct": _baseline_tolerance_pct(campaign),
+                })
+                logger.info(
+                    "build: measured the known_valid_baseline %s x%d before the "
+                    "build (mean %s on %s) — verify re-measures it and hard-fails "
+                    "if the mechanism moved it",
+                    dict(_pre_baseline), _n, f"{_mean(_pre):.6g}",
+                    _metric or "<unset>",
+                )
         build_mod.run_build(
             campaign, work_dir,
             iteration=iteration,
@@ -1419,13 +1487,15 @@ def run_stage(
 
     # ── build: the mechanism was just authored; do NOT gate on tests here ──
     #
-    # The build call already ran (above, before the test command, so the
-    # target's tests are not run against code that did not exist yet). This
-    # stage deliberately makes no correctness judgement: `verify` is the gate,
-    # and letting the stage that wrote the code also certify it would mean the
-    # model grading its own work. Ending the iteration here hands the next
-    # iteration to verify, which runs the real test command against the real
-    # repo and aborts if anything the campaign declared is missing or failing.
+    # The build call already ran (above — AFTER the pre-build test run and the
+    # pre-build control measurement, both of which have to observe the tree as
+    # it was before the mechanism existed). This stage deliberately makes no
+    # correctness judgement: the pre-build verdicts are RECORDED, never gated on,
+    # because `verify` is the gate, and letting the stage that wrote the code
+    # also certify it would mean the model grading its own work. Ending the
+    # iteration here hands the next iteration to verify, which runs the real test
+    # command against the real repo and aborts if anything the campaign declared
+    # is missing or failing.
     if stage_name == Stage.BUILD.value:
         _enter_phase(engine, "DESIGN", work_dir)
         _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
