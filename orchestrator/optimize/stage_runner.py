@@ -526,6 +526,33 @@ def _build_checks(campaign: dict) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def _mechanism_paths(campaign: dict) -> list[str] | None:
+    """The drift oracle's allowlist, or None for Task 12's whole-tree hash.
+
+    SINGLE OWNER of the resolution, because ``snapshot_mechanism`` and
+    ``current_mechanism_hash`` must be handed the identical list — a scope that
+    differs between the two is a comparison between two different questions,
+    and every epoch iteration would read as drift.
+
+    Only the explicit ``optimization.build_checks.mechanism_paths`` is honoured.
+    The plan floated deriving paths from the factors' ``manipulation`` /
+    ``relations`` when they "name paths", but the schema does not carry file
+    paths there: ``manipulation`` is a predicate over observables
+    (``telemetry.*`` / ``applied.*``), and ``relations[].native_test`` is a test
+    IDENTIFIER for the target's own runner (``tests/x.py::test_y``, a Go
+    package, a JUnit class) — which resolves to a path only for some languages,
+    and names the TEST rather than the mechanism even then. A derivation that
+    guessed would produce a silently wrong allowlist, which is the one failure
+    mode this oracle must not have: too narrow and drift goes unnoticed. So:
+    declared, or whole-tree.
+    """
+    raw = _build_checks(campaign).get("mechanism_paths")
+    if not isinstance(raw, list):
+        return None
+    paths = [str(p) for p in raw if str(p).strip()]
+    return paths or None
+
+
 def _baseline_replicates(campaign: dict) -> int:
     raw = _build_checks(campaign).get("baseline_replicates")
     if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
@@ -825,6 +852,30 @@ def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
             "policy.json was edited after compilation (hash mismatch with "
             "policy.sha256); a pre-registered policy cannot change inside an "
             "epoch",
+        )
+    # Two records of ONE commitment must agree. `mechanism.sha256` is what the
+    # drift oracle compares the tree against; `compiled_from
+    # .mechanism_patch_hash` is what the policy says it was compiled for. Only
+    # the second is covered by the policy hash above, so re-stamping the sidecar
+    # alone leaves both files individually well-formed and the pair
+    # meaningless — the drift check would then certify the tree against a hash
+    # this policy never registered, and the epoch's numbers would be filed
+    # under a pre-registration that does not describe them. Distinct from tree
+    # drift, and named as such, because the fixes differ: recompile (a new
+    # epoch) versus restore the tree.
+    sidecar = _read_mechanism_hash(work_dir)
+    registered = str((pol.get("compiled_from") or {}).get("mechanism_patch_hash") or "")
+    if sidecar and registered and sidecar != registered:
+        raise OptimizationAborted(
+            f"the policy's registered hash and the sidecar hash disagree: "
+            f"policy.json was compiled for mechanism_patch_hash "
+            f"{registered[:12]} but mechanism.sha256 now records "
+            f"{sidecar[:12]}. This is NOT tree drift — the tree may match the "
+            f"sidecar perfectly — it means the mechanism was re-snapshotted "
+            f"without recompiling, so the pre-registration and the drift "
+            f"oracle no longer describe the same system. A revised mechanism "
+            f"is a new experiment: start a new epoch (or a fresh campaign) so "
+            f"the policy is compiled against the mechanism it will measure.",
         )
     return pol
 
@@ -1430,12 +1481,20 @@ def run_stage(
         # build's own output — anything that edits the target between the two
         # stages should register as drift, not be absorbed into the baseline.
         if repo:
-            h = build_mod.snapshot_mechanism(Path(repo), work_dir)
+            _paths = _mechanism_paths(campaign)
+            h = build_mod.snapshot_mechanism(
+                Path(repo), work_dir, allowlist=_paths,
+            )
             logger.info(
-                "build: recorded mechanism.patch (%s)",
+                "build: recorded mechanism.patch (%s), scope: %s",
                 f"sha256 {h[:12]}" if h
                 else "no hash — target is not a git work tree, so the epoch "
                      "has no drift oracle",
+                ", ".join(_paths) if _paths else
+                "the whole working tree (declare "
+                "optimization.build_checks.mechanism_paths to scope it — "
+                "otherwise any file the test or run command leaves behind that "
+                "git does not ignore will read as mechanism drift)",
             )
     elif repo and stage_name not in policy_mod.pre_epoch_stages(campaign):
         # ── drift oracle (spec §3.7, oracle 2) ──────────────────────────────
@@ -1458,21 +1517,44 @@ def run_stage(
         # Pre-epoch stages are exempt because `verify` is where the hash is
         # stamped into the policy: "drifted since compile" is not yet meaningful
         # before the compile it refers to.
+        #
+        # SCOPE (Task 13.5): `mechanism_paths`, when declared, narrows what
+        # counts as the mechanism. It must be the same list `snapshot_mechanism`
+        # used, so both come from `_mechanism_paths`. Undeclared → whole tree,
+        # which is Task 12's behaviour and its known hazard: Nous runs the
+        # target's `test_command`/`run_command` with the repo as cwd, so a
+        # `.pytest_cache/` or `run.log` that git does not ignore lands here as
+        # "the mechanism drifted". The remedy is a declared scope, named in the
+        # abort message below so the author who hits the false positive is told
+        # how to fix it rather than left to distrust the oracle.
         recorded = _read_mechanism_hash(work_dir)
         if recorded:
             from orchestrator.optimize import build as build_mod
 
-            current = build_mod.current_mechanism_hash(Path(repo))
+            _paths = _mechanism_paths(campaign)
+            current = build_mod.current_mechanism_hash(
+                Path(repo), allowlist=_paths,
+            )
             if current != recorded:
+                _scope = (
+                    f"scope: {', '.join(_paths)}" if _paths else
+                    "scope: the whole working tree — if the difference is an "
+                    "artifact of the test or run command (a .pytest_cache/, a "
+                    "log, a coverage file) rather than a code change, that is "
+                    "a FALSE POSITIVE: gitignore it, or declare "
+                    "optimization.build_checks.mechanism_paths naming only the "
+                    "mechanism's own files"
+                )
                 raise OptimizationAborted(
                     f"mechanism drifted since compile: the target's working "
                     f"tree no longer matches mechanism.patch; measurements "
                     f"would describe a different system "
                     f"(recorded {recorded[:12]}, now "
-                    f"{current[:12] or '<no git work tree>'}). Either restore "
-                    f"the tree to the recorded patch, or treat the revision as "
-                    f"a new experiment and start a fresh campaign — a revised "
-                    f"mechanism is a new pre-registration, not a resumed one.",
+                    f"{current[:12] or '<no git work tree>'}; {_scope}). Either "
+                    f"restore the tree to the recorded patch, or treat the "
+                    f"revision as a new experiment and start a fresh campaign — "
+                    f"a revised mechanism is a new pre-registration, not a "
+                    f"resumed one.",
                 )
 
     factors = parse_factors(opt["factors"])
