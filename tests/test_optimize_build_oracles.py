@@ -443,3 +443,115 @@ def test_a_control_that_cannot_be_measured_is_not_equivalence(tmp_path, monkeypa
                   test_results={t: True for t in ids})
     be = json.loads((wd / "baseline_equivalence.json").read_text())
     assert be["ok"] is False
+
+
+# ─── the oracle's own setup must never be able to kill the campaign ──────────
+
+
+def _strict_runner(row):
+    """A harness that rejects flags it has never heard of.
+
+    The pre-build reality for a `build` campaign: the mechanism's flag does not
+    exist yet, and often neither does the benchmark harness, because `build` is
+    what authors it. `render_apply` renders the flag anyway (at its control
+    level), so a strict CLI parser exits non-zero on it.
+    """
+    raise RuntimeError(
+        "config run exited 2: unknown flag %r" % sorted(row.levels),
+    )
+
+
+def test_a_prebuild_harness_that_cannot_run_does_not_kill_the_build(tmp_path, monkeypatch):
+    """The oracle's SETUP must not destroy the campaign's one model call.
+
+    Regression guard. The pre-build control measurement runs the target's
+    run_command against a tree where the mechanism — and often the harness
+    itself — does not exist yet. Both a non-zero exit and unparseable output are
+    NORMAL there, not campaign errors. When the raise propagated, `run_build`
+    was never reached: the campaign died before spending the single substantive
+    model call the whole kind is built around, and authored nothing.
+
+    So: the build completes, the mechanism IS authored, and the oracle degrades.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("strictpre", repo_path=str(repo), campaign=c)
+
+    authored: list[int] = []
+
+    def _sdk(**kw):
+        authored.append(1)
+        Path(kw["cwd"]).joinpath("mech.py").write_text("X = 2\n")
+        return _fake_build({})(**kw)
+
+    run_stage(c, wd, iteration=1, stage="build", config_runner=_strict_runner,
+              test_results={t: False for t in _declared_ids(c)}, sdk_runner=_sdk)
+    assert authored == [1], "the build's one model call must still happen"
+    assert "X = 2" in (repo / "mech.py").read_text()
+    assert (Path(wd) / "mechanism.sha256").exists(), "the build still snapshots"
+
+
+def test_an_unarmed_oracle_is_recorded_not_silent(tmp_path, monkeypatch, caplog):
+    """NOT ARMED must be distinguishable from PASSED, in the artifact and the log.
+
+    A silently absent oracle on the one stage that authors code reads exactly
+    like an oracle that passed. So the build records WHY it could not arm, and
+    verify says so at WARNING rather than no-op'ing — otherwise a campaign
+    author reading the artifacts afterwards cannot tell that nothing checked
+    whether the mechanism was inert.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("unarmed", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build", config_runner=_strict_runner,
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert "pre" not in be, "no pre-build measurement was taken, so claim none"
+    assert "unknown flag" in be["pre_unavailable"], be
+    assert be["levels"] == {"A": 2, "B": 2, "C": "off"}
+
+    # verify must proceed (nothing to compare against) and must SAY it did not
+    # check, rather than passing silently.
+    import logging
+    with caplog.at_level(logging.WARNING, logger="orchestrator.optimize.stage_runner"):
+        run_stage(c, wd, iteration=2, stage="verify",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in ids})
+    assert any("NOT ARMED" in r.getMessage() for r in caplog.records), caplog.text
+    assert (Path(wd) / "policy.json").exists(), "the epoch still compiles"
+    # And the record must NOT have been rewritten into something that looks OK.
+    be2 = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be2.get("ok") is None and "pre_unavailable" in be2
+
+
+def test_a_post_build_measurement_failure_still_aborts(tmp_path, monkeypatch):
+    """The GUARD IS ASYMMETRIC on purpose, and that asymmetry is the contract.
+
+    Pre-build, a harness that cannot run is expected and must degrade. At
+    verify, the mechanism and its harness DO exist, so the same failure means
+    the apparatus is broken — and the campaign must not proceed to spend an
+    epoch's runs on it. If someone later wraps the verify-side call in the same
+    try/except as the build-side one, this fails.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("postfail", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    assert "pre" in json.loads((wd / "baseline_equivalence.json").read_text())
+    with pytest.raises(RuntimeError):
+        run_stage(c, wd, iteration=2, stage="verify", config_runner=_strict_runner,
+                  test_results={t: True for t in ids})
