@@ -315,11 +315,24 @@ def test_a_surface_with_nothing_refinable_no_longer_aborts_at_refine(tmp_path):
     documented workaround was to hand-edit ``stages``. ``compile_policy`` omits
     the state instead, so ``screen`` defaults to ``confirm`` and the campaign
     reaches its answer with no author intervention.
+
+    The ``refine_on`` assertion below is the one that pins THAT mechanism.
+    Mutation-verified during review: the path/outcome assertions alone still
+    pass with ``refine_on`` reverted to always-include, because ``drift`` has
+    zero refinable SURVIVORS too, so the ``{"refinable_survivors": {">": 0}}``
+    guard already defaults screen to confirm for an unrelated reason. Reading
+    the compiled policy off disk is what distinguishes "the state was never
+    compiled" from "the state was compiled and the guard skipped it".
     """
     res = run_synthetic_campaign(SURFACES["drift"](), seed=22, parent_dir=tmp_path)
     assert res.path == ["screen", "confirm", "report"], res.path
     assert res.recommendation, res.report
     assert not any(p.startswith("aborted:") for p in res.path)
+    states = json.loads((res.work_dir / "policy.json").read_text())["states"]
+    assert "refine" not in states, (
+        f"compile_policy registered a refine state on a surface where nothing "
+        f"is refinable; states={sorted(states)}"
+    )
 
 
 def test_skipping_refine_lets_a_two_level_surface_reach_its_optimum(tmp_path):
