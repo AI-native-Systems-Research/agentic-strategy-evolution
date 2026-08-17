@@ -230,6 +230,65 @@ reader already knows.
    the epoch instead of improvising. This is the single most important
    invariant in the kind — it is what makes the token-call table above true.
 
+**The epoch's artifacts, and where they live.** Work-dir root holds the
+epoch-scoped facts; `runs/iter-N/` holds the iteration-scoped ones. An
+epoch spans several iterations, so this split is load-bearing, not cosmetic.
+
+| Root | Written by |
+|---|---|
+| `policy.json` + `policy.sha256` | end of `verify` (`policy.write_policy`) |
+| `transitions.jsonl` | every `step()` — the audit trail `report.json`'s `path` is read back from |
+| `report.json` | `report` — `recommendation.basis`, both bounds, both deltas, finalists |
+| `epoch_end-<epoch>.json` | `exception` — why the epoch ended + `next_epoch_requires` |
+| `mechanism.patch` / `mechanism.sha256` / `pre_build_tests.json` / `baseline_equivalence.json` | the three build oracles |
+
+| `runs/iter-N/` | Written by |
+|---|---|
+| `design_matrix.json`, `runs.jsonl`, `relations.json` | pre-registration, execution, contract check |
+| `effects.json` (incl. the **alias classes**), `recommendation.json` (incl. `alias_consequential`, `residual_regret_model`) | every fitting state: `screen`, `foldover`, `refine` |
+| `fit_exclusions.json` | fitting states, **only** when rows were excluded from the fit |
+| `confirmation.json`, `shortlist.json` | `confirm` — finalists, fresh samples, `residual_regret_terminal` |
+| `findings.json`, `principle_updates.json` | projected deterministically from the fit — zero tokens |
+
+Two names where the spec and the code differ, and **the code is what is on
+disk**: spec §3.9's `epoch.json` is really `epoch_end-<epoch>.json` (one per
+epoch, at the root, so `_epoch_index` is a glob rather than a directory
+walk); spec §3.9's `alias_map.json` does **not exist** — its content is
+`effects.json`'s `aliases` plus `recommendation.json`'s
+`alias_consequential`. Fix the spec's table if it is ever revised; do not
+"fix" the code to match an idealized name.
+
+**Never edit `policy.json`.** `_load_or_compile_policy` compares it against
+`policy.sha256` on every stage and hard-aborts on a mismatch — a
+pre-registered policy that changed inside an epoch is not a pre-registration.
+The one legitimate way to change a design is to revise the campaign YAML and
+start a **new epoch**: the presence of `epoch_end-<e>.json` makes the next
+`nous run --resume` recompile from the revised campaign. Recompiling *across*
+an epoch boundary is the opposite operation from editing *inside* one — a new
+pre-registration, freshly hashed, whose `epoch` field says which execution it
+registers, with the previous epoch's registration preserved in
+`transitions.jsonl`'s per-row `policy_hash`.
+
+**Two bounds, never collapsed.** `report.json` carries
+`residual_regret_model` (at `delta_screen`, method `bonferroni_one_sided_t` —
+carries the registered response-class assumption) and
+`residual_regret_terminal` (at `delta_terminal`, method
+`bonferroni_one_sided_t_paired` under common random numbers else
+`bonferroni_one_sided_welch_t` — does not depend on the fitted model at all)
+as **separate** fields. `Pr(wrong global decision) ≤ δ_s + δ_t` is only
+meaningful while they stay apart; one merged "regret" number would advertise
+the assumption-light guarantee while delivering the model-dependent one. A
+`null` bound means the variance was not estimable — an unknown is not a zero.
+
+**The fallback ladder is `report.json`'s `recommendation.basis`**, one of
+`certified` / `terminal_best` / `model` / `measured` / `baseline` / `none`.
+Six values for the spec §3.6 ladder's four rungs: the spec's rung 2 (model
+adequate, bound too wide) and rung 3 (model inadequate, re-measure) are
+`terminal_best` and `measured`, and `none` covers the no-baseline case that
+is not a rung at all. The report **always** names an action; a semantic
+exception removes only the `model` rung, because the fitted surface is what
+the exception impeached.
+
 **Oracle-first discipline (spec §2.1):** no paper-aligned mechanism is
 implemented before a synthetic surface exists (`orchestrator/optimize/synthetic.py`,
 nine closed-form response surfaces with known optima, each named for a past
@@ -282,11 +341,21 @@ config to check that declared `native_test` identifiers actually resolve, that
 present, and that the manipulation predicates hold. Each of those otherwise
 costs a full campaign to discover.
 
+`--smoke` remains the **first** thing to run on any campaign, compiled policy
+or not: a policy compiles cleanly from a campaign whose `run_command` cannot
+exec, and a hashed pre-registration of an experiment that cannot execute a
+single configuration is a pre-registration of nothing.
+
 These campaigns are authored by AI: see
 `docs/optimization-campaign-guide.md` for the mental model, the
-field-by-field walkthrough of the `optimization` block, four worked
-end-to-end examples, and the anti-patterns to avoid. Cross-field rules
-live in `orchestrator.validate.validate_optimization_campaign`.
+field-by-field walkthrough of the `optimization` block, the **"The compiled
+policy"** section (the `policy` / `known_valid_baseline` / `workload` blocks,
+the states-and-branches table, how to read `report.json`, and how to start
+epoch 2), four worked end-to-end examples, and the anti-patterns to avoid.
+Per-artifact reference: `docs/data-model.md` §7. Target-side adapter
+contract (`run_command` / `test_command` shape, seed verification, SLA
+constraints as validity): `docs/targets.md`. Cross-field rules live in
+`orchestrator.validate.validate_optimization_campaign`.
 
 ## Meta-findings emit at campaign end (issue #155)
 
@@ -330,7 +399,15 @@ worked example). The full friction-report resolution map is in
   "what to lock" inventory, rehearsal-as-instrument (#245
   resolution).
 - `docs/optimization-campaign-guide.md` — authoring guide for
-  `kind: optimization` factorial/response-surface campaigns.
+  `kind: optimization` factorial/response-surface campaigns, including
+  "The compiled policy" section (states, artifacts, `report.json`, epochs).
+- `docs/targets.md` — the **target adapter contract** for real systems
+  targets: `run_command` / `test_command` output shape, the
+  `NOUS_WORKLOAD_SEED` verification recipe, SLA constraints as validity
+  rather than penalty, and per-target notes (vLLM, Qdrant, ClickHouse,
+  Knative, Cilium).
+- `docs/data-model.md` §7 — per-artifact reference for everything a
+  compiled epoch writes.
 - `docs/superpowers/specs/2026-08-16-compiled-policy-design.md` — binding
   design authority for the compiled experimental policy (`policy.json`,
   `step()`, the closed observation/operator vocabularies, the residual-regret
