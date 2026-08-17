@@ -4113,10 +4113,76 @@ def _run_row(row, outcome) -> dict:
     }
 
 
+SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
+
+GOVERNED_ARTIFACTS: dict[str, str] = {
+    "report.json": "report.schema.json",
+    "recommendation.json": "recommendation.schema.json",
+    "confirmation.json": "confirmation.schema.json",
+    "shortlist.json": "shortlist.schema.json",
+}
+"""Artifacts of this kind whose shape is enforced at the moment they are written.
+
+WHY THE ENFORCEMENT LIVES IN ``_write_json`` rather than at each call site.
+A schema file that nothing validates against is not a check; it is a second copy
+of the shape that drifts from the code silently, which is the failure mode
+``check_policy`` was wired up to close for ``policy.json``. Putting the call in
+the one function every artifact write already goes through means a NEW write site
+cannot be added that skips validation — there is no per-call-site opt-in to
+forget.
+
+``report.json`` carries the load-bearing obligation (design spec §3.5): its
+schema requires ``residual_regret_model`` and ``residual_regret_terminal``
+INDEPENDENTLY, so a report that dropped either — or that collapsed the two into
+one number — cannot reach disk. The two bounds rest on different assumptions
+(the model bound carries the registered response class, the terminal bound
+carries nothing but the fresh measurements), and one number advertising the
+assumption-light guarantee while delivering the model-dependent one is exactly
+what the separation exists to prevent.
+
+Artifacts NOT listed here are unaffected — ``findings.json`` and
+``principle_updates.json`` are validated by the shared reflective machinery
+downstream, and the epoch/build records have no schema yet.
+"""
+
+_schema_cache: dict[str, dict] = {}
+
+
+def _validate_artifact(name: str, payload) -> None:
+    """Validate a governed artifact against its schema, or raise.
+
+    Raises ``OptimizationAborted`` rather than letting ``jsonschema``'s own error
+    escape, because a malformed artifact is a campaign-level hard-fail of the same
+    class as a structurally invalid compiled policy: every downstream reader — the
+    report ladder, the terminal state's shortlist seeding, a human auditing the
+    certificate — joins on these fields, so shipping a report the schema rejects
+    would put an unreadable certificate on disk and only fail later, somewhere
+    that cannot say what went wrong.
+    """
+    schema_name = GOVERNED_ARTIFACTS.get(name)
+    if schema_name is None:
+        return
+    import jsonschema
+
+    if schema_name not in _schema_cache:
+        _schema_cache[schema_name] = json.loads(
+            (SCHEMA_DIR / schema_name).read_text(),
+        )
+    try:
+        jsonschema.validate(payload, _schema_cache[schema_name])
+    except jsonschema.ValidationError as exc:
+        raise OptimizationAborted(
+            f"{name} does not conform to {schema_name}: "
+            f"{exc.message} (at {'/'.join(str(p) for p in exc.absolute_path) or '<root>'})",
+        ) from exc
+
+
 def _write_json(target: Path, payload) -> Path:
     import json
 
     from orchestrator.util import atomic_write
 
-    atomic_write(Path(target), json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    return Path(target)
+    target = Path(target)
+    _validate_artifact(target.name, payload)
+    atomic_write(target, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return target

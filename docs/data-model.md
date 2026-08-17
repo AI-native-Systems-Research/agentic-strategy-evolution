@@ -273,7 +273,7 @@ called out where they appear (`epoch_end-<epoch>.json` for the spec's
 | `policy.json` | root | end of `verify` (`policy.write_policy`) | `schemas/policy.schema.json` |
 | `policy.sha256` | root | same call | plain text |
 | `transitions.jsonl` | root | every `step()` (`policy.append_transition`) | none |
-| `report.json` | root | `report` (`stage_runner._run_report`) | none |
+| `report.json` | root | `report` (`stage_runner._run_report`) | `schemas/report.schema.json` |
 | `epoch_end-<epoch>.json` | root | `exception` (`stage_runner._close_iteration`) | none |
 | `mechanism.patch` / `mechanism.sha256` | root | `build.snapshot_mechanism` | patch / plain text |
 | `pre_build_tests.json` | root | `run_stage`, before `build` | none |
@@ -281,10 +281,10 @@ called out where they appear (`epoch_end-<epoch>.json` for the spec's
 | `design_matrix.json` | `runs/iter-N/` | `artifacts.write_design_matrix` | `schemas/design_matrix.schema.json` |
 | `runs.jsonl` | `runs/iter-N/` | `artifacts.append_run` | `schemas/runs_row.schema.json` |
 | `effects.json` | `runs/iter-N/` | `artifacts.write_effects` | `schemas/effects.schema.json` |
-| `recommendation.json` | `runs/iter-N/` | `run_stage`, fitting states | none |
+| `recommendation.json` | `runs/iter-N/` | `run_stage`, fitting states | `schemas/recommendation.schema.json` |
 | `fit_exclusions.json` | `runs/iter-N/` | `run_stage`, only when rows were excluded | none |
-| `confirmation.json` | `runs/iter-N/` | `stage_runner._finish_confirm` | none |
-| `shortlist.json` | `runs/iter-N/` | `stage_runner._finish_confirm` | none |
+| `confirmation.json` | `runs/iter-N/` | `stage_runner._finish_confirm` | `schemas/confirmation.schema.json` |
+| `shortlist.json` | `runs/iter-N/` | `stage_runner._finish_confirm` | `schemas/shortlist.schema.json` |
 | `relations.json` | `runs/iter-N/` | `artifacts.write_relations` | `schemas/relations.schema.json` |
 | `findings.json` / `principle_updates.json` | `runs/iter-N/` | projected from the fit — zero tokens | the shared reflective schemas |
 | `build_summary.md` / `build_warning.txt` | `runs/iter-N/` | `build.run_build` | prose |
@@ -371,8 +371,10 @@ the log, is the audit trail: `report.json`'s `path` is read back from it, and
 
 ### 7g. recommendation.json — "What does the fitted surface say is best?"
 
-**Location:** `runs/iter-N/` · written at every fitting state (`screen`,
-`foldover`, `refine`).
+**Schema:** `schemas/recommendation.schema.json` · **Location:**
+`runs/iter-N/` · written at every fitting state (`screen`, `foldover`,
+`refine`) — from one call site, so the shape is identical at all three and
+`stage` is the only field that tells them apart.
 
 `recommend()` is `argmax` over `X_valid` — enumeration for a small space,
 deterministic optimization for a structured one, and **no model judgment**.
@@ -408,7 +410,9 @@ visible rather than silent.
 
 ### 7i. confirmation.json / shortlist.json — "Terminal discrimination"
 
-**Location:** `runs/iter-N/` · written by `stage_runner._finish_confirm`.
+**Schemas:** `schemas/confirmation.schema.json` and
+`schemas/shortlist.schema.json` · **Location:** `runs/iter-N/` · written by
+`stage_runner._finish_confirm`.
 
 `confirm` is this branch's name for the paper's **`discriminate`** stage
 (design spec §3.3's naming note). It is **terminal discrimination**, not
@@ -433,7 +437,8 @@ one source of truth.
 
 ### 7j. report.json — "What should we do, and how strong is the claim?"
 
-**Location:** work-dir root · written by `stage_runner._run_report`.
+**Schema:** `schemas/report.schema.json` · **Location:** work-dir root ·
+written by `stage_runner._run_report`.
 
 The report **always names an action.** The fallback ladder is recorded as
 `recommendation.basis`, so a reader can tell a certificate from a fallback
@@ -465,6 +470,16 @@ an unknown is not a zero: treat it as "cannot certify."
 `report.json` carries each bound's *value*; the full record (`challenger`,
 `delta`, `method`, `detail`) stays in `recommendation.json` and
 `confirmation.json`.
+
+The separation is enforced, not merely documented. `report.schema.json`
+requires `residual_regret_model` and `residual_regret_terminal`
+**independently**, declares no `oneOf`/dependency relating them, and defines no
+combined field for a collapsed number to live in — so a report that dropped or
+merged either bound cannot reach disk. Enforcement is wired at
+`stage_runner._write_json`, the one function every artifact write in the kind
+goes through (see `GOVERNED_ARTIFACTS`), which is why a new write site cannot be
+added that skips validation. A violation raises `OptimizationAborted` at the
+write rather than shipping an unreadable certificate.
 
 ### 7k. epoch_end-&lt;epoch&gt;.json — "Why did the epoch end, and what would a new one need?"
 
