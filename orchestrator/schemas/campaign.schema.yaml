@@ -1251,3 +1251,39 @@ properties:
               ``noise_estimate_pct`` — it is a fact about the target that
               several other calculations use — and set this only when the
               control's variance genuinely differs from the response's.
+          mechanism_paths:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              minLength: 1
+            description: >
+              Which files ARE the mechanism, as repo-relative paths. Scopes
+              the drift oracle: every epoch iteration re-hashes the target's
+              tree and hard-aborts if it no longer matches
+              ``mechanism.sha256``, and this is what that hash covers.
+              Example: ``["src/batching.py", "tests/prop_batch.py"]``.
+              Matching is a plain path-component prefix, not a glob —
+              ``"src/batching.py"`` is that file, ``"src/"`` is everything
+              under that directory, and ``"src/batch"`` matches NEITHER
+              (a partial component never matches).
+
+              DECLARE THIS. The default, when it is omitted, hashes the
+              ENTIRE working tree — every tracked edit plus every untracked
+              file git does not ignore. Nous runs the target's own
+              ``test_command`` and ``run_command`` with the repo as the
+              working directory, so anything they leave behind that is not
+              gitignored (a ``.pytest_cache/``, a ``run.log``, a coverage
+              file) changes that hash, and the next iteration aborts with
+              "mechanism drifted since compile" — a false positive that
+              reads exactly like a real one. Naming the mechanism's files
+              here removes the whole class of failure.
+
+              The whole-tree default is kept for backward compatibility
+              (an existing campaign's recorded hash stays valid), not
+              because it is the better setting.
+
+              Unlike the rest of this block, this field is NOT limited to
+              campaigns that declare ``build``: the drift oracle is armed by
+              the presence of ``mechanism.sha256``, which a campaign may also
+              write by hand.

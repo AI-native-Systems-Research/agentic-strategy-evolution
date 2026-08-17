@@ -555,3 +555,213 @@ def test_a_post_build_measurement_failure_still_aborts(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError):
         run_stage(c, wd, iteration=2, stage="verify", config_runner=_strict_runner,
                   test_results={t: True for t in ids})
+
+
+# ── Task 13.5: the drift oracle's precision ──────────────────────────────────
+#
+# Task 12 hashed the target's WHOLE working tree. Nous itself runs the target's
+# `test_command`/`run_command` with the target repo as cwd, so any artifact
+# those commands leave behind that git does not ignore (a `.pytest_cache/`, a
+# `run.log`, a coverage file) changed the hash — and the NEXT epoch iteration
+# aborted with "mechanism drifted since compile". A false positive dressed as
+# the worst available true positive. The fix is an opt-in allowlist; these four
+# tests pin all four corners of it.
+
+
+def _leave_artifact(repo: Path, rel: str = "run.log") -> None:
+    """Stand in for what a test/run command leaves behind in the target's cwd.
+
+    Deliberately a plain untracked file rather than a real subprocess: the
+    defect is about *any* non-gitignored artifact, and a real `pytest` run
+    inside a tmp repo would make the test slow and platform-dependent while
+    testing the same one byte of hash input.
+    """
+    (repo / rel).write_text("run 1: ok\n")
+
+
+def _drift_setup(tmp_path, monkeypatch, name: str, campaign_edit=None):
+    """A verified campaign whose mechanism is snapshotted, ready for iter-2.
+
+    Returns (campaign, work_dir, repo, recorded_hash). `campaign_edit` is
+    applied to the campaign dict BEFORE verify compiles the policy, which is
+    where `mechanism_paths` has to be in place for the epoch to see it.
+    """
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import SURFACES, make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path)
+    s = SURFACES["additive"]()
+    c = synthetic_campaign(s); c["target_system"]["repo_path"] = str(repo)
+    if campaign_edit is not None:
+        campaign_edit(c)
+    wd = setup_work_dir(name, repo_path=str(repo), campaign=c)
+    (repo / "mech.py").write_text("X = 2\n")          # the mechanism itself
+    recorded = snapshot_mechanism(
+        repo, wd, allowlist=_mechanism_paths_of(c),
+    )
+    assert recorded
+    tests_ok = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="verify",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: True for t in tests_ok})
+    return c, wd, repo, recorded, s
+
+
+def _mechanism_paths_of(campaign) -> list[str] | None:
+    return ((campaign.get("optimization") or {}).get("build_checks")
+            or {}).get("mechanism_paths")
+
+
+def _declare_paths(paths):
+    def edit(c):
+        c["optimization"].setdefault("build_checks", {})["mechanism_paths"] = paths
+    return edit
+
+
+def test_without_mechanism_paths_a_test_artifact_still_aborts_the_epoch(tmp_path, monkeypatch):
+    """PINS TASK 12'S DEFAULT — this is the hazard, kept on purpose.
+
+    A campaign that declares no `mechanism_paths` must behave EXACTLY as it did
+    before this task: the whole tree is hashed, so a stray `run.log` from the
+    target's own test command aborts the next iteration. Narrowing every
+    existing campaign's oracle silently would be a worse bug than the one being
+    fixed, so the fix is opt-in and this test is what keeps it opt-in.
+    """
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    c, wd, repo, _rec, s = _drift_setup(tmp_path, monkeypatch, "wholetree")
+    _leave_artifact(repo)                              # NOT a mechanism edit
+    with pytest.raises(OptimizationAborted, match="drifted since compile"):
+        run_stage(c, wd, iteration=2,
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in _declared_ids(c)})
+
+
+def test_declared_mechanism_paths_exclude_a_test_command_artifact(tmp_path, monkeypatch):
+    """THE FIX. The same artifact, with the allowlist declared, is not drift.
+
+    `mechanism_paths: ["mech.py"]` says the experiment is about `mech.py`. A
+    `run.log` the test command dropped is outside it, so the epoch proceeds —
+    which is the whole point: Nous's own machinery must not be able to abort a
+    campaign for a reason that has nothing to do with the mechanism.
+    """
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    c, wd, repo, _rec, s = _drift_setup(
+        tmp_path, monkeypatch, "scoped", _declare_paths(["mech.py"]),
+    )
+    _leave_artifact(repo)
+    (repo / ".pytest_cache").mkdir(exist_ok=True)
+    _leave_artifact(repo, ".pytest_cache/CACHEDIR.TAG")
+    run_stage(c, wd, iteration=2,
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: True for t in _declared_ids(c)})
+    assert (Path(wd) / "runs" / "iter-2").exists()
+
+
+def test_declared_mechanism_paths_still_catch_a_real_mechanism_edit(tmp_path, monkeypatch):
+    """THE ALLOWLIST MUST NOT WEAKEN THE ORACLE.
+
+    An allowlist implementation that filtered too aggressively — dropping the
+    tracked diff, or matching nothing — would pass the test above while
+    silently disabling the oracle entirely. That is the failure mode worth
+    fearing here, because it is invisible: every campaign would just proceed.
+    So: an edit INSIDE the allowlist must still abort, in the presence of the
+    same out-of-scope artifact that must not.
+    """
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    c, wd, repo, _rec, s = _drift_setup(
+        tmp_path, monkeypatch, "realedit", _declare_paths(["mech.py"]),
+    )
+    _leave_artifact(repo)                       # out of scope, must not count
+    (repo / "mech.py").write_text("X = 99\n")    # in scope, MUST count
+    with pytest.raises(OptimizationAborted, match="drifted since compile"):
+        run_stage(c, wd, iteration=2,
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in _declared_ids(c)})
+
+
+def test_an_untracked_mechanism_file_inside_the_allowlist_is_still_watched(tmp_path, monkeypatch):
+    """A NEW FILE is the common shape of a mechanism, and it must stay watched.
+
+    `git diff HEAD` cannot see untracked files, so the allowlist has to filter
+    the untracked listing rather than drop it. If it dropped it, a mechanism
+    authored as a new module would have no drift oracle at all.
+
+    The new module is written BEFORE the snapshot (as a real build would), so
+    the registered hash covers it; only then is it edited. Re-snapshotting after
+    verify would instead trip the policy/sidecar cross-check, which is a
+    different oracle.
+    """
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+
+    def _author_new_module(c):
+        _declare_paths(["mech.py", "extra/"])(c)
+        (Path(c["target_system"]["repo_path"]) / "extra").mkdir(exist_ok=True)
+        (Path(c["target_system"]["repo_path"]) / "extra" / "knob.py").write_text("K = 1\n")
+
+    c, wd, repo, _rec, s = _drift_setup(
+        tmp_path, monkeypatch, "untracked", _author_new_module,
+    )
+    assert "untracked: extra/knob.py" in (Path(wd) / "mechanism.patch").read_text()
+    (repo / "extra" / "knob.py").write_text("K = 2\n")
+    with pytest.raises(OptimizationAborted, match="drifted since compile"):
+        run_stage(c, wd, iteration=2,
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in _declared_ids(c)})
+
+
+def test_policy_and_sidecar_hash_disagreement_is_its_own_failure(tmp_path, monkeypatch):
+    """The second half of the Task 12 finding: two records of one commitment.
+
+    `policy.json`'s `compiled_from.mechanism_patch_hash` and `mechanism.sha256`
+    are both records of WHICH CODE the epoch measures. Nothing compared them,
+    so a re-snapshot that did not recompile left the pair disagreeing while
+    both files looked fine — and the drift check, which reads the sidecar,
+    would happily certify a tree against a hash the policy never registered.
+    The message must distinguish this from ordinary tree drift, because the
+    fixes differ (recompile vs. restore the tree).
+    """
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    c, wd, repo, recorded, s = _drift_setup(tmp_path, monkeypatch, "sidecar")
+    pol = json.loads((Path(wd) / "policy.json").read_text())
+    assert pol["compiled_from"]["mechanism_patch_hash"] == recorded
+    # Re-stamp the sidecar alone — the mid-epoch re-snapshot the review found.
+    (Path(wd) / "mechanism.sha256").write_text("f" * 64 + "\n")
+    with pytest.raises(OptimizationAborted, match="registered hash"):
+        run_stage(c, wd, iteration=2,
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in _declared_ids(c)})
+
+
+def test_allowlist_matching_agrees_with_gits_own_pathspec(tmp_path):
+    """The two halves of the filter must mean the same thing by an entry.
+
+    The tracked half is scoped by handing the entries to git as a
+    ``git diff HEAD -- <paths>`` pathspec; the untracked half is scoped by
+    `_in_allowlist`. If those disagreed, one channel would drop a file the
+    other kept and the effective scope would be neither. Asserted against real
+    git rather than against a remembered rule, because git's pathspec semantics
+    are the half we do not control.
+    """
+    from orchestrator.optimize.build import _in_allowlist
+    repo = _git_repo(tmp_path)
+    for d in ("src", "srcx"):
+        (repo / d).mkdir()
+        (repo / d / "a.py").write_text("V = 1\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "dirs"], cwd=repo, check=True)
+    for d in ("src", "srcx"):
+        (repo / d / "a.py").write_text("V = 2\n")
+    for entry in ("src", "src/", "src/a", "srcx", "nope"):
+        git_says = set(subprocess.run(
+            ["git", "diff", "HEAD", "--name-only", "--", entry],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout.split())
+        ours = {p for p in ("src/a.py", "srcx/a.py") if _in_allowlist(p, [entry])}
+        assert ours == git_says, f"{entry!r}: we say {ours}, git says {git_says}"

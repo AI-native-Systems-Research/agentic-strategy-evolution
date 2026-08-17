@@ -91,7 +91,46 @@ def check_build_touched_repo(repo: Path) -> str | None:
     )
 
 
-def _mechanism_text(repo: Path) -> str | None:
+def _in_allowlist(rel: str, allowlist: list[str]) -> bool:
+    """Does the repo-relative path ``rel`` fall under any allowlist entry?
+
+    MATCHING RULE — plain prefix on path components, no globbing:
+
+      - ``"src/mechanism.py"`` matches that file exactly;
+      - ``"src/"`` (or ``"src"``) matches every path under that directory;
+      - ``"src/mech"`` does NOT match ``"src/mechanism.py"`` — a partial
+        component is not a match, because ``"log"`` silently covering
+        ``"logs_from_the_test_runner/"`` is exactly the surprise this oracle
+        cannot afford.
+
+    Prefix rather than ``fnmatch``: an allowlist entry that is wrong widens the
+    oracle's blind spot, and a glob is much easier to get subtly wrong than a
+    directory name (``*`` matching across separators, ``[`` opening a character
+    class, a bare ``mech*`` catching ``mech_backup.py.orig``). Directory-or-file
+    prefix covers the documented use case — "the experiment is about these
+    files and this directory" — with a rule a campaign author can verify by
+    reading it once. Separators are normalised to ``/`` (git's own output
+    format) so a Windows-style entry still matches.
+
+    This rule is chosen to AGREE with the semantics git applies to the same
+    entries as a ``git diff HEAD -- <paths>`` pathspec, which is how the
+    tracked half of the mechanism text is scoped. Verified on all four
+    interesting cases: ``src`` and ``src/`` both match ``src/a.py``, while the
+    partial components ``src/a`` and ``mech`` match nothing. If the two halves
+    disagreed about what an entry means, one channel would filter a file the
+    other kept and the "scope" would be neither of the two.
+    """
+    r = rel.replace("\\", "/").strip("/")
+    for entry in allowlist:
+        e = str(entry).replace("\\", "/").strip("/")
+        if not e:
+            continue
+        if r == e or r.startswith(e + "/"):
+            return True
+    return False
+
+
+def _mechanism_text(repo: Path, *, allowlist: list[str] | None = None) -> str | None:
     """Canonical text of everything the build stage changed under ``repo``.
 
     ``git diff HEAD`` covers tracked edits; new files are invisible to it, and
@@ -100,6 +139,24 @@ def _mechanism_text(repo: Path) -> str | None:
     ``+++ untracked: <path>`` marker, sorted so the text is a function of the
     tree rather than of git's listing order.
 
+    ``allowlist`` narrows BOTH halves to the declared paths: the tracked diff
+    via ``git diff HEAD -- <paths>``, the untracked listing via
+    :func:`_in_allowlist`. Narrowing only one half would be worse than
+    narrowing neither — the oracle would look scoped and still fire on a stray
+    artifact through the other channel.
+
+    ``allowlist=None`` (the default) is Task 12's original whole-tree
+    behaviour, byte-for-byte: no ``--`` pathspec is passed to git and no
+    untracked path is filtered, so an existing campaign's recorded hash stays
+    valid across this change. That default is deliberate. Whole-tree hashing
+    has a real defect — Nous runs the target's own ``test_command`` with the
+    repo as cwd, so a ``.pytest_cache/`` or ``run.log`` that git does not
+    ignore reads as "the mechanism drifted" — but silently narrowing every
+    existing campaign's oracle would trade a loud false positive for a quiet
+    false negative, and only one of those two is discoverable by the person it
+    misleads. So the narrowing is opt-in, via
+    ``optimization.build_checks.mechanism_paths``.
+
     Returns None — not "" — when ``repo`` is not a git work tree or git is
     absent. The distinction matters: "" is a legitimate hash input (a git repo
     with no changes at all), while None means "no oracle available here", which
@@ -107,9 +164,13 @@ def _mechanism_text(repo: Path) -> str | None:
     """
     import subprocess
 
+    paths = [p for p in (allowlist or []) if str(p).strip()]
+    diff_cmd = ["git", "diff", "HEAD", "--no-color"]
+    if paths:
+        diff_cmd += ["--", *paths]
     try:
         diff = subprocess.run(
-            ["git", "diff", "HEAD", "--no-color"], cwd=str(repo),
+            diff_cmd, cwd=str(repo),
             capture_output=True, text=True, timeout=120,
         )
         if diff.returncode != 0:
@@ -122,6 +183,8 @@ def _mechanism_text(repo: Path) -> str | None:
         return None
     parts = [diff.stdout]
     for rel in sorted(p for p in others.stdout.splitlines() if p.strip()):
+        if paths and not _in_allowlist(rel, paths):
+            continue
         try:
             parts.append(f"+++ untracked: {rel}\n" + (repo / rel).read_text())
         except (OSError, UnicodeDecodeError):
@@ -129,21 +192,28 @@ def _mechanism_text(repo: Path) -> str | None:
     return "".join(parts)
 
 
-def current_mechanism_hash(repo: Path) -> str:
+def current_mechanism_hash(repo: Path, *, allowlist: list[str] | None = None) -> str:
     """Hash the target's current working tree the same way ``snapshot_mechanism`` did.
 
     Recomputed from the tree on every call — never cached, never read back from
     ``mechanism.sha256``. That is the whole point: the drift check compares a
     FRESH reading against the recorded one, so a check that trusted the stored
     value would be no check at all.
+
+    ``allowlist`` must be the SAME list ``snapshot_mechanism`` was given, or
+    the comparison is between two different questions and every iteration
+    "drifts". Both call sites resolve it from one place —
+    ``stage_runner._mechanism_paths(campaign)`` — for that reason.
     """
     import hashlib
 
-    text = _mechanism_text(Path(repo))
+    text = _mechanism_text(Path(repo), allowlist=allowlist)
     return "" if text is None else hashlib.sha256(text.encode()).hexdigest()
 
 
-def snapshot_mechanism(repo: Path, work_dir: Path) -> str:
+def snapshot_mechanism(
+    repo: Path, work_dir: Path, *, allowlist: list[str] | None = None,
+) -> str:
     """Record the target's post-build diff and its hash next to the campaign.
 
     Written once, right after ``build`` authors the mechanism, and thereafter
@@ -153,12 +223,16 @@ def snapshot_mechanism(repo: Path, work_dir: Path) -> str:
     is what the epoch's drift check and the compiled policy's
     ``mechanism_patch_hash`` key on.
 
+    ``allowlist`` scopes what counts as "the mechanism" — see
+    :func:`_mechanism_text` for the matching rule and for why ``None`` (whole
+    tree) is the backward-compatible default.
+
     Returns "" and writes nothing for a non-git target, so a campaign against a
     directory that is not under version control is not penalised — it simply
     gets no drift oracle, and the absence of the file is what disables the
     check rather than a hash that would never match.
     """
-    text = _mechanism_text(Path(repo))
+    text = _mechanism_text(Path(repo), allowlist=allowlist)
     if text is None:
         return ""
     import hashlib
