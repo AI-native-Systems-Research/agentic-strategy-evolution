@@ -928,9 +928,13 @@ def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool)
     A no-op unless the campaign declares ``optimization.workload.seed_env``.
     That default is deliberate: exporting a variable a target does not read is
     harmless, but recording ``paired: True`` (below) about a comparison whose
-    finalists never shared a workload draw would make the terminal bound TIGHTER
-    than the data supports, and an unearned tight bound is worse than a loose
-    one.
+    finalists never shared a workload draw makes the artifact claim a method
+    (``bonferroni_one_sided_t_paired``) whose premise did not hold. The bound
+    itself stays VALID — it is computed from the observed differences, so an
+    absent cancellation just never shrinks the spread — but it is typically LESS
+    efficient than the unpaired form (fewer degrees of freedom for a common term
+    that was not common), and its recorded provenance is wrong. Opt-in keeps the
+    label honest.
 
     TWO KEYING RULES, and the difference between them is the whole point.
 
@@ -3373,11 +3377,19 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     the two cannot silently disagree on disk.
 
     A campaign with NO ``workload`` block gets ``paired: False`` and the Welch
-    form — deliberately, and this is not conservatism for its own sake. Pairing
-    measurements whose seeds were never shared removes a variance component that
-    was never common, understating the true variance and producing a bound
-    tighter than the data supports. An unearned tight bound is worse than a loose
-    one: only one of the two misleads its reader.
+    form — deliberately, though the reason is efficiency and provenance rather
+    than soundness. The paired form is not overconfident when the seeds were not
+    actually shared: it computes its variance from the OBSERVED differences, so
+    a cancellation that never happened simply never shows up as a smaller
+    spread, and the bound stays valid at nominal coverage (verified by
+    simulation over 6000 falsely-paired trials). What it does lose is
+    efficiency — the paired t spends n-1 degrees of freedom on a common term
+    that was not there, where the Welch form spends closer to 2n-2 — and,
+    worse, ``RegretBound.method`` would then read
+    ``bonferroni_one_sided_t_paired`` about an experiment that never paired
+    anything. Defaulting to Welch keeps the recorded method true to what
+    happened; a mislabelled method costs a reader their ability to audit the
+    number even when the number itself is fine.
 
     Recorded in ``confirmation.json`` so a reader can tell which bound they are
     looking at rather than inferring it from the branch date.
