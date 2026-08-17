@@ -23,6 +23,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import json
+from pathlib import Path
 
 from orchestrator.optimize.design import (
     Design,
@@ -412,6 +413,38 @@ def test_policy_foldover_false_removes_the_state():
         (t.get("to") or t.get("default")) == "foldover" for t in pol["transitions"]
     )
     assert check_policy(pol) == []
+
+
+def test_the_foldover_opt_out_is_reachable_from_a_schema_valid_campaign():
+    """An escape hatch the campaign SCHEMA rejects is not an escape hatch.
+
+    MUTATION-DRIVEN, and the mutation is deletion of the schema property rather
+    than of any code: ``compile_policy`` reads ``optimization.policy.foldover``,
+    but the ``policy`` block is ``additionalProperties: false``, so for the life
+    of this branch the opt-out was unreachable from any real campaign file — the
+    test above only reached it by handing ``compile_policy`` a dict directly,
+    which is exactly the seam that hid it. Validate a real campaign against the
+    real schema, then compile THAT.
+    """
+    import jsonschema
+    import yaml
+
+    from orchestrator.optimize.policy import compile_policy
+
+    root = Path(__file__).resolve().parents[1]
+    schema = yaml.safe_load(
+        (root / "orchestrator" / "schemas" / "campaign.schema.yaml").read_text(),
+    )
+    c = yaml.safe_load(
+        (root / "examples" / "optimization" / "vllm-batching.yaml").read_text(),
+    )
+    c["optimization"].setdefault("policy", {})["foldover"] = False
+    jsonschema.validate(c, schema)          # the hatch is DECLARED, not just read
+    assert "foldover" not in compile_policy(c)["states"]
+    # ...and the default still registers it, so the opt-out is opt-IN only.
+    c["optimization"]["policy"].pop("foldover")
+    jsonschema.validate(c, schema)
+    assert "foldover" in compile_policy(c)["states"]
 
 
 def test_every_foldover_path_terminates_with_room_to_spare():

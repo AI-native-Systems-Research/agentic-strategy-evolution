@@ -288,6 +288,7 @@ called out where they appear (`epoch_end-<epoch>.json` for the spec's
 | `relations.json` | `runs/iter-N/` | `artifacts.write_relations` | `schemas/relations.schema.json` |
 | `findings.json` / `principle_updates.json` | `runs/iter-N/` | projected from the fit — zero tokens | the shared reflective schemas |
 | `build_summary.md` / `build_warning.txt` | `runs/iter-N/` | `build.run_build` | prose |
+| `build_events.jsonl` | `runs/iter-N/` | `build.run_build` (the SDK runner's event log) | none |
 
 How they chain, for one epoch:
 
