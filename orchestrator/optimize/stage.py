@@ -69,6 +69,25 @@ class Stage(str, Enum):
     FOLDOVER = "foldover"
     REFINE = "refine"
     CONFIRM = "confirm"
+    #: The two TERMINAL states of a compiled epoch. Neither is ever declared in
+    #: ``optimization.stages`` and neither spends benchmark budget: the policy
+    #: routes to one of them and ``_close_iteration`` runs it inline.
+    #:
+    #: ``REPORT`` is the ordinary end — spec §3.6's fallback ladder always
+    #: returns something, so this state is reached whether or not anything was
+    #: certified. ``EXCEPTION`` is the paper's orange exit: an observation
+    #: exposed a semantic condition the policy did not name, so the EPOCH ends
+    #: (``states["exception"]["ends_epoch"]``). An agent may then revise the
+    #: mechanism or interface, and recompilation starts a new epoch — which is
+    #: why the exception state is terminal rather than a branch back into the
+    #: epoch. Reporting still happens on the way out: "uncertainty weakens the
+    #: claim; it need not prevent a decision".
+    #:
+    #: Named here so the two states that decide whether a campaign ends are
+    #: referred to by the same symbols everywhere, rather than by bare string
+    #: literals in ``_close_iteration`` that no rename would ever catch.
+    REPORT = "report"
+    EXCEPTION = "exception"
 
 
 _DEFAULT_ORDER: tuple[Stage, ...] = (Stage.VERIFY, Stage.SCREEN, Stage.REFINE, Stage.CONFIRM)
@@ -351,6 +370,24 @@ def observations_from_decision(decision: StageDecision, fit: Fit, *,
     """Project a StageDecision onto the policy's closed observation vocabulary.
 
     Pure. ``stationary_in_hull`` is None at screen (no stationary point yet).
+
+    AN EXPLICIT ``stationary_in_hull`` WINS over ``OPTIMUM_OUTSIDE_HULL``, and
+    the asymmetry is deliberate. The trigger fires on a purely GEOMETRIC test —
+    is any coordinate of the solved stationary point outside [-1, 1]? — which is
+    the right test for REPORTING ("the ranges may have been too narrow, look at
+    this") because that is all a reader is being asked to consider. It is the
+    wrong test for a guard that ENDS THE EPOCH, because a stationary point is not
+    an optimum: on a monotone surface the fitted quadratic's curvature is noise,
+    the solve inverts a near-singular Hessian, and the "stationary point" lands
+    at coded -33 or +6575 — measured on ``SURFACES["additive"]`` (seed 19: coded
+    A=-33.7, B=+57.8) and ``SURFACES["sla"]`` (seed 5: A=+6575). Those campaigns'
+    optima ARE inside the declared ranges, at a corner, and ending their epochs
+    would be a false semantic exception on the most ordinary surface there is.
+
+    So the caller (``stage_runner.run_stage``) computes the stricter fact — out of
+    hull AND curving the right way to be an optimum out there — and passes it
+    here. ``None`` still defers to the trigger, which keeps every pre-existing
+    caller's behaviour unchanged.
     """
     trig = set(decision.triggers)
     return {
@@ -359,7 +396,9 @@ def observations_from_decision(decision: StageDecision, fit: Fit, *,
         "behavioral_violation": Trigger.BEHAVIORAL_VIOLATION in trig,
         "refinable_survivors": (len(decision.surviving) if refinable_survivors is None
                                 else int(refinable_survivors)),
-        "stationary_in_hull": (False if Trigger.OPTIMUM_OUTSIDE_HULL in trig
-                               else stationary_in_hull),
+        "stationary_in_hull": (
+            stationary_in_hull if stationary_in_hull is not None
+            else (False if Trigger.OPTIMUM_OUTSIDE_HULL in trig else None)
+        ),
         "model_adequate": Trigger.LACK_OF_FIT not in trig,
     }

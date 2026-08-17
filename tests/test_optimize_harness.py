@@ -299,16 +299,48 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     assert single.report["certified"] is False
 
 
-@pytest.mark.xfail(strict=True, reason="Task 11: an out-of-hull optimum ends the epoch instead of confirming anyway")
 def test_bowl_out_of_hull_ends_the_epoch(tmp_path):
+    """FLIPPED BY TASK 11 (was xfail(strict=True)).
+
+    The stationary point of ``20 - 0.05(A-30)^2 - 0.05(B-11)^2`` sits at A=30,
+    outside the declared hull [2, 16]. That is a defect in the FACTOR's
+    definition — the declared range does not contain the optimum — and no
+    measurement inside the range repairs it, so it is a semantic exception rather
+    than a branch: ``refine`` observes ``stationary_in_hull: False`` and the
+    policy routes to ``exception``, which ends the epoch.
+
+    Previously the campaign confirmed anyway and reported ``certified`` on a
+    configuration clamped to the boundary, which is a certificate over the wrong
+    space.
+    """
     res = run_synthetic_campaign(SURFACES["bowl_out_of_hull"](), seed=6, parent_dir=tmp_path)
     assert res.path[-1] == "exception"
+    # The discriminating half: an ended epoch still returns an ACTION, on a rung
+    # that does not rest on the surface the exception just impeached.
+    assert res.report["epoch_ended"], res.report
+    assert res.report["recommendation"]["basis"] in ("measured", "baseline"), (
+        res.report["recommendation"]
+    )
+    assert res.recommendation
 
 
-@pytest.mark.xfail(strict=True, reason="Task 11: a NaN response is a semantic exception, not a fit over the remaining rows")
 def test_nan_corner_ends_the_epoch(tmp_path):
+    """FLIPPED BY TASK 11 (was xfail(strict=True)).
+
+    ``nan_at_corner`` makes the target report a non-numeric ``m`` at
+    ``{A: 16, B: 16}`` with ``status: complete`` — it ran, it just cannot measure
+    there. Fitting over the remaining rows would report a surface over a space
+    the campaign cannot actually measure; carrying the NaN into the fit would
+    NaN-poison every coefficient. Both are wrong, so the stage never fits: the
+    policy's ``nan_response`` guard routes straight to ``exception``.
+    """
     res = run_synthetic_campaign(SURFACES["nan_at_corner"](), seed=7, parent_dir=tmp_path)
     assert res.path[-1] == "exception"
+    # No fit happened, and the epoch-end record names the guard that fired.
+    screen_iter = res.work_dir / "runs" / "iter-2"
+    assert not (screen_iter / "effects.json").exists()
+    end = json.loads((res.work_dir / "epoch_end-1.json").read_text())
+    assert end["state"] == "screen" and end["observations"]["nan_response"] is True
 
 
 # ── the harness's own contract ───────────────────────────────────────────
@@ -449,19 +481,35 @@ def test_no_recommendation_gives_an_infinite_gap_rather_than_a_plausible_one(tmp
     The abort is gone because the schedule that caused it is gone, which is the
     point of the change.
 
-    So the ``inf`` contract is driven by an abort that Task 6 does NOT remove:
-    ``nan_at_corner`` makes one configuration emit NaN, and
-    ``_fitting_responses`` still refuses to fit on an unmeasured row (rule 8
-    keeps that behaviour; Task 11 is what routes it to ``exception`` instead).
-    Asserting the contract via ``drift``'s old refine abort would be asserting
-    a defect that no longer exists.
+    BEHAVIOUR CHANGE AGAIN, Task 11, and the driver moved a SECOND time. The
+    previous driver was ``nan_at_corner``, whose one NaN configuration made
+    ``_fitting_responses`` abort the campaign. Task 11 is precisely the task that
+    routes that condition to ``exception`` instead, and an exception now writes a
+    report on the ``measured`` rung — so ``nan_at_corner`` returns a perfectly
+    good recommendation and can no longer drive an ``inf`` gap. Keeping it here
+    would assert a defect Task 11 removed on purpose.
+
+    The driver is now a campaign whose declared primary metric the target NEVER
+    EMITS, which is the raise Task 11 deliberately LEFT in ``_fitting_responses``
+    — and left for a reason. A row that ran to completion but reports no value at
+    all for the objective is a MEASUREMENT failure: the metric is absent, not
+    NaN, so nothing semantic has been discovered and re-running against a target
+    that does emit it repairs the campaign completely. That is a different failure
+    class from the semantic exception (a value that IS a NaN, which no re-run
+    repairs), and the two must not share an exit — one revises the interface, the
+    other fixes the instrumentation.
     """
     res = run_synthetic_campaign(
-        SURFACES["nan_at_corner"](), seed=12, parent_dir=tmp_path,
+        SURFACES["additive"](), seed=12, parent_dir=tmp_path,
+        campaign_overrides={
+            "response": {"primary": {"metric": "not_a_metric_the_target_emits",
+                                     "direction": "maximize"}},
+        },
     )
     assert res.recommendation == {}
     assert res.true_gap == float("inf")
-    assert res.path[-1].startswith("aborted:")
+    assert res.path[-1].startswith("aborted:"), res.path
+    assert "no usable measurement" in res.path[-1], res.path[-1]
 
 
 def test_a_surface_with_nothing_refinable_no_longer_aborts_at_refine(tmp_path):

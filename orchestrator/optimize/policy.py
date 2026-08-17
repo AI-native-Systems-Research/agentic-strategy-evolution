@@ -224,6 +224,25 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         transitions += [
             {"from": "refine", "when": {"correctness_failed": True}, "to": "exception", "accounting": sem},
             {"from": "refine", "when": {"nan_response": True}, "to": "exception", "accounting": sem},
+            # THE DECLARED RANGES DO NOT CONTAIN THE OPTIMUM — a defect in the
+            # factor's DEFINITION, which no additional measurement inside those
+            # ranges repairs (paper, "the one way back": the threshold expressed
+            # in tokens while the allocator works in pages). So this is a
+            # semantic exception, not a branch: the epoch ends, an agent may
+            # widen the ranges, and recompilation starts a new epoch.
+            #
+            # DELIBERATELY NOT a `lack_of_fit` rule. Model inadequacy IS named
+            # by the policy — refine's registered augmentation is confirm's
+            # fresh measurements — so it routes to `confirm` on the default with
+            # `recommendation.json["model_adequate"] = false`, which is what
+            # makes `_confirm_rows` build finalists from MEASURED valid rows
+            # instead of from the model's untrusted pick (paper: "remeasures the
+            # leading measured valid candidates rather than choosing the largest
+            # noisy observation"). An out-of-hull optimum is different in kind:
+            # no amount of remeasurement inside the hull finds a point outside
+            # it.
+            {"from": "refine", "when": {"stationary_in_hull": False}, "to": "exception",
+             "accounting": sem},
             {"from": "refine", "default": after_refine},
         ]
     if confirm_on:
@@ -420,6 +439,38 @@ def read_transitions(work_dir: Path) -> list[dict]:
     return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
 
 
+def epoch_transitions(policy: dict, work_dir: Path) -> list[dict]:
+    """``read_transitions`` narrowed to the rows belonging to THIS epoch.
+
+    ``transitions.jsonl`` is append-only ACROSS epochs — it is the campaign's
+    audit trail, and truncating it on an exception would destroy the record of
+    why the epoch ended. Every consumer that asks "what has happened so far?"
+    therefore has to mean "so far IN THIS EPOCH", or a recompiled epoch inherits
+    its predecessor's history: ``current_state`` would resume at the terminal
+    ``exception``, and ``_confirm_round`` would count a spent round cap it never
+    spent. One filter, one place, so the two cannot drift.
+
+    ``r.get("epoch", 1)`` treats a row with no recorded epoch as epoch 1. Rows
+    predating the field (and the hand-written ones in the unit tests) are all
+    first-epoch rows, so the default is the truth rather than a guess.
+    """
+    want = int(policy.get("epoch", 1))
+    return [r for r in read_transitions(work_dir) if int(r.get("epoch", 1)) == want]
+
+
 def current_state(policy: dict, work_dir: Path) -> str:
-    rows = read_transitions(work_dir)
+    """Where THIS epoch is: the last transition recorded under ``policy["epoch"]``.
+
+    Filtering by epoch is what makes a semantic exception genuinely END an
+    epoch rather than merely label one. ``transitions.jsonl`` is append-only
+    across epochs — that is the point, it is the audit trail — so an unfiltered
+    read would hand the new epoch its predecessor's last state, which is
+    ``exception``: terminal, so the recompiled policy would resume at a state it
+    can never leave and the campaign would be permanently stuck at the failure
+    it was just recompiled to escape. With the filter, epoch e+1 sees no rows of
+    its own and starts at ``initial``, which is a CLEAN restart from screen.
+
+    See ``epoch_transitions`` for why the filter is not optional.
+    """
+    rows = epoch_transitions(policy, work_dir)
     return rows[-1]["to"] if rows else policy["initial"]
