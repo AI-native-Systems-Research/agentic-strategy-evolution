@@ -91,6 +91,84 @@ def check_build_touched_repo(repo: Path) -> str | None:
     )
 
 
+def _mechanism_text(repo: Path) -> str | None:
+    """Canonical text of everything the build stage changed under ``repo``.
+
+    ``git diff HEAD`` covers tracked edits; new files are invisible to it, and
+    a new file is the COMMON case for a mechanism (a new module, a new test
+    file). So untracked-but-not-ignored files are appended by content under an
+    ``+++ untracked: <path>`` marker, sorted so the text is a function of the
+    tree rather than of git's listing order.
+
+    Returns None — not "" — when ``repo`` is not a git work tree or git is
+    absent. The distinction matters: "" is a legitimate hash input (a git repo
+    with no changes at all), while None means "no oracle available here", which
+    callers must not turn into a hash that could later be compared against.
+    """
+    import subprocess
+
+    try:
+        diff = subprocess.run(
+            ["git", "diff", "HEAD", "--no-color"], cwd=str(repo),
+            capture_output=True, text=True, timeout=120,
+        )
+        if diff.returncode != 0:
+            return None
+        others = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            cwd=str(repo), capture_output=True, text=True, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    parts = [diff.stdout]
+    for rel in sorted(p for p in others.stdout.splitlines() if p.strip()):
+        try:
+            parts.append(f"+++ untracked: {rel}\n" + (repo / rel).read_text())
+        except (OSError, UnicodeDecodeError):
+            parts.append(f"+++ untracked: {rel}\n<binary or unreadable>\n")
+    return "".join(parts)
+
+
+def current_mechanism_hash(repo: Path) -> str:
+    """Hash the target's current working tree the same way ``snapshot_mechanism`` did.
+
+    Recomputed from the tree on every call — never cached, never read back from
+    ``mechanism.sha256``. That is the whole point: the drift check compares a
+    FRESH reading against the recorded one, so a check that trusted the stored
+    value would be no check at all.
+    """
+    import hashlib
+
+    text = _mechanism_text(Path(repo))
+    return "" if text is None else hashlib.sha256(text.encode()).hexdigest()
+
+
+def snapshot_mechanism(repo: Path, work_dir: Path) -> str:
+    """Record the target's post-build diff and its hash next to the campaign.
+
+    Written once, right after ``build`` authors the mechanism, and thereafter
+    read-only: it is the pre-registration of WHICH CODE the epoch's numbers
+    describe. ``mechanism.patch`` is the human-readable record (a reviewer can
+    read what was built without the target repo in hand); ``mechanism.sha256``
+    is what the epoch's drift check and the compiled policy's
+    ``mechanism_patch_hash`` key on.
+
+    Returns "" and writes nothing for a non-git target, so a campaign against a
+    directory that is not under version control is not penalised — it simply
+    gets no drift oracle, and the absence of the file is what disables the
+    check rather than a hash that would never match.
+    """
+    text = _mechanism_text(Path(repo))
+    if text is None:
+        return ""
+    import hashlib
+
+    h = hashlib.sha256(text.encode()).hexdigest()
+    (Path(work_dir) / "mechanism.patch").write_text(text)
+    (Path(work_dir) / "mechanism.sha256").write_text(h + "\n")
+    return h
+
+
 class BuildFailed(RuntimeError):
     """The build stage could not author the mechanism.
 
