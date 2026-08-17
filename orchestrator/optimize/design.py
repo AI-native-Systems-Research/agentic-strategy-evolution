@@ -61,6 +61,10 @@ class Design:
     kind: str = "full"
     resolution: int | None = None
     generators: tuple[tuple[int, ...], ...] = ()
+    #: Which factor's column ``foldover`` negated, or ``None`` for a full
+    #: foldover (every column negated). Also carried by ``combine``'s result,
+    #: so the combined design records how the aliasing it resolves was broken.
+    folded_on: str | None = None
 
     @property
     def corners(self) -> tuple[DesignPoint, ...]:
@@ -154,7 +158,7 @@ def with_center_points(design: Design, n: int) -> Design:
     return Design(
         points=design.points + centers, factor_ids=design.factor_ids,
         kind=design.kind, resolution=design.resolution,
-        generators=design.generators,
+        generators=design.generators, folded_on=design.folded_on,
     )
 
 
@@ -234,3 +238,88 @@ def alias_pairs(design: Design) -> list[tuple[str, str]]:
         if c1 == c2 and l1 not in aliased_to_main and l2 not in aliased_to_main:
             out.append((l1, l2))
     return sorted(out)
+
+
+def foldover(design: Design, *, on: str | None = None) -> Design:
+    """The fold-over runs: negate every corner column, or only column ``on``.
+
+    A fractional design cannot separate aliased terms; no arithmetic can. What
+    resolves the confounding is MORE RUNS — a second block whose sign pattern
+    breaks the defining relation that created the alias. That is the paper's
+    "registered foldover": it spends budget, and it is spent only when the
+    aliasing could change the recommended answer (``decide.alias_consequential``
+    is the test, ``policy``'s ``screen -> foldover`` rule is the registration).
+
+    Two flavours, and they resolve DIFFERENT confounding:
+
+      * ``on=None`` — FULL foldover, every column negated. This kills the
+        odd-length words of the defining relation, so a resolution-III design
+        (2fi aliased onto MAIN effects) becomes resolution IV: every main effect
+        is then clear of every two-factor interaction. It does NOT separate 2fi
+        from each other, because an even-length word survives negation of every
+        column — so a full foldover of a resolution-IV design leaves
+        ``AB = CD`` exactly where it was.
+      * ``on=<factor id>`` — SINGLE-FACTOR foldover, only that factor's column
+        negated. This kills every word CONTAINING that factor, which separates
+        every two-factor interaction involving ``on`` from its alias — and,
+        because each such alias pair is ``(on-containing, not-on-containing)``
+        on a resolution-IV four-factor design, that separates the whole family.
+        Verified on ``fractional_factorial("ABCD", 4)``: folding on any single
+        factor empties ``alias_pairs(combine(base, fold))``.
+
+    Centre points are REPLICATED at the same count rather than carried over as
+    the same rows: they buy the pure-error estimate, and the fold block is a
+    fresh set of runs on (possibly) a drifted machine, so it needs its own
+    replicates for the pooled pure error to mean anything. ``resolution`` is
+    ``None`` on the result because a fold block on its own has no resolution to
+    claim — the design whose resolution improved is ``combine``'s output.
+    """
+    ids = design.factor_ids
+    if on is not None and on not in ids:
+        raise ValueError(
+            f"cannot fold over on {on!r}: no such factor in this design "
+            f"(factor_ids={list(ids)}). Pass a declared factor id, or None for "
+            f"a full foldover.",
+        )
+    j = None if on is None else ids.index(on)
+    corners = tuple(
+        DesignPoint(
+            coded=tuple(
+                -c if (j is None or k == j) else c for k, c in enumerate(p.coded)
+            ),
+            role="corner",
+        )
+        for p in design.corners
+    )
+    centers = tuple(
+        DesignPoint(coded=p.coded, role="center", replicate=p.replicate)
+        for p in design.points if p.role == "center"
+    )
+    return Design(
+        points=corners + centers, factor_ids=ids, kind="foldover",
+        resolution=None, generators=design.generators, folded_on=on,
+    )
+
+
+def combine(a: Design, b: Design) -> Design:
+    """Both blocks as one design: the matrix the combined fit is estimated on.
+
+    Points are concatenated in ``a``-then-``b`` order, which is the order the
+    responses must be supplied in — ``fit_effects`` pairs value ``i`` with
+    ``points[i]``, so a caller that concatenates its response vectors the other
+    way round would misalign every coefficient. ``kind="combined"`` and
+    ``resolution=None`` because the combined design is not a member of any
+    tabulated family; what it can estimate is reported by ``alias_pairs``, which
+    reads the columns rather than the label.
+    """
+    if a.factor_ids != b.factor_ids:
+        raise ValueError(
+            f"cannot combine designs over different factors: {list(a.factor_ids)} "
+            f"vs {list(b.factor_ids)}. The combined fit indexes both blocks' "
+            f"points by the same column order, so the factor sets must match "
+            f"exactly (order included).",
+        )
+    return Design(
+        points=a.points + b.points, factor_ids=a.factor_ids, kind="combined",
+        resolution=None, generators=a.generators, folded_on=b.folded_on,
+    )

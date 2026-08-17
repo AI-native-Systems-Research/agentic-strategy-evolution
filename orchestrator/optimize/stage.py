@@ -60,6 +60,13 @@ class Stage(str, Enum):
     BUILD = "build"
     VERIFY = "verify"
     SCREEN = "screen"
+    #: The paper's registered foldover: a second block of runs that breaks the
+    #: defining relation behind a CONSEQUENTIAL alias. Never declared in
+    #: ``optimization.stages`` and never reached by index — the compiled policy
+    #: routes ``screen -> foldover`` only when ``decide.alias_consequential``
+    #: says resolving the alias could change the winner and the remaining budget
+    #: covers the block. ``optimization.policy.foldover: false`` removes it.
+    FOLDOVER = "foldover"
     REFINE = "refine"
     CONFIRM = "confirm"
 

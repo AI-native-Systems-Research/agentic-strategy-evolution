@@ -129,6 +129,7 @@ from pathlib import Path
 from typing import Callable
 
 from orchestrator.optimize import artifacts, certificate, decide, matrix, relations, runner
+from orchestrator.optimize import design as design_mod
 from orchestrator.optimize import policy as policy_mod
 from orchestrator.optimize.effects import fit_effects, solve_stationary_point
 from orchestrator.optimize.factors import is_refinable, parse_factors
@@ -763,9 +764,55 @@ def run_stage(
         (response_spec.get("primary") or {}).get("direction", "maximize")
     )
     design = None
+    screen_design = None
+    screen_iter = None
+    screen_nan = False
     if stage_name == Stage.CONFIRM.value:
         rows, payload = _confirm_rows(
             pol, work_dir, factors, primary, direction, iteration,
+        )
+    elif stage_name == Stage.FOLDOVER.value:
+        # ── the registered foldover: a real block of runs, spent to resolve
+        # ── an alias the screen showed could change the answer.
+        #
+        # `_close_iteration` only routes here after the screen's observations
+        # said `alias_consequential` AND `foldover_affordable`, so the pairs are
+        # on disk in the screen's recommendation.json.
+        screen_iter = _screen_iteration(work_dir)
+        if screen_iter is None:
+            raise OptimizationAborted(
+                "foldover has no screen to fold: transitions.jsonl records no "
+                "transition out of `screen`, so there is no earlier block whose "
+                "aliasing this state could resolve and no response vector to "
+                "combine with. The state is reachable only from screen, so this "
+                "means the work_dir's transition log was truncated or the state "
+                "was forced with an explicit stage=.",
+            )
+        pairs = [
+            tuple(p) for p in
+            (_read_recommendation(work_dir) or {}).get("alias_consequential") or ()
+        ]
+        on = _fold_on(factors, design_cfg, pairs)
+        screen_design = _build_design(factors, design_cfg, Stage.SCREEN.value)
+        design = _build_design(
+            factors, design_cfg, stage_name, fold_on=on,
+        )
+        payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
+        rows = matrix.expand(design, factors)
+        # Provenance the combined fit rests on: WHICH column was negated, and
+        # WHICH iteration's runs are the other half of the response vector. A
+        # reader who cannot answer both cannot reproduce the effects.json this
+        # iteration writes.
+        payload["folded_on"] = on
+        payload["screen_iteration"] = screen_iter
+        payload["alias_consequential"] = [list(p) for p in pairs]
+        logger.info(
+            "foldover: spending %d run(s) to resolve %s by negating column %s; "
+            "the combined fit will be OLS over iter-%d's screen block plus this "
+            "one (%d rows total)",
+            len(rows), pairs or "the recorded aliasing",
+            on if on is not None else "EVERY column (full foldover)",
+            screen_iter, len(screen_design.points) + len(rows),
         )
     else:
         design = _build_design(factors, design_cfg, stage_name)
@@ -961,6 +1008,47 @@ def run_stage(
     # design that was actually built.
     fitted_ids = _design_factor_ids(factors, design_cfg, stage_name)
 
+    # ── the combined fit: screen ∪ foldover, in that order ────────────────
+    #
+    # This is where the spent runs BUY something. The fold block alone is just
+    # another fractional design with the same aliasing; what resolves the alias
+    # is the two blocks TOGETHER, because the fold's sign flip breaks the
+    # defining word that made the two columns coincide. Verified on
+    # `fractional_factorial("ABCD", 4)`: `alias_pairs(combine(screen, fold))` is
+    # empty and all six two-factor interactions come back separately estimable,
+    # where the screen alone could only estimate three.
+    #
+    # ORDER IS LOAD-BEARING. `combine` concatenates screen-then-fold and
+    # `fit_effects` pairs response `i` with `points[i]`, so the response vector
+    # must be assembled the same way round. Getting it backwards would misalign
+    # every coefficient and still return a plausible-looking Fit.
+    #
+    # `nan_response` for the SCREEN half is checked here rather than left to the
+    # per-row guard below: the combined fit rests on both blocks, and a screen
+    # row that never measured means the combined design is not the design whose
+    # alias structure was just reasoned about.
+    fold_n = len(ys)
+    if stage_name == Stage.FOLDOVER.value:
+        screen_ys, screen_nan = _screen_responses(
+            work_dir, screen_iter, primary, len(screen_design.points),
+        )
+        if screen_nan:
+            logger.warning(
+                "foldover: iter-%d's screen block has %d row(s) with no usable "
+                "measurement, so the combined fit cannot be formed over the "
+                "design whose aliasing this block was spent to resolve. Routing "
+                "to the policy's nan_response branch.",
+                screen_iter, sum(1 for v in screen_ys if v != v),
+            )
+        design = design_mod.combine(screen_design, design)
+        ys = screen_ys + list(ys)
+        logger.info(
+            "foldover: combined fit over %d screen + %d foldover row(s); "
+            "aliasing after combination: %s",
+            len(screen_ys), fold_n,
+            [list(p) for p in design_mod.alias_pairs(design)] or "none",
+        )
+
     # Fit on the COMPLETE rows only.
     #
     # `_fitting_responses` carries NaN for any row that did not complete, and the
@@ -1097,6 +1185,26 @@ def run_stage(
         direction=direction,
     )
     epsilon = certificate.resolve_epsilon(pol["objective"]["epsilon"], rec.predicted)
+
+    # ── is the aliasing CONSEQUENTIAL? (spec §3.4, paper §Illustrative) ────
+    #
+    # Costs nothing — pure arithmetic over the coefficients already fitted and
+    # the space already enumerated — and it is what turns aliasing from a hidden
+    # assumption into a resource decision. Recorded in `recommendation.json`
+    # whatever the answer, because "the design confounds AB with CD and it does
+    # not matter for the winner" is a claim a reader should be able to check, not
+    # an absence they have to trust.
+    #
+    # Computed at EVERY fitting state, not only at screen. The foldover block
+    # resolves the alias it was spent on, so the pairs should come back empty
+    # there; recording them is what makes that verifiable rather than assumed,
+    # and the foldover state deliberately carries no second foldover branch, so
+    # a non-empty list there is a finding for a reader rather than another run.
+    alias_pairs_consequential = decide.alias_consequential(
+        fit, factors, direction=direction, fitted_ids=fitted_ids,
+        held_fixed=held_now, exclude_levels=excluded,
+        epsilon_pct=float((pol["objective"]["epsilon"] or {}).get("pct", 2.0)),
+    )
     _write_json(iter_dir / "recommendation.json", {
         "stage": stage_name,
         "iteration": iteration,
@@ -1113,7 +1221,25 @@ def run_stage(
         "excluded_measured_infeasible": excluded,
         "residual_regret_model": rb.as_dict(),
         "epsilon": epsilon,
+        "alias_consequential": [list(p) for p in alias_pairs_consequential],
+        "aliases": [list(p) for p in fit.aliases],
     })
+    if alias_pairs_consequential:
+        logger.info(
+            "%s: aliasing is CONSEQUENTIAL — re-attributing the shared estimate "
+            "in %s names a different winner, so resolving it can change the "
+            "answer. The policy's registered foldover fires if the budget covers "
+            "the block.", stage_name,
+            [list(p) for p in alias_pairs_consequential],
+        )
+    elif fit.aliases:
+        logger.info(
+            "%s: %d alias pair(s) recorded (%s) and NONE is consequential — every "
+            "plausible resolution names the same epsilon-optimal winner, so a "
+            "foldover would buy a cleaner model and a worse campaign. Not "
+            "spending it.", stage_name, len(fit.aliases),
+            [list(p) for p in fit.aliases],
+        )
     logger.info(
         "%s: recommendation %s (predicted %s=%.6g) — argmax over %d valid "
         "candidate(s), %d measured-infeasible configuration(s) excluded; "
@@ -1200,10 +1326,19 @@ def run_stage(
         # `exception`, which would make constraints unusable and would reverse
         # two existing behaviours (see
         # test_infeasible_row_does_not_nan_poison_the_fit).
+        #
+        # `ys[-fold_n:]` rather than `ys`: at foldover `ys` has the SCREEN
+        # block's responses prepended, so a bare `zip(outcomes, ys)` would pair
+        # this iteration's outcomes with the previous iteration's measurements
+        # and report the wrong rows' status. `fold_n` is the count of rows this
+        # iteration actually ran, and it equals `len(ys)` at every other state,
+        # so the slice is the identity there. The screen half's own NaN check is
+        # `screen_nan`, folded in below — a missing screen row breaks the
+        # combined design, so it routes to the same branch.
         "nan_response": any(
             v != v and getattr(o, "status", None) == "complete"
-            for o, v in zip(outcomes, ys)
-        ),
+            for o, v in zip(outcomes, ys[-fold_n:] if fold_n else ys)
+        ) or bool(screen_nan),
         "budget_remaining": _budget_remaining(pol, work_dir),
         # No compiled guard reads `round` at screen or refine — neither state
         # self-loops, so there are no rounds to count. Reported as 0 (rather
@@ -1226,6 +1361,42 @@ def run_stage(
         "residual_regret": rb.value,
         "epsilon": epsilon,
     })
+
+    # ── the foldover guard's two observations ─────────────────────────────
+    #
+    # `alias_consequential` is the DECISION fact ("could resolving this change
+    # the winner?"); `foldover_affordable` is the RESOURCE fact ("can we pay for
+    # it?"). Both must hold, which is exactly the paper's rule — the foldover is
+    # spent when it can change the answer AND the budget covers it, never
+    # unconditionally and never merely reported.
+    #
+    # `runs_needed_foldover` is recorded next to the verdict even though no
+    # compiled guard reads it. The `when` vocabulary compares an observation
+    # against a CONSTANT, so a two-observation comparison
+    # (`budget_remaining >= runs_needed_foldover`) cannot be expressed as a
+    # predicate and is evaluated here instead. Recording only the boolean would
+    # leave a reader of `transitions.jsonl` unable to tell a foldover declined
+    # for cost from one declined for irrelevance; recording both makes the
+    # arithmetic behind the branch reconstructible from the log alone. This is
+    # also what makes the key live rather than dead vocabulary.
+    obs["alias_consequential"] = bool(alias_pairs_consequential)
+    if stage_name == Stage.SCREEN.value and "foldover" in (pol.get("states") or {}):
+        # What the block would cost: the fold design is the screen's corners plus
+        # its centre replicates, so it is sized from the design rather than from
+        # a config value that could disagree with what `_build_design` builds.
+        fold_rows = len(_build_design(
+            factors, design_cfg, Stage.FOLDOVER.value, fold_on=None,
+        ).points)
+        obs["runs_needed_foldover"] = fold_rows
+        obs["foldover_affordable"] = obs["budget_remaining"] >= fold_rows
+        if alias_pairs_consequential and not obs["foldover_affordable"]:
+            logger.warning(
+                "screen: the aliasing IS consequential but the registered "
+                "foldover needs %d run(s) and only %d remain, so the alias "
+                "stays unresolved and the recommendation carries it as an "
+                "assumption. recommendation.json records which pairs.",
+                fold_rows, obs["budget_remaining"],
+            )
     return _close_iteration(
         engine, campaign, work_dir, iter_dir, iteration, stage_name, pol, obs,
         recommendation_levels=None,
@@ -1329,6 +1500,122 @@ def _design_factor_ids(factors, design_cfg: dict, stage_name: str) -> tuple[str,
         return tuple(f.id for f in factors if is_refinable(f))
     return ids
 
+
+
+def _screen_iteration(work_dir: Path) -> int | None:
+    """The iteration of the most recent transition OUT of ``screen``.
+
+    The foldover state's combined fit needs the screen's responses, and which
+    iteration those live in is recorded evidence (``transitions.jsonl``) rather
+    than an inference from the iteration index — a resumed work_dir, an
+    exception-and-recompile epoch, or a campaign with pre-epoch ``build`` all
+    move the screen away from any fixed position.
+    """
+    hits = [
+        int(t["iteration"]) for t in policy_mod.read_transitions(work_dir)
+        if t.get("from") == Stage.SCREEN.value and t.get("iteration") is not None
+    ]
+    return max(hits) if hits else None
+
+
+def _fold_on(factors, design_cfg: dict, pairs) -> str | None:
+    """Which single column the fold block negates, or ``None`` for a full fold.
+
+    Two regimes, and they resolve different confounding (see
+    ``design.foldover``):
+
+      * a resolution-III screen aliases two-factor interactions onto MAIN
+        effects, and only a FULL foldover (every column negated) clears that —
+        so ``None``.
+      * anything else (resolution IV, where 2fi are aliased with each other) is
+        resolved by negating ONE column: every word containing that factor dies,
+        which separates every 2fi involving it from its alias. Choose a factor
+        that actually appears in the consequential pair, because folding on a
+        factor absent from both sides of the alias would spend the block and
+        leave the alias exactly where it was.
+
+    The label is parsed by matching declared factor ids against its prefix
+    rather than by splitting on character count: a campaign may declare
+    multi-character ids (``KV``, ``BATCH``), and a one-char split would silently
+    pick a factor that does not exist.
+    """
+    resolution = int((design_cfg.get("screen") or {}).get("resolution", 5))
+    if resolution <= 3:
+        return None
+    ids = [f.id for f in factors]
+    for kept, _alt in pairs or ():
+        rest = str(kept)
+        while rest:
+            # Longest id first, so `A` never shadows `AB` on a campaign that
+            # declares both.
+            match = max(
+                (fid for fid in ids if rest.startswith(fid)), key=len, default=None,
+            )
+            if match is None:
+                break
+            return match
+    # Reaching here means either the pairs list was empty or no label matched a
+    # declared id. Neither should be possible: the policy only routes to this
+    # state after the screen observed `alias_consequential`, and every label
+    # `fit_effects` produces is built from `factor_ids`. Fall back to a FULL
+    # foldover rather than to `ids[0]` — folding on an arbitrary column would
+    # spend the block and, if that column appears in no alias word, resolve
+    # nothing at all, whereas a full foldover at least clears every odd-length
+    # word. Say so in the log, because it means the recorded pairs and the
+    # design disagree.
+    logger.warning(
+        "foldover: no declared factor could be read out of the recorded "
+        "consequential pairs %s (declared ids: %s), so falling back to a FULL "
+        "foldover. This means recommendation.json's alias_consequential and the "
+        "campaign's factor set disagree — check whether the factor list changed "
+        "under a resumed work_dir.", list(pairs or ()), ids,
+    )
+    return None
+
+
+def _screen_responses(work_dir: Path, screen_iter: int, primary: str,
+                      n_expected: int) -> tuple[list[float], bool]:
+    """The screen block's responses in DESIGN-ROW order, plus a NaN flag.
+
+    Order is everything: ``fit_effects`` pairs value ``i`` with
+    ``design.points[i]``, and ``combine`` concatenates screen-then-fold, so the
+    screen half of the response vector must be in ``row_index`` order. Rows land
+    in ``runs.jsonl`` in EXECUTION order (the pre-registered randomized
+    permutation), so reading the file front-to-back would misalign every
+    coefficient while producing a perfectly plausible fit.
+
+    A row that did not complete, or whose primary metric is missing or
+    non-numeric, contributes NaN and sets the flag. The caller routes that to
+    ``nan_response`` rather than fitting: the combined fit rests on the screen
+    block as much as on the fold block, and silently dropping a screen row would
+    change the combined design's real resolution — the very thing this state
+    exists to improve.
+    """
+    rows = artifacts.read_runs(Path(work_dir) / "runs" / f"iter-{screen_iter}")
+    by_index: dict[int, dict] = {}
+    for row in rows:
+        idx = row.get("row_index")
+        if isinstance(idx, int):
+            by_index[idx] = row
+    ys: list[float] = []
+    saw_nan = False
+    for i in range(n_expected):
+        row = by_index.get(i)
+        raw = None if row is None else (row.get("response") or {}).get(primary)
+        if row is None or row.get("status") != "complete" or raw is None:
+            ys.append(float("nan"))
+            saw_nan = True
+            continue
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            ys.append(float("nan"))
+            saw_nan = True
+            continue
+        if val != val:
+            saw_nan = True
+        ys.append(val)
+    return ys, saw_nan
 
 
 def _preflight_design(rows, factors, opt: dict, iter_dir: Path) -> None:
@@ -1719,7 +2006,8 @@ def _latest_confirmation(work_dir) -> dict | None:
     return None
 
 
-def _build_design(factors, design_cfg: dict, stage_name: str):
+def _build_design(factors, design_cfg: dict, stage_name: str, *,
+                  fold_on: str | None = None):
     """Design for this stage: a screen matrix, or a response surface.
 
     Takes no ``work_dir``. It used to, solely so the confirm branch could read
@@ -1729,9 +2017,18 @@ def _build_design(factors, design_cfg: dict, stage_name: str):
     (from ``recommendation.json``), so design generation is a pure function of
     the factors and the config again, which is what makes it comparable across
     stages in a test without a filesystem.
+
+    ``fold_on`` keeps that property for the foldover state too. The state needs
+    to know WHICH column to negate, and that choice comes from the screen's
+    recorded ``alias_consequential`` pairs — which live on disk. Rather than
+    re-admitting ``work_dir`` here (and with it the whole class of "generation
+    silently depends on what some earlier artifact said"), ``run_stage``
+    resolves the factor id and passes it in, so this function stays a pure
+    function of its arguments and the choice is visible at the call site.
     """
     from orchestrator.optimize.design import (
         central_composite,
+        foldover,
         fractional_factorial,
         full_factorial,
         is_tabulated,
@@ -1807,7 +2104,14 @@ def _build_design(factors, design_cfg: dict, stage_name: str):
         if is_tabulated(len(ids), resolution)
         else full_factorial(ids)
     )
-    return with_center_points(base, int(cfg.get("center_points", 4)))
+    screen = with_center_points(base, int(cfg.get("center_points", 4)))
+    if stage_name != Stage.FOLDOVER.value:
+        return screen
+    # The fold block is derived from the SCREEN design, deterministically, from
+    # the same config — so it is reproducible from `design_matrix.json` without
+    # having to have kept the screen's Design object alive across the process
+    # boundary between iterations.
+    return foldover(screen, on=fold_on)
 
 
 def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,

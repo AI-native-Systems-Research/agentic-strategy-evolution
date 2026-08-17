@@ -25,9 +25,23 @@ OBSERVATION_KEYS: frozenset[str] = frozenset({
     "correctness_failed", "nan_response", "all_within_noise", "lack_of_fit",
     "refinable_survivors", "alias_consequential", "stationary_in_hull",
     "model_adequate", "certified", "round", "budget_remaining",
-    "runs_needed_foldover", "runs_needed_confirm", "residual_regret", "epsilon",
-    "behavioral_violation",
+    "runs_needed_foldover", "foldover_affordable", "runs_needed_confirm",
+    "residual_regret", "epsilon", "behavioral_violation",
 })
+"""The closed observation vocabulary a compiled ``when`` predicate may read.
+
+``foldover_affordable`` is a DERIVED boolean rather than a comparison the policy
+performs itself, and the reason is that ``when`` predicates compare an
+observation against a CONSTANT — there is no form that compares two
+observations. "Is the remaining budget at least what the fold block would cost?"
+is exactly such a two-observation comparison (``budget_remaining >=
+runs_needed_foldover``), so the runtime evaluates it where both numbers are known
+and reports the verdict. ``runs_needed_foldover`` is still recorded next to it:
+the verdict is what the guard reads, the count is what a reader of
+``transitions.jsonl`` needs to see WHY it came out that way, and a boolean with
+no accompanying magnitude would make a budget-denied foldover indistinguishable
+from an unaffordable one in the audit trail.
+"""
 
 COMPARISON_OPS: frozenset[str] = frozenset({">", ">=", "<", "<="})
 """The closed operator vocabulary a ``when`` predicate may use.
@@ -73,6 +87,24 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
     enabled = _enabled(campaign)
     refine_on = "refine" in enabled and any(is_refinable(f) for f in factors)
     confirm_on = "confirm" in enabled
+    # The registered foldover is ON BY DEFAULT and gated at RUNTIME, not at
+    # compile time. Compilation cannot know whether any alias will turn out
+    # consequential — that is a fact about measurements, and a policy that reads
+    # a measurement is not a pre-registration. So the branch is always
+    # registered when the state exists, and `alias_consequential` /
+    # `foldover_affordable` decide whether it fires. A campaign that would
+    # rather never spend the block says so explicitly with
+    # `optimization.policy.foldover: false`, which removes the state and the
+    # branch together — a registered branch that can never fire is worse than an
+    # absent one, because `enumerate_paths` would report a path the campaign
+    # cannot take.
+    #
+    # Deliberately NOT gated on the screen design's resolution either. A
+    # resolution-V screen aliases nothing, so `alias_consequential` returns []
+    # and the branch simply never fires; making the state's existence depend on
+    # `design.screen.resolution` would put the same fact in two places and let
+    # them drift.
+    fold_on = bool(pol_cfg.get("foldover", True))
     primary = (opt.get("response") or {}).get("primary") or {}
     confirm_cfg = design.get("confirm") or {}
 
@@ -88,6 +120,25 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         "report": {"spends": False, "terminal": True},
         "exception": {"spends": False, "terminal": True, "ends_epoch": True},
     }
+    if fold_on:
+        states["foldover"] = {
+            # SPENDS is the whole point. A state that only reported the
+            # confounding would be the spec's own named defect — "diagnosis
+            # without action", the `Trigger` enum documented as "reported, not
+            # acted on". The paper is explicit: "if one flips the winner, the
+            # policy SPENDS its registered foldover." This state executes a
+            # second block of benchmark runs and produces new measurements.
+            "spends": True,
+            # Not a design family: the block is derived from whatever the screen
+            # actually built, so the design is named by REFERENCE to that state
+            # rather than by parameters that could disagree with it.
+            "design": {"kind": "foldover_of", "state": "screen"},
+            "estimator": "ols_orthogonal_closed_form",
+            "accounting": (
+                "combined OLS over screen ∪ foldover runs; per-term t on "
+                "pooled pure error"
+            ),
+        }
     if refine_on:
         states["refine"] = {
             "spends": True,
@@ -128,10 +179,47 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         {"from": "screen", "when": {"correctness_failed": True}, "to": "exception", "accounting": sem},
         {"from": "screen", "when": {"nan_response": True}, "to": "exception", "accounting": sem},
     ]
+    # BEFORE the refine rule, and the order is load-bearing. `step` takes the
+    # FIRST matching rule, so registering the foldover after refine would mean a
+    # screen with both refinable survivors and a consequential alias goes
+    # straight to refine — fitting curvature on a surface whose linear terms are
+    # still confounded, which is the more expensive stage resting on the weaker
+    # model. Resolve the alias first, then refine on coefficients that mean what
+    # they say.
+    fold_rule = {
+        "from": "screen",
+        "when": {"alias_consequential": True, "foldover_affordable": True},
+        "to": "foldover",
+        "accounting": (
+            "combined OLS over screen ∪ foldover runs; per-term t on pooled "
+            "pure error"
+        ),
+    }
+    if fold_on:
+        transitions.append(dict(fold_rule))
     if refine_on:
         transitions.append({"from": "screen", "when": {"refinable_survivors": {">": 0}}, "to": "refine",
                             "accounting": "screen selection at alpha=0.05 per main effect (Task 8 adds regret)"})
     transitions.append({"from": "screen", "default": ("confirm" if confirm_on else "report")})
+    if fold_on:
+        # Foldover carries SCREEN's rules MINUS the foldover rule — one fold per
+        # screen, by registration. The alias the block was spent on is resolved,
+        # so a second fold could only chase a different alias with runs the
+        # budget already committed here; and the absent self-branch is what makes
+        # `enumerate_paths` finite without needing a decreasing-budget argument.
+        transitions += [
+            {"from": "foldover", "when": {"correctness_failed": True}, "to": "exception", "accounting": sem},
+            {"from": "foldover", "when": {"nan_response": True}, "to": "exception", "accounting": sem},
+        ]
+        if refine_on:
+            transitions.append({
+                "from": "foldover", "when": {"refinable_survivors": {">": 0}},
+                "to": "refine",
+                "accounting": "screen selection at alpha=0.05 per main effect on the combined fit",
+            })
+        transitions.append(
+            {"from": "foldover", "default": ("confirm" if confirm_on else "report")},
+        )
     if refine_on:
         transitions += [
             {"from": "refine", "when": {"correctness_failed": True}, "to": "exception", "accounting": sem},
