@@ -851,7 +851,16 @@ def _compile_and_write_policy(campaign: dict, work_dir: Path) -> dict:
         raise OptimizationAborted(
             "compiled policy is structurally invalid:\n  " + "\n  ".join(errs),
         )
-    policy_mod.write_policy(work_dir, pol)
+    try:
+        policy_mod.write_policy(work_dir, pol)
+    except ValueError as exc:
+        # `check_policy` covers the closed observation/operator vocabulary and
+        # reachability; `write_policy`'s schema check covers the shape
+        # constraints neither `check_policy` nor `compile_policy` enforces
+        # (`policy_version` pinned to 1, the `epsilon` `abs`/`pct` `oneOf`, the
+        # delta bounds). Both are pre-registration failures of the same class,
+        # so both abort the campaign the same way.
+        raise OptimizationAborted(str(exc)) from exc
     return pol
 
 
