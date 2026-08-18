@@ -90,6 +90,23 @@ def test_write_and_read_round_trip_with_sidecar_hash(tmp_path):
     assert read_policy(tmp_path / "nowhere") is None
 
 
+def test_write_policy_rejects_a_schema_invalid_document(tmp_path):
+    """POLICY_SCHEMA_PATH existed since Task 4; nothing called jsonschema.validate
+    against it in production until now. ``check_policy`` covers the closed
+    observation/operator vocabulary and reachability, not the schema's own shape
+    constraints — so a policy that violates the schema but satisfies
+    ``check_policy`` (e.g. a bogus ``policy_version``) must still be caught here,
+    at the one place every compiled policy is persisted.
+    """
+    pol = compile_policy(_campaign())
+    bad = json.loads(json.dumps(pol))
+    bad["policy_version"] = 2          # schema pins this to the const 1
+    assert check_policy(bad) == []     # check_policy has no opinion on this field
+    with pytest.raises(ValueError, match="policy_version"):
+        write_policy(tmp_path, bad)
+    assert not (tmp_path / "policy.json").exists()
+
+
 def test_check_policy_rejects_structural_defects():
     pol = compile_policy(_campaign())
     bad = json.loads(json.dumps(pol))

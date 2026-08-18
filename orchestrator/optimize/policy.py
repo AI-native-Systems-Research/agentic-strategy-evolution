@@ -366,6 +366,30 @@ def policy_hash(policy: dict) -> str:
 
 
 def write_policy(work_dir: Path, policy: dict) -> Path:
+    """Write the compiled policy and its content hash, or raise.
+
+    ``POLICY_SCHEMA_PATH`` existed from Task 4 but nothing in production ever
+    called ``jsonschema.validate`` against it — ``check_policy`` covers the
+    closed observation/operator vocabulary and reachability, not the schema's
+    own shape constraints (``policy_version`` pinned to 1,
+    ``additionalProperties: false``, the ``epsilon`` ``abs``/``pct``
+    ``oneOf``, the delta bounds). A schema file nothing validates against is
+    the same phantom-check failure mode this branch closed for
+    ``report.json``/``recommendation.json``/``confirmation.json``/
+    ``shortlist.json`` — this is the fifth and last of the same class of gap,
+    and the one every downstream artifact's own pre-registration hash
+    ultimately rests on.
+    """
+    import jsonschema
+
+    schema = json.loads(POLICY_SCHEMA_PATH.read_text())
+    try:
+        jsonschema.validate(policy, schema)
+    except jsonschema.ValidationError as exc:
+        raise ValueError(
+            f"compiled policy does not conform to {POLICY_SCHEMA_PATH.name}: "
+            f"{exc.message} (at {'/'.join(str(p) for p in exc.absolute_path) or '<root>'})",
+        ) from exc
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     p = work_dir / "policy.json"
