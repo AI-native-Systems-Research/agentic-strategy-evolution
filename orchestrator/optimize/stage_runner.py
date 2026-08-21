@@ -224,6 +224,64 @@ def resolve_run_timeout(opt: dict | None) -> int:
     return runner.DEFAULT_RUN_TIMEOUT_SEC
 
 
+def resolve_max_parallel(opt: dict | None, *, stage_name: str) -> int:
+    """The EFFECTIVE ceiling on simultaneous in-flight runs at ``stage_name``.
+
+    ``optimization.max_parallel`` is the campaign's declared ceiling; this is the
+    one place that decides where it applies, and the answer is CONFIRM ONLY.
+    Everywhere else it resolves to 1 no matter what the campaign says.
+
+    That is not conservatism about thread safety -- the measurement path is
+    already race-free (``config_patch`` materialises a per-run COPY of every
+    patched file precisely so rows never share mutable state). It is the
+    statistics. The spending stages (``screen`` / ``foldover`` / ``refine``) fit a
+    response surface over DISTINCT configurations, and co-scheduled rows contend
+    for machine resources, so a row's measured response would depend on which
+    other rows happened to run beside it. Contention distributed unevenly across
+    a design is absorbed by the fitted coefficients as though it were a factor
+    effect -- and unlike drift, which run-order randomization spreads across the
+    design, a neighbour effect is not something a permutation can average away.
+    On a target whose objective is where the system SATURATES, that is the
+    measurement rather than noise around it.
+
+    ``confirm`` is different in kind, not in degree. Its rows are emitted one
+    complete REPLICATE BLOCK at a time, and within a block every finalist is
+    measured exactly once -- so whatever contention the block creates is
+    symmetric across exactly the things being compared, shifts all the finalists
+    together, and cancels out of the finalist-to-finalist difference, which is
+    the only quantity terminal discrimination reads. It is the same argument
+    ``_confirm_rows`` makes for shuffling INSIDE a block rather than across the
+    matrix; the bound is scoped to be its counterpart, and
+    ``runner.execute_design`` keeps blocks a barrier so the scoping holds.
+
+    Row-level concurrency at a spending stage is reachable only by CLOSING the
+    confound rather than ignoring it: each concurrent row pinned to a disjoint
+    CPU set, with the pinning recorded in the artifact so a reader can check it.
+    Until that exists, returning 1 here is what keeps a campaign from buying wall
+    clock with a confounded surface, and it is deliberately not something the
+    campaign file can override.
+
+    Absence resolves to 1 -- exactly what every campaign authored before the
+    field existed ran at. That is a compatibility REQUIREMENT rather than a
+    preference: ``design_matrix.json`` is a pre-registration, and execution
+    conditions that changed underneath an already-registered design would mean
+    the artifact no longer describes the runs it registered.
+
+    A non-integer or non-positive value cannot reach here from a schema-valid
+    campaign (``max_parallel`` is ``type: integer, minimum: 1``), so one is
+    treated as absent rather than raising -- same convention as
+    ``resolve_run_timeout``, and for the same reason: turning a hand-edited
+    campaign file into an epoch-wide abort at the measurement seam would
+    attribute the failure to the wrong place.
+    """
+    if stage_name != Stage.CONFIRM.value:
+        return 1
+    raw = (opt or {}).get("max_parallel")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return 1
+
+
 def _check_correctness_relations(
     factors, test_results: dict[str, bool] | None,
 ) -> tuple[list, list]:
@@ -2026,6 +2084,14 @@ def run_stage(
         rows, payload, pol,
         iteration=iteration, confirm=stage_name == Stage.CONFIRM.value,
     )
+
+    # Resolved OUTSIDE the DESIGN guard for the same reason the seeds are: the
+    # guard is False on a resumed iteration whose design_matrix.json already
+    # exists, and those rows still have to execute under a bound. Recomputing it
+    # from the same campaign and the same stage name is deterministic, so a
+    # resumed stage runs at the concurrency its already-written matrix records.
+    max_parallel = resolve_max_parallel(opt, stage_name=stage_name)
+
     if _enter_phase(engine, "DESIGN", work_dir):
         _preflight_design(rows, factors, opt, iter_dir)
         # Provenance: every matrix materialised inside the epoch cites the
@@ -2042,6 +2108,21 @@ def run_stage(
         # pre-registration, not only in the campaign file that may since have
         # been revised for the next epoch.
         payload["run_timeout_sec"] = resolve_run_timeout(opt)
+        # ... and the CONCURRENCY those rows were measured under, recorded beside
+        # `run_order` / `run_order_seed` because it is what says how to READ them.
+        # A pre-registration that claims a randomized run order while executing
+        # rows concurrently is asserting a guarantee it did not provide: the
+        # randomization defuses a TIME trend, and co-scheduling introduces a
+        # NEIGHBOUR effect that no permutation of the same rows can average away.
+        # That is the same defect class as the run-order bug fixed just below --
+        # an artifact recording a randomization that never happened -- and it is
+        # invisible without this field, because a `run_order` permutation looks
+        # identical whether it described a sequence or a schedule. The EFFECTIVE
+        # value is recorded, not the declared one: `resolve_max_parallel` returns
+        # 1 at every spending stage regardless of the campaign, so a screen matrix
+        # saying 1 under a campaign declaring 4 is the artifact being accurate
+        # about what ran rather than echoing an intention.
+        payload["max_parallel"] = max_parallel
         artifacts.write_design_matrix(iter_dir, payload)
 
     _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
@@ -2092,10 +2173,20 @@ def run_stage(
             "does not hold", stage_name, len(rows) - 1,
         )
 
+    if max_parallel > 1:
+        logger.info(
+            "%s: executing replicate blocks at up to %d simultaneous run(s); "
+            "blocks remain a barrier, so every finalist is measured once before "
+            "any is measured twice, and contention inside a block is symmetric "
+            "across exactly the finalists being compared", stage_name,
+            max_parallel,
+        )
+
     outcomes = runner.execute_design(
         exec_rows, runner=config_runner, response_spec=response_spec,
         invariants=invariants, factors=factors,
         integrity_check=integrity_check,
+        max_parallel=max_parallel,
         on_row=lambda outcome: artifacts.append_run(
             iter_dir, _run_row(by_index[outcome.row_index], outcome),
         ),

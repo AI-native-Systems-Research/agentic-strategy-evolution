@@ -1249,6 +1249,56 @@ properties:
           ``workload_seeds`` and ``policy_hash``, so a reader of a
           timed-out row can tell which ceiling produced it.
 
+      max_parallel:
+        type: integer
+        minimum: 1
+        description: >
+          Ceiling on SIMULTANEOUS in-flight ``run_command`` invocations, and
+          the ONLY concurrency the epoch offers. Defaults to 1, which is
+          strictly sequential execution -- exactly what every campaign
+          authored before this field existed ran at.
+
+          IT APPLIES TO ``confirm`` REPLICATE BLOCKS ONLY. The spending
+          stages (``screen`` / ``foldover`` / ``refine``) stay strictly
+          sequential whatever this says, because they FIT A SURFACE over
+          distinct configurations and co-scheduled rows contend for machine
+          resources: a row's measured response would then depend on which
+          OTHER rows happened to run beside it, and the fitted coefficients
+          would absorb that contention as a factor effect. Run-order
+          randomization exists to keep drift (a warming cache, a thermally
+          throttling machine, a background job) from masquerading as an
+          effect; co-scheduling reintroduces the same confound in a form
+          randomization cannot average away. For an objective that measures
+          where a system SATURATES that is first-order, not a rounding
+          error.
+
+          A confirm replicate block is different in kind, not in degree.
+          Within one block every finalist is measured exactly once, so
+          whatever contention exists is symmetric across exactly the things
+          being compared -- which is the same argument that puts confirm's
+          run-order shuffle INSIDE a block rather than across the whole
+          matrix. Blocks remain a barrier: replicate *i* of every finalist
+          completes before replicate *i+1* starts.
+
+          Row-level concurrency at the spending stages is reachable only by
+          CLOSING the confound rather than ignoring it -- each concurrent row
+          pinned to a disjoint CPU set, with the pinning recorded in the
+          artifact -- and this field deliberately does not enable it.
+
+          Size it from CORES, not from rows: more in-flight runs than the
+          machine has CPUs means the runs time-slice against each other and a
+          finalist's response starts depending on the scheduler, so
+          ``nous validate campaign`` warns above ``os.cpu_count()``. The
+          warning is advisory because a run that mostly WAITS on a remote
+          service holds no core while it waits, and only the author knows
+          which their target is.
+
+          The EFFECTIVE value (1 at a spending stage even when this says 4)
+          is echoed into each iteration's ``design_matrix.json`` as
+          ``max_parallel``, beside ``run_order_seed``: a pre-registration
+          asserting randomized run order while executing concurrently would
+          be claiming a guarantee it did not provide.
+
       integrity_command:
         type: string
         minLength: 1
