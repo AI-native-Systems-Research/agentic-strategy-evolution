@@ -94,7 +94,17 @@ def _render_apply(f: Factor, level: Any) -> dict:
     if kind == "config_patch":
         value = spec["value"]
         rendered = level if value == "{level}" else value
+        # ``factor_id`` rides along so the REALIZED patch can be keyed by factor
+        # when the runner records it (``runner._applied_namespace``'s
+        # ``applied_patches``). Without it the realized record could only be a
+        # LIST, and ``predicates._resolve`` walks dotted paths through dicts
+        # only -- there is no list-index token and no ``contains`` operator -- so
+        # a manipulation predicate could not address a config_patch factor at
+        # all. Verified: ``applied_patches.0.value`` resolves to _MISSING, which
+        # fails EVERY row with "the target did not emit it", the same shape that
+        # made 115 configurations unusable before ``applied.*`` existed.
         return {"patches": [{
+            "factor_id": f.id,
             "path": spec["path"], "pointer": spec["pointer"], "value": rendered,
         }]}
     raise ValueError(f"factor {f.id!r}: unknown apply kind {kind!r}")

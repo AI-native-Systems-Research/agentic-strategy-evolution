@@ -762,9 +762,16 @@ def _smoke_check_optimization(campaign: dict) -> list[str]:
         emits as a bool/int, which can never match -- 67 of 67 runs failed this
         way while the CLI itself was correct;
       * an objective metric absent from the emitted JSON, so every run parses
-        and scores NaN.
+        and scores NaN;
+      * a ``config_patch`` factor whose value never reaches the file the target
+        reads. This one is the reason "the probe run succeeded" is not the
+        criterion: a config-patch campaign whose patches were dropped exits 0
+        and emits perfectly parseable JSON on every row -- it just measures the
+        BASELINE. So the probe's materialized copy is read BACK through the same
+        pointer that wrote it, value and type compared against the requested
+        level.
 
-    One probe run costs seconds and catches all four. Also checked, for free
+    One probe run costs seconds and catches all five. Also checked, for free
     (no subprocess): a declared ``build_checks.mechanism_paths`` entry that
     resolves to nothing under the target, which silently narrows the drift
     oracle instead of failing.
@@ -772,10 +779,11 @@ def _smoke_check_optimization(campaign: dict) -> list[str]:
     Returns a list of problems; empty means the contract holds at the first
     design corner.
     """
+    import shutil
+    import tempfile
+
     from orchestrator.optimize import runner
     from orchestrator.optimize.factors import parse_factors
-    from orchestrator.optimize.matrix import render_apply
-    from orchestrator.optimize import predicates
 
     problems: list[str] = []
     opt = campaign.get("optimization") or {}
@@ -847,12 +855,42 @@ def _smoke_check_optimization(campaign: dict) -> list[str]:
     # 2. One configuration at every factor's first level.
     if not opt.get("run_command"):
         return problems
+    probe_dir = tempfile.mkdtemp(prefix="nous-smoke-")
+    try:
+        problems.extend(_smoke_probe_one_config(
+            opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
+        ))
+    finally:
+        shutil.rmtree(probe_dir, ignore_errors=True)
+    return problems
+
+
+def _smoke_probe_one_config(
+    opt: dict, factors, *, repo: Path, probe_dir: Path,
+) -> list[str]:
+    """Run ONE configuration and check everything that run makes answerable.
+
+    Split out of ``_smoke_check_optimization`` so ``probe_dir`` — where any
+    ``config_patch`` copy materialized for the probe lands, and which check 2b
+    reads back — has exactly one lifetime with exactly one cleanup, rather than
+    a removal duplicated across this function's several early returns.
+    """
+    from orchestrator.optimize import predicates, runner
+    from orchestrator.optimize.matrix import render_apply
+
+    problems: list[str] = []
     levels = {f.id: f.levels[0] for f in factors if getattr(f, "levels", None)}
+    # A log dir is supplied so that any config_patch copies materialized for the
+    # probe SURVIVE the run: check 2b below reads them back to confirm the patch
+    # landed, and without a log dir the runner cleans its scratch copies up (as
+    # it should — under a real campaign the surviving copies live next to the
+    # iteration's artifacts as evidence).
     cfg_runner = runner.make_config_runner(
-        opt["run_command"], cwd=Path(repo),
+        opt["run_command"], cwd=repo,
         metric_path=((opt.get("response") or {}).get("primary") or {}).get(
             "metric", "",
         ),
+        log_dir=probe_dir / "failed_runs",
     )
 
     class _Row:
@@ -876,6 +914,75 @@ def _smoke_check_optimization(campaign: dict) -> list[str]:
     print(f"  smoke: ran one configuration {levels} — "
           f"{len(obs)} observable(s) returned")
 
+    # 2b. Did every config_patch actually land in the file the target read?
+    #
+    # This is the check that was missing when `config_patch` was rendered onto
+    # every row and consumed by nothing: a broken config-patch campaign ran
+    # CLEANLY under --smoke, because the probe run exits 0 and emits parseable
+    # JSON whether or not the patch took effect. The run succeeded; it just
+    # measured the baseline. So "the run worked" is not the question. Two
+    # separate claims have to hold, and confusing them IS the defect:
+    #
+    #   (i) the patched document holds the requested value, at the requested
+    #       pointer, with the requested TYPE -- checked by materializing into
+    #       the probe's own directory and reading it back through `read_pointer`;
+    #  (ii) that document is the one the command was pointed at -- checked
+    #       against `delivered_command`, the argv the runner actually executed.
+    #
+    # (i) without (ii) is exactly the state the original defect was in.
+    realized = (getattr(row, "apply", None) or {}).get("applied_patches") or {}
+    if realized:
+        from orchestrator.optimize import config_patch as _cp
+
+        print(f"  smoke: verifying {len(realized)} config_patch(es) reached the "
+              f"target's config file")
+    for fid, entry in sorted(realized.items()):
+        where = f"{entry.get('path')}{entry.get('pointer')}"
+        want = entry.get("value")
+        delivered = entry.get("delivered_command") or []
+        materialized = str(entry.get("materialized_path") or "")
+        if not any(materialized and materialized in str(tok) for tok in delivered):
+            problems.append(
+                f"factor {fid}: config_patch {where} was written to "
+                f"{materialized} but that path does not appear in the command the "
+                f"run actually executed ({' '.join(str(t) for t in delivered)}). "
+                f"The run therefore read the target's UNPATCHED configuration: "
+                f"it exits 0, emits parseable JSON, and reports a number for the "
+                f"baseline while the design matrix records the requested level.",
+            )
+            continue
+        # Re-materialized rather than read from `materialized_path`, because the
+        # runner keeps a copy only for a FAILED row (a 90-run screen would
+        # otherwise leave ~90 unattributed copies in the iteration dir). The
+        # rendering is pure and deterministic, so a fresh materialization of the
+        # same patch is the same document the run read.
+        try:
+            fresh = _cp.materialize_patches(
+                [{"path": entry["path"], "pointer": entry["pointer"],
+                  "value": want}],
+                cwd=repo, temp_dir=probe_dir / "verify",
+            )
+            got = _cp.read_pointer(
+                _cp.load_config(Path(fresh[0]["materialized_path"])),
+                entry["pointer"],
+            )
+        except Exception as exc:  # noqa: BLE001 — any failure is a finding
+            problems.append(
+                f"factor {fid}: config_patch {where} could not be read back "
+                f"after patching: {exc}",
+            )
+            continue
+        if got != want or type(got) is not type(want):
+            problems.append(
+                f"factor {fid}: config_patch {where} did not land as declared: "
+                f"requested {want!r} ({type(want).__name__}), the patched file "
+                f"holds {got!r} ({type(got).__name__}). A level that arrives as "
+                f"the wrong TYPE is the same silent-wrong-config failure as one "
+                f"that never arrived -- the target parses it, rejects or coerces "
+                f"it, and reports a number for a configuration the design matrix "
+                f"never described.",
+            )
+
     # 3. Is the objective metric present?
     metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")
     if metric and metric not in obs:
@@ -892,7 +999,17 @@ def _smoke_check_optimization(campaign: dict) -> list[str]:
     # exactly the type mismatch this check exists to find -- a target echoing a
     # bool where the level is the string "0" can never compare equal, and that
     # failed 67 of 67 runs on a real campaign.
-    scope = {"applied": dict(levels)}
+    #
+    # The BASE is `runner._applied_namespace(row)` rather than a hand-built
+    # `{"applied": levels}`, so every namespace the schema tells authors to use
+    # is present here exactly as it is at run time. Built by hand, smoke supplied
+    # only `applied` -- so a predicate against `applied_env.X` or
+    # `applied_patches.<FACTOR_ID>.value`, both of which the schema explicitly
+    # recommends, reported a spurious smoke failure and then passed in
+    # production. A pre-flight check that disagrees with the run is worse than
+    # no pre-flight check: it trains the author to ignore it.
+    scope = dict(runner._applied_namespace(row))
+    scope["applied"] = dict(levels)
     scope.update({k: v for k, v in obs.items()})
     if isinstance(obs.get("applied"), dict):
         merged = dict(levels)

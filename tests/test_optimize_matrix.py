@@ -121,7 +121,12 @@ def test_config_patch_apply_renders_path_pointer_value():
     design = Design(points=(DesignPoint(coded=(-1.0,)),), factor_ids=("L9",))
     row = expand(design, fs)[0]
     assert row.apply["patches"] == [
-        {"path": "strategy.json", "pointer": "/filters/min_peak", "value": 0.01},
+        # `factor_id` rides along so the REALIZED patch can be keyed by factor
+        # in the row's `applied_patches`. Without it that record could only be a
+        # list, and `predicates._resolve` walks dotted paths through dicts only
+        # -- so a manipulation predicate could not address a config_patch factor.
+        {"factor_id": "L9", "path": "strategy.json",
+         "pointer": "/filters/min_peak", "value": 0.01},
     ]
 
 

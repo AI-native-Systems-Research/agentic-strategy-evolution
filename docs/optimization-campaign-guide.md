@@ -257,6 +257,37 @@ else has a default.
   the single most load-bearing field in the schema — get it wrong and
   Python is applying the wrong configuration on every one of 60-90 runs
   with nobody watching.
+
+  **`config_patch` has one precondition, and the validator enforces it.**
+  A patch is applied to a per-run COPY of `path` (your file is never
+  mutated — rows run concurrently in principle, and a mutated shared file
+  is both a race and a cross-row contamination channel), and the copy's
+  path is substituted for every occurrence of `path` in the assembled
+  command. So `path` **must appear as an argument value in
+  `run_command`** — `run_command: "bench --config engine.json --json"` for
+  `path: engine.json`. A path the command never names is a hard validation
+  error, because there would be nothing to substitute and the run would
+  read your unpatched file while the design matrix recorded the requested
+  level. `pointer` is an RFC 6901 JSON pointer (`/cache/policy`,
+  `/tiers/0/bytes`, with `~0` for a literal `~` and `~1` for a literal
+  `/`) and must address a field that already exists — a patch replaces a
+  value the target reads, it never invents structure. The two spellings must
+  match **literally**: `path: ./engine.json` against
+  `run_command: "... engine.json"` is a hard error, because the substitution is
+  textual over the assembled argv and nothing normalises either side. The match
+  is anchored to an argument boundary, so `other/engine.json` in the command
+  does *not* satisfy `path: engine.json` (and `--config=engine.json` does). `.json`, `.yaml`,
+  and `.yml` are supported; anything else is an error rather than a guess
+  at a format Nous cannot round-trip. The level's TYPE is preserved
+  exactly: `42949672960` lands as an integer, `true` as the format's
+  native boolean, `arc` as a string. What actually happened is recorded
+  per run as `applied_patches` (next to `applied_args` and `applied_env`),
+  keyed by factor id and including the copy's path and the command that
+  consumed it — so a target that echoes nothing back can still write a
+  truthful check: `{observable: applied_patches.P1.value, op: "==", value:
+  "{level}"}`. The copy itself is preserved only when the run FAILED, under
+  `runs/iter-N/patched_configs/row-<index>/`; a successful row's
+  configuration is reproducible from the pre-registered matrix.
 - **`manipulation`** (required, exactly one) — Family A: did the lever
   actually engage? Checked on every run of this factor. Uses the shared
   comparison shape `{observable | metric, op, value}`, with `value:

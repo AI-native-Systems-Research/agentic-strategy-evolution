@@ -100,15 +100,16 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["path", "pointer", "value"],
+                "required": ["factor_id", "path", "pointer", "value"],
                 "additionalProperties": false,
                 "properties": {
+                  "factor_id": { "type": "string", "minLength": 1, "description": "The factor this patch renders. Carried so the REALIZED patch can be keyed by factor in the row's applied_patches, which is what makes it addressable from a manipulation predicate (predicates resolve dotted paths through dicts only -- a list of patches could not be addressed at all)." },
                   "path": { "type": "string", "minLength": 1, "description": "Config file to patch." },
-                  "pointer": { "type": "string", "description": "JSON-pointer-like location within that file." },
+                  "pointer": { "type": "string", "description": "RFC 6901 JSON pointer to the field to replace, e.g. \"/cache/policy\" or \"/tiers/0/bytes\" (~0 escapes a literal ~, ~1 a literal /). Must address a field that already exists: a config_patch replaces a value the target reads, it never creates structure." },
                   "value": {}
                 }
               },
-              "description": "Config-file patches to apply before running."
+              "description": "Config-file patches (apply.kind: config_patch). Each is applied to a PER-RUN COPY of `path` -- the campaign author's file is never mutated -- and the copy's path is substituted for every occurrence of `path` in the assembled run command, so `path` must appear as an argument value in optimization.run_command. `pointer` is an RFC 6901 JSON pointer addressing an existing field; `value` keeps its declared type (an int stays an int). What was realized per run is recorded separately as the row's applied_patches."
             },
             "center_choice_pinned": {
               "type": "object",
