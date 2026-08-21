@@ -21,14 +21,22 @@ Phase A scope:
     findings-shaped dict (the schema validation step is reused from
     the existing executor pipeline).
 
-Phase B (lands when #121 + #133 merge):
+Phase B, as it actually landed:
 
-  * SDKDispatcher integration: the runner spawns
-    ``Agent(isolation="worktree", subagent_type="claude")`` per unit.
-  * Real ``anyio.gather`` for actual parallelism with a CPU-bounded
-    semaphore.
+  * SDKDispatcher integration: ``worktree.make_isolated_arm_runner`` builds
+    an ``ArmRunner`` that dispatches ``isolation="worktree"`` per unit.
+  * ``run_units``'s ``max_parallel`` is a REAL bound -- a bounded
+    ``ThreadPoolExecutor`` with positional result slots, not the
+    ``anyio.gather`` this docstring used to promise. Threads because the
+    module is synchronous throughout and a unit blocks on a subprocess or an
+    SDK call; see ``run_units`` for why concurrency is safe over arm units
+    but is NOT safe over an optimization campaign's design rows.
+
+Still outstanding:
+
   * Wire-up into iteration.py so EXECUTE_ANALYZE picks parallel mode
-    when ``max_parallel_arms > 1``.
+    when ``max_parallel_arms > 1``. Until that lands, ``run_units`` has no
+    production caller -- every caller today is a test.
 """
 from __future__ import annotations
 
@@ -116,31 +124,98 @@ def run_units(
     runner: ArmRunner,
     max_parallel: int | None = None,
 ) -> list[ArmUnitResult]:
-    """Fan out units to the runner.
+    """Fan out units to the runner; returns results in ``units`` order.
 
-    ``max_parallel`` is honored as an upper bound on simultaneous
-    in-flight runner calls. Phase A is synchronous over the runner;
-    the bound is enforced trivially. Phase B replaces this with
-    ``anyio.gather`` + a semaphore for real parallelism.
+    ``max_parallel`` is a CEILING on simultaneous in-flight ``runner`` calls.
+    ``None`` (the default) and ``1`` both mean the strictly sequential loop
+    this function has always been -- concurrency is opt-in, never a silent
+    default -- and a value above 1 genuinely runs that many units at once.
 
-    Returns results in the same order as ``units`` so callers can pair
-    them deterministically with their inputs (the merge step depends
-    on this — it would be nondeterministic otherwise).
+    IT USED TO BE A FALSE PROMISE, which is why this docstring is explicit.
+    The parameter was validated (``< 1`` raised) and then ignored: the body was
+    a plain ``for`` loop, so a caller asking for 8 got serial execution with no
+    signal that it had. That is worse than an unimplemented feature -- an
+    unimplemented feature announces itself, whereas a bound silently downgraded
+    to 1 looks exactly like a slow machine. The bound is now enforced rather
+    than documented.
+
+    WHY CONCURRENCY IS SAFE HERE, unlike at an optimization campaign's spending
+    stages. ``orchestrator.optimize.runner.execute_design`` keeps its own bound
+    at 1 for every fitting state because co-scheduled rows contend, and
+    contention distributed unevenly across a design matrix is absorbed by the
+    fitted coefficients as though it were a factor effect. An ``ArmUnit`` is not
+    a design point: units are ISOLATED BY CONSTRUCTION -- each gets its own git
+    worktree (``worktree.make_isolated_arm_runner`` dispatches with
+    ``isolation="worktree"``) and its own non-overlapping results directory
+    (``ArmUnit.relative_results_dir``) -- and nothing downstream fits a response
+    surface over them. ``merge_unit_results`` reduces per-unit statuses; it
+    estimates no coefficient that a neighbour effect could contaminate.
+
+    A THREAD pool, not ``anyio``: this module is synchronous throughout and its
+    unit of work blocks on a subprocess or an SDK subagent call, so a worker
+    holds the GIL only to start the child and to shape the result. Processes
+    would buy nothing and would break the injected-callable seam the module is
+    built on -- a test's in-process fake runner is not picklable.
+
+    POSITIONAL ORDER IS PART OF THE CONTRACT, not an incidental property of the
+    sequential loop this used to be. ``merge_unit_results`` pairs each result
+    with its own ``unit``, so a list appended to by completing workers would
+    mis-attribute every seed and condition SILENTLY rather than raising.
+    Results are therefore written into a pre-sized slot per input position and
+    never appended from a worker -- the same discipline, and for the same
+    reason, as ``execute_design``'s positional slots.
+
+    A runner that raises still becomes that unit's ``failed`` result, in its own
+    position, without disturbing its neighbours: one bad arm must not take down
+    the batch.
     """
     if max_parallel is not None and max_parallel < 1:
-        raise ValueError("max_parallel must be >= 1")
-    results: list[ArmUnitResult] = []
-    for unit in units:
+        raise ValueError(
+            f"max_parallel must be >= 1, got {max_parallel!r}: a bound below "
+            f"one is not a schedule, it is a stall.",
+        )
+
+    def _one(unit: ArmUnit) -> ArmUnitResult:
         try:
-            result = runner(unit)
+            return runner(unit)
         except Exception as exc:  # runner exceptions become failed units
-            result = ArmUnitResult(
+            return ArmUnitResult(
                 unit=unit,
                 status="failed",
                 error=f"{type(exc).__name__}: {exc}",
             )
-        results.append(result)
-    return results
+
+    if max_parallel is None or max_parallel == 1 or len(units) < 2:
+        return [_one(unit) for unit in units]
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    results: list[ArmUnitResult | None] = [None] * len(units)
+    # Sized to the SMALLER of the bound and the batch: spawning threads that
+    # can never be fed is noise in a thread dump.
+    with ThreadPoolExecutor(max_workers=min(max_parallel, len(units))) as pool:
+        # Every unit is submitted BEFORE any result is collected -- that is what
+        # makes them concurrent. Results are then collected in SUBMISSION order,
+        # which is harmless (a completed future does not block) and is what puts
+        # each outcome in its own slot regardless of when it finished.
+        futures = {pool.submit(_one, unit): i for i, unit in enumerate(units)}
+        for future, i in futures.items():
+            # `_one` converts a raising runner into a `failed` result itself, so
+            # a future raising HERE is a defect in this module rather than a bad
+            # arm -- let it propagate rather than fabricating a result row.
+            results[i] = future.result()
+
+    # Every slot filled: a None here would mean a submitted unit produced no
+    # result, which `merge_unit_results` would silently under-count.
+    missing = [i for i, r in enumerate(results) if r is None]
+    if missing:  # pragma: no cover - defensive; the loop above is total
+        raise RuntimeError(
+            f"run_units: unit(s) at position(s) {missing} produced no result "
+            f"under max_parallel={max_parallel}. Positional pairing downstream "
+            f"(merge_unit_results reads each result's own unit) would be "
+            f"silently wrong, so this aborts instead.",
+        )
+    return [r for r in results if r is not None]
 
 
 def default_max_parallel() -> int:

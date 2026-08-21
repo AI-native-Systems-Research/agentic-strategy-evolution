@@ -6,6 +6,13 @@
   "type": "object",
   "required": ["factor_ids", "kind", "resolution", "generators", "aliases", "run_order", "run_order_seed", "rows"],
   "additionalProperties": false,
+  "allOf": [
+    {
+      "$comment": "round and finalists are OPTIONAL at the top level because the spending stages (screen/foldover/refine) write neither -- they register a design over the factor space, which has no shortlist and no round counter. But a shortlist_replicate matrix without them is not a pre-registration of terminal discrimination at all: the finalists ARE the registered comparison, and the round is what the policy's registered guard reads to decide whether another round may be spent. Declaring them merely optional would let a confirm matrix omit the two fields that make it checkable, so the requirement is expressed conditionally on the kind rather than globally.",
+      "if": { "properties": { "kind": { "const": "shortlist_replicate" } }, "required": ["kind"] },
+      "then": { "required": ["round", "finalists"] }
+    }
+  ],
   "properties": {
     "factor_ids": {
       "type": "array",
@@ -15,8 +22,8 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["full", "fractional", "central_composite"],
-      "description": "Design family. \"fractional\" designs carry non-empty aliases; \"central_composite\" adds axial/center points for curvature."
+      "enum": ["full", "fractional", "central_composite", "foldover", "shortlist_replicate"],
+      "description": "Design family, as orchestrator.optimize.design labels it. \"fractional\" designs carry non-empty aliases; \"central_composite\" adds axial/center points for curvature. \"foldover\" is the REGISTERED FOLDOVER's block -- the screen's corners with one column (or every column) negated, so it is not a member of any tabulated family and reports resolution null; it is the only kind that carries folded_on / screen_iteration / alias_consequential, because the fold block alone is not a fittable design and the combined screen-plus-fold fit is what de-aliases. \"shortlist_replicate\" is the CONFIRM round's matrix (the paper's terminal-discrimination stage, spec 3.3): not a design over the factor space at all but r replicates of each shortlisted finalist, so it carries no generators and no aliases and instead declares round + finalists. It is the one kind whose rows are role \"confirm\". Note design.combine's \"combined\" label is deliberately absent: that design is assembled AT FIT TIME over two already-registered blocks and is never itself pre-registered, so a matrix on disk claiming it would be an artifact no stage writes."
     },
     "resolution": {
       "type": ["integer", "null"],
@@ -77,6 +84,57 @@
       "type": "object",
       "description": "Map of factor id -> the level it was pinned at for this matrix, for factors that are declared in the campaign but not columns of THIS design (e.g. a factor dropped after screening). Recorded because a row's levels alone cannot distinguish \"this factor was not varied\" from \"this factor was not present\"."
     },
+    "round": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Which CONFIRM round this matrix registers, counting rounds SPENT INCLUDING this one -- so the first confirm round is 1, not 0. Written by stage_runner._confirm_rows from _confirm_round, and it is the same number the compiled policy's registered guard {\"round\": {\">=\": max_rounds}} reads, which is why the 1-based convention is load-bearing rather than cosmetic: a 0-based count would let a campaign whose registered max_rounds is 1 run terminal discrimination twice. Epoch-scoped -- a recompiled epoch 2 starts again at 1, because transitions.jsonl is append-only across epochs and an unscoped count would arrive at the new epoch with its round cap already spent."
+    },
+    "finalists": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The SHORTLIST this round discriminates between, pre-registered before any replicate ran. One entry per finalist, in the order confirmation.json and certificate.terminal_regret_bound index them -- a row's apply.finalist is a position in THIS array, so its order is part of the join and not a presentation choice.",
+      "items": {
+        "type": "object",
+        "required": ["key", "levels", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable label for this finalist, \"f<index>\" for its position in this array. Carried so downstream artifacts (confirmation.json, shortlist.json) can name a finalist without restating its whole level dict."
+          },
+          "levels": {
+            "type": "object",
+            "description": "The complete configuration this finalist runs at -- every declared factor, held-fixed ones included. A partial level dict would silently drop that factor's flag from every replicate's command line, so _confirm_rows aborts rather than registering one."
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Provenance: WHY this configuration is on the shortlist (the fitted recommendation, a best-observed run, the known-valid baseline). What makes the shortlist auditable as a pre-registration rather than a list of coordinates."
+          }
+        }
+      }
+    },
+    "folded_on": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "FOLDOVER ONLY. The single factor id whose design column this fold block negates, or null for a FULL foldover (every column negated). The two regimes resolve different confounding: a resolution-III screen aliases two-factor interactions onto MAIN effects and only a full fold clears that (null), while resolution IV aliases 2fi with each other and negating one column separates every 2fi involving that factor. A reader who cannot answer which column was negated cannot reproduce the combined fit this iteration writes."
+    },
+    "screen_iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "FOLDOVER ONLY. Which iteration's screen block is the OTHER HALF of the response vector this fold's combined OLS fit is run over. The fold block alone is not a fittable design -- de-aliasing comes from fitting the screen and fold blocks together -- so without this field the effects.json the foldover iteration writes cites a response vector a reader cannot assemble."
+    },
+    "alias_consequential": {
+      "type": "array",
+      "description": "FOLDOVER ONLY. The alias pairs from the screen that were CONSEQUENTIAL -- confounded terms whose ambiguity actually changes the recommendation, as opposed to the full alias structure recorded in `aliases`. This is what the registered foldover branch fired on, copied onto the matrix so the artifact states the fact the branch was taken on rather than leaving it to be re-derived from the screen's recommendation.json.",
+      "items": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
     "policy_hash": {
       "type": "string",
       "minLength": 1,
@@ -100,8 +158,8 @@
         },
         "role": {
           "type": "string",
-          "enum": ["corner", "center", "axial"],
-          "description": "Design-point role: a full/fractional-factorial corner, a replicated center point (supplies the pure-error estimate), or a central-composite axial/star point (supplies curvature)."
+          "enum": ["corner", "center", "axial", "confirm"],
+          "description": "Design-point role: a full/fractional-factorial corner, a replicated center point (supplies the pure-error estimate), a central-composite axial/star point (supplies curvature), or a \"confirm\" replicate of a shortlisted finalist at terminal discrimination. A confirm row is not a design point in the response-surface sense -- nothing is fitted from it -- which is why it is a role of its own rather than a corner: `_best_observed` and the fitting states select on this field, and calling a replicate a corner would feed terminal-discrimination measurements into a surface fit."
         },
         "replicate": {
           "type": "integer",
@@ -137,6 +195,11 @@
                 }
               },
               "description": "Config-file patches (apply.kind: config_patch). Each is applied to a PER-RUN COPY of `path` -- the campaign author's file is never mutated -- and the copy's path is substituted for every occurrence of `path` in the assembled run command, so `path` must appear as an argument value in optimization.run_command. `pointer` is an RFC 6901 JSON pointer addressing an existing field; `value` keeps its declared type (an int stays an int). What was realized per run is recorded separately as the row's applied_patches."
+            },
+            "finalist": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "CONFIRM ROWS ONLY. Index into the matrix's top-level `finalists` array: which shortlisted configuration this replicate measured. It rides on `apply` rather than on the row because ConfigRow has no field for it and runs.jsonl records `apply` verbatim -- so which finalist each measurement belongs to is DURABLE EVIDENCE in the run log rather than an inference from matching level dicts after the fact, which is what terminal discrimination's paired differences are zipped by."
             },
             "center_choice_pinned": {
               "type": "object",
