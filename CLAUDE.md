@@ -341,6 +341,16 @@ config to check that declared `native_test` identifiers actually resolve, that
 present, and that the manipulation predicates hold. Each of those otherwise
 costs a full campaign to discover.
 
+`--smoke` executes **one** configuration, so it cannot see the apparatus
+properties that only appear across a *range* of them: a `run_timeout_sec`
+sized from the cheap corner of the design (run order is randomized, so the slow
+corner may run first), a factor whose levels move the objective by less than
+run-to-run noise, a noise floor measured in the wrong load regime, an objective
+that is censored by a request deadline, or a workload that leaves the mechanism
+under study entirely idle. `docs/optimization-campaign-guide.md` §7 is the
+pre-flight checklist for those — six checks costing a handful of runs against a
+budget of 60-90, each one a defect a real campaign shipped.
+
 `--smoke` remains the **first** thing to run on any campaign, compiled policy
 or not: a policy compiles cleanly from a campaign whose `run_command` cannot
 exec, and a hashed pre-registration of an experiment that cannot execute a
@@ -398,6 +408,11 @@ worked example). The full friction-report resolution map is in
 - `docs/campaign-authoring-guide.md` — locked_parameters, the
   "what to lock" inventory, rehearsal-as-instrument (#245
   resolution).
+- `docs/optimization-campaign-guide.md` §7 — **pre-flight checklist**: size the
+  timeout from the worst corner, verify each factor beats the noise floor,
+  measure noise at the real operating point, check the objective is fittable and
+  uncensored, confirm the workload exercises the mechanism, and make probe
+  harnesses fail loudly. Run it before a policy hash is written.
 - `docs/optimization-campaign-guide.md` — authoring guide for
   `kind: optimization` factorial/response-surface campaigns, including
   "The compiled policy" section (states, artifacts, `report.json`, epochs).

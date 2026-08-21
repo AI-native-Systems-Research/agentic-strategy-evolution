@@ -20,6 +20,13 @@ If you are editing this guide, fix the **example**, never the test, when
 one fails — an example that would fail its own validator is the single
 most damaging thing a doc for AI authors can contain.
 
+**Before you launch anything, read §7 (pre-flight).** Static validation and
+`--smoke` catch a campaign that cannot execute; §7 covers the apparatus
+properties that only show up across a *range* of configurations — a timeout
+sized from the wrong corner, a factor that moves nothing, a noise floor
+measured in the wrong regime, an objective that is not fittable. Each item
+there is a defect a real campaign shipped.
+
 ## 1. Mental model
 
 ### Why factorial beats one-factor-at-a-time
@@ -185,10 +192,15 @@ prose findings do not.
 The block is required when `kind: optimization`, and forbidden otherwise
 (the validator's rule 1). Its three required top-level keys are `response`,
 `factors`, and `design`; everything else — `design_space`, `guidance`,
-`test_command`, `integrity_command`, `stages` — is optional but load-
-bearing when present.
+`test_command`, `integrity_command`, `run_timeout_sec`, `stages` — is
+optional but load-bearing when present.
 
 ### `response`
+
+> `noise_estimate_pct` should be **measured, not guessed** — at the operating
+> point the campaign will actually run. See §7.3, and §7.4 on checking that the
+> metric you chose is a fittable response at all.
+
 
 What the campaign is optimizing, and the guardrails that keep a winning
 candidate honest.
@@ -368,6 +380,51 @@ reader, and they are the slots a future model-facing stage would read.
   `native_test` and exits clean iff all pass.
 - **`integrity_command`** — optional, independent of any single relation
   (a checksum or reconciliation script).
+
+### `run_timeout_sec`
+
+Wall-clock ceiling, in seconds, on **one** invocation of `run_command` — one
+row of the design matrix, one measurement. Defaults to **600**, which is what
+every campaign authored before this field existed ran at.
+
+Raise it when the target's single *legitimate* measurement is a **compound**
+one: an objective evaluation that is itself a bisection, a sweep to saturation,
+or a multi-replicate average inside the target's own harness. A live campaign
+whose one objective evaluation was a capacity bisection over ~5 simulator runs
+died on its first row at the old fixed ceiling, and every workaround available
+at that point bought the schedule with the science — a shorter simulation
+horizon means a noisier slope statistic, a looser bisection tolerance means a
+coarser objective value, and caching results across invocations would open a
+covert channel between arms the design registered as independent. Declaring the
+real ceiling is the only option that leaves the measurement alone.
+
+```yaml
+optimization:
+  run_command: "./sim capacity-bisect --tol 0.01 --json"
+  run_timeout_sec: 5400          # ~5 simulator runs per objective evaluation
+```
+
+Two things it is not. It is **not a budget**: a run that exceeds the ceiling
+records a `failed` row naming the timeout, that row is excluded from the fit
+(the complete-row subset rule, spec §4 D2), and the epoch continues — you never
+get a partial measurement, because a partial measurement of a compound
+objective is indistinguishable from a complete measurement of a different one.
+And it is **not free to over-size**: the ceiling is per row, so
+`run_timeout_sec × runs` is the campaign's worst-case wall clock, and that worst
+case is reachable rather than hypothetical — a target that hangs consumes the
+whole ceiling on every affected row before failing it. `nous validate campaign`
+warns above 3600 and quantifies the exposure against your declared `max_runs`.
+
+The resolved value — declared or defaulted — is echoed into every iteration's
+`design_matrix.json` as `run_timeout_sec`, beside `workload_seeds` and
+`policy_hash`. A reader of a timed-out row can then tell which ceiling produced
+it without knowing which campaign revision was on disk at the time.
+
+`--smoke` prints the probe configuration's real duration next to this ceiling,
+and flags a probe that used more than half of it. That check matters most when
+the probe *passes*: the first design corner is not the design's slowest, so a
+corner finishing at 570s under a 600s ceiling clears smoke and still kills the
+epoch on the first slower row.
 
 ### `stages`
 
@@ -569,7 +626,7 @@ nothing was executing that contract.
     nous validate campaign campaign.yaml --smoke
 
 `--smoke` runs the test command and **one** configuration at every factor's
-first level, then reports five things static checks cannot see:
+first level, then reports six things static checks cannot see:
 
 | Check | Failure it prevents |
 |---|---|
@@ -578,6 +635,7 @@ first level, then reports five things static checks cannot see:
 | `response.primary.metric` is present in the output | every run parses and scores NaN, poisoning the fit |
 | manipulation predicates hold at the first level | every run rejected while the target is fine |
 | each declared `build_checks.mechanism_paths` entry resolves under the target | a typo'd entry silently narrows the drift oracle to less than declared — to nothing, if every entry is wrong |
+| the probe's real duration against the effective `run_timeout_sec` | a ceiling the first corner clears and a slower corner does not — the probe passes, then row *k* of the epoch dies on the ceiling |
 
 The predicate check builds its scope the way `run_stage` does — the target's own
 `applied` echo wins over the requested levels — because using the requested
@@ -1701,6 +1759,10 @@ kind's own design and worked examples actually shipped during development
 — a documented near-miss teaches better than an abstract warning, so they
 are named here rather than smoothed over.
 
+These are mistakes in what you **wrote**. For mistakes in what you
+**assumed** about the target — a mis-sized timeout, an inert factor, a noise
+floor from the wrong regime — see §7.
+
 ### 6.1 Trivially-true manipulation predicates
 
 **Wrong:**
@@ -1971,6 +2033,249 @@ disciplines on the same campaign would be incoherent.
 `kind: optimization` campaign. If you want to reason about how
 sophisticated the factor structure is, that's what `design.screen.resolution`
 and the factor count already express.
+
+## 7. Pre-flight: measure the apparatus before you pre-register a design
+
+Everything in §6 is a mistake in what you *wrote*. This section is about
+mistakes in what you *assumed* — and they are more expensive, because a
+campaign whose design is sound but whose apparatus is mis-sized still burns
+its whole run budget before saying so.
+
+The rule that ties this section together:
+
+> **A pre-registration is a promise about an experiment that can execute.
+> Probe first, then compile.**
+
+`nous validate campaign FILE --smoke` is the first line of defence and should
+always be run. But `--smoke` executes **one** configuration; several apparatus
+properties only show up across a *range* of configurations, and those are what
+this section covers. Every item below is a defect a real campaign shipped.
+
+### 7.1 Size `run_timeout_sec` from a measured worst case, not a typical one
+
+**Wrong:** leave `optimization.run_timeout_sec` at its default, having timed
+one run.
+
+**Right:** time the *slowest plausible* configuration, then set the ceiling
+with headroom.
+
+```yaml
+optimization:
+  # Measured: baseline (LRU, large tier) bisects in ~330 s. The slow corner
+  # (ARC, small tier) takes materially longer -- ARC's bookkeeping on a
+  # smaller tier does more work per step. 1800 s covers the slow corner with
+  # ~2x headroom.
+  run_timeout_sec: 1800
+```
+
+This is worth its own item because of *how* the failure presents. The
+campaign does not warn you; the row simply dies:
+
+```
+RuntimeError: config run failed: Command '[...]' timed out after 600 seconds
+```
+
+A real campaign hit this twice. The first timing pass measured the **baseline**
+configuration (~330 s, comfortably inside the ceiling) and concluded the
+budget was fine. The screen then died on its first row, which the randomized
+run order happened to make the *slow corner* of the space. Note the ordering
+is the point: a pre-registered design deliberately randomizes run order, so
+you cannot assume the cheap corners run first and warn you gently.
+
+Two properties make an objective especially prone to this:
+
+- **A compound response.** If one objective evaluation is itself a search — a
+  bisection, a ramp, a convergence loop — its cost is a multiple of a single
+  run's. Time the *evaluation*, not the run.
+- **Factors that change the cost of measuring.** A factor that alters how much
+  work the target does per unit of measurement (cache size, policy complexity,
+  concurrency) makes cost vary *across the design matrix*, so the mean is the
+  wrong statistic. Take the max.
+
+**Probe recipe:** measure the two extreme corners of your factor space (all
+factors at their cheapest levels, all at their most expensive), take the
+larger, and set `run_timeout_sec` to roughly twice it. Cheap: two runs.
+
+### 7.2 Verify each factor actually moves the response, at the operating point
+
+**Wrong:** declare eight factors because the target documents eight knobs.
+
+**Right:** measure each factor's effect against the noise floor first, and
+declare only the ones that clear it.
+
+`--smoke` checks that manipulation predicates **hold** — that the lever
+engaged. It does not check that the lever **matters**. A factor whose levels
+move the response by less than run-to-run noise passes every static and smoke
+check, consumes its share of a resolution-V design, and contributes only
+variance to the fit. A policy hash computed over such factors is a
+pre-registration of nothing.
+
+**Probe recipe**, and note both halves are required:
+
+1. **Noise floor.** Run the baseline configuration at ≥5 workload seeds.
+   Compute the coefficient of variation of your objective. That is your floor.
+2. **Per-factor effect.** For each candidate factor, run its extreme levels
+   with everything else at baseline. Effect size is the difference in the
+   objective.
+3. **Keep a factor only if `|effect| > 2 x noise CV`.** Report the ones you
+   dropped; a factor that does not move the response is a finding about the
+   target, not a failure of the campaign.
+
+A real campaign began with eight candidate factors and found that **three
+were unusable** — two levels caused the target to abort outright, and two more
+produced byte-identical output because the knob was captured in config but not
+yet consumed by any mechanism. Discovering that after pre-registration would
+have spent the run budget on dead axes.
+
+### 7.3 Measure the noise floor at the operating point you will actually run
+
+**Wrong:** measure noise once, anywhere, and reuse the number.
+
+**Right:** measure noise at, or near, the configuration the campaign will
+spend most of its budget on — and re-measure if you change the operating
+point.
+
+Noise is not a property of the target; it is a property of the target *at a
+load*. The same system measured below capacity, near capacity, and past
+capacity gives three different variances, and the ordering is not always
+intuitive. In one measured case a tail percentile was *less* noisy than a
+lower percentile at the same load, which inverted the obvious choice of
+objective.
+
+Worse, effect sizes measured in the wrong regime can be **actively
+misleading** rather than merely imprecise. The same campaign measured
+apparent factor effects of −6.8% while the system was queue-bound; at a
+healthy operating point the same factors moved the objective by 0.3–3.3%
+against a 4.8% noise floor — i.e. nothing. The large effects were queueing
+dynamics that happened to correlate with the config change.
+
+`response.noise_estimate_pct` should be a number you measured, not a guess.
+
+### 7.4 Check that your objective is a fittable response
+
+**Wrong:** pick the metric your stakeholders quote.
+
+**Right:** pick a metric that (a) responds monotonically to the thing you are
+varying, and (b) does not swing by orders of magnitude on a single factor
+change.
+
+Symptoms that a metric is unfittable, all observed:
+
+- **Extreme tail sensitivity.** One factor change moved a P99 by +268% while
+  the P90 moved +9%. A response surface fitted to that P99 is fitting a handful
+  of unlucky requests, not the system.
+- **Censoring.** A default request timeout pinned the objective at the deadline
+  for every overloaded configuration (three configurations all reporting
+  ~300,000 ms — the timeout, not a latency). The surface goes flat exactly
+  where the search operates. If your target has a deadline, either raise it
+  beyond any plausible measurement or exclude censored rows explicitly.
+- **Degeneracy.** A throughput objective under a fixed arrival rate is largely
+  pinned by the arrival rate. Check that your objective can actually move
+  before you optimize it.
+
+**Probe recipe:** sweep one factor across its full range and plot the
+objective. If it is monotone and its dynamic range comfortably exceeds the
+noise floor, it is fittable.
+
+### 7.5 Confirm the workload exercises the mechanism under study
+
+**Wrong:** use the target's default workload.
+
+**Right:** confirm the subsystem you are tuning is actually active, by reading
+a metric that proves it.
+
+A campaign studying KV-cache offload ran the target's default workload and
+measured a cache hit rate of **exactly 0.000** — the default workload had no
+prefix reuse at all, so every cache factor was inert for a reason that had
+nothing to do with the factors. The tell was available in the metrics output
+the whole time.
+
+Pick one metric that is **zero when the mechanism is idle** and assert it is
+non-zero before you launch. For a cache: hit rate. For an eviction policy:
+eviction count. For an admission controller: rejection count. Then put it in
+`design_space.invariants` so a configuration that silently disables the
+mechanism is recorded as infeasible rather than fitted as a data point.
+
+### 7.6 Make your probe harness fail loudly
+
+**Wrong:**
+
+```python
+subprocess.run(cmd)                 # exit code ignored
+d = json.load(open(metrics_path))   # may be a stale file from the last run
+```
+
+**Right:**
+
+```python
+if os.path.exists(metrics_path):
+    os.unlink(metrics_path)         # never read a stale result
+p = subprocess.run(cmd, capture_output=True, text=True)
+if p.returncode != 0:
+    raise ProbeError(f"exit {p.returncode}: {p.stderr[-400:]}")
+if "panic:" in p.stdout + p.stderr:
+    raise ProbeError("target panicked")
+if not os.path.exists(metrics_path):
+    raise ProbeError("no metrics written")
+```
+
+This belongs in a guide about *campaigns* because the probes that size your
+apparatus are usually throwaway scripts, and a throwaway script that fails
+silently produces confident wrong numbers that then get pre-registered.
+
+The concrete failure: a probe harness that ignored exit codes and re-read a
+stale metrics file reported a factor level as having **no effect, identical to
+baseline** — when in fact that level made the target *abort*. Three factors
+were briefly believed live on that basis. The same class of defect as this
+kind's two historical fit bugs (a singular `XᵀX` from aliased columns; NaN
+poisoning from infeasible rows): **a silent failure that looks like a clean
+result.**
+
+### 7.7 Point certifying relations at tests that fail without the mechanism
+
+**Wrong:** hang a `correctness` relation on an existing test that already
+passes, because it happens to cover the area you are changing.
+
+**Right:** point it at a test that is *new with*, or *strengthened by*, the
+mechanism.
+
+`verify` enforces this and will hard-fail:
+
+```
+native test(s) TestFoo passed before the mechanism existed — a test that
+passes without the mechanism does not test it, so it cannot certify the
+apparatus every later measurement rests on.
+```
+
+A real campaign hit exactly this. It deliberately pointed three relations at a
+guard test that asserted the *unimplemented* state of the mechanism — good
+instinct, wrong slot. That test necessarily passed on the pre-build tree, so it
+could not certify anything. The right structure is:
+
+- **Certifying relations** → the new tests the mechanism brings with it.
+- **A stale guard test** → still required to pass (so the change cannot quietly
+  delete it), but checked as a *diff review*, not as a certifying relation.
+
+`optimization.build_checks.allow_preexisting_tests: true` exists for the
+legitimate case — a genuine backward-compatibility relation, where "this still
+behaves as it did" is exactly the claim.
+
+### 7.8 The pre-flight checklist
+
+Run these before you let a policy hash be written. Total cost is a handful of
+runs against a budget of 60–90.
+
+| # | Check | Cost | Fails if |
+|---|---|---|---|
+| 1 | `nous validate campaign FILE --smoke` | 1 run | predicates unsatisfiable, tests unmatched, `run_command` cannot exec |
+| 2 | Mechanism is active (§7.5) | 1 run | the mechanism's own metric is zero |
+| 3 | Noise floor at the operating point (§7.3) | ≥5 runs | — (produces `noise_estimate_pct`) |
+| 4 | Per-factor effect vs noise (§7.2) | 2 per factor | any factor under 2x the noise CV |
+| 5 | Objective is monotone and uncensored (§7.4) | 4–6 runs | orders-of-magnitude swings, or values pinned at a deadline |
+| 6 | Worst-corner timing (§7.1) | 2 runs | `run_timeout_sec` under ~2x the slow corner |
+
+If a check fails, revise the campaign — **not** the check. A pre-registration
+whose apparatus was not verified first is a hash over an assumption.
 
 ## See also
 
