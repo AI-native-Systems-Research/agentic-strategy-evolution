@@ -557,8 +557,20 @@ one-factor-at-a-time search.
 | `workload_seeds` | Row index → the seed exported into that row's run, when the campaign declares `workload.seed_env` (§3.7 oracle 3) |
 | `paired` | `true` on a confirm-round matrix under common random numbers — replicate *i* of every finalist ran the same draw, which is what lets the terminal bound read the paired differences |
 | `held_fixed` | Factor id → the level it was pinned at, for factors declared in the campaign but not columns of *this* design |
+| `round` / `finalists` | **`shortlist_replicate` only** (and required there). Which confirm round this is, counting rounds *spent including this one* — so the first is 1, which is what the registered `{"round": {">=": max_rounds}}` guard reads — plus the shortlist it discriminates between: one entry per finalist with its `key`, complete `levels`, and the `why` that says where it came from (the fitted recommendation, a best-observed run, the known-valid baseline). A row's `apply.finalist` is a *position in this array*, so its order is part of the join |
+| `folded_on` / `screen_iteration` / `alias_consequential` | **`foldover` only.** Which column the fold block negated (`null` = a full foldover, which is what a resolution-III screen needs), which iteration's screen block is the other half of the response vector the combined OLS fit runs over, and which alias pairs were *consequential* — the facts the registered foldover branch fired on. A fold block alone is not a fittable design, so a reader without these three cannot assemble the response vector the iteration's `effects.json` cites |
 
-Those last six are **resolved run parameters**, not design structure: facts
+`kind` spans five values, one per stage that registers a matrix: `full` /
+`fractional` (screen), `central_composite` (refine), `foldover`, and
+`shortlist_replicate` (confirm). `design.combine`'s `"combined"` label is
+deliberately **not** among them — that design is assembled at *fit* time over
+two already-registered blocks and is never itself pre-registered. Row `role`
+spans `corner` / `center` / `axial` / `confirm`, the last being a finalist
+replicate rather than a design point: nothing is fitted from it, which is why
+it is a role of its own.
+
+Those six resolved-run-parameter rows above (`policy_hash` through
+`held_fixed`) are **not design structure**: facts
 about how the rows were measured rather than which rows they are. They live on
 the pre-registration because the campaign file they came from may since have
 been revised for the next epoch, and a matrix that no longer describes its own
