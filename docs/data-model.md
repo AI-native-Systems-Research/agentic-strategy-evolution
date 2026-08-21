@@ -551,6 +551,17 @@ one-factor-at-a-time search.
 | `aliases` | Named aliased effect pairs, if any — the honest cost of resolution < V |
 | `rows` | The matrix rows themselves, in coded (±1) space |
 | `run_order` / `run_order_seed` | Randomized execution order plus the seed that reproduces it — immune to time-ordered drift a sequential grid can't rule out |
+| `policy_hash` | The registered policy that scheduled this matrix — the same hash `transitions.jsonl` records per row |
+| `run_timeout_sec` | The wall-clock ceiling **every row here was measured under** — `optimization.run_timeout_sec`, or 600 when the campaign declared none. Recorded either way, so a `failed` row reading "timed out after 600 seconds" is readable without knowing which campaign revision was on disk |
+| `workload_seeds` | Row index → the seed exported into that row's run, when the campaign declares `workload.seed_env` (§3.7 oracle 3) |
+| `paired` | `true` on a confirm-round matrix under common random numbers — replicate *i* of every finalist ran the same draw, which is what lets the terminal bound read the paired differences |
+| `held_fixed` | Factor id → the level it was pinned at, for factors declared in the campaign but not columns of *this* design |
+
+Those last five are **resolved run parameters**, not design structure: facts
+about how the rows were measured rather than which rows they are. They live on
+the pre-registration because the campaign file they came from may since have
+been revised for the next epoch, and a matrix that no longer describes its own
+runs is not a record.
 
 ### 7b. runs.jsonl — "What did each executed configuration produce?"
 

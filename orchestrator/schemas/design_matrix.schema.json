@@ -54,6 +54,28 @@
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/row" }
+    },
+    "run_timeout_sec": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Wall-clock ceiling, in seconds, that EVERY row of this matrix was measured under -- optimization.run_timeout_sec resolved through stage_runner.resolve_run_timeout, defaulting to 600. Recorded whether or not the campaign declared it, because \"the author did not choose\" and \"the author chose 600\" produce identical runs: without this field, a failed row reading \"timed out after 600 seconds\" cannot be told apart from the same campaign re-launched at a different ceiling. A resolved run parameter that shaped the measurement belongs on the pre-registration, not only in a campaign file that may since have been revised for the next epoch."
+    },
+    "workload_seeds": {
+      "type": "object",
+      "description": "Map of row_index (as a string) -> the workload seed exported into that row's run, present only when the campaign declares optimization.workload.seed_env (spec 3.7 oracle 3, 3.8). Written by stage_runner._assign_workload_seeds BEFORE this matrix is registered, so the seeds are pre-registered draws rather than an after-the-fact log."
+    },
+    "paired": {
+      "type": "boolean",
+      "description": "True on a confirm-round matrix under common random numbers: replicate i of EVERY finalist ran the same seed, so the draw's contribution cancels out of the finalist-to-finalist difference and certificate.terminal_regret_bound reads the paired differences (bonferroni_one_sided_t_paired) instead of Welch-combining two independent variances. Absent at the spending stages, where a seed shared across the block would confound the entire fit with one workload draw."
+    },
+    "held_fixed": {
+      "type": "object",
+      "description": "Map of factor id -> the level it was pinned at for this matrix, for factors that are declared in the campaign but not columns of THIS design (e.g. a factor dropped after screening). Recorded because a row's levels alone cannot distinguish \"this factor was not varied\" from \"this factor was not present\"."
+    },
+    "policy_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Content hash of the compiled policy.json that scheduled this matrix. Provenance: a reader can check that this design was produced under the pre-registration that was hashed before the first benchmark run, and not a later one -- the same hash transitions.jsonl records per row."
     }
   },
   "$defs": {
