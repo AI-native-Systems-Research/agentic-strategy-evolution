@@ -2096,6 +2096,33 @@ Two properties make an objective especially prone to this:
 factors at their cheapest levels, all at their most expensive), take the
 larger, and set `run_timeout_sec` to roughly twice it. Cheap: two runs.
 
+**For a compound objective, corners are not enough — size from the slowest
+PROBE the search can reach.** This is the subtler half, and getting it wrong
+cost a row in a real campaign even after the ceiling had already been raised
+once from the corner measurement.
+
+When the objective is a search (a bisection over arrival rate, a ramp, a
+convergence loop), each probe's cost depends on the *value being probed*, not
+only on the configuration. A capacity search at rate `r` over a horizon `T`
+simulates `r x T` units of work, so a probe at 24 req/s costs ~16x a probe at
+1.5 req/s. The bracket's reachable ceiling therefore sets the worst-case row:
+
+    worst row  ~=  (max reachable probe / baseline probe) x baseline row cost
+
+with `max reachable probe = hi x 2^(expansion steps)` for a doubling search.
+Concretely: a bracket of `[0.75, 3.0]` with 5 evaluations can double `hi` three
+times to 24 — 16x the baseline probe — so a 330 s baseline row implies a
+~5,300 s worst row. A ceiling of 2,400 s looks generous against the measured
+corners and is still 2x short.
+
+**The perverse consequence, which is what makes this a trap:** a *better*
+configuration costs *more* to measure, because the search must climb higher
+before it finds a failing point. So the rows most likely to time out are the
+ones carrying your best candidates — and losing them biases the surface toward
+mediocre configurations while every diagnostic looks healthy. Bound the search
+explicitly (cap the bracket, or cap the probe value) rather than relying on the
+timeout to do it.
+
 ### 7.2 Verify each factor actually moves the response, at the operating point
 
 **Wrong:** declare eight factors because the target documents eight knobs.
