@@ -194,6 +194,36 @@ def _opt_block(campaign: dict) -> dict:
     return opt
 
 
+def resolve_run_timeout(opt: dict | None) -> int:
+    """The wall-clock ceiling one ``run_command`` invocation runs under.
+
+    Public because the resolution has to be identical in two places that do not
+    share a code path: this module, which builds the config runner every epoch
+    state measures through, and ``cli._smoke_probe_one_config``, which launches
+    exactly one configuration before any epoch exists. ``--smoke`` is where an
+    author first meets the ceiling, so it must be the SAME ceiling -- a probe
+    that silently ran at 600 while the epoch runs at 5400 (or the reverse) would
+    make the one check that exists to catch contract mismatches into a source of
+    them.
+
+    Absence resolves to ``DEFAULT_RUN_TIMEOUT_SEC``, i.e. exactly what this seam
+    was hardcoded to before the field existed. That is a compatibility
+    requirement rather than a preference: an epoch's ``design_matrix.json`` is a
+    pre-registration, and a ceiling that moved underneath an already-registered
+    design would mean the artifact no longer describes the runs it registered.
+
+    A non-integer or non-positive value cannot reach here from a schema-valid
+    campaign (``run_timeout_sec`` is ``type: integer, minimum: 1``), so one is
+    treated as absent rather than raising: a run at 0 seconds fails instantly on
+    every row, and turning a hand-edited campaign file into an epoch-wide abort
+    at the measurement seam would attribute the failure to the wrong place.
+    """
+    raw = (opt or {}).get("run_timeout_sec")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return runner.DEFAULT_RUN_TIMEOUT_SEC
+
+
 def _check_correctness_relations(
     factors, test_results: dict[str, bool] | None,
 ) -> tuple[list, list]:
@@ -1546,6 +1576,7 @@ def run_stage(
             metric_path=((opt.get("response") or {}).get("primary") or {}).get(
                 "metric", "",
             ),
+            timeout=resolve_run_timeout(opt),
             log_dir=Path(work_dir) / "runs" / f"iter-{iteration}" / "failed_runs",
         )
 
@@ -2001,6 +2032,16 @@ def run_stage(
         # policy that scheduled it, so a reader can check that this design was
         # produced under the policy that was pre-registered and not a later one.
         payload["policy_hash"] = policy_mod.policy_hash(pol)
+        # ... and the ceiling every row of it was measured under. Recorded even
+        # when the campaign declared nothing, because "the author did not choose"
+        # and "the author chose 600" produce the same runs, and a reader of a
+        # `failed` row whose error says "timed out after 600 seconds" should not
+        # have to know which release of Nous wrote it to learn whether that
+        # ceiling was intentional. Same convention as `workload_seeds`: a
+        # resolved run parameter that shaped the measurement belongs on the
+        # pre-registration, not only in the campaign file that may since have
+        # been revised for the next epoch.
+        payload["run_timeout_sec"] = resolve_run_timeout(opt)
         artifacts.write_design_matrix(iter_dir, payload)
 
     _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)

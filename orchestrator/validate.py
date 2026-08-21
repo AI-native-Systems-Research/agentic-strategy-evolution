@@ -984,6 +984,77 @@ def _rule16_workload_seed_env(opt: dict) -> list[str]:
     return errors
 
 
+# An hour: the point at which a campaign stops being something an author waits
+# on and becomes something they schedule. Nothing in a campaign declares how long
+# its author is willing to wait, so a threshold derived from the campaign would be
+# inventing the number it claimed to derive.
+HIGH_RUN_TIMEOUT_SEC = 3600
+
+
+def _rule18_high_run_timeout_warning(opt: dict, factors: list[dict]) -> list[str]:
+    """Rule 18: warn when ``run_timeout_sec`` buys a week of wall clock.
+
+    ``run_timeout_sec`` exists precisely so that a target whose single
+    LEGITIMATE measurement is a compound one -- an objective evaluation that is
+    itself a bisection or a sweep to saturation -- can declare the real ceiling
+    instead of buying a shorter one with a noisier statistic. So a large value is
+    not wrong, and this is a WARNING: erroring on it would re-close the gap the
+    field was added to open.
+
+    What it IS, and what the author is the only person positioned to judge, is a
+    schedule commitment multiplied by the run budget. The ceiling is per ROW; a
+    90-row screen at a two-hour ceiling is 180 hours of worst-case wall clock,
+    and the ceiling's own failure mode makes that worst case reachable rather
+    than hypothetical -- a target that hangs (a deadlock, a saturated queue that
+    never drains, a simulator waiting on a resource) consumes the full ceiling on
+    every affected row and then fails it. The number the author typed is the only
+    place that exposure is visible before the campaign is launched.
+
+    The warning quantifies the exposure with the run budget the campaign
+    declares. ``design.max_runs`` when present is the author's own stated
+    ceiling on rows; otherwise the ``2**k`` full factorial, which is what
+    ``_build_design`` falls back to and therefore an honest upper bound on the
+    rows a screen can spend (a fractional design spends fewer -- that direction
+    is safe for a warning about too MUCH time). Replicates and confirm rounds
+    push the true total higher still, so the figure quoted is a floor on the
+    exposure, not an estimate of it.
+
+    3600 as the threshold rather than something derived: an hour is the point at
+    which a campaign stops being something an author waits on and becomes
+    something they schedule, and no field in the campaign says how long the
+    author is willing to wait, so a derived threshold would be inventing the
+    number it claims to derive.
+    """
+    raw = opt.get("run_timeout_sec")
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw <= HIGH_RUN_TIMEOUT_SEC:
+        return []
+    design = opt.get("design") if isinstance(opt.get("design"), dict) else {}
+    max_runs = design.get("max_runs")
+    if isinstance(max_runs, int) and not isinstance(max_runs, bool) and max_runs > 0:
+        runs, basis = max_runs, "design.max_runs"
+    else:
+        k = len(factors)
+        if k == 0:
+            return []
+        runs, basis = 2 ** k, f"the {k}-factor full factorial"
+    hours = runs * raw / 3600.0
+    return [
+        f"WARN: optimization.run_timeout_sec={raw} is a per-ROW ceiling, so "
+        f"{runs} run(s) ({basis}) commit up to {hours:.0f} hours "
+        f"({hours / 24:.1f} days) of worst-case wall clock before replicates or "
+        f"a second confirm round are counted. That worst case is reachable, not "
+        f"hypothetical: a target that hangs burns the whole ceiling on every "
+        f"affected row and then fails it. Keep the value if the target's single "
+        f"measurement really is compound (a bisection, a sweep to saturation) -- "
+        f"that is what the field is for, and shortening the measurement to fit a "
+        f"smaller ceiling would buy the schedule with a noisier statistic. "
+        f"Otherwise lower it to just above the slowest corner's expected "
+        f"duration, so a hang fails fast instead of quietly consuming the "
+        f"budget. Run --smoke first: it prints the probe's real duration "
+        f"alongside this ceiling.",
+    ]
+
+
 def _rule17_config_patch_path_reachable(campaign: dict, opt: dict,
                                          factors: list[dict]) -> list[str]:
     """Rule 17: a ``config_patch`` factor's file must be reachable from the run.
@@ -1298,6 +1369,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule15_build_requires_baseline(opt))
     errors.extend(_rule16_workload_seed_env(opt))
     errors.extend(_rule17_config_patch_path_reachable(campaign, opt, factors))
+    errors.extend(_rule18_high_run_timeout_warning(opt, factors))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     return errors
 

@@ -771,10 +771,15 @@ def _smoke_check_optimization(campaign: dict) -> list[str]:
         pointer that wrote it, value and type compared against the requested
         level.
 
-    One probe run costs seconds and catches all five. Also checked, for free
-    (no subprocess): a declared ``build_checks.mechanism_paths`` entry that
-    resolves to nothing under the target, which silently narrows the drift
-    oracle instead of failing.
+    One probe run costs seconds and catches all five. It also reports the
+    probe's real DURATION against the effective ``run_timeout_sec``, and flags a
+    probe that consumed more than half of it -- the case that matters is the one
+    where the probe SUCCEEDS, because the first design corner is not the design's
+    slowest, so a corner finishing just inside the ceiling clears smoke and still
+    kills row *k* of the epoch. Also checked, for free (no subprocess): a
+    declared ``build_checks.mechanism_paths`` entry that resolves to nothing
+    under the target, which silently narrows the drift oracle instead of
+    failing.
 
     Returns a list of problems; empty means the contract holds at the first
     design corner.
@@ -875,8 +880,11 @@ def _smoke_probe_one_config(
     reads back — has exactly one lifetime with exactly one cleanup, rather than
     a removal duplicated across this function's several early returns.
     """
+    import time
+
     from orchestrator.optimize import predicates, runner
     from orchestrator.optimize.matrix import render_apply
+    from orchestrator.optimize.stage_runner import resolve_run_timeout
 
     problems: list[str] = []
     levels = {f.id: f.levels[0] for f in factors if getattr(f, "levels", None)}
@@ -885,11 +893,18 @@ def _smoke_probe_one_config(
     # landed, and without a log dir the runner cleans its scratch copies up (as
     # it should — under a real campaign the surviving copies live next to the
     # iteration's artifacts as evidence).
+    # The SAME ceiling the epoch will run under, resolved through the same
+    # function -- not a probe-specific one. `--smoke` exists to catch mismatches
+    # between what the campaign declares and what the target does; a probe that
+    # quietly ran at 600 while the epoch runs at 5400 (or the reverse) would turn
+    # the one check that catches those into a source of them.
+    timeout = resolve_run_timeout(opt)
     cfg_runner = runner.make_config_runner(
         opt["run_command"], cwd=repo,
         metric_path=((opt.get("response") or {}).get("primary") or {}).get(
             "metric", "",
         ),
+        timeout=timeout,
         log_dir=probe_dir / "failed_runs",
     )
 
@@ -903,16 +918,37 @@ def _smoke_probe_one_config(
     row = _Row()
     row.levels = dict(levels)
     row.apply = render_apply(factors, levels)
+    started = time.monotonic()
     try:
         obs = cfg_runner(row)
     except Exception as exc:  # noqa: BLE001 — any failure is a finding
         problems.append(
-            f"run_command failed at the first design corner {levels}: {exc}",
+            f"run_command failed at the first design corner {levels} under a "
+            f"{timeout}s run_timeout_sec ceiling: {exc}",
         )
         return problems
+    elapsed = time.monotonic() - started
 
-    print(f"  smoke: ran one configuration {levels} — "
+    # The ceiling AND the duration, together. Either alone is uninformative: the
+    # ceiling is the number the author typed and can already read, and a bare
+    # duration says nothing about the headroom. The pair is what answers the
+    # question a 90-row screen would otherwise answer on row 1 -- and it answers
+    # it for the SUCCEEDING probe too, which is the case the timeout error can
+    # never cover: a corner that finishes at 570s under a 600s ceiling has
+    # already passed smoke and will still kill the epoch on the first slower row.
+    print(f"  smoke: ran one configuration {levels} in {elapsed:.1f}s "
+          f"(run_timeout_sec ceiling: {timeout}s) — "
           f"{len(obs)} observable(s) returned")
+    if elapsed > 0.5 * timeout:
+        problems.append(
+            f"the probe configuration took {elapsed:.1f}s against a "
+            f"run_timeout_sec ceiling of {timeout}s, leaving under 2x headroom. "
+            f"This corner is the design's FIRST one, not its slowest, and a "
+            f"campaign's rows vary by more than 2x routinely -- so the epoch is "
+            f"likely to lose rows to the ceiling rather than to the target. "
+            f"Raise optimization.run_timeout_sec above the slowest corner's "
+            f"expected duration.",
+        )
 
     # 2b. Did every config_patch actually land in the file the target read?
     #

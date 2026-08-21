@@ -814,9 +814,25 @@ def _promote_patched_configs(log_dir: Path | None, row, scratch: Path) -> bool:
         return False
 
 
+DEFAULT_RUN_TIMEOUT_SEC = 600
+"""Wall-clock ceiling on ONE ``run_command`` invocation when the campaign
+declares no ``optimization.run_timeout_sec``.
+
+600 is not a considered number -- it is the value this seam was hardcoded to
+before the ceiling had an authoring surface at all. It stays the default
+precisely because of that history: every campaign already on disk measured its
+epoch under a 600-second ceiling, and a pre-registration whose measurement
+ceiling silently moved underneath it would no longer describe the runs it
+registered. A campaign whose single legitimate measurement is a COMPOUND one --
+an objective evaluation that is itself a bisection or a sweep to saturation --
+says so by declaring ``run_timeout_sec``, and ``stage_runner.resolve_run_timeout``
+is the one place that resolution happens.
+"""
+
+
 def make_config_runner(
     command_template: str, *, cwd: Path, metric_path: str,
-    timeout: int = 600, log_dir: Path | None = None,
+    timeout: int = DEFAULT_RUN_TIMEOUT_SEC, log_dir: Path | None = None,
 ) -> Callable:
     """Build the per-config benchmark callable ``run_stage`` requires.
 
@@ -828,6 +844,16 @@ def make_config_runner(
     ``log_dir`` preserves the full stdout/stderr of any configuration that
     fails, keyed by row index. Without it, the only surviving trace of a
     failed run is a truncated stderr tail in an exception message.
+
+    ``timeout`` is the wall-clock ceiling on ONE invocation, resolved from the
+    campaign's ``optimization.run_timeout_sec`` by
+    ``stage_runner.resolve_run_timeout`` and defaulting to
+    ``DEFAULT_RUN_TIMEOUT_SEC``. It is a hard failure, never a budget: exceeding
+    it raises out of the closure, so ``execute_design`` records a ``failed`` row
+    carrying the timeout text and the fit proceeds on the complete-row subset
+    (spec §4 D2). Nothing here ever returns a partial measurement, because a
+    partial measurement of a compound objective is indistinguishable from a
+    complete measurement of a different one.
 
     ``apply["patches"]`` (the rendered form of an ``apply.kind: config_patch``
     factor) is MATERIALIZED here, per run, into a patched copy of the author's

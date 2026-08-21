@@ -1214,6 +1214,41 @@ properties:
           reconciles as "declared but not executed", which aborts the
           campaign at its verify stage.
 
+      run_timeout_sec:
+        type: integer
+        minimum: 1
+        description: >
+          Wall-clock ceiling, in seconds, on ONE invocation of
+          ``run_command`` -- one row of the design matrix, one measurement.
+          Defaults to 600 when absent, which is what every campaign
+          authored before this field existed ran at.
+
+          Raise it when the target's single LEGITIMATE measurement is a
+          COMPOUND one: an objective evaluation that is itself a bisection,
+          a sweep to saturation, or a multi-replicate average inside the
+          target's own harness. The alternatives all degrade the
+          measurement rather than the schedule -- a shorter horizon buys
+          the ceiling with a noisier slope statistic, a looser bisection
+          tolerance buys it with a coarser objective value, and caching
+          results across invocations buys it with a covert channel between
+          arms the design registered as independent. Declaring the real
+          ceiling is the only option that leaves the science alone.
+
+          The ceiling is a hard failure, not a budget: a run that exceeds
+          it records a ``failed`` row naming the timeout and the epoch
+          continues with that row excluded from the fit (spec §4 D2). It is
+          never a partial measurement. Sizing it far above the true
+          duration therefore costs nothing per successful row but does
+          raise the campaign's worst-case wall clock to
+          ``run_timeout_sec x runs``, which ``nous validate campaign``
+          warns about above 3600. Example: 5400 for a capacity bisection
+          over ~5 simulator runs.
+
+          The resolved value (declared or defaulted) is echoed into each
+          iteration's ``design_matrix.json`` as ``run_timeout_sec``, beside
+          ``workload_seeds`` and ``policy_hash``, so a reader of a
+          timed-out row can tell which ceiling produced it.
+
       integrity_command:
         type: string
         minLength: 1
