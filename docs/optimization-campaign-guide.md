@@ -2101,19 +2101,20 @@ PROBE the search can reach.** This is the subtler half, and getting it wrong
 cost a row in a real campaign even after the ceiling had already been raised
 once from the corner measurement.
 
-When the objective is a search (a bisection over arrival rate, a ramp, a
+When the objective is a search (a bisection over a load level, a ramp, a
 convergence loop), each probe's cost depends on the *value being probed*, not
-only on the configuration. A capacity search at rate `r` over a horizon `T`
-simulates `r x T` units of work, so a probe at 24 req/s costs ~16x a probe at
-1.5 req/s. The bracket's reachable ceiling therefore sets the worst-case row:
+only on the configuration. If the target does work proportional to the probed
+value — a load level `v` sustained over an observation window `T` does `v x T`
+work — then a probe at 16x the baseline value costs roughly 16x as much. The
+bracket's reachable ceiling therefore sets the worst-case row:
 
     worst row  ~=  (max reachable probe / baseline probe) x baseline row cost
 
 with `max reachable probe = hi x 2^(expansion steps)` for a doubling search.
-Concretely: a bracket of `[0.75, 3.0]` with 5 evaluations can double `hi` three
-times to 24 — 16x the baseline probe — so a 330 s baseline row implies a
-~5,300 s worst row. A ceiling of 2,400 s looks generous against the measured
-corners and is still 2x short.
+Concretely, from a real campaign: a bracket of `[0.75, 3.0]` with 5 evaluations
+can double `hi` three times to 24 — 16x the baseline probe — so a 330 s baseline
+row implies a ~5,300 s worst row. A ceiling of 2,400 s looked generous against
+the measured corners and was still 2x short; two rows died on it.
 
 **The perverse consequence, which is what makes this a trap:** a *better*
 configuration costs *more* to measure, because the search must climb higher
@@ -2188,17 +2189,20 @@ change.
 
 Symptoms that a metric is unfittable, all observed:
 
-- **Extreme tail sensitivity.** One factor change moved a P99 by +268% while
-  the P90 moved +9%. A response surface fitted to that P99 is fitting a handful
-  of unlucky requests, not the system.
+- **Extreme tail sensitivity.** In one campaign a single factor change moved an
+  extreme tail statistic (a 99th percentile) by +268% while a less extreme one
+  (90th) moved +9%. A surface fitted to the extreme tail is fitting a handful of
+  unlucky observations, not the system. Prefer the least extreme statistic that
+  still answers the question you were asked.
 - **Censoring.** A default request timeout pinned the objective at the deadline
   for every overloaded configuration (three configurations all reporting
   ~300,000 ms — the timeout, not a latency). The surface goes flat exactly
   where the search operates. If your target has a deadline, either raise it
   beyond any plausible measurement or exclude censored rows explicitly.
-- **Degeneracy.** A throughput objective under a fixed arrival rate is largely
-  pinned by the arrival rate. Check that your objective can actually move
-  before you optimize it.
+- **Degeneracy.** An objective can be pinned by something you held fixed — a
+  throughput metric under a fixed offered load is largely determined by that
+  load, not by the factors. Sweep one factor and confirm the objective actually
+  moves before you optimize it.
 
 **Probe recipe:** sweep one factor across its full range and plot the
 objective. If it is monotone and its dynamic range comfortably exceeds the
@@ -2211,11 +2215,10 @@ noise floor, it is fittable.
 **Right:** confirm the subsystem you are tuning is actually active, by reading
 a metric that proves it.
 
-A campaign studying KV-cache offload ran the target's default workload and
-measured a cache hit rate of **exactly 0.000** — the default workload had no
-prefix reuse at all, so every cache factor was inert for a reason that had
-nothing to do with the factors. The tell was available in the metrics output
-the whole time.
+A campaign tuning a caching subsystem ran the target's default workload and
+measured a hit rate of **exactly 0.000** — that workload had no reuse at all, so
+every cache factor was inert for a reason that had nothing to do with the
+factors. The tell was in the target's own metrics output the whole time, unread.
 
 Pick one metric that is **zero when the mechanism is idle** and assert it is
 non-zero before you launch. For a cache: hit rate. For an eviction policy:
@@ -2223,7 +2226,51 @@ eviction count. For an admission controller: rejection count. Then put it in
 `design_space.invariants` so a configuration that silently disables the
 mechanism is recorded as infeasible rather than fitted as a data point.
 
-### 7.6 Make your probe harness fail loudly
+### 7.6 The observation window is part of the objective's definition, not a speed knob
+
+**Wrong:** shorten the measurement window to make rows cheaper.
+
+**Right:** treat the window length as fixed by the objective's semantics, and
+validate it against a configuration whose answer you already know.
+
+Many objectives are computed over a window of observed behaviour — a trend, a
+rate, a steady-state level, anything fitted over time. Such a metric has a
+*settling* requirement: the window must be long enough for start-up behaviour to
+stop dominating it. Trim the window for speed and you do not get a noisier
+version of the same measurement, you get a **different and biased** one.
+
+Measured, from a real campaign whose objective was the largest load a system
+sustains without its backlog growing:
+
+| window | wall per run | samples | fitted trend, two seeds | verdict |
+|---|---|---|---|---|
+| short (2/3 length) | 38-44 s | ~2,540 | +0.1643, +0.0625 | **growing** |
+| full | 70-74 s | ~3,875 | +0.0553, -0.0247 | **sustained** |
+
+Same configuration, same load, same seeds, **opposite verdicts** — and the short
+window is 1.8x faster, which is exactly what makes it tempting. The cause is that
+the short window still contains the cold-start ramp (the system filling from
+empty), and a trend fitted across a ramp reads as growth. The longer window lets
+the ramp amortise so the real trend shows.
+
+The consequence is not symmetric noise: a too-short window declares saturation
+too early on **every** configuration, so every reported optimum shifts in the same
+direction. A 1.8x speedup that moves every number one way is not a speedup, it is
+a different experiment.
+
+**Validation recipe.** Pick a configuration you are confident is comfortably
+inside capacity. Measure it at your candidate window and at 1.5x that window. If
+the verdict or the fitted quantity changes, your window is too short — the metric
+has not settled. Repeat until two adjacent window lengths agree, then lock the
+longer one into `locked_parameters` so a later iteration cannot quietly trim it.
+
+This is the same failure mode as computing the statistic over the wrong *region*
+of a run rather than the wrong *length* — in the same campaign, a trend computed
+over a window that included the post-arrival drain reported "stable" for a system
+whose backlog was growing throughout the active phase. Both are cases of a
+correct statistic over an incorrect window.
+
+### 7.7 Make your probe harness fail loudly
 
 **Wrong:**
 
@@ -2258,7 +2305,7 @@ kind's two historical fit bugs (a singular `XᵀX` from aliased columns; NaN
 poisoning from infeasible rows): **a silent failure that looks like a clean
 result.**
 
-### 7.7 Point certifying relations at tests that fail without the mechanism
+### 7.8 Point certifying relations at tests that fail without the mechanism
 
 **Wrong:** hang a `correctness` relation on an existing test that already
 passes, because it happens to cover the area you are changing.
@@ -2287,7 +2334,7 @@ could not certify anything. The right structure is:
 legitimate case — a genuine backward-compatibility relation, where "this still
 behaves as it did" is exactly the claim.
 
-### 7.8 The pre-flight checklist
+### 7.9 The pre-flight checklist
 
 Run these before you let a policy hash be written. Total cost is a handful of
 runs against a budget of 60–90.
@@ -2299,7 +2346,8 @@ runs against a budget of 60–90.
 | 3 | Noise floor at the operating point (§7.3) | ≥5 runs | — (produces `noise_estimate_pct`) |
 | 4 | Per-factor effect vs noise (§7.2) | 2 per factor | any factor under 2x the noise CV |
 | 5 | Objective is monotone and uncensored (§7.4) | 4–6 runs | orders-of-magnitude swings, or values pinned at a deadline |
-| 6 | Worst-corner timing (§7.1) | 2 runs | `run_timeout_sec` under ~2x the slow corner |
+| 6 | Observation window has settled (§7.6) | 2 runs | the verdict or fitted value changes between a window and 1.5x it |
+| 7 | Worst-*probe* timing (§7.1) | 2 runs | `run_timeout_sec` under ~2x the most expensive probe the search can reach |
 
 If a check fails, revise the campaign — **not** the check. A pre-registration
 whose apparatus was not verified first is a hash over an assumption.
