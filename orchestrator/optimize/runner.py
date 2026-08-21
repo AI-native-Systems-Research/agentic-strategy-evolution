@@ -44,6 +44,9 @@ import hashlib
 import json
 import logging
 import os
+import shutil
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -152,11 +155,34 @@ def _applied_namespace(row: ConfigRow) -> dict:
     stronger evidence, since it confirms the flag was RECEIVED rather than
     merely SENT. But an author whose target reports nothing now has a
     truthful check available instead of an impossible one.
+
+    ``applied_patches`` is the same idea for the ``config_patch`` kind, and it
+    reports what was REALIZED rather than what was requested: each entry carries
+    the ``materialized_path`` of the patched copy the run actually read. A
+    file-configured target that echoes nothing back therefore still has a
+    truthful manipulation check available, and a row that failed can say which
+    configuration file it failed on.
+
+    IT IS KEYED BY FACTOR ID, NOT A LIST, AND THAT IS LOAD-BEARING.
+    ``predicates._resolve`` walks a dotted observable through DICTS only -- there
+    is no list-index token in the vocabulary and no ``contains`` operator in
+    ``OPS`` -- so a list-shaped ``applied_patches`` would be documented as
+    addressable and be addressable by nothing: ``applied_patches.0.value``
+    resolves to ``_MISSING`` and fails every row with "the target did not emit
+    it". That is precisely the 115-configurations-all-failed shape this whole
+    namespace was introduced to end, and it would have been worse here than
+    before, because the design-gate pre-flight advisory
+    (``stage_runner._preflight_design``) treats an ``applied_patches`` root as
+    "this will exist at check time" and stays silent. Keyed by factor,
+    ``applied_patches.<FACTOR_ID>.value`` resolves, which is the form the schema
+    and the authoring guide document.
     """
+    realized = (row.apply or {}).get("applied_patches") or {}
     return {
         "applied": dict(row.levels),
         "applied_args": list((row.apply or {}).get("cli_args") or []),
         "applied_env": dict((row.apply or {}).get("env") or {}),
+        "applied_patches": dict(realized) if isinstance(realized, dict) else {},
     }
 
 
@@ -683,6 +709,111 @@ def _dump_failed_run(
         return None
 
 
+@contextmanager
+def _patch_scope(row, cmd: list[str], *, cwd: Path, log_dir: Path | None):
+    """Materialize this row's ``config_patch`` patches; yield the rewritten command.
+
+    Yields ``cmd`` UNCHANGED and does no filesystem work at all when the row
+    declares no patches, which is every row of every ``cli_flag``/``env_var``
+    campaign -- the common case pays nothing.
+
+    The realized patches are recorded back onto ``row.apply["applied_patches"]``
+    BEFORE the command runs, KEYED BY FACTOR ID, for the same reason
+    ``applied_args`` and ``applied_env`` exist (``_applied_namespace``): a
+    manipulation predicate resolves against them, and a row that failed still has
+    to be able to say what configuration it failed on. The factor key is not
+    cosmetic -- see ``_applied_namespace`` on why a list-shaped record would be
+    addressable by no predicate at all. ``ConfigRow`` is frozen but its ``apply``
+    dict is not, which is the same door ``_confirm_rows`` already uses to ride
+    ``finalist`` along on ``apply``.
+
+    THE COPIES ARE KEPT ONLY WHEN THE RUN FAILED, AND ARE NAMED BY ROW. A
+    campaign's screen is 60-90 runs plus confirm replicates plus manipulation
+    retries; keeping every success's copy left ~100 opaque UUID directories in
+    the iteration dir that nothing mapped back to a row, which is storage without
+    diagnostic value. So every copy is materialized into a scratch directory and
+    only PROMOTED into ``log_dir/patched_configs/row-<index>/`` when the run
+    raised -- the same rule and the same row-keyed naming ``_dump_failed_run``
+    uses for stdout/stderr, and for the same reason: a failed row's exact
+    configuration is what a campaign author needs, and a successful row's is
+    reproducible from the pre-registered matrix.
+    """
+    from orchestrator.optimize import config_patch as cp
+
+    patches = list((row.apply or {}).get("patches") or [])
+    if not patches:
+        yield cmd
+        return
+
+    scratch = tempfile.TemporaryDirectory(prefix="nous-config-patch-")
+    promoted = False
+    try:
+        realized = cp.materialize_patches(
+            patches, cwd=Path(cwd), temp_dir=Path(scratch.name),
+        )
+        rewritten = cp.rewrite_command(cmd, realized)
+        # `delivered_command` closes the gap between "the copy was written
+        # correctly" and "the copy is what ran". Those are two different claims,
+        # and the original defect was precisely a campaign where the first was
+        # vacuously true (nothing was written) and nothing checked the second.
+        # `--smoke` reads it back; recorded once per row rather than once per
+        # patch, since every patch of a row shares the one command.
+        record = {
+            str(entry.get("factor_id") or f"patch_{i}"): {
+                k: v for k, v in entry.items() if k != "factor_id"
+            }
+            for i, entry in enumerate(realized)
+        }
+        for value in record.values():
+            value["delivered_command"] = list(rewritten)
+        if isinstance(row.apply, dict):
+            row.apply["applied_patches"] = record
+        try:
+            yield rewritten
+        except BaseException:
+            promoted = _promote_patched_configs(log_dir, row, Path(scratch.name))
+            raise
+    finally:
+        # Promotion MOVES the tree out of the scratch dir, so cleanup then has
+        # nothing left to remove and the kept copies survive.
+        if not promoted:
+            scratch.cleanup()
+
+
+def _promote_patched_configs(log_dir: Path | None, row, scratch: Path) -> bool:
+    """Move a failed row's patched config copies under ``log_dir``, row-keyed.
+
+    Returns whether the move happened, so the caller knows whether the scratch
+    directory still needs cleaning. Never raises: like ``_dump_failed_run``, this
+    is a diagnostics aid and must never be the reason a campaign fails -- the
+    row has already failed for a real reason and that reason must be what
+    propagates.
+    """
+    if log_dir is None:
+        return False
+    try:
+        idx = getattr(row, "row_index", None)
+        rep = getattr(row, "replicate", None)
+        name = f"row-{idx if idx is not None else 'unknown'}"
+        if rep:
+            name += f"-rep{rep}"
+        dest = Path(log_dir).parent / "patched_configs" / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            # A retried row (manipulation transient) materializes a second time;
+            # the latest attempt is the one whose configuration matters.
+            shutil.rmtree(dest, ignore_errors=True)
+        shutil.move(str(scratch), str(dest))
+        logger.warning(
+            "config run failed; the patched configuration it ran on is at %s",
+            dest,
+        )
+        return True
+    except OSError as e:
+        logger.warning("could not preserve patched configs: %s", e)
+        return False
+
+
 def make_config_runner(
     command_template: str, *, cwd: Path, metric_path: str,
     timeout: int = 600, log_dir: Path | None = None,
@@ -697,6 +828,17 @@ def make_config_runner(
     ``log_dir`` preserves the full stdout/stderr of any configuration that
     fails, keyed by row index. Without it, the only surviving trace of a
     failed run is a truncated stderr tail in an exception message.
+
+    ``apply["patches"]`` (the rendered form of an ``apply.kind: config_patch``
+    factor) is MATERIALIZED here, per run, into a patched copy of the author's
+    config file, and every reference to the original path in the assembled
+    command is rewritten to point at that copy. Before this existed the field
+    was rendered onto every row and read by nothing, so a design whose factors
+    were config-file knobs measured the target's BASELINE on every row while
+    the pre-registered matrix and the fitted surface looked real -- the
+    silent-wrong-result class. See ``orchestrator.optimize.config_patch`` for
+    why the copy is per-run rather than an in-place edit-and-restore, and why a
+    path the command never names is fatal rather than a no-op.
     """
     import shlex
     import subprocess
@@ -706,6 +848,16 @@ def make_config_runner(
         for args in (row.apply or {}).get("cli_args", []) or []:
             cmd.append(args)
         env_extra = (row.apply or {}).get("env") or {}
+        # The patched copies land next to the iteration's other run artifacts
+        # when there is a log dir (so a campaign author debugging a row can read
+        # the exact configuration it ran on), and in a scratch directory
+        # otherwise. `_patch_scope` removes the scratch case afterwards; the
+        # log-dir case is kept deliberately -- it is evidence.
+        with _patch_scope(row, cmd, cwd=cwd, log_dir=log_dir) as cmd:
+            return _run_command(row, cmd, cwd=cwd, env_extra=env_extra,
+                                timeout=timeout, log_dir=log_dir)
+
+    def _run_command(row, cmd, *, cwd, env_extra, timeout, log_dir):
         try:
             proc = subprocess.run(
                 cmd, cwd=str(cwd), capture_output=True, text=True,

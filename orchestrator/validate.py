@@ -984,6 +984,118 @@ def _rule16_workload_seed_env(opt: dict) -> list[str]:
     return errors
 
 
+def _rule17_config_patch_path_reachable(campaign: dict, opt: dict,
+                                         factors: list[dict]) -> list[str]:
+    """Rule 17: a ``config_patch`` factor's file must be reachable from the run.
+
+    ``apply.kind: config_patch`` is realized by materializing a patched COPY of
+    the declared file per run and rewriting every reference to the original
+    ``path`` in the assembled command to point at that copy
+    (``orchestrator.optimize.config_patch``). That mechanism has exactly one
+    precondition: the ``path`` has to appear in ``optimization.run_command``,
+    because there is no other place in the schema that says how the target is
+    told which config file to read.
+
+    THE DEFECT THIS CLOSES, in its second form. The first form was that nothing
+    consumed ``apply["patches"]`` at all, so every row of a config-patch design
+    silently measured the target's BASELINE while the pre-registered matrix and
+    the fitted surface looked real. The runtime now refuses that case loudly —
+    but refusing it at RUN time costs whatever the campaign already spent to get
+    there, and on the live campaign that surfaced this it was a full ``build``
+    stage and ~50 minutes of wall clock before row 1 of 18 said anything. A
+    ``path`` the command never mentions is knowable from the campaign file
+    alone, so it is knowable before anything is spent.
+
+    HARD ERROR for the ``run_command`` half, WARNING for the on-disk half. A
+    command that never names the file cannot work, in every case, with no
+    exception worth preserving. Whether the file EXISTS is a different question:
+    a ``build`` stage may be about to author it, the target may generate it from
+    a template, and the check is path-based against a repo the validator can only
+    see as a directory — the same reasoning that makes rule 12 a warning. A false
+    hard-fail there would be worse than a false warning.
+
+    Silent about campaigns with no ``run_command`` at all: that campaign has a
+    more fundamental problem, and a secondary message about a patch path would
+    bury it.
+
+    THE MATCH REUSES THE RUNTIME'S OWN MATCHER rather than a bare ``in``
+    substring test. The runtime anchors a path to an argument boundary (a whole
+    token, or the tail of a ``--config=...`` token) precisely so that a factor
+    declaring ``engine.json`` cannot be satisfied by a command naming
+    ``other/engine.json``. A validator using ``in`` would pass exactly that
+    campaign and leave the runtime to reject it -- which is the same
+    "validated clean, aborted later" gap this rule exists to close, reintroduced
+    at the level of the check itself. One matcher, one semantics.
+    """
+    import shlex
+
+    from orchestrator.optimize.config_patch import command_names_path
+
+    run_command = opt.get("run_command")
+    run_command = str(getattr(run_command, "value", run_command) or "")
+    try:
+        tokens = shlex.split(run_command)
+    except ValueError:
+        # An unbalanced quote is a different (and louder) authoring problem;
+        # fall back to the whole string as one token rather than adding a second
+        # report for it here.
+        tokens = [run_command]
+    repo = (campaign.get("target_system") or {}).get("repo_path")
+
+    errors: list[str] = []
+    for factor in factors:
+        if not isinstance(factor, dict):
+            continue
+        spec = factor.get("apply")
+        if not isinstance(spec, dict) or spec.get("kind") != "config_patch":
+            continue
+        path = spec.get("path")
+        path = str(getattr(path, "value", path) or "")
+        fid = factor.get("id")
+        if not path:
+            errors.append(
+                f"factor {fid!r} declares apply.kind: config_patch with no "
+                f"'path'. A config_patch needs path + pointer + value: the file "
+                f"to copy-and-patch, the RFC 6901 location inside it, and the "
+                f"value (normally '{{level}}')."
+            )
+            continue
+        if run_command and not command_names_path(tokens, path):
+            errors.append(
+                f"factor {fid!r} patches {path!r}, but that path does not appear "
+                f"in optimization.run_command ({run_command!r}). The patch is "
+                f"applied to a per-run COPY of the file and the copy's path is "
+                f"substituted for the original in the command — so a command "
+                f"that never names the file has nothing to substitute, and the "
+                f"run would read the target's unpatched configuration while the "
+                f"design matrix recorded the requested level. Name the file as "
+                f"an argument value, e.g. "
+                f"'... --config {path} ...'."
+            )
+        # ``is_file()`` rather than ``exists()``: a DIRECTORY at the patch path
+        # passes an existence check and then aborts at the apply seam, and a
+        # broken symlink fails ``exists()`` while plainly being present. Both
+        # need saying here, because "does not exist" sends an author hunting for
+        # a typo in a path that is spelled correctly.
+        if repo and path and not (Path(repo) / path).is_file():
+            target = Path(repo) / path
+            what = (
+                "is a directory, not a file" if target.is_dir()
+                else "is a symlink that does not resolve to a file"
+                if target.is_symlink()
+                else "is not a regular file" if target.exists()
+                else "does not exist"
+            )
+            errors.append(
+                f"WARN: factor {fid!r} patches {path!r}, which {what} "
+                f"under target_system.repo_path ({repo}). Every run of this "
+                f"factor would abort at the apply seam. Legitimate if a 'build' "
+                f"stage authors the file or the target generates it from a "
+                f"template; otherwise correct the path."
+            )
+    return errors
+
+
 #: Characters that make a ``mechanism_paths`` entry a glob for git's pathspec
 #: but a literal (and therefore unmatchable) string for ``_in_allowlist``.
 _MECHANISM_PATH_GLOB_CHARS = "*?[]"
@@ -1185,6 +1297,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule14_policy_ranges(opt))
     errors.extend(_rule15_build_requires_baseline(opt))
     errors.extend(_rule16_workload_seed_env(opt))
+    errors.extend(_rule17_config_patch_path_reachable(campaign, opt, factors))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     return errors
 

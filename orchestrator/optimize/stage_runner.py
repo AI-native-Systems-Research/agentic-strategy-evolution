@@ -2882,7 +2882,7 @@ def _preflight_design(rows, factors, opt: dict, iter_dir: Path) -> None:
             f.manipulation or {}
         ).get("metric") or ""
         root = str(obs).split(".", 1)[0]
-        if root not in ("applied", "applied_args", "applied_env"):
+        if root not in ("applied", "applied_args", "applied_env", "applied_patches"):
             logger.info(
                 "factor %s asserts manipulation against %r, which requires the "
                 "TARGET to emit that field. If it does not, every run of this "

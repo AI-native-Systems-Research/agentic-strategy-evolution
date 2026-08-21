@@ -851,6 +851,19 @@ properties:
                 value: ...}``, and ``{kind: config_patch, path: ...,
                 pointer: ..., value: ...}``. ``{level}`` is the only
                 interpolation token in the entire spec.
+
+                ``config_patch`` patches a PER-RUN COPY of ``path`` (the
+                author's file is never mutated) and substitutes the copy's
+                path for every occurrence of ``path`` in the assembled
+                command -- so ``path`` MUST appear as an argument value in
+                ``optimization.run_command``, or there is nothing to
+                substitute and the run would read the unpatched file. That
+                is a hard validation error. ``pointer`` is an RFC 6901
+                JSON pointer (``/cache/policy``, ``/tiers/0/bytes``, with
+                ``~0``/``~1`` escapes) and must address an EXISTING field.
+                ``.json``/``.yaml``/``.yml`` only. The level's type is
+                preserved exactly -- an int lands as an int, a bool as the
+                format's native boolean.
               oneOf:
                 - type: string
                   minLength: 1
@@ -877,9 +890,19 @@ properties:
                 assert against the rendered configuration instead:
                 ``{observable: applied.MAXRUN, op: "==", value:
                 "{level}"}``, where ``applied.<FACTOR_ID>`` is the level
-                this run was launched with. ``applied_args`` and
-                ``applied_env`` expose the rendered CLI arguments and
-                environment for the same purpose.
+                this run was launched with. ``applied_args``,
+                ``applied_env`` and ``applied_patches`` expose the rendered
+                CLI arguments, environment, and realized config-file
+                patches for the same purpose. ``applied_patches`` reports
+                what was DONE rather than what was requested, KEYED BY
+                FACTOR ID -- ``{observable: applied_patches.P1.value, op:
+                "==", value: "{level}"}`` -- and each entry also carries the
+                patched copy's ``materialized_path`` and the
+                ``delivered_command`` that consumed it. Keyed rather than a
+                list because a predicate's observable is a dotted path
+                through mappings: there is no list-index token and no
+                ``contains`` operator, so a list would be addressable by
+                nothing.
 
                 Without ``applied.*`` a target that does not echo its own
                 config back cannot satisfy this REQUIRED field at all --

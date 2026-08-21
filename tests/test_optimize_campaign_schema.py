@@ -1007,3 +1007,88 @@ def test_a_zero_shortlist_size_is_rejected_by_the_schema():
     c["optimization"]["design"]["confirm"]["shortlist_size"] = 0
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(c, _schema())
+
+
+# ---------------------------------------------------------------------------
+# Rule 17: a config_patch factor whose file the run_command never names
+# ---------------------------------------------------------------------------
+#
+# The apply/measure seam rewrites the run command's reference to the config
+# file with a per-run patched copy. A command that never mentions the file has
+# nothing to rewrite, so the patch cannot possibly take effect -- and before
+# this rule existed, that campaign validated with zero errors, smoke-tested
+# green, and then measured the BASELINE on every row while its design matrix
+# and fitted surface looked real.
+
+
+def _config_patch_factor(**over) -> dict:
+    raw = {
+        "id": "L7", "name": "cpu_bytes", "type": "numeric",
+        "levels": [42949672960, 85899345920], "grid": 1,
+        "apply": {"kind": "config_patch", "path": "engine.json",
+                  "pointer": "/cache/cpu_bytes_to_use", "value": "{level}"},
+        "manipulation": {"observable": "applied.L7", "op": "==",
+                         "value": "{level}"},
+        "relations": [{"id": "R7", "kind": "correctness",
+                       "statement": "the patched config round-trips",
+                       "native_test": "tests/prop_cfg.py::test_patch"}],
+    }
+    raw.update(over)
+    return raw
+
+
+def test_rule17_config_patch_path_absent_from_run_command_is_an_error():
+    c = _minimal_optimization_campaign()
+    c["optimization"]["factors"].append(_config_patch_factor())
+    c["optimization"]["run_command"] = "bench --json"
+    errors = _hard_errors(c)
+    assert any("engine.json" in e and "run_command" in e for e in errors), errors
+
+
+def test_rule17_config_patch_path_present_in_run_command_passes():
+    c = _minimal_optimization_campaign()
+    c["optimization"]["factors"].append(_config_patch_factor())
+    c["optimization"]["run_command"] = "bench --config engine.json --json"
+    assert not [
+        e for e in _hard_errors(c) if "engine.json" in e and "run_command" in e
+    ]
+
+
+def test_rule17_config_patch_path_missing_on_disk_warns(tmp_path: Path):
+    """Path-based, so a WARNING: the file may legitimately be authored by the
+    ``build`` stage, or live behind a symlink the validator cannot resolve."""
+    c = _minimal_optimization_campaign()
+    c["optimization"]["factors"].append(_config_patch_factor())
+    c["optimization"]["run_command"] = "bench --config engine.json --json"
+    c["target_system"]["repo_path"] = str(tmp_path)
+    warnings = [e for e in validate_optimization_campaign(c) if e.startswith("WARN:")]
+    assert any("engine.json" in w for w in warnings), warnings
+
+    (tmp_path / "engine.json").write_text("{}")
+    warnings = [e for e in validate_optimization_campaign(c) if e.startswith("WARN:")]
+    assert not [w for w in warnings if "engine.json" in w]
+
+
+def test_rule17_no_run_command_declared_is_not_reported():
+    """A campaign with no ``run_command`` at all has other problems; reporting
+    the patch path here would bury them under a secondary message."""
+    c = _minimal_optimization_campaign()
+    c["optimization"]["factors"].append(_config_patch_factor())
+    c["optimization"].pop("run_command", None)
+    assert not [e for e in _hard_errors(c) if "engine.json" in e]
+
+
+def test_rule17_agrees_with_the_runtime_on_what_naming_the_file_means():
+    """A path that appears only as the TAIL of a longer path is not "named":
+    the runtime rewrites at argument boundaries, so a validator using a bare
+    ``in`` substring test would pass a campaign the runtime then rejects --
+    reintroducing the "validated clean, aborted later" gap inside the check."""
+    c = _minimal_optimization_campaign()
+    c["optimization"]["factors"].append(_config_patch_factor())
+    c["optimization"]["run_command"] = "bench --config other/engine.json --json"
+    assert any("engine.json" in e and "run_command" in e for e in _hard_errors(c))
+
+    c["optimization"]["run_command"] = "bench --config=engine.json --json"
+    assert not [
+        e for e in _hard_errors(c) if "engine.json" in e and "run_command" in e
+    ], "the --flag=value form is an ordinary way to name a config file"
