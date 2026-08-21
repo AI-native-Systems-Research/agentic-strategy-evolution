@@ -309,6 +309,7 @@ def execute_design(
     on_row: Callable[[RunOutcome], None] | None = None,
     integrity_check: "IntegrityCheck | None" = None,
     max_retries: int = 1,
+    max_parallel: int = 1,
 ) -> list[RunOutcome]:
     """Run every row through the tokenless loop; returns outcomes in row order.
 
@@ -323,17 +324,156 @@ def execute_design(
     ``_run_once``. ``on_row`` fires exactly once per row, after its final
     status is known, so a caller can append to ``runs.jsonl`` incrementally
     without buffering every row in memory first.
+
+    ``max_parallel`` is a CEILING on simultaneous in-flight ``runner`` calls,
+    defaulting to 1, i.e. the strictly sequential loop this function has always
+    been. It exists for one caller -- ``confirm`` -- and the reason it is not
+    simply "parallelize the sweep" is statistical, so read the next three
+    paragraphs before widening it.
+
+    WHY CONCURRENCY IS NOT FREE HERE. Co-scheduled rows contend for machine
+    resources, so a row's measured response comes to depend on WHICH OTHER ROWS
+    happened to run beside it. At a spending stage that is a first-order
+    confound: those stages fit a surface over DISTINCT configurations, and
+    contention distributed unevenly across the design is absorbed by the fitted
+    coefficients as though it were a factor effect. It is the same confound that
+    run-order randomization exists to defuse (drift: a warming cache, a
+    thermally throttling machine, a background job), but in a form randomization
+    cannot average away -- a permutation spreads a TIME trend across the design;
+    it does nothing about a NEIGHBOUR effect. For an objective that measures
+    where a system saturates, this is the measurement, not noise around it.
+
+    WHY A CONFIRM REPLICATE BLOCK IS DIFFERENT IN KIND. Within one block every
+    finalist is measured exactly once, so whatever contention the block creates
+    is symmetric across exactly the things being compared -- it shifts all the
+    finalists together and cancels out of the finalist-to-finalist difference,
+    which is the only quantity terminal discrimination reads. That is the same
+    argument ``stage_runner._confirm_rows`` makes for putting its run-order
+    shuffle INSIDE a block rather than across the whole matrix, and this
+    function's bound is scoped to be its exact counterpart. Blocks stay a
+    barrier (see below): every finalist is measured once before any is measured
+    twice.
+
+    Because the bound is per-block rather than global, this function does NOT
+    decide which stages may use it -- the stage runner passes 1 at every
+    spending stage. What this function guarantees is that a bound above 1 never
+    dissolves the block structure and never reorders a result.
+
+    POSITIONAL ORDER IS PART OF THE CONTRACT, not an incidental property of the
+    sequential loop it used to be. ``stage_runner._finish_confirm`` appends each
+    finalist's measurements in row order and ``certificate.terminal_regret_bound``
+    ZIPS them, so position *i* must be replicate *i* for every finalist; a list
+    returned in completion order would mispair the paired differences and
+    produce a wrong bound rather than an error. Outcomes are therefore written
+    into a pre-sized slot per input position, never appended from a completing
+    worker.
+
+    ``on_row`` still fires exactly once per row, and still from the CALLING
+    thread rather than from a worker, so a callback appending to ``runs.jsonl``
+    needs no locking of its own and cannot interleave a write -- the contract is
+    unchanged. What a bound above 1 does change is what its ORDER *means*: rows
+    within a block are all in flight together, so their order in ``runs.jsonl``
+    records the order they were SUBMITTED, not a sequence in which each finished
+    before the next began. That is one more reason the effective bound is
+    recorded on the design matrix -- at ``max_parallel: 1`` the log is a
+    sequence, above 1 it is a schedule, and nothing else in the artifact set
+    tells the two apart.
     """
-    outcomes: list[RunOutcome] = []
-    for row in rows:
-        outcome = _execute_row(
+    if max_parallel < 1:
+        raise ValueError(
+            f"max_parallel must be >= 1, got {max_parallel!r}: a bound below one "
+            f"is not a schedule, it is a stall.",
+        )
+
+    def _one(row: ConfigRow) -> RunOutcome:
+        return _execute_row(
             row, runner=runner, response_spec=response_spec, invariants=invariants,
             factors=factors, integrity_check=integrity_check, max_retries=max_retries,
         )
-        outcomes.append(outcome)
-        if on_row is not None:
-            on_row(outcome)
-    return outcomes
+
+    if max_parallel == 1 or len(rows) < 2:
+        outcomes: list[RunOutcome] = []
+        for row in rows:
+            outcome = _one(row)
+            outcomes.append(outcome)
+            if on_row is not None:
+                on_row(outcome)
+        return outcomes
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    # A THREAD pool, not a process pool: every unit of work here is a
+    # subprocess invocation of the target (``make_config_runner`` shells out and
+    # waits), so the worker holds the GIL only to start the child and to parse
+    # its JSON. Processes would buy nothing and would break the injected-callable
+    # seam this module is built on -- a test's in-process fake runner is not
+    # picklable, and neither is a closure over the campaign.
+    results: list[RunOutcome | None] = [None] * len(rows)
+
+    # BLOCKS ARE A BARRIER. Rows are grouped by ``replicate`` and each group is
+    # drained before the next is submitted, so replicate *i* of every finalist
+    # completes before replicate *i+1* of any finalist starts. Keeping the pool
+    # full across the boundary instead would let a late finalist's replicate 2
+    # overlap an early finalist's replicate 3 -- which restores exactly the
+    # asymmetric-neighbour confound the per-block scoping exists to exclude, and
+    # would do it invisibly, since every row still ran.
+    #
+    # Grouping preserves first-appearance order and never sorts: at confirm the
+    # rows arrive already emitted one complete block at a time, with the shuffle
+    # inside each block, and re-sorting them would discard that shuffle.
+    blocks: list[list[int]] = []
+    seen: dict[Any, int] = {}
+    for pos, row in enumerate(rows):
+        key = getattr(row, "replicate", 0)
+        if key not in seen:
+            seen[key] = len(blocks)
+            blocks.append([])
+        blocks[seen[key]].append(pos)
+
+    for positions in blocks:
+        # The pool is sized to the SMALLER of the bound and the block's width:
+        # a bound of 8 over a 3-finalist block must not spill into the next
+        # block, and spawning threads that can never be fed is noise in a
+        # thread dump.
+        with ThreadPoolExecutor(
+            max_workers=min(max_parallel, len(positions)),
+        ) as pool:
+            # Every row in the block is submitted BEFORE any result is
+            # collected -- that is what makes them concurrent. Results are then
+            # collected in SUBMISSION order, which is harmless (a completed
+            # future does not block) and keeps `on_row`'s ordering close to the
+            # execution sequence it records.
+            futures = {
+                pool.submit(_one, rows[pos]): pos for pos in positions
+            }
+            for future, pos in futures.items():
+                # ``_execute_row`` converts a raising runner into a ``failed``
+                # RunOutcome itself (``_run_once``), so a future raising here is
+                # a defect in THIS module rather than a bad target -- let it
+                # propagate rather than silently recording a fabricated row.
+                outcome = future.result()
+                results[pos] = outcome
+                # Called from THIS thread, never from a worker, and therefore
+                # never concurrently with itself -- so an `on_row` that appends
+                # to `runs.jsonl` needs no lock and cannot interleave a write,
+                # exactly as at the sequential seam. This is the reason results
+                # are collected here rather than via `as_completed`: a callback
+                # firing from N workers would make every consumer of this seam
+                # responsible for its own locking.
+                if on_row is not None:
+                    on_row(outcome)
+
+    # Every slot filled: a None here would mean a submitted row produced no
+    # outcome, which would silently shorten the confirm pairing.
+    missing = [i for i, o in enumerate(results) if o is None]
+    if missing:  # pragma: no cover - defensive; the loop above is total
+        raise RuntimeError(
+            f"execute_design: rows at position(s) {missing} produced no outcome "
+            f"under max_parallel={max_parallel}. Positional pairing downstream "
+            f"(certificate.terminal_regret_bound zips finalist measurements) "
+            f"would be silently wrong, so this aborts instead.",
+        )
+    return [o for o in results if o is not None]
 
 
 def _execute_row(

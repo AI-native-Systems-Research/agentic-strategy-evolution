@@ -50,6 +50,11 @@
       "type": "integer",
       "description": "RNG seed that reproduces run_order from orchestrator.optimize.matrix.randomized_run_order — recorded so the randomization is reproducible, not just random."
     },
+    "max_parallel": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The EFFECTIVE ceiling on simultaneous in-flight run_command invocations this matrix was measured under -- optimization.max_parallel as the stage resolved it, which is 1 at every spending stage (screen/foldover/refine) regardless of what the campaign declared, and the declared value only at confirm. Recorded beside run_order_seed and for the same reason: run_order randomization is what keeps time-ordered drift from masquerading as a factor effect, and a pre-registration asserting a randomized run order while executing rows concurrently would be claiming a guarantee it did not provide -- the same defect class as an artifact recording a randomization that never happened. Reading the two together is what tells a reader whether the recorded order describes a sequence or a schedule. Always present, whether or not the campaign declared the field, on the run_timeout_sec convention: \"the author did not choose\" and \"the author chose 1\" produce identical runs, so without it a reader cannot tell which release wrote the artifact."
+    },
     "rows": {
       "type": "array",
       "minItems": 1,

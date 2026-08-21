@@ -426,6 +426,87 @@ the probe *passes*: the first design corner is not the design's slowest, so a
 corner finishing at 570s under a 600s ceiling clears smoke and still kills the
 epoch on the first slower row.
 
+### `max_parallel`
+
+Ceiling on **simultaneous in-flight `run_command` invocations**. Defaults to
+**1** — strictly sequential, exactly what every campaign authored before this
+field existed ran at.
+
+```yaml
+optimization:
+  max_parallel: 4                # confirm replicate blocks only; see below
+```
+
+It applies to **`confirm` replicate blocks and nothing else.** The spending
+stages — `screen`, `foldover`, `refine` — stay strictly sequential no matter
+what you declare, and the reason is the same one that makes the design worth
+running at all.
+
+**Why screen rows are excluded.** A spending stage fits a response surface over
+*distinct* configurations. Co-scheduled rows contend for machine resources, so a
+row's measured response comes to depend on which *other* rows happened to run
+beside it — and contention spread unevenly across a design is absorbed by the
+fitted coefficients as though it were a factor effect. This is not the same
+problem as drift, which the pre-registered randomized run order already handles:
+a permutation spreads a *time* trend across the levels, but it can do nothing
+about a *neighbour* effect, because permuting the rows permutes the neighbours
+too. For a target whose objective is where the system saturates — a queue, a
+cache, an autoscaler, which is every target this kind exists for — contention is
+the measurement, not noise around it. Parallelizing an 18-row screen would turn
+a 3-hour campaign into a 45-minute one and hand back coefficients that partly
+describe your machine's scheduler.
+
+**Why a confirm block is different in kind.** Confirm's rows are emitted one
+complete replicate block at a time, and within a block *every finalist is
+measured exactly once*. So whatever contention the block creates is symmetric
+across exactly the things being compared: it shifts all the finalists together
+and cancels out of the finalist-to-finalist difference, which is the only
+quantity terminal discrimination reads. That is the same argument that puts
+confirm's run-order shuffle *inside* a block rather than across the whole
+matrix, and the bound is scoped to be its exact counterpart. Blocks stay a
+barrier — replicate *i* of every finalist completes before replicate *i+1*
+starts — so "every finalist measured once before any is measured twice" still
+holds. A shortlist of 3 finalists × 5 replicates at `max_parallel: 3` is five
+sequential rounds of three concurrent runs, not fifteen runs in a free-for-all.
+
+**Size it from cores, not from rows.** More in-flight runs than the machine has
+CPUs means the runs time-slice against each other, and a finalist's response
+starts depending on the scheduler — which injects variance into the very
+differences the terminal bound is computed from, so a wider bound buys wall
+clock with a *wider* residual-regret certificate. `nous validate campaign` warns
+above `os.cpu_count()`. It is a warning rather than an error because there is one
+legitimate case it cannot see: a `run_command` that mostly *waits* — on a remote
+inference endpoint, a managed database, a cluster it only submits to — holds no
+core while waiting, and a bound well above the core count is correct there. Only
+you know which your target is.
+
+The **effective** value is echoed into every iteration's `design_matrix.json` as
+`max_parallel`, beside `run_order_seed` — and note it is the effective one, so a
+screen matrix records `1` even under a campaign declaring `4`. The two fields are
+meant to be read together: a `run_order` permutation looks identical whether it
+described a sequence or a schedule, so a pre-registration claiming a randomized
+run order while executing rows concurrently would be asserting a guarantee it
+did not provide.
+
+**Look here first, though.** The field bounds concurrency *between* rows, and on
+most targets that is not where the wall clock actually is. A single objective
+evaluation is frequently several *sequential* target invocations behind one
+`run_command` — a warmup pass, then a measurement pass, then a verification
+pass; or a bisection stepping through candidate loads one at a time; observed on
+a real campaign at up to five sequential invocations per row. Those probes are
+usually **independent of each other**, and parallelizing them is entirely
+target-side: it needs no field here, it speeds up *every* stage rather than only
+`confirm`, and it introduces no cross-row confound at all, because the
+contention it creates is inside one measurement and therefore identical for
+every row of the design. Before reaching for `max_parallel`, check whether your
+`run_command` is really one measurement or five in a row.
+
+Row-level concurrency at the spending stages is not simply unimplemented — it is
+reachable only by *closing* the confound rather than ignoring it: each concurrent
+row pinned to a disjoint CPU set, with the pinning recorded in the artifact so a
+reader can check it. This field deliberately does not enable that, and raising it
+will never make a screen run rows side by side.
+
 ### `stages`
 
 Optional override of the default iteration -> stage mapping

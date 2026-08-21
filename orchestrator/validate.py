@@ -1055,6 +1055,65 @@ def _rule18_high_run_timeout_warning(opt: dict, factors: list[dict]) -> list[str
     ]
 
 
+def _rule19_max_parallel_oversubscription(opt: dict) -> list[str]:
+    """Rule 19: warn when ``max_parallel`` exceeds the machine's CPU count.
+
+    ``optimization.max_parallel`` exists to buy wall clock at the one place a
+    factorial design can absorb it -- a ``confirm`` replicate block, where every
+    finalist is measured exactly once so whatever contention the block creates is
+    SYMMETRIC across exactly the things being compared, shifts all the finalists
+    together, and cancels out of the finalist-to-finalist difference.
+
+    That symmetry argument is what the bound rests on, and OVERSUBSCRIPTION is
+    where it stops holding cleanly. More in-flight runs than the machine has
+    cores means the runs time-slice against each other, so a finalist's measured
+    response starts depending on the scheduler rather than on its configuration:
+    the contention is no longer a level shift the comparison cancels, it is
+    variance injected into the very differences the terminal bound is computed
+    from. A wider bound then buys wall clock with a wider residual-regret bound,
+    which is the opposite of what the field is for -- the campaign spends the same
+    runs and certifies less.
+
+    A WARNING rather than an error, and the reason is a case the validator cannot
+    see: a run that mostly WAITS -- on a remote inference endpoint, a managed
+    database, a cluster it only submits to -- holds no core while it waits, so a
+    bound well above ``cpu_count()`` is correct there and refusing it would make
+    the field useless for exactly the targets whose wall clock hurts most. Only
+    the author knows whether their ``run_command`` is CPU-bound or I/O-bound.
+
+    ``os.cpu_count()`` rather than a derived or configured threshold, because it
+    is the same number the contention is actually against, and because nothing in
+    the campaign says how many cores the campaign will run on -- a derived
+    threshold would be inventing the number it claims to derive. It is measured on
+    the VALIDATING machine, which is usually but not always the running one; that
+    is a limitation of the check, not a reason to skip it, and the message names
+    the count so a mismatch is visible rather than silent.
+    """
+    import os as _os
+
+    raw = opt.get("max_parallel")
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw <= 1:
+        return []
+    cpus = _os.cpu_count() or 1
+    if raw <= cpus:
+        return []
+    return [
+        f"WARN: optimization.max_parallel={raw} exceeds this machine's "
+        f"{cpus} CPU(s), so a confirm replicate block would put more runs on the "
+        f"machine than it has cores to run them on. The bound is safe at all "
+        f"because contention inside a block is SYMMETRIC across the finalists "
+        f"being compared and therefore cancels out of their differences; "
+        f"time-slicing breaks that by injecting scheduler-dependent variance "
+        f"into those same differences, which widens the terminal "
+        f"residual-regret bound the round exists to tighten. Lower it to at most "
+        f"{cpus} unless the target's run_command is I/O-bound (it mostly waits on "
+        f"a remote service or a cluster and holds no core while waiting), which "
+        f"is the one case where a higher bound is correct and the only case this "
+        f"check cannot see. Note the count is this machine's; if the campaign "
+        f"runs elsewhere, compare against that host's cores instead.",
+    ]
+
+
 def _rule17_config_patch_path_reachable(campaign: dict, opt: dict,
                                          factors: list[dict]) -> list[str]:
     """Rule 17: a ``config_patch`` factor's file must be reachable from the run.
@@ -1370,6 +1429,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule16_workload_seed_env(opt))
     errors.extend(_rule17_config_patch_path_reachable(campaign, opt, factors))
     errors.extend(_rule18_high_run_timeout_warning(opt, factors))
+    errors.extend(_rule19_max_parallel_oversubscription(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     return errors
 
