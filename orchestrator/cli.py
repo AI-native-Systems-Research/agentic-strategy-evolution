@@ -609,7 +609,12 @@ def _cmd_validate(args):
                 file=sys.stderr,
             )
             sys.exit(2)
-        _validate_campaign_file(args.file, smoke=getattr(args, 'smoke', False))
+        _validate_campaign_file(
+            args.file,
+            smoke=getattr(args, 'smoke', False),
+            liveness=getattr(args, 'liveness', False),
+            liveness_repeats=getattr(args, 'liveness_repeats', 3),
+        )
         return
     if args.dir is None:
         print(
@@ -628,7 +633,10 @@ def _cmd_validate(args):
         sys.exit(1)
 
 
-def _validate_campaign_file(path: Path, smoke: bool = False) -> None:
+def _validate_campaign_file(
+    path: Path, smoke: bool = False, *, liveness: bool = False,
+    liveness_repeats: int = 3,
+) -> None:
     """Check a campaign.yaml before spending anything on a run.
 
     Runs BOTH layers an author can trip: the JSON Schema (shape, required
@@ -729,11 +737,17 @@ def _validate_campaign_file(path: Path, smoke: bool = False) -> None:
                 "  Static checks only. Re-run with --smoke to execute the test "
                 "command and ONE configuration: that is the only way to catch a "
                 "manipulation predicate whose type never matches, an unmatched "
-                "native_test, or a run_command that cannot exec."
+                "native_test, or a run_command that cannot exec. Add --liveness "
+                "to also run EVERY declared level once, which is the only way to "
+                "catch a level that aborts the target and a factor whose levels "
+                "move the objective by less than run-to-run noise."
             )
         else:
             print("\n  --smoke: executing the contract against the target...")
-            issues = _smoke_check_optimization(campaign)
+            issues = _smoke_check_optimization(
+                campaign, liveness=liveness,
+                liveness_repeats=liveness_repeats,
+            )
             if issues:
                 print(f"\n{len(issues)} smoke failure(s):", file=sys.stderr)
                 for i in issues:
@@ -746,8 +760,18 @@ def _validate_campaign_file(path: Path, smoke: bool = False) -> None:
             print("  smoke: OK — the campaign/target contract holds.")
 
 
-def _smoke_check_optimization(campaign: dict) -> list[str]:
+def _smoke_check_optimization(
+    campaign: dict, *, liveness: bool = False, liveness_repeats: int = 3,
+) -> list[str]:
     """Execute the test command and ONE configuration; report what breaks.
+
+    ``liveness`` opts into the per-level sweep (``_smoke_liveness_sweep``):
+    every declared level run once at the baseline, which both catches a level
+    that ABORTS the target and measures each factor's effect against the
+    workload's own noise floor. Off by default because it is the only part of
+    ``--smoke`` whose cost scales with the design (``sum(len(levels)) +
+    liveness_repeats`` runs rather than one); without it, the count of levels
+    that went unexercised is printed instead so the gap stays visible.
 
     Static validation cannot see the failures that actually kill campaigns,
     because they live in the *contract between the campaign and the target*
@@ -865,9 +889,258 @@ def _smoke_check_optimization(campaign: dict) -> list[str]:
         problems.extend(_smoke_probe_one_config(
             opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
         ))
+        # 5. Per-level abort sweep + liveness (opt-in). Gated behind
+        # `--liveness` because it costs REAL runs -- one per declared level plus
+        # the baseline repeats -- unlike everything above it, which is one run
+        # total. Plain `--smoke` reports the size of the gap instead of closing
+        # it, so an author can see what was not exercised and decide.
+        if liveness:
+            problems.extend(_smoke_liveness_sweep(
+                opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
+                repeats=liveness_repeats,
+            ))
+        else:
+            problems.extend(_report_unexercised_levels(factors))
     finally:
         shutil.rmtree(probe_dir, ignore_errors=True)
     return problems
+
+
+def _report_unexercised_levels(factors) -> list[str]:
+    """Say how many declared levels plain ``--smoke`` did NOT exercise.
+
+    Never a problem -- always the empty list. The single probe corner covers
+    exactly one level per factor, so every other declared level is untested at
+    this point, and a level that ABORTS the target (a real one exited 2 on a Go
+    panic) is caught only if it happens to sit at the corner. Reporting the
+    count is what keeps that gap from being invisible; closing it costs
+    ``sum(len(levels))`` runs and is therefore opt-in.
+    """
+    declared = sum(len(getattr(f, "levels", ()) or ()) for f in factors)
+    covered = sum(1 for f in factors if getattr(f, "levels", None))
+    unexercised = declared - covered
+    if unexercised <= 0:
+        return []
+    print(
+        f"  smoke: {unexercised} of {declared} declared level(s) were NOT "
+        f"exercised — the probe ran ONE corner, so a level that aborts the "
+        f"target is caught only if it sits at that corner. Re-run with "
+        f"--liveness to run every level once ({declared} runs) and to measure "
+        f"each factor's effect against the workload's noise floor.",
+    )
+    return []
+
+
+def _smoke_liveness_sweep(
+    opt: dict, factors, *, repo: Path, probe_dir: Path, repeats: int = 3,
+) -> list[str]:
+    """Run every declared level once, then report effect size against noise.
+
+    Two gaps, one set of runs — deliberately shared, because a level that
+    aborts the target cannot produce an effect size, so measuring liveness and
+    detecting an aborting level are the same sweep read two ways:
+
+      * GAP 3, a HARD failure. Each declared level of each factor is run once
+        with every other factor at ``known_valid_baseline``. A non-zero exit, a
+        crash signature, or unparseable output is a smoke FAILURE naming the
+        factor AND the level. The real defect this closes: a level that exited 2
+        on a Go panic was reported by the author's own harness as a clean null
+        result identical to baseline, because that harness reused a stale
+        metrics file on non-zero exit.
+      * GAP 2, REPORTED not refused. The baseline is run ``repeats`` times
+        varying only the workload seed, giving the objective's coefficient of
+        variation — the noise floor. A factor whose objective RANGE across its
+        measured levels is under ``2 x`` that floor is flagged "not
+        demonstrably live". A
+        genuinely-small-but-real effect is the author's call to keep; what was
+        missing was the NUMBER. On a real target 3 of 8 candidate factors were
+        dead axes, and a pre-registered policy hash over dead axes is a
+        pre-registration of nothing.
+
+    Cost is ``sum(len(levels)) + repeats`` runs — LINEAR in the design, never
+    ``prod(len(levels))``. That is what makes it affordable enough to be worth
+    offering at all.
+    """
+    problems: list[str] = []
+    baseline = opt.get("known_valid_baseline")
+    if not isinstance(baseline, dict) or not baseline:
+        return [
+            "--liveness needs optimization.known_valid_baseline: every "
+            "per-factor run holds the OTHER factors at the baseline, and every "
+            "noise-floor run is the baseline itself. Without it there is no "
+            "configuration the campaign promises is runnable to vary from, so "
+            "an effect measured against an arbitrary corner would not be "
+            "attributable to the factor.",
+        ]
+    metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")
+    if not metric:
+        return [
+            "--liveness needs response.primary.metric to compare levels on.",
+        ]
+    seed_env = ((opt.get("workload") or {}).get("seed_env")) or None
+
+    def _run(levels: dict, *, seed: int | None, label: str):
+        """One configuration. Returns ``(objective, error_text)``."""
+        obs, err = _liveness_run_one(
+            opt, factors, levels, repo=repo, probe_dir=probe_dir,
+            seed_env=seed_env, seed=seed, label=label,
+        )
+        if err is not None:
+            return None, err
+        value = obs.get(metric)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None, (
+                f"the run emitted no numeric {metric!r} (got {value!r}), so no "
+                f"effect size is computable"
+            )
+        return float(value), None
+
+    # 1. Noise floor: the baseline, `repeats` times, varying ONLY the seed.
+    samples: list[float] = []
+    for i in range(max(1, int(repeats or 1))):
+        # A campaign with no `workload.seed_env` gets seed=None: the repeats
+        # still measure whatever run-to-run variation the target has (process
+        # startup, timing, an internal clock), which is the floor that matters.
+        val, err = _run(dict(baseline), seed=(i + 1) if seed_env else None,
+                        label=f"noise floor {i + 1}/{repeats}")
+        if err is not None:
+            problems.append(
+                f"the known_valid_baseline configuration {baseline} failed on "
+                f"noise-floor run {i + 1}: {err}. The baseline is the bottom "
+                f"rung of report.json's fallback ladder — a campaign whose "
+                f"baseline does not run has nothing to fall back to.",
+            )
+            return problems
+        samples.append(val)
+    mean = sum(samples) / len(samples)
+    if len(samples) > 1:
+        var = sum((s - mean) ** 2 for s in samples) / (len(samples) - 1)
+        sd = var ** 0.5
+    else:
+        sd = 0.0
+    cv = (sd / abs(mean)) if mean else 0.0
+    print(f"  liveness: noise floor from {len(samples)} baseline run(s): "
+          f"mean {metric}={mean:.6g}, sd={sd:.6g}, CV={cv * 100:.2f}%")
+    if len(samples) < 2:
+        print("  liveness: NOTE — one baseline sample cannot estimate a noise "
+              "floor; the CV is reported as 0 and every non-zero effect will "
+              "clear it. Raise --liveness-repeats to at least 3.")
+
+    # 2. Every declared level once, other factors at baseline.
+    #    Both bullets above read this ONE sweep: an aborting level is a hard
+    #    failure, and the surviving extremes give the effect size.
+    noise_abs = abs(cv * mean) if mean else sd
+    threshold = 2.0 * noise_abs
+    rows: list[tuple[str, float | None, float | None]] = []
+    dead: list[str] = []
+    for f in factors:
+        levels = list(getattr(f, "levels", ()) or ())
+        if not levels:
+            continue
+        measured: dict = {}
+        for level in levels:
+            cfg = dict(baseline)
+            cfg[f.id] = level
+            val, err = _run(cfg, seed=1 if seed_env else None,
+                            label=f"{f.id}={level!r}")
+            if err is not None:
+                problems.append(
+                    f"factor {f.id} level {level!r} could not be run: {err}. "
+                    f"A declared level the target cannot execute is not a null "
+                    f"result — it is a hole in the design matrix that a fitter "
+                    f"will read as a failed row, and (if a harness reuses a "
+                    f"stale metrics file on non-zero exit) as a measurement "
+                    f"identical to baseline.",
+                )
+                continue
+            measured[level] = val
+        if len(measured) < 2:
+            rows.append((f.id, None, None))
+            continue
+        # The objective's full RANGE across the levels actually measured, not
+        # just the difference between the two extreme LEVELS. A strict superset
+        # of the latter, and the right criterion: a factor whose endpoints
+        # happen to coincide but whose middle level moves the objective IS live,
+        # and an endpoints-only comparison would call it dead. For a two-level
+        # factor the two definitions coincide.
+        lo = min(measured.values())
+        hi = max(measured.values())
+        effect = hi - lo
+        rows.append((f.id, effect, (effect / noise_abs) if noise_abs else None))
+        if abs(effect) < threshold:
+            dead.append(f.id)
+
+    print(f"  liveness: effect (objective range across measured levels) vs "
+          f"noise (threshold: |effect| >= 2 x {noise_abs:.6g} = "
+          f"{threshold:.6g})")
+    for fid, effect, ratio in rows:
+        if effect is None:
+            print(f"    {fid:<20} effect: n/a (fewer than 2 levels measured)")
+            continue
+        flag = "  <-- not demonstrably live" if fid in dead else ""
+        shown = "inf" if ratio is None else f"{ratio:.2f}x"
+        print(f"    {fid:<20} effect: {effect:.6g}   ({shown} noise){flag}")
+    if dead:
+        # REPORTED, never refused: a small-but-real effect is the author's
+        # call, and the point of the check is to make that call informed.
+        print(
+            f"  liveness: {len(dead)} factor(s) NOT demonstrably live "
+            f"({', '.join(dead)}): the objective moved less across all their "
+            f"measured levels than 2x the workload's own run-to-run variation. "
+            f"Such a factor consumes its share of the design, contributes only "
+            f"variance to the fit, and makes the policy hash a "
+            f"pre-registration of a knob nothing reads. Confirm the knob "
+            f"reaches a mechanism (not just a config file), widen its levels, "
+            f"or drop it before pre-registering.",
+        )
+    return problems
+
+
+def _liveness_run_one(
+    opt: dict, factors, levels: dict, *, repo: Path, probe_dir: Path,
+    seed_env: str | None, seed: int | None, label: str,
+):
+    """Execute one configuration for the liveness sweep.
+
+    Returns ``(observations, None)`` or ``(None, error_text)``. Goes through the
+    SAME ``runner.make_config_runner`` / ``matrix.render_apply`` /
+    ``resolve_run_timeout`` seams the epoch runs through — a sweep that ran the
+    target differently from the way the epoch will could not certify anything
+    about the epoch. In particular the runner already raises on a non-zero exit,
+    on a timeout, and on unparseable output, which is exactly the abort
+    detection GAP 3 needs; nothing here reimplements it.
+    """
+    from orchestrator.optimize import runner
+    from orchestrator.optimize.matrix import render_apply
+    from orchestrator.optimize.stage_runner import resolve_run_timeout
+
+    cfg_runner = runner.make_config_runner(
+        opt["run_command"], cwd=repo,
+        metric_path=((opt.get("response") or {}).get("primary") or {}).get(
+            "metric", "",
+        ),
+        timeout=resolve_run_timeout(opt),
+        log_dir=probe_dir / "failed_runs",
+    )
+
+    class _Row:
+        row_index = 0
+        replicate = 0
+        role = "liveness"
+        levels: dict = {}
+        apply: dict = {}
+
+    row = _Row()
+    row.levels = dict(levels)
+    apply = render_apply(factors, levels)
+    if seed_env and seed is not None:
+        apply = {**apply, "env": {**(apply.get("env") or {}),
+                                  seed_env: str(seed)}}
+    row.apply = apply
+    try:
+        return cfg_runner(row), None
+    except Exception as exc:  # noqa: BLE001 — any failure is a finding
+        return None, f"{exc}"
 
 
 def _smoke_probe_one_config(
@@ -1697,6 +1970,26 @@ def build_parser():
              "unmatched native_test, a manipulation predicate whose type never "
              "matches, an objective metric the target does not emit, and a "
              "run_command that cannot exec.",
+    )
+    p_validate.add_argument(
+        "--liveness", action="store_true",
+        help="With --smoke: also run EVERY declared level of every factor once "
+             "(other factors at known_valid_baseline) and measure each factor's "
+             "effect against the workload's noise floor. Opt-in because it is "
+             "the only check whose cost scales with the design: "
+             "sum(len(levels)) + --liveness-repeats runs, not one. Catches a "
+             "level that ABORTS the target (caught otherwise only if it happens "
+             "to sit at the first design corner) and flags a factor whose "
+             "levels move the objective by less than 2x run-to-run noise — a "
+             "dead axis that consumes its share of the design and makes the "
+             "policy hash a pre-registration of a knob nothing reads.",
+    )
+    p_validate.add_argument(
+        "--liveness-repeats", type=int, default=3, metavar="N",
+        help="How many times --liveness runs the known_valid_baseline, varying "
+             "only the workload seed, to estimate the objective's noise floor "
+             "(default: 3). Below 2 no floor is estimable and every non-zero "
+             "effect clears it.",
     )
     p_validate.set_defaults(func=_cmd_validate)
 

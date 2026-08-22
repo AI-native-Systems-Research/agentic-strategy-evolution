@@ -341,15 +341,28 @@ config to check that declared `native_test` identifiers actually resolve, that
 present, and that the manipulation predicates hold. Each of those otherwise
 costs a full campaign to discover.
 
-`--smoke` executes **one** configuration, so it cannot see the apparatus
-properties that only appear across a *range* of them: a `run_timeout_sec`
-sized from the cheap corner of the design (run order is randomized, so the slow
-corner may run first), a factor whose levels move the objective by less than
-run-to-run noise, a noise floor measured in the wrong load regime, an objective
-that is censored by a request deadline, or a workload that leaves the mechanism
-under study entirely idle. `docs/optimization-campaign-guide.md` §7 is the
-pre-flight checklist for those — six checks costing a handful of runs against a
-budget of 60-90, each one a defect a real campaign shipped.
+Add `--liveness` (opt-in, alongside `--smoke`) to run **every declared level of
+every factor once**, other factors at `known_valid_baseline`:
+`sum(len(levels)) + --liveness-repeats` runs, linear in the design rather than
+combinatorial. One sweep, read two ways. A level whose run exits non-zero, times
+out, or emits unparseable output is a **smoke FAILURE naming the factor and the
+level** — a real level exited 2 on a Go panic and an author's harness, reusing a
+stale metrics file, reported it as a clean null result identical to baseline. And
+each factor's effect across its extreme levels is **reported** against the noise
+floor (the baseline re-run varying only the workload seed), flagged
+`not demonstrably live` under `2 x` the noise CV. Reported, not refused: a
+small-but-real effect is the author's call, but of 8 candidate factors on a real
+target 3 were dead axes, and a policy hash over dead axes pre-registers nothing.
+Plain `--smoke` stays one run and prints how many levels it did **not** exercise,
+so the gap is visible rather than silent.
+
+Even with `--liveness`, `--smoke` cannot see the apparatus properties that only
+appear across a *range* of configurations: a `run_timeout_sec` sized from the
+cheap corner of the design (run order is randomized, so the slow corner may run
+first), a noise floor measured in the wrong load regime, an objective that is
+censored by a request deadline, or a workload that leaves the mechanism under
+study entirely idle. `docs/optimization-campaign-guide.md` §7 is the pre-flight
+checklist for those — each one a defect a real campaign shipped.
 
 `--smoke` remains the **first** thing to run on any campaign, compiled policy
 or not: a policy compiles cleanly from a campaign whose `run_command` cannot
