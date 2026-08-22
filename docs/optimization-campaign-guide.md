@@ -1692,7 +1692,7 @@ prompts:
 locked_parameters:
   arming_threshold: 0.40
   score_floor: 0.0
-  cd: 0
+  cooldown_bars: 0
   weighting: equal_per_window
   is_start: "2025-03-20"
   oos_start: "2026-02-01"
@@ -1760,7 +1760,7 @@ optimization:
       name: severity_boundary
       type: numeric
       levels: [0.75, 0.85, 0.95]
-      apply: "--severity_boundary={level}"
+      apply: "--severity-boundary={level}"
       manipulation: {observable: config.severity_boundary, op: "==", value: "{level}"}
       relations:
         - {id: R3a, kind: correctness,
@@ -3030,7 +3030,7 @@ was declared but nothing stopped fitting from using it too.
 
 ```yaml
 response:
-  held_out: [held_out_scoer]   # typo: "retrun"
+  held_out: [held_out_scoer]   # typo: "scoer"
 ```
 
 A typo in a `held_out` entry makes it **inert**, not leaked. The author
