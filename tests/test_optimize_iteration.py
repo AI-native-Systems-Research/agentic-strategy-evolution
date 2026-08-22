@@ -2529,3 +2529,203 @@ def _noisy_runner():
             "m": 10.0 - 0.05 * a + 0.20 * b + 0.02 * a * b + rng.gauss(0, 0.4),
         }
     return run
+
+
+# ─── the three target-adapter guards, through run_stage ────────────────────
+#
+# `policy.json` is content-hashed and a mid-epoch edit hard-aborts, because a
+# pre-registered policy that changed inside an epoch is not a pre-registration.
+# A pre-registered design assumes the MEASUREMENT INSTRUMENT is fixed too, and
+# nothing enforced that until these guards. These tests assert what the epoch
+# does about it: the contract file that lands at the work-dir ROOT (epoch-scoped,
+# so `screen` and `confirm` share it), the abort a drifted adapter produces, and
+# the row status a stale or self-contradictory response earns.
+
+
+def test_adapter_contract_is_captured_at_the_work_dir_root(tmp_path, work_dir):
+    """Epoch-scoped, beside policy.json -- not under runs/iter-N/.
+
+    An epoch spans several iterations, and an adapter edited BETWEEN two of them
+    is the interval the real defect occupied; an iteration-scoped fingerprint
+    would see nothing.
+    """
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd)
+
+    doc = json.loads((Path(wd) / "adapter_contract.json").read_text())
+    assert set(doc["keys"]) == {"cfg", "m"}
+    assert doc["keys"]["m"] == "float"
+    assert doc["captured_at"]["stage"] == "screen"
+    assert (Path(wd) / "adapter_contract.sha256").exists()
+    assert not (Path(wd) / "runs" / "iter-2" / "adapter_contract.json").exists()
+
+
+def test_adapter_drift_mid_sweep_aborts_the_campaign(tmp_path, work_dir):
+    """DEFECT 7: the adapter's output schema changed underneath the design.
+
+    A drifted contract is a campaign-level abort, not a semantic exception: the
+    exception branch ends the epoch and still returns an action from the fitted
+    surface, and here the surface would be fitted over rows measured by two
+    different instruments, so there is no action to certify.
+    """
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    seen: list[int] = []
+
+    def _grows_a_key(row):
+        seen.append(row.row_index)
+        # The author "improved" the adapter after the first few rows.
+        return {"backlog_slope": 0.4} if len(seen) > 3 else {}
+
+    with pytest.raises(OptimizationAborted) as exc:
+        _run(c, wd, runner=_runner(extra=_grows_a_key))
+
+    msg = str(exc.value)
+    assert "CHANGED MID-EPOCH" in msg
+    assert "backlog_slope" in msg
+    assert "EPOCH BOUNDARY, NOT AN EDIT" in msg
+    # The rows measured BEFORE the change survive on disk: runs.jsonl is
+    # append-only, and they are what tells an author where the change landed.
+    rows = artifacts.read_runs(Path(wd) / "runs" / "iter-2")
+    assert len(rows) >= 3
+
+
+def test_a_null_where_a_value_was_aborts_the_campaign(tmp_path, work_dir):
+    """DEFECT 7 verbatim: a key present, its value null.
+
+    The real consequence was a `None` reaching `float(raw)` and a `>=` against a
+    float, killing an iteration at fit time after ~2 hours of measurement. Caught
+    on the first row after the change instead.
+    """
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    seen: list[int] = []
+
+    def _nulls_a_key(row):
+        seen.append(row.row_index)
+        return {"slope": None if len(seen) > 3 else 0.01}
+
+    with pytest.raises(OptimizationAborted) as exc:
+        _run(c, wd, runner=_runner(extra=_nulls_a_key))
+
+    assert "slope: float -> null" in str(exc.value)
+    assert "an unknown is not a measurement" in str(exc.value)
+
+
+def test_a_self_check_violation_fails_only_its_own_row(tmp_path, work_dir):
+    """DEFECT 2: 8 of 12 rows reported a value their own diagnostic refuted.
+
+    A row failure, not a campaign abort -- the sound rows must survive, and the
+    violated row must be recorded with its reason and its verdicts.
+    """
+    c = _campaign()
+    c["optimization"]["response"]["self_check"] = [
+        {"metric": "backlog_slope", "op": "<=", "value": 0.060},
+    ]
+    wd = _init_work_dir(tmp_path, c)
+
+    def _one_bad_row(row):
+        return {"backlog_slope": 0.1234 if row.row_index == 1 else 0.01}
+
+    # `_fitting_responses` refuses to fit when a row produced no usable
+    # measurement, which is exactly the right outcome here -- the abort names the
+    # excluded row rather than NaN-poisoning every coefficient.
+    with pytest.raises(OptimizationAborted) as exc:
+        _run(c, wd, runner=_runner(extra=_one_bad_row))
+    assert "no usable measurement" in str(exc.value)
+
+    rows = {r["row_index"]: r for r in
+            artifacts.read_runs(Path(wd) / "runs" / "iter-2")}
+    assert rows[1]["status"] == "failed"
+    assert "response.self_check violated" in rows[1]["error"]
+    assert [r["status"] for i, r in rows.items() if i != 1] == \
+        ["complete"] * (len(rows) - 1)
+    # Verdicts recorded on the PASSING rows too, so a reader can tell "the
+    # invariant held" from "no invariant was declared" (guide SS7.7).
+    assert rows[0]["self_check"][0]["ok"] is True
+    assert rows[1]["self_check"][0]["ok"] is False
+
+
+def test_a_campaign_with_no_self_check_records_an_empty_verdict_list(
+    tmp_path, work_dir,
+):
+    """Declaring none behaves exactly as before: every row complete."""
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+    _run(c, wd)
+
+    rows = artifacts.read_runs(Path(wd) / "runs" / "iter-2")
+    assert {r["status"] for r in rows} == {"complete"}
+    assert all(r["self_check"] == [] for r in rows)
+
+
+def test_a_stale_byte_identical_response_fails_the_row(tmp_path, work_dir):
+    """DEFECT 1: an adapter serving a cached result across different levels.
+
+    The real one re-read a metrics file it failed to overwrite when the target
+    exited non-zero, so a level that PANICKED was recorded as "no effect,
+    identical to baseline" -- and three factors were briefly believed live.
+
+    The manipulation predicate here reads ``applied.*`` (the rendered
+    configuration Nous itself knows), which is the form
+    ``runner._applied_namespace`` exists for and the only form available to the
+    majority of targets -- they emit metrics only, with no config echo. So the
+    predicates pass on a stale row and the freshness guard is what catches it.
+    """
+    c = _campaign()
+    for f in c["optimization"]["factors"]:
+        f["manipulation"] = {"observable": f"applied.{f['id']}", "op": "==",
+                             "value": "{level}"}
+    wd = _init_work_dir(tmp_path, c)
+
+    def _serves_a_cached_result(row):
+        # Metrics only, and always the SAME object: a file the adapter never
+        # overwrote, re-read on every invocation.
+        return {"m": 10.0, "slope": 0.01}
+
+    with pytest.raises(OptimizationAborted):
+        # `_fitting_responses` then refuses to fit on the excluded rows, which is
+        # the right end state: the epoch stops rather than fitting a surface over
+        # measurements that were never taken.
+        _run(c, wd, runner=_serves_a_cached_result)
+
+    rows = artifacts.read_runs(Path(wd) / "runs" / "iter-2")
+    stale = [r for r in rows if "BYTE-IDENTICAL" in (r["error"] or "")]
+    assert stale, [r["error"] for r in rows]
+    assert all(r["status"] == "failed" for r in stale)
+    # Row 0 established the reference and is kept; every later row whose levels
+    # differ from its predecessor's is failed, so a whole sweep of stale reads
+    # cannot pass itself off as a flat response surface.
+    assert rows[0]["status"] == "complete"
+
+
+def test_a_config_echo_shields_a_stale_row_from_the_freshness_guard(
+    tmp_path, work_dir,
+):
+    """The freshness guard's honest limit, asserted rather than implied.
+
+    An adapter that echoes its own configuration back emits a response object
+    that differs on every row BY CONSTRUCTION, so no two rows are ever
+    byte-identical and guard 2 can never fire -- even when every metric in the
+    object is stale. That is not a bug in the guard: Nous observes only what the
+    adapter returns, and an object that differs per row IS evidence the adapter
+    did something per row. It IS a limit worth pinning down, because the
+    mitigation is a different guard: the config echo makes the manipulation
+    predicate strictly stronger (it confirms the flag was RECEIVED, not merely
+    sent), and a stale-metrics adapter that echoes config is caught by
+    ``response.self_check`` or by ``--liveness``'s effect-size measurement
+    instead -- a factor whose objective never moves reads as a dead axis.
+    """
+    c = _campaign()
+    wd = _init_work_dir(tmp_path, c)
+
+    def _echoes_config_but_serves_stale_metrics(row):
+        return {"cfg": {k.lower(): v for k, v in row.levels.items()},
+                "m": 10.0, "slope": 0.01}
+
+    _run(c, wd, runner=_echoes_config_but_serves_stale_metrics)
+
+    rows = artifacts.read_runs(Path(wd) / "runs" / "iter-2")
+    assert {r["status"] for r in rows} == {"complete"}
+    assert not any("BYTE-IDENTICAL" in (r["error"] or "") for r in rows)

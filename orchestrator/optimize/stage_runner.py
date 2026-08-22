@@ -144,7 +144,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from orchestrator.optimize import artifacts, certificate, decide, matrix, relations, runner
+from orchestrator.optimize import (
+    adapter_contract,
+    artifacts,
+    certificate,
+    decide,
+    matrix,
+    relations,
+    runner,
+)
 from orchestrator.optimize import design as design_mod
 from orchestrator.optimize import policy as policy_mod
 from orchestrator.optimize.effects import fit_effects, solve_stationary_point
@@ -2182,15 +2190,40 @@ def run_stage(
             max_parallel,
         )
 
-    outcomes = runner.execute_design(
-        exec_rows, runner=config_runner, response_spec=response_spec,
-        invariants=invariants, factors=factors,
-        integrity_check=integrity_check,
-        max_parallel=max_parallel,
-        on_row=lambda outcome: artifacts.append_run(
-            iter_dir, _run_row(by_index[outcome.row_index], outcome),
-        ),
+    # The three target-adapter guards, armed for every measuring stage of the
+    # epoch. Epoch-scoped rather than iteration-scoped, and that is the point:
+    # `adapter_contract.json` lives at the work-dir root, so the contract
+    # captured at `screen` is the one `refine` and `confirm` are checked
+    # against. An adapter edited between two iterations of one epoch is exactly
+    # the defect this closes, and an iteration-scoped fingerprint would see
+    # nothing.
+    adapter_guard = runner.AdapterGuard(
+        work_dir, epoch=_epoch_index(work_dir), stage=stage_name,
+        self_check=(response_spec.get("self_check") or []),
+        constant_fields=set(response_spec.get("constant_fields") or ()),
     )
+
+    try:
+        outcomes = runner.execute_design(
+            exec_rows, runner=config_runner, response_spec=response_spec,
+            invariants=invariants, factors=factors,
+            integrity_check=integrity_check,
+            max_parallel=max_parallel,
+            adapter_guard=adapter_guard,
+            on_row=lambda outcome: artifacts.append_run(
+                iter_dir, _run_row(by_index[outcome.row_index], outcome),
+            ),
+        )
+    except adapter_contract.AdapterContractDrift as exc:
+        # Converted here so it lands on exactly the path a `policy.sha256`
+        # mismatch does: a campaign-level hard abort, not a row failure and not a
+        # semantic exception. A semantic exception would be wrong -- that branch
+        # ends the epoch and still returns an action from the fitted surface,
+        # and here the surface is fitted over rows measured by two different
+        # instruments, so there is no action to certify. The rows already written
+        # to runs.jsonl stay on disk (append-only), which is what lets an author
+        # see which rows preceded the change.
+        raise OptimizationAborted(str(exc)) from exc
 
     # Restore DESIGN order before anything reads these positionally.
     # `_fitting_responses` walks `outcomes` in sequence and `fit_effects` pairs
@@ -4249,6 +4282,13 @@ def _run_row(row, outcome) -> dict:
         "held_out": dict(getattr(outcome, "held_out", {}) or {}),
         "manipulation": list(outcome.manipulation or []),
         "invariants": list(outcome.invariants or []),
+        # Recorded even when every self-check passed, and even when none were
+        # declared (an empty list). "Record enough to adjudicate a flag you
+        # raise, not just to raise it" (guide §7.7): a reader of a row failed by
+        # a self-check needs the observed value the predicate compared, and a
+        # reader of a PASSING row needs to be able to tell "the invariant held"
+        # from "no invariant was declared".
+        "self_check": list(getattr(outcome, "self_check", []) or []),
         "duration_ms": int(outcome.duration_ms or 0),
         "error": outcome.error or "",
     }

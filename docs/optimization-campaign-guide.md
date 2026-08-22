@@ -230,8 +230,113 @@ candidate honest.
   hardware limit, a theoretical maximum). A response above ceiling
   hard-fails that config: exceeding a physical ceiling means the
   instrumentation is lying, not that the campaign found a miracle.
+- **`self_check`** — invariants the row's **own response** must satisfy for its
+  reported objective to *be* the objective. Same `{observable | metric, op,
+  value}` shape as `constraints`, and a different question: a constraint asks
+  *is this configuration admissible?* (violation → `infeasible`, real data about
+  the space, retained), while a self-check asks *does this row contradict
+  itself?* (violation → `failed`, excluded from the fit). Declare one whenever
+  the objective is defined by a **predicate over a diagnostic** — "the largest
+  rate that was sustained", "the smallest setting that still converges", "the
+  highest load meeting a bound". See §7.7 and the "Guarding the adapter"
+  section below.
+- **`constant_fields`** — response fields that legitimately never vary across
+  rows (a schema version, a host name, a build tag). Excluded from the
+  output-freshness guard's byte-identity comparison, which makes that check
+  *stricter* on what remains. See "Guarding the adapter" below.
 - **`noise_estimate_pct`** — rough expected measurement noise as a percent
   of the primary metric, used to size replicate counts.
+
+### Guarding the adapter: the three checks Nous applies to your `run_command`
+
+`policy.json` is content-hashed and a mid-epoch edit hard-aborts, because a
+pre-registered policy that changed inside an epoch is not a pre-registration. A
+pre-registered design makes the same assumption about the **measurement
+instrument** — your adapter — and until these three guards nothing enforced it.
+Each closes a defect observed on a real campaign, where the adapter produced
+plausible-but-wrong numbers Nous had no way to question.
+
+| Guard | Fires when | Consequence | Turn it off by |
+|---|---|---|---|
+| **Contract drift** | this row's response has a key the epoch's first successful row did not, is missing one it had, or reports one at a different **type** (including `null`) | campaign **abort** | nothing — it is always on |
+| **Output freshness** | this row's response object is byte-identical to the immediately preceding row's while the factor levels differ | **row failure** (excluded from the fit) | declaring `response.constant_fields`, or reporting a diagnostic alongside the objective |
+| **Declared self-check** | a `response.self_check` predicate fails on this row's own response | **row failure** | declaring no `self_check` (the default) |
+
+**Contract drift** — at the first *successful* row of an epoch, Nous
+fingerprints the adapter's output contract (every top-level key name and its
+value's type, never the values themselves, which legitimately change per row)
+and writes it to `adapter_contract.json` + `adapter_contract.sha256` at the
+work-dir root, beside `policy.json`. Every later row is checked against it. The
+fingerprint is epoch-scoped, so the contract captured at `screen` is the one
+`refine` and `confirm` are checked against — an adapter edited *between* two
+iterations of one epoch is exactly the interval the real defect occupied.
+
+An added key aborts just as a removed one does, and that is deliberate. The
+tempting answer is a warning: an extra key is additive and nothing downstream
+reads it. That is right about the row and wrong about the epoch — the only way an
+adapter grows a key between two rows of one pre-registered design is that the
+adapter was edited mid-epoch, and in the real defect the added key was the
+*carrier* of the damage: the rows measured **before** the edit are the ones that
+end up `null`, and they are already on disk and unfixable by the time the new key
+appears. The real consequence was a `None` reaching a `float()` coerce and a `>=`
+against a float — an entire iteration killed at fit time, after ~2 hours of
+measurement.
+
+**An apparatus change is an epoch boundary, not an edit.** If you improve your
+adapter mid-campaign, end the epoch and let the next one capture the new
+contract (see "Semantic exceptions, and how to start epoch 2"). Do not edit
+`adapter_contract.json`; its hash sidecar is checked, exactly as `policy.json`'s
+is.
+
+**Output freshness** — Nous cannot police your adapter's internals, but it can
+assert what it observes. A response whose *entire* object is byte-identical to
+the immediately preceding row's, while the levels differ, is the signature of a
+cached or stale read. The real defect: an adapter reused a stale metrics file
+whenever the target exited non-zero, so a factor level that **panicked** was
+recorded as "no effect, identical to baseline" — and three factors were briefly
+believed live on that basis.
+
+Two different level combinations *can* legitimately produce the identical
+objective value (`arc` and `lru` both measured exactly 1.3125 on a live
+campaign), so the check compares the **full response object**, not the objective,
+and only against the **immediately preceding** row. It has one honest limit: an
+adapter that echoes its own configuration back emits a response that differs on
+every row by construction, so the guard cannot fire for it even when every metric
+is stale. That is the case `self_check` and `--liveness`'s effect-size
+measurement cover instead — a factor whose objective never moves reads as a dead
+axis.
+
+**Declared self-check** — Nous cannot know your objective's semantics, so it
+cannot detect a self-contradictory row itself. You state the invariant; Nous
+enforces it, per row, and on the configurations `--smoke` and `--liveness` run:
+
+```yaml
+response:
+  primary: {metric: max_sustained_rate, direction: maximize}
+  self_check:
+    # the reported optimum must satisfy the predicate that DEFINES it
+    - {metric: backlog_slope, op: "<=", value: 0.060}
+```
+
+On a real campaign that one line would have failed **8 of 12 rows** at the
+moment each was measured. Without it, every one reported a flattering
+`max_sustained_rate` whose own recorded `backlog_slope` said the rate was
+growing — exit codes clean, file present and parseable, manipulation predicates
+passing, schema validating — and the epoch's fit was believed.
+
+A violation fails only its own row, never the campaign: in the real defect 4 of
+12 rows were sound, and aborting would have discarded them. The verdicts are
+recorded in `runs.jsonl`'s `self_check` field on **passing** rows too, so a
+reader can tell "the invariant held" from "no invariant was declared" (§7.7's
+"record enough to adjudicate a flag you raise").
+
+Two things the validator rejects: a **trivially true** self-check (it certifies
+nothing while making the campaign look checked, and an author who declares one
+reasonably stops looking by hand), and a self-check **over the primary metric
+itself** — a bound on the objective is `response.constraints` (violation →
+`infeasible`, retained) or `response.ceiling` (violation → the instrumentation is
+lying), and as a self-check it would throw away a measurement that is merely
+unattractive.
 
 ### `factors`
 
@@ -1034,13 +1139,14 @@ Work-dir root:
 | `mechanism.patch` + `mechanism.sha256` | `build` (or written by hand) | the mechanism snapshot the drift oracle compares the tree against |
 | `pre_build_tests.json` | before `build` | oracle 2(b): each declared `native_test`'s verdict *before* the mechanism existed |
 | `baseline_equivalence.json` | `verify`, when `build` ran | oracle 2(c): the baseline's replicate vectors before and after the build |
+| `adapter_contract.json` + `adapter_contract.sha256` | the first **successful** row of the epoch's first measuring stage | the adapter's output contract (every top-level key and its value's *type*) and its content hash — every later row is checked against it |
 
 Per iteration, under `runs/iter-N/`:
 
 | File | Written by | Contains |
 |---|---|---|
 | `design_matrix.json` | before execution | the pre-registered rows, generator, randomized run order, RNG seed, `workload_seeds` |
-| `runs.jsonl` | each run, append-only | levels, response metrics, replicate index, manipulation/constraint verdicts, status, duration |
+| `runs.jsonl` | each run, append-only | levels, response metrics, replicate index, manipulation/constraint/**`self_check`** verdicts, status, duration |
 | `effects.json` | fitting states | fitted effects and interactions, pure error, lack-of-fit, **`aliases`** (the alias classes), dropped factors |
 | `recommendation.json` | fitting states | `levels`, `predicted`, `top_candidates`, `stationary_point`, `residual_regret_model`, `aliases`, **`alias_consequential`** |
 | `fit_exclusions.json` | fitting states, only when rows were excluded | which row indices were left out of the fit, and why |
@@ -2436,7 +2542,11 @@ silently produces confident wrong numbers that then get pre-registered.
 The concrete failure: a probe harness that ignored exit codes and re-read a
 stale metrics file reported a factor level as having **no effect, identical to
 baseline** — when in fact that level made the target *abort*. Three factors
-were briefly believed live on that basis. The same class of defect as this
+were briefly believed live on that basis. Nous now fails a row whose
+response object is byte-identical to the immediately preceding row's while the
+levels differ (see "Guarding the adapter", §2) — but only for a target that does
+not echo its configuration back, so the fail-loud wrapper above is still the
+primary defence, not a redundant one. The same class of defect as this
 kind's two historical fit bugs (a singular `XᵀX` from aliased columns; NaN
 poisoning from infeasible rows): **a silent failure that looks like a clean
 result.**
@@ -2477,6 +2587,26 @@ extremum must be re-checked against that predicate before it is reported. A sear
 that returns a point violating its own acceptance test has a bug in the search, not
 a measurement worth recording. Make that a hard failure, because as data it is
 indistinguishable from a good result.
+
+**And declare it, so Nous enforces it too.** The assertion above lives inside
+*your* adapter, which is the right place for it — but it is also the code that
+was wrong in the first place, so an adapter asserting its own correctness is a
+single point of failure. `response.self_check` is the same predicate stated where
+Nous can evaluate it, against the response the adapter actually returned:
+
+```yaml
+response:
+  primary: {metric: max_sustained_rate, direction: maximize}
+  self_check:
+    - {metric: backlog_slope, op: "<=", value: 0.060}
+```
+
+That one line fails each offending row at the moment it is measured (excluded
+from the fit, reason recorded, the sound rows untouched), and `--smoke` /
+`--liveness` evaluate it on the configurations they run — so a violated invariant
+surfaces *before* the policy hash is written rather than after the epoch. See
+"Guarding the adapter" in §2 for the other two guards, which need no declaration
+at all.
 
 
 **Record enough to adjudicate a flag you raise, not just to raise it.** A check
@@ -2541,9 +2671,9 @@ runs against a budget of 60–90.
 
 | # | Check | Cost | Fails if |
 |---|---|---|---|
-| 1 | `nous validate campaign FILE --smoke` | 1 run | predicates unsatisfiable, tests unmatched, `run_command` cannot exec |
+| 1 | `nous validate campaign FILE --smoke` | 1 run | predicates unsatisfiable, tests unmatched, `run_command` cannot exec, a declared `response.self_check` violated at the probe corner |
 | 2 | Mechanism is active (§7.5) | 1 run | the mechanism's own metric is zero |
-| 3+4 | `nous validate campaign FILE --smoke --liveness` (§7.2, §7.3) | `sum(len(levels)) + N` runs | any declared level the target cannot execute — and it *reports* every factor under 2x the noise CV |
+| 3+4 | `nous validate campaign FILE --smoke --liveness` (§7.2, §7.3) | `sum(len(levels)) + N` runs | any declared level the target cannot execute, or one whose row violates a declared `response.self_check` — and it *reports* every factor under 2x the noise CV |
 | 5 | Objective is monotone and uncensored (§7.4) | 4–6 runs | orders-of-magnitude swings, or values pinned at a deadline |
 | 6 | Observation window has settled (§7.6) | 2 runs | the verdict or fitted value changes between a window and 1.5x it |
 | 7 | Worst-*probe* timing (§7.1) | 2 runs | `run_timeout_sec` under ~2x the most expensive probe the search can reach |

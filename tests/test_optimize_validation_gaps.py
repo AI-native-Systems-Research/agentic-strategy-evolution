@@ -565,3 +565,172 @@ def test_validate_campaign_exits_1_when_a_level_aborts(tmp_path: Path):
     with pytest.raises(SystemExit) as exc:
         _validate_campaign_file(path, smoke=True, liveness=True)
     assert exc.value.code == 1
+
+
+# ─────── response.self_check: the invariant --smoke and --liveness enforce ──────
+#
+# Nous cannot know an objective's semantics, so it cannot detect a
+# self-contradictory row itself. The author states the invariant that DEFINES the
+# objective and Nous enforces it -- per row inside the epoch, and on the
+# configurations `--smoke` / `--liveness` run, so a violated invariant surfaces
+# BEFORE the policy hash is written rather than after ~2 hours of measurement.
+#
+# The real defect: `max_sustained_rate` was reported alongside a
+# `backlog_slope` that exceeded the growing threshold on 8 of 12 rows, every one
+# biased in the flattering direction. Exit codes were clean, the file was
+# present and parseable, the manipulation predicates passed, and the schema
+# validated.
+
+
+def _self_check_target(tmp_path: Path, *, slope_when: dict) -> Path:
+    """A target reporting an objective AND the diagnostic that defines it.
+
+    ``slope_when`` maps a factor level to the ``backlog_slope`` the run reports.
+    A slope above the campaign's declared threshold, alongside a healthy-looking
+    ``m``, is a row asserting a rate was sustained while its own diagnostic says
+    it was growing.
+    """
+    path = tmp_path / "sc_target.py"
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        f"SLOPES = {slope_when!r}\n"
+        "levels = {}\n"
+        "for a in sys.argv[1:]:\n"
+        "    if a.startswith('--') and '=' in a:\n"
+        "        k, v = a[2:].split('=', 1)\n"
+        "        levels[k] = v\n"
+        "slope = float(SLOPES.get(levels.get('P'), 0.0))\n"
+        "print(json.dumps({'applied': levels, 'm': 2.1562, "
+        "'backlog_slope': slope}))\n",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
+def _self_check_campaign(tmp_path: Path, *, slope_when: dict,
+                         self_check: list | None = None) -> dict:
+    target = _self_check_target(tmp_path, slope_when=slope_when)
+    repo = tmp_path / "repo"
+    repo.mkdir(exist_ok=True)
+    response = {"primary": {"metric": "m", "direction": "maximize"}}
+    if self_check is not None:
+        response["self_check"] = self_check
+    return {
+        "kind": "optimization", "run_id": "sc", "research_question": "q",
+        "target_system": {"name": "T", "repo_path": str(repo)},
+        "optimization": {
+            "response": response,
+            "factors": [{
+                "id": "P", "name": "policy", "type": "choice",
+                "levels": ["a", "b"], "apply": "--P={level}",
+                "manipulation": {"observable": "applied.P", "op": "==",
+                                 "value": "{level}"},
+                "relations": _relations("P"),
+            }],
+            "stages": ["verify", "screen", "confirm"],
+            "design": {"screen": {"resolution": 3},
+                       "confirm": {"replicates": 1}},
+            "run_command": f"python3 {target}",
+            "known_valid_baseline": {"P": "a"},
+        },
+    }
+
+
+_SLOPE_CHECK = [{"metric": "backlog_slope", "op": "<=", "value": 0.060}]
+
+
+def test_smoke_fails_when_the_probe_violates_a_declared_self_check(tmp_path: Path):
+    """One declared line catches at the probe what took an epoch to find."""
+    from orchestrator.cli import _smoke_check_optimization
+
+    campaign = _self_check_campaign(
+        tmp_path, slope_when={"a": 0.1234, "b": 0.0100},
+        self_check=_SLOPE_CHECK,
+    )
+    issues = _smoke_check_optimization(campaign)
+
+    assert any("self_check violated" in i for i in issues), issues
+    assert any("backlog_slope" in i and "0.1234" in i for i in issues), issues
+
+
+def test_smoke_passes_when_the_declared_self_check_holds(tmp_path: Path):
+    from orchestrator.cli import _smoke_check_optimization
+
+    campaign = _self_check_campaign(
+        tmp_path, slope_when={"a": 0.0100, "b": 0.0200},
+        self_check=_SLOPE_CHECK,
+    )
+    assert _smoke_check_optimization(campaign) == []
+
+
+def test_smoke_reports_how_many_self_checks_hold(tmp_path: Path, capsys):
+    """The count is printed on a passing probe too -- an unread check is not one."""
+    from orchestrator.cli import _smoke_check_optimization
+
+    campaign = _self_check_campaign(
+        tmp_path, slope_when={"a": 0.0100, "b": 0.0200},
+        self_check=_SLOPE_CHECK,
+    )
+    _smoke_check_optimization(campaign)
+
+    out = capsys.readouterr().out
+    assert "1/1 declared response.self_check invariant(s) hold" in out
+
+
+def test_smoke_with_no_self_check_declared_is_unchanged(tmp_path: Path, capsys):
+    """A campaign declaring none behaves exactly as before -- silent and clean.
+
+    The target here violates what WOULD have been the invariant; with nothing
+    declared, Nous has no basis to object, and inventing one would be Nous
+    guessing an objective's semantics.
+    """
+    from orchestrator.cli import _smoke_check_optimization
+
+    campaign = _self_check_campaign(tmp_path, slope_when={"a": 0.1234})
+    assert _smoke_check_optimization(campaign) == []
+    assert "self_check" not in capsys.readouterr().out
+
+
+def test_liveness_flags_the_level_whose_row_contradicts_itself(tmp_path: Path):
+    """`--liveness` runs every level, so it finds a violation the corner misses.
+
+    Level ``a`` is honest and sits at the probe corner; level ``b`` is the
+    self-contradictory one. Plain `--smoke` therefore passes and `--liveness`
+    fails -- which is the same off-by-default/opt-in split the aborting-level
+    sweep has.
+    """
+    from orchestrator.cli import _smoke_check_optimization
+
+    campaign = _self_check_campaign(
+        tmp_path, slope_when={"a": 0.0100, "b": 0.1234},
+        self_check=_SLOPE_CHECK,
+    )
+    assert _smoke_check_optimization(campaign) == []
+
+    issues = _smoke_check_optimization(campaign, liveness=True,
+                                       liveness_repeats=2)
+    assert any("self_check violated" in i for i in issues), issues
+    assert any("P=" in i and "'b'" in i for i in issues), issues
+
+
+def test_liveness_still_measures_the_effect_of_a_self_contradicting_level(
+    tmp_path: Path, capsys,
+):
+    """A self-check violation is not an "unrunnable level" -- the row DID run.
+
+    Conflating the two would report "level could not be run" about a
+    configuration that ran fine, and would suppress its effect-size measurement.
+    """
+    from orchestrator.cli import _smoke_check_optimization
+
+    campaign = _self_check_campaign(
+        tmp_path, slope_when={"a": 0.0100, "b": 0.1234},
+        self_check=_SLOPE_CHECK,
+    )
+    issues = _smoke_check_optimization(campaign, liveness=True,
+                                       liveness_repeats=2)
+
+    assert not any("could not be run" in i for i in issues), issues
+    # The effect line is still printed for P: both levels were measured.
+    assert "P " in capsys.readouterr().out

@@ -742,6 +742,53 @@ properties:
                 value: {}
                 when: {}
                 when_not: {}
+          self_check:
+            type: array
+            minItems: 1
+            description: >
+              Invariants the row's OWN response must satisfy for its
+              reported objective to BE the objective. Same
+              ``{observable | metric, op, value}`` shape as
+              ``constraints``, and a DIFFERENT question: a constraint asks
+              "is this configuration admissible?" (a violation is
+              ``infeasible`` -- real data about the space, retained), while
+              a self-check asks "does this row contradict itself?" (a
+              violation is ``failed`` -- the row is not a measurement of
+              anything and is excluded from the fit). Nous cannot know an
+              objective's semantics, so it cannot detect a
+              self-contradictory row on its own; declaring the invariant is
+              what makes it enforceable. Declare one whenever the objective
+              is defined by a PREDICATE OVER A DIAGNOSTIC -- "the largest
+              rate that was sustained", "the smallest setting that still
+              converges", "the highest load meeting a bound". Example:
+              ``{metric: backlog_slope, op: "<=", value: 0.060}`` alongside
+              ``primary: {metric: max_sustained_rate, direction: maximize}``
+              asserts that the rate reported as sustained has a
+              non-growing backlog. On a real campaign that one line would
+              have failed 8 of 12 rows at the moment each was measured;
+              without it, every one reported a flattering number whose own
+              recorded slope said it was invalid, and the epoch's fit was
+              believed. Evaluated per row with no level guard, and also by
+              ``nous validate campaign --smoke`` / ``--liveness`` on the
+              configurations they run, so a violated invariant surfaces
+              BEFORE the policy hash is written. See
+              ``docs/optimization-campaign-guide.md`` §7.7.
+            items: { "$ref": "#/$defs/comparison" }
+          constant_fields:
+            type: array
+            minItems: 1
+            items: { type: string, minLength: 1 }
+            description: >
+              Response fields that legitimately never vary across rows -- a
+              schema version, a host name, a workload identifier, a build
+              tag. Excluded from the OUTPUT FRESHNESS guard's comparison,
+              which fails a row whose entire response object is
+              byte-identical to the immediately preceding row's while the
+              factor levels differ (the signature of an adapter serving a
+              cached or stale result). Declaring these makes that check
+              STRICTER on what remains, not weaker: the surviving fields
+              are exactly the ones that should have varied. Example:
+              ``[schema_version, host]``.
           held_out:
             type: array
             minItems: 1

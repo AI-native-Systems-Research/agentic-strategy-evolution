@@ -931,6 +931,48 @@ def _report_unexercised_levels(factors) -> list[str]:
     return []
 
 
+def _check_declared_self_checks(opt: dict, obs: dict, *, where: str) -> list[str]:
+    """Evaluate ``response.self_check`` against one observation; problems, if any.
+
+    Shared by the ``--smoke`` probe and every ``--liveness`` run, and it goes
+    through the SAME ``adapter_contract.check_self_checks`` the epoch uses -- a
+    pre-flight check that disagreed with the run would be worse than none, since
+    it trains the author to ignore it (the reason ``_smoke_probe_one_config``
+    builds its manipulation scope from ``runner._applied_namespace``).
+
+    A self-check violation here is a SMOKE FAILURE, not a warning, because the
+    consequence of ignoring it is the whole epoch: the objective the campaign is
+    about to pre-register a design over does not satisfy the predicate that
+    defines it, so every row that follows measures something other than the
+    declared response.
+    """
+    from orchestrator.optimize import adapter_contract as ac
+
+    self_check = ((opt.get("response") or {}).get("self_check")) or []
+    if not self_check:
+        return []
+    try:
+        verdicts = ac.check_self_checks(self_check, obs)
+    except Exception as exc:  # noqa: BLE001 — a malformed predicate is a finding
+        return [f"response.self_check could not be evaluated at {where}: {exc}"]
+    bad = [v for v in verdicts if (not v["ok"]) and not v["skipped"]]
+    print(f"  smoke: {len(verdicts) - len(bad)}/{len(verdicts)} declared "
+          f"response.self_check invariant(s) hold at {where}")
+    if not bad:
+        return []
+    return [
+        f"response.self_check violated at {where}: "
+        + "; ".join(f"{v['id']!r}: {v['detail']}" for v in bad)
+        + ". The run reported an objective value its OWN recorded diagnostic "
+        "contradicts, so it is not a measurement of the declared response. "
+        "Under an epoch this fails the row and excludes it from the fit; here "
+        "it means the objective's definition and the adapter's computation of "
+        "it disagree, which no amount of replication repairs. Fix the adapter "
+        "(assert the returned extremum against its own acceptance test before "
+        "reporting it) or correct the declared invariant.",
+    ]
+
+
 def _smoke_liveness_sweep(
     opt: dict, factors, *, repo: Path, probe_dir: Path, repeats: int = 3,
 ) -> list[str]:
@@ -980,13 +1022,27 @@ def _smoke_liveness_sweep(
     seed_env = ((opt.get("workload") or {}).get("seed_env")) or None
 
     def _run(levels: dict, *, seed: int | None, label: str):
-        """One configuration. Returns ``(objective, error_text)``."""
+        """One configuration. Returns ``(objective, error_text)``.
+
+        Any ``response.self_check`` violation is appended to ``problems``
+        directly rather than returned as this run's ``error_text``. The two are
+        different findings and must not be conflated: an error means the level
+        could not be RUN (a hole in the design matrix), while a self-check
+        violation means it ran and reported a self-contradictory number. Folding
+        the second into the first would report "level could not be run" about a
+        configuration that ran fine, and would also suppress its effect-size
+        measurement -- which is still worth having, since a violated invariant on
+        a live axis and on a dead one call for different repairs.
+        """
         obs, err = _liveness_run_one(
             opt, factors, levels, repo=repo, probe_dir=probe_dir,
             seed_env=seed_env, seed=seed, label=label,
         )
         if err is not None:
             return None, err
+        problems.extend(_check_declared_self_checks(
+            opt, obs, where=f"liveness run {label}",
+        ))
         value = obs.get(metric)
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return None, (
@@ -1291,6 +1347,17 @@ def _smoke_probe_one_config(
                 f"it, and reports a number for a configuration the design matrix "
                 f"never described.",
             )
+
+    # 2c. Do the declared response.self_check invariants hold at this corner?
+    #
+    # Placed before the objective-presence check deliberately: a row whose
+    # reported objective contradicts its own recorded diagnostic is a WORSE
+    # finding than a missing objective, because a missing objective scores NaN
+    # loudly on every row while a self-contradictory one scores a plausible
+    # number. Checked here rather than only mid-epoch because that is the whole
+    # value: the real defect this closes produced 8 bad rows out of 12, all
+    # biased in the flattering direction, and was found only after the epoch.
+    problems.extend(_check_declared_self_checks(opt, obs, where=f"corner {levels}"))
 
     # 3. Is the objective metric present?
     metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")

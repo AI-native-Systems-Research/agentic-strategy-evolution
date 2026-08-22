@@ -1610,7 +1610,65 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule17_config_patch_path_reachable(campaign, opt, factors))
     errors.extend(_rule18_high_run_timeout_warning(opt, factors))
     errors.extend(_rule19_max_parallel_oversubscription(opt))
+    errors.extend(_rule20_self_check_is_a_real_invariant(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
+    return errors
+
+
+def _rule20_self_check_is_a_real_invariant(opt: dict) -> list[str]:
+    """Rule 20: a declared ``response.self_check`` must be able to fail a row.
+
+    The guard is only as good as the predicate, and two ways of declaring one
+    make it useless:
+
+      * TRIVIALLY TRUE (same floor rule 6 applies to manipulation predicates and
+        design-space invariants). A self-check that cannot fail manufactures
+        exactly the false confidence the whole mechanism exists to remove -- and
+        worse here than elsewhere, because an author who declares one reasonably
+        stops looking for the self-contradiction by hand.
+      * OVER THE PRIMARY METRIC ITSELF. ``{metric: <primary>, op: ...}`` is a
+        bound on the objective, which is what ``response.constraints`` (a config
+        is inadmissible: ``infeasible``, retained as real data about the space)
+        or ``response.ceiling`` (the instrumentation is lying: ``rejected``)
+        already express, with the status semantics an author actually wants. A
+        self-check is a check on the DIAGNOSTIC that defines the objective, and
+        pointing it at the objective turns a row that is merely poor into a row
+        that "contradicts itself" and is thrown away.
+    """
+    response = (opt or {}).get("response") or {}
+    self_check = response.get("self_check") or []
+    if not self_check:
+        return []
+    primary = ((response.get("primary") or {}).get("metric")) or ""
+    errors: list[str] = []
+    for pred in self_check:
+        if not isinstance(pred, dict):
+            continue
+        path = pred.get("observable") or pred.get("metric")
+        if is_trivial(pred):
+            errors.append(
+                f"response.self_check entry over {path!r}: predicate "
+                f"{{op: {pred.get('op')!r}, value: {pred.get('value')!r}}} is "
+                f"trivially true -- it cannot fail, so it certifies nothing "
+                f"while making the campaign look as though its objective is "
+                f"checked against its own definition. State the real threshold "
+                f"the objective's definition uses (e.g. {{metric: "
+                f"backlog_slope, op: '<=', value: 0.060}} for an objective "
+                f"defined as 'the largest rate whose backlog is not growing')."
+            )
+        if primary and str(path) == str(primary):
+            errors.append(
+                f"response.self_check entry is over {path!r}, which IS "
+                f"response.primary.metric. A self-check asserts that the "
+                f"reported objective satisfies the predicate that DEFINES it, "
+                f"so it must read the DIAGNOSTIC, not the objective: a bound on "
+                f"the objective itself belongs in response.constraints (a "
+                f"violation marks the config infeasible -- excluded from "
+                f"fitting, retained as real data about the space) or "
+                f"response.ceiling (a violation means the instrumentation is "
+                f"lying). As a self-check it would fail the row outright, "
+                f"discarding a measurement that is merely unattractive."
+            )
     return errors
 
 

@@ -31,6 +31,15 @@ The failure taxonomy is deliberately asymmetric (spec Sec 6.4):
     resolution drops, dropped factors named); it never silently proceeds
     as if nothing happened.
 
+The three TARGET-ADAPTER guards (``orchestrator.optimize.adapter_contract``)
+attach at this same observation boundary, via the optional ``adapter_guard``
+parameter: the epoch's output-contract fingerprint, the output-freshness check,
+and the campaign's declared ``response.self_check``. They belong here rather than
+in ``stage_runner`` for the same reason the failure taxonomy above does -- this is
+the one place a raw observation from the author's adapter arrives, and a guard
+placed anywhere else would be a guard over a value something already
+reinterpreted.
+
 ``response.held_out`` metrics are removed from ``RunOutcome.response``
 entirely at this observation boundary and surface only on the distinctly
 named ``RunOutcome.held_out`` field -- a structural split, not a filtered
@@ -51,6 +60,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from orchestrator.optimize import adapter_contract as ac
 from orchestrator.optimize.factors import Factor
 from orchestrator.optimize.matrix import ConfigRow
 from orchestrator.optimize.predicates import evaluate
@@ -86,6 +96,138 @@ class RunOutcome:
     duration_ms: int = 0
     error: str = ""
     held_out: dict = field(default_factory=dict)
+    self_check: list = field(default_factory=list)
+    """One verdict per declared ``response.self_check`` predicate, same
+    plain-dict shape as ``manipulation`` / ``invariants``. Empty when the
+    campaign declares none, or when the row failed before the self-checks were
+    reached -- recording the verdicts (not just the failure text) is what lets a
+    reader adjudicate a raised flag rather than only see that one was raised."""
+
+
+class AdapterGuard:
+    """Epoch-scoped state for the three target-adapter guards.
+
+    One instance per ``execute_design`` call, constructed by
+    ``stage_runner`` from the campaign and the work-dir. It carries the state
+    the guards need that a single row cannot supply: the epoch's registered
+    output contract (guard 1, read from / written to the work-dir root) and the
+    immediately preceding row's response (guard 2). Guard 3 needs no state at
+    all and is here only so all three live behind one seam.
+
+    WHY THIS IS AN OBJECT AND NOT THREE PARAMETERS. Guard 1 has to be able to
+    WRITE (the first successful row of an epoch captures the contract) and guard
+    2 has to remember one row back, so the seam is inherently stateful. Bundling
+    it also keeps ``execute_design``'s signature honest: a caller either arms
+    the adapter guards or does not, and a test that passes no guard gets exactly
+    today's behaviour.
+
+    THREAD SAFETY. ``execute_design`` may run a replicate block concurrently
+    (``max_parallel``), so ``observe`` is called from worker threads. Both
+    mutable pieces of state are guarded by one lock. Guard 2's ordering under
+    concurrency is deliberately weakened rather than faked: see ``observe``.
+    """
+
+    def __init__(
+        self, work_dir: Path | None = None, *, epoch: int = 1, stage: str = "",
+        self_check: list | None = None, constant_fields: set[str] | None = None,
+        capture: bool = True,
+    ):
+        import threading
+
+        self.work_dir = Path(work_dir) if work_dir is not None else None
+        self.epoch = int(epoch)
+        self.stage = str(stage or "")
+        self.self_check = list(self_check or [])
+        self.constant_fields = {str(f) for f in (constant_fields or set())}
+        self.capture = bool(capture)
+        self._lock = threading.Lock()
+        self._contract: dict | None = None
+        self._contract_loaded = False
+        self._prev: tuple[int, dict, dict] | None = None
+
+    # ── guard 1 ────────────────────────────────────────────────────────────
+
+    def _recorded_contract(self) -> dict | None:
+        if not self._contract_loaded:
+            self._contract = (
+                ac.read_contract(self.work_dir) if self.work_dir is not None else None
+            )
+            self._contract_loaded = True
+        return self._contract
+
+    def check_contract(self, response: dict, *, row_index: int) -> None:
+        """Capture the epoch's contract, or check this row against it.
+
+        Called ONLY for a row that reached ``complete`` -- see ``observe``. A
+        failed row must not establish the contract: the whole point of the
+        capture is that it records what a WORKING invocation of the adapter
+        emits, and a crashed run's partial or absent output would register a
+        contract every subsequent healthy row then violates.
+        """
+        recorded = self._recorded_contract()
+        if recorded is None:
+            if not (self.capture and self.work_dir is not None):
+                return
+            self._contract = ac.capture_contract(
+                self.work_dir, response, epoch=self.epoch, row_index=row_index,
+                stage=self.stage,
+            )
+            self._contract_loaded = True
+            return
+        ac.check_contract(recorded, response, row_index=row_index)
+
+    # ── guard 2 ────────────────────────────────────────────────────────────
+
+    def freshness_error(self, response: dict, *, row) -> str | None:
+        """Guard 2's verdict for this row, and record it as the new 'previous'.
+
+        UNDER CONCURRENCY, "the immediately preceding row" is the row whose
+        response arrived here most recently, which above ``max_parallel: 1`` is
+        a submission-order-ish neighbour rather than a strict predecessor. That
+        is a weaker claim, and it is stated rather than papered over: a stale
+        file served to a co-scheduled row is still adjacent in the sequence the
+        adapter saw, and the check's job is to notice byte-identity between
+        neighbours, not to reconstruct a total order the schedule did not have.
+        Nothing downstream reads this ordering -- the verdict is a row status.
+        """
+        prev = self._prev
+        levels = dict(getattr(row, "levels", {}) or {})
+        self._prev = (int(getattr(row, "row_index", -1)), dict(response or {}), levels)
+        if prev is None:
+            return None
+        prev_index, prev_response, prev_levels = prev
+        return ac.check_freshness(
+            response, prev_response, levels=levels, previous_levels=prev_levels,
+            row_index=int(getattr(row, "row_index", -1)),
+            previous_row_index=prev_index,
+            constant_fields=self.constant_fields,
+        )
+
+    # ── the one entry point execute_design calls ──────────────────────────
+
+    def observe(self, response: dict, *, row) -> tuple[list[dict], str]:
+        """Run every armed guard over one COMPLETE row's response.
+
+        Returns ``(self_check_verdicts, error_text)``. An empty ``error_text``
+        means the row passes all three. Guard 1 raises
+        ``AdapterContractDrift`` instead of returning text, because it is a
+        campaign-level abort rather than a row failure -- re-running a row
+        against a changed instrument does not make it comparable to the rows
+        measured before the change.
+
+        ORDER: contract first, then freshness, then the self-checks. Contract
+        drift makes every other verdict about this row meaningless (a key that
+        moved may be the key a self-check reads), and a stale response is a
+        response that describes the PREVIOUS configuration, so evaluating its
+        self-checks would attribute a verdict to the wrong row.
+        """
+        with self._lock:
+            self.check_contract(response, row_index=int(getattr(row, "row_index", -1)))
+            stale = self.freshness_error(response, row=row)
+        if stale:
+            return [], stale
+        verdicts = ac.check_self_checks(self.self_check, response)
+        return verdicts, ac.self_check_error(verdicts) or ""
 
 
 class ConfigRunner(Protocol):
@@ -310,6 +452,7 @@ def execute_design(
     integrity_check: "IntegrityCheck | None" = None,
     max_retries: int = 1,
     max_parallel: int = 1,
+    adapter_guard: "AdapterGuard | None" = None,
 ) -> list[RunOutcome]:
     """Run every row through the tokenless loop; returns outcomes in row order.
 
@@ -324,6 +467,17 @@ def execute_design(
     ``_run_once``. ``on_row`` fires exactly once per row, after its final
     status is known, so a caller can append to ``runs.jsonl`` incrementally
     without buffering every row in memory first.
+
+    ``adapter_guard`` arms the three TARGET-ADAPTER guards (see
+    ``orchestrator.optimize.adapter_contract``): output-contract drift, output
+    freshness, and the campaign's declared ``response.self_check``. Passing
+    ``None`` -- the default, and what a test that does not care passes -- is
+    exactly the behaviour this function has always had. The guards run LAST,
+    only on a row that would otherwise be ``complete``; the block at the end of
+    ``_execute_row`` says why. Contract drift is the one condition here that
+    DOES raise out of the loop, because it is not a property of one row: the
+    instrument changed, so no re-run makes this row comparable to the ones
+    already on disk.
 
     ``max_parallel`` is a CEILING on simultaneous in-flight ``runner`` calls,
     defaulting to 1, i.e. the strictly sequential loop this function has always
@@ -389,6 +543,7 @@ def execute_design(
         return _execute_row(
             row, runner=runner, response_spec=response_spec, invariants=invariants,
             factors=factors, integrity_check=integrity_check, max_retries=max_retries,
+            adapter_guard=adapter_guard,
         )
 
     if max_parallel == 1 or len(rows) < 2:
@@ -485,6 +640,7 @@ def _execute_row(
     factors: list[Factor],
     integrity_check: "IntegrityCheck | None",
     max_retries: int,
+    adapter_guard: "AdapterGuard | None" = None,
 ) -> RunOutcome:
     all_manipulation: list[dict] = []
     observed: dict | None = None
@@ -560,6 +716,40 @@ def _execute_row(
             row_index=row.row_index, status="infeasible", response=response,
             manipulation=all_manipulation, invariants=invariant_verdicts,
             error="; ".join(constraint_violations), held_out=held_out,
+        )
+
+    # ── the three target-adapter guards, LAST ───────────────────────────────
+    #
+    # Placed after every existing check, so a row reaches them only if it would
+    # otherwise be `complete`. Two reasons, and they point the same way:
+    #
+    #   * "the first SUCCESSFUL row of the epoch" is what may establish the
+    #     contract (guard 1). A `rejected` row violated an invariant or exceeded
+    #     the physical ceiling -- its instrumentation is already suspect, which
+    #     is the last thing to fingerprint as the epoch's reference. An
+    #     `infeasible` row is trustworthy data about the space, but it is data
+    #     about an INADMISSIBLE configuration, and an adapter that reports a
+    #     reduced object there (a missing diagnostic it could not compute) would
+    #     register a contract every admissible row then "drifts" from.
+    #   * guard 2 compares against "the immediately preceding row", and the
+    #     sequence that matters is the one of rows that produced a usable
+    #     measurement. A stale read is served to the invocation after the one
+    #     that wrote the file; interleaving rejected rows into that chain would
+    #     compare a fresh row against an object no fit ever reads.
+    #
+    # Guard 1 raises rather than returning text -- see `AdapterGuard.observe`.
+    if adapter_guard is not None:
+        self_verdicts, guard_error = adapter_guard.observe(response, row=row)
+        if guard_error:
+            return RunOutcome(
+                row_index=row.row_index, status="failed", response=response,
+                manipulation=all_manipulation, invariants=invariant_verdicts,
+                error=guard_error, held_out=held_out, self_check=self_verdicts,
+            )
+        return RunOutcome(
+            row_index=row.row_index, status="complete", response=response,
+            manipulation=all_manipulation, invariants=invariant_verdicts, error="",
+            held_out=held_out, self_check=self_verdicts,
         )
 
     return RunOutcome(

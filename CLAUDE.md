@@ -241,6 +241,7 @@ epoch spans several iterations, so this split is load-bearing, not cosmetic.
 | `report.json` | `report` — `recommendation.basis`, both bounds, both deltas, finalists |
 | `epoch_end-<epoch>.json` | `exception` — why the epoch ended + `next_epoch_requires` |
 | `mechanism.patch` / `mechanism.sha256` / `pre_build_tests.json` / `baseline_equivalence.json` | the three build oracles |
+| `adapter_contract.json` + `adapter_contract.sha256` | the epoch's first **successful** row — the target adapter's output contract (key names + value **types**), re-checked on every later row |
 
 | `runs/iter-N/` | Written by |
 |---|---|
@@ -268,6 +269,42 @@ an epoch boundary is the opposite operation from editing *inside* one — a new
 pre-registration, freshly hashed, whose `epoch` field says which execution it
 registers, with the previous epoch's registration preserved in
 `transitions.jsonl`'s per-row `policy_hash`.
+
+**The adapter is the other half of the apparatus, and it is guarded too.**
+`policy.json`'s hash freezes the *campaign* side of a pre-registration; a
+pre-registered design assumes the **measurement instrument** — the author-written
+`run_command` — is fixed for the epoch's duration as well.
+`orchestrator/optimize/adapter_contract.py` holds three guards over it, wired in
+at the observation boundary (`runner.execute_design`'s `adapter_guard=`), never as
+a branch in `stage_runner`:
+
+1. **Contract drift** — the epoch's first *successful* row fingerprints the
+   adapter's output contract (top-level key names plus each value's **type**,
+   never the values, which legitimately change per row) into
+   `adapter_contract.json` + `adapter_contract.sha256` at the work-dir root. A key
+   appearing, disappearing, or changing type — **including a real value becoming
+   `null`** — hard-aborts, exactly as a `policy.sha256` mismatch does. An added key
+   aborts too, deliberately: the rows damaged by a mid-epoch adapter edit are the
+   ones measured *before* the new key appeared. **An apparatus change is an epoch
+   boundary, not an edit.** `null` is its own type name because a key-set-only
+   fingerprint would read the real defect as no drift at all.
+2. **Output freshness** — a response byte-identical to the immediately preceding
+   row's while the levels differ fails that ROW (a cached or stale read).
+   `response.constant_fields` excludes fields that legitimately never vary, which
+   makes the check stricter on what remains. It cannot fire for an adapter that
+   echoes its own configuration back; that limit is asserted, not implied.
+3. **Declared self-check** — `response.self_check`, the same
+   `{observable|metric, op, value}` shape and the same `predicates` module as
+   `manipulation` / `constraints`. A violation fails only its own row (excluded
+   from the fit, verdicts recorded in `runs.jsonl`'s `self_check`), because in the
+   real defect 4 of 12 rows were sound. `--smoke` / `--liveness` evaluate declared
+   self-checks too, so a violated invariant surfaces pre-registration.
+
+All three are pure Python: no model call, no next-state decision. Only drift
+raises out of the loop, and `stage_runner` converts it to `OptimizationAborted`
+rather than routing it to the `exception` branch — the exception branch still
+returns an action from the fitted surface, and a surface fitted over two different
+instruments has no action to certify.
 
 **Two bounds, never collapsed.** `report.json` carries
 `residual_regret_model` (at `delta_screen`, method `bonferroni_one_sided_t` —

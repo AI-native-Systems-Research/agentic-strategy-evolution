@@ -70,6 +70,106 @@ observable against the **factor level object**, not its string rendering. So:
 A predicate that can never match fails every row, and the CLI looks correct
 while it happens. `nous validate campaign FILE --smoke` catches this in seconds.
 
+### Your output contract is frozen for the epoch's duration
+
+At the **first successful row** of an epoch, Nous fingerprints your adapter's
+output contract — every top-level key and its value's **type**, never the values
+themselves — and records it at the work-dir root as `adapter_contract.json` +
+`adapter_contract.sha256`. Every later row is checked against it, and any of
+these **hard-aborts the campaign**:
+
+- a key that **disappeared**;
+- a key that **appeared**;
+- a key whose value **changed type**, including a real value becoming `null`.
+
+This is the same discipline `policy.json` is under, applied to the other half of
+the apparatus: a pre-registered design assumes the measurement instrument is
+fixed, and an adapter edited mid-epoch means the rows already on disk were
+measured by a different instrument from the ones that follow.
+
+The defect it closes: an adapter's output schema was edited three times during
+one epoch. Rows measured before each edit carried `null` for the new keys, the
+response-reading path coerces with `float()`, and a `None` reached a `>=` against
+a float — killing an entire iteration at fit time, after ~2 hours of measurement.
+An added key is treated as strictly as a removed one for exactly this reason: the
+addition is the *carrier* of the damage, and the rows it damaged were measured
+before it appeared.
+
+**If you need to change what your adapter emits, that is an epoch boundary, not
+an edit.** Finish or end the epoch and let the next one capture the new contract.
+Never edit `adapter_contract.json` — its hash sidecar is checked.
+
+Practical consequences for how you write the adapter:
+
+- **Emit every key on every row, always.** A diagnostic you can only sometimes
+  compute must be present with a stable type; if it is genuinely unavailable,
+  fail the row (exit non-zero) rather than emitting the key as `null`.
+- **Do not switch a count between `3` and `3.0`, or a level between `4` and
+  `"4"`.** Both read as drift, and both are real changes in what your instrument
+  reports.
+- **Settle the output shape before the first row.** `nous validate campaign FILE
+  --smoke` runs one configuration; the shape it emits is the shape the epoch will
+  hold you to.
+
+### An invocation must produce output on *that* call
+
+Nous also fails any row whose response object is **byte-identical** to the
+immediately preceding row's while the factor levels differ. That is the signature
+of a cached or stale read — the defect being an adapter that re-read a stale
+metrics file whenever the target exited non-zero, so a factor level that
+**panicked** was recorded as "no effect, identical to baseline".
+
+Two different configurations *can* legitimately tie on the objective (two cache
+policies both measured exactly 1.3125 on a live campaign), which is why the
+comparison is over the whole object and only against the one preceding row. If
+your response carries fields that legitimately never vary — a schema version, a
+host name, a build tag — declare them in `response.constant_fields` and they are
+excluded, which makes the check stricter on the fields that should have moved.
+
+So: **delete or truncate any intermediate file before you write it**, and never
+read a metrics file you did not just produce.
+
+```python
+if os.path.exists(metrics_path):
+    os.unlink(metrics_path)         # never read a stale result
+p = subprocess.run(cmd, capture_output=True, text=True)
+if p.returncode != 0:
+    raise ProbeError(f"exit {p.returncode}: {p.stderr[-400:]}")
+if not os.path.exists(metrics_path):
+    raise ProbeError("no metrics written")
+```
+
+### Assert that your reported answer satisfies its own predicate
+
+When the objective is defined by a **predicate over a diagnostic** — "the largest
+rate that was sustained", "the smallest setting that still converges", "the
+highest load meeting a bound" — re-check the returned extremum against that
+predicate before reporting it, and fail loudly if it does not hold. A search that
+returns a point violating its own acceptance test has a bug in the search, not a
+number worth recording, and as data it is indistinguishable from a good result.
+
+Then **declare the same predicate** as `response.self_check` so Nous enforces it
+against what your adapter actually returned:
+
+```yaml
+response:
+  primary: {metric: max_sustained_rate, direction: maximize}
+  self_check:
+    - {metric: backlog_slope, op: "<=", value: 0.060}
+```
+
+A violation fails only that row (excluded from the fit, reason and verdicts
+recorded in `runs.jsonl`); the sound rows are untouched. `--smoke` and
+`--liveness` evaluate it on the configurations they run, so a violated invariant
+surfaces before the policy hash is written.
+
+The defect: two growth criteria combined with `and` instead of `or` meant **8 of
+12 rows** reported a `max_sustained_rate` whose own recorded `backlog_slope` said
+that rate was growing — every one biased in the flattering direction. Exit codes
+were clean, the file was present and parseable, the manipulation predicates
+passed, and the schema validated. The adapter was loud about *failures* and
+silent about a *self-contradiction*.
+
 ---
 
 ## 2. `test_command`: per-test results, and every id must resolve
@@ -332,8 +432,12 @@ Static validation passes campaigns that cannot execute a single configuration.
 `--smoke` runs your test command and one configuration at the first design
 corner, and reports: an unresolvable `native_test`, a `run_command` that cannot
 exec, a missing objective metric, a manipulation predicate whose type can never
-match, and a `build_checks.mechanism_paths` entry that resolves to nothing.
-Each of those otherwise costs a full campaign to discover.
+match, a declared `response.self_check` the probe row violates, and a
+`build_checks.mechanism_paths` entry that resolves to nothing. Each of those
+otherwise costs a full campaign to discover.
+
+`--liveness` adds one run per declared level, so a level whose row violates a
+`self_check` is caught even when the probe corner is honest.
 
 Then run the seed check in §3 by hand. `--smoke` does not do it for you yet.
 
