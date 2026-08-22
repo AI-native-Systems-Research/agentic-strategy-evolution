@@ -1092,3 +1092,92 @@ def test_rule17_agrees_with_the_runtime_on_what_naming_the_file_means():
     assert not [
         e for e in _hard_errors(c) if "engine.json" in e and "run_command" in e
     ], "the --flag=value form is an ordinary way to name a config file"
+
+
+# ---------------------------------------------------------------------------
+# response.self_check / response.constant_fields — the target-adapter guards'
+# authoring surface (rule 20)
+#
+# `self_check` states the invariant that DEFINES the objective, so a row whose
+# reported value contradicts its own recorded diagnostic can be failed at the
+# moment it is measured. `constant_fields` names the response fields that
+# legitimately never vary, so the output-freshness guard's byte-identity
+# comparison stays strict on the fields that should have moved.
+# ---------------------------------------------------------------------------
+
+
+def _with_self_check(self_check, **response_over) -> dict:
+    campaign = _minimal_optimization_campaign()
+    response = campaign["optimization"]["response"]
+    response["self_check"] = self_check
+    response.update(response_over)
+    return campaign
+
+
+def test_self_check_and_constant_fields_pass_schema_and_validator():
+    campaign = _with_self_check(
+        [{"metric": "backlog_slope", "op": "<=", "value": 0.060}],
+        constant_fields=["schema_version", "host"],
+    )
+
+    jsonschema.validate(campaign, _schema())
+    errors = validate_optimization_campaign(campaign)
+    assert [e for e in errors if not e.startswith("WARN:")] == []
+
+
+def test_self_check_shares_the_one_comparison_vocabulary():
+    """It is the SAME predicate shape, so a foreign key is a schema rejection.
+
+    A second predicate language for the same job would be a second thing to
+    learn, a second thing to validate, and a second place for the two to
+    disagree.
+    """
+    campaign = _with_self_check(
+        [{"metric": "backlog_slope", "threshold": 0.060}],
+    )
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(campaign, _schema())
+
+
+def test_self_check_rejects_an_unknown_operator():
+    campaign = _with_self_check(
+        [{"metric": "backlog_slope", "op": "=~", "value": 0.060}],
+    )
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(campaign, _schema())
+
+
+def test_rule20_rejects_a_trivially_true_self_check():
+    """A check that cannot fail is worse than none: the author stops looking."""
+    campaign = _with_self_check(
+        [{"metric": "backlog_slope", "op": ">=", "value": 0}],
+    )
+
+    errors = [e for e in validate_optimization_campaign(campaign)
+              if not e.startswith("WARN:")]
+
+    assert any("trivially true" in e for e in errors), errors
+    assert any("backlog_slope" in e for e in errors), errors
+
+
+def test_rule20_rejects_a_self_check_over_the_primary_metric():
+    """A bound on the OBJECTIVE is a constraint or a ceiling, not a self-check.
+
+    As a self-check it would fail the row outright, discarding a measurement
+    that is merely unattractive rather than self-contradictory.
+    """
+    campaign = _with_self_check(
+        [{"metric": "throughput_gbps", "op": ">=", "value": 1.5}],
+    )
+
+    errors = [e for e in validate_optimization_campaign(campaign)
+              if not e.startswith("WARN:")]
+
+    assert any("response.primary.metric" in e for e in errors), errors
+    assert any("response.constraints" in e for e in errors), errors
+
+
+def test_rule20_silent_when_no_self_check_is_declared():
+    """A campaign written before this field existed is unaffected."""
+    errors = validate_optimization_campaign(_minimal_optimization_campaign())
+    assert [e for e in errors if not e.startswith("WARN:")] == []

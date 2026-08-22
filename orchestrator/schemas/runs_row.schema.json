@@ -4,7 +4,15 @@
   "title": "Optimization Run Row",
   "description": "One line of runs.jsonl (design spec 5.5) -- one executed configuration: factor levels, response metrics, replicate index, manipulation/constraint/integrity verdicts, duration, and build hash. runs.jsonl is APPEND-ONLY: a crashed run must leave already-written rows intact, so each line validates independently against this schema rather than the file as a whole.",
   "type": "object",
-  "required": ["row_index", "levels", "role", "replicate", "status", "response", "duration_ms"],
+  "required": [
+    "row_index",
+    "levels",
+    "role",
+    "replicate",
+    "status",
+    "response",
+    "duration_ms"
+  ],
   "additionalProperties": false,
   "properties": {
     "row_index": {
@@ -18,7 +26,11 @@
     },
     "role": {
       "type": "string",
-      "enum": ["corner", "center", "axial"],
+      "enum": [
+        "corner",
+        "center",
+        "axial"
+      ],
       "description": "Design-point role, copied from the planned row."
     },
     "replicate": {
@@ -28,24 +40,44 @@
     },
     "status": {
       "type": "string",
-      "enum": ["complete", "failed", "infeasible", "rejected"],
+      "enum": [
+        "complete",
+        "failed",
+        "infeasible",
+        "rejected"
+      ],
       "description": "complete: ran cleanly and is usable for fitting. failed: the runner crashed or the manipulation predicate never engaged after retry. infeasible: a response.constraints entry was violated -- excluded from fitting but retained here as real data about the space. rejected: a design_space invariant was violated, the response exceeded response.ceiling, or the integrity_command failed -- never used for fitting."
     },
     "response": {
       "type": "object",
       "description": "Observed response metrics for this configuration, e.g. {\"latency_ms\": 42.1}. Held-out metrics present in the raw observation are stripped before this is recorded as a fitting input (leakage guard)."
     },
+    "self_check": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "One verdict per declared response.self_check predicate ({id, kind, ok, detail, skipped, missing}), in declaration order. A violated self-check FAILS this row -- the reported objective contradicts the row's own recorded diagnostic, so it is not a measurement of the declared response -- while leaving every other row untouched. Empty when the campaign declares no self_check, or when the row failed before they were reached; the verdicts are recorded on PASSING rows too, so a reader can tell 'the invariant held' from 'no invariant was declared'."
+    },
     "manipulation_verdict": {
-      "type": ["boolean", "null"],
+      "type": [
+        "boolean",
+        "null"
+      ],
       "description": "Whether this row's manipulation predicate (the lever actually engaged) passed. Null when not applicable."
     },
     "constraint_verdicts": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "Human-readable results of response.constraints checks for this row; empty when none were declared or all passed silently."
     },
     "integrity_verdict": {
-      "type": ["boolean", "null"],
+      "type": [
+        "boolean",
+        "null"
+      ],
       "description": "Result of optimization.integrity_command for this config, when declared. Null when integrity_command is absent -- the field is optional, per design spec 6.4."
     },
     "duration_ms": {
@@ -54,11 +86,17 @@
       "description": "Wall-clock duration of this run in milliseconds."
     },
     "build_hash": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Content hash of the build/config used for this run (orchestrator.optimize.runner.build_cache_key), so repeated levels can be identified as reusing the same build."
     },
     "error": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Error text when status is failed or rejected (e.g. the ceiling that was exceeded, the integrity_command's stderr, or the exception type from a crashed runner). Null on a clean complete/infeasible row."
     }
   }

@@ -278,6 +278,7 @@ called out where they appear (`epoch_end-<epoch>.json` for the spec's
 | `mechanism.patch` / `mechanism.sha256` | root | `build.snapshot_mechanism` | patch / plain text |
 | `pre_build_tests.json` | root | `run_stage`, before `build` | none |
 | `baseline_equivalence.json` | root | `run_stage` at `verify`, when `build` ran | none |
+| `adapter_contract.json` / `adapter_contract.sha256` | root | first **successful** row of the epoch (`adapter_contract.capture_contract`) | none / plain text |
 | `design_matrix.json` | `runs/iter-N/` | `artifacts.write_design_matrix` | `schemas/design_matrix.schema.json` |
 | `runs.jsonl` | `runs/iter-N/` | `artifacts.append_run` | `schemas/runs_row.schema.json` |
 | `effects.json` | `runs/iter-N/` | `artifacts.write_effects` | `schemas/effects.schema.json` |
@@ -533,6 +534,52 @@ pre-build half recorded no matching seeds — a campaign that added the block
 between `build` and `verify` degrades to the unpaired reading with a WARNING
 rather than labelling a pairing that never happened.
 
+### 7m. adapter_contract.json — "Was the measuring instrument the same all epoch?"
+
+**Location:** work-dir root · written by `orchestrator.optimize.adapter_contract`
+from the **first successful row** of the epoch.
+
+`policy.json` is content-hashed so a pre-registered *policy* cannot change inside
+an epoch. A pre-registered design makes the same assumption about the **target
+adapter** — the author-written `run_command` that produces the objective — and
+this artifact is the record of it.
+
+| Field | What it means |
+|---|---|
+| `contract_version` | `1` — the fingerprint format version |
+| `epoch` | Which execution this contract was captured for |
+| `captured_at` | `{stage, row_index}` — which row established it |
+| `keys` | `{key: type_name}` for every top-level key in the response, one level of nesting summarized (`object{a,b}`, `array[int]`). **Types, never values** — values legitimately change per row; that variation *is* the measurement |
+
+`adapter_contract.sha256` beside it carries the content hash, so an edit to the
+record cannot pass itself off as the contract the epoch registered.
+
+Every later row is re-fingerprinted and compared. A key that appeared, one that
+disappeared, or one whose type changed — **including a real value becoming
+`null`** — hard-aborts the campaign, the same way a `policy.sha256` mismatch does.
+`null` is its own type name for exactly that reason: a key-set-only fingerprint
+would read a value going null as no drift at all, and that was the defect —
+an adapter's output schema edited three times mid-epoch, rows measured before each
+edit carrying `null`, and a `None` reaching a `float()` coerce and a `>=` against
+a float, killing an iteration at fit time after ~2 hours of measurement.
+
+An **added** key aborts as strictly as a removed one. That is not conservatism
+about an additive change: the only way an adapter grows a key between two rows of
+one pre-registered design is that the adapter was edited mid-epoch, and the rows
+damaged by that edit are the ones measured *before* the new key appeared — already
+on disk, unfixable, and looking clean. **An apparatus change is an epoch boundary,
+not an edit**; the abort message says so and names the drifted keys.
+
+Not an artifact but recorded alongside them: two sibling guards over the same
+adapter, both **row failures** rather than aborts. A response byte-identical to
+the immediately preceding row's while the levels differ is failed as a stale or
+cached read (`response.constant_fields` excludes fields that legitimately never
+vary); a violated `response.self_check` predicate is failed with its verdicts in
+`runs.jsonl`'s `self_check` field. See
+[docs/targets.md](targets.md) §1 for the adapter-side contract and
+[docs/optimization-campaign-guide.md](optimization-campaign-guide.md)
+"Guarding the adapter" for the authoring surface.
+
 ### 7a. design_matrix.json — "What configurations are pre-registered?"
 
 **Schema:** `schemas/design_matrix.schema.json`
@@ -595,6 +642,7 @@ even though they're excluded from fitting.
 | `response` | The observed metrics for this run |
 | `manipulation_verdict` | Did the lever actually engage? (Family A check) |
 | `constraint_verdicts` | Per-constraint admissibility results |
+| `self_check` | One verdict per declared `response.self_check` predicate — recorded on passing rows too, so "the invariant held" is distinguishable from "none was declared". A violation makes `status` `failed`: the row's reported objective contradicts its own recorded diagnostic (see §7m) |
 | `integrity_verdict` | Result of `integrity_command`, if declared |
 | `duration_ms` / `build_hash` | Provenance for reproducibility and build-cache validation |
 | `error` | Populated on a failed/retried run |
