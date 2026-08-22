@@ -717,6 +717,10 @@ first level, then reports six things static checks cannot see:
 | manipulation predicates hold at the first level | every run rejected while the target is fine |
 | each declared `build_checks.mechanism_paths` entry resolves under the target | a typo'd entry silently narrows the drift oracle to less than declared — to nothing, if every entry is wrong |
 | the probe's real duration against the effective `run_timeout_sec` | a ceiling the first corner clears and a slower corner does not — the probe passes, then row *k* of the epoch dies on the ceiling |
+| how many declared levels the probe did **not** exercise | a level that aborts the target, reported as a clean null result identical to baseline |
+
+The last row is a *count*, not a check: the probe runs ONE corner, so every other
+declared level is unexercised at that point. `--liveness` (below) closes it.
 
 The predicate check builds its scope the way `run_stage` does — the target's own
 `applied` echo wins over the requested levels — because using the requested
@@ -727,10 +731,54 @@ It costs one test run plus one configuration, and each of those failures
 otherwise costs a full campaign to discover. Make it the last thing you do
 before launching.
 
-Run `nous validate campaign FILE` before starting: it warns when declared
-`native_test` files are absent from the target and no `build` stage exists to
-author them — the combination that is otherwise guaranteed to abort at
-`verify`, but only after a real run.
+#### `--liveness`: is each level runnable, and does each factor matter?
+
+    nous validate campaign campaign.yaml --smoke --liveness
+
+Opt-in, because it is the only part of `--smoke` whose cost scales with the
+design: **`sum(len(levels)) + --liveness-repeats` runs** — linear in the design,
+never `prod(len(levels))`. Everything else `--smoke` does costs one run total,
+which is why plain `--smoke` stays cheap enough to be unconditional.
+
+It runs every declared level of every factor once, holding the other factors at
+`known_valid_baseline`, and reads that one sweep two ways:
+
+| Reading | Verdict |
+|---|---|
+| a level whose run exits non-zero, times out, or emits unparseable output | **smoke FAILURE**, naming the factor *and* the level |
+| each factor's effect — the objective's **range across all its measured levels**, a superset of the extreme-levels difference — against the noise floor from `--liveness-repeats` baseline runs varying only the workload seed | **reported**, and flagged `not demonstrably live` under `2 x` the noise CV |
+
+The asymmetry is deliberate. A level the target cannot execute is a hole in the
+design matrix, and (if a harness reuses a stale metrics file on non-zero exit) it
+reads downstream as a measurement *identical to baseline* — that is a hard
+failure. A small effect, by contrast, may be small and real; the number is what
+was missing, so the flag informs the author's call rather than overriding it.
+
+Both readings share the same runs on purpose: a level that aborts cannot produce
+an effect size. `--liveness` requires `known_valid_baseline`, since it is both
+what the other factors are held at and what the noise floor is measured on.
+
+This automates §7.2 and §7.3's manual probe recipes; run it instead of doing
+them by hand.
+
+Run `nous validate campaign FILE` before starting: it warns when a declared
+`native_test` cannot be found in the target and no `build` stage exists to author
+it — the combination that is otherwise guaranteed to abort at `verify`, but only
+after a real run. Three locator styles are checked, matching what the result
+parsers actually support:
+
+| Locator | Checked by |
+|---|---|
+| `sim/kv/offload_test.go`, `tests/test_x.py::test_foo` | the file's existence under the target |
+| `TestOffloadCPUTier_ARCRespectsCapacity`, `test_foo` | a definition (`func TestFoo` / `def test_foo`) anywhere under the target |
+| `go test ./sim/kv/ -run TestFoo`, `pytest -k test_foo` | the identifier behind the selector flag, then as above |
+
+Anything else gets its own warning saying the locator **could not be checked**,
+and why. That is deliberate: silence used to cover a bare Go test name — exactly
+what `--- PASS: TestName` output is parsed into — so a campaign declaring bare Go
+identifiers with no `build` stage validated at 0 errors / 0 warnings and aborted
+at `verify` after a full run. An author must be able to tell "checked and fine"
+from "could not check".
 
 ## The compiled policy
 
@@ -2219,6 +2267,13 @@ check, consumes its share of a resolution-V design, and contributes only
 variance to the fit. A policy hash computed over such factors is a
 pre-registration of nothing.
 
+**`nous validate campaign FILE --smoke --liveness` runs this recipe for you** —
+noise floor, per-factor effect, and the `2 x` comparison — and additionally fails
+on any declared level the target cannot execute. Prefer it to doing the below by
+hand; the manual recipe remains here because it is the reasoning the flag
+implements, and because a target whose noise structure needs a different floor
+(more seeds, a different operating point) is still the author's to measure.
+
 **Probe recipe**, and note both halves are required:
 
 1. **Noise floor.** Run the baseline configuration at ≥5 workload seeds.
@@ -2461,8 +2516,7 @@ runs against a budget of 60–90.
 |---|---|---|---|
 | 1 | `nous validate campaign FILE --smoke` | 1 run | predicates unsatisfiable, tests unmatched, `run_command` cannot exec |
 | 2 | Mechanism is active (§7.5) | 1 run | the mechanism's own metric is zero |
-| 3 | Noise floor at the operating point (§7.3) | ≥5 runs | — (produces `noise_estimate_pct`) |
-| 4 | Per-factor effect vs noise (§7.2) | 2 per factor | any factor under 2x the noise CV |
+| 3+4 | `nous validate campaign FILE --smoke --liveness` (§7.2, §7.3) | `sum(len(levels)) + N` runs | any declared level the target cannot execute — and it *reports* every factor under 2x the noise CV |
 | 5 | Objective is monotone and uncensored (§7.4) | 4–6 runs | orders-of-magnitude swings, or values pinned at a deadline |
 | 6 | Observation window has settled (§7.6) | 2 runs | the verdict or fitted value changes between a window and 1.5x it |
 | 7 | Worst-*probe* timing (§7.1) | 2 runs | `run_timeout_sec` under ~2x the most expensive probe the search can reach |

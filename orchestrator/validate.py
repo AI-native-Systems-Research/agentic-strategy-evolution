@@ -7,6 +7,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -414,25 +415,146 @@ def _rule11_build_stage_position(opt: dict) -> list[str]:
     return errors
 
 
+#: Source extensions a declared ``native_test`` path may name. Used to tell a
+#: path-style locator from a bare identifier -- not to restrict what a target
+#: may be written in (an unrecognised extension falls through to the
+#: "could not check" branch rather than being dropped).
+_TEST_SOURCE_SUFFIXES = (".go", ".py", ".rs", ".ts", ".js", ".java", ".kt",
+                         ".rb", ".cc", ".cpp", ".c", ".cs", ".scala", ".swift")
+
+#: Flags by which a command-style locator selects one test. ``go test -run``
+#: and ``pytest -k`` are the two the runner's own output parsers were built
+#: against; the rest are the same idea in other runners.
+_TEST_SELECTOR_FLAGS = ("-run", "-k", "--run", "--test", "-t", "--filter",
+                        "--gtest_filter", "--name")
+
+#: A bare test identifier: what `go test -v` prints after ``--- PASS:`` and
+#: what pytest prints as a node's trailing name. This is the style the Go
+#: result parser matches on, and the one rule 12 used to skip silently.
+_BARE_TEST_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _native_test_identifier(declared: str) -> tuple[str, str | None]:
+    """Classify a ``native_test`` locator into ``(kind, subject)``.
+
+    ``kind`` is one of:
+
+    ``path``
+        ``a/b.py::test_foo`` or ``pkg/file_test.go`` -- ``subject`` is the
+        repo-relative path, checked for existence.
+    ``ident``
+        ``TestFoo`` / ``test_foo``, possibly extracted from behind a
+        command-style selector flag (``go test ./pkg -run TestFoo``,
+        ``pytest -k test_foo``) -- ``subject`` is the identifier, checked for
+        a definition anywhere in the tree.
+    ``unknown``
+        anything else -- ``subject`` is None, and the caller must say so out
+        loud rather than skip it. The silence was the original defect: an
+        author could not tell "checked and fine" from "could not check".
+
+    A parametrization suffix is stripped before the identifier is matched
+    (``test_x[0.95-1.05]``, ``TestX/case_name``), mirroring
+    ``runner.match_declared_tests``, so the bare function name is what gets
+    looked for -- the same aggregation rule the contract check applies.
+    """
+    head = declared.split("::", 1)[0].strip()
+    # A path is a SINGLE token: whitespace means this is a command line, and
+    # `make check && ./scripts/verify.sh --all` would otherwise be mistaken for
+    # a path (its head contains both a '/' and a '.') and reported as a missing
+    # file rather than as un-checkable.
+    if not any(c.isspace() for c in head) and (
+        head.endswith(_TEST_SOURCE_SUFFIXES) or ("/" in head and "." in head)
+    ):
+        return "path", head
+
+    def _strip_cases(name: str) -> str:
+        return name.split("[", 1)[0].split("/", 1)[0]
+
+    if _BARE_TEST_IDENT.match(_strip_cases(declared.strip())):
+        return "ident", _strip_cases(declared.strip())
+
+    # Command-style: find a selector flag and take its argument. Both
+    # `-run TestFoo` and `-run=TestFoo` spellings are accepted.
+    import shlex
+
+    try:
+        tokens = shlex.split(declared)
+    except ValueError:
+        return "unknown", None
+    for i, tok in enumerate(tokens):
+        flag, _, inline = tok.partition("=")
+        if flag not in _TEST_SELECTOR_FLAGS:
+            continue
+        arg = inline or (tokens[i + 1] if i + 1 < len(tokens) else "")
+        # A selector is a regex in Go and a substring expression in pytest, so
+        # strip the anchors an author may have typed before matching.
+        arg = _strip_cases(arg.strip().strip("^$"))
+        if _BARE_TEST_IDENT.match(arg):
+            return "ident", arg
+        return "unknown", None
+    return "unknown", None
+
+
+def _identifier_is_defined(repo: Path, ident: str) -> bool:
+    """Is ``ident`` defined as a test somewhere under ``repo``?
+
+    Grep-shaped on purpose: a bare identifier carries no path, so the only
+    thing that can be checked is whether the tree defines it at all. Matching
+    a DEFINITION (``func TestFoo``, ``def test_foo``) rather than a bare
+    mention keeps a call site or a comment from vouching for a test that does
+    not exist.
+    """
+    pattern = re.compile(
+        r"(?:func|def|fn|it|test|describe)\s*\(?\s*['\"]?" + re.escape(ident)
+        + r"\b",
+    )
+    skip = {".git", "node_modules", "vendor", "target", "__pycache__",
+            ".venv", "venv", "build", "dist", ".nous", ".nous-experiments"}
+    for root, dirs, files in os.walk(repo):
+        dirs[:] = [d for d in dirs if d not in skip]
+        for name in files:
+            if not name.endswith(_TEST_SOURCE_SUFFIXES):
+                continue
+            try:
+                text = (Path(root) / name).read_text(errors="ignore")
+            except OSError:
+                continue
+            if pattern.search(text):
+                return True
+    return False
+
+
 def _rule12_missing_native_tests_need_build(
     campaign: dict, opt: dict, factors: list[dict],
 ) -> list[str]:
-    """Rule 12: warn when declared ``native_test`` files are absent and no
-    ``build`` stage exists to author them.
+    """Rule 12: warn when a declared ``native_test`` cannot be found and no
+    ``build`` stage exists to author it.
 
     ``relations.reconcile`` is fail-closed: a declared test that did not
     execute is a FAILED correctness relation, which aborts at verify. So a
     campaign naming tests that do not exist yet, with no build stage, is
-    guaranteed to abort -- but only after a real run. Checking the paths here
-    turns that into an authoring-time message.
+    guaranteed to abort -- but only after a real run. Checking the locators
+    here turns that into an authoring-time message.
 
-    A WARNING rather than an error: the check is path-based, and a test can
-    legitimately live somewhere the declared locator does not literally name
-    (a helper file, a generated suite). A false hard-fail would be worse than
-    a false warning.
+    The rule handles the locator styles the RUNNER actually supports, not just
+    the pytest-style ``path::test`` one. Before this it extracted a path and
+    skipped anything without a source extension, which meant a bare Go test
+    name -- precisely what ``runner.match_declared_tests`` matches on, and what
+    ``--- PASS: TestName`` output is parsed into -- was silently ignored. A real
+    campaign declaring bare Go test names with no ``build`` stage validated at
+    0 errors / 0 warnings and aborted at verify after a full run.
+
+    An un-checkable locator gets its own WARNING saying so. The silence WAS the
+    defect: an author must be able to tell "checked and fine" from "could not
+    check" from the output alone.
+
+    A WARNING rather than an error throughout: the check is heuristic (a test
+    can legitimately live somewhere the declared locator does not literally
+    name -- a helper file, a generated suite, a build-tagged file), and a false
+    hard-fail is worse than a false warning.
     """
     repo = (campaign.get("target_system") or {}).get("repo_path")
-    if not repo:
+    if not repo or not Path(repo).is_dir():
         return []
     stages = opt.get("stages")
     names = (
@@ -442,9 +564,7 @@ def _rule12_missing_native_tests_need_build(
     if "build" in names:
         return []  # the campaign intends to author them
 
-    from pathlib import Path as _Path
-
-    missing: list[str] = []
+    declared_all: list[str] = []
     for factor in factors:
         if not isinstance(factor, dict):
             continue
@@ -452,27 +572,87 @@ def _rule12_missing_native_tests_need_build(
             if not isinstance(rel, dict):
                 continue
             declared = rel.get("native_test")
-            if not isinstance(declared, str) or not declared:
-                continue
-            rel_path = declared.split("::", 1)[0]
-            if not rel_path.endswith((".go", ".py", ".rs", ".ts", ".js", ".java")):
-                continue
-            if not (_Path(repo) / rel_path).exists():
-                missing.append(declared)
+            if isinstance(declared, str) and declared:
+                declared_all.append(declared)
 
-    if not missing:
-        return []
-    shown = ", ".join(sorted(set(missing))[:4])
-    more = "" if len(set(missing)) <= 4 else f" (+{len(set(missing)) - 4} more)"
-    return [
-        f"WARN: {len(set(missing))} declared native_test file(s) do not exist "
-        f"in the target repo: {shown}{more}. A declared test that does not run "
-        f"counts as a FAILED correctness relation, so this campaign will abort "
-        f"at verify. If the mechanism and its tests still need to be written, "
-        f"add 'build' as the first entry in optimization.stages so a single "
-        f"agent call authors them before verify gates them. If the tests exist "
-        f"under a different path, correct the native_test locator.",
-    ]
+    missing: list[str] = []
+    unknown: list[str] = []
+    # A command-style locator that RESOLVES here can still fail the contract
+    # check: `runner.match_declared_tests` matches on trailing identifiers and
+    # never parses a command line, so `go test ./pkg -run TestFoo` passes this
+    # rule and is then reported as "declared but not executed" by the fail-closed
+    # reconcile. Endorsing a locator that verify will reject is worse than the
+    # silence this rule was fixed to remove, so it is called out explicitly.
+    command_style: list[str] = []
+    # Definitions are looked up once per distinct identifier: the walk is over
+    # the whole target tree, and a campaign routinely declares the same test
+    # against several factors.
+    defined: dict[str, bool] = {}
+    for declared in declared_all:
+        kind, subject = _native_test_identifier(declared)
+        if kind == "path":
+            if not (Path(repo) / str(subject)).exists():
+                missing.append(declared)
+        elif kind == "ident":
+            if subject not in defined:
+                defined[str(subject)] = _identifier_is_defined(
+                    Path(repo), str(subject),
+                )
+            if not defined[str(subject)]:
+                missing.append(declared)
+        else:
+            unknown.append(declared)
+        if kind == "ident" and any(c.isspace() for c in declared.strip()):
+            command_style.append(declared)
+
+    out: list[str] = []
+    if missing:
+        uniq = sorted(set(missing))
+        shown = ", ".join(uniq[:4])
+        more = "" if len(uniq) <= 4 else f" (+{len(uniq) - 4} more)"
+        out.append(
+            f"WARN: {len(uniq)} declared native_test(s) could not be found in "
+            f"the target repo: {shown}{more}. A path-style locator was checked "
+            f"for the file's existence; a bare or selector-style identifier was "
+            f"checked for a definition (func/def) anywhere under the target. A "
+            f"declared test that does not run counts as a FAILED correctness "
+            f"relation, so this campaign will abort at verify. If the mechanism "
+            f"and its tests still need to be written, add 'build' as the first "
+            f"entry in optimization.stages so a single agent call authors them "
+            f"before verify gates them. If the tests exist under a different "
+            f"name, correct the native_test locator.",
+        )
+    if command_style:
+        uniq = sorted(set(command_style))
+        shown = ", ".join(uniq[:3])
+        more = "" if len(uniq) <= 3 else f" (+{len(uniq) - 3} more)"
+        out.append(
+            f"WARN: {len(uniq)} native_test locator(s) are COMMAND-STYLE: "
+            f"{shown}{more}. This rule can resolve them, but the contract check "
+            f"(runner.match_declared_tests) matches on trailing test identifiers "
+            f"and does not parse a command line — so the relation will be "
+            f"reported as 'declared but not executed' and fail closed at verify. "
+            f"Declare the bare test identifier instead (e.g. 'TestFoo' rather "
+            f"than 'go test ./pkg -run TestFoo'); the test_command still selects "
+            f"which tests run.",
+        )
+    if unknown:
+        uniq = sorted(set(unknown))
+        shown = ", ".join(repr(u) for u in uniq[:4])
+        more = "" if len(uniq) <= 4 else f" (+{len(uniq) - 4} more)"
+        out.append(
+            f"WARN: {len(uniq)} declared native_test(s) could not be checked "
+            f"for existence, because the locator is neither a path "
+            f"(a/b_test.go, a/b.py::test_x), a bare test identifier (TestFoo, "
+            f"test_foo), nor a command with a recognised selector flag "
+            f"({', '.join(_TEST_SELECTOR_FLAGS[:3])}...): {shown}{more}. This is "
+            f"reported rather than skipped so that silence here never reads as "
+            f"'checked and fine'. Run `nous validate campaign FILE --smoke` to "
+            f"execute test_command and see which declared identifiers it "
+            f"actually reports, or restate the locator in one of the checkable "
+            f"forms.",
+        )
+    return out
 
 
 def _rule5_correctness_relation_required(factors: list[dict]) -> list[str]:
