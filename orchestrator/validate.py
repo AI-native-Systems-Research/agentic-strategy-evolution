@@ -1652,9 +1652,13 @@ def _rule20_self_check_is_a_real_invariant(opt: dict) -> list[str]:
                 f"trivially true -- it cannot fail, so it certifies nothing "
                 f"while making the campaign look as though its objective is "
                 f"checked against its own definition. State the real threshold "
-                f"the objective's definition uses (e.g. {{metric: "
-                f"backlog_slope, op: '<=', value: 0.060}} for an objective "
-                f"defined as 'the largest rate whose backlog is not growing')."
+                f"that definition uses: whenever the objective is the extremum "
+                f"of a feasible set, the adapter had to decide membership, and "
+                f"the self-check is that decision restated where Nous can "
+                f"check it -- {{metric: residual_norm, op: '<=', value: 1e-8}} "
+                f"for 'the coarsest mesh that still converged', or {{metric: "
+                f"queue_growth_slope, op: '<=', value: 0.060}} for 'the "
+                f"largest arrival rate whose backlog is not growing'."
             )
         if primary and str(path) == str(primary):
             errors.append(

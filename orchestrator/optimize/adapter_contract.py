@@ -39,11 +39,16 @@ believed live on that basis.
 GUARD 3 -- the declared self-check (``check_self_checks``). Nous cannot know an
 objective's semantics, so it cannot detect a self-contradictory row itself; it
 CAN require the author to state the invariant that defines the objective and
-then enforce it per row. Defect 2: two growth criteria were combined with ``and``
-instead of ``or``, so 8 of 12 rows reported ``max_sustained_rate`` while their own
-recorded ``backlog_slope`` said that rate was growing. One declared self-check
-(``{metric: backlog_slope, op: "<=", value: 0.060}``) would have failed each of
-those 8 rows at the moment it was measured rather than after the epoch.
+then enforce it per row. The general case is an objective that is the EXTREMUM OF
+A FEASIBLE SET -- the coarsest mesh that still converged, the largest rate that
+was sustained, the smallest replica count that held a bound. There the adapter had
+to decide set membership, so a bug in that decision yields a flattering number
+with no outward sign of being wrong; the self-check is the membership test
+restated where Nous can apply it. Defect 2 was one instance: two growth criteria
+combined with ``and`` instead of ``or``, so 8 of 12 rows reported a sustained rate
+while their own recorded backlog slope said that rate was growing. One declared
+self-check would have failed each of those 8 rows at the moment it was measured
+rather than after the epoch.
 """
 from __future__ import annotations
 

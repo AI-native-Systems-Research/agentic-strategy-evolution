@@ -760,15 +760,22 @@ properties:
               what makes it enforceable. Declare one whenever the objective
               is defined by a PREDICATE OVER A DIAGNOSTIC -- "the largest
               rate that was sustained", "the smallest setting that still
-              converges", "the highest load meeting a bound". Example:
-              ``{metric: backlog_slope, op: "<=", value: 0.060}`` alongside
+              converges", "the highest load meeting a bound". In each case
+              the objective is the EXTREMUM OF A FEASIBLE SET, so the
+              adapter had to decide membership, and a self-check is that
+              decision restated where Nous can check it. A solver whose
+              answer fails its own acceptance test has a bug in the search,
+              not a number worth fitting. Two shapes:
+              ``{metric: residual_norm, op: "<=", value: 1.0e-8}`` beside
+              ``primary: {metric: coarsest_mesh, direction: maximize}``
+              (the coarsest mesh that still converged), and
+              ``{metric: queue_growth_slope, op: "<=", value: 0.06}`` beside
               ``primary: {metric: max_sustained_rate, direction: maximize}``
-              asserts that the rate reported as sustained has a
-              non-growing backlog. On a real campaign that one line would
-              have failed 8 of 12 rows at the moment each was measured;
-              without it, every one reported a flattering number whose own
-              recorded slope said it was invalid, and the epoch's fit was
-              believed. Evaluated per row with no level guard, and also by
+              (the highest arrival rate whose backlog was not growing). On a
+              real campaign the second line would have failed 8 of 12 rows at
+              the moment each was measured; without it, every one reported a
+              flattering number whose own recorded diagnostic said it was
+              invalid, and the epoch's fit was believed. Evaluated per row with no level guard, and also by
               ``nous validate campaign --smoke`` / ``--liveness`` on the
               configurations they run, so a violated invariant surfaces
               BEFORE the policy hash is written. See
