@@ -2478,6 +2478,33 @@ that returns a point violating its own acceptance test has a bug in the search, 
 a measurement worth recording. Make that a hard failure, because as data it is
 indistinguishable from a good result.
 
+
+**Record enough to adjudicate a flag you raise, not just to raise it.** A check
+that reports a problem you then cannot diagnose has done half its job, and the
+missing half is usually the expensive half.
+
+A campaign's adapter validated that its search produced a well-ordered result and
+recorded the outcome as counts:
+
+    n_sustained: 7      n_growing: 4      monotone: false
+
+The flag is correct and the record is useless. "Monotone: false" over those counts
+is consistent with two situations that call for opposite responses:
+
+* one point straddles the boundary — noise near the decision threshold, and the
+  reported extremum is broadly fine;
+* the response is genuinely not ordered in the swept variable — in which case the
+  reported extremum is not the quantity it claims to be, and no amount of
+  replication fixes that.
+
+Distinguishing them needs **which** points fell in each bin, which the artifact did
+not carry. The row had to be re-run to be judged — at full cost, after the fact,
+and only because someone noticed.
+
+The rule generalizes past monotonicity: whenever you add a validity flag, ask what
+a reader would need to *act* on it, and record that alongside. A boolean is a
+smoke alarm; the diagnosis needs the floor plan.
+
 ### 7.8 Point certifying relations at tests that fail without the mechanism
 
 **Wrong:** hang a `correctness` relation on an existing test that already
