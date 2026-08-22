@@ -89,16 +89,37 @@ def _all_tests_pass(campaign: dict) -> dict[str, bool]:
     return out
 
 
-def _runner(*, extra=None, drop_row=None):
-    """Fake config runner: a clean linear response plus an L5-style flip."""
+def _runner(*, extra=None, drop_row=None, noise=0.0):
+    """Fake config runner: a clean linear response plus an L5-style flip.
+
+    ``noise`` adds a small SEED-DEPENDENT term, deterministic given the row's
+    workload seed so the fixture stays reproducible. Zero by default, because
+    most assertions here are about a response's SHAPE and a fixed value keeps
+    them readable.
+
+    A `confirm` assertion about the terminal BOUND must pass a non-zero value:
+    with identical replicates the paired differences are constant, the variance
+    is zero, and `terminal_regret_bound` now correctly returns `None` rather than
+    certifying exact epsilon-optimality from no information. That refusal is the
+    fix, not a fixture problem -- a real target's replicates differ, which is what
+    the fresh-sample comparison exists to read.
+    """
     def run(row):
         lv = row.levels
         a = float(lv.get("A", 0)); b = float(lv.get("B", 0))
+        jitter = 0.0
+        if noise:
+            # Keyed on the REPLICATE index (plus the row's own levels so two
+            # finalists do not share a jitter sequence), because the workload seed
+            # is injected into `apply.env` downstream of `expand` and is not on the
+            # row this stub sees. Deterministic, so the fixture is reproducible.
+            h = (int(row.replicate) * 2654435761 + int(a) * 40503 + int(b) * 7919)
+            jitter = noise * ((h % 2003) / 1001.0 - 1.0)
         obs = {
             "cfg": {k.lower(): v for k, v in lv.items()},
             # negative main effect on A, positive AB interaction: the compound
             # beats the parts, which is the landscape this feature exists for
-            "m": 10.0 - 0.05 * a + 0.20 * b + 0.02 * a * b,
+            "m": 10.0 - 0.05 * a + 0.20 * b + 0.02 * a * b + jitter,
         }
         if extra:
             obs.update(extra(row) or {})
@@ -1965,7 +1986,8 @@ def test_confirm_compares_a_shortlist_of_finalists_with_fresh_replicates(
     _advance_engine(wd)
     _run(c, wd, stage="screen", iteration=2)
     _advance_engine(wd)
-    _run(c, wd, stage="confirm", iteration=3)
+    # noise: real replicates differ, which is what a paired terminal bound reads.
+    _run(c, wd, stage="confirm", iteration=3, runner=_runner(noise=0.05))
 
     conf = json.loads((wd / "runs" / "iter-3" / "confirmation.json").read_text())
     assert len(conf["finalists"]) == 3 and all(f["n"] == 3 for f in conf["finalists"])

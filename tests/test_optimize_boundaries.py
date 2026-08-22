@@ -128,19 +128,8 @@ def test_a_single_finalist_is_the_no_discrimination_boundary():
 
 
 @pytest.mark.mutation_sentinel
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG (independently reproduced; also reported by the invariant-"
-           "inventory agent): terminal_regret_bound certifies value=0.0 from "
-           "ZERO-VARIANCE replicates. The `>= 2 replicates` guard is a COUNT "
-           "check (`len(v) < 2`), never a variance check, so three IDENTICAL "
-           "measurements pass a floor whose whole purpose is to guarantee a "
-           "variance estimate exists. Its sibling model_regret_bound correctly "
-           "returns None at pure_error_df <= 0. Spec §3.5: unknown is not a "
-           "zero.",
-)
-def test_terminal_bound_certifies_from_zero_information():
-    """THE VARIANCE BOUNDARY, at exactly 0.
+def test_terminal_bound_refuses_to_certify_from_zero_information():
+    """THE VARIANCE BOUNDARY, at exactly 0. FIXED -- xfail removed.
 
     A deterministic target (or a cached/stale read — the very thing the adapter's
     freshness guard exists to catch) returns identical replicates. The count
@@ -174,20 +163,26 @@ def test_terminal_bound_certifies_from_zero_information():
     )
 
 
-def test_the_zero_variance_certificate_is_delta_independent_which_a_bound_never_is():
-    """Documents the CURRENT behaviour so the defect above is measurable.
+def test_the_refusal_is_delta_independent_but_a_real_bound_never_is():
+    """FIXED, and updated exactly as the previous version said it should be.
 
-    Asserts what the code does today, not what it should do: at zero variance the
-    bound ignores delta entirely. Kept as a passing test (rather than folded into
-    the xfail) so the evidence survives whichever way the xfail is resolved — if
-    the bound starts returning None, this test's `0.0` expectations fail loudly
-    and it gets updated alongside.
+    That version pinned the defect: at zero variance the bound returned 0.0 for
+    EVERY delta, which was the machine-checkable symptom — a genuine bound
+    responds to its error budget, and one that ignores delta entirely is not
+    reading any evidence. It said "if the bound starts returning None, this
+    test's 0.0 expectations fail loudly and it gets updated alongside." They did,
+    and this is the update.
+
+    The refusal is still delta-independent, and that is correct: whether a
+    variance is estimable does not depend on how much risk the author is willing
+    to take. What must respond to delta is a bound that exists.
     """
     zero_var = {"f1": [5.0, 5.0, 5.0], "f2": [7.0, 7.0, 7.0]}
-    values = {d: terminal_regret_bound(zero_var, "f2", delta=d,
-                                       direction="maximize", paired=True).value
-              for d in (0.001, 0.05, 0.5)}
-    assert set(values.values()) == {0.0}, values
+    refusals = {d: terminal_regret_bound(zero_var, "f2", delta=d,
+                                         direction="maximize", paired=True)
+                for d in (0.001, 0.05, 0.5)}
+    assert {b.value for b in refusals.values()} == {None}, refusals
+    assert {b.method for b in refusals.values()} == {"none"}, refusals
 
     # Off the boundary, the bound behaves like a bound: it moves with delta.
     # That contrast is the whole finding.
@@ -210,13 +205,19 @@ def test_the_zero_variance_certificate_is_delta_independent_which_a_bound_never_
     )
     assert moved[0.001] > 0.0 and moved[0.5] == 0.0
 
-    # And the constant-offset case, which is the one the paired path gets wrong.
+    # And the CONSTANT-OFFSET case, which is the wider reachability this file
+    # documented and which the fix had to cover too: neither finalist's own
+    # samples are constant, but the PAIRED DIFFERENCES are (2.0, 2.0, 2.0), so the
+    # paired variance is exactly 0 and the old code certified from it. It now
+    # refuses, for the same reason as the identical-replicate case -- the paired
+    # path has no variance to estimate from -- which is why a count check on
+    # replicates could never have caught it.
     const_offset = {"f1": [5.0, 5.4, 5.2], "f2": [7.0, 7.4, 7.2]}
     flat = {d: terminal_regret_bound(const_offset, "f2", delta=d,
                                      direction="maximize", paired=True).value
             for d in (0.001, 0.5)}
-    assert set(flat.values()) == {0.0}, (
-        f"expected the constant-offset case to certify unconditionally too: {flat}"
+    assert set(flat.values()) == {None}, (
+        f"a constant paired offset carries no variance and must not certify: {flat}"
     )
 
 
@@ -453,7 +454,7 @@ def test_a_constant_response_yields_exactly_zero_effects_and_zero_variance():
     # not evidence that the knob's effect is distinguishable from zero, it is
     # evidence that this instrument cannot tell. Note the contrast with
     # `terminal_regret_bound`, which faces the identical zero-variance input and
-    # instead CERTIFIES (see the xfail above) — `fit_effects` is the module that
+    # instead CERTIFIES (fixed; see the variance-boundary test above) — `fit_effects` is the module that
     # gets this boundary right.
     assert all(e.se is None for e in fit.effects)
     assert all(e.significant is None for e in fit.effects), (

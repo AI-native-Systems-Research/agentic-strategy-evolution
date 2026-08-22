@@ -637,7 +637,7 @@ def test_contract_drift_beats_a_stale_or_self_check_verdict(tmp_path):
 
 @pytest.mark.parametrize("value,expected", [
     (None, "null"), (True, "bool"), (3, "int"), (3.0, "float"),
-    ("x", "str"), ({"a": 1, "b": 2}, "object{a,b}"), ([1, 2], "array[int]"),
+    ("x", "str"), ({"a": 1, "b": 2}, "object{a:int,b:int}"), ([1, 2], "array[int]"),
 ])
 def test_fingerprint_names_each_type_distinctly(value, expected):
     assert ac.fingerprint({"k": value}) == {"k": expected}
@@ -660,4 +660,4 @@ def test_nested_key_set_is_part_of_the_contract():
     before = {"keys": ac.fingerprint({"tel": {"a": 1, "b": 2}})}
     added, removed, changed = ac.diff_contract(before, {"tel": {"a": 1}})
     assert not added and not removed
-    assert changed == ["tel: object{a,b} -> object{a}"]
+    assert changed == ["tel: object{a:int,b:int} -> object{a:int}"]

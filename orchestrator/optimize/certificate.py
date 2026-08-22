@@ -223,23 +223,66 @@ def terminal_regret_bound(samples: dict[str, list[float]], best: str, *,
     xb = samples[best]
     use_paired = paired and all(len(samples[k]) == len(xb) for k in others)
 
+    # NOT ESTIMABLE means None, including when the arithmetic would produce a
+    # number. Two ways a contrast carries zero information while still returning
+    # a finite value, and both used to certify:
+    #
+    #   * Every replicate of every finalist identical (`[5,5,5]` vs `[4,4,4]`) --
+    #     spec §3.5's MEASURED deterministic-target case. The paired differences
+    #     are then a constant, `variance(d) == 0`, `se == 0`, and the t-interval
+    #     collapses to the point estimate: `value=0.0` labelled
+    #     `bonferroni_one_sided_t_paired`, i.e. exact epsilon-optimality asserted
+    #     from no variance at all, wearing a real certificate's name. Note it is
+    #     the CONSTANT OFFSET that does it, not three equal numbers -- any two
+    #     finalists differing by a fixed amount reach it, which is why a count
+    #     check on replicates cannot catch it.
+    #   * Subnormal variances in the Welch branch. The guard was `(vk + vb) > 0`,
+    #     but `vk ** 2` UNDERFLOWS to exactly 0.0 long before `vk` does, so the
+    #     guard passed while the df denominator was zero. Minimal reproducer:
+    #     replicates `[-3.117993501313441e-82, 0.0]`, which raised
+    #     ZeroDivisionError straight out of the certification path. A campaign
+    #     reporting a normalized rate can reach it.
+    #
+    # `model_regret_bound` already returns None when `pure_error_df <= 0`; the
+    # asymmetry between the two bounds was the defect. An unknown is not a zero,
+    # and a deterministic target's honest answer is "this instrument cannot
+    # produce a variance estimate", which the fallback ladder already handles --
+    # `terminal_best` names the winner without claiming a bound.
+    not_estimable: list[str] = []
+
     def contrast(k: str) -> tuple[float, float, float]:
         xk = samples[k]
         if use_paired:
             d = [sign * (b - a) for a, b in zip(xb, xk)]
             n = len(d)
-            return mean(d), math.sqrt(variance(d) / n), float(n - 1)
+            vd = variance(d)
+            if not vd > 0.0:
+                not_estimable.append(k)
+                return mean(d), 0.0, float(n - 1)
+            return mean(d), math.sqrt(vd / n), float(n - 1)
         est = sign * (mean(xk) - mean(xb))
         vk, vb = variance(xk) / len(xk), variance(xb) / len(xb)
         se = math.sqrt(vk + vb)
-        df = (
-            (vk + vb) ** 2
-            / ((vk ** 2) / (len(xk) - 1) + (vb ** 2) / (len(xb) - 1))
-            if (vk + vb) > 0 else 1.0
-        )
+        # Guard the DENOMINATOR itself, not a quantity that merely implies it.
+        den = (vk ** 2) / (len(xk) - 1) + (vb ** 2) / (len(xb) - 1)
+        if not den > 0.0:
+            not_estimable.append(k)
+            return est, se, 1.0
+        df = (vk + vb) ** 2 / den
         return est, se, df
 
     bounds = _challenger_bounds(others, contrast, delta=delta)
+    if not_estimable:
+        return RegretBound(
+            None, None, delta, "none",
+            f"no variance estimate for challenger(s) "
+            f"{sorted(set(not_estimable))}: the replicates carry zero spread "
+            f"(a deterministic target, or a constant offset between finalists), "
+            f"so a t-interval would collapse to its point estimate and report "
+            f"exact epsilon-optimality from no information. An unknown is not a "
+            f"zero -- the report's fallback ladder names the winner as "
+            f"`terminal_best` instead of certifying it.",
+        )
     arg = max(bounds, key=lambda i: bounds[i])
     return RegretBound(
         max(0.0, bounds[arg]), others[arg], delta,
