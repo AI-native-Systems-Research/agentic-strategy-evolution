@@ -2386,6 +2386,43 @@ kind's two historical fit bugs (a singular `XᵀX` from aliased columns; NaN
 poisoning from infeasible rows): **a silent failure that looks like a clean
 result.**
 
+
+**Assert that the reported answer satisfies its own predicate.** This is the
+sharpest form of the rule above, and the one that catches the bug a fail-loud
+wrapper misses.
+
+A measured campaign shipped rows of the form:
+
+    max_sustained_rate = 2.1562        # "this load was sustained"
+    backlog_slope      = 0.1234        # the growing threshold was 0.060
+
+Those two lines contradict each other: the reported answer is a point the run's own
+recorded diagnostic classifies as *not* sustained. **8 of 12 rows** had this shape,
+every one biased in the flattering direction, and nothing caught it — exit codes
+were clean, the file was present and parseable, the manipulation predicates passed,
+and the schema validated. The harness was loud about *failures* and silent about a
+*self-contradiction*.
+
+No amount of threshold calibration finds this. Only an assertion tying the returned
+value back to the evidence does:
+
+```python
+lam, diagnostics = search(...)
+slope = diagnostics["slope"]
+if slope > GROWING_THRESHOLD:
+    raise SearchError(
+        f"reported {lam} as sustained but its own slope {slope} exceeds "
+        f"{GROWING_THRESHOLD} — refusing to report a self-contradictory result")
+```
+
+Generalize it: whenever an objective is defined by a **predicate over a
+diagnostic** — "the largest input for which the system is stable", "the smallest
+setting that still converges", "the highest load meeting a bound" — the returned
+extremum must be re-checked against that predicate before it is reported. A search
+that returns a point violating its own acceptance test has a bug in the search, not
+a measurement worth recording. Make that a hard failure, because as data it is
+indistinguishable from a good result.
+
 ### 7.8 Point certifying relations at tests that fail without the mechanism
 
 **Wrong:** hang a `correctness` relation on an existing test that already
