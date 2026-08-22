@@ -473,6 +473,23 @@ worked example). The full friction-report resolution map is in
   Knative, Cilium).
 - `docs/data-model.md` §7 — per-artifact reference for everything a
   compiled epoch writes.
+- `docs/optimization-invariants.md` — the **enumerated invariant inventory**
+  for the kind: stable IDs classified by TYPE (structural / closed-vocabulary /
+  semantic / statistical / temporal / provenance / resource / economic) and by
+  LEVEL (function → module → artifact → iteration → epoch → campaign), each
+  traced to a docstring, spec section, or historical defect; plus §8's
+  **behaviors** enumeration (the `recommendation.basis` ladder, the row-outcome
+  taxonomy, the three adapter guards' blast radii, and the
+  semantic-exception / measurement-failure / campaign-abort discriminator) and
+  §10's list of prose that turned out **not** to be invariant. Read it as a
+  reviewer's checklist before changing anything under `orchestrator/optimize/`.
+  The machine-readable half is `orchestrator/optimize/invariants.py` — do NOT
+  confuse it with the campaign-authored `design_space.invariants` (that asks
+  "is the TARGET behaving?"; this asks "is NOUS behaving?").
+  `tests/test_optimize_invariants.py` fails when document and registry drift,
+  which is what keeps the inventory alive. **If you add a "MUST NEVER" to a
+  docstring in that package, it needs an ID there and a checker — otherwise you
+  have added prose that cannot fail.**
 - `docs/superpowers/specs/2026-08-16-compiled-policy-design.md` — binding
   design authority for the compiled experimental policy (`policy.json`,
   `step()`, the closed observation/operator vocabularies, the residual-regret

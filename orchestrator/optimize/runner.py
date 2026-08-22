@@ -55,17 +55,69 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from orchestrator.optimize import adapter_contract as ac
+from orchestrator.optimize import reaper
 from orchestrator.optimize.factors import Factor
 from orchestrator.optimize.matrix import ConfigRow
 from orchestrator.optimize.predicates import evaluate
 
 logger = logging.getLogger(__name__)
+
+
+FAILURE_KINDS: frozenset[str] = frozenset({
+    "timeout",
+    "exit_nonzero",
+    "unparseable_output",
+    "adapter_exception",
+    "manipulation_failed",
+    "invariant_violated",
+    "integrity_failed",
+    "ceiling_exceeded",
+    "constraint_violated",
+    "adapter_guard",
+})
+"""The closed vocabulary for ``RunOutcome.failure_kind``.
+
+CLOSED for the same reason ``policy.OBSERVATION_KEYS`` is: a label a reader can
+switch on is only worth switching on if the set of possible values is
+enumerable. A new failure mode adds a member here (and a schema enum entry)
+rather than a new free-form string invented at one raise site.
+
+The three that matter most are the first three, and they are the ones that were
+indistinguishable without opening a log file. ``timeout`` says the apparatus ran
+out of time -- a BUDGET question about the design, answerable together with
+``duration_ms`` and nothing else. ``exit_nonzero`` and ``unparseable_output``
+say the adapter misbehaved -- a DEFECT that will recur on every row that reaches
+that branch. All three arrived as ``RuntimeError: config run ...`` in ``error``,
+because ``make_config_runner`` wraps a ``TimeoutExpired`` and a bad exit code in
+the same exception type."""
+
+
+class ConfigRunFailure(RuntimeError):
+    """A ``run_command`` invocation that failed, carrying WHY as a label.
+
+    ``make_config_runner``'s closure raised a bare ``RuntimeError`` for a
+    timeout, a non-zero exit, and unparseable output alike, so the only way
+    downstream code could tell them apart was to substring-match the message --
+    which is prose the raise site is free to reword, and which reduced three
+    materially different findings to one indistinguishable "failed".
+
+    ``kind`` is a member of ``FAILURE_KINDS``, set at the raise site where the
+    distinction is actually known. Subclassing ``RuntimeError`` keeps every
+    existing ``except Exception`` / ``except RuntimeError`` handler (in
+    ``_run_once``, in the smoke probe, in the liveness sweep) working unchanged
+    -- this adds a readable attribute, it does not reroute control flow.
+    """
+
+    def __init__(self, message: str, *, kind: str):
+        super().__init__(message)
+        self.kind = kind
 
 
 @dataclass(frozen=True)
@@ -94,7 +146,44 @@ class RunOutcome:
     manipulation: list
     invariants: list
     duration_ms: int = 0
+    """TOTAL wall clock this row consumed, in milliseconds, summed across every
+    attempt -- monotonic-clock derived, so it can never be negative and never
+    moves under a wall-clock adjustment.
+
+    Total-across-attempts rather than last-attempt because the number a reader
+    needs it for is sizing ``optimization.run_timeout_sec``, and a row that
+    burned two attempts really did occupy the schedule for both. A
+    per-invocation ceiling still applies per attempt, so the two readings differ
+    and both are recorded: ``attempts`` and ``last_attempt_ms`` are what let a
+    reader recover the per-invocation figure without re-deriving it from a log.
+
+    Populated at EVERY construction site, including the failing ones. A row that
+    TIMED OUT records the elapsed time it consumed -- that is precisely the
+    number a timeout budget must cover, and a field that read 0 there advertised
+    "measured, instantaneous" about the one outcome whose duration mattered
+    most."""
     error: str = ""
+    failure_kind: str = ""
+    """A closed-vocabulary machine label for WHY a non-complete row is
+    non-complete: one of ``FAILURE_KINDS``, or ``""`` on a clean row.
+
+    ``error`` carries the human-readable cause and is not going away; this is
+    the field a tool reads. The distinction that has to survive without opening
+    a log is "the apparatus ran out of time" (``timeout`` -- a budget question
+    about the design, answerable from ``duration_ms``) versus "the adapter
+    crashed" (``exit_nonzero`` / ``adapter_exception`` -- a defect that will
+    recur on every row reaching that branch). Both surfaced as
+    ``RuntimeError: ...`` in ``error``, so telling them apart meant
+    substring-matching prose the raise site is free to reword. This is set AT
+    the raise site instead."""
+    attempts: int = 1
+    """How many times the runner was invoked for this row (1 unless a
+    manipulation retry fired). Recorded so ``duration_ms``'s total-across-
+    attempts semantics are readable rather than assumed."""
+    last_attempt_ms: int = 0
+    """Wall clock of the FINAL attempt only. Equals ``duration_ms`` when
+    ``attempts == 1``. This is the figure to compare against a per-invocation
+    ceiling; ``duration_ms`` is the figure a schedule must budget."""
     held_out: dict = field(default_factory=dict)
     self_check: list = field(default_factory=list)
     """One verdict per declared ``response.self_check`` predicate, same
@@ -433,12 +522,63 @@ def _split_held_out(response_spec: dict, observed: dict) -> tuple[dict, dict]:
     return response, held_out
 
 
-def _run_once(row: ConfigRow, runner: "ConfigRunner") -> tuple[dict | None, str]:
-    """Call ``runner`` once; returns ``(observation, error)`` -- exactly one is truthy."""
+def _run_once(
+    row: ConfigRow, runner: "ConfigRunner",
+) -> tuple[dict | None, str, str, int]:
+    """Call ``runner`` once.
+
+    Returns ``(observation, error, failure_kind, elapsed_ms)``. Exactly one of
+    ``observation`` / ``error`` is truthy; ``failure_kind`` is empty on success
+    and a ``FAILURE_KINDS`` member otherwise; ``elapsed_ms`` is populated on
+    BOTH paths.
+
+    THE CLOCK IS THE POINT OF THIS FUNCTION being the timing seam. It wraps the
+    single call to the injected runner and nothing else, so the elapsed figure
+    covers exactly one invocation of the target -- not the manipulation checks,
+    not the invariant evaluation, not the adapter guards, all of which are
+    in-process Python whose cost is not what a ``run_timeout_sec`` budgets.
+
+    ``time.monotonic`` rather than ``time.time``: an NTP step or a DST
+    transition mid-run must not be able to produce a negative duration, and a
+    duration is a difference, so the epoch a monotonic clock counts from being
+    arbitrary costs nothing here.
+
+    The clock is read on BOTH branches, not only the success one. A row that
+    timed out is the one whose duration a reader most needs: it is the lower
+    bound on what the ceiling would have had to be, and it is the case the old
+    ``duration_ms`` default of 0 misreported most damagingly (a 1800-second
+    timeout recorded as instantaneous).
+    """
+    started = time.monotonic()
     try:
-        return runner(row), ""
+        obs = runner(row)
     except Exception as exc:  # runner exceptions become failed rows, never abort the sweep
-        return None, f"{type(exc).__name__}: {exc}"
+        elapsed_ms = _elapsed_ms(started)
+        # A `ConfigRunFailure` knows its own kind (set at the raise site inside
+        # `make_config_runner`). Anything else came from an injected runner or
+        # from the subprocess plumbing itself and is, from here, an opaque
+        # adapter crash -- which is exactly the honest label for it.
+        kind = getattr(exc, "kind", "") or "adapter_exception"
+        if kind not in FAILURE_KINDS:  # pragma: no cover - defensive
+            kind = "adapter_exception"
+        return None, f"{type(exc).__name__}: {exc}", kind, elapsed_ms
+    return obs, "", "", _elapsed_ms(started)
+
+
+def _elapsed_ms(started: float) -> int:
+    """Monotonic milliseconds since ``started``, floored at 0 and at least 1.
+
+    THE FLOOR AT 1 IS DELIBERATE and is the whole lesson of the defect this
+    field carries. ``duration_ms`` was structurally always 0, and a 0 that means
+    "measured, instantaneous" is indistinguishable from a 0 that means "never
+    assigned" -- which is why 18 rows of a real campaign looked instrumented and
+    were not. Reserving 0 for "did not run" makes any executed row's duration
+    positive by construction, so the absent-field case stays detectable forever.
+    A sub-millisecond target run (only reachable with an in-process fake) reports
+    1ms; a millisecond of imprecision on a benchmark is not a number anyone
+    sizes a timeout from.
+    """
+    return max(1, int((time.monotonic() - started) * 1000))
 
 
 def execute_design(
@@ -647,16 +787,52 @@ def _execute_row(
     error = ""
     attempts = max(1, max_retries + 1)
 
+    # THE INSTRUMENTATION ACCUMULATORS, and why they are threaded through every
+    # exit path below rather than computed once at the end. This function has
+    # nine `RunOutcome` construction sites and `duration_ms` reached none of
+    # them: it was declared on the dataclass, defaulted to 0, and never
+    # assigned, so every row of every campaign recorded a duration of 0 while
+    # remaining schema-valid. The reason a reader wants the field at all is to
+    # size `optimization.run_timeout_sec` from the campaign's OWN data, and a
+    # mis-sized ceiling is what killed a real 14-hour epoch.
+    #
+    # `_instr()` below is the single place all four instrumentation fields
+    # (`duration_ms`, `last_attempt_ms`, `attempts`, `failure_kind`) are
+    # assembled, and every construction site spreads it. That is deliberate: a
+    # new exit path added later cannot forget one of the four without also having
+    # chosen not to call `_instr` at all, which is visible in review in a way a
+    # missing keyword argument among nine similar-looking calls is not.
+    total_ms = 0
+    last_ms = 0
+    n_attempts = 0
+
+    def _instr(kind: str = "") -> dict:
+        return {
+            "duration_ms": total_ms,
+            "last_attempt_ms": last_ms,
+            "attempts": max(1, n_attempts),
+            "failure_kind": kind,
+        }
+
     for attempt in range(attempts):
-        observed, run_error = _run_once(row, runner)
+        observed, run_error, run_kind, last_ms = _run_once(row, runner)
+        total_ms += last_ms
+        n_attempts += 1
         if observed is None:
             # Runner raised. Retrying a crashed build/run is not what
             # max_retries is for (that budget is reserved for manipulation
             # transients) -- fail the row immediately without burning the
             # remaining retry attempts on a build that will keep crashing.
+            #
+            # `run_kind` came from the raise site, so a row that TIMED OUT lands
+            # here labelled `timeout` alongside the elapsed time it consumed.
+            # Those two fields together are the entire answer to "how big should
+            # the ceiling have been", readable from `runs.jsonl` with no log
+            # file open.
             return RunOutcome(
                 row_index=row.row_index, status="failed", response={},
                 manipulation=all_manipulation, invariants=[], error=run_error,
+                **_instr(run_kind),
             )
 
         manipulation = _check_manipulation(factors, row, observed)
@@ -670,6 +846,7 @@ def _execute_row(
             return RunOutcome(
                 row_index=row.row_index, status="failed", response={},
                 manipulation=all_manipulation, invariants=[], error=error,
+                **_instr("manipulation_failed"),
             )
         # else: retry -- loop again for up to max_retries additional attempts.
 
@@ -690,6 +867,7 @@ def _execute_row(
             row_index=row.row_index, status="rejected", response=response,
             manipulation=all_manipulation, invariants=invariant_verdicts,
             error=failed_detail, held_out=held_out,
+            **_instr("invariant_violated"),
         )
 
     if integrity_check is not None:
@@ -699,7 +877,7 @@ def _execute_row(
                 row_index=row.row_index, status="rejected", response=response,
                 manipulation=all_manipulation, invariants=invariant_verdicts,
                 error=integrity_detail or "integrity_command exited non-zero",
-                held_out=held_out,
+                held_out=held_out, **_instr("integrity_failed"),
             )
 
     ceiling_error = _check_ceiling(response_spec, observed)
@@ -708,6 +886,7 @@ def _execute_row(
             row_index=row.row_index, status="rejected", response=response,
             manipulation=all_manipulation, invariants=invariant_verdicts,
             error=ceiling_error, held_out=held_out,
+            **_instr("ceiling_exceeded"),
         )
 
     constraint_violations = _check_constraints(response_spec, observed)
@@ -716,6 +895,7 @@ def _execute_row(
             row_index=row.row_index, status="infeasible", response=response,
             manipulation=all_manipulation, invariants=invariant_verdicts,
             error="; ".join(constraint_violations), held_out=held_out,
+            **_instr("constraint_violated"),
         )
 
     # ── the three target-adapter guards, LAST ───────────────────────────────
@@ -745,17 +925,18 @@ def _execute_row(
                 row_index=row.row_index, status="failed", response=response,
                 manipulation=all_manipulation, invariants=invariant_verdicts,
                 error=guard_error, held_out=held_out, self_check=self_verdicts,
+                **_instr("adapter_guard"),
             )
         return RunOutcome(
             row_index=row.row_index, status="complete", response=response,
             manipulation=all_manipulation, invariants=invariant_verdicts, error="",
-            held_out=held_out, self_check=self_verdicts,
+            held_out=held_out, self_check=self_verdicts, **_instr(),
         )
 
     return RunOutcome(
         row_index=row.row_index, status="complete", response=response,
         manipulation=all_manipulation, invariants=invariant_verdicts, error="",
-        held_out=held_out,
+        held_out=held_out, **_instr(),
     )
 
 
@@ -1199,11 +1380,30 @@ def make_config_runner(
     import shlex
     import subprocess
 
+    from orchestrator.optimize import concurrency
+
     def run(row) -> dict:
         cmd = shlex.split(command_template)
         for args in (row.apply or {}).get("cli_args", []) or []:
             cmd.append(args)
-        env_extra = (row.apply or {}).get("env") or {}
+        env_extra = dict((row.apply or {}).get("env") or {})
+        # PER-RUN SCRATCH, exported unconditionally at every width including 1.
+        # Nous exported no private directory, so every row ran with the same
+        # `cwd` and no unique path to write into -- which is how two rows came to
+        # share one `go build -o` output path in a real campaign, producing
+        # plausible numbers from the wrong binary with nothing in any artifact to
+        # show it. `config_patch` already isolates the INPUT side (a per-run copy
+        # under a fresh uuid4 dir); this is the output side. Exported at width 1
+        # too, deliberately: a variable that only appeared above width 1 would
+        # make concurrency the first thing to exercise the adapter's use of it.
+        # Author-declared `env` wins on a key collision -- an author who sets
+        # NOUS_RUN_DIR themselves has a reason, and silently overriding a
+        # declared factor level would be the worse failure.
+        iso = concurrency.run_isolation(
+            log_dir if log_dir is not None else cwd,
+            row_index=getattr(row, "row_index", 0),
+        )
+        env_extra = {**iso, **env_extra}
         # The patched copies land next to the iteration's other run artifacts
         # when there is a log dir (so a campaign author debugging a row can read
         # the exact configuration it ran on), and in a scratch directory
@@ -1215,20 +1415,42 @@ def make_config_runner(
 
     def _run_command(row, cmd, *, cwd, env_extra, timeout, log_dir):
         try:
-            proc = subprocess.run(
+            # `reaper.run_in_process_group`, NOT `subprocess.run`, and the
+            # difference is only visible on the timeout path. `subprocess.run`
+            # kills the direct child; anything that child spawned is reparented
+            # to PID 1 and keeps running. A benchmark adapter that starts a
+            # server, drives load at it and prints JSON is exactly that shape,
+            # so a timed-out row left the server alive -- measured on this
+            # repo: two orphaned `sleep` processes with PPID 1 after a
+            # 2-second timeout, and in production an SDK child still billing
+            # 18 hours after the campaign was killed.
+            #
+            # Same signature, same return type, same `TimeoutExpired`, so every
+            # caller below is unchanged: what differs is that the child is
+            # spawned in a new session and the whole process GROUP is signalled.
+            proc = reaper.run_in_process_group(
                 cmd, cwd=str(cwd), capture_output=True, text=True,
                 timeout=timeout,
                 env={**os.environ, **{k: str(v) for k, v in env_extra.items()}},
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             _dump_failed_run(log_dir, row, cmd, cwd, exc=exc)
-            raise RuntimeError(f"config run failed: {exc}") from exc
+            # The two are caught together (both mean "the invocation never
+            # produced output") but labelled apart: a timeout is a budget
+            # question about the design, while an OSError is the command not
+            # being executable at all -- which no larger timeout ever fixes.
+            kind = ("timeout" if isinstance(exc, subprocess.TimeoutExpired)
+                    else "adapter_exception")
+            raise ConfigRunFailure(
+                f"config run failed: {exc}", kind=kind,
+            ) from exc
         if proc.returncode != 0:
             path = _dump_failed_run(log_dir, row, cmd, cwd, proc=proc)
-            raise RuntimeError(
+            raise ConfigRunFailure(
                 f"config run exited {proc.returncode}: "
                 f"{(proc.stderr or '')[-400:]}"
                 + (f" [full output: {path}]" if path else ""),
+                kind="exit_nonzero",
             )
         obs = _last_json_object(proc.stdout)
         if obs is None:
@@ -1237,9 +1459,10 @@ def make_config_runner(
             # a changed output format, and this is the failure that NaN-poisons
             # a fit, so keep the text.
             path = _dump_failed_run(log_dir, row, cmd, cwd, proc=proc)
-            raise RuntimeError(
+            raise ConfigRunFailure(
                 "config run emitted no parseable JSON object"
                 + (f" [full output: {path}]" if path else ""),
+                kind="unparseable_output",
             )
         return obs
 

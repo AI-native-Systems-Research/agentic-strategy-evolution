@@ -279,11 +279,14 @@ called out where they appear (`epoch_end-<epoch>.json` for the spec's
 | `pre_build_tests.json` | root | `run_stage`, before `build` | none |
 | `baseline_equivalence.json` | root | `run_stage` at `verify`, when `build` ran | none |
 | `adapter_contract.json` / `adapter_contract.sha256` | root | first **successful** row of the epoch (`adapter_contract.capture_contract`) | none / plain text |
+| `progress.json` | root | `progress.write_progress` — rewritten atomically as the campaign runs; read it with `nous progress <target>` | none |
+| `halt.json` | root | `progress.write_halt` — the CAMPAIGN LOOP stopped (repeated identical failures, or the declared wall-clock budget). Distinct from `epoch_end-<e>.json`, which records a SEMANTIC exception the policy routed to | none |
 | `design_matrix.json` | `runs/iter-N/` | `artifacts.write_design_matrix` | `schemas/design_matrix.schema.json` |
 | `runs.jsonl` | `runs/iter-N/` | `artifacts.append_run` | `schemas/runs_row.schema.json` |
 | `effects.json` | `runs/iter-N/` | `artifacts.write_effects` | `schemas/effects.schema.json` |
 | `recommendation.json` | `runs/iter-N/` | `run_stage`, fitting states | `schemas/recommendation.schema.json` |
 | `fit_exclusions.json` | `runs/iter-N/` | `run_stage`, only when rows were excluded | none |
+| `reuse_manifest.json` | `runs/iter-N/` | `resume.write_manifest`, whenever reuse was considered (including when REFUSED) | none |
 | `confirmation.json` | `runs/iter-N/` | `stage_runner._finish_confirm` | `schemas/confirmation.schema.json` |
 | `shortlist.json` | `runs/iter-N/` | `stage_runner._finish_confirm` | `schemas/shortlist.schema.json` |
 | `relations.json` | `runs/iter-N/` | `artifacts.write_relations` | `schemas/relations.schema.json` |
@@ -600,7 +603,10 @@ one-factor-at-a-time search.
 | `run_order` / `run_order_seed` | Randomized execution order plus the seed that reproduces it — immune to time-ordered drift a sequential grid can't rule out |
 | `policy_hash` | The registered policy that scheduled this matrix — the same hash `transitions.jsonl` records per row |
 | `run_timeout_sec` | The wall-clock ceiling **every row here was measured under** — `optimization.run_timeout_sec`, or 600 when the campaign declared none. Recorded either way, so a `failed` row reading "timed out after 600 seconds" is readable without knowing which campaign revision was on disk |
-| `max_parallel` | The **effective** ceiling on simultaneous in-flight runs this matrix was measured under — `optimization.max_parallel` at a `confirm` round, and always `1` at a spending stage regardless of what the campaign declared. Read it alongside `run_order`: a permutation looks identical whether it described a sequence or a schedule, so without this field a matrix claiming a randomized run order could be asserting a guarantee concurrent execution did not provide |
+| `max_parallel` | The **effective** ceiling on simultaneous in-flight runs this matrix was measured under — `optimization.max_parallel` at a `confirm` round; at a spending stage, `1` unless the campaign licensed concurrency via `optimization.concurrency` (see `concurrency_basis`). Read it alongside `run_order`: a permutation looks identical whether it described a sequence or a schedule, so without this field a matrix claiming a randomized run order could be asserting a guarantee concurrent execution did not provide |
+| `concurrency_basis` | **Why** those rows were (or were not) co-scheduled, from a closed vocabulary: `serial` (width 1), `confirm_block` (a replicate block, where contention is symmetric across the finalists being compared and cancels out of their difference), `load_independent` (the **author's** declared claim that the objective is not a function of machine load — recorded as a claim, not as a measurement Nous made), or `contention_floor` (**measured**: the objective at the author-named heaviest corner moved less than 2x the target's own serial noise floor). The width alone is not auditable — `max_parallel: 4` cannot be distinguished from the asymmetric-neighbour confound it is only sometimes safe against — so the licence travels with the number. CPU pinning is deliberately **not** a basis: a disjoint CPU set leaves L3, memory bandwidth, disk queues, page cache, NIC queues, thermal budget and the GPU shared, so for a throughput or tail-latency objective it would record an isolation the measurement never had |
+| `concurrency_certified_width` | For `contention_floor` only: the width the evidence was obtained at. `max_parallel` may be **narrower** than this but never wider — inflation grows with the number of neighbours, so a floor certified at 2 says nothing about 8 and the resolver refuses to extrapolate |
+| `concurrency_detail` | Human-readable provenance for the basis — the serial mean, its CV, the mean at width, the observed inflation and the threshold, or whose claim it was. Diagnostic; nothing parses it |
 | `workload_seeds` | Row index → the seed exported into that row's run, when the campaign declares `workload.seed_env` (§3.7 oracle 3) |
 | `paired` | `true` on a confirm-round matrix under common random numbers — replicate *i* of every finalist ran the same draw, which is what lets the terminal bound read the paired differences |
 | `held_fixed` | Factor id → the level it was pinned at, for factors declared in the campaign but not columns of *this* design |
@@ -644,8 +650,11 @@ even though they're excluded from fitting.
 | `constraint_verdicts` | Per-constraint admissibility results |
 | `self_check` | One verdict per declared `response.self_check` predicate — recorded on passing rows too, so "the invariant held" is distinguishable from "none was declared". A violation makes `status` `failed`: the row's reported objective contradicts its own recorded diagnostic (see §7m) |
 | `integrity_verdict` | Result of `integrity_command`, if declared |
-| `duration_ms` / `build_hash` | Provenance for reproducibility and build-cache validation |
-| `error` | Populated on a failed/retried run |
+| `duration_ms` | **Total** wall clock this row consumed, in ms, summed across every attempt — monotonic-clock derived, so never negative. `0` is reserved for a row that never executed; any row the runner invoked reports at least `1`. This is the number that sizes the next epoch's `run_timeout_sec`, and it was structurally always `0` before the instrumentation fix (declared on `RunOutcome`, defaulted, assigned at none of nine construction sites), which is why one 14-hour campaign could not be diagnosed from its own artifacts |
+| `attempts` / `last_attempt_ms` | How many times the runner was invoked (>1 only after a manipulation retry) and the final attempt's wall clock alone. Both are recorded because the per-invocation `run_timeout_sec` ceiling applies to `last_attempt_ms` while a schedule must budget `duration_ms`; without them a retried row is indistinguishable from a target that got twice as slow |
+| `build_hash` | Provenance for build-cache validation |
+| `error` | Human-readable cause; populated on a failed/rejected/infeasible run |
+| `failure_kind` | **Closed-vocabulary** machine label for the same cause (`orchestrator.optimize.runner.FAILURE_KINDS`; `""` on a clean row), set at the raise site rather than parsed back out of `error`. The distinction it exists for: `timeout` says the apparatus ran out of time — a *budget* question about the design, answerable with `duration_ms` — while `exit_nonzero` / `unparseable_output` / `adapter_exception` say the adapter misbehaved, a *defect* that recurs on every row reaching that branch. Both used to surface as `RuntimeError: config run ...` in `error`, so telling them apart meant substring-matching prose |
 
 ### 7c. effects.json — "What did the fitted surface find?"
 

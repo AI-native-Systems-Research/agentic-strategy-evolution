@@ -13,11 +13,25 @@ If those two contracts hold, the campaign runs. If either is subtly wrong, the
 campaign runs anyway and produces numbers that mean something other than what
 you read — which is why this document is a contract and not a tutorial.
 
-Three worked, schema-valid examples live in `examples/optimization/`:
+Worked, schema-valid examples live in `examples/optimization/` — including
 [`vllm-batching.yaml`](../examples/optimization/vllm-batching.yaml),
 [`qdrant-hnsw.yaml`](../examples/optimization/qdrant-hnsw.yaml),
-[`knative-autoscale.yaml`](../examples/optimization/knative-autoscale.yaml).
+[`knative-autoscale.yaml`](../examples/optimization/knative-autoscale.yaml), and
+[`finetune-hyperparams.yaml`](../examples/optimization/finetune-hyperparams.yaml).
 Copy the closest one.
+
+The serving and datastore ones are online systems measured on throughput or latency;
+`finetune-hyperparams.yaml` is deliberately not — an **offline batch
+computation** whose objective is an accuracy under a wall-clock and memory
+budget, with a real held-out test split, a censorable objective guarded by
+`response.self_check`, and no `refine` stage. **Nothing in this contract is
+specific to serving.** A target satisfies it if one invocation of one command
+prints one JSON object of metrics for one configuration — whether that
+configuration is a scheduler policy, a solver tolerance, a compiler flag set, or
+a training hyperparameter. The
+[optimization campaign guide](optimization-campaign-guide.md) §3 opens with a
+domain-to-machinery mapping table and carries worked examples in four different
+fields, including a PDE solver (§3.5) and a compiler flag set (§3.6).
 
 ---
 
@@ -309,6 +323,53 @@ at an exchange rate you invented, and the recommendation will exploit it.
 Put in `design_space.invariants` only the things whose violation means the
 *measurement is untrustworthy* (memory cap exceeded, compaction still running,
 activator in the request path) — those rows are thrown away, not learned from.
+
+---
+
+## 4a. Write under `NOUS_RUN_DIR` — never a shared path
+
+Nous exports three variables into **every** run's environment, at every
+concurrency width **including 1**:
+
+| Variable | Meaning |
+|---|---|
+| `NOUS_RUN_DIR` | a private, already-created, writable directory for this row |
+| `NOUS_ROW_INDEX` | the row's index in the design matrix |
+| `NOUS_RUN_SLOT` | which concurrency slot the row occupies, or `0` |
+
+**Put every file your adapter writes under `NOUS_RUN_DIR`** — build output,
+metrics files, temp data, logs, downloaded fixtures:
+
+```bash
+# Wrong: two concurrent rows race on one path, and the loser's binary
+# silently measures the winner's build.
+go build -o /tmp/bench ./cmd/bench
+
+# Right: private per row, and identical code serially or concurrently.
+go build -o "$NOUS_RUN_DIR/bench" ./cmd/bench
+"$NOUS_RUN_DIR/bench" --metrics-out "$NOUS_RUN_DIR/metrics.json"
+```
+
+This is not hypothetical. On a real campaign two rows shared a single
+`go build -o` output path, so one row measured a binary built for the *other*
+row's configuration — plausible numbers, attributed to the wrong levels, with
+nothing in any artifact to show it. The variables are exported at width 1 as well
+precisely so that the same adapter code path runs in both regimes: one that only
+appeared above width 1 would make concurrency the first thing to exercise it.
+
+Two related notes:
+
+* Factors using `apply.kind: config_patch` are **already** isolated on the input
+  side — each run reads its own patched copy of your config file — so this closes
+  the *output* side of the same problem.
+* A harness that reuses a stale metrics file when a run exits non-zero is the
+  companion defect (§1): it reports a crashed configuration as a clean result
+  identical to baseline. Write to `$NOUS_RUN_DIR` **and** fail loudly.
+
+Nous cannot enforce this — an adapter that hardcodes `/tmp/bench` still collides.
+It is a facility plus a contract, and honouring it is what makes
+`optimization.concurrency` safe to declare. See the guide's
+`optimization.concurrency` subsection.
 
 ---
 

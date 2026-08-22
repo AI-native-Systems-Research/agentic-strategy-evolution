@@ -466,7 +466,7 @@ def test_smoke_reports_a_config_patch_whose_path_the_command_never_names(
     assert any("engine.json" in p for p in problems), problems
 
 
-def test_smoke_leaves_no_patched_copies_behind(tmp_path: Path):
+def test_smoke_leaves_no_patched_copies_behind(tmp_path: Path, monkeypatch):
     """The probe's materialized copies are diagnostics for one command, not
     campaign artifacts; validate must not accumulate them across invocations.
 
@@ -480,7 +480,26 @@ def test_smoke_leaves_no_patched_copies_behind(tmp_path: Path):
     campaign = _smoke_campaign(
         tmp_path, run_command="sh {target} --config engine.json",
     )
+    # PRIVATE TEMP ROOT, not the shared one. The assertion below is a
+    # before/after set difference over `nous-*` in the temp root, so it is only
+    # sound if nothing ELSE writes there during the call. On the shared system
+    # temp dir that does not hold: `runner._materialise` creates
+    # `nous-config-patch-*` there for every patched row, so any other test
+    # exercising a config-patch row -- in this file, in another file, or in a
+    # parallel xdist worker -- made this test fail with leaks it did not cause.
+    # Observed exactly that: three live `nous-config-patch-*` dirs from unrelated
+    # runs, and a failure that vanished when run alone.
+    #
+    # Redirecting TMPDIR keeps the check's real content (nothing is left behind)
+    # while making it independent of the rest of the suite. Narrowing the glob to
+    # `nous-smoke-*` would NOT work, and the docstring above says why: those
+    # copies land inside the wrapper, so the glob would stay unchanged even if the
+    # cleanup were deleted outright.
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "tmproot"))
+    (tmp_path / "tmproot").mkdir()
+    _tempfile.tempdir = None          # force re-read of TMPDIR
     root = Path(_tempfile.gettempdir())
+    assert root == tmp_path / "tmproot", root
     before = {
         str(f) for d in root.glob("nous-*") for f in d.rglob("*") if f.is_file()
     } | {str(d) for d in root.glob("nous-*")}

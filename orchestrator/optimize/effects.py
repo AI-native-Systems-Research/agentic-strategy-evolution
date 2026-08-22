@@ -157,6 +157,38 @@ def fit_effects(design: Design, responses, *, factor_ids,
             f"response value",
         )
 
+    # A NaN RESPONSE IS REFUSED HERE, at the module boundary, and not only by the
+    # caller that happens to remember. The normal equations propagate a single NaN
+    # into the intercept and EVERY coefficient -- verified: one NaN among eight
+    # runs turns all six effects and the intercept into NaN -- and the result is
+    # still a structurally valid `Fit`. That is the dangerous part: every
+    # comparison against NaN is False, so an all-NaN surface does not raise, does
+    # not warn, and reads downstream as "no factor is significant", which is a
+    # plausible scientific finding rather than an obvious defect. A campaign can
+    # emit a schema-valid effects.json describing nothing at all.
+    #
+    # `stage_runner` does pre-filter (spec §4 D2: fit on the complete-row subset
+    # and record the exclusions in fit_exclusions.json), and that remains the
+    # right place for the POLICY decision about which rows are admissible --
+    # including the identifiability and rank floors, which need the design.
+    # But D2 was implemented at that one call site, leaving the module itself
+    # willing to return nonsense to any other caller: the harness, a test, a
+    # future stage, or a notebook. Refusing at the boundary makes the invariant
+    # "a returned Fit never contains a NaN coefficient" true of the FUNCTION
+    # rather than of one of its callers.
+    nan_at = [i for i, v in enumerate(ys) if v != v]
+    if nan_at:
+        raise ValueError(
+            f"response(s) at index {nan_at} are NaN. Fitting would return a "
+            f"structurally valid Fit whose intercept and every coefficient are "
+            f"NaN, and because every comparison against NaN is False that result "
+            f"reads as 'no factor is significant' rather than as an error. The "
+            f"caller must decide which rows are admissible and fit on that subset "
+            f"-- see stage_runner's exclusion handling, which drops non-complete "
+            f"rows, enforces the identifiability and rank floors, and records what "
+            f"it dropped in fit_exclusions.json.",
+        )
+
     k = len(ids)
     pts = design.points
     has_axial = any(p.role == "axial" for p in pts)

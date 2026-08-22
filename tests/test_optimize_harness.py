@@ -373,8 +373,8 @@ def test_an_empty_carry_over_is_costed_at_the_full_shortlist_not_at_one():
 
     # Every finalist excluded on measured invalidity -> nothing carries over.
     none_left = {"epsilon": 1.0, "best": None, "bounds": {},
-                 "finalists": [{"key": "a", "status": "excluded"},
-                               {"key": "b", "status": "excluded"}]}
+                 "finalists": [{"key": "a", "status": "infeasible"},
+                               {"key": "b", "status": "infeasible"}]}
     assert _next_round_finalists(none_left, shortlist_size=3) == 3
 
     # Every challenger's bound already at or below epsilon -> only the winner.
@@ -459,6 +459,10 @@ _REFINE_UNSUPPORTED = {
     "drift": 0,              # both factors are 2-level numerics
     "interaction_only": 0,   # all four factors are 2-level numerics
     "nan_at_corner": 0,      # both factors are 2-level numerics
+    # EV and DEV are choices; CPU is a 2-level numeric. Deliberately built that
+    # way: a full 2^3 screen gives every cell a one-factor sibling, which is the
+    # 2x2 separation `exclusions.cell_holes` reports.
+    "fails_at_one_level": 0,
 }
 
 
@@ -597,6 +601,17 @@ def test_no_recommendation_gives_an_infinite_gap_rather_than_a_plausible_one(tmp
     class from the semantic exception (a value that IS a NaN, which no re-run
     repairs), and the two must not share an exit — one revises the interface, the
     other fixes the instrumentation.
+
+    WHICH GUARD ABORTS MOVED AGAIN with the partial-fit reconciliation, and the
+    claim is unchanged. ``_fitting_responses`` no longer aborts on rows that
+    produced no measurement — it carries them as NaN so the retained subset can
+    be fitted. Here there IS no retained subset: the metric is absent from EVERY
+    row, so all 12 carry NaN and the partial-fit path's ARITHMETIC floor
+    ("fewer than two usable rows cannot support a fit") is what ends the
+    campaign. Still an abort, still no recommendation, still an infinite gap —
+    and the assertion below matches on the substance ("produced a usable
+    measurement") rather than on the wording of whichever guard fires, so it
+    does not have to move a fourth time.
     """
     res = run_synthetic_campaign(
         SURFACES["additive"](), seed=12, parent_dir=tmp_path,
@@ -608,7 +623,7 @@ def test_no_recommendation_gives_an_infinite_gap_rather_than_a_plausible_one(tmp
     assert res.recommendation == {}
     assert res.true_gap == float("inf")
     assert res.path[-1].startswith("aborted:"), res.path
-    assert "no usable measurement" in res.path[-1], res.path[-1]
+    assert "usable measurement" in res.path[-1], res.path[-1]
 
 
 def test_a_surface_with_nothing_refinable_no_longer_aborts_at_refine(tmp_path):

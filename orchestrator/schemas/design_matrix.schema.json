@@ -4,29 +4,64 @@
   "title": "Optimization Design Matrix",
   "description": "The pre-registered plan for an optimization-campaign iteration (design spec 5.5). Written BEFORE any config is executed: rows, generator/alias structure, and a randomized-but-recorded run order so time-ordered drift (thermal effects, cache warming) cannot masquerade as a factor effect. See orchestrator.optimize.matrix.matrix_payload.",
   "type": "object",
-  "required": ["factor_ids", "kind", "resolution", "generators", "aliases", "run_order", "run_order_seed", "rows"],
+  "required": [
+    "factor_ids",
+    "kind",
+    "resolution",
+    "generators",
+    "aliases",
+    "run_order",
+    "run_order_seed",
+    "rows"
+  ],
   "additionalProperties": false,
   "allOf": [
     {
       "$comment": "round and finalists are OPTIONAL at the top level because the spending stages (screen/foldover/refine) write neither -- they register a design over the factor space, which has no shortlist and no round counter. But a shortlist_replicate matrix without them is not a pre-registration of terminal discrimination at all: the finalists ARE the registered comparison, and the round is what the policy's registered guard reads to decide whether another round may be spent. Declaring them merely optional would let a confirm matrix omit the two fields that make it checkable, so the requirement is expressed conditionally on the kind rather than globally.",
-      "if": { "properties": { "kind": { "const": "shortlist_replicate" } }, "required": ["kind"] },
-      "then": { "required": ["round", "finalists"] }
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "shortlist_replicate"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "round",
+          "finalists"
+        ]
+      }
     }
   ],
   "properties": {
     "factor_ids": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "minItems": 1,
       "description": "Declared factor ids in design-column order, e.g. [\"A\", \"B\", \"C\"]."
     },
     "kind": {
       "type": "string",
-      "enum": ["full", "fractional", "central_composite", "foldover", "shortlist_replicate"],
+      "enum": [
+        "full",
+        "fractional",
+        "central_composite",
+        "foldover",
+        "shortlist_replicate"
+      ],
       "description": "Design family, as orchestrator.optimize.design labels it. \"fractional\" designs carry non-empty aliases; \"central_composite\" adds axial/center points for curvature. \"foldover\" is the REGISTERED FOLDOVER's block -- the screen's corners with one column (or every column) negated, so it is not a member of any tabulated family and reports resolution null; it is the only kind that carries folded_on / screen_iteration / alias_consequential, because the fold block alone is not a fittable design and the combined screen-plus-fold fit is what de-aliases. \"shortlist_replicate\" is the CONFIRM round's matrix (the paper's terminal-discrimination stage, spec 3.3): not a design over the factor space at all but r replicates of each shortlisted finalist, so it carries no generators and no aliases and instead declares round + finalists. It is the one kind whose rows are role \"confirm\". Note design.combine's \"combined\" label is deliberately absent: that design is assembled AT FIT TIME over two already-registered blocks and is never itself pre-registered, so a matrix on disk claiming it would be an artifact no stage writes."
     },
     "resolution": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 3,
       "description": "Design resolution (III/IV/V) for a fractional design; null for a full factorial or central composite, which have no aliasing to report at this level."
     },
@@ -34,7 +69,10 @@
       "type": "array",
       "items": {
         "type": "array",
-        "items": { "type": "integer", "minimum": 0 }
+        "items": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "description": "Base-column index tuples defining each derived factor's generator, e.g. [[0, 1, 2]] means the 4th factor = product of base columns 0, 1, 2. Empty for a full factorial."
     },
@@ -42,7 +80,10 @@
       "type": "array",
       "items": {
         "type": "array",
-        "items": { "type": "string", "minLength": 1 },
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
         "minItems": 2,
         "maxItems": 2
       },
@@ -50,22 +91,46 @@
     },
     "run_order": {
       "type": "array",
-      "items": { "type": "integer", "minimum": 0 },
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      },
       "description": "A permutation of row indices [0, len(rows)) giving the randomized execution order."
     },
     "run_order_seed": {
       "type": "integer",
-      "description": "RNG seed that reproduces run_order from orchestrator.optimize.matrix.randomized_run_order — recorded so the randomization is reproducible, not just random."
+      "description": "RNG seed that reproduces run_order from orchestrator.optimize.matrix.randomized_run_order \u2014 recorded so the randomization is reproducible, not just random."
     },
     "max_parallel": {
       "type": "integer",
       "minimum": 1,
       "description": "The EFFECTIVE ceiling on simultaneous in-flight run_command invocations this matrix was measured under -- optimization.max_parallel as the stage resolved it, which is 1 at every spending stage (screen/foldover/refine) regardless of what the campaign declared, and the declared value only at confirm. Recorded beside run_order_seed and for the same reason: run_order randomization is what keeps time-ordered drift from masquerading as a factor effect, and a pre-registration asserting a randomized run order while executing rows concurrently would be claiming a guarantee it did not provide -- the same defect class as an artifact recording a randomization that never happened. Reading the two together is what tells a reader whether the recorded order describes a sequence or a schedule. Always present, whether or not the campaign declared the field, on the run_timeout_sec convention: \"the author did not choose\" and \"the author chose 1\" produce identical runs, so without it a reader cannot tell which release wrote the artifact."
     },
+    "concurrency_basis": {
+      "type": "string",
+      "enum": [
+        "serial",
+        "confirm_block",
+        "load_independent",
+        "contention_floor"
+      ],
+      "description": "WHY this matrix's rows were (or were not) co-scheduled, from the closed vocabulary serial | confirm_block | load_independent | contention_floor. Recorded beside max_parallel because the width alone is not readable: max_parallel: 4 cannot be distinguished by a reader from the asymmetric-neighbour confound it is only sometimes safe against, so the license has to travel with the number. 'serial' is width 1 -- what an undeclared, unmeasured, load-dependent target gets, and what every campaign authored before optimization.concurrency existed records. 'confirm_block' is a confirm replicate block, where every finalist is measured exactly once so contention is SYMMETRIC across exactly the things being compared and cancels out of the finalist-to-finalist difference terminal discrimination reads. 'load_independent' is an AUTHOR DECLARATION that the objective is not a function of machine load (an iteration count, an output size, a simulated time) -- recorded as the author's claim, not as a measurement Nous made, and falsifiable afterwards from runs.jsonl. 'contention_floor' is MEASURED: the objective at the author-named most-loaded corner moved less under co-scheduling than the target's own serial noise floor, certified at the width in concurrency_certified_width. CPU pinning is deliberately NOT a basis: a disjoint cpu set partitions time slices and per-core L1/L2 while leaving L3, memory bandwidth, disk queues, page cache, NIC queues, thermal budget and the GPU shared, so for a throughput or tail-latency objective it would record an isolation the measurement never had."
+    },
+    "concurrency_certified_width": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The width the contention floor was MEASURED at, present only when concurrency_basis is contention_floor. max_parallel can be narrower than this but never wider: inflation grows with the number of neighbours, so a floor certified at 2 says nothing about 8 and the resolver refuses to extrapolate. A reader checks the certificate covers the schedule by comparing this against max_parallel."
+    },
+    "concurrency_detail": {
+      "type": "string",
+      "description": "Human-readable provenance for concurrency_basis -- for a measured floor, the serial mean, its CV, the mean at width, the observed inflation and the threshold it was compared against; for a declaration, whose claim it is. Diagnostic rather than load-bearing: nothing parses it, and its absence means the basis needed no elaboration (serial at width 1, or a confirm block)."
+    },
     "rows": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/row" }
+      "items": {
+        "$ref": "#/$defs/row"
+      }
     },
     "run_timeout_sec": {
       "type": "integer",
@@ -95,7 +160,11 @@
       "description": "The SHORTLIST this round discriminates between, pre-registered before any replicate ran. One entry per finalist, in the order confirmation.json and certificate.terminal_regret_bound index them -- a row's apply.finalist is a position in THIS array, so its order is part of the join and not a presentation choice.",
       "items": {
         "type": "object",
-        "required": ["key", "levels", "why"],
+        "required": [
+          "key",
+          "levels",
+          "why"
+        ],
         "additionalProperties": false,
         "properties": {
           "key": {
@@ -116,7 +185,10 @@
       }
     },
     "folded_on": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "description": "FOLDOVER ONLY. The single factor id whose design column this fold block negates, or null for a FULL foldover (every column negated). The two regimes resolve different confounding: a resolution-III screen aliases two-factor interactions onto MAIN effects and only a full fold clears that (null), while resolution IV aliases 2fi with each other and negating one column separates every 2fi involving that factor. A reader who cannot answer which column was negated cannot reproduce the combined fit this iteration writes."
     },
@@ -130,7 +202,10 @@
       "description": "FOLDOVER ONLY. The alias pairs from the screen that were CONSEQUENTIAL -- confounded terms whose ambiguity actually changes the recommendation, as opposed to the full alias structure recorded in `aliases`. This is what the registered foldover branch fired on, copied onto the matrix so the artifact states the fact the branch was taken on rather than leaving it to be re-derived from the screen's recommendation.json.",
       "items": {
         "type": "array",
-        "items": { "type": "string", "minLength": 1 },
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
         "minItems": 2,
         "maxItems": 2
       }
@@ -144,7 +219,13 @@
   "$defs": {
     "row": {
       "type": "object",
-      "required": ["row_index", "levels", "role", "replicate", "apply"],
+      "required": [
+        "row_index",
+        "levels",
+        "role",
+        "replicate",
+        "apply"
+      ],
       "additionalProperties": false,
       "properties": {
         "row_index": {
@@ -158,7 +239,12 @@
         },
         "role": {
           "type": "string",
-          "enum": ["corner", "center", "axial", "confirm"],
+          "enum": [
+            "corner",
+            "center",
+            "axial",
+            "confirm"
+          ],
           "description": "Design-point role: a full/fractional-factorial corner, a replicated center point (supplies the pure-error estimate), a central-composite axial/star point (supplies curvature), or a \"confirm\" replicate of a shortlisted finalist at terminal discrimination. A confirm row is not a design point in the response-surface sense -- nothing is fitted from it -- which is why it is a role of its own rather than a corner: `_best_observed` and the fitting states select on this field, and calling a replicate a corner would feed terminal-discrimination measurements into a surface fit."
         },
         "replicate": {
@@ -168,13 +254,19 @@
         },
         "apply": {
           "type": "object",
-          "required": ["cli_args", "env", "patches"],
+          "required": [
+            "cli_args",
+            "env",
+            "patches"
+          ],
           "additionalProperties": false,
-          "description": "The rendered, mechanical instructions for making this row's levels take effect on the target — no model call is involved in producing this.",
+          "description": "The rendered, mechanical instructions for making this row's levels take effect on the target \u2014 no model call is involved in producing this.",
           "properties": {
             "cli_args": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "CLI flags to pass to the target's invocation, e.g. [\"--queues=4\"]."
             },
             "env": {
@@ -185,12 +277,28 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["factor_id", "path", "pointer", "value"],
+                "required": [
+                  "factor_id",
+                  "path",
+                  "pointer",
+                  "value"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                  "factor_id": { "type": "string", "minLength": 1, "description": "The factor this patch renders. Carried so the REALIZED patch can be keyed by factor in the row's applied_patches, which is what makes it addressable from a manipulation predicate (predicates resolve dotted paths through dicts only -- a list of patches could not be addressed at all)." },
-                  "path": { "type": "string", "minLength": 1, "description": "Config file to patch." },
-                  "pointer": { "type": "string", "description": "RFC 6901 JSON pointer to the field to replace, e.g. \"/cache/policy\" or \"/tiers/0/bytes\" (~0 escapes a literal ~, ~1 a literal /). Must address a field that already exists: a config_patch replaces a value the target reads, it never creates structure." },
+                  "factor_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The factor this patch renders. Carried so the REALIZED patch can be keyed by factor in the row's applied_patches, which is what makes it addressable from a manipulation predicate (predicates resolve dotted paths through dicts only -- a list of patches could not be addressed at all)."
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Config file to patch."
+                  },
+                  "pointer": {
+                    "type": "string",
+                    "description": "RFC 6901 JSON pointer to the field to replace, e.g. \"/cache/policy\" or \"/tiers/0/bytes\" (~0 escapes a literal ~, ~1 a literal /). Must address a field that already exists: a config_patch replaces a value the target reads, it never creates structure."
+                  },
                   "value": {}
                 }
               },

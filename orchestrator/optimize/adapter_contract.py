@@ -208,8 +208,26 @@ def read_contract(work_dir: Path) -> dict | None:
             f"what the target adapter emitted on this epoch's first successful "
             f"row; without it no later row can be shown comparable to it.",
         ) from exc
+    # FAILS CLOSED WHEN THE SIDECAR IS ABSENT, not just when it disagrees. The
+    # condition used to be `sidecar.exists() and <mismatch>`, so DELETING the
+    # sidecar skipped the check instead of failing it -- the same hole that let a
+    # tampered `policy.json` run to completion once `policy.sha256` was removed.
+    # `write_contract` writes the document and its sidecar in one call, so a
+    # document present without its sidecar means the sidecar was removed after
+    # capture, which is exactly the edit the pair exists to detect.
     sidecar = Path(work_dir) / CONTRACT_HASH_FILE
-    if sidecar.exists() and sidecar.read_text().strip() != contract_hash(doc):
+    if not sidecar.exists():
+        raise AdapterContractDrift(
+            f"{CONTRACT_FILE} exists but its hash sidecar {CONTRACT_HASH_FILE} "
+            f"does not. `write_contract` writes the pair together, so the sidecar "
+            f"was removed after capture, and without it the recorded contract "
+            f"cannot be shown to be the one this epoch captured -- every later "
+            f"row's comparability rests on a record nothing vouches for. Restore "
+            f"{CONTRACT_HASH_FILE}, or start a NEW epoch so the adapter's contract "
+            f"is captured and hashed afresh. AN APPARATUS CHANGE IS AN EPOCH "
+            f"BOUNDARY, NOT AN EDIT.",
+        )
+    if sidecar.read_text().strip() != contract_hash(doc):
         raise AdapterContractDrift(
             f"{CONTRACT_FILE} was edited after capture (hash mismatch with "
             f"{CONTRACT_HASH_FILE}). The adapter's registered output contract "

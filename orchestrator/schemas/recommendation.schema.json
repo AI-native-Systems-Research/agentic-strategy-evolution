@@ -127,6 +127,21 @@
         "maxItems": 2
       }
     },
+    "exclusion_balance": {
+      "type": "object",
+      "description": "GENUINELY OPTIONAL, not nullable: present ONLY when rows were excluded from the fit behind this recommendation. Same object as effects.json's exclusion_balance (orchestrator.optimize.exclusions.ExclusionBalance.as_dict), recorded HERE so it sits next to residual_regret_model -- the bound whose guarantee is conditional on the registered response class describing the measurements. A level-correlated exclusion is evidence that the fitted surface is biased in a NAMED direction rather than merely estimated from fewer rows, which is a different fact from a wider interval. It is also PERSISTED (rather than recomputed at the terminal state) for the reason model_adequate is: confirm is a separate run_iteration call and the Fit is gone by then, and confirm reads level_correlated to withhold GLOBAL certification -- the same delta_screen premise, broken the same way, as an inadmissible finalist.",
+      "additionalProperties": true,
+      "required": ["n_rows", "n_excluded", "n_bias_excluded", "level_correlated", "flagged_factors"],
+      "properties": {
+        "n_rows": { "type": "integer", "minimum": 0 },
+        "n_excluded": { "type": "integer", "minimum": 1 },
+        "n_bias_excluded": { "type": "integer", "minimum": 0 },
+        "level_correlated": { "type": "boolean" },
+        "flagged_factors": { "type": "array", "items": { "type": "string" } },
+        "factors": { "type": "array", "items": { "type": "object" } },
+        "cells": { "type": "array", "items": { "type": "object" } }
+      }
+    },
     "aliases": {
       "type": "array",
       "description": "Every alias pair the design confounds, consequential or not. One fitted coefficient per ALIAS CLASS is what keeps X^T X non-singular under a resolution-IV screen, so recording the classes is how a reader checks which effects share an estimate.",

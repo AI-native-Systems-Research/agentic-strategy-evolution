@@ -403,6 +403,58 @@ def read_policy(work_dir: Path) -> dict | None:
     return json.loads(p.read_text()) if p.exists() else None
 
 
+def verify_policy_registration(work_dir: Path) -> list[str]:
+    """Is the pre-registration on disk INTACT? Returns violations, or empty.
+
+    ``INV-PROV01`` in ``docs/optimization-invariants.md``. The pair
+    ``policy.json`` + ``policy.sha256`` is what makes a pre-registration
+    checkable, and the invariant is that the document must both HAVE a sidecar
+    and AGREE with it — **absence is as fatal as disagreement**.
+
+    WHY THIS EXISTS AS ITS OWN FUNCTION. ``_load_or_compile_policy``'s guard is
+    ``if recorded.exists() and recorded.read_text().strip() != policy_hash(pol)``,
+    so deleting ``policy.sha256`` does not fail the check — it SKIPS it, and
+    nothing downstream regenerates the sidecar or notices its absence
+    (``_compile_and_write_policy`` is reached only when ``pol is None``).
+    Verified end to end: with the sidecar deleted and ``screen``'s
+    ``default: confirm`` rewritten to ``default: report`` — removing terminal
+    discrimination from a pre-registered design — the epoch ran to completion and
+    wrote a ``report.json`` claiming ``basis: model`` with no
+    ``confirmation.json`` anywhere, and the tampered hash was recorded in
+    ``transitions.jsonl`` as though it were the registration.
+
+    A pre-registration whose only proof of integrity can be removed by deleting
+    a file is not a pre-registration. This returns the finding rather than
+    raising so the caller decides the blast radius (``stage_runner`` raises
+    ``OptimizationAborted``; an audit tool reports). ``read_policy`` returning
+    ``None`` — nothing registered yet — is a different state, not a violation.
+    """
+    work_dir = Path(work_dir)
+    doc = work_dir / "policy.json"
+    if not doc.exists():
+        return []
+    sidecar = work_dir / "policy.sha256"
+    if not sidecar.exists():
+        return [
+            "policy.json exists with no policy.sha256. The sidecar's ABSENCE "
+            "must be as fatal as its disagreement, or the one proof that the "
+            "pre-registration is unchanged can be removed by deleting a file.",
+        ]
+    try:
+        pol = json.loads(doc.read_text())
+    except (OSError, ValueError) as exc:
+        return [f"policy.json could not be read ({exc}); the epoch's registration is unreadable"]
+    recorded = sidecar.read_text().strip()
+    actual = policy_hash(pol)
+    if recorded != actual:
+        return [
+            f"policy.json was edited after compilation (recorded {recorded[:16]}..., "
+            f"actual {actual[:16]}...); a pre-registered policy cannot change "
+            f"inside an epoch",
+        ]
+    return []
+
+
 def check_policy(policy: dict) -> list[str]:
     """Structural rules a valid compiled policy must satisfy (spec §3.1, §3.5)."""
     errs: list[str] = []

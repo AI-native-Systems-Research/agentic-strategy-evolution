@@ -148,9 +148,12 @@ from orchestrator.optimize import (
     adapter_contract,
     artifacts,
     certificate,
+    concurrency,
     decide,
+    exclusions,
     matrix,
     relations,
+    resume,
     runner,
 )
 from orchestrator.optimize import design as design_mod
@@ -232,7 +235,8 @@ def resolve_run_timeout(opt: dict | None) -> int:
     return runner.DEFAULT_RUN_TIMEOUT_SEC
 
 
-def resolve_max_parallel(opt: dict | None, *, stage_name: str) -> int:
+def resolve_max_parallel(opt: dict | None, *, stage_name: str,
+                        measured=None) -> int:
     """The EFFECTIVE ceiling on simultaneous in-flight runs at ``stage_name``.
 
     ``optimization.max_parallel`` is the campaign's declared ceiling; this is the
@@ -262,12 +266,25 @@ def resolve_max_parallel(opt: dict | None, *, stage_name: str) -> int:
     matrix; the bound is scoped to be its counterpart, and
     ``runner.execute_design`` keeps blocks a barrier so the scoping holds.
 
-    Row-level concurrency at a spending stage is reachable only by CLOSING the
-    confound rather than ignoring it: each concurrent row pinned to a disjoint
-    CPU set, with the pinning recorded in the artifact so a reader can check it.
-    Until that exists, returning 1 here is what keeps a campaign from buying wall
-    clock with a confounded surface, and it is deliberately not something the
-    campaign file can override.
+    A spending stage is NO LONGER unconditionally 1, and the paragraphs above
+    are why it is not simply widened either: the confound is real, so the width
+    rests on a recorded BASIS rather than on the campaign asking nicely.
+    ``orchestrator.optimize.concurrency`` owns that decision and the argument for
+    it. In short, a spending stage goes above 1 when the campaign declares
+    ``optimization.concurrency.load_independent`` (the objective is not a
+    function of machine load -- an iteration count, an output size, a simulated
+    time), or when a CONTENTION FLOOR was measured at the design's most loaded
+    corner and came back under the target's own serial noise floor. ``measured``
+    carries that measurement's verdict. Absent both, the answer is still 1.
+
+    CPU pinning -- which an earlier revision of this docstring named as the only
+    escape hatch -- is deliberately NOT one of those bases. A disjoint cpu set
+    partitions time slices and per-core L1/L2 and leaves L3, memory bandwidth,
+    disk queues, page cache, NIC queues, thermal budget and the GPU shared, so
+    for the throughput and tail-latency objectives these campaigns declare it
+    isolates almost nothing the objective reads, while a per-row cpu set in the
+    artifact would testify to an isolation the measurement never had. That is
+    declined on the merits, independently of the API being Linux-only.
 
     Absence resolves to 1 -- exactly what every campaign authored before the
     field existed ran at. That is a compatibility REQUIREMENT rather than a
@@ -282,12 +299,75 @@ def resolve_max_parallel(opt: dict | None, *, stage_name: str) -> int:
     campaign file into an epoch-wide abort at the measurement seam would
     attribute the failure to the wrong place.
     """
-    if stage_name != Stage.CONFIRM.value:
-        return 1
-    raw = (opt or {}).get("max_parallel")
-    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
-        return raw
-    return 1
+    return resolve_concurrency(
+        opt, stage_name=stage_name, measured=measured,
+    ).width
+
+
+def resolve_concurrency(opt: dict | None, *, stage_name: str, measured=None):
+    """``resolve_max_parallel``'s width TOGETHER WITH the reason for it.
+
+    The width alone is not readable: ``max_parallel: 4`` in an artifact cannot
+    be distinguished by a reader from the confound it is only sometimes safe
+    against, so the basis travels with it onto the design matrix. Same inputs,
+    same determinism; this is the richer return and ``resolve_max_parallel``
+    projects it to an int for the call sites that only schedule.
+    """
+    return concurrency.resolve(
+        opt, stage_name=stage_name, confirm_stage=Stage.CONFIRM.value,
+        measured=measured,
+    )
+
+
+def _measure_contention_floor(opt, factors, config_runner, *, width):
+    """Measure the target's contention floor at the author-named loaded corner.
+
+    Returns a ``concurrency.Verdict``. The corner comes from
+    ``optimization.concurrency.contention_probe_levels`` and is NOT defaulted to
+    ``known_valid_baseline``: contention inflation grows with load, so a floor
+    measured at the cheap corner certifies the loaded corners it gets wrong. See
+    ``orchestrator.optimize.concurrency`` for the simulation that establishes
+    this and the numbers it produced.
+
+    Both halves of the probe execute through the SAME ``execute_design`` seam the
+    epoch measures through, so the concurrency being characterised is the
+    concurrency that would run. Every failure returns a ``serial`` verdict, which
+    is the safe direction: an unmeasurable target and a refuted one both fall
+    back to the behaviour that needs no license.
+    """
+    levels = concurrency.contention_probe_levels(opt)
+    metric = (((opt or {}).get("response") or {}).get("primary") or {}).get("metric")
+    if not levels:
+        return concurrency.Verdict(
+            width=1, basis=concurrency.BASIS_SERIAL, detail=(
+                "optimization.concurrency.contention_probe_levels names no "
+                "corner to measure at, so no floor was certified"
+            ),
+        )
+    if not metric:
+        return concurrency.Verdict(
+            width=1, basis=concurrency.BASIS_SERIAL,
+            detail="response.primary.metric is required to compare widths",
+        )
+
+    def _probe(w: int) -> list[float]:
+        rows = [
+            matrix.ConfigRow(
+                row_index=i, levels=dict(levels), role="corner", replicate=0,
+                apply=matrix.render_apply(factors, dict(levels)),
+            )
+            for i in range(max(1, w))
+        ]
+        outcomes = runner.execute_design(
+            rows, runner=config_runner,
+            response_spec=(opt or {}).get("response") or {},
+            invariants=[], factors=factors, max_parallel=w,
+        )
+        return [o.response.get(metric) for o in outcomes]
+
+    return concurrency.measure_contention_floor(
+        _probe, width=width, metric=metric,
+    )
 
 
 def _check_correctness_relations(
@@ -340,18 +420,21 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
     ends the epoch while the campaign still returns an action. An abort here would
     end the campaign with no report at all.
 
-    The remaining aborts are a DIFFERENT failure class each, and all four stay:
+    The remaining aborts are a DIFFERENT failure class each, and all THREE stay:
 
       * ``primary`` is also declared ``held_out`` — a campaign misconfiguration,
         caught before any measurement is interpreted;
       * a held-out metric reached a fitting input — the leak this path exists to
         refuse, one of the three checks that hard-fail under auto-approve;
       * the primary metric is a string or a structure — an instrumentation
-        mismatch, not a measurement, and not a NaN (see ``_primary_is_nan``);
-      * rows that never reached ``complete`` carry no measurement — a MEASUREMENT
-        failure, which re-running the configurations repairs. Nothing semantic has
-        been discovered, so ending the epoch would tell the next agent to revise
-        an interface that is fine.
+        mismatch, not a measurement, and not a NaN (see ``_primary_is_nan``).
+
+    A fourth bullet used to sit here — "rows that never reached ``complete``
+    carry no measurement" — describing the abort the block below downgraded to a
+    warning. It is gone because it had become a docstring promising a guarantee
+    the code no longer makes, which is the one kind of comment rot that actively
+    misleads the next reader: they would go looking for the abort and conclude
+    the warning was the bug.
     """
     held_out = {str(m) for m in (response_spec.get("held_out") or [])}
     if primary in held_out:
@@ -405,20 +488,170 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
     # would make constraints unusable. Those rows are excluded from the fit
     # by carrying NaN, which is the same mechanism, so distinguish them from
     # rows that genuinely failed to measure.
+    #
+    # THIS NO LONGER ABORTS, and the reason is a measured failure rather than a
+    # preference. The message this raise carried named the correct behaviour
+    # itself — "refit on the completed subset and report the reduced
+    # resolution" — and `_fit_and_recommend` IMPLEMENTS exactly that a thousand
+    # lines below: it drops the NaN rows, refits on the kept subset, enforces a
+    # floor, and records the exclusions in `fit_exclusions.json`. Two guards over
+    # one condition, disagreeing, and the stricter one ran first — so the refit
+    # was reachable only for `infeasible`/`rejected` rows and never for a row
+    # that genuinely failed to measure.
+    #
+    # What that cost, once, on a real campaign: 3 rows of an 18-row screen failed
+    # (two wall-clock timeouts, one adapter crash). The iteration aborted and
+    # discarded the 15 VALID measurements. It then retried and aborted three more
+    # times, so ~14 hours of measurement produced zero usable output, the epoch
+    # never reached `confirm`, and `transitions.jsonl` stayed empty because the
+    # transition write lives in the iteration closer past the fit. A design of 90
+    # runs would be destroyed by one bad row.
+    #
+    # Degrading the CLAIM rather than the DATA is the spec's stance on partial
+    # failure (spec §4 D2), so the exclusion is now reported, not fatal. The floor
+    # and the artifact both live at the refit site, which is the only place that
+    # knows the design and can tell whether what remains is still fittable — a
+    # count of NaNs here cannot answer that question.
     unmeasured = [
         o.row_index for o, v in zip(outcomes, values)
         if v != v and o.status not in ("infeasible", "rejected")
     ]
     if unmeasured:
-        raise OptimizationAborted(
-            f"{len(unmeasured)} of {len(values)} runs produced no usable "
-            f"measurement (row_index {unmeasured}). Fitting would "
-            f"NaN-poison every coefficient while still producing "
-            f"schema-valid artifacts. Re-run the failed configurations, or "
-            f"refit on the completed subset and report the reduced "
-            f"resolution.",
+        logger.warning(
+            "%d of %d runs produced no usable measurement (row_index %s). "
+            "Fitting proceeds on the complete-row subset and the exclusions are "
+            "recorded in fit_exclusions.json; the fit's resolution is reduced "
+            "accordingly. Re-running the failed configurations would restore it. "
+            "These rows are a MEASUREMENT failure a re-run can repair, which is "
+            "why they degrade the claim rather than ending the epoch — unlike a "
+            "complete row reporting a non-numeric objective, which is a semantic "
+            "exception and is routed to the policy before reaching here.",
+            len(unmeasured), len(values), unmeasured,
         )
     return values
+
+
+#: Why a row carried NaN out of ``_fitting_responses``, keyed by
+#: ``RunOutcome.status``. These mean DIFFERENT things scientifically and
+#: ``fit_exclusions.json`` must not merge them:
+#:
+#:   * ``failed`` — the row produced no measurement (crash, timeout,
+#:     manipulation predicate never engaged, adapter guard). REPAIRABLE by
+#:     re-running the configuration, and the region it leaves empty is a hole
+#:     in the design rather than a fact about the space.
+#:   * ``infeasible`` — the row RAN and produced trustworthy numbers that
+#:     violated a declared constraint. Real information about the design space
+#:     (spec §6.4); re-running changes nothing, and the point is genuinely
+#:     outside ``X_valid``.
+#:   * ``rejected`` — the row ran but its numbers are untrustworthy (invariant
+#:     violation, above the physical ceiling, failed integrity check). Neither
+#:     a measurement nor information about the space.
+#:   * ``no_metric`` — the row reached ``complete`` but the primary metric key
+#:     was present-and-null. Kept distinct from ``failed`` because the target
+#:     ran successfully and only the statistic is missing, which points at the
+#:     instrumentation rather than at the run.
+#:
+#: The split is not bookkeeping: ``failed``/``no_metric`` are the only reasons
+#: whose loss can BIAS a coefficient, because they remove an ADMISSIBLE region
+#: from the fit. See ``orchestrator.optimize.exclusions`` on why counting an
+#: ``infeasible`` row as bias would flag every constrained campaign ever run.
+EXCLUSION_REASONS: dict[str, str] = {
+    "failed": "failed_to_measure",
+    "infeasible": "infeasible",
+    "rejected": "rejected",
+    "complete": "no_metric",
+}
+
+
+def _exclusion_reason(outcome) -> str:
+    """The ``EXCLUSION_REASONS`` label for one excluded row."""
+    return EXCLUSION_REASONS.get(
+        getattr(outcome, "status", "") or "", "failed_to_measure",
+    )
+
+
+def _screen_block_rows(work_dir: Path, screen_iter: int | None,
+                       n_expected: int) -> list[dict]:
+    """The screen block's ``runs.jsonl`` rows in DESIGN-ROW order.
+
+    Sibling of ``_screen_responses``, which reads the same file for the same
+    reason and with the same ordering hazard: rows land in ``runs.jsonl`` in
+    EXECUTION order (the pre-registered randomized permutation), so reading the
+    file front-to-back would misalign every row with its design point. Indexed
+    by ``row_index`` for that reason.
+
+    A missing row yields an empty dict rather than raising. The caller only
+    needs its ``levels`` and ``status``, and a screen row that is absent
+    altogether is already routed to ``nan_response`` by ``_screen_responses``'
+    flag — so this reader's job is to describe what IS there, not to re-raise a
+    condition another guard owns.
+    """
+    if screen_iter is None:
+        return [{} for _ in range(n_expected)]
+    by_index: dict[int, dict] = {}
+    for row in artifacts.read_runs(Path(work_dir) / "runs" / f"iter-{screen_iter}"):
+        idx = row.get("row_index")
+        if isinstance(idx, int):
+            by_index[idx] = row
+    return [by_index.get(i) or {} for i in range(n_expected)]
+
+
+def _fit_row_levels(work_dir: Path, rows, outcomes, stage_name: str,
+                    screen_iter: int | None, *, n_total: int,
+                    n_fold: int) -> list[dict]:
+    """Levels for every POSITION in the fit's response vector ``ys``.
+
+    Positions, not ``row_index``, because that is what ``ys`` and
+    ``design.points`` are indexed by and what the exclusion analysis and the
+    identifiability floor both consume. At every state except ``foldover`` the
+    two coincide (``matrix.expand`` assigns ``row_index = enumerate(points)``),
+    and at ``foldover`` they emphatically do not: ``ys`` is
+    ``screen_ys + fold_ys``, so position 0 is the SCREEN block's row 0 and lives
+    in a previous iteration's directory. Attributing the fold block's levels to
+    the screen block's exclusions would analyse the wrong contingency table and
+    could flag a factor whose rows all completed.
+    """
+    fold_levels = {r.row_index: dict(r.levels) for r in rows}
+    fold = [fold_levels.get(i, {}) for i in range(n_fold)]
+    if stage_name != Stage.FOLDOVER.value or n_total == n_fold:
+        return fold
+    screen = _screen_block_rows(work_dir, screen_iter, n_total - n_fold)
+    return [dict(r.get("levels") or {}) for r in screen] + fold
+
+
+def _fit_exclusion_reasons(outcomes, stage_name: str, dropped, *, n_total: int,
+                           n_fold: int, work_dir: Path,
+                           screen_iter: int | None) -> dict[int, str]:
+    """``EXCLUSION_REASONS`` label per excluded POSITION in ``ys``.
+
+    Same positional convention as ``_fit_row_levels``, and the same reason for
+    it. The screen half's status comes from its ``runs.jsonl`` row rather than
+    from a ``RunOutcome``, because the outcomes this iteration holds are the
+    FOLD block's — pairing them with a screen position would report one row's
+    failure mode against another row's index.
+    """
+    by_pos: dict[int, object] = {}
+    offset = 0
+    if stage_name == Stage.FOLDOVER.value and n_total != n_fold:
+        offset = n_total - n_fold
+        for i, row in enumerate(_screen_block_rows(work_dir, screen_iter, offset)):
+            by_pos[i] = row
+    for i, o in enumerate(outcomes[:n_fold]):
+        by_pos[offset + i] = o
+
+    out: dict[int, str] = {}
+    for i in dropped:
+        src = by_pos.get(i)
+        status = (
+            src.get("status") if isinstance(src, dict)
+            else getattr(src, "status", None)
+        )
+        # An ABSENT source is not a status this module knows how to label. A
+        # screen row that never reached runs.jsonl at all is the
+        # `_screen_responses` NaN flag's business (it routes to nan_response);
+        # here it is simply a row that produced no measurement.
+        out[i] = EXCLUSION_REASONS.get(status or "", "failed_to_measure")
+    return out
 
 
 def _stationary_in_hull(fit, stationary: dict | None, direction: str) -> bool:
@@ -932,6 +1165,94 @@ def _check_baseline_equivalence(
     )
 
 
+def _reuse_enabled(opt: dict) -> bool:
+    """Whether row reuse is on for this campaign. On by default.
+
+    Opt-OUT rather than opt-in, deliberately: re-measuring rows that were
+    already validly measured under the same pre-registration is never MORE
+    correct, only slower, and the guards in ``resume`` refuse reuse in every
+    case where it would not be sound. An author who wants the old behaviour
+    (e.g. to reproduce a historical run byte-for-byte) sets
+    ``optimization.reuse_measured_rows: false``.
+    """
+    val = opt.get("reuse_measured_rows")
+    return True if val is None else bool(val)
+
+
+def _enter_phase_pending(engine, work_dir: Path) -> bool:
+    """True when this iteration has NOT yet passed its DESIGN phase.
+
+    Reuse must be planned before the matrix is registered, because the carried
+    -forward draws are part of the pre-registration. A resumed iteration whose
+    ``design_matrix.json`` already exists is past that point: its rows are
+    already registered, its own ``runs.jsonl`` already holds whatever it
+    measured, and re-planning reuse would try to re-append rows that are on
+    disk — which ``check_fidelity`` correctly reports as a duplicate row_index.
+    """
+    from orchestrator.iteration import _PHASE_INDEX
+    try:
+        return _PHASE_INDEX[engine.phase] <= _PHASE_INDEX["DESIGN"]
+    except (KeyError, AttributeError):  # pragma: no cover - defensive
+        return False
+
+
+def _prior_attempt_matrix(work_dir: Path, iteration: int,
+                          stage_name: str) -> dict | None:
+    """The most recent EARLIER iteration's design matrix for the same stage.
+
+    "Same stage" is checked through the matrix's own ``kind``/shape rather than
+    a recorded stage name, because ``design_matrix.json`` carries no stage
+    field. ``resume.carry_forward_payload`` then does the real structural
+    comparison and returns ``None`` for anything that is not the same
+    registration, so this only has to find a plausible candidate.
+    """
+    runs = Path(work_dir) / "runs"
+    if not runs.exists():
+        return None
+    best: tuple[int, dict] | None = None
+    for d in runs.glob("iter-*"):
+        try:
+            n = int(d.name.split("-")[1])
+        except (IndexError, ValueError):
+            continue
+        if n >= int(iteration):
+            continue
+        mpath = d / "design_matrix.json"
+        if not mpath.exists():
+            continue
+        try:
+            doc = json.loads(mpath.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        if best is None or n > best[0]:
+            best = (n, doc)
+    return best[1] if best else None
+
+
+def _rows_from_payload(rows, payload: dict):
+    """``rows`` re-rendered with the payload's ``apply`` (i.e. its seeds).
+
+    ``ConfigRow`` is frozen, so this replaces rather than mutates. Only
+    ``apply`` is taken from the payload: levels/role/replicate were already
+    verified identical by ``carry_forward_payload``, so taking those too would
+    be a no-op that merely widened what this function could get wrong.
+    """
+    import dataclasses
+
+    by_index = {}
+    for row in payload.get("rows") or ():
+        idx = row.get("row_index")
+        if isinstance(idx, int):
+            by_index[idx] = row.get("apply") or {}
+    out = []
+    for r in rows:
+        applied = by_index.get(r.row_index)
+        out.append(r if applied is None else dataclasses.replace(r, apply=dict(applied)))
+    return out
+
+
 def _epoch_index(work_dir: Path) -> int:
     return 1 + len(list(Path(work_dir).glob("epoch_end*.json")))
 
@@ -1004,8 +1325,40 @@ def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
         return _compile_and_write_policy(campaign, work_dir)
     if pol is None:
         return _compile_and_write_policy(campaign, work_dir)
+    # FAILS CLOSED ON A MISSING SIDECAR, and that is the whole point of this
+    # block. The guard used to read `if recorded.exists() and <mismatch>`, so
+    # DELETING `policy.sha256` made the condition False and SKIPPED the check
+    # rather than failing it — and nothing regenerates the sidecar, because
+    # `_compile_and_write_policy` only runs when `pol is None`. Verified end to
+    # end: with the sidecar removed and `screen`'s default transition rewritten
+    # from `confirm` to `report`, the epoch ran to completion, skipped terminal
+    # discrimination entirely, wrote no `confirmation.json`, emitted
+    # `report.json` with `basis: model`, and recorded the TAMPERED hash in
+    # `transitions.jsonl` as though it were the registration.
+    #
+    # A pre-registration whose verification can be disabled by removing a file is
+    # not a pre-registration; it is a file that says one existed. The absent
+    # sidecar and the mismatched one are the SAME failure — this epoch's policy
+    # cannot be shown to be the one it registered — so they abort with one
+    # message that distinguishes the cause without softening either.
+    #
+    # There is no legitimate path here without a sidecar: `write_policy` writes
+    # `policy.json` and `policy.sha256` together, and a fresh epoch takes the
+    # `pol is None` / recompile branches above. So reaching this line with the
+    # file missing means it was removed after compilation.
     recorded = Path(work_dir) / "policy.sha256"
-    if recorded.exists() and recorded.read_text().strip() != policy_mod.policy_hash(pol):
+    if not recorded.exists():
+        raise OptimizationAborted(
+            f"policy.json exists but its hash sidecar {recorded.name} does not. "
+            f"`write_policy` writes the pair together, so the sidecar was removed "
+            f"after compilation, and without it this epoch's policy cannot be "
+            f"shown to be the one that was pre-registered — every branch it takes "
+            f"is unverifiable. This is the same failure as a hash mismatch and is "
+            f"refused for the same reason. Restore {recorded.name} from the "
+            f"epoch's records, or end this epoch and start a new one so the "
+            f"revised campaign gets a fresh, freshly-hashed pre-registration.",
+        )
+    if recorded.read_text().strip() != policy_mod.policy_hash(pol):
         raise OptimizationAborted(
             "policy.json was edited after compilation (hash mismatch with "
             "policy.sha256); a pre-registered policy cannot change inside an "
@@ -2093,12 +2446,99 @@ def run_stage(
         iteration=iteration, confirm=stage_name == Stage.CONFIRM.value,
     )
 
+    # ── row reuse across a retried iteration ─────────────────────────────────
+    #
+    # A failed iteration records no transition, so `current_state` still returns
+    # the state it was on and THIS iteration legitimately re-registers the same
+    # design. That is correct; what was wrong is that it re-MEASURED everything.
+    # On a real campaign 15 valid rows were re-run four times, which was most of
+    # a 14-hour campaign that produced nothing.
+    #
+    # WHY THE PRIOR ATTEMPT'S DRAWS ARE CARRIED FORWARD rather than the rows
+    # being matched against this attempt's freshly-derived design: seeds come
+    # from `run_order_seed`, which is the ITERATION, so iteration 4 row 0 and
+    # iteration 5 row 0 carry DIFFERENT workload seeds. Matching on levels alone
+    # would substitute one experiment's randomness for another's — a stale
+    # measurement resurrected, which is worse than re-measuring. So the previous
+    # attempt's registered design (seeds included) becomes this attempt's
+    # pre-registration, and a row is reused only when it is a measurement of
+    # exactly what this attempt registers. See `resume`'s module docstring for
+    # the full validity argument and the six guards.
+    #
+    # NOT A STAGE DECISION. Nothing here chooses what runs next; the stage was
+    # already resolved by the compiled policy above. This only changes which of
+    # THIS stage's rows have to be measured again.
+    # NOT AT CONFIRM, ever. Terminal discrimination's claim is that the
+    # finalist comparison rests on FRESH measurements rather than on the fitted
+    # surface, and a second round is spent precisely because the first did not
+    # discriminate — so repeating its workload could not help (spec §3.8). Its
+    # paired bound also zips replicates that must share a workload draw, which a
+    # mix of reused and fresh rows would break. `carry_forward_payload` refuses
+    # `shortlist_replicate` on both sides as well; this is the same rule stated
+    # at the call site so a reader of the epoch's flow sees it here too.
+    _reuse_plan = None
+    if (_reuse_enabled(opt) and stage_name != Stage.CONFIRM.value
+            and _enter_phase_pending(engine, work_dir)):
+        _prior = _prior_attempt_matrix(work_dir, iteration, stage_name)
+        if _prior is not None:
+            _carried = resume.carry_forward_payload(_prior, payload)
+            if _carried is not None:
+                _carried["policy_hash"] = policy_mod.policy_hash(pol)
+                _reuse_plan = resume.plan_reuse(
+                    work_dir, iter_dir=iter_dir, payload=_carried,
+                    policy_hash=policy_mod.policy_hash(pol),
+                    epoch=int(pol.get("epoch", 1)),
+                )
+                if _reuse_plan.rows:
+                    payload = _carried
+                    # Re-derive the ConfigRow list from the carried payload so
+                    # the rows that still EXECUTE carry the carried-forward
+                    # seeds, not the ones this iteration would have derived.
+                    rows = _rows_from_payload(rows, payload)
+                    logger.info(
+                        "%s: reusing %d of %d row(s) measured at iter-%s under "
+                        "the same pre-registration (%.1f min of measurement "
+                        "not repeated); %d row(s) still to measure",
+                        stage_name, _reuse_plan.reused_count, len(payload["rows"]),
+                        _reuse_plan.source_iteration,
+                        _reuse_plan.saved_ms / 60000.0,
+                        len(_reuse_plan.pending_indices),
+                    )
+                elif _reuse_plan.refused:
+                    logger.info(
+                        "%s: re-measuring every row — reuse refused: %s",
+                        stage_name, _reuse_plan.refused,
+                    )
+
     # Resolved OUTSIDE the DESIGN guard for the same reason the seeds are: the
     # guard is False on a resumed iteration whose design_matrix.json already
     # exists, and those rows still have to execute under a bound. Recomputing it
     # from the same campaign and the same stage name is deterministic, so a
     # resumed stage runs at the concurrency its already-written matrix records.
-    max_parallel = resolve_max_parallel(opt, stage_name=stage_name)
+    # The contention-floor probe is what can lift a SPENDING stage above 1, and
+    # it is a MEASUREMENT, so it runs here -- before the matrix is written, since
+    # the width it licenses is part of the pre-registration. Skipped entirely
+    # unless the campaign named a probe corner and asked for a width, so a
+    # campaign that declares nothing pays nothing and runs exactly as before. A
+    # `load_independent` declaration needs no probe at all and does not enter
+    # here; `concurrency.resolve` honours it directly.
+    measured = None
+    if (stage_name != Stage.CONFIRM.value
+            and concurrency.contention_probe_levels(opt)
+            and concurrency.declared_width(opt) > 1
+            and config_runner is not None):
+        measured = _measure_contention_floor(
+            opt, factors, config_runner,
+            width=min(concurrency.declared_width(opt),
+                      concurrency.cpu_ceiling()),
+        )
+        logger.info(
+            "%s: contention floor %s -- %s", stage_name,
+            "CERTIFIED" if measured.basis == concurrency.BASIS_CONTENTION_FLOOR
+            else "NOT certified", measured.detail,
+        )
+    conc = resolve_concurrency(opt, stage_name=stage_name, measured=measured)
+    max_parallel = conc.width
 
     if _enter_phase(engine, "DESIGN", work_dir):
         _preflight_design(rows, factors, opt, iter_dir)
@@ -2131,6 +2571,19 @@ def run_stage(
         # saying 1 under a campaign declaring 4 is the artifact being accurate
         # about what ran rather than echoing an intention.
         payload["max_parallel"] = max_parallel
+        # ... and WHY that width was allowed. The width alone is not readable:
+        # `max_parallel: 4` cannot be distinguished by a reader from the
+        # asymmetric-neighbour confound it is only sometimes safe against, so
+        # the basis travels with it. `serial` is what every campaign authored
+        # before `concurrency` existed records.
+        payload["concurrency_basis"] = conc.basis
+        # The evidence's width, when the basis rests on evidence. A floor
+        # measured at 2 does not license 8, so a reader has to be able to check
+        # the certificate covers the schedule that ran.
+        if conc.certified_width is not None:
+            payload["concurrency_certified_width"] = conc.certified_width
+        if conc.detail:
+            payload["concurrency_detail"] = conc.detail
         artifacts.write_design_matrix(iter_dir, payload)
 
     _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
@@ -2180,6 +2633,31 @@ def run_stage(
             "executing in design order and the artifact's randomization claim "
             "does not hold", stage_name, len(rows) - 1,
         )
+
+    # Reused rows are appended to THIS iteration's runs.jsonl and dropped from
+    # the execution list. Appending them (rather than reading them from the old
+    # directory at fit time) is what keeps every existing downstream consumer
+    # working unchanged: `check_fidelity` requires one run per planned row in
+    # THIS iteration's log, `_best_observed` and the infeasible-region reader
+    # glob `runs/iter-*/runs.jsonl`, and the fit pairs response *i* with design
+    # point *i*. Each carries `reused_from`, so the log distinguishes a carried
+    # measurement from a fresh one.
+    _reused_rows: list[dict] = []
+    if _reuse_plan is not None and _reuse_plan.rows:
+        _pending = set(_reuse_plan.pending_indices)
+        _reused_rows = list(_reuse_plan.rows)
+        for _row in _reused_rows:
+            artifacts.append_run(iter_dir, _row)
+        exec_rows = [r for r in exec_rows if r.row_index in _pending]
+        resume.write_manifest(iter_dir, _reuse_plan.manifest(
+            iteration=iteration, epoch=int(pol.get("epoch", 1)),
+            policy_hash=policy_mod.policy_hash(pol),
+        ))
+    elif _reuse_plan is not None:
+        resume.write_manifest(iter_dir, _reuse_plan.manifest(
+            iteration=iteration, epoch=int(pol.get("epoch", 1)),
+            policy_hash=policy_mod.policy_hash(pol),
+        ))
 
     if max_parallel > 1:
         logger.info(
@@ -2232,11 +2710,38 @@ def run_stage(
     # coefficients — far worse than the provenance gap that motivated
     # randomizing execution in the first place. runs.jsonl still records the
     # true execution sequence, because `on_row` fires as each row completes.
-    if exec_rows is not rows:
+    # Reused rows re-enter the outcome list BEFORE the ordering is restored, as
+    # `RunOutcome`s reconstituted from the log rows that were carried forward.
+    # They have to be here, not merged later: everything downstream — the NaN
+    # guard, `_fitting_responses`, `fit_effects`' positional pairing, the
+    # exclusion accounting — reads `outcomes`, and a reused row that reached the
+    # log but not this list would be a planned row the fit silently never saw,
+    # which is the same class of defect as the NaN poisoning (spec §4 D2).
+    if _reused_rows:
+        outcomes = list(outcomes) + [
+            _outcome_from_run_row(row) for row in _reused_rows
+        ]
+
+    if exec_rows is not rows or _reused_rows:
         pos = {r.row_index: i for i, r in enumerate(rows)}
         outcomes = sorted(
             outcomes, key=lambda o: pos.get(o.row_index, len(rows)),
         )
+
+    # A `load_independent` declaration is an author CLAIM Nous cannot verify up
+    # front without spending the runs the claim exists to save -- but the rows
+    # just measured can CONTRADICT it, for free. Reported rather than aborted:
+    # replicated identical rows are not guaranteed to exist in a screen design
+    # (so silence is common and is not evidence of a violation), and by the time
+    # these rows exist the runs are already spent, so aborting would destroy the
+    # data that proves the problem instead of surfacing it for the next epoch.
+    if concurrency.declared_load_independent(opt):
+        contradiction = concurrency.falsify_load_independence(
+            artifacts.read_runs(iter_dir),
+            metric=((response_spec.get("primary") or {}).get("metric") or ""),
+        )
+        if contradiction:
+            logger.warning("%s: %s", stage_name, contradiction)
 
     # Fidelity: what ran must match what was pre-registered. Hard-fails
     # even under auto-approve — the #246 discipline extended to the matrix.
@@ -2404,43 +2909,242 @@ def run_stage(
     # implemented it. This does. The excluded rows are named in the log and
     # recorded on the fit's artifact so the reduced resolution is visible rather
     # than implied.
+    # THE FLOORS, AND WHY THERE ARE THREE OF THEM.
+    #
+    #   (a) ARITHMETIC. Fewer than two retained rows cannot support a fit at all,
+    #       whatever the columns look like.
+    #   (b) IDENTIFIABILITY. `len(keep) >= 2` says the normal equations have rows;
+    #       it says nothing about whether any given COEFFICIENT is estimable. A
+    #       factor every one of whose retained rows sits at one level has a
+    #       CONSTANT column in the reduced model matrix, collinear with the
+    #       intercept — `_solve_normal_equations` then raises "design matrix is
+    #       singular", and the campaign dies at the fit with a message about
+    #       matrix rank instead of about the factor that lost a level.
+    #   (c) RANK. (b) is necessary and NOT sufficient, and this was found by
+    #       MUTATION TESTING rather than by design. A subset can retain two
+    #       distinct levels of every factor — so (b) passes — and still be
+    #       rank-deficient for the model `fit_effects` actually builds, because
+    #       that model also carries every two-factor interaction. Measured on the
+    #       2^3 screen with corners 3 and 5 excluded: A, B and C each keep three
+    #       levels, and the seven-term model (intercept + 3 mains + 3
+    #       interactions) has rank 6 over the six surviving corners.
+    #
+    # (b) DROPS the factor and (c) DROPS the interaction block rather than
+    # aborting. Aborting would discard every surviving coefficient to protect one
+    # that was never estimable — the "throw away the 15 valid measurements"
+    # behaviour this whole path exists to end. Each loss is named in
+    # `fit_exclusions.json` and visible in `recommendation.json`'s `fitted_ids`,
+    # so it is loud rather than silent. Aborting IS still correct when NOTHING is
+    # estimable: there is then no model to fit.
+    #
+    # Dropping a factor also narrows the ALIAS CLASSES: `fit_effects` collapses
+    # interaction columns per class over the design it is handed, so `fitted_ids`
+    # is recomputed from the identifiability verdict rather than patched
+    # afterwards — that function derives everything, including which interactions
+    # are separately estimable, from the (design, factor_ids) pair it receives.
+    import dataclasses
+
     design_for_fit, ys_for_fit = design, ys
     dropped = [i for i, v in enumerate(ys) if v != v]
+    keep = [i for i, v in enumerate(ys) if v == v]
+    # Levels per POSITION in `ys`, which is what the exclusion analysis and the
+    # identifiability floor both index by. At foldover `ys` has the screen
+    # block's responses prepended, so positions do not map to this iteration's
+    # `row_index` — the screen half's levels are read back from its own
+    # runs.jsonl. Getting this wrong would attribute the fold block's levels to
+    # the screen block's exclusions and analyse the wrong table.
+    levels_by_pos = _fit_row_levels(
+        work_dir, rows, outcomes, stage_name, screen_iter,
+        n_total=len(ys), n_fold=fold_n,
+    )
+    excluded_reasons = _fit_exclusion_reasons(
+        outcomes, stage_name, dropped, n_total=len(ys), n_fold=fold_n,
+        work_dir=work_dir, screen_iter=screen_iter,
+    )
+    # Third element: is this exclusion BIAS-RELEVANT? Only a row that was
+    # admissible-but-unmeasurable leaves a hole in X_valid that can bias a
+    # coefficient. An `infeasible` row is not missing information — it IS
+    # information, namely that the point is outside X_valid — and a constrained
+    # design has every inadmissible corner on one level of one factor by
+    # construction (measured on SURFACES["sla"]: both refine exclusions at
+    # A=16, a perfect concentration meaning only "the p99 ceiling binds at high
+    # A"). Counting those as bias would flag every constrained campaign and be
+    # wrong about all of them. `rejected` is grouped with `infeasible` for the
+    # conservative reason the exclusions module states.
+    _bias_reasons = {"failed_to_measure", "no_metric"}
+    _dropped_set = set(dropped)
+    balance = exclusions.analyse(
+        [
+            (levels_by_pos[i], i in _dropped_set,
+             excluded_reasons.get(i) in _bias_reasons)
+            for i in range(len(ys))
+        ],
+        fitted_ids,
+    )
+    non_identifiable_held: dict = {}
+    interactions_dropped = False
     if dropped:
-        import dataclasses
-
-        keep = [i for i, v in enumerate(ys) if v == v]
         if len(keep) < 2:
             raise OptimizationAborted(
                 f"only {len(keep)} of {len(ys)} rows produced a usable "
                 f"measurement, which cannot support a fit. Re-run the failed "
                 f"configurations before fitting.",
             )
+        ident = exclusions.identifiable_factors(
+            [levels_by_pos[i] for i in keep], fitted_ids,
+        )
+        if not ident.estimable:
+            raise OptimizationAborted(
+                f"{len(keep)} of {len(ys)} rows were retained, but NO factor "
+                f"retains two distinct levels among them "
+                f"({ident.levels_retained}), so no coefficient is identifiable "
+                f"and there is no model to fit. Re-run the excluded "
+                f"configurations, or narrow the design to the region that "
+                f"measures.",
+            )
+        if ident.dropped:
+            logger.warning(
+                "%s: factor(s) %s lost every row at all but one level "
+                "(retained levels %s) and are NOT identifiable from the "
+                "retained subset. Dropping them from the fitted set rather "
+                "than aborting — a non-identifiable coefficient must not be "
+                "estimated, and discarding the %d measurable row(s) to protect "
+                "it would lose every other coefficient too. "
+                "fit_exclusions.json names them and recommendation.json's "
+                "fitted_ids omits them.",
+                stage_name, list(ident.dropped),
+                {k: list(v) for k, v in ident.levels_retained.items()
+                 if k in set(ident.dropped)},
+                len(keep),
+            )
+            fitted_ids = tuple(ident.estimable)
+            # A dropped factor is not "varied but unfitted": every retained row
+            # sits at one level of it, so pin it there for the argmax. Reading
+            # the level off the retained rows rather than off the baseline keeps
+            # `held_fixed` describing what was actually measured.
+            for fid in ident.dropped:
+                for lv in (levels_by_pos[i] for i in keep):
+                    if fid in lv:
+                        non_identifiable_held[fid] = lv[fid]
+                        break
+            design_for_fit = dataclasses.replace(
+                design,
+                factor_ids=tuple(ident.estimable),
+                points=tuple(
+                    dataclasses.replace(
+                        p,
+                        coded=tuple(
+                            c for j, c in enumerate(p.coded)
+                            if design.factor_ids[j] in set(ident.estimable)
+                        ),
+                    )
+                    for p in design.points
+                ),
+            )
         design_for_fit = dataclasses.replace(
-            design, points=tuple(design.points[i] for i in keep),
+            design_for_fit,
+            points=tuple(design_for_fit.points[i] for i in keep),
         )
         ys_for_fit = [ys[i] for i in keep]
+
+        # ── floor (c): is the model FULL RANK on what is left? ──────────────
+        #
+        # Six corners cannot support seven terms. That is arithmetic, and the
+        # principled response is the one `effects.py` already takes for aliased
+        # columns: FIT FEWER TERMS AND SAY SO. Dropping the interaction block
+        # keeps every main effect — which is what `dropped_factors`, the stage
+        # rule and the argmax all read — where aborting would discard them to
+        # protect interactions the surviving rows never could have estimated.
+        if not exclusions.model_is_full_rank(design_for_fit):
+            if exclusions.model_is_full_rank(
+                design_for_fit, include_interactions=False,
+            ):
+                interactions_dropped = True
+                logger.warning(
+                    "%s: the retained %d row(s) cannot support the full model "
+                    "(intercept + main effects + two-factor interactions) — it "
+                    "is rank-deficient. Fitting MAIN EFFECTS ONLY and recording "
+                    "the reduced model, rather than aborting and discarding "
+                    "every main effect to protect interactions the surviving "
+                    "rows never could have estimated. fit_exclusions.json "
+                    "records interactions_dropped.",
+                    stage_name, len(keep),
+                )
+            else:
+                raise OptimizationAborted(
+                    f"the {len(keep)} retained row(s) cannot support even a "
+                    f"main-effects-only model over {list(fitted_ids)}: the "
+                    f"model matrix is rank-deficient, so no coefficient is "
+                    f"estimable. Re-run the excluded configurations, or narrow "
+                    f"the design to the region that measures.",
+                )
+
         logger.warning(
-            "%s: fitting on %d of %d rows; %d row(s) excluded as not complete "
-            "(row_index %s). The fit's resolution is reduced accordingly — a "
-            "single NaN row would otherwise NaN-poison every coefficient "
-            "silently.",
+            "%s: fitting on %d of %d rows; %d row(s) excluded (%s). The fit's "
+            "resolution is reduced accordingly — a single NaN row would "
+            "otherwise NaN-poison every coefficient silently.",
             stage_name, len(keep), len(ys), len(dropped),
-            [getattr(design.points[i], "label", i) or i for i in dropped],
+            ", ".join(f"pos {i}: {excluded_reasons[i]}" for i in dropped),
         )
 
-    fit = fit_effects(design_for_fit, ys_for_fit, factor_ids=fitted_ids)
-    artifacts.write_effects(iter_dir, fit, factors=factors, stage=stage_name)
+    # ── a level-correlated loss is not a widened one ────────────────────────
+    #
+    # A BALANCED loss costs degrees of freedom, which widens every interval —
+    # honest, and already handled by the arithmetic. A loss CONCENTRATED on one
+    # level of one factor moves that factor's POINT ESTIMATE and leaves its
+    # interval looking exactly as tight as before, because the interval is
+    # computed from the retained rows' pure error and knows nothing about the
+    # region that is missing. Logging a warning would not change what a reader
+    # of `effects.json` sees, so the caveat is attached to the artifacts a
+    # consumer actually joins on: `effects.json`'s `exclusion_balance`, and
+    # `recommendation.json`'s, next to the bound.
+    #
+    # It is NOT routed to the policy and it is NOT an `if` deciding the next
+    # state — that decision belongs to the compiled policy, and no registered
+    # branch reads this. It changes what the campaign CLAIMS, not where it goes.
+    if balance.level_correlated:
+        logger.warning("%s: %s", stage_name, balance.caveat())
+
+    fit = fit_effects(
+        design_for_fit, ys_for_fit, factor_ids=fitted_ids,
+        include_interactions=not interactions_dropped,
+    )
+    artifacts.write_effects(
+        iter_dir, fit, factors=factors, stage=stage_name,
+        exclusion_balance=(balance.as_dict() if dropped else None),
+    )
     if dropped:
         _write_json(iter_dir / "fit_exclusions.json", {
             "stage": stage_name,
+            # planned == fitted + excluded, always. A reader must be able to
+            # reconcile the three numbers without consulting runs.jsonl.
             "planned_rows": len(ys),
             "fitted_rows": len(ys_for_fit),
             "excluded_row_indices": dropped,
+            # Per-row REASONS, because they mean different things
+            # scientifically: `infeasible` is information about X_valid that a
+            # re-run will reproduce, while `failed_to_measure` is a repairable
+            # hole in the design. Merging them (as the single `reason` string
+            # below used to) tells a reader the wrong thing to do next.
+            "excluded_reasons": {str(i): excluded_reasons[i] for i in dropped},
+            "excluded_by_reason": {
+                r: sorted(i for i in dropped if excluded_reasons[i] == r)
+                for r in sorted({excluded_reasons[i] for i in dropped})
+            },
+            "non_identifiable_factors": sorted(non_identifiable_held),
+            "interactions_dropped": interactions_dropped,
+            "fitted_ids": list(fitted_ids),
+            "exclusion_balance": balance.as_dict(),
+            # Kept for backward compatibility with readers (and one test)
+            # written against the single-string shape. It now SUMMARISES the
+            # per-row reasons rather than asserting one for all of them.
             "reason": (
-                "rows did not reach status 'complete' (infeasible, rejected, or "
-                "unmeasured); fitting on the complete subset rather than "
-                "carrying NaN into every coefficient"
+                "rows did not reach status 'complete' with a usable primary "
+                "metric (" + ", ".join(
+                    f"{r}: {len([i for i in dropped if excluded_reasons[i] == r])}"
+                    for r in sorted({excluded_reasons[i] for i in dropped})
+                ) + "); fitting on the complete subset rather than carrying "
+                "NaN into every coefficient"
             ),
         })
 
@@ -2478,6 +3182,14 @@ def run_stage(
     # those points are inadmissible, and recommending one anyway would be
     # recommending a configuration it watched fail.
     held_now = dict(payload.get("held_fixed") or {})
+    # A factor dropped for non-identifiability was not "varied but unfitted":
+    # every retained row sat at ONE of its levels, so the argmax must hold it
+    # there rather than enumerate levels the reduced fit has no coefficient for.
+    # Without this, `decide.ranked` would score candidates at levels the model
+    # cannot distinguish and the recommendation could name one purely on
+    # tie-break order. `held_fixed` is also what `recommendation.json` records,
+    # so the pin is visible next to the narrowed `fitted_ids`.
+    held_now.update(non_identifiable_held)
     excluded = _measured_infeasible(work_dir)
     # `top=None` means "no truncation", so one call gives both the shortlist
     # and the size of the space it was chosen from. Ordering stays in `decide`
@@ -2581,6 +3293,17 @@ def run_stage(
         "epsilon": epsilon,
         "alias_consequential": [list(p) for p in alias_pairs_consequential],
         "aliases": [list(p) for p in fit.aliases],
+        # ── the caveat travels WITH the bound, not in a sibling file ────────
+        #
+        # Present only when rows were excluded. `residual_regret_model` sits
+        # three keys above it, and that adjacency is the point: the model
+        # bound's guarantee is conditional on the registered response class
+        # describing the measurements, and a LEVEL-CORRELATED exclusion is
+        # evidence that the surface it was fitted on is biased in a named
+        # direction rather than merely estimated from fewer rows. Recording the
+        # verdict here is also what lets `confirm` read it back — the Fit is gone
+        # by then, exactly as `model_adequate` is persisted for the same reason.
+        **({"exclusion_balance": balance.as_dict()} if dropped else {}),
     })
     if alias_pairs_consequential:
         logger.info(
@@ -3666,9 +4389,25 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         if key not in samples:
             continue
         if o.status != "complete" or y != y:
-            status[key] = "excluded"
+            # WHY the finalist dropped out, not merely THAT it did. Collapsing
+            # every non-complete status into one bucket reported a finalist that
+            # TIMED OUT under `excluded_infeasible` -- i.e. as though it had
+            # violated a declared constraint. Those are opposite claims about a
+            # configuration: `infeasible` says the config is inadmissible and is
+            # real information about the design space (spec §6.4), while a
+            # timeout says the instrument could not measure an admissible config
+            # and a re-run may well repair it. An author reading "excluded as
+            # infeasible" strikes the configuration off; an author reading
+            # "failed to measure" re-runs it with a larger budget.
+            status[key] = (
+                "infeasible" if o.status in ("infeasible", "rejected")
+                else "unmeasured"
+            )
         else:
             samples[key].append(float(y))
+    # Any non-"ok" status is out of the running, whatever its reason: the
+    # terminal comparison needs fresh usable samples and neither an inadmissible
+    # nor an unmeasured finalist has them. The reason survives for the REPORT.
     ok = {k: v for k, v in samples.items() if status[k] == "ok" and v}
 
     best = max(ok, key=lambda k: sign * mean(ok[k])) if ok else None
@@ -3733,8 +4472,79 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # `bounds` / `residual_regret_terminal` are deliberately UNAFFECTED. They are
     # the within-shortlist numbers, they are valid as such, and suppressing them
     # would hide the comparison that genuinely did happen.
-    n_excluded = sum(1 for v in status.values() if v == "excluded")
-    certified = bound.value is not None and bound.value <= eps and not n_excluded
+    # ── the SAME premise, broken the same way, by a level-correlated loss ───
+    #
+    # `delta_s` carries the premise that screening did not exclude the true
+    # optimum, i.e. that the model's candidate ranking tracks the objective well
+    # enough for the top of it to contain the winner. An inadmissible finalist is
+    # one kind of evidence against that premise (below). A LEVEL-CORRELATED
+    # exclusion in the fit that produced the ranking is another kind of the SAME
+    # evidence, and it is strictly upstream: the ranking was computed from a
+    # coefficient the missing region BIASES, in a named direction, for a named
+    # factor. On the field case that motivated this, every row lost sat at one
+    # level of the eviction-policy factor while the same corner at the other
+    # level completed — so the fitted eviction effect was biased against exactly
+    # the level the mechanism under study exists to evaluate, and a shortlist
+    # seated from that ranking carries no reason to contain the constrained
+    # optimum.
+    #
+    # So it suppresses GLOBAL certification for the same reason and by the same
+    # mechanism, and — like the exclusion case — leaves `bound` and
+    # `residual_regret_terminal` UNTOUCHED. Those are the within-shortlist
+    # numbers, they are valid as such (they rest on fresh measurements of the
+    # finalists and consult no model at all), and suppressing them would hide the
+    # comparison that genuinely did happen. What is withheld is the GLOBAL label,
+    # which is the only claim the fitted surface underwrites.
+    #
+    # Read off `recommendation.json` rather than recomputed: the Fit is gone by
+    # now, exactly as with `model_adequate`. A campaign that reached the terminal
+    # state straight from a complete screen has no such record, and `False` is
+    # then the right reading — there were no exclusions to correlate.
+    #
+    # NOT a policy branch. This changes what the campaign CLAIMS, never where it
+    # goes: the registered `confirm -> confirm` / `confirm -> report` transitions
+    # are untouched, and `certified` is an observation the compiled policy already
+    # reads.
+    _rec_for_bias = _read_recommendation(work_dir) or {}
+    fit_bias = bool(
+        (_rec_for_bias.get("exclusion_balance") or {}).get("level_correlated"),
+    )
+    # EVERY non-"ok" status counts, and the reason is a bug this line already
+    # caused once. The statuses were split into "infeasible" (measured
+    # inadmissible) and "unmeasured" (the instrument failed on an admissible
+    # config) so a timed-out finalist would stop being reported as though it had
+    # violated a constraint. This comparison still read the retired literal
+    # "excluded", so `n_excluded` silently became 0 for every campaign: nothing
+    # withheld certification, the registered `confirm -> confirm` top-up never
+    # fired, and the sla surface certified round 1's 6.12%-off answer.
+    #
+    # Both reasons must gate `certified`, for the same reason and by different
+    # arguments. An INADMISSIBLE finalist is direct evidence against `delta_s`'s
+    # premise that screening did not exclude the true optimum. An UNMEASURED one
+    # leaves the terminal comparison with no fresh samples for that candidate at
+    # all, so the shortlist it was drawn from was never actually compared. Either
+    # way the global epsilon-optimality claim over X_valid is unearned, even
+    # though `residual_regret_terminal` remains a valid WITHIN-shortlist number
+    # over whoever did survive.
+    n_excluded = sum(1 for v in status.values() if v != "ok")
+    certified = (
+        bound.value is not None and bound.value <= eps
+        and not n_excluded and not fit_bias
+    )
+    if fit_bias and bound.value is not None and bound.value <= eps and not n_excluded:
+        logger.info(
+            "confirm: R_terminal=%.6g is at or below epsilon=%.6g over the "
+            "finalists, which is a valid WITHIN-SHORTLIST result and is reported "
+            "as such. Not certifying globally: the fit that produced this "
+            "shortlist excluded rows in a way that was NOT independent of the "
+            "factor levels (%s), so its coefficients are biased by the missing "
+            "region rather than merely widened by it, and the delta_screen "
+            "premise behind Pr(wrong global decision) <= delta_s + delta_t does "
+            "not hold. Re-measure the excluded region in a new epoch to earn the "
+            "global claim.",
+            bound.value, eps,
+            (_rec_for_bias.get("exclusion_balance") or {}).get("flagged_factors"),
+        )
     if n_excluded and bound.value is not None and bound.value <= eps:
         logger.info(
             "confirm: R_terminal=%.6g is at or below epsilon=%.6g over the "
@@ -3787,10 +4597,37 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "residual_regret_terminal": bound.value,
         "terminal_bound": bound.as_dict(),
         "certified": certified,
+        # Always written, empty when certified, so `certified: false` is never an
+        # unexplained boolean. The premise-breaking reasons are named separately
+        # from "the bound was simply too wide": a reader deciding what to do next
+        # needs to know whether to spend more replicates (wide bound) or to
+        # re-measure a region in a new epoch (broken premise).
+        #
+        # NOTE: `finalist_measured_infeasible` is derived from `n_excluded`,
+        # which another agent's status-vocabulary split has left computing 0 —
+        # see the FIXME at that line. This list is therefore currently complete
+        # for every reason EXCEPT that one.
+        "certification_withheld": [
+            r for r, hit in (
+                ("bound_not_computable", bound.value is None),
+                ("bound_above_epsilon",
+                 bound.value is not None and bound.value > eps),
+                ("finalist_measured_infeasible", bool(n_excluded)),
+                ("fit_exclusions_level_correlated", fit_bias),
+            ) if hit
+        ],
         "paired": paired,
         "delta_terminal": delta_t,
+        # Name kept for the readers that already exist, and now it is TRUE:
+        # only genuinely inadmissible finalists appear here.
         "excluded_infeasible": [
-            f["levels"] for f in fin if status[f["key"]] == "excluded"
+            f["levels"] for f in fin if status[f["key"]] == "infeasible"
+        ],
+        #: Finalists whose measurement failed (timeout, crash, unparseable
+        #: output) rather than being inadmissible. A re-run with a larger budget
+        #: may recover these; striking them off the design would be wrong.
+        "excluded_unmeasured": [
+            f["levels"] for f in fin if status[f["key"]] == "unmeasured"
         ],
         # Legacy fields, kept because readers of the single-point record exist
         # (the harness's recommendation fallback, the guide's worked output, and
@@ -4270,8 +5107,50 @@ def _measured_infeasible(work_dir) -> list[dict]:
     return out
 
 
+def _outcome_from_run_row(row: dict) -> "runner.RunOutcome":
+    """A ``RunOutcome`` reconstituted from a ``runs.jsonl`` row.
+
+    The inverse of ``_run_row``, and only used for REUSED rows: a row carried
+    forward from a previous attempt has to re-enter the outcome list the fit
+    reads, and the log row is the only record of it.
+
+    Round-tripping through JSON is lossless for every field the fit and the
+    exclusion accounting use (``status``, ``response``, ``held_out``, the
+    verdict lists, the instrumentation counters), because ``_run_row`` writes
+    all of them and none is a Python object that JSON cannot represent. The one
+    field that does NOT round-trip is ``reused_from`` — it has no ``RunOutcome``
+    counterpart and does not need one: it is provenance for a READER of the log,
+    and nothing in the fit branches on it. It stays on the log row.
+    """
+    return runner.RunOutcome(
+        row_index=int(row.get("row_index", 0)),
+        status=str(row.get("status") or ""),
+        response=dict(row.get("response") or {}),
+        manipulation=list(row.get("manipulation") or []),
+        invariants=list(row.get("invariants") or []),
+        duration_ms=int(row.get("duration_ms") or 0),
+        error=str(row.get("error") or ""),
+        failure_kind=str(row.get("failure_kind") or ""),
+        attempts=int(row.get("attempts") or 1),
+        last_attempt_ms=int(row.get("last_attempt_ms") or 0),
+        held_out=dict(row.get("held_out") or {}),
+        self_check=list(row.get("self_check") or []),
+    )
+
+
 def _run_row(row, outcome) -> dict:
-    """One ``runs.jsonl`` row from a ConfigRow + RunOutcome pair."""
+    """One ``runs.jsonl`` row from a ConfigRow + RunOutcome pair.
+
+    THE INSTRUMENTATION FIELDS (``duration_ms``, ``failure_kind``, ``attempts``,
+    ``last_attempt_ms``) are what make ``runs.jsonl`` sufficient on its own to
+    answer the two questions a dead campaign raises first: how long did this
+    take, and why did it stop. Both used to require opening
+    ``failed_runs/failed_run_N.log`` — a sibling file that a reader consulting
+    the primary artifact has no reason to know exists, and which the artifact
+    itself did not point at. ``duration_ms`` in particular was structurally
+    always 0, so every row read as "measured, instantaneous"; sizing
+    ``run_timeout_sec`` from the campaign's own data was impossible.
+    """
     return {
         "row_index": row.row_index,
         "levels": dict(row.levels),
@@ -4290,7 +5169,18 @@ def _run_row(row, outcome) -> dict:
         # from "no invariant was declared".
         "self_check": list(getattr(outcome, "self_check", []) or []),
         "duration_ms": int(outcome.duration_ms or 0),
+        # Total across attempts; `attempts` and `last_attempt_ms` are what let a
+        # reader tell a retried row's schedule cost (which a timeout budget must
+        # cover) from its per-invocation cost (which the ceiling applies to).
+        "attempts": int(getattr(outcome, "attempts", 1) or 1),
+        "last_attempt_ms": int(getattr(outcome, "last_attempt_ms", 0) or 0),
         "error": outcome.error or "",
+        # A closed-vocabulary label, set at the raise site rather than parsed
+        # back out of `error`. "The apparatus ran out of time" and "the adapter
+        # crashed" call for opposite repairs — a bigger budget versus a code fix
+        # — and both arrived as `RuntimeError: ...` in `error`, so telling them
+        # apart meant substring-matching prose. Empty on a clean row.
+        "failure_kind": str(getattr(outcome, "failure_kind", "") or ""),
     }
 
 

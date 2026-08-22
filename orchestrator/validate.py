@@ -1611,8 +1611,140 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule18_high_run_timeout_warning(opt, factors))
     errors.extend(_rule19_max_parallel_oversubscription(opt))
     errors.extend(_rule20_self_check_is_a_real_invariant(opt))
+    errors.extend(_rule21_concurrency_declaration(opt))
+    errors.extend(_rule22_completion_budgets(opt, factors))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     return errors
+
+
+def _rule21_concurrency_declaration(opt: dict) -> list[str]:
+    """Rule 21: a spending-stage concurrency claim must be coherent.
+
+    Delegates to ``orchestrator.optimize.concurrency.check_declaration`` so the
+    refusal and the resolution read the same declaration through one function --
+    a validator that accepted a block the resolver then ignored would be the
+    worst of both.
+
+    HARD ERRORS, unlike rule 19's advisory oversubscription warning for
+    ``confirm``. Rule 19 is advisory because it cannot see whether a
+    ``run_command`` mostly WAITS on a remote service and so holds no core, and
+    only the author knows. Under this block the width applies to the SPENDING
+    stages, where the confound is first-order rather than cancelling, so an
+    incoherent declaration is refused instead of warned about.
+
+    Refusing at validation time rather than resolving quietly is the point.
+    Silently running at 1 when the author asked for 8 costs a day of wall clock
+    and explains nothing; silently running 8 uncertified corrupts the surface.
+    Every message names the edit or the command that fixes it.
+    """
+    from orchestrator.optimize import concurrency
+
+    return concurrency.check_declaration(opt)
+
+
+#: A wall-clock budget below this is more likely a units mistake (minutes typed
+#: as hours) than an intent: no real systems campaign screens a factorial design
+#: in six minutes. Warned about, not refused -- a synthetic or simulator target
+#: legitimately can.
+LOW_WALL_CLOCK_HOURS = 0.1
+
+
+def _rule22_completion_budgets(opt: dict, factors: list) -> list[str]:
+    """Rule 22: the completion budgets must be able to complete something.
+
+    Both fields exist because a real campaign spent ~14 hours producing zero
+    usable output, and both fail in the same direction if declared carelessly:
+    a budget too small to finish a single screen, or a failure threshold of 1,
+    turns a robustness feature into a campaign that stops before it starts.
+
+    ``max_wall_clock_hours`` is checked against the campaign's own declared
+    exposure, reusing rule 18's run-count basis (``design.max_runs`` when the
+    author stated one, else the ``2**k`` full factorial that ``_build_design``
+    falls back to). The comparison is against the ONE-ROW ceiling rather than
+    the whole design: a budget that cannot fit even a single row at
+    ``run_timeout_sec`` is an ERROR, because no rung of the fallback ladder can
+    be reached from zero measurements -- the report would rest on
+    ``known_valid_baseline`` or nothing at all. A budget that fits some rows but
+    not the declared design is a WARNING, because that is a legitimate choice:
+    the epoch ends cleanly and the report names an action from what was
+    measured.
+
+    ``max_identical_failures: 1`` is a WARNING rather than an error. It halts on
+    the FIRST failure of any kind, which forecloses the ordinary case this
+    machinery is built around -- a transient timeout that a retry repairs, on
+    exactly the noisy systems targets this kind exists for. It is not refused
+    because an author debugging an apparatus may genuinely want it.
+    """
+    out: list[str] = []
+
+    raw_budget = opt.get("max_wall_clock_hours")
+    if isinstance(raw_budget, (int, float)) and not isinstance(raw_budget, bool):
+        budget_h = float(raw_budget)
+        ceiling_sec = opt.get("run_timeout_sec")
+        if not (isinstance(ceiling_sec, int) and not isinstance(ceiling_sec, bool)
+                and ceiling_sec > 0):
+            ceiling_sec = 600  # the documented default
+        one_row_h = ceiling_sec / 3600.0
+
+        if budget_h < one_row_h:
+            out.append(
+                f"optimization.max_wall_clock_hours={budget_h:g} is smaller than "
+                f"the time ONE row is allowed to take "
+                f"(run_timeout_sec={ceiling_sec}s = {one_row_h:.2f}h), so the "
+                f"budget can expire before the first measurement completes. A "
+                f"campaign with zero measured rows cannot reach any rung of the "
+                f"fallback ladder above `baseline`, so the report it still "
+                f"writes would name an action nothing in this epoch supports. "
+                f"Raise the budget to at least a few multiples of the per-row "
+                f"ceiling, or lower run_timeout_sec.",
+            )
+        else:
+            design = opt.get("design") if isinstance(opt.get("design"), dict) else {}
+            max_runs = design.get("max_runs")
+            if (isinstance(max_runs, int) and not isinstance(max_runs, bool)
+                    and max_runs > 0):
+                runs, basis = max_runs, "design.max_runs"
+            else:
+                k = len(factors)
+                runs, basis = (2 ** k, f"the {k}-factor full factorial") if k else (0, "")
+            if runs:
+                worst_h = runs * one_row_h
+                if budget_h < worst_h:
+                    out.append(
+                        f"WARN: optimization.max_wall_clock_hours={budget_h:g} is "
+                        f"below this campaign's worst-case exposure of "
+                        f"{worst_h:.1f}h ({runs} run(s) from {basis} at "
+                        f"{ceiling_sec}s each), so the budget can expire "
+                        f"mid-design. That is a legitimate cap -- the epoch ends "
+                        f"cleanly and report.json still names an action from what "
+                        f"was measured -- but the recommendation would then rest "
+                        f"on a PARTIAL design, and recommendation.basis will say "
+                        f"so. Run --smoke (and --liveness) first: the real "
+                        f"per-row duration is usually far below the ceiling, so "
+                        f"the worst case quoted here is a bound rather than an "
+                        f"estimate.",
+                    )
+        if budget_h < LOW_WALL_CLOCK_HOURS:
+            out.append(
+                f"WARN: optimization.max_wall_clock_hours={budget_h:g} is under "
+                f"{LOW_WALL_CLOCK_HOURS:g}h ({budget_h * 60:.0f} minutes). If "
+                f"minutes were intended, the field is in HOURS.",
+            )
+
+    raw_thresh = opt.get("max_identical_failures")
+    if (isinstance(raw_thresh, int) and not isinstance(raw_thresh, bool)
+            and raw_thresh == 1):
+        out.append(
+            "WARN: optimization.max_identical_failures=1 halts the campaign on "
+            "the FIRST failed iteration, before any retry. On the noisy systems "
+            "targets this kind exists for, a single wall-clock timeout or "
+            "adapter hiccup is routinely repaired by re-running the "
+            "configuration -- and with row reuse, the retry re-measures only the "
+            "rows that actually failed. Keep 1 only while deliberately debugging "
+            "an apparatus; the default of 3 is what bounds a genuinely "
+            "deterministic loop.",
+        )
+    return out
 
 
 def _rule20_self_check_is_a_real_invariant(opt: dict) -> list[str]:

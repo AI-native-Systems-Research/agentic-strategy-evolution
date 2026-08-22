@@ -973,6 +973,75 @@ def _check_declared_self_checks(opt: dict, obs: dict, *, where: str) -> list[str
     ]
 
 
+HEADROOM_FACTOR = 2.0
+"""How much slack ``run_timeout_sec`` must leave over the slowest OBSERVED run.
+
+Not a new number: it is the factor the probe's existing check already applied
+(``elapsed > 0.5 * timeout`` is ``timeout < 2 * elapsed``), lifted to a name so
+the probe and the liveness sweep cannot drift apart. Two mechanisms disagreeing
+about how much headroom is enough would be worse than one being slightly wrong.
+
+2x rather than 1.1x because the quantity being bounded is not measurement noise
+around one configuration — it is the gap between the configuration that was
+measured and the SLOWEST CORNER OF THE DESIGN, which no single run visits."""
+
+
+def _timeout_headroom_problem(
+    slowest_sec: float, timeout: int, *, what: str,
+    why_a_lower_bound: str = (
+        "no single measured configuration is the design's costliest one"
+    ),
+) -> str | None:
+    """The headroom finding for the slowest observed run, or None if it is fine.
+
+    ONE function for both callers (the ``--smoke`` probe's single corner and the
+    ``--liveness`` sweep's per-level maximum) because they are asking the same
+    question of different evidence, and a second copy of the arithmetic would be
+    free to disagree with the first. ``what`` names which evidence, so the
+    message says how weak the bound it rests on is.
+
+    WHAT THIS CHECK CANNOT GUARANTEE, stated here because the message below
+    promises no more than this:
+
+      * A single run's wall clock is a LOWER BOUND on the slowest corner. The
+        liveness sweep varies ONE factor at a time with the others held at
+        ``known_valid_baseline``; the design's slowest corner combines several
+        factors' costly levels at once, and costs can be superadditive. The real
+        defect's slow corner was ``arc + sata_ssd + 40GiB`` — three costly levels
+        TOGETHER, a configuration a one-factor-at-a-time sweep never visits. So a
+        passing verdict here means "the ceiling clears every corner I actually
+        measured by 2x", never "the ceiling clears the design".
+      * It cannot see the machine the epoch will run on, contention from
+        ``max_parallel``, a cold cache on the first row, or a workload that grows
+        with a factor the sweep held fixed.
+      * A FAILING verdict, by contrast, is sound in the direction that matters:
+        a level already measured within 2x of the ceiling will be joined in the
+        design by corners at least that slow, so the finding is real evidence
+        rather than a heuristic.
+
+    That asymmetry is why this is worth having at all despite the weak bound:
+    the check is conservative exactly where an author gets hurt.
+    """
+    if slowest_sec <= 0 or timeout <= 0:
+        return None
+    if slowest_sec * HEADROOM_FACTOR <= timeout:
+        return None
+    # ``why_a_lower_bound`` differs per caller because the two callers' evidence
+    # is weak in DIFFERENT ways, and an inaccurate caveat is worse than none: an
+    # author who reads "each run varies one factor" about a probe that ran a full
+    # corner learns the wrong thing about what was measured.
+    return (
+        f"{what} took {slowest_sec:.1f}s against a run_timeout_sec ceiling of "
+        f"{timeout}s, leaving under {HEADROOM_FACTOR:g}x headroom. That "
+        f"measurement is a LOWER BOUND on the design's slowest corner, not an "
+        f"estimate of it: {why_a_lower_bound} and costs across factors can be "
+        f"superadditive. Run order is randomized, so the slow corner may run "
+        f"FIRST. Raise optimization.run_timeout_sec to at least "
+        f"{int(slowest_sec * HEADROOM_FACTOR) + 1}s, or higher if the costly "
+        f"levels compound."
+    )
+
+
 def _smoke_liveness_sweep(
     opt: dict, factors, *, repo: Path, probe_dir: Path, repeats: int = 3,
 ) -> list[str]:
@@ -1003,6 +1072,8 @@ def _smoke_liveness_sweep(
     ``prod(len(levels))``. That is what makes it affordable enough to be worth
     offering at all.
     """
+    from orchestrator.optimize.stage_runner import resolve_run_timeout
+
     problems: list[str] = []
     baseline = opt.get("known_valid_baseline")
     if not isinstance(baseline, dict) or not baseline:
@@ -1021,6 +1092,13 @@ def _smoke_liveness_sweep(
         ]
     seed_env = ((opt.get("workload") or {}).get("seed_env")) or None
 
+    # Every run's wall clock, in the order the sweep made them, keyed by the
+    # label already used for error messages. Collected for EVERY run including
+    # the failing ones and the noise-floor repeats, because "the ceiling is the
+    # binding constraint" is a claim about the whole sweep and a level that died
+    # AT the ceiling is its strongest evidence.
+    observed_sec: list[tuple[str, float, bool]] = []
+
     def _run(levels: dict, *, seed: int | None, label: str):
         """One configuration. Returns ``(objective, error_text)``.
 
@@ -1034,10 +1112,11 @@ def _smoke_liveness_sweep(
         measurement -- which is still worth having, since a violated invariant on
         a live axis and on a dead one call for different repairs.
         """
-        obs, err = _liveness_run_one(
+        obs, err, elapsed = _liveness_run_one(
             opt, factors, levels, repo=repo, probe_dir=probe_dir,
             seed_env=seed_env, seed=seed, label=label,
         )
+        observed_sec.append((label, elapsed, err is None))
         if err is not None:
             return None, err
         problems.extend(_check_declared_self_checks(
@@ -1065,6 +1144,13 @@ def _smoke_liveness_sweep(
                 f"noise-floor run {i + 1}: {err}. The baseline is the bottom "
                 f"rung of report.json's fallback ladder — a campaign whose "
                 f"baseline does not run has nothing to fall back to.",
+            )
+            # Reported even on this early return: a baseline that failed AT the
+            # ceiling is itself the finding, and it is the one case where the
+            # duration is more informative than the effect sizes the sweep now
+            # cannot compute.
+            _report_liveness_durations(
+                observed_sec, resolve_run_timeout(opt), problems,
             )
             return problems
         samples.append(val)
@@ -1149,7 +1235,72 @@ def _smoke_liveness_sweep(
             f"reaches a mechanism (not just a config file), widen its levels, "
             f"or drop it before pre-registering.",
         )
+
+    # 3. GAP 1: the ceiling, against the per-level wall clock this sweep just
+    #    measured and used to throw away.
+    #
+    #    The sweep already ran every declared level of every factor once. Each of
+    #    those runs' durations is the per-level cost data guide §7.1 tells an
+    #    author to size `run_timeout_sec` from -- and it was observed by the OS
+    #    and discarded, so the advice stayed prose. Prose advice demonstrably does
+    #    not hold: the author of §7.1 then sized the ceiling from the CHEAP corner
+    #    three campaigns in a row, and run order is randomized, so the slow corner
+    #    can be row 1.
+    #
+    #    FAIL rather than merely flag, and deliberately so, unlike the dead-axis
+    #    check right above. The two findings differ in who can adjudicate them. A
+    #    small-but-real effect is a judgement call only the author can make, so
+    #    that check reports a number. Insufficient timeout headroom is not a
+    #    judgement call: rows WILL die at the ceiling, and they die after
+    #    consuming the full ceiling each, which is how ~14 hours bought nothing.
+    #    A `--smoke` failure is also the only actionable moment -- it is
+    #    pre-registration, before a policy hash exists, and the repair is one
+    #    integer in the campaign file. The probe's existing single-corner check
+    #    already fails for exactly this reason; this raises the evidence from one
+    #    corner to every declared level rather than changing the verdict's kind.
+    _report_liveness_durations(observed_sec, resolve_run_timeout(opt), problems)
     return problems
+
+
+def _report_liveness_durations(
+    observed_sec: list[tuple[str, float, bool]], timeout: int,
+    problems: list[str],
+) -> None:
+    """Print every run's wall clock and check the slowest against the ceiling.
+
+    Split out so the printing and the verdict have one home and can be tested
+    without executing a sweep. ``problems`` is appended to in place, matching how
+    the rest of ``_smoke_liveness_sweep`` accumulates findings.
+
+    The slowest run is taken over SUCCESSFUL runs only. A failed run's elapsed
+    time is printed (it is evidence, and a level that died at the ceiling is the
+    most damning kind) but is not the basis of the headroom verdict, because its
+    duration is bounded BY the ceiling: feeding it back in would compare the
+    ceiling against itself and report a failure on every campaign that has ever
+    lost a row, including one whose level crashed in 0.2s. That level's own
+    finding is already raised, by name, as a hard failure.
+    """
+    if not observed_sec:
+        return
+    print(f"  liveness: observed wall clock per run "
+          f"(run_timeout_sec ceiling: {timeout}s)")
+    for label, secs, ok in sorted(observed_sec, key=lambda r: -r[1]):
+        mark = "" if ok else "   <-- did not complete"
+        print(f"    {label:<28} {secs:8.1f}s{mark}")
+    completed = [(lbl, s) for lbl, s, ok in observed_sec if ok]
+    if not completed:
+        return
+    label, slowest = max(completed, key=lambda r: r[1])
+    problem = _timeout_headroom_problem(
+        slowest, timeout, what=f"the slowest completed liveness run ({label})",
+        why_a_lower_bound=(
+            "the sweep varies ONE factor with the others at "
+            "known_valid_baseline and never runs a corner, while the design's "
+            "slowest corner combines several factors' costly levels at once"
+        ),
+    )
+    if problem:
+        problems.append(problem)
 
 
 def _liveness_run_one(
@@ -1158,14 +1309,30 @@ def _liveness_run_one(
 ):
     """Execute one configuration for the liveness sweep.
 
-    Returns ``(observations, None)`` or ``(None, error_text)``. Goes through the
-    SAME ``runner.make_config_runner`` / ``matrix.render_apply`` /
+    Returns ``(observations, error_text, elapsed_sec)`` — exactly one of the
+    first two is None, and ``elapsed_sec`` is populated on BOTH paths. Goes
+    through the SAME ``runner.make_config_runner`` / ``matrix.render_apply`` /
     ``resolve_run_timeout`` seams the epoch runs through — a sweep that ran the
     target differently from the way the epoch will could not certify anything
     about the epoch. In particular the runner already raises on a non-zero exit,
     on a timeout, and on unparseable output, which is exactly the abort
     detection GAP 3 needs; nothing here reimplements it.
+
+    THE ELAPSED TIME WAS ALREADY BEING OBSERVED HERE AND THROWN AWAY. ``--liveness``
+    runs every declared level of every factor once; the wall clock of each of
+    those runs is exactly the per-level cost data an author needs to size
+    ``run_timeout_sec``, and it was measured by the OS and discarded. Returning
+    it costs one ``time.monotonic()`` pair and turns prose advice (guide §7.1,
+    "size the ceiling from the slowest corner") into a machine check — advice
+    whose own author then violated it three times running.
+
+    Timed on the FAILING path too, and that is the case that matters most: a
+    level that dies AT the ceiling reports an elapsed time approximately equal
+    to the ceiling, which is the strongest possible evidence that the ceiling is
+    the binding constraint rather than the target.
     """
+    import time
+
     from orchestrator.optimize import runner
     from orchestrator.optimize.matrix import render_apply
     from orchestrator.optimize.stage_runner import resolve_run_timeout
@@ -1193,10 +1360,12 @@ def _liveness_run_one(
         apply = {**apply, "env": {**(apply.get("env") or {}),
                                   seed_env: str(seed)}}
     row.apply = apply
+    started = time.monotonic()
     try:
-        return cfg_runner(row), None
+        obs = cfg_runner(row)
     except Exception as exc:  # noqa: BLE001 — any failure is a finding
-        return None, f"{exc}"
+        return None, f"{exc}", time.monotonic() - started
+    return obs, None, time.monotonic() - started
 
 
 def _smoke_probe_one_config(
@@ -1268,16 +1437,20 @@ def _smoke_probe_one_config(
     print(f"  smoke: ran one configuration {levels} in {elapsed:.1f}s "
           f"(run_timeout_sec ceiling: {timeout}s) — "
           f"{len(obs)} observable(s) returned")
-    if elapsed > 0.5 * timeout:
-        problems.append(
-            f"the probe configuration took {elapsed:.1f}s against a "
-            f"run_timeout_sec ceiling of {timeout}s, leaving under 2x headroom. "
-            f"This corner is the design's FIRST one, not its slowest, and a "
-            f"campaign's rows vary by more than 2x routinely -- so the epoch is "
-            f"likely to lose rows to the ceiling rather than to the target. "
-            f"Raise optimization.run_timeout_sec above the slowest corner's "
-            f"expected duration.",
-        )
+    # Same arithmetic the liveness sweep applies to its per-level maximum,
+    # through the same function -- see `_timeout_headroom_problem` for what the
+    # verdict can and cannot guarantee. One corner is the weakest evidence this
+    # check ever runs on (it is the design's FIRST corner, not its slowest),
+    # which is exactly why `--liveness` upgrading the evidence is worth the runs.
+    headroom = _timeout_headroom_problem(
+        elapsed, timeout, what=f"the probe configuration {levels}",
+        why_a_lower_bound=(
+            "this is the design's FIRST corner, not its slowest -- every factor "
+            "sits at its first declared level"
+        ),
+    )
+    if headroom:
+        problems.append(headroom)
 
     # 2b. Did every config_patch actually land in the file the target read?
     #
@@ -1447,6 +1620,60 @@ def _cmd_status(args):
             return
 
     print(format_watch_panel(read_status_snapshot(work_dir)))
+
+
+def _cmd_progress(args):
+    """Progress surface for a kind: optimization campaign (stage/rows/ETA).
+
+    Separate from ``nous status`` rather than folded into it, because the two
+    answer different questions from different artifacts. ``status`` reports the
+    engine PHASE from ``state.json`` and the last SDK tool-call event, which is
+    the right surface for a reflective campaign. It cannot report which STAGE an
+    optimization campaign is on -- the stage lives in ``transitions.jsonl`` and
+    the row counts live in each iteration's ``design_matrix.json`` / ``runs.jsonl``,
+    none of which ``status`` reads. A supervising human watching a real campaign
+    reported "confirm is running, 17 rows to go" for hours while it was actually
+    retry-looping, because no surface answered "which stage, how many rows".
+    """
+    import json
+    import time as _time
+
+    from orchestrator.optimize.progress import (
+        format_progress,
+        format_progress_line,
+        read_progress_snapshot,
+    )
+
+    work_dir = resolve_work_dir(args.target)
+    if not (work_dir / "state.json").exists():
+        print(f"Error: no state.json at {work_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, "json", False):
+        print(json.dumps(read_progress_snapshot(work_dir).as_dict(), indent=2,
+                         sort_keys=True))
+        return
+
+    if getattr(args, "line", False):
+        print(format_progress_line(read_progress_snapshot(work_dir)))
+        return
+
+    if getattr(args, "watch", False):
+        try:
+            while True:
+                snap = read_progress_snapshot(work_dir)
+                if sys.stdout.isatty():
+                    sys.stdout.write("\033[2J\033[H")
+                else:
+                    sys.stdout.write("\n" + "\u2500" * 60 + "\n")
+                sys.stdout.write(format_progress(snap) + "\n")
+                sys.stdout.flush()
+                _time.sleep(args.interval if args.interval > 0 else 2)
+        except KeyboardInterrupt:
+            print()
+            return
+
+    print(format_progress(read_progress_snapshot(work_dir)))
 
 
 def _cmd_cost(args):
@@ -2049,7 +2276,11 @@ def build_parser():
              "to sit at the first design corner) and flags a factor whose "
              "levels move the objective by less than 2x run-to-run noise — a "
              "dead axis that consumes its share of the design and makes the "
-             "policy hash a pre-registration of a knob nothing reads.",
+             "policy hash a pre-registration of a knob nothing reads. Also "
+             "reports each run's observed WALL CLOCK and fails when "
+             "run_timeout_sec leaves under 2x headroom over the slowest "
+             "completed run — a lower bound on the slowest CORNER, since the "
+             "sweep varies one factor at a time and never runs a corner.",
     )
     p_validate.add_argument(
         "--liveness-repeats", type=int, default=3, metavar="N",
@@ -2111,6 +2342,31 @@ def build_parser():
         help="Watch redraw interval in seconds (default: 2).",
     )
     p_status.set_defaults(func=_cmd_status)
+
+    p_progress = subparsers.add_parser(
+        "progress",
+        help="Stage, row counts, elapsed and ETA for a kind: optimization "
+             "campaign (reads progress.json's inputs live).",
+    )
+    p_progress.add_argument("target")
+    p_progress.add_argument(
+        "--watch", action="store_true",
+        help="Loop and redraw every --interval seconds.",
+    )
+    p_progress.add_argument(
+        "--line", action="store_true",
+        help="Print a single-line summary suitable for shell prompts.",
+    )
+    p_progress.add_argument(
+        "--json", action="store_true",
+        help="Print the machine-readable snapshot (same shape as "
+             "progress.json at the work-dir root).",
+    )
+    p_progress.add_argument(
+        "--interval", type=float, default=2.0,
+        help="Watch redraw interval in seconds (default: 2).",
+    )
+    p_progress.set_defaults(func=_cmd_progress)
 
     p_cost = subparsers.add_parser("cost")
     p_cost.add_argument("target")
@@ -2252,6 +2508,26 @@ def main():
     if not args.command:
         parser.print_help(sys.stderr)
         sys.exit(1)
+
+    # Reap the target adapter's process trees on SIGTERM/SIGINT. Installed HERE,
+    # at the entry point, and nowhere in library code: an application embedding
+    # `nous` has its own signal handling, and a library that silently replaced
+    # it would be a worse bug than the orphan this fixes. `install_signal_handlers`
+    # is additionally careful not to clobber a handler that is already set to
+    # something other than the default.
+    #
+    # What it buys: a campaign killed with SIGTERM used to leave the benchmark's
+    # children alive — an SDK child was found still running, and billing, 18
+    # hours after its campaign was stopped. `atexit` alone cannot cover that,
+    # because it does not run on a signal death.
+    try:
+        from orchestrator.optimize.reaper import install_signal_handlers
+        install_signal_handlers()
+    except Exception:  # pragma: no cover - never block the command
+        import logging as _logging
+        _logging.getLogger(__name__).debug(
+            "could not install child-reaping signal handlers", exc_info=True,
+        )
 
     try:
         args.func(args)
