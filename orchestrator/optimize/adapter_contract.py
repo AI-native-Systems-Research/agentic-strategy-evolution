@@ -64,7 +64,13 @@ logger = logging.getLogger(__name__)
 
 CONTRACT_FILE = "adapter_contract.json"
 CONTRACT_HASH_FILE = "adapter_contract.sha256"
-CONTRACT_VERSION = 1
+#: How deep the fingerprint records nested key TYPES before falling back to key
+#: names only. Two covers the shapes real adapters emit (a top-level metric, and
+#: one telemetry/cfg block beneath it) while keeping the fingerprint far smaller
+#: than the payload it describes.
+_MAX_NEST_DEPTH = 2
+
+CONTRACT_VERSION = 2
 
 
 class AdapterContractDrift(RuntimeError):
@@ -81,7 +87,7 @@ class AdapterContractDrift(RuntimeError):
 
 # ── the fingerprint ────────────────────────────────────────────────────────
 
-def _type_name(value: Any) -> str:
+def _type_name(value: Any, *, _depth: int = 0) -> str:
     """The fingerprinted type of one response value.
 
     WHAT IS FINGERPRINTED, AND WHY IT IS TYPES AND NOT VALUES. The sorted set of
@@ -105,13 +111,20 @@ def _type_name(value: Any) -> str:
     would otherwise call ``True`` an ``int``, which is how a bool/int level
     mismatch failed 67 of 67 runs on a real campaign).
 
-    Nesting is summarized one level deep -- a dict's own sorted key names, a
-    list's element types -- rather than recursed indefinitely. The keys a
-    campaign reads are addressed by ``predicates._resolve`` walking dotted
-    paths through dicts, so a nested block's key set is part of the contract;
-    an unbounded recursion over an adapter's arbitrarily deep telemetry would
-    make the fingerprint a second copy of the payload and would drift on
-    per-row content.
+    Nesting carries key names AND their types, to a bounded depth
+    (``_MAX_NEST_DEPTH``), rather than key names alone. Names alone reproduced
+    defect 7 exactly one level down: ``{"telemetry": {"rate": 2.0}}`` and
+    ``{"telemetry": {"rate": null}}`` both fingerprinted as
+    ``object{rate}`` and ``diff_contract`` reported no drift -- the same
+    real-value-becomes-null signature the top level was hardened against, in a
+    place a campaign genuinely reads, since ``predicates._resolve`` walks dotted
+    paths through dicts so ``telemetry.rate`` can be an objective or a
+    ``self_check`` observable.
+    The depth is bounded rather than unbounded because an adapter's arbitrarily
+    deep telemetry would otherwise make the fingerprint a second copy of the
+    payload and drift on per-row content; below the cap the summary falls back to
+    key names, and a campaign whose declared observables sit that deep is outside
+    what this guard can see -- stated rather than implied.
     """
     if value is None:
         return "null"
@@ -124,7 +137,13 @@ def _type_name(value: Any) -> str:
     if isinstance(value, str):
         return "str"
     if isinstance(value, dict):
-        inner = ",".join(sorted(str(k) for k in value))
+        if _depth < _MAX_NEST_DEPTH:
+            inner = ",".join(
+                f"{k}:{_type_name(value[k], _depth=_depth + 1)}"
+                for k in sorted(value, key=str)
+            )
+        else:
+            inner = ",".join(sorted(str(k) for k in value))
         return f"object{{{inner}}}"
     if isinstance(value, (list, tuple)):
         kinds = sorted({_scalar_kind(v) for v in value})

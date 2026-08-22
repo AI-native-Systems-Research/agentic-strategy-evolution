@@ -697,7 +697,7 @@ def test_bound_nonnegativity_checker():
 
 
 def test_zero_variance_bound_must_not_certify():
-    """INV-SEM02 / INV-STAT05: the OPEN violation, asserted as open.
+    """INV-SEM02 / INV-STAT05: FIXED, and asserted as fixed.
 
     Spec §3.5, measured on a real campaign: four centre points returned
     bit-identical values, so `pure_error = 0` and every interval came back
@@ -706,20 +706,22 @@ def test_zero_variance_bound_must_not_certify():
     a claim of exact ε-optimality from zero information wearing the label of a
     real t-based certificate.
 
-    This test asserts the CURRENT (wrong) behaviour and that the checker catches
-    it, so the day `terminal_regret_bound` grows the guard its sibling already
-    has, this test fails and points at INV-SEM02's `open_violation` flag.
+    `terminal_regret_bound` now grows the guard its sibling already had: an
+    unestimable contrast returns `value=None, method="none"` with a detail naming
+    the reason. Covers the CONSTANT-OFFSET reach too, which a count check on
+    replicates could never catch -- two finalists differing by a fixed amount give
+    paired differences of zero variance even when neither finalist's own samples
+    are constant.
     """
     deterministic = {"f1": [5.0] * 4, "f2": [5.0] * 4}
     bound = terminal_regret_bound(
         deterministic, "f1", delta=0.05, direction="maximize", paired=True,
     )
-    assert bound.value == 0.0 and bound.method == "bonferroni_one_sided_t_paired", (
-        "if this fails, terminal_regret_bound has been fixed — clear "
-        "INV-SEM02/INV-STAT05's open_violation flag and invert this assertion"
-    )
-    errs = inv.check_bound_unknown_is_not_zero(bound)
-    assert any("unknown is not a zero" in e for e in errs), errs
+    assert bound.value is None and bound.method == "none", bound
+    assert "zero spread" in (bound.detail or ""), bound
+    # The checker now finds nothing to report, which is the point: it flags a
+    # bound that certifies from zero variance, and this bound no longer does.
+    assert inv.check_bound_unknown_is_not_zero(bound) == []
 
     # The sibling gets it right, which is what makes the asymmetry a defect
     # rather than a design choice.
@@ -1079,10 +1081,13 @@ def test_compile_policy_is_a_pure_function_of_the_campaign():
 def _welch_df_underflows(samples: dict[str, list[float]]) -> bool:
     """Whether `terminal_regret_bound`'s unpaired branch will raise on these samples.
 
-    Used by the properties below to `assume` away the input class that
-    `test_welch_df_underflows_on_subnormal_variance` asserts directly. Excluding
-    it there and asserting it here keeps the two findings distinct: the
-    properties are about the bound's shape, this is about a crash.
+    Named for the arithmetic it detects, which USED to be a crash: the Welch df
+    denominator `(vk**2)/(nk-1) + (vb**2)/(nb-1)` was guarded by
+    `if (vk + vb) > 0`, and for subnormal variances that guard passes while
+    `vk**2` underflows to exactly 0.0. The guard now tests the denominator itself,
+    so this input class returns a not-estimable bound instead of raising -- but the
+    class is still worth identifying, because the properties below assert bound
+    SHAPES and this class has no bound to shape.
     """
     from statistics import variance
 
@@ -1096,7 +1101,7 @@ def _welch_df_underflows(samples: dict[str, list[float]]) -> bool:
 
 
 def test_welch_df_underflows_on_subnormal_variance():
-    """INV-STAT12: the terminal bound must not RAISE on any admissible sample.
+    """INV-STAT12: FIXED -- the terminal bound no longer RAISES on subnormals.
 
     A checker cannot express this one, because the failure is an exception
     rather than a value -- so it is asserted directly, and recorded in the
@@ -1122,17 +1127,23 @@ def test_welch_df_underflows_on_subnormal_variance():
     """
     tiny = -3.117993501313441e-82
     samples = {"f1": [tiny, 0.0], "f2": [tiny, 0.0]}
+    # FIXED: the guard now tests the DENOMINATOR itself, so this returns a
+    # not-estimable verdict instead of raising.
+    # The arithmetic class is unchanged -- vk**2 still underflows -- but it is no
+    # longer a crash: the denominator guard converts it to a not-estimable verdict.
     assert _welch_df_underflows(samples)
-    with pytest.raises(ZeroDivisionError):
-        terminal_regret_bound(
-            samples, "f1", delta=0.05, direction="maximize", paired=False,
-        )
+    b = terminal_regret_bound(samples, "f1", delta=0.05, direction="maximize",
+                              paired=False)
+    assert b.value is None and b.method == "none", b
     # The paired branch divides by `n` rather than by a squared variance, so it
-    # survives the same input -- which is what localises the defect.
-    ok = terminal_regret_bound(
+    # never had the underflow -- but on THIS input its paired differences are
+    # (0.0, 0.0), variance exactly 0, so it now declines for the OTHER reason
+    # fixed alongside: zero spread carries no variance estimate. Both branches
+    # refuse, by different arguments, and neither raises.
+    paired = terminal_regret_bound(
         samples, "f1", delta=0.05, direction="maximize", paired=True,
     )
-    assert ok.value is not None
+    assert paired.value is None and paired.method == "none", paired
 
 
 _DETERMINISTIC = settings(

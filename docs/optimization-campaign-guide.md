@@ -3530,25 +3530,38 @@ Two things to do about it, and they are both cheap:
    surviving rows and report a coefficient for a factor whose expensive level was
    never measured.
 
-<!-- TODO(cross-ref): a concurrent change lands per-row instrumentation in
-     `runs.jsonl` — `duration_ms` (total across attempts), `attempts`,
-     `last_attempt_ms`, and a closed-vocabulary `failure_kind`
-     (orchestrator.optimize.runner.FAILURE_KINDS) alongside the prose `error`.
-     docs/data-model.md §7b already documents them. Once the implementation is
-     final, wire them in here:
-     (1) `failure_kind == "timeout"` versus `exit_nonzero` /
-     `unparseable_output` / `adapter_exception` is exactly the budget-versus-
-     defect split this subsection asks the author to make by hand — name the
-     field so the cross-tabulation is a filter, not a substring match on `error`;
-     (2) `duration_ms` is what makes "budget from the worst corner" auditable
-     after the fact and lets the NEXT epoch's ceiling be sized from data rather
-     than a probe — say so in the "two things to do about it" list;
-     (3) `last_attempt_ms` versus `duration_ms` is the distinction between what
-     the per-row ceiling applies to and what a schedule must budget; a reader
-     sizing a ceiling wants the former.
-     Also link the `--liveness` timeout-headroom check from the "what a per-level
-     sweep can and cannot bound" table above, keeping the load-bearing point
-     intact: it bounds LEVELS and still cannot bound CORNERS. -->
+**What `runs.jsonl` records, and how to read it for this.** Every row carries
+four instrumentation fields, so the budget-versus-defect split above is a filter
+rather than a substring match on prose:
+
+| Field | What it answers |
+|---|---|
+| `failure_kind` | *Why* the row failed, from a closed vocabulary: `timeout`, `exit_nonzero`, `unparseable_output`, `adapter_exception`, plus the rejection kinds (`ceiling_exceeded`, `constraint_violated`, `invariant_violated`, `manipulation_failed`, `integrity_failed`, `adapter_guard`). `timeout` is a **budget** question about your design; the next three are **defects** that will recur on any row reaching the same branch. |
+| `duration_ms` | Total wall clock the row consumed, **across attempts**. This is what makes "budget from the worst corner" auditable after the fact, and it lets the NEXT epoch's ceiling be sized from your own measured data instead of a fresh probe. |
+| `last_attempt_ms` | The single slowest attempt. **This is what a per-row ceiling applies to** — size `run_timeout_sec` against this, not against `duration_ms`. |
+| `attempts` | How many tries the row took, which is what tells you whether the two numbers above should differ. |
+
+Recording only the total would make a two-attempt row indistinguishable from a
+target that got twice as slow, and an author would then raise a ceiling that was
+never the constraint.
+
+To test whether failures cluster on a level, cross-tabulate `failure_kind` against
+`levels` — a `timeout` concentrated on one level of one factor is the bias this
+subsection is about, and it is now a group-by rather than a reading exercise.
+`duration_ms` is reserved so that `0` means "did not run": a field that exists,
+validates, and is always zero reads as "measured, instantaneous", which is how one
+real campaign hid a total instrumentation failure across all eighteen rows.
+
+**And the `--liveness` headroom check.** `nous validate campaign FILE --smoke
+--liveness` now reports each level's observed wall clock and FAILS when
+`run_timeout_sec` lacks 2x headroom over the slowest level that completed. That
+moves §7.1's advice from prose into a check — which matters, because prose did not
+hold: this section's own author sized a ceiling from the cheap corner three times
+in a row. The load-bearing limit is unchanged and the check says so itself: it
+bounds **levels**, and it still cannot bound **corners**. A failed run's duration
+is printed but never sets the bound, since its duration is bounded *by* the ceiling
+and feeding it back would compare the ceiling against itself.
+
 
 ### 7.1b Design so the surface survives losing rows
 
@@ -3596,22 +3609,34 @@ unestimable. If the answer for any factor is "the rows in one corner", that
 factor's levels or the design's resolution is the thing to revise — not the
 analysis afterwards.
 
-<!-- TODO(cross-ref): a concurrent change adds partial-design fitting plus
-     level-correlated exclusion reporting. When it lands:
-     (1) link the artifact that reports *which* levels lost rows (presumably
-     `fit_exclusions.json`, whose current contract per docs/data-model.md is row
-     indices plus a reason — if it gains a per-level or per-factor rollup, that
-     is the field to name here);
-     (2) state explicitly which of the three rows in the "what was lost" table
-     the implementation can now DETECT and warn about automatically (I expect
-     rows 2 and 3 — an unestimable coefficient is structurally visible from the
-     surviving design matrix) versus which remain the author's pre-flight
-     judgement;
-     (3) if the fitter drops a factor whose coefficient became unestimable,
-     confirm that it is recorded distinguishably from a factor dropped for being
-     insignificant — those are opposite findings and `effects.json`'s
-     "dropped factors" currently reads as one list. If it does not distinguish
-     them, that is a code-side gap worth filing, not a doc fix. -->
+**What the fitter now detects for you, and what stays your job.** A stage that
+loses rows writes `fit_exclusions.json`, and its fields map onto the three rows of
+the "what was lost" table above:
+
+| Field | Meaning |
+|---|---|
+| `excluded_by_reason` | Which rows went, split by cause — `failed_to_measure` / `no_metric` versus `infeasible` / `rejected`. Only the first two count as bias evidence; a constraint boundary concentrates on one level **by construction**, so counting `infeasible` would false-flag every constrained campaign. |
+| `non_identifiable_factors` | Factors that lost every row at one of their levels. Their coefficient is not weaker — it is **not estimable**, so the factor is dropped from the fit and named here. |
+| `interactions_dropped` | Set when the surviving rows cannot support the interaction block (six corners cannot fit seven terms). Main effects are kept. |
+
+`effects.json` carries `exclusion_balance`, the per-factor and per-cell
+concentration verdict, and a level-correlated exclusion **withholds global
+certification** — it is evidence against `delta_screen`'s premise that screening
+did not exclude the true optimum.
+
+Two of the three rows in that table are therefore now detected automatically: an
+unestimable coefficient is structurally visible from the surviving design matrix,
+and a concentrated loss is visible from the exclusion pattern. The **third stays
+your pre-flight judgement** — whether the region that went missing was the one you
+cared about is a question about your system, not about the matrix.
+
+One distinction worth keeping straight when you read the artifacts, because the
+names are similar and the findings are opposite: `effects.json`'s `dropped_factors`
+means **measured null** (the confidence interval contains zero — a result), while
+`fit_exclusions.json`'s `non_identifiable_factors` means **never estimable** (the
+design lost the contrast — a hole). Reading a hole as a result would report "this
+factor does not matter" about a factor you never measured.
+
 
 ### 7.2 Verify each factor actually moves the response, at the operating point
 
