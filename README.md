@@ -45,7 +45,7 @@ INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → HUMAN_FINDINGS_GAT
    DONE → DESIGN       Next iteration (increments counter, merges principles)
 ```
 
-See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, and [docs/architecture.md](docs/architecture.md) for system internals.
+See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, [docs/architecture.md](docs/architecture.md) for system internals, and [docs/optimization-campaign-guide.md](docs/optimization-campaign-guide.md) for the factorial/response-surface `kind: optimization` campaign type.
 
 ## Hypothesis Bundle Arms
 
@@ -58,6 +58,70 @@ Every experiment is structured as a bundle of falsifiable predictions:
 | **H-super-additivity** | Do components interact? | Tests whether compound effect exceeds sum of parts |
 | **H-control-negative** | Where should it NOT work? | Confirms mechanism specificity |
 | **H-robustness** | Does it generalize? | Tests across workloads, resources, scale |
+
+## Optimization Campaigns (`kind: optimization`)
+
+Alongside the default `reflective` loop above, Nous has a second campaign
+type for a different question: not "why does this system behave this way"
+but "which configuration is best, and how sure are we." `kind: optimization`
+runs a factorial / response-surface design instead of an agent-driven
+hypothesis loop:
+
+```
+verify → screen → [refine] → [confirm] → report
+```
+
+The campaign author (human, or an AI writing the YAML) declares factors and
+an objective; `verify` certifies the apparatus and **compiles an experimental
+policy** — a schema-validated, content-hashed `policy.json` — from that
+declaration. From there, **pure Python interprets the compiled policy**
+through the run: `screen` fits a factorial design, `refine` explores
+curvature where a factor survives screening, `confirm` takes the leading
+candidates and measures them fresh, and `report` writes the recommendation
+with a residual-regret certificate. Every intermediate decision is a lookup
+in `policy.json`, not a model call.
+
+**Substantive model calls per campaign: 0 by default, 1 if the optional
+`build` stage is used** to author a mechanism that doesn't exist in the
+target yet. Measured on a real campaign: 115 configurations certified for
+about $0.38.
+
+This is not the `reflective` loop with a factorial front end — it is a
+different guarantee. The reflective loop's two human gates are the safety
+mechanism; the optimization loop's safety mechanism is that **every branch
+the run can take was fixed in `policy.json` before the first measurement**,
+so "the winner was pre-registered" is a checkable fact about the artifact,
+not a claim about the process.
+
+Use it when:
+- the research question is "which configuration/knob-setting wins," not
+  "why does the system behave this way"
+- the factors and their ranges are already known (no exploration needed to
+  find them)
+- you want a certificate — a quantified bound on how far the recommendation
+  could be from the true optimum — rather than a narrative finding
+
+Use `reflective` (the default) instead when the mechanism itself is what's
+under investigation, or the space of plausible interventions isn't known
+up front.
+
+```bash
+nous validate campaign optimization-campaign.yaml --smoke   # do this before every run
+nous run optimization-campaign.yaml --auto-approve
+```
+
+`--smoke` runs the test command and one real configuration against the
+target before spending the full budget — catching declared-but-unresolvable
+test identifiers, a `run_command` that doesn't emit parseable JSON, a missing
+objective metric, or a manipulation predicate that doesn't actually hold, all
+of which otherwise cost a full campaign to discover.
+
+See [docs/optimization-campaign-guide.md](docs/optimization-campaign-guide.md)
+for the field-by-field authoring guide (four worked examples), and
+[docs/superpowers/specs/2026-08-16-compiled-policy-design.md](docs/superpowers/specs/2026-08-16-compiled-policy-design.md)
+for the design authority behind the compiled policy — what `step()` does,
+the closed observation/operator vocabularies, and the residual-regret
+certificate's two separately-reported error bounds.
 
 ## Quick Start
 
@@ -106,10 +170,10 @@ state.json's recorded `work_dir` will be stale until the campaign's next setup; 
 ### 1. Install Nous
 
 ```bash
-pip install "git+https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git@reflective"
+pip install "git+https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git@main"
 ```
 
-`reflective` is the active integration branch — that's where new work lands first. `main` lags slightly behind. To pin to a release, replace `@reflective` with a tag (`@v0.2.0`).
+`main` is the integration branch — that's where new work lands. To pin to a release, replace `@main` with a tag (`@v0.4.0`).
 
 For development (editable install with test dependencies):
 
@@ -426,6 +490,8 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   ledger.py                Deterministic ledger append (no LLM)
   worktree.py              Git worktree isolation for experiments
   util.py                  Shared utilities (atomic_write)
+  optimize/                kind: optimization — compiled experimental policy,
+                           factorial/response-surface design, zero-token epoch
 prompts/methodology/     Methodology prompt templates
 examples/                Example campaigns
 docs/                    Quickstart, protocol, data model, architecture

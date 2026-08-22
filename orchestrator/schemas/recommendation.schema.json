@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/recommendation.schema.json",
+  "title": "Optimization Fitting-Stage Recommendation",
+  "description": "runs/iter-N/recommendation.json (design spec 3.4, 3.5) -- what a FITTING state of the compiled epoch concluded from its fit: the argmax over X_valid, the runners-up that seed the terminal shortlist, the model-side residual regret R_delta(x) at delta_screen, and whether the design's aliasing is CONSEQUENTIAL. Written from exactly ONE call site in orchestrator.optimize.stage_runner (the fitting branch of run_stage), shared by every fitting state -- screen, the registered foldover, and refine -- so the shape is identical at all three and `stage` is the only field that tells them apart. This is the model-dependent half of the two-bound obligation: residual_regret_model lives here and residual_regret_terminal lives in confirmation.json, and no artifact carries a combined number.",
+  "type": "object",
+  "required": [
+    "stage",
+    "iteration",
+    "levels",
+    "coded",
+    "predicted",
+    "fitted_ids",
+    "held_fixed",
+    "top_candidates",
+    "stationary_point",
+    "model_adequate",
+    "excluded_measured_infeasible",
+    "residual_regret_model",
+    "epsilon",
+    "alias_consequential",
+    "aliases"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": ["screen", "foldover", "refine"],
+      "description": "Which fitting state of the compiled epoch produced this. The terminal state writes confirmation.json instead, never this file, because it fits no model."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The iteration index this fitting state ran at. Each state is a separate run_iteration call, which is why facts the terminal state needs are PERSISTED here rather than recomputed (the Fit is gone by then)."
+    },
+    "levels": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "The recommended factor levels: the argmax of the fitted surface over the enumerated valid candidate space. Real levels, never coded coordinates."
+    },
+    "coded": {
+      "type": "object",
+      "description": "The same point in coded coordinates, as the fit sees it. Recorded alongside `levels` so a reader can check the decode rather than trust it."
+    },
+    "predicted": {
+      "type": "number",
+      "description": "The fitted surface's PREDICTION at `levels` -- not a measurement. Report ladder rung 3 (`model`) is the only rung that hands this back as an answer, and it is the rung a semantic exception suppresses."
+    },
+    "fitted_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The factor ids actually carried in the fit, which can be narrower than the campaign's declared factors when rows were excluded or a factor was held fixed."
+    },
+    "held_fixed": {
+      "type": "object",
+      "description": "Factors pinned to one level for this stage rather than varied, and the level each was pinned at. Empty when every declared factor varied."
+    },
+    "top_candidates": {
+      "type": "array",
+      "description": "The runners-up, best first, including the argmax itself -- the near misses whose intervals still reach above x-hat. This is the pool the terminal shortlist is seated from, so a wider shortlist_size needs a wider pool here.",
+      "items": {
+        "type": "object",
+        "required": ["levels", "coded", "predicted"],
+        "additionalProperties": false,
+        "properties": {
+          "levels": { "type": "object" },
+          "coded": { "type": "object" },
+          "predicted": { "type": "number" }
+        }
+      }
+    },
+    "stationary_point": {
+      "type": ["object", "null"],
+      "description": "Coded-space stationary point of the fitted quadratic, or null when the fit has no curvature terms (a plane has no interior optimum). When it lies OUTSIDE the declared level hull the policy's registered stationary_in_hull guard routes to a semantic exception, and epoch_end-<epoch>.json points a reader back at this field to learn which axis to widen."
+    },
+    "model_adequate": {
+      "type": "boolean",
+      "description": "False when the lack-of-fit test rejected the registered response class, i.e. the argmax above is an artefact of a model the measurements rejected. PERSISTED rather than recomputed at the terminal state, which reads it to build its shortlist from MEASURED valid rows instead of anchoring on the model's pick (design spec 3.6 rung 3). The policy still routes to the terminal state on lack of fit -- fresh measurement IS the registered augmentation for model inadequacy."
+    },
+    "excluded_measured_infeasible": {
+      "type": "array",
+      "items": { "type": "object" },
+      "description": "Configurations excluded from the candidate space because the campaign has already MEASURED them inadmissible. Recorded so the exclusion is auditable rather than invisible; _run_report repeats the check at the point of use, because this recommendation may be read later than the run that invalidated it."
+    },
+    "residual_regret_model": {
+      "type": "object",
+      "required": ["value", "challenger", "delta", "method", "detail"],
+      "additionalProperties": false,
+      "description": "The MODEL-side residual regret R_delta(x) (design spec 3.5), taken over the WHOLE valid space rather than over top_candidates -- eq. (2)'s max over z in X_valid. This is the bound that rests on the registered response class. The terminal bound is a different number computed from disjoint inputs and lives in confirmation.json; the two are never collapsed, and neither artifact carries a combined value.",
+      "properties": {
+        "value": {
+          "type": ["number", "null"],
+          "description": "The bound itself, at level `delta`. Null when no bound was computable -- no challenger at all, or pure error exactly zero."
+        },
+        "challenger": {
+          "type": ["object", "string", "null"],
+          "description": "Which rival attains the bound: a levels dict here (a finalist key at the terminal stage). Named even when `value` floored at 0.0, because `which rival is closest` is what the next experiment should be directed at. Null when there was no challenger."
+        },
+        "delta": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 0.5,
+          "description": "The risk level this bound holds at -- delta_screen from the compiled policy's objective. A bound without its delta is not a bound."
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Which arithmetic actually ran (e.g. bonferroni_one_sided_t), so the recorded method can never silently disagree with the number."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Human-readable provenance: challenger count M, degrees of freedom, the t multiplier."
+        }
+      }
+    },
+    "epsilon": {
+      "type": "number",
+      "description": "The resolved epsilon-optimality tolerance this stage's bound is compared against, from the policy's objective (an absolute value, or a percentage resolved against `predicted`)."
+    },
+    "alias_consequential": {
+      "type": "array",
+      "description": "Aliased pairs whose resolution could change the recommended winner (design spec 3.4). Non-empty means resolving the alias can change the ANSWER, which is what makes the registered foldover a resource decision rather than a reflex; empty means every plausible resolution names the same epsilon-optimal winner and a foldover would buy a cleaner model and a worse campaign. Computed at EVERY fitting state, not only at screen, so `the foldover resolved it` is verifiable rather than assumed.",
+      "items": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "exclusion_balance": {
+      "type": "object",
+      "description": "GENUINELY OPTIONAL, not nullable: present ONLY when rows were excluded from the fit behind this recommendation. Same object as effects.json's exclusion_balance (orchestrator.optimize.exclusions.ExclusionBalance.as_dict), recorded HERE so it sits next to residual_regret_model -- the bound whose guarantee is conditional on the registered response class describing the measurements. A level-correlated exclusion is evidence that the fitted surface is biased in a NAMED direction rather than merely estimated from fewer rows, which is a different fact from a wider interval. It is also PERSISTED (rather than recomputed at the terminal state) for the reason model_adequate is: confirm is a separate run_iteration call and the Fit is gone by then, and confirm reads level_correlated to withhold GLOBAL certification -- the same delta_screen premise, broken the same way, as an inadmissible finalist.",
+      "additionalProperties": true,
+      "required": ["n_rows", "n_excluded", "n_bias_excluded", "level_correlated", "flagged_factors"],
+      "properties": {
+        "n_rows": { "type": "integer", "minimum": 0 },
+        "n_excluded": { "type": "integer", "minimum": 1 },
+        "n_bias_excluded": { "type": "integer", "minimum": 0 },
+        "level_correlated": { "type": "boolean" },
+        "flagged_factors": { "type": "array", "items": { "type": "string" } },
+        "factors": { "type": "array", "items": { "type": "object" } },
+        "cells": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "aliases": {
+      "type": "array",
+      "description": "Every alias pair the design confounds, consequential or not. One fitted coefficient per ALIAS CLASS is what keeps X^T X non-singular under a resolution-IV screen, so recording the classes is how a reader checks which effects share an estimate.",
+      "items": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 2,
+        "maxItems": 2
+      }
+    }
+  }
+}

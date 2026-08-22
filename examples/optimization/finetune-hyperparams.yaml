@@ -1,0 +1,232 @@
+# Fine-tuning hyperparameters under a wall-clock and memory budget —
+# response-surface campaign.
+#
+# A DELIBERATELY NON-SERVING example. The other files in this directory
+# (vllm-batching, qdrant-hnsw, knative-autoscale) are online-systems campaigns
+# whose objective is throughput or latency. This one is an offline batch
+# computation, and it is here because it exercises parts of the machinery those
+# three do not:
+#
+#   * `held_out` finally means what its name says. In the serving examples it is
+#     a second workload trace — a generalization check by analogy. Here it is the
+#     actual frozen TEST split, and the field's contract (recorded at `confirm`,
+#     never an input to fitting) is the ordinary discipline of the field stated
+#     where Nous enforces it. Validator rule 2 makes fitting on the test metric
+#     unwriteable.
+#   * The budget is a CONSTRAINT, not a penalty. "Best accuracy" with no budget
+#     is won by whichever configuration trained longest, so the real question is
+#     accuracy SUBJECT TO wall-clock and memory. An over-budget row is marked
+#     infeasible and retained in runs.jsonl as real data about the trade —
+#     see docs/targets.md §4 on why validity beats a hand-chosen penalty weight.
+#   * The objective is CENSORABLE. A diverged run and a run killed at the ceiling
+#     both report a real-looking accuracy. `response.self_check` is what separates
+#     a measurement from a censored observation (guide §7.4, §7.7).
+#   * No `refine`. Only one numeric factor has more than two levels, and a
+#     central-composite design needs two — so `stages: [verify, screen, confirm]`
+#     is the right schedule, which is the common case in hyperparameter spaces
+#     where most factors are names rather than magnitudes.
+#   * `run_timeout_sec` sits ABOVE the wall-clock constraint on purpose. See the
+#     comment at that field.
+#
+# The adapter contract this campaign assumes (bench/nous_bench.py,
+# tests/test_train_props.py inside the harness checkout) follows the shape
+# specified in docs/targets.md. Run `nous validate campaign FILE --smoke` before
+# launching; add --liveness to catch a precision level the hardware silently
+# downgrades, which is this domain's classic dead axis.
+kind: optimization
+run_id: finetune-hyperparams-rsm
+research_question: >
+  Which combination of optimizer, learning-rate schedule, batch size, and
+  compute precision maximizes validation accuracy on the fine-tuning task within
+  a 90-minute wall-clock and 40 GiB memory budget, and does the winner hold up
+  on the untouched test split?
+prompts:
+  methodology_layer: prompts/methodology
+  domain_adapter_layer: null
+target_system:
+  name: finetune-harness
+  repo_path: /path/to/finetune-harness   # adapter lives at bench/ inside this checkout
+  description: >
+    Fine-tuning harness over a fixed dataset and a fixed base checkpoint.
+    bench/nous_bench.py trains for the locked epoch count with the requested
+    hyperparameters using a seeded data order (NOUS_WORKLOAD_SEED), evaluates on
+    the frozen validation split, and prints one JSON object:
+    {val_accuracy, test_accuracy, epochs_completed, train_wall_sec,
+     peak_gpu_mem_gib, grad_norm_final, diverged, cfg:{...}}.
+    cfg echoes the EFFECTIVE settings, not the requested ones — in particular
+    cfg.effective_precision is what the kernels actually ran at, so a harness
+    that silently falls back to bf16 on hardware without fp8 support is caught by
+    the I_PREC invariant rather than reporting the fp8 rows as a duplicate of the
+    bf16 rows. test_accuracy is computed but NEVER read by any fitting stage; it
+    is declared held_out below.
+  controllable_knobs:
+    - optimizer
+    - lr_schedule
+    - batch_size
+    - precision
+    - warmup_pct
+locked_parameters:
+  dataset: task-mix-v2
+  base_checkpoint: base-7b-r3
+  epochs: 3
+  max_seq_len: 2048
+  val_split: val-frozen-5k
+  test_split: test-frozen-5k
+  warmup_pct: 3
+optimization:
+  run_command: "python bench/nous_bench.py --dataset task-mix-v2 --checkpoint base-7b-r3 --epochs 3 --json"
+  test_command: "python -m pytest tests/test_train_props.py -q --json-report --json-report-file=/dev/stdout"
+
+  # ABOVE the 5400 s wall-clock constraint on purpose. train_wall_sec <= 5400 is
+  # a CONSTRAINT, evaluated after the row completes: an over-budget config must
+  # be allowed to finish so it can be recorded as infeasible (informative) rather
+  # than timed out (excluded, and indistinguishable from a hang). Setting the
+  # ceiling AT the budget would convert every over-budget row into a timeout, and
+  # would do so systematically on the large-batch fp32 corner — which is exactly
+  # the level-correlated resource limit that biases a surface (guide §7.1a).
+  #
+  # Sized from the worst CORNER, not from levels: BS=64 x PREC=fp32 x OPT=adamw
+  # is the expensive one (largest activations, no memory saving, two optimizer
+  # moments). Measured: baseline ~2,900 s; that corner ~5,600 s including its
+  # own eval. 6600 s covers it. Note `nous validate campaign` WARNS about
+  # 6600 x 60 rows of worst-case wall clock; that warning is correct and this
+  # campaign keeps the ceiling anyway, because the measurement really is compound
+  # (a full training run) and shortening it would change the experiment rather
+  # than the schedule.
+  run_timeout_sec: 6600
+
+  known_valid_baseline: {OPT: adamw, SCH: cosine, BS: 16, PREC: bf16}
+
+  # Stochastic through the data order, so pairing is real: replicate i of every
+  # finalist trains on the same shuffle, and the shuffle's contribution cancels
+  # out of the finalist-to-finalist difference. Verify the harness actually reads
+  # the variable (docs/targets.md §3) before trusting a paired bound.
+  workload:
+    seed_env: NOUS_WORKLOAD_SEED
+    seeds: [7, 17, 27, 37, 47]
+
+  policy:
+    # 0.4 accuracy points ABSOLUTE, not a percent: a percentage of an accuracy is
+    # a quantity nobody in this field reasons about, and `abs` says exactly what
+    # "we would not reship for less than this" means.
+    epsilon: {abs: 0.004}
+    delta_screen: 0.05
+    delta_terminal: 0.05
+    confirm_max_rounds: 2
+
+  response:
+    primary: {metric: val_accuracy, direction: maximize}
+    constraints:
+      - {metric: train_wall_sec, op: "<=", value: 5400}
+      - {metric: peak_gpu_mem_gib, op: "<=", value: 40}
+      - {metric: diverged, op: "==", value: false}
+    self_check:
+      # A censored run is not a measurement of THIS objective. Without these, a
+      # run killed at epoch 2 reports a plausible accuracy and the fit reads it
+      # as "this configuration is mediocre" rather than "this row measured
+      # something else entirely".
+      - {metric: epochs_completed, op: ">=", value: 3}
+      - {metric: grad_norm_final, op: "<=", value: 100.0}
+    held_out: [test_accuracy]
+    noise_estimate_pct: 1.2
+  factors:
+    - id: OPT
+      name: optimizer
+      type: choice
+      levels: [adamw, adafactor, lion]
+      apply: "--optimizer={level}"
+      manipulation: {observable: cfg.optimizer, op: "==", value: "{level}"}
+      relations:
+        - id: R_OPT
+          kind: correctness
+          statement: "at a fixed seed, two runs of the same optimizer produce identical loss curves, so a measured difference is the factor and not the run"
+          native_test: "tests/test_train_props.py::test_seeded_run_is_reproducible"
+    - id: SCH
+      name: lr_schedule
+      type: choice
+      levels: [constant, cosine, linear_decay]
+      apply: "--lr-schedule={level}"
+      manipulation: {observable: cfg.lr_schedule, op: "==", value: "{level}"}
+      relations:
+        - id: R_SCH
+          kind: correctness
+          statement: "every schedule starts at the configured peak LR after warmup and ends at or below it, so no schedule silently rescales the peak"
+          native_test: "tests/test_train_props.py::test_schedule_endpoints"
+    - id: BS
+      name: batch_size
+      type: numeric
+      levels: [8, 16, 32, 64]
+      grid: 8
+      apply: "--batch-size={level}"
+      manipulation: {observable: cfg.batch_size, op: "==", value: "{level}"}
+      relations:
+        - id: R_BS
+          kind: correctness
+          statement: "gradient accumulation is exact: the summed gradient at batch 8 with 2 accumulation steps equals the gradient at batch 16 to float tolerance"
+          native_test: "tests/test_train_props.py::test_accumulation_matches_larger_batch"
+        - id: B_BS
+          kind: behavioral
+          statement: "peak GPU memory is non-decreasing in batch size at fixed precision"
+          native_test: "tests/test_train_props.py::test_peak_mem_monotone_in_batch"
+    - id: PREC
+      name: precision
+      type: choice
+      levels: [fp32, bf16, fp8]
+      apply: "--precision={level}"
+      manipulation: {observable: cfg.effective_precision, op: "==", value: "{level}"}
+      relations:
+        - id: R_PREC
+          kind: correctness
+          statement: "master weights and optimizer state stay fp32 at every compute precision, so a precision change is a compute change and not a silently different algorithm"
+          native_test: "tests/test_train_props.py::test_master_weights_are_fp32"
+  design:
+    screen: {resolution: 5, center_points: 3}
+    # No `refine`: BS is the only numeric factor with more than two levels, and a
+    # central-composite design needs >= 2 to have curvature to fit. The validator
+    # hard-fails a `refine` block here rather than running one that could only fit
+    # a line. That is not a degraded campaign — screening still estimates every
+    # two-factor interaction, and confirm still does terminal discrimination over
+    # a shortlist, so the final claim still does not rest on the fitted surface.
+    confirm: {replicates: 4, shortlist_size: 3}
+    max_runs: 60
+  stages: [verify, screen, confirm]
+  design_space:
+    invariants:
+      # The precision the row CLAIMS is the precision the row USED. `value:
+      # "{level}"` is the same level interpolation manipulation uses, and it is
+      # the right tool whenever a target has a FALLBACK PATH: a harness that
+      # quietly downgrades an unsupported setting is the single most common way a
+      # factor becomes a dead axis while every check passes (guide §7.2).
+      - id: I_PREC
+        statement: "the executed compute precision matches the requested one"
+        observable: cfg.effective_precision
+        op: "=="
+        value: "{level}"
+      - id: I_SPLIT
+        statement: "every run evaluates the frozen validation split, so no row scores itself on different data"
+        observable: cfg.val_split
+        op: "=="
+        value: val-frozen-5k
+  build_checks:
+    mechanism_paths: ["bench/nous_bench.py", "tests/test_train_props.py"]
+  guidance:
+    interpretation: >
+      BS x SCH is the expected interaction and the reason this is a factorial
+      rather than four sweeps: a constant LR is defensible at batch 8 and badly
+      wrong at batch 64, so the schedule's main effect averaged over batch sizes
+      is close to meaningless. Expect PREC x BS as well, through memory — fp8 is
+      what makes batch 64 fit, and batch 64 may be where the winner lives, which
+      is precisely the compound a one-factor-at-a-time sweep cannot reach (guide
+      §1, the composition barrier — with no queue anywhere in sight).
+      Read test_accuracy at confirm as a CHECK, never as a tiebreak. If the
+      shortlist's validation ordering and test ordering disagree, the campaign has
+      found overfitting to the validation split, and that is the result to report
+      — not a licence to pick whichever config won on test, which would leak the
+      held-out split through the author instead of through the fitter.
+      Certification arithmetic (docs/targets.md §5): sigma is ~1.2% of
+      val_accuracy, and epsilon is 0.004 absolute. With 4 PAIRED replicates over
+      2 challengers the terminal Bonferroni-t bound clears that epsilon once the
+      winner is roughly half a point clear of the field. Three finalists inside
+      0.2 points of each other should come back `terminal_best`, not `certified`
+      — read that as "these hyperparameter sets are indistinguishable at this
+      budget", which is a real and useful answer, not a failed campaign.

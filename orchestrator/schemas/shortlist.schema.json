@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/shortlist.schema.json",
+  "title": "Optimization Terminal Shortlist Pointer",
+  "description": "runs/iter-N/shortlist.json (design spec 3.9's artifact table) -- the shortlist under terminal discrimination, written next to confirmation.json by orchestrator.optimize.stage_runner._finish_confirm. A DISTINCT ARTIFACT from confirmation.json, not the same record under a second name: this is a POINTER (`see`) plus the shortlist itself, so the finalists and their measurements have exactly one source of truth and a reader who only needs `who was compared and who won` does not have to parse the whole terminal record. It deliberately carries NEITHER residual_regret_terminal NOR `certified` -- the certificate and its verdict live in confirmation.json alone, so there is no second place a bound could be reported from and no way for two copies of one number to disagree.",
+  "type": "object",
+  "required": ["round", "finalists", "best", "bounds", "epsilon", "see"],
+  "additionalProperties": false,
+  "properties": {
+    "round": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Which terminal round this shortlist belongs to. Same value as confirmation.json's `round`."
+    },
+    "finalists": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The realized shortlist, carried verbatim from confirmation.json's `finalists` -- same entries, same key/levels/why/samples/mean/n/status shape.",
+      "items": { "type": "object", "required": ["key", "levels", "status"] }
+    },
+    "best": {
+      "type": ["string", "null"],
+      "description": "The winning finalist's key, or null when none produced a valid measurement."
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": { "type": ["number", "null"] },
+      "description": "The per-challenger bounds against the winner, at delta_terminal with M=1 -- a screening level, not a certificate level. This is what round r+1 reads to decide who is still in contention."
+    },
+    "epsilon": {
+      "type": "number",
+      "description": "The resolved epsilon-optimality tolerance those bounds are read against."
+    },
+    "see": {
+      "type": "string",
+      "const": "confirmation.json",
+      "description": "Names the artifact that IS the record. Constant, because this file's whole reason for existing is to point at exactly one place rather than to become a second copy of it."
+    }
+  }
+}

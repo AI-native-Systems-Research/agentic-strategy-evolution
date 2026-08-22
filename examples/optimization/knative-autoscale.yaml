@@ -1,0 +1,135 @@
+# Knative Serving KPA autoscaler knobs — response-surface campaign.
+#
+# The adapter contract this campaign assumes (bench/nous_bench.py,
+# bench/test_nous_props.py inside the Knative checkout) is specified in
+# docs/targets.md. Run `nous validate campaign FILE --smoke` before launching.
+kind: optimization
+run_id: knative-autoscale-rsm
+research_question: >
+  Which combination of KPA autoscaling knobs minimizes p99 request latency
+  under a bursty diurnal load, without exceeding the cluster's pod ceiling or
+  dropping requests during scale events?
+prompts:
+  methodology_layer: prompts/methodology
+  domain_adapter_layer: null
+target_system:
+  name: knative-serving
+  repo_path: /path/to/knative-serving  # adapter lives at bench/ inside this checkout
+  description: >
+    Knative Serving on a fixed 3-node kind cluster. bench/nous_bench.py applies
+    the autoscaler annotations for the given levels, replays a seeded bursty
+    load profile (NOUS_WORKLOAD_SEED) against a fixed hello-latency Service,
+    waits out the scale-to-zero grace period, then prints one JSON object:
+    {p99_latency_ms, max_pods, error_rate, activator_in_path_pct, cfg:{...}}.
+  controllable_knobs:
+    - target_concurrency
+    - panic_window_pct
+    - scale_to_zero_grace
+    - metric_mode
+    - stable_window
+    - max_scale_up_rate
+locked_parameters:
+  service: hello-latency
+  nodes: 3
+  load_profile: diurnal-burst-10m
+  stable_window: 60s
+  max_scale_up_rate: 1000
+optimization:
+  run_command: "python bench/nous_bench.py --service hello-latency --profile diurnal-burst-10m"
+  test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
+  known_valid_baseline: {TC: 100, PW: 10, SZ: 30, MODE: concurrency}
+  workload: {seed_env: NOUS_WORKLOAD_SEED}
+  policy: {epsilon: {pct: 3.0}, delta_screen: 0.05, delta_terminal: 0.05, confirm_max_rounds: 2}
+  response:
+    primary: {metric: p99_latency_ms, direction: minimize}
+    constraints:
+      - {metric: max_pods, op: "<=", value: 20}
+      - {metric: error_rate, op: "<=", value: 0.001}
+    noise_estimate_pct: 8.0
+  factors:
+    - id: TC
+      name: target_concurrency
+      type: numeric
+      levels: [10, 50, 100, 200]
+      grid: 10
+      apply: "--target-concurrency={level}"
+      manipulation: {observable: cfg.target_concurrency, op: "==", value: "{level}"}
+      relations:
+        - id: R_TC
+          kind: correctness
+          statement: >
+            no request is lost or 503'd because of a scale event at any target
+            concurrency — every offered request is either answered or counted in
+            error_rate, never silently dropped by the load generator
+          native_test: "bench/test_nous_props.py::test_no_request_lost_during_scale_events"
+    - id: PW
+      name: panic_window_pct
+      type: numeric
+      levels: [5, 10, 20, 50]
+      grid: 5
+      apply: "--panic-window-percentage={level}"
+      manipulation: {observable: cfg.panic_window_pct, op: "==", value: "{level}"}
+      relations:
+        - id: R_PW
+          kind: correctness
+          statement: >
+            the autoscaler leaves panic mode within one stable window after the
+            burst ends, at every panic-window percentage — a run that ends still
+            panicking has not measured the steady state it reports
+          native_test: "bench/test_nous_props.py::test_panic_mode_exits_within_one_stable_window"
+        - id: B_PW
+          kind: behavioral
+          statement: "pod count is non-decreasing in offered load within a burst"
+          native_test: "bench/test_nous_props.py::test_pods_monotone_in_load"
+    - id: SZ
+      name: scale_to_zero_grace
+      type: numeric
+      levels: [30, 60, 120, 300]
+      grid: 30
+      apply: "--scale-to-zero-grace-period={level}s"
+      manipulation: {observable: cfg.scale_to_zero_grace, op: "==", value: "{level}"}
+      relations:
+        - id: R_SZ
+          kind: correctness
+          statement: >
+            the Revision reaches zero replicas after the declared grace period
+            elapses with no traffic — the knob actually terminates the last pod
+            rather than merely being accepted by the annotation validator
+          native_test: "bench/test_nous_props.py::test_scale_to_zero_reached_after_grace"
+    - id: MODE
+      name: metric_mode
+      type: choice
+      levels: [concurrency, rps]
+      apply: {kind: cli_flag, template: "--autoscaling-metric={level}"}
+      manipulation: {observable: cfg.metric_mode, op: "==", value: "{level}"}
+      relations:
+        - id: R_MODE
+          kind: correctness
+          statement: >
+            every offered request is accounted for exactly once under either
+            metric mode — the request total the load generator sent equals
+            answered plus errored
+          native_test: "bench/test_nous_props.py::test_every_request_accounted_once_under_either_metric"
+  design:
+    screen: {resolution: 5, center_points: 4}
+    refine: {kind: central_composite, center_points: 4}
+    confirm: {replicates: 6, shortlist_size: 3}
+    max_runs: 100
+  design_space:
+    invariants:
+      - id: I_ACT
+        statement: >
+          the activator stays out of the request path for the steady-state
+          portion of the run, so latency reflects the autoscaler's decisions
+          rather than cold-start proxying
+        observable: activator_in_path_pct
+        op: "<="
+        value: 20
+  guidance:
+    interpretation: >
+      This target's run-to-run variance is large relative to the effects under
+      study (cluster scheduling, image cache state, kubelet timing) — hence the
+      8% noise estimate, six confirm replicates, and a 3% indifference width.
+      A recommendation whose bound does not clear 3% is a genuine "no
+      difference", not a budget failure. Latency is MINIMIZED here: read every
+      regret number as "how much worse than the unknown best could this be".

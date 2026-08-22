@@ -1,6 +1,11 @@
 # Data Model Guide
 
-Nous uses 11 schema-governed artifacts to drive the investigation loop. This guide explains each one in plain English.
+Nous drives the investigation loop through schema-governed artifacts on disk
+(`orchestrator/schemas/`), plus a handful written without a JSON Schema of
+their own. This guide explains each one in plain English. Sections 0-6b cover
+the artifacts every campaign writes; section 7 covers the ones a
+`kind: optimization` campaign adds, and notes which of those are
+schema-governed and which are not.
 
 ## How They Fit Together
 
@@ -238,6 +243,458 @@ A human-readable summary produced before each human gate. Designed to help the h
 | `key_points` | Bullet points with specific numbers, metrics, and hypothesis references |
 
 Located at `runs/iter-N/gate_summary_<type>.json`. Generated on the fly before each gate — not persisted across sessions.
+
+## 7. Optimization campaign artifacts (`kind: optimization`)
+
+Additive to the schemas above — every artifact described in sections 0-6b is
+still written, unchanged in schema, for a `kind: optimization` campaign. See
+[docs/optimization-campaign-guide.md](optimization-campaign-guide.md) for
+the authoring guide these artifacts support, and its "The compiled policy"
+section for how they fit together during a run.
+
+Two locations matter, and the split is not cosmetic:
+
+- **Work-dir root** — facts about the **epoch**: the compiled policy, the
+  transition log, the report, the epoch-end record, and the build oracles'
+  evidence. An epoch spans several iterations, so an epoch-scoped fact
+  buried per-iteration would make "which epoch are we in?" a directory walk.
+- **`runs/iter-N/`** — facts about one **iteration**: its design matrix, its
+  runs, its fit, its recommendation or confirmation.
+
+**Complete inventory.** The list below is what the code writes, not an
+illustrative subset; the design spec's §3.9 table is the authority on what
+must exist, and the code is the authority on the names. Two differ, and are
+called out where they appear (`epoch_end-<epoch>.json` for the spec's
+`epoch.json`; no `alias_map.json` — its content lives in `effects.json` and
+`recommendation.json`).
+
+| File | Location | Written by | Schema |
+|---|---|---|---|
+| `policy.json` | root | end of `verify` (`policy.write_policy`) | `schemas/policy.schema.json` |
+| `policy.sha256` | root | same call | plain text |
+| `transitions.jsonl` | root | every `step()` (`policy.append_transition`) | none |
+| `report.json` | root | `report` (`stage_runner._run_report`) | `schemas/report.schema.json` |
+| `epoch_end-<epoch>.json` | root | `exception` (`stage_runner._close_iteration`) | none |
+| `mechanism.patch` / `mechanism.sha256` | root | `build.snapshot_mechanism` | patch / plain text |
+| `pre_build_tests.json` | root | `run_stage`, before `build` | none |
+| `baseline_equivalence.json` | root | `run_stage` at `verify`, when `build` ran | none |
+| `adapter_contract.json` / `adapter_contract.sha256` | root | first **successful** row of the epoch (`adapter_contract.capture_contract`) | none / plain text |
+| `progress.json` | root | `progress.write_progress` — rewritten atomically as the campaign runs; read it with `nous progress <target>` | none |
+| `halt.json` | root | `progress.write_halt` — the CAMPAIGN LOOP stopped (repeated identical failures, or the declared wall-clock budget). Distinct from `epoch_end-<e>.json`, which records a SEMANTIC exception the policy routed to | none |
+| `design_matrix.json` | `runs/iter-N/` | `artifacts.write_design_matrix` | `schemas/design_matrix.schema.json` |
+| `runs.jsonl` | `runs/iter-N/` | `artifacts.append_run` | `schemas/runs_row.schema.json` |
+| `effects.json` | `runs/iter-N/` | `artifacts.write_effects` | `schemas/effects.schema.json` |
+| `recommendation.json` | `runs/iter-N/` | `run_stage`, fitting states | `schemas/recommendation.schema.json` |
+| `fit_exclusions.json` | `runs/iter-N/` | `run_stage`, only when rows were excluded | none |
+| `reuse_manifest.json` | `runs/iter-N/` | `resume.write_manifest`, whenever reuse was considered (including when REFUSED) | none |
+| `confirmation.json` | `runs/iter-N/` | `stage_runner._finish_confirm` | `schemas/confirmation.schema.json` |
+| `shortlist.json` | `runs/iter-N/` | `stage_runner._finish_confirm` | `schemas/shortlist.schema.json` |
+| `relations.json` | `runs/iter-N/` | `artifacts.write_relations` | `schemas/relations.schema.json` |
+| `findings.json` / `principle_updates.json` | `runs/iter-N/` | projected from the fit — zero tokens | the shared reflective schemas |
+| `build_summary.md` / `build_warning.txt` | `runs/iter-N/` | `build.run_build` | prose |
+| `build_events.jsonl` | `runs/iter-N/` | `build.run_build` (the SDK runner's event log) | none |
+
+How they chain, for one epoch:
+
+```
+campaign.yaml (optimization block)
+    │  build?  → mechanism.patch, mechanism.sha256, pre_build_tests.json
+    │  verify  → relations.json, baseline_equivalence.json
+    ▼
+policy.json + policy.sha256    compile_policy(), pure Python, ZERO tokens
+    │                          ── the pre-registration: hashed before run 1
+    ▼
+   ┌──────────────── step(policy, state, observations) ───────────────┐
+   │  each call appends one row to transitions.jsonl                  │
+   │                                                                  │
+   │  screen ─┬─▶ foldover ─┬─▶ refine ─▶ confirm ⟲ ─▶ report        │
+   │          └─────────────┴──────────────┘   │                      │
+   │   per state: design_matrix.json, runs.jsonl,                     │
+   │              effects.json, recommendation.json                   │
+   │              (+ fit_exclusions.json if rows were excluded)        │
+   │   at confirm: confirmation.json, shortlist.json                  │
+   │                                                                  │
+   │  any state ─▶ exception  (semantic exception; ENDS the epoch)     │
+   └──────────────────────────────────────────────────────────────────┘
+    │                                    │
+    ▼                                    ▼
+report.json                        epoch_end-<epoch>.json
+ recommendation.basis,               why it ended + next_epoch_requires
+ both bounds, path                  → its presence starts epoch 2
+```
+
+### 7e. policy.json — "What was pre-registered, before any result was seen?"
+
+**Schema:** `schemas/policy.schema.json` · **Location:** work-dir root
+
+The **compiled epoch**: a state machine compiled from the campaign's
+`optimization` block by `orchestrator.optimize.policy.compile_policy` at the
+end of `verify`. Compilation is pure Python — **zero model tokens** — and
+reads no measurement. `policy.sha256` beside it carries the content hash.
+
+That hash written *before the first benchmark run* is the pre-registration:
+every branch the campaign could take was fixed before any result was seen.
+`stage_runner` re-checks it on every subsequent stage and hard-aborts on a
+mismatch — a pre-registered policy cannot change inside an epoch. **Never
+edit `policy.json`;** revise the campaign YAML and start a new epoch.
+
+| Field | What it means |
+|---|---|
+| `policy_version` | `1` — the compiled-policy format version |
+| `epoch` | Which execution this policy registers; `epoch_end-*.json` files on disk are what advance it |
+| `compiled_from` | `campaign_hash`, `mechanism_patch_hash`, `factor_ids`, and the `pre_epoch` stages (`build` / `verify`) this was compiled behind |
+| `objective` | `metric`, `direction`, `epsilon`, `delta_screen`, `delta_terminal` — the campaign's `policy` block, verbatim |
+| `budget` | `max_runs` (or `null` for unbudgeted) |
+| `known_valid_baseline` / `workload` | The declared baseline and seed contract, carried into the epoch |
+| `initial` | The epoch's first state — `screen` (`build`/`verify` are pre-epoch) |
+| `states` | Per state: `spends`, `terminal`, `ends_epoch`, `design`, `estimator`, `accounting` |
+| `transitions` | Ordered rules: `from`, plus either (`when`, `to`, `accounting`) or `default` |
+
+Every `when` guard reads only keys in `policy.OBSERVATION_KEYS` and compares
+them with `policy.COMPARISON_OPS` (`>`, `>=`, `<`, `<=` — no `==`/`!=`).
+`check_policy` rejects anything else, and `enumerate_paths` makes
+registration checkable by enumeration rather than inspection.
+
+### 7f. transitions.jsonl — "Why did the epoch go this way?"
+
+**Location:** work-dir root · one object per line, append-only **across
+epochs** (truncating it on an exception would destroy the record of why the
+epoch ended; every row carries its `epoch`, so consumers filter).
+
+Written by `policy.append_transition` on every `step()` call. This file, not
+the log, is the audit trail: `report.json`'s `path` is read back from it, and
+`current_state` resumes from it.
+
+| Field | What it means |
+|---|---|
+| `epoch` / `iteration` | Which epoch and which Nous iteration this step belongs to |
+| `from` / `to` | The state that just finished and the state the policy routed to |
+| `observations` | The **full** observation dict `step()` saw — every key in the closed vocabulary, not just the one that fired |
+| `rule` | The transition that fired, including its `accounting` string (or the `default`) |
+| `policy_hash` | Which registered policy scheduled this step — what keeps the question answerable across epochs |
+
+### 7g. recommendation.json — "What does the fitted surface say is best?"
+
+**Schema:** `schemas/recommendation.schema.json` · **Location:**
+`runs/iter-N/` · written at every fitting state (`screen`, `foldover`,
+`refine`) — from one call site, so the shape is identical at all three and
+`stage` is the only field that tells them apart.
+
+`recommend()` is `argmax` over `X_valid` — enumeration for a small space,
+deterministic optimization for a structured one, and **no model judgment**.
+It exists because a solved stationary point may be a saddle or a minimum, and
+because `choice` factors are excluded from a quadratic solve.
+
+| Field | What it means |
+|---|---|
+| `stage` / `iteration` | Which fitting state produced this |
+| `levels` / `coded` / `predicted` | The argmax over `X_valid`, and the surface's prediction there |
+| `top_candidates` | The runners-up, which become the shortlist's seed at `confirm` |
+| `stationary_point` | The solved quadratic stationary point, when there is one — reported, never blindly trusted |
+| `residual_regret_model` | The **model bound** `R_δ^model(x̂)`: `value`, `challenger`, `delta`, `method`, `detail` |
+| `aliases` / `alias_consequential` | The alias classes, and which of them could actually change the winner — the spec's `alias_map.json` content, recorded at every fitting state |
+| `fitted_ids` / `held_fixed` | Which factors this fit covered, and what the rest were pinned at |
+| `model_adequate` | Whether the lack-of-fit test rejected the registered response class — read by `confirm` to decide whether the model's pick may be seated as a finalist |
+
+### 7h. fit_exclusions.json — "Which rows were left out of the fit, and why?"
+
+**Location:** `runs/iter-N/`, written **only when rows were excluded.**
+
+One infeasible row used to NaN-poison every fitted coefficient while still
+producing a schema-valid `effects.json`. The fit now runs on the
+complete-row subset and records the exclusions here, so information loss is
+visible rather than silent.
+
+| Field | What it means |
+|---|---|
+| `stage` | Which fitting state |
+| `planned_rows` / `fitted_rows` | How many rows the design planned versus how many the fit used |
+| `excluded_row_indices` | Which `runs.jsonl` rows were excluded |
+| `reason` | Why — rows that did not reach status `complete` (infeasible, rejected, or unmeasured) |
+
+### 7i. confirmation.json / shortlist.json — "Terminal discrimination"
+
+**Schemas:** `schemas/confirmation.schema.json` and
+`schemas/shortlist.schema.json` · **Location:** `runs/iter-N/` · written by
+`stage_runner._finish_confirm`.
+
+`confirm` is this branch's name for the paper's **`discriminate`** stage
+(design spec §3.3's naming note). It is **terminal discrimination**, not
+replication: it measures a shortlist of finalists freshly and compares them
+*against each other*, so the final comparison rests on measurements rather
+than on the fitted surface.
+
+`confirmation.json` is the record; `shortlist.json` is a pointer to it plus
+the shortlist itself, so the finalists and their measurements have exactly
+one source of truth.
+
+| Field | What it means |
+|---|---|
+| `round` | Which round of terminal discrimination (capped by `confirm_max_rounds`) |
+| `finalists` | Each finalist's `key`, `levels`, `samples`, `mean`, `n`, `status`, and **`why`** it made the shortlist |
+| `best` | The winning finalist's key |
+| `residual_regret_terminal` | The **terminal bound**'s value — model-free, from the fresh replicates only |
+| `bounds` | The per-challenger bound record: `delta`, `method`, `challenger`, `detail` |
+| `epsilon` | The resolved indifference width this round was judged against |
+| `certified` | Whether `R_δ^term ≤ ε` |
+| `best_observed` / `confirmed_is_best_observed` / `regression_vs_best_observed` | The best configuration observed anywhere against the winning finalist — "best finalist" and "best configuration found" are different claims |
+
+### 7j. report.json — "What should we do, and how strong is the claim?"
+
+**Schema:** `schemas/report.schema.json` · **Location:** work-dir root ·
+written by `stage_runner._run_report`.
+
+The report **always names an action.** The fallback ladder is recorded as
+`recommendation.basis`, so a reader can tell a certificate from a fallback
+without opening a log: `certified` → `terminal_best` → `model` → `measured`
+→ `baseline`, plus `none` when no baseline was declared and there is
+genuinely nothing legal to return. See the guide's table for what each rung
+does and does not claim.
+
+| Field | What it means |
+|---|---|
+| `recommendation` | `levels`, `basis`, and `value` where one exists |
+| `residual_regret_model` | The model bound's value, at `delta_screen` — carries the registered response-class assumption |
+| `residual_regret_terminal` | The terminal bound's value, at `delta_terminal` — does not depend on the fitted model at all |
+| `epsilon` / `certified` | The indifference width, and whether the terminal bound cleared it |
+| `delta_screen` / `delta_terminal` | The two error budgets: `Pr(wrong global decision) ≤ δ_s + δ_t` |
+| `finalists` | The terminal shortlist, carried forward from `confirmation.json` |
+| `known_valid_baseline` | The declared baseline, so the bottom rung is visible even when it was not used |
+| `path` | The states this epoch actually visited, read back from `transitions.jsonl` |
+| `epoch` / `policy_hash` / `iteration` | Which epoch, under which registered policy, closed at which iteration |
+| `epoch_ended` | Present **only** when a semantic exception ended the epoch: the guard that fired |
+
+The two bounds are **never collapsed into one number.** They rest on
+different assumptions — the model bound on the registered response class, the
+terminal bound on nothing but the fresh measurements — so a single "regret"
+figure would advertise the assumption-light guarantee while delivering the
+model-dependent one. A `null` bound means the variance was not estimable, and
+an unknown is not a zero: treat it as "cannot certify."
+
+`report.json` carries each bound's *value*; the full record (`challenger`,
+`delta`, `method`, `detail`) stays in `recommendation.json` and
+`confirmation.json`.
+
+The separation is enforced, not merely documented. `report.schema.json`
+requires `residual_regret_model` and `residual_regret_terminal`
+**independently**, declares no `oneOf`/dependency relating them, and defines no
+combined field for a collapsed number to live in — so a report that dropped or
+merged either bound cannot reach disk. Enforcement is wired at
+`stage_runner._write_json`, the one function every artifact write in the kind
+goes through (see `GOVERNED_ARTIFACTS`), which is why a new write site cannot be
+added that skips validation. A violation raises `OptimizationAborted` at the
+write rather than shipping an unreadable certificate.
+
+### 7k. epoch_end-&lt;epoch&gt;.json — "Why did the epoch end, and what would a new one need?"
+
+**Location:** work-dir root, one per epoch · written by
+`stage_runner._close_iteration` when the policy routes to `exception`.
+
+A **semantic exception** is a measurement the compiled policy has no
+registered branch for — a failed `correctness` relation, a NaN primary
+metric, a stationary point outside the declared hull. No model call is made
+to interpret it; the epoch ends instead. A `report.json` is still written, on
+the strongest rung that does not rest on the fitted surface.
+
+The file lives at the root, not per-iteration, because it is a fact about the
+epoch: `_epoch_index` counts these files to know which epoch the next run is.
+`iteration` is recorded inside it so the iteration that ended the epoch stays
+identifiable.
+
+| Field | What it means |
+|---|---|
+| `epoch` / `iteration` / `state` | Which epoch ended, at which iteration, in which state |
+| `rule` / `observations` / `reason` | The guard that fired, the full observation dict, and a printable summary |
+| `next_epoch_requires` | What a new epoch would need — a fixed lookup over the closed observation vocabulary, so it needs no model call to write |
+| `policy_hash` | The registration this epoch ran under |
+
+Its presence is also the signal that starts epoch 2: the next
+`nous run --resume` sees `epoch_end-1.json`, **recompiles** from the revised
+campaign, and runs a fresh pre-registration. That is not an escape from the
+hash check — the check refuses a policy edited *inside* an epoch; recompiling
+*across* an epoch boundary is the opposite operation.
+
+### 7l. pre_build_tests.json / baseline_equivalence.json / mechanism.patch — the build oracles
+
+**Location:** work-dir root · written around the opt-in `build` stage.
+
+| File | Oracle | What it proves |
+|---|---|---|
+| `mechanism.patch` + `mechanism.sha256` | 2(a) | A snapshot of the mechanism as compiled. Every later iteration re-hashes the tree (scoped by `build_checks.mechanism_paths`) and aborts on drift — the numbers must describe the system the policy was compiled for |
+| `pre_build_tests.json` | 2(b) | Each declared `native_test`'s verdict **before** the build. A `correctness` test that already passed against a tree without the mechanism is green for some other reason, and stays green if the build wires the mechanism to nothing |
+| `baseline_equivalence.json` | 2(c) | The `known_valid_baseline`'s replicate vectors before and after the build. A mechanism that moves the metric *at its own OFF level* changed something outside its scope and confounds every treatment effect while looking clean |
+
+`baseline_equivalence.json` also records how the pre/post comparison was
+made. When the campaign declares `optimization.workload.seed_env`, the two
+halves share **workload common random numbers** (§3.8): post replicate *i*
+re-runs the draw pre replicate *i* used, so the workload's own entropy cancels
+out of the pre/post difference instead of being charged to the mechanism —
+which is what keeps a 5% hard-abort gate meaningful on a queue, a cache, or an
+autoscaler. `paired` is `true` in that case, with `workload_seeds` (the draws,
+index-aligned to `pre`/`post`) and `workload_seed_env` alongside it. `paired`
+is `false` when the campaign declares no workload block, and also when the
+pre-build half recorded no matching seeds — a campaign that added the block
+between `build` and `verify` degrades to the unpaired reading with a WARNING
+rather than labelling a pairing that never happened.
+
+### 7m. adapter_contract.json — "Was the measuring instrument the same all epoch?"
+
+**Location:** work-dir root · written by `orchestrator.optimize.adapter_contract`
+from the **first successful row** of the epoch.
+
+`policy.json` is content-hashed so a pre-registered *policy* cannot change inside
+an epoch. A pre-registered design makes the same assumption about the **target
+adapter** — the author-written `run_command` that produces the objective — and
+this artifact is the record of it.
+
+| Field | What it means |
+|---|---|
+| `contract_version` | `1` — the fingerprint format version |
+| `epoch` | Which execution this contract was captured for |
+| `captured_at` | `{stage, row_index}` — which row established it |
+| `keys` | `{key: type_name}` for every top-level key in the response, one level of nesting summarized (`object{a,b}`, `array[int]`). **Types, never values** — values legitimately change per row; that variation *is* the measurement |
+
+`adapter_contract.sha256` beside it carries the content hash, so an edit to the
+record cannot pass itself off as the contract the epoch registered.
+
+Every later row is re-fingerprinted and compared. A key that appeared, one that
+disappeared, or one whose type changed — **including a real value becoming
+`null`** — hard-aborts the campaign, the same way a `policy.sha256` mismatch does.
+`null` is its own type name for exactly that reason: a key-set-only fingerprint
+would read a value going null as no drift at all, and that was the defect —
+an adapter's output schema edited three times mid-epoch, rows measured before each
+edit carrying `null`, and a `None` reaching a `float()` coerce and a `>=` against
+a float, killing an iteration at fit time after ~2 hours of measurement.
+
+An **added** key aborts as strictly as a removed one. That is not conservatism
+about an additive change: the only way an adapter grows a key between two rows of
+one pre-registered design is that the adapter was edited mid-epoch, and the rows
+damaged by that edit are the ones measured *before* the new key appeared — already
+on disk, unfixable, and looking clean. **An apparatus change is an epoch boundary,
+not an edit**; the abort message says so and names the drifted keys.
+
+Not an artifact but recorded alongside them: two sibling guards over the same
+adapter, both **row failures** rather than aborts. A response byte-identical to
+the immediately preceding row's while the levels differ is failed as a stale or
+cached read (`response.constant_fields` excludes fields that legitimately never
+vary); a violated `response.self_check` predicate is failed with its verdicts in
+`runs.jsonl`'s `self_check` field. See
+[docs/targets.md](targets.md) §1 for the adapter-side contract and
+[docs/optimization-campaign-guide.md](optimization-campaign-guide.md)
+"Guarding the adapter" for the authoring surface.
+
+### 7a. design_matrix.json — "What configurations are pre-registered?"
+
+**Schema:** `schemas/design_matrix.schema.json`
+
+The pre-registered design matrix, written **before** any execution. Fixing
+every configuration in advance — before any result is seen — is what
+makes the campaign's anti-p-hacking property stronger than sequential
+one-factor-at-a-time search.
+
+| Field | What it means |
+|---|---|
+| `factor_ids` | Which factors (by id) form the matrix's columns |
+| `kind` | Design family (e.g. fractional factorial, central composite) |
+| `resolution` | Achieved resolution (III/IV/V) for a fractional design |
+| `generators` | The published generator columns used to build the fraction |
+| `aliases` | Named aliased effect pairs, if any — the honest cost of resolution < V |
+| `rows` | The matrix rows themselves, in coded (±1) space |
+| `run_order` / `run_order_seed` | Randomized execution order plus the seed that reproduces it — immune to time-ordered drift a sequential grid can't rule out |
+| `policy_hash` | The registered policy that scheduled this matrix — the same hash `transitions.jsonl` records per row |
+| `run_timeout_sec` | The wall-clock ceiling **every row here was measured under** — `optimization.run_timeout_sec`, or 600 when the campaign declared none. Recorded either way, so a `failed` row reading "timed out after 600 seconds" is readable without knowing which campaign revision was on disk |
+| `max_parallel` | The **effective** ceiling on simultaneous in-flight runs this matrix was measured under — `optimization.max_parallel` at a `confirm` round; at a spending stage, `1` unless the campaign licensed concurrency via `optimization.concurrency` (see `concurrency_basis`). Read it alongside `run_order`: a permutation looks identical whether it described a sequence or a schedule, so without this field a matrix claiming a randomized run order could be asserting a guarantee concurrent execution did not provide |
+| `concurrency_basis` | **Why** those rows were (or were not) co-scheduled, from a closed vocabulary: `serial` (width 1), `confirm_block` (a replicate block, where contention is symmetric across the finalists being compared and cancels out of their difference), `load_independent` (the **author's** declared claim that the objective is not a function of machine load — recorded as a claim, not as a measurement Nous made), or `contention_floor` (**measured**: the objective at the author-named heaviest corner moved less than 2x the target's own serial noise floor). The width alone is not auditable — `max_parallel: 4` cannot be distinguished from the asymmetric-neighbour confound it is only sometimes safe against — so the licence travels with the number. CPU pinning is deliberately **not** a basis: a disjoint CPU set leaves L3, memory bandwidth, disk queues, page cache, NIC queues, thermal budget and the GPU shared, so for a throughput or tail-latency objective it would record an isolation the measurement never had |
+| `concurrency_certified_width` | For `contention_floor` only: the width the evidence was obtained at. `max_parallel` may be **narrower** than this but never wider — inflation grows with the number of neighbours, so a floor certified at 2 says nothing about 8 and the resolver refuses to extrapolate |
+| `concurrency_detail` | Human-readable provenance for the basis — the serial mean, its CV, the mean at width, the observed inflation and the threshold, or whose claim it was. Diagnostic; nothing parses it |
+| `workload_seeds` | Row index → the seed exported into that row's run, when the campaign declares `workload.seed_env` (§3.7 oracle 3) |
+| `paired` | `true` on a confirm-round matrix under common random numbers — replicate *i* of every finalist ran the same draw, which is what lets the terminal bound read the paired differences |
+| `held_fixed` | Factor id → the level it was pinned at, for factors declared in the campaign but not columns of *this* design |
+| `round` / `finalists` | **`shortlist_replicate` only** (and required there). Which confirm round this is, counting rounds *spent including this one* — so the first is 1, which is what the registered `{"round": {">=": max_rounds}}` guard reads — plus the shortlist it discriminates between: one entry per finalist with its `key`, complete `levels`, and the `why` that says where it came from (the fitted recommendation, a best-observed run, the known-valid baseline). A row's `apply.finalist` is a *position in this array*, so its order is part of the join |
+| `folded_on` / `screen_iteration` / `alias_consequential` | **`foldover` only.** Which column the fold block negated (`null` = a full foldover, which is what a resolution-III screen needs), which iteration's screen block is the other half of the response vector the combined OLS fit runs over, and which alias pairs were *consequential* — the facts the registered foldover branch fired on. A fold block alone is not a fittable design, so a reader without these three cannot assemble the response vector the iteration's `effects.json` cites |
+
+`kind` spans five values, one per stage that registers a matrix: `full` /
+`fractional` (screen), `central_composite` (refine), `foldover`, and
+`shortlist_replicate` (confirm). `design.combine`'s `"combined"` label is
+deliberately **not** among them — that design is assembled at *fit* time over
+two already-registered blocks and is never itself pre-registered. Row `role`
+spans `corner` / `center` / `axial` / `confirm`, the last being a finalist
+replicate rather than a design point: nothing is fitted from it, which is why
+it is a role of its own.
+
+Those six resolved-run-parameter rows above (`policy_hash` through
+`held_fixed`) are **not design structure**: facts
+about how the rows were measured rather than which rows they are. They live on
+the pre-registration because the campaign file they came from may since have
+been revised for the next epoch, and a matrix that no longer describes its own
+runs is not a record.
+
+### 7b. runs.jsonl — "What did each executed configuration produce?"
+
+**Schema:** `schemas/runs_row.schema.json` (one object per line)
+
+One row per executed configuration: factor levels, response metrics,
+manipulation/constraint/integrity verdicts, and provenance. Configs marked
+infeasible by a constraint are retained here as real data about the space,
+even though they're excluded from fitting.
+
+| Field | What it means |
+|---|---|
+| `row_index` | Which design_matrix.json row this run executed |
+| `levels` | The factor levels actually applied |
+| `role` | `corner` / `center` / `axial` (design-matrix role) |
+| `replicate` | Replicate index for repeated runs |
+| `status` | Whether the run completed, failed, or was retried |
+| `response` | The observed metrics for this run |
+| `manipulation_verdict` | Did the lever actually engage? (Family A check) |
+| `constraint_verdicts` | Per-constraint admissibility results |
+| `self_check` | One verdict per declared `response.self_check` predicate — recorded on passing rows too, so "the invariant held" is distinguishable from "none was declared". A violation makes `status` `failed`: the row's reported objective contradicts its own recorded diagnostic (see §7m) |
+| `integrity_verdict` | Result of `integrity_command`, if declared |
+| `duration_ms` | **Total** wall clock this row consumed, in ms, summed across every attempt — monotonic-clock derived, so never negative. `0` is reserved for a row that never executed; any row the runner invoked reports at least `1`. This is the number that sizes the next epoch's `run_timeout_sec`, and it was structurally always `0` before the instrumentation fix (declared on `RunOutcome`, defaulted, assigned at none of nine construction sites), which is why one 14-hour campaign could not be diagnosed from its own artifacts |
+| `attempts` / `last_attempt_ms` | How many times the runner was invoked (>1 only after a manipulation retry) and the final attempt's wall clock alone. Both are recorded because the per-invocation `run_timeout_sec` ceiling applies to `last_attempt_ms` while a schedule must budget `duration_ms`; without them a retried row is indistinguishable from a target that got twice as slow |
+| `build_hash` | Provenance for build-cache validation |
+| `error` | Human-readable cause; populated on a failed/rejected/infeasible run |
+| `failure_kind` | **Closed-vocabulary** machine label for the same cause (`orchestrator.optimize.runner.FAILURE_KINDS`; `""` on a clean row), set at the raise site rather than parsed back out of `error`. The distinction it exists for: `timeout` says the apparatus ran out of time — a *budget* question about the design, answerable with `duration_ms` — while `exit_nonzero` / `unparseable_output` / `adapter_exception` say the adapter misbehaved, a *defect* that recurs on every row reaching that branch. Both used to surface as `RuntimeError: config run ...` in `error`, so telling them apart meant substring-matching prose |
+
+### 7c. effects.json — "What did the fitted surface find?"
+
+**Schema:** `schemas/effects.schema.json`
+
+Fitted main effects and interactions, with confidence intervals, the
+pure-error estimate, and the lack-of-fit test. Written once per fitting
+state — `screen`, `foldover`, and `refine` each produce one. Authored
+**without spending
+tokens**: a fitted effect with a confidence interval already contains
+everything `findings.json` requires (a claim, a direction, a magnitude,
+quantitative evidence), so `findings.json` and `principle_updates.json`
+are projected from this file deterministically rather than restated in
+prose.
+
+| Field | What it means |
+|---|---|
+| `stage` | Which fitting state produced this fit (`screen`, `foldover`, or `refine`) |
+| `intercept` / `effects` | Fitted coefficients, with confidence intervals |
+| `quadratic` | Curvature terms and the solved stationary point (refine only) |
+| `n_runs` | How many runs the fit is based on |
+| `pure_error_var` / `pure_error_df` | Pure-error estimate from center-point replicates |
+| `lack_of_fit_f` / `lack_of_fit_p` | Whether the fitted model form is adequate |
+| `aliases` | The **alias classes** this fit estimated one coefficient per. At resolution IV aliased columns coincide, so one column per two-factor interaction makes `XᵀX` singular; fitting per alias class is what makes a resolution-IV screen fit at all, and recording the classes is what makes the confounding auditable. Whether any class could change the winner is `recommendation.json`'s `alias_consequential` |
+| `dropped_factors` | Factors whose effect CI contained zero — the campaign's null results |
+
+### 7d. relations.json — "Did the mechanism check out?"
+
+**Schema:** `schemas/relations.schema.json`
+
+Per-relation verdicts from running `test_command` against the target's own
+native test tree. Nous's role here is a contract check, not a test
+runner: each declared relation names a `native_test` identifier, and this
+file records whether it ran and passed.
+
+| Field | What it means |
+|---|---|
+| `verdicts` | Per-relation pass/fail, keyed by relation id |
+| `correctness_failures` | Any failed `correctness` relation — hard-fails the campaign |
+| `behavioral_failures` | Any failed `behavioral` relation — recorded as a finding, campaign continues |
 
 ## Dispatch and Prompt Templates
 

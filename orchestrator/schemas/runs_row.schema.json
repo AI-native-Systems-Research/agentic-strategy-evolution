@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/runs_row.schema.json",
+  "title": "Optimization Run Row",
+  "description": "One line of runs.jsonl (design spec 5.5) -- one executed configuration: factor levels, response metrics, replicate index, manipulation/constraint/integrity verdicts, duration, and build hash. runs.jsonl is APPEND-ONLY: a crashed run must leave already-written rows intact, so each line validates independently against this schema rather than the file as a whole.",
+  "type": "object",
+  "required": [
+    "row_index",
+    "levels",
+    "role",
+    "replicate",
+    "status",
+    "response",
+    "duration_ms"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "row_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Matches the design_matrix.json row this run executes -- the join key orchestrator.optimize.matrix.check_fidelity uses to detect drift."
+    },
+    "levels": {
+      "type": "object",
+      "description": "The factor levels actually applied, e.g. {\"A\": \"low\", \"B\": 4}. Compared against design_matrix.json's planned levels for the same row_index to detect drift."
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "corner",
+        "center",
+        "axial",
+        "confirm"
+      ],
+      "description": "Design-point role, copied from the planned row. Includes `confirm`, which `design_matrix.schema.json` has always declared: a confirm replicate row carries role=confirm, and `pure_error` reads this field to separate genuine centre-point replicates from confirm replicates. Omitting it made every confirm row on disk fail its own schema while design_matrix accepted the identical value -- two schemas describing one field, disagreeing. Nothing caught it because the schema has no production consumer and the tests built rows by hand."
+    },
+    "replicate": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Replicate index, copied from the planned row."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "failed",
+        "infeasible",
+        "rejected"
+      ],
+      "description": "complete: ran cleanly and is usable for fitting. failed: the runner crashed or the manipulation predicate never engaged after retry. infeasible: a response.constraints entry was violated -- excluded from fitting but retained here as real data about the space. rejected: a design_space invariant was violated, the response exceeded response.ceiling, or the integrity_command failed -- never used for fitting."
+    },
+    "response": {
+      "type": "object",
+      "description": "Observed response metrics for this configuration, e.g. {\"latency_ms\": 42.1}. Held-out metrics present in the raw observation are stripped before this is recorded as a fitting input (leakage guard)."
+    },
+    "self_check": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "One verdict per declared response.self_check predicate ({id, kind, ok, detail, skipped, missing}), in declaration order. A violated self-check FAILS this row -- the reported objective contradicts the row's own recorded diagnostic, so it is not a measurement of the declared response -- while leaving every other row untouched. Empty when the campaign declares no self_check, or when the row failed before they were reached; the verdicts are recorded on PASSING rows too, so a reader can tell 'the invariant held' from 'no invariant was declared'."
+    },
+    "manipulation_verdict": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether this row's manipulation predicate (the lever actually engaged) passed. Null when not applicable."
+    },
+    "constraint_verdicts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Human-readable results of response.constraints checks for this row; empty when none were declared or all passed silently."
+    },
+    "integrity_verdict": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Result of optimization.integrity_command for this config, when declared. Null when integrity_command is absent -- the field is optional, per design spec 6.4."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "TOTAL wall-clock duration of this run in milliseconds, summed across every attempt, monotonic-clock derived (so never negative, and unmoved by an NTP step or a DST transition mid-run). 0 is RESERVED for a row that never executed: any row the runner actually invoked reports at least 1ms. That reservation is the residue of a real defect -- the field was declared on RunOutcome, defaulted to 0, and assigned at none of the nine construction sites, so all 18 rows of a 14-hour campaign recorded 0 while staying schema-valid, and sizing run_timeout_sec from the campaign's own data was impossible. A 0 meaning \"measured, instantaneous\" is indistinguishable from a 0 meaning \"never assigned\", which is worse than an absent field; keeping 0 out of the executed-row range keeps the two distinguishable. A timed-out row records the time it CONSUMED, which is the lower bound on what the ceiling would have had to be."
+    },
+    "build_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Content hash of the build/config used for this run (orchestrator.optimize.runner.build_cache_key), so repeated levels can be identified as reusing the same build."
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Error text when status is failed or rejected (e.g. the ceiling that was exceeded, the integrity_command's stderr, or the exception type from a crashed runner). Null on a clean complete/infeasible row."
+    },
+    "held_out": {
+      "type": "object",
+      "description": "Metrics named in response.held_out, split OUT of `response` entirely at the observation boundary (orchestrator.optimize.runner.RunOutcome). Present as its own key so a fitter handed `response` wholesale cannot leak a held-out metric into the surface, and so the confirm stage's generalization check has a distinctly named place to read from."
+    },
+    "manipulation": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "One verdict per factor manipulation predicate ({id, ok, detail, skipped}), in declaration order, ACROSS EVERY ATTEMPT -- so a row whose lever engaged only on the retry shows both verdicts rather than only the surviving one."
+    },
+    "invariants": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "One verdict per design_space invariant, same plain-dict shape as manipulation. A violation makes the row `rejected`."
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "How many times the runner was invoked for this row -- 1 unless a manipulation-predicate retry fired. Recorded so duration_ms's total-across-attempts semantics are readable rather than assumed: without it a 2x-long row is indistinguishable from a slow one."
+    },
+    "last_attempt_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall clock of the FINAL attempt only, in milliseconds; equals duration_ms when attempts == 1. This is the figure the per-invocation run_timeout_sec ceiling applies to, while duration_ms is the figure a schedule must budget. Both are recorded because a reader sizing a ceiling from a retried row needs the per-invocation one and cannot recover it from the total."
+    },
+    "failure_kind": {
+      "type": "string",
+      "enum": [
+        "",
+        "timeout",
+        "exit_nonzero",
+        "unparseable_output",
+        "adapter_exception",
+        "manipulation_failed",
+        "invariant_violated",
+        "integrity_failed",
+        "ceiling_exceeded",
+        "constraint_violated",
+        "adapter_guard"
+      ],
+      "description": "CLOSED-vocabulary machine label for why a non-complete row is non-complete (orchestrator.optimize.runner.FAILURE_KINDS); empty string on a clean complete row. Set at the raise site, never parsed back out of `error`. The distinction this exists for is `timeout` -- the apparatus ran out of time, a BUDGET question about the design, answerable from duration_ms -- versus `exit_nonzero` / `unparseable_output` / `adapter_exception` -- the adapter misbehaved, a DEFECT that recurs on every row reaching that branch. Both used to surface as \"RuntimeError: ...\" in `error`, so telling them apart meant substring-matching prose the raise site is free to reword. An `enum` rather than a free string because a label a reader switches on is only worth switching on if its value set is enumerable -- same reason policy.json's observation keys are closed."
+    },
+    "reused_from": {
+      "type": "object",
+      "required": [
+        "iteration",
+        "epoch"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "iteration": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The iteration whose attempt actually MEASURED this row."
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The epoch this reuse happened within. Reuse never crosses an epoch boundary -- a new epoch is a fresh pre-registration -- so this always equals the reusing iteration's epoch, and is recorded so a reader need not infer it."
+        }
+      },
+      "description": "PRESENT ONLY ON A REUSED ROW. This row was NOT measured by the iteration whose directory it sits in: it was carried forward from an earlier attempt at the SAME pre-registered design, because that attempt failed for reasons unrelated to this row. Absent on every freshly measured row, so presence alone distinguishes the two and a reader can never mistake reuse for fresh measurement. Reuse is legitimate only when the row's identity matches exactly -- same policy_hash, same coded levels, same applied config INCLUDING the workload seed, same adapter contract, same epoch -- and only for a status of complete / infeasible / rejected; a `failed` row is always re-measured, because it is a measurement failure a re-run repairs. The row's duration_ms is preserved rather than zeroed: it really did cost that wall clock, once. See orchestrator.optimize.resume and runs/iter-N/reuse_manifest.json, which records the whole reuse decision including refusals."
+    }
+  }
+}

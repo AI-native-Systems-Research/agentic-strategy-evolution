@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/effects.schema.json",
+  "title": "Optimization Fitted Effects",
+  "description": "effects.json (design spec 5.5): fitted main effects and interactions with confidence intervals, the pure-error estimate, the lack-of-fit test, aliasing caveats, and which factors were dropped as within-noise. Written by orchestrator.optimize.artifacts.write_effects from an orchestrator.optimize.effects.Fit. This is the artifact project_findings() and project_principle_updates() are deterministically derived from -- no LLM call is needed to author findings.json/principle_updates.json at screen/refine because everything a finding needs is already here.",
+  "type": "object",
+  "required": ["stage", "intercept", "n_runs", "pure_error_var", "pure_error_df", "lack_of_fit_f", "lack_of_fit_p", "aliases", "effects", "quadratic", "dropped_factors"],
+  "additionalProperties": false,
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": ["verify", "screen", "refine", "confirm"],
+      "description": "Which of the four optimization-campaign stages produced this fit."
+    },
+    "intercept": {
+      "type": "number",
+      "description": "Fitted model intercept (grand mean at the design center)."
+    },
+    "n_runs": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of rows the fit was estimated from -- orchestrator.optimize.effects.Fit.n_runs."
+    },
+    "pure_error_var": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Sample variance of replicated center-point responses. Null when fewer than 2 center-point replicates exist -- there is then no independent error estimate, so every effect's significance is unknown rather than guessed."
+    },
+    "pure_error_df": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Degrees of freedom backing pure_error_var (replicate count minus 1); 0 when pure_error_var is null."
+    },
+    "lack_of_fit_f": {
+      "type": ["number", "null"],
+      "description": "F statistic for the lack-of-fit test. Null when no pure-error estimate exists or there are no residual degrees of freedom left over."
+    },
+    "lack_of_fit_p": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "p-value for the lack-of-fit test. A significant (small) value means the linear model form is inadequate -- one of the four escalation triggers in design spec 6.3."
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "minItems": 2,
+        "maxItems": 2
+      },
+      "description": "Confounded term-label pairs carried forward from the design (orchestrator.optimize.design.alias_pairs), e.g. [[\"AB\", \"C\"]]. Non-empty here means this fit's estimates for the aliased terms cannot be separated -- the caveat must survive from design_matrix.json into this artifact."
+    },
+    "effects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/effect" },
+      "description": "Main effects and (when include_interactions was true) two-factor interactions, in fit order."
+    },
+    "quadratic": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/effect" },
+      "description": "Pure-quadratic terms (A^2, B^2, ...) fitted only when the design has axial points (central composite, at refine). Empty at screen."
+    },
+    "dropped_factors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Factor ids whose main effect confidence interval contains zero (orchestrator.optimize.effects.dropped_factors) -- measured null, not merely unmeasured."
+    },
+    "exclusion_balance": {
+      "type": "object",
+      "description": "GENUINELY OPTIONAL, not nullable: present ONLY when rows were excluded from this fit (its mere presence says the design was partial), and then it answers whether the loss was INDEPENDENT of the factor levels. From orchestrator.optimize.exclusions.ExclusionBalance.as_dict. A BALANCED loss costs degrees of freedom and therefore widens every interval above, which the arithmetic already reports honestly; a LEVEL-CORRELATED loss moves a point estimate while leaving its interval exactly as tight as before, because the interval is computed from the retained rows and knows nothing about the missing region. That is why the caveat lives on THIS artifact next to the coefficients it qualifies rather than only in the sibling fit_exclusions.json. An effect for a factor named in flagged_factors must not be read as certified.",
+      "required": ["n_rows", "n_excluded", "n_bias_excluded", "level_correlated", "flagged_factors", "factors", "cells"],
+      "additionalProperties": false,
+      "properties": {
+        "n_rows": { "type": "integer", "minimum": 0, "description": "Rows in the response vector the fit was formed over, BEFORE exclusion. Reconciles as n_rows == n_runs + n_excluded." },
+        "n_excluded": { "type": "integer", "minimum": 1, "description": "Rows excluded from the fit for ANY reason. At least 1, because this object is absent when nothing was excluded." },
+        "n_bias_excluded": { "type": "integer", "minimum": 0, "description": "Of n_excluded, how many were excluded for a reason whose loss can BIAS a coefficient -- failed_to_measure or no_metric, i.e. an ADMISSIBLE configuration the instrument could not measure. An `infeasible` row is deliberately NOT counted: it ran, produced trustworthy numbers, and violated a declared constraint, so it is not missing information but IS information (the point is outside X_valid), and a constrained design has every inadmissible corner on one level of one factor by construction. Only this subset drives level_correlated; 0 means every exclusion was information about the space rather than a hole in it." },
+        "level_correlated": { "type": "boolean", "description": "True when ANY factor's BIAS-RELEVANT exclusions concentrated on one of its levels by the deterministic all_exclusions_on_one_level rule. Cell holes alone do not set it: a hole with no completed sibling is a coverage gap rather than a biased coefficient." },
+        "flagged_factors": { "type": "array", "items": { "type": "string" }, "description": "The factor ids whose coefficients the missing region biases. This is the key a reader joins against effects[].terms to decide which estimates to distrust." },
+        "factors": {
+          "type": "array",
+          "description": "Per-factor contingency of rows against exclusions, one entry per FITTED factor id, so the list aligns with the coefficients above.",
+          "items": {
+            "type": "object",
+            "required": ["factor_id", "by_level", "flagged", "concentrated_at", "concentration_p", "rule"],
+            "additionalProperties": false,
+            "properties": {
+              "factor_id": { "type": "string", "minLength": 1 },
+              "by_level": {
+                "type": "object",
+                "description": "level (rendered as a string, since JSON keys are strings) -> {rows, excluded, excluded_bias_relevant}. The raw table, so a reader can recompute the verdict rather than trust it. All three counts are given: a reader wants the whole picture, and only the third is what `flagged` reads.",
+                "additionalProperties": {
+                  "type": "object",
+                  "required": ["rows", "excluded", "excluded_bias_relevant"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "rows": { "type": "integer", "minimum": 0 },
+                    "excluded": { "type": "integer", "minimum": 0 },
+                    "excluded_bias_relevant": { "type": "integer", "minimum": 0 }
+                  }
+                }
+              },
+              "flagged": { "type": "boolean", "description": "The DETERMINISTIC rule's verdict, and the only trigger. Not a p-value threshold -- see concentration_p." },
+              "concentrated_at": { "type": ["string", "null"], "description": "The level every exclusion landed on when flagged; null otherwise." },
+              "concentration_p": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Exact one-sided hypergeometric tail P(X >= observed) for losing this many rows at this level by chance. REPORTED FOR THE READER, NEVER THE TRIGGER: at a screen's n (8-18 rows, 1-3 exclusions) the smallest attainable one-sided p on a 2x2 table is about 0.1, so any conventional alpha would fail to reject on the very pattern this field exists to describe -- which would launder the defect as a checked null. `flagged` is the verdict." },
+              "rule": { "type": "string", "minLength": 1, "description": "The name of the deterministic criterion applied, so the recorded verdict can never silently disagree with the rule that produced it (same discipline as a regret bound's `method`)." }
+            }
+          }
+        },
+        "cells": {
+          "type": "array",
+          "description": "Design cells (full level combinations) every row of which was excluded AND which have a completed sibling differing in exactly ONE factor -- the 2x2 separation. Per-cell as well as per-factor because the two answer different questions: `factors` says which COEFFICIENT to distrust, `cells` says which CONFIGURATION the next epoch should re-measure.",
+          "items": {
+            "type": "object",
+            "required": ["levels", "n_rows", "sibling_levels", "differs_from_sibling_in"],
+            "additionalProperties": false,
+            "properties": {
+              "levels": { "type": "object", "description": "The unmeasurable cell's levels." },
+              "n_rows": { "type": "integer", "minimum": 1, "description": "How many rows sat at this cell; all of them were excluded." },
+              "sibling_levels": { "type": "object", "description": "A cell that DID complete, differing in exactly one factor. This neighbour is what makes the hole attributable to a level rather than to a corner the design never reached." },
+              "differs_from_sibling_in": { "type": "string", "minLength": 1, "description": "The single factor whose level differs between the hole and its completed sibling." }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "effect": {
+      "type": "object",
+      "required": ["label", "terms", "estimate", "se", "ci_low", "ci_high", "significant"],
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Display label for this term, e.g. \"A\" for a main effect or \"AB\" for an interaction."
+        },
+        "terms": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "maxItems": 2,
+          "description": "Factor id(s) making up this term: one id for a main effect, two for an interaction or a pure-quadratic term (same id twice, e.g. [\"A\", \"A\"])."
+        },
+        "estimate": {
+          "type": "number",
+          "description": "Fitted coefficient (half the effect size in the +/-1 coding)."
+        },
+        "se": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Standard error of the estimate, from the term's own column sum of squares against pure_error_var. Null when pure_error_var is null."
+        },
+        "ci_low": {
+          "type": ["number", "null"],
+          "description": "Lower bound of the confidence interval. Null when se is null."
+        },
+        "ci_high": {
+          "type": ["number", "null"],
+          "description": "Upper bound of the confidence interval. Null when se is null."
+        },
+        "significant": {
+          "type": ["boolean", "null"],
+          "description": "True if the confidence interval excludes zero, false if it contains zero, null when unknown (no pure-error estimate -- an unknown effect is never treated as a measured null)."
+        }
+      }
+    }
+  }
+}

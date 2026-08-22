@@ -6,6 +6,42 @@ from pathlib import Path
 import yaml
 
 
+def resolve_gate_mode(args, campaign):
+    """Resolve the effective ``auto_approve`` bool for a run/resume.
+
+    Gate defaults are scoped to campaign ``kind`` (spec §7.1 of the
+    ``kind: optimization`` design): an optimization campaign's stage
+    rule is pure Python with no per-stage human decision that changes
+    what happens next, so prompting only costs wall-clock. Reflective
+    campaigns (or campaigns with no ``kind`` at all) keep the historical
+    default of prompting unless the operator opts in.
+
+    Resolution order (highest precedence first):
+      1. ``--interactive`` forces prompting (``False``) for either kind.
+      2. An explicit ``--auto-approve`` on the command line wins over
+         the kind default, in either direction — this is what keeps
+         existing invocations and scripts behaving exactly as before.
+      3. Otherwise, fall back to the kind default: ``True`` for
+         ``kind: optimization``, ``False`` for ``kind: reflective``
+         (or absent).
+
+    ``args.auto_approve`` must distinguish "flag omitted" (``None``)
+    from "flag explicitly supplied" (``True``) — see the
+    ``action="store_const", const=True, default=None`` wiring on the
+    ``--auto-approve`` argument. A plain ``store_true`` (default
+    ``False``) cannot make that distinction and would let the kind
+    default silently override an explicit user choice.
+    """
+    from orchestrator.validate import campaign_kind
+
+    if getattr(args, "interactive", False):
+        return False
+    explicit_auto_approve = getattr(args, "auto_approve", None)
+    if explicit_auto_approve is not None:
+        return explicit_auto_approve
+    return campaign_kind(campaign) == "optimization"
+
+
 def _find_repo_root(start=None):
     current = Path(start) if start else Path.cwd()
     while True:
@@ -262,7 +298,7 @@ def _cmd_run(args):
         work_dir,
         max_iterations=max_iterations,
         model=args.model,
-        auto_approve=args.auto_approve,
+        auto_approve=resolve_gate_mode(args, campaign),
         timeout=args.timeout,
         agent=args.agent,
         max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
@@ -357,7 +393,7 @@ def _cmd_resume(args):
         work_dir,
         max_iterations=max_iterations,
         model=args.model,
-        auto_approve=args.auto_approve,
+        auto_approve=resolve_gate_mode(args, campaign),
         timeout=args.timeout,
         agent=args.agent,
         max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
@@ -565,6 +601,28 @@ def _cmd_validate(args):
 
     from orchestrator.validate import validate_design, validate_execution
 
+    if args.phase == "campaign":
+        if args.file is None:
+            print(
+                "validate campaign: pass the campaign.yaml path, e.g.\n"
+                "  nous validate campaign ./campaign.yaml",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        _validate_campaign_file(
+            args.file,
+            smoke=getattr(args, 'smoke', False),
+            liveness=getattr(args, 'liveness', False),
+            liveness_repeats=getattr(args, 'liveness_repeats', 3),
+        )
+        return
+    if args.dir is None:
+        print(
+            f"validate {args.phase}: --dir is required (the iteration "
+            f"directory to check).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if args.phase == "design":
         result = validate_design(args.dir)
     else:
@@ -573,6 +631,957 @@ def _cmd_validate(args):
     print(json.dumps(result, indent=2))
     if result["status"] != "pass":
         sys.exit(1)
+
+
+def _validate_campaign_file(
+    path: Path, smoke: bool = False, *, liveness: bool = False,
+    liveness_repeats: int = 3,
+) -> None:
+    """Check a campaign.yaml before spending anything on a run.
+
+    Runs BOTH layers an author can trip: the JSON Schema (shape, required
+    fields, enums) and the cross-field rules that JSON Schema cannot express
+    (``validate_optimization_campaign``). Before this existed the cross-field
+    rules had no production caller at all — they ran only in tests — so an
+    author authoring a ``kind: optimization`` campaign got raw jsonschema
+    messages with no repair path, and a wrong ``native_test`` identifier was
+    only discovered by a real campaign aborting at its verify stage.
+
+    Schema errors are translated from jsonschema's default phrasing into the
+    field path plus what was expected, because "60 is not of type 'object'"
+    without a path is not actionable.
+    """
+    import jsonschema
+    import yaml
+
+    from orchestrator.validate import campaign_kind, validate_optimization_campaign
+
+    target = Path(path)
+    if not target.exists():
+        print(f"validate: {target} does not exist", file=sys.stderr)
+        sys.exit(2)
+    try:
+        campaign = yaml.safe_load(target.read_text())
+    except yaml.YAMLError as exc:
+        print(f"validate: {target} is not valid YAML:\n  {exc}", file=sys.stderr)
+        sys.exit(2)
+    if not isinstance(campaign, dict):
+        print(
+            f"validate: {target} must be a YAML mapping, got "
+            f"{type(campaign).__name__}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    kind = campaign_kind(campaign)
+    print(f"campaign: {target}")
+    print(f"kind:     {kind}")
+
+    schemas_dir = Path(__file__).resolve().parent / "schemas"
+    schema = yaml.safe_load((schemas_dir / "campaign.schema.yaml").read_text())
+    validator = jsonschema.Draft202012Validator(schema)
+    schema_errors = sorted(validator.iter_errors(campaign), key=lambda e: e.path)
+
+    errors: list[str] = []
+    for err in schema_errors:
+        where = ".".join(str(p) for p in err.absolute_path) or "(top level)"
+        errors.append(f"[schema] {where}: {err.message}")
+
+    warnings: list[str] = []
+    if not schema_errors:
+        # Cross-field rules assume a shape-valid document; running them on a
+        # malformed one produces confusing secondary errors.
+        for item in validate_optimization_campaign(campaign):
+            if item.startswith("WARN:"):
+                warnings.append(item[len("WARN:"):].strip())
+            else:
+                errors.append(f"[rules] {item}")
+
+    if warnings:
+        print(f"\n{len(warnings)} warning(s) — not fatal, but worth reading:")
+        for w in warnings:
+            print(f"  ! {w}")
+
+    if errors:
+        print(f"\n{len(errors)} error(s):", file=sys.stderr)
+        for e in errors:
+            print(f"  x {e}", file=sys.stderr)
+        guide = (
+            "docs/optimization-campaign-guide.md"
+            if kind == "optimization"
+            else "docs/campaign-authoring-guide.md"
+        )
+        print(f"\nSee {guide} for the field-by-field walkthrough.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\nOK — no errors. {len(warnings)} warning(s).")
+    if kind == "optimization":
+        opt = campaign.get("optimization") or {}
+        n_factors = len(opt.get("factors") or [])
+        tests = [
+            r.get("native_test")
+            for f in (opt.get("factors") or [])
+            for r in (f.get("relations") or [])
+            if r.get("native_test")
+        ]
+        print(f"  {n_factors} factor(s), {len(tests)} declared native test(s).")
+        print(
+            "  NOTE: a native_test identifier that does not exist in the target "
+            "repo counts as a FAILED correctness relation (reconcile treats "
+            "'declared but not executed' as failure), which aborts the campaign "
+            "at its verify stage. Confirm each one runs under "
+            "optimization.test_command before starting a run."
+        )
+        if not smoke:
+            print(
+                "  Static checks only. Re-run with --smoke to execute the test "
+                "command and ONE configuration: that is the only way to catch a "
+                "manipulation predicate whose type never matches, an unmatched "
+                "native_test, or a run_command that cannot exec. Add --liveness "
+                "to also run EVERY declared level once, which is the only way to "
+                "catch a level that aborts the target and a factor whose levels "
+                "move the objective by less than run-to-run noise."
+            )
+        else:
+            print("\n  --smoke: executing the contract against the target...")
+            issues = _smoke_check_optimization(
+                campaign, liveness=liveness,
+                liveness_repeats=liveness_repeats,
+            )
+            if issues:
+                print(f"\n{len(issues)} smoke failure(s):", file=sys.stderr)
+                for i in issues:
+                    print(f"  x {i}", file=sys.stderr)
+                print(
+                    "\nThese would each have cost a full campaign to discover. "
+                    "Fix them before launching.", file=sys.stderr,
+                )
+                sys.exit(1)
+            print("  smoke: OK — the campaign/target contract holds.")
+
+
+def _smoke_check_optimization(
+    campaign: dict, *, liveness: bool = False, liveness_repeats: int = 3,
+) -> list[str]:
+    """Execute the test command and ONE configuration; report what breaks.
+
+    ``liveness`` opts into the per-level sweep (``_smoke_liveness_sweep``):
+    every declared level run once at the baseline, which both catches a level
+    that ABORTS the target and measures each factor's effect against the
+    workload's own noise floor. Off by default because it is the only part of
+    ``--smoke`` whose cost scales with the design (``sum(len(levels)) +
+    liveness_repeats`` runs rather than one); without it, the count of levels
+    that went unexercised is printed instead so the gap stays visible.
+
+    Static validation cannot see the failures that actually kill campaigns,
+    because they live in the *contract between the campaign and the target*
+    rather than in the campaign's structure. Every one of these was observed on
+    a real run that passed static validation cleanly:
+
+      * a ``run_command`` that cannot exec (an inline ``VAR=value`` prefix is
+        parsed by ``shlex`` as the binary name);
+      * a declared ``native_test`` the test command never reports, so the
+        relation reconciles as "declared but not executed" and fails closed;
+      * a manipulation predicate comparing a level string to a value the target
+        emits as a bool/int, which can never match -- 67 of 67 runs failed this
+        way while the CLI itself was correct;
+      * an objective metric absent from the emitted JSON, so every run parses
+        and scores NaN;
+      * a ``config_patch`` factor whose value never reaches the file the target
+        reads. This one is the reason "the probe run succeeded" is not the
+        criterion: a config-patch campaign whose patches were dropped exits 0
+        and emits perfectly parseable JSON on every row -- it just measures the
+        BASELINE. So the probe's materialized copy is read BACK through the same
+        pointer that wrote it, value and type compared against the requested
+        level.
+
+    One probe run costs seconds and catches all five. It also reports the
+    probe's real DURATION against the effective ``run_timeout_sec``, and flags a
+    probe that consumed more than half of it -- the case that matters is the one
+    where the probe SUCCEEDS, because the first design corner is not the design's
+    slowest, so a corner finishing just inside the ceiling clears smoke and still
+    kills row *k* of the epoch. Also checked, for free (no subprocess): a
+    declared ``build_checks.mechanism_paths`` entry that resolves to nothing
+    under the target, which silently narrows the drift oracle instead of
+    failing.
+
+    Returns a list of problems; empty means the contract holds at the first
+    design corner.
+    """
+    import shutil
+    import tempfile
+
+    from orchestrator.optimize import runner
+    from orchestrator.optimize.factors import parse_factors
+
+    problems: list[str] = []
+    opt = campaign.get("optimization") or {}
+    repo = (campaign.get("target_system") or {}).get("repo_path")
+    if not repo or not Path(repo).is_dir():
+        return [f"target_system.repo_path is not a directory: {repo!r}"]
+
+    factors = parse_factors(opt["factors"])
+
+    # 0. Declared mechanism_paths: does each entry resolve to something real?
+    # Placed first because it costs no subprocess, and ahead of the early return
+    # for a campaign with no `run_command` so it is reported either way.
+    # A typo'd entry is not a loud failure: it contributes nothing to the drift
+    # allowlist, so the oracle watches less than the campaign says it does, and
+    # if every entry is wrong the mechanism text filters down to nothing and no
+    # edit ever reads as drift. Skipped when `build` is declared -- that stage
+    # AUTHORS the mechanism, so its files legitimately do not exist yet.
+    stage_names = [
+        str(getattr(s, "value", s)) for s in (opt.get("stages") or [])
+    ]
+    mech_paths = (opt.get("build_checks") or {}).get("mechanism_paths") or []
+    if mech_paths and "build" not in stage_names:
+        missing = [
+            str(p) for p in mech_paths
+            if not (Path(repo) / str(p).strip().strip("/")).exists()
+        ]
+        print(f"  smoke: {len(mech_paths) - len(missing)}/{len(mech_paths)} "
+              f"mechanism_paths entr(ies) resolve under the target")
+        if missing:
+            problems.append(
+                f"{len(missing)} build_checks.mechanism_paths entr(ies) do not "
+                f"exist under {repo}: {', '.join(missing[:4])}"
+                + ("" if len(missing) <= 4 else f" (+{len(missing)-4} more)")
+                + ". Each contributes nothing to the drift allowlist, so the "
+                "oracle silently watches less than declared (and watches "
+                "nothing at all if every entry is wrong). Entries are literal "
+                "repo-relative paths -- 'src/' for a directory, 'src/mech.py' "
+                "for a file -- not globs."
+            )
+
+    # 1. Test command: do the declared identifiers actually resolve?
+    if opt.get("test_command"):
+        raw = runner.run_test_command(opt["test_command"], cwd=Path(repo))
+        matched = runner.match_declared_tests(factors, raw)
+        declared = {
+            r.get("native_test")
+            for f in factors for r in (getattr(f, "relations", ()) or [])
+            if isinstance(r, dict) and r.get("native_test")
+        }
+        missing = sorted(str(x) for x in (declared - set(matched)) if x)
+        print(f"  smoke: test command reported {len(raw)} test(s); "
+              f"{len(matched)}/{len(declared)} declared identifier(s) matched")
+        if missing:
+            problems.append(
+                f"{len(missing)} declared native_test(s) did not appear in the "
+                f"test command's output, so they would fail closed at verify: "
+                f"{', '.join(str(m) for m in missing[:4])}"
+                + ("" if len(missing) <= 4 else f" (+{len(missing)-4} more)")
+                + ". Check the identifier spelling, that the command selects "
+                "them, and that it prints per-test results (-v / --json-report)."
+            )
+        failed = sorted(k for k, v in matched.items() if not v)
+        if failed:
+            problems.append(
+                f"{len(failed)} declared native_test(s) ran and FAILED: "
+                f"{', '.join(failed[:4])}",
+            )
+
+    # 2. One configuration at every factor's first level.
+    if not opt.get("run_command"):
+        return problems
+    probe_dir = tempfile.mkdtemp(prefix="nous-smoke-")
+    try:
+        problems.extend(_smoke_probe_one_config(
+            opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
+        ))
+        # 5. Per-level abort sweep + liveness (opt-in). Gated behind
+        # `--liveness` because it costs REAL runs -- one per declared level plus
+        # the baseline repeats -- unlike everything above it, which is one run
+        # total. Plain `--smoke` reports the size of the gap instead of closing
+        # it, so an author can see what was not exercised and decide.
+        if liveness:
+            problems.extend(_smoke_liveness_sweep(
+                opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
+                repeats=liveness_repeats,
+            ))
+        else:
+            problems.extend(_report_unexercised_levels(factors))
+    finally:
+        shutil.rmtree(probe_dir, ignore_errors=True)
+    return problems
+
+
+def _report_unexercised_levels(factors) -> list[str]:
+    """Say how many declared levels plain ``--smoke`` did NOT exercise.
+
+    Never a problem -- always the empty list. The single probe corner covers
+    exactly one level per factor, so every other declared level is untested at
+    this point, and a level that ABORTS the target (a real one exited 2 on a Go
+    panic) is caught only if it happens to sit at the corner. Reporting the
+    count is what keeps that gap from being invisible; closing it costs
+    ``sum(len(levels))`` runs and is therefore opt-in.
+    """
+    declared = sum(len(getattr(f, "levels", ()) or ()) for f in factors)
+    covered = sum(1 for f in factors if getattr(f, "levels", None))
+    unexercised = declared - covered
+    if unexercised <= 0:
+        return []
+    print(
+        f"  smoke: {unexercised} of {declared} declared level(s) were NOT "
+        f"exercised — the probe ran ONE corner, so a level that aborts the "
+        f"target is caught only if it sits at that corner. Re-run with "
+        f"--liveness to run every level once ({declared} runs) and to measure "
+        f"each factor's effect against the workload's noise floor.",
+    )
+    return []
+
+
+def _check_declared_self_checks(opt: dict, obs: dict, *, where: str) -> list[str]:
+    """Evaluate ``response.self_check`` against one observation; problems, if any.
+
+    Shared by the ``--smoke`` probe and every ``--liveness`` run, and it goes
+    through the SAME ``adapter_contract.check_self_checks`` the epoch uses -- a
+    pre-flight check that disagreed with the run would be worse than none, since
+    it trains the author to ignore it (the reason ``_smoke_probe_one_config``
+    builds its manipulation scope from ``runner._applied_namespace``).
+
+    A self-check violation here is a SMOKE FAILURE, not a warning, because the
+    consequence of ignoring it is the whole epoch: the objective the campaign is
+    about to pre-register a design over does not satisfy the predicate that
+    defines it, so every row that follows measures something other than the
+    declared response.
+    """
+    from orchestrator.optimize import adapter_contract as ac
+
+    self_check = ((opt.get("response") or {}).get("self_check")) or []
+    if not self_check:
+        return []
+    try:
+        verdicts = ac.check_self_checks(self_check, obs)
+    except Exception as exc:  # noqa: BLE001 — a malformed predicate is a finding
+        return [f"response.self_check could not be evaluated at {where}: {exc}"]
+    bad = [v for v in verdicts if (not v["ok"]) and not v["skipped"]]
+    print(f"  smoke: {len(verdicts) - len(bad)}/{len(verdicts)} declared "
+          f"response.self_check invariant(s) hold at {where}")
+    if not bad:
+        return []
+    return [
+        f"response.self_check violated at {where}: "
+        + "; ".join(f"{v['id']!r}: {v['detail']}" for v in bad)
+        + ". The run reported an objective value its OWN recorded diagnostic "
+        "contradicts, so it is not a measurement of the declared response. "
+        "Under an epoch this fails the row and excludes it from the fit; here "
+        "it means the objective's definition and the adapter's computation of "
+        "it disagree, which no amount of replication repairs. Fix the adapter "
+        "(assert the returned extremum against its own acceptance test before "
+        "reporting it) or correct the declared invariant.",
+    ]
+
+
+HEADROOM_FACTOR = 2.0
+"""How much slack ``run_timeout_sec`` must leave over the slowest OBSERVED run.
+
+Not a new number: it is the factor the probe's existing check already applied
+(``elapsed > 0.5 * timeout`` is ``timeout < 2 * elapsed``), lifted to a name so
+the probe and the liveness sweep cannot drift apart. Two mechanisms disagreeing
+about how much headroom is enough would be worse than one being slightly wrong.
+
+2x rather than 1.1x because the quantity being bounded is not measurement noise
+around one configuration — it is the gap between the configuration that was
+measured and the SLOWEST CORNER OF THE DESIGN, which no single run visits."""
+
+
+def _timeout_headroom_problem(
+    slowest_sec: float, timeout: int, *, what: str,
+    why_a_lower_bound: str = (
+        "no single measured configuration is the design's costliest one"
+    ),
+) -> str | None:
+    """The headroom finding for the slowest observed run, or None if it is fine.
+
+    ONE function for both callers (the ``--smoke`` probe's single corner and the
+    ``--liveness`` sweep's per-level maximum) because they are asking the same
+    question of different evidence, and a second copy of the arithmetic would be
+    free to disagree with the first. ``what`` names which evidence, so the
+    message says how weak the bound it rests on is.
+
+    WHAT THIS CHECK CANNOT GUARANTEE, stated here because the message below
+    promises no more than this:
+
+      * A single run's wall clock is a LOWER BOUND on the slowest corner. The
+        liveness sweep varies ONE factor at a time with the others held at
+        ``known_valid_baseline``; the design's slowest corner combines several
+        factors' costly levels at once, and costs can be superadditive. The real
+        defect's slow corner was ``arc + sata_ssd + 40GiB`` — three costly levels
+        TOGETHER, a configuration a one-factor-at-a-time sweep never visits. So a
+        passing verdict here means "the ceiling clears every corner I actually
+        measured by 2x", never "the ceiling clears the design".
+      * It cannot see the machine the epoch will run on, contention from
+        ``max_parallel``, a cold cache on the first row, or a workload that grows
+        with a factor the sweep held fixed.
+      * A FAILING verdict, by contrast, is sound in the direction that matters:
+        a level already measured within 2x of the ceiling will be joined in the
+        design by corners at least that slow, so the finding is real evidence
+        rather than a heuristic.
+
+    That asymmetry is why this is worth having at all despite the weak bound:
+    the check is conservative exactly where an author gets hurt.
+    """
+    if slowest_sec <= 0 or timeout <= 0:
+        return None
+    if slowest_sec * HEADROOM_FACTOR <= timeout:
+        return None
+    # ``why_a_lower_bound`` differs per caller because the two callers' evidence
+    # is weak in DIFFERENT ways, and an inaccurate caveat is worse than none: an
+    # author who reads "each run varies one factor" about a probe that ran a full
+    # corner learns the wrong thing about what was measured.
+    return (
+        f"{what} took {slowest_sec:.1f}s against a run_timeout_sec ceiling of "
+        f"{timeout}s, leaving under {HEADROOM_FACTOR:g}x headroom. That "
+        f"measurement is a LOWER BOUND on the design's slowest corner, not an "
+        f"estimate of it: {why_a_lower_bound} and costs across factors can be "
+        f"superadditive. Run order is randomized, so the slow corner may run "
+        f"FIRST. Raise optimization.run_timeout_sec to at least "
+        f"{int(slowest_sec * HEADROOM_FACTOR) + 1}s, or higher if the costly "
+        f"levels compound."
+    )
+
+
+def _smoke_liveness_sweep(
+    opt: dict, factors, *, repo: Path, probe_dir: Path, repeats: int = 3,
+) -> list[str]:
+    """Run every declared level once, then report effect size against noise.
+
+    Two gaps, one set of runs — deliberately shared, because a level that
+    aborts the target cannot produce an effect size, so measuring liveness and
+    detecting an aborting level are the same sweep read two ways:
+
+      * GAP 3, a HARD failure. Each declared level of each factor is run once
+        with every other factor at ``known_valid_baseline``. A non-zero exit, a
+        crash signature, or unparseable output is a smoke FAILURE naming the
+        factor AND the level. The real defect this closes: a level that exited 2
+        on a Go panic was reported by the author's own harness as a clean null
+        result identical to baseline, because that harness reused a stale
+        metrics file on non-zero exit.
+      * GAP 2, REPORTED not refused. The baseline is run ``repeats`` times
+        varying only the workload seed, giving the objective's coefficient of
+        variation — the noise floor. A factor whose objective RANGE across its
+        measured levels is under ``2 x`` that floor is flagged "not
+        demonstrably live". A
+        genuinely-small-but-real effect is the author's call to keep; what was
+        missing was the NUMBER. On a real target 3 of 8 candidate factors were
+        dead axes, and a pre-registered policy hash over dead axes is a
+        pre-registration of nothing.
+
+    Cost is ``sum(len(levels)) + repeats`` runs — LINEAR in the design, never
+    ``prod(len(levels))``. That is what makes it affordable enough to be worth
+    offering at all.
+    """
+    from orchestrator.optimize.stage_runner import resolve_run_timeout
+
+    problems: list[str] = []
+    baseline = opt.get("known_valid_baseline")
+    if not isinstance(baseline, dict) or not baseline:
+        return [
+            "--liveness needs optimization.known_valid_baseline: every "
+            "per-factor run holds the OTHER factors at the baseline, and every "
+            "noise-floor run is the baseline itself. Without it there is no "
+            "configuration the campaign promises is runnable to vary from, so "
+            "an effect measured against an arbitrary corner would not be "
+            "attributable to the factor.",
+        ]
+    metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")
+    if not metric:
+        return [
+            "--liveness needs response.primary.metric to compare levels on.",
+        ]
+    seed_env = ((opt.get("workload") or {}).get("seed_env")) or None
+
+    # Every run's wall clock, in the order the sweep made them, keyed by the
+    # label already used for error messages. Collected for EVERY run including
+    # the failing ones and the noise-floor repeats, because "the ceiling is the
+    # binding constraint" is a claim about the whole sweep and a level that died
+    # AT the ceiling is its strongest evidence.
+    observed_sec: list[tuple[str, float, bool]] = []
+
+    def _run(levels: dict, *, seed: int | None, label: str):
+        """One configuration. Returns ``(objective, error_text)``.
+
+        Any ``response.self_check`` violation is appended to ``problems``
+        directly rather than returned as this run's ``error_text``. The two are
+        different findings and must not be conflated: an error means the level
+        could not be RUN (a hole in the design matrix), while a self-check
+        violation means it ran and reported a self-contradictory number. Folding
+        the second into the first would report "level could not be run" about a
+        configuration that ran fine, and would also suppress its effect-size
+        measurement -- which is still worth having, since a violated invariant on
+        a live axis and on a dead one call for different repairs.
+        """
+        obs, err, elapsed = _liveness_run_one(
+            opt, factors, levels, repo=repo, probe_dir=probe_dir,
+            seed_env=seed_env, seed=seed, label=label,
+        )
+        observed_sec.append((label, elapsed, err is None))
+        if err is not None:
+            return None, err
+        problems.extend(_check_declared_self_checks(
+            opt, obs, where=f"liveness run {label}",
+        ))
+        value = obs.get(metric)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None, (
+                f"the run emitted no numeric {metric!r} (got {value!r}), so no "
+                f"effect size is computable"
+            )
+        return float(value), None
+
+    # 1. Noise floor: the baseline, `repeats` times, varying ONLY the seed.
+    samples: list[float] = []
+    for i in range(max(1, int(repeats or 1))):
+        # A campaign with no `workload.seed_env` gets seed=None: the repeats
+        # still measure whatever run-to-run variation the target has (process
+        # startup, timing, an internal clock), which is the floor that matters.
+        val, err = _run(dict(baseline), seed=(i + 1) if seed_env else None,
+                        label=f"noise floor {i + 1}/{repeats}")
+        if err is not None:
+            problems.append(
+                f"the known_valid_baseline configuration {baseline} failed on "
+                f"noise-floor run {i + 1}: {err}. The baseline is the bottom "
+                f"rung of report.json's fallback ladder — a campaign whose "
+                f"baseline does not run has nothing to fall back to.",
+            )
+            # Reported even on this early return: a baseline that failed AT the
+            # ceiling is itself the finding, and it is the one case where the
+            # duration is more informative than the effect sizes the sweep now
+            # cannot compute.
+            _report_liveness_durations(
+                observed_sec, resolve_run_timeout(opt), problems,
+            )
+            return problems
+        samples.append(val)
+    mean = sum(samples) / len(samples)
+    if len(samples) > 1:
+        var = sum((s - mean) ** 2 for s in samples) / (len(samples) - 1)
+        sd = var ** 0.5
+    else:
+        sd = 0.0
+    cv = (sd / abs(mean)) if mean else 0.0
+    print(f"  liveness: noise floor from {len(samples)} baseline run(s): "
+          f"mean {metric}={mean:.6g}, sd={sd:.6g}, CV={cv * 100:.2f}%")
+    if len(samples) < 2:
+        print("  liveness: NOTE — one baseline sample cannot estimate a noise "
+              "floor; the CV is reported as 0 and every non-zero effect will "
+              "clear it. Raise --liveness-repeats to at least 3.")
+
+    # 2. Every declared level once, other factors at baseline.
+    #    Both bullets above read this ONE sweep: an aborting level is a hard
+    #    failure, and the surviving extremes give the effect size.
+    noise_abs = abs(cv * mean) if mean else sd
+    threshold = 2.0 * noise_abs
+    rows: list[tuple[str, float | None, float | None]] = []
+    dead: list[str] = []
+    for f in factors:
+        levels = list(getattr(f, "levels", ()) or ())
+        if not levels:
+            continue
+        measured: dict = {}
+        for level in levels:
+            cfg = dict(baseline)
+            cfg[f.id] = level
+            val, err = _run(cfg, seed=1 if seed_env else None,
+                            label=f"{f.id}={level!r}")
+            if err is not None:
+                problems.append(
+                    f"factor {f.id} level {level!r} could not be run: {err}. "
+                    f"A declared level the target cannot execute is not a null "
+                    f"result — it is a hole in the design matrix that a fitter "
+                    f"will read as a failed row, and (if a harness reuses a "
+                    f"stale metrics file on non-zero exit) as a measurement "
+                    f"identical to baseline.",
+                )
+                continue
+            measured[level] = val
+        if len(measured) < 2:
+            rows.append((f.id, None, None))
+            continue
+        # The objective's full RANGE across the levels actually measured, not
+        # just the difference between the two extreme LEVELS. A strict superset
+        # of the latter, and the right criterion: a factor whose endpoints
+        # happen to coincide but whose middle level moves the objective IS live,
+        # and an endpoints-only comparison would call it dead. For a two-level
+        # factor the two definitions coincide.
+        lo = min(measured.values())
+        hi = max(measured.values())
+        effect = hi - lo
+        rows.append((f.id, effect, (effect / noise_abs) if noise_abs else None))
+        if abs(effect) < threshold:
+            dead.append(f.id)
+
+    print(f"  liveness: effect (objective range across measured levels) vs "
+          f"noise (threshold: |effect| >= 2 x {noise_abs:.6g} = "
+          f"{threshold:.6g})")
+    for fid, effect, ratio in rows:
+        if effect is None:
+            print(f"    {fid:<20} effect: n/a (fewer than 2 levels measured)")
+            continue
+        flag = "  <-- not demonstrably live" if fid in dead else ""
+        shown = "inf" if ratio is None else f"{ratio:.2f}x"
+        print(f"    {fid:<20} effect: {effect:.6g}   ({shown} noise){flag}")
+    if dead:
+        # REPORTED, never refused: a small-but-real effect is the author's
+        # call, and the point of the check is to make that call informed.
+        print(
+            f"  liveness: {len(dead)} factor(s) NOT demonstrably live "
+            f"({', '.join(dead)}): the objective moved less across all their "
+            f"measured levels than 2x the workload's own run-to-run variation. "
+            f"Such a factor consumes its share of the design, contributes only "
+            f"variance to the fit, and makes the policy hash a "
+            f"pre-registration of a knob nothing reads. Confirm the knob "
+            f"reaches a mechanism (not just a config file), widen its levels, "
+            f"or drop it before pre-registering.",
+        )
+
+    # 3. GAP 1: the ceiling, against the per-level wall clock this sweep just
+    #    measured and used to throw away.
+    #
+    #    The sweep already ran every declared level of every factor once. Each of
+    #    those runs' durations is the per-level cost data guide §7.1 tells an
+    #    author to size `run_timeout_sec` from -- and it was observed by the OS
+    #    and discarded, so the advice stayed prose. Prose advice demonstrably does
+    #    not hold: the author of §7.1 then sized the ceiling from the CHEAP corner
+    #    three campaigns in a row, and run order is randomized, so the slow corner
+    #    can be row 1.
+    #
+    #    FAIL rather than merely flag, and deliberately so, unlike the dead-axis
+    #    check right above. The two findings differ in who can adjudicate them. A
+    #    small-but-real effect is a judgement call only the author can make, so
+    #    that check reports a number. Insufficient timeout headroom is not a
+    #    judgement call: rows WILL die at the ceiling, and they die after
+    #    consuming the full ceiling each, which is how ~14 hours bought nothing.
+    #    A `--smoke` failure is also the only actionable moment -- it is
+    #    pre-registration, before a policy hash exists, and the repair is one
+    #    integer in the campaign file. The probe's existing single-corner check
+    #    already fails for exactly this reason; this raises the evidence from one
+    #    corner to every declared level rather than changing the verdict's kind.
+    _report_liveness_durations(observed_sec, resolve_run_timeout(opt), problems)
+    return problems
+
+
+def _report_liveness_durations(
+    observed_sec: list[tuple[str, float, bool]], timeout: int,
+    problems: list[str],
+) -> None:
+    """Print every run's wall clock and check the slowest against the ceiling.
+
+    Split out so the printing and the verdict have one home and can be tested
+    without executing a sweep. ``problems`` is appended to in place, matching how
+    the rest of ``_smoke_liveness_sweep`` accumulates findings.
+
+    The slowest run is taken over SUCCESSFUL runs only. A failed run's elapsed
+    time is printed (it is evidence, and a level that died at the ceiling is the
+    most damning kind) but is not the basis of the headroom verdict, because its
+    duration is bounded BY the ceiling: feeding it back in would compare the
+    ceiling against itself and report a failure on every campaign that has ever
+    lost a row, including one whose level crashed in 0.2s. That level's own
+    finding is already raised, by name, as a hard failure.
+    """
+    if not observed_sec:
+        return
+    print(f"  liveness: observed wall clock per run "
+          f"(run_timeout_sec ceiling: {timeout}s)")
+    for label, secs, ok in sorted(observed_sec, key=lambda r: -r[1]):
+        mark = "" if ok else "   <-- did not complete"
+        print(f"    {label:<28} {secs:8.1f}s{mark}")
+    completed = [(lbl, s) for lbl, s, ok in observed_sec if ok]
+    if not completed:
+        return
+    label, slowest = max(completed, key=lambda r: r[1])
+    problem = _timeout_headroom_problem(
+        slowest, timeout, what=f"the slowest completed liveness run ({label})",
+        why_a_lower_bound=(
+            "the sweep varies ONE factor with the others at "
+            "known_valid_baseline and never runs a corner, while the design's "
+            "slowest corner combines several factors' costly levels at once"
+        ),
+    )
+    if problem:
+        problems.append(problem)
+
+
+def _liveness_run_one(
+    opt: dict, factors, levels: dict, *, repo: Path, probe_dir: Path,
+    seed_env: str | None, seed: int | None, label: str,
+):
+    """Execute one configuration for the liveness sweep.
+
+    Returns ``(observations, error_text, elapsed_sec)`` — exactly one of the
+    first two is None, and ``elapsed_sec`` is populated on BOTH paths. Goes
+    through the SAME ``runner.make_config_runner`` / ``matrix.render_apply`` /
+    ``resolve_run_timeout`` seams the epoch runs through — a sweep that ran the
+    target differently from the way the epoch will could not certify anything
+    about the epoch. In particular the runner already raises on a non-zero exit,
+    on a timeout, and on unparseable output, which is exactly the abort
+    detection GAP 3 needs; nothing here reimplements it.
+
+    THE ELAPSED TIME WAS ALREADY BEING OBSERVED HERE AND THROWN AWAY. ``--liveness``
+    runs every declared level of every factor once; the wall clock of each of
+    those runs is exactly the per-level cost data an author needs to size
+    ``run_timeout_sec``, and it was measured by the OS and discarded. Returning
+    it costs one ``time.monotonic()`` pair and turns prose advice (guide §7.1,
+    "size the ceiling from the slowest corner") into a machine check — advice
+    whose own author then violated it three times running.
+
+    Timed on the FAILING path too, and that is the case that matters most: a
+    level that dies AT the ceiling reports an elapsed time approximately equal
+    to the ceiling, which is the strongest possible evidence that the ceiling is
+    the binding constraint rather than the target.
+    """
+    import time
+
+    from orchestrator.optimize import runner
+    from orchestrator.optimize.matrix import render_apply
+    from orchestrator.optimize.stage_runner import resolve_run_timeout
+
+    cfg_runner = runner.make_config_runner(
+        opt["run_command"], cwd=repo,
+        metric_path=((opt.get("response") or {}).get("primary") or {}).get(
+            "metric", "",
+        ),
+        timeout=resolve_run_timeout(opt),
+        log_dir=probe_dir / "failed_runs",
+    )
+
+    class _Row:
+        row_index = 0
+        replicate = 0
+        role = "liveness"
+        levels: dict = {}
+        apply: dict = {}
+
+    row = _Row()
+    row.levels = dict(levels)
+    apply = render_apply(factors, levels)
+    if seed_env and seed is not None:
+        apply = {**apply, "env": {**(apply.get("env") or {}),
+                                  seed_env: str(seed)}}
+    row.apply = apply
+    started = time.monotonic()
+    try:
+        obs = cfg_runner(row)
+    except Exception as exc:  # noqa: BLE001 — any failure is a finding
+        return None, f"{exc}", time.monotonic() - started
+    return obs, None, time.monotonic() - started
+
+
+def _smoke_probe_one_config(
+    opt: dict, factors, *, repo: Path, probe_dir: Path,
+) -> list[str]:
+    """Run ONE configuration and check everything that run makes answerable.
+
+    Split out of ``_smoke_check_optimization`` so ``probe_dir`` — where any
+    ``config_patch`` copy materialized for the probe lands, and which check 2b
+    reads back — has exactly one lifetime with exactly one cleanup, rather than
+    a removal duplicated across this function's several early returns.
+    """
+    import time
+
+    from orchestrator.optimize import predicates, runner
+    from orchestrator.optimize.matrix import render_apply
+    from orchestrator.optimize.stage_runner import resolve_run_timeout
+
+    problems: list[str] = []
+    levels = {f.id: f.levels[0] for f in factors if getattr(f, "levels", None)}
+    # A log dir is supplied so that any config_patch copies materialized for the
+    # probe SURVIVE the run: check 2b below reads them back to confirm the patch
+    # landed, and without a log dir the runner cleans its scratch copies up (as
+    # it should — under a real campaign the surviving copies live next to the
+    # iteration's artifacts as evidence).
+    # The SAME ceiling the epoch will run under, resolved through the same
+    # function -- not a probe-specific one. `--smoke` exists to catch mismatches
+    # between what the campaign declares and what the target does; a probe that
+    # quietly ran at 600 while the epoch runs at 5400 (or the reverse) would turn
+    # the one check that catches those into a source of them.
+    timeout = resolve_run_timeout(opt)
+    cfg_runner = runner.make_config_runner(
+        opt["run_command"], cwd=repo,
+        metric_path=((opt.get("response") or {}).get("primary") or {}).get(
+            "metric", "",
+        ),
+        timeout=timeout,
+        log_dir=probe_dir / "failed_runs",
+    )
+
+    class _Row:
+        row_index = 0
+        replicate = 0
+        role = "smoke"
+        levels: dict = {}
+        apply: dict = {}
+
+    row = _Row()
+    row.levels = dict(levels)
+    row.apply = render_apply(factors, levels)
+    started = time.monotonic()
+    try:
+        obs = cfg_runner(row)
+    except Exception as exc:  # noqa: BLE001 — any failure is a finding
+        problems.append(
+            f"run_command failed at the first design corner {levels} under a "
+            f"{timeout}s run_timeout_sec ceiling: {exc}",
+        )
+        return problems
+    elapsed = time.monotonic() - started
+
+    # The ceiling AND the duration, together. Either alone is uninformative: the
+    # ceiling is the number the author typed and can already read, and a bare
+    # duration says nothing about the headroom. The pair is what answers the
+    # question a 90-row screen would otherwise answer on row 1 -- and it answers
+    # it for the SUCCEEDING probe too, which is the case the timeout error can
+    # never cover: a corner that finishes at 570s under a 600s ceiling has
+    # already passed smoke and will still kill the epoch on the first slower row.
+    print(f"  smoke: ran one configuration {levels} in {elapsed:.1f}s "
+          f"(run_timeout_sec ceiling: {timeout}s) — "
+          f"{len(obs)} observable(s) returned")
+    # Same arithmetic the liveness sweep applies to its per-level maximum,
+    # through the same function -- see `_timeout_headroom_problem` for what the
+    # verdict can and cannot guarantee. One corner is the weakest evidence this
+    # check ever runs on (it is the design's FIRST corner, not its slowest),
+    # which is exactly why `--liveness` upgrading the evidence is worth the runs.
+    headroom = _timeout_headroom_problem(
+        elapsed, timeout, what=f"the probe configuration {levels}",
+        why_a_lower_bound=(
+            "this is the design's FIRST corner, not its slowest -- every factor "
+            "sits at its first declared level"
+        ),
+    )
+    if headroom:
+        problems.append(headroom)
+
+    # 2b. Did every config_patch actually land in the file the target read?
+    #
+    # This is the check that was missing when `config_patch` was rendered onto
+    # every row and consumed by nothing: a broken config-patch campaign ran
+    # CLEANLY under --smoke, because the probe run exits 0 and emits parseable
+    # JSON whether or not the patch took effect. The run succeeded; it just
+    # measured the baseline. So "the run worked" is not the question. Two
+    # separate claims have to hold, and confusing them IS the defect:
+    #
+    #   (i) the patched document holds the requested value, at the requested
+    #       pointer, with the requested TYPE -- checked by materializing into
+    #       the probe's own directory and reading it back through `read_pointer`;
+    #  (ii) that document is the one the command was pointed at -- checked
+    #       against `delivered_command`, the argv the runner actually executed.
+    #
+    # (i) without (ii) is exactly the state the original defect was in.
+    realized = (getattr(row, "apply", None) or {}).get("applied_patches") or {}
+    if realized:
+        from orchestrator.optimize import config_patch as _cp
+
+        print(f"  smoke: verifying {len(realized)} config_patch(es) reached the "
+              f"target's config file")
+    for fid, entry in sorted(realized.items()):
+        where = f"{entry.get('path')}{entry.get('pointer')}"
+        want = entry.get("value")
+        delivered = entry.get("delivered_command") or []
+        materialized = str(entry.get("materialized_path") or "")
+        if not any(materialized and materialized in str(tok) for tok in delivered):
+            problems.append(
+                f"factor {fid}: config_patch {where} was written to "
+                f"{materialized} but that path does not appear in the command the "
+                f"run actually executed ({' '.join(str(t) for t in delivered)}). "
+                f"The run therefore read the target's UNPATCHED configuration: "
+                f"it exits 0, emits parseable JSON, and reports a number for the "
+                f"baseline while the design matrix records the requested level.",
+            )
+            continue
+        # Re-materialized rather than read from `materialized_path`, because the
+        # runner keeps a copy only for a FAILED row (a 90-run screen would
+        # otherwise leave ~90 unattributed copies in the iteration dir). The
+        # rendering is pure and deterministic, so a fresh materialization of the
+        # same patch is the same document the run read.
+        try:
+            fresh = _cp.materialize_patches(
+                [{"path": entry["path"], "pointer": entry["pointer"],
+                  "value": want}],
+                cwd=repo, temp_dir=probe_dir / "verify",
+            )
+            got = _cp.read_pointer(
+                _cp.load_config(Path(fresh[0]["materialized_path"])),
+                entry["pointer"],
+            )
+        except Exception as exc:  # noqa: BLE001 — any failure is a finding
+            problems.append(
+                f"factor {fid}: config_patch {where} could not be read back "
+                f"after patching: {exc}",
+            )
+            continue
+        if got != want or type(got) is not type(want):
+            problems.append(
+                f"factor {fid}: config_patch {where} did not land as declared: "
+                f"requested {want!r} ({type(want).__name__}), the patched file "
+                f"holds {got!r} ({type(got).__name__}). A level that arrives as "
+                f"the wrong TYPE is the same silent-wrong-config failure as one "
+                f"that never arrived -- the target parses it, rejects or coerces "
+                f"it, and reports a number for a configuration the design matrix "
+                f"never described.",
+            )
+
+    # 2c. Do the declared response.self_check invariants hold at this corner?
+    #
+    # Placed before the objective-presence check deliberately: a row whose
+    # reported objective contradicts its own recorded diagnostic is a WORSE
+    # finding than a missing objective, because a missing objective scores NaN
+    # loudly on every row while a self-contradictory one scores a plausible
+    # number. Checked here rather than only mid-epoch because that is the whole
+    # value: the real defect this closes produced 8 bad rows out of 12, all
+    # biased in the flattering direction, and was found only after the epoch.
+    problems.extend(_check_declared_self_checks(opt, obs, where=f"corner {levels}"))
+
+    # 3. Is the objective metric present?
+    metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")
+    if metric and metric not in obs:
+        problems.append(
+            f"response.primary.metric {metric!r} is absent from the run's "
+            f"output, so every configuration would score NaN. Emitted keys: "
+            f"{', '.join(sorted(str(k) for k in obs)[:8])}",
+        )
+
+    # 4. Do the manipulation predicates hold at this corner?
+    # Build the scope the way run_stage does: the target's OWN echo of its
+    # configuration wins over the requested levels. Using the requested levels
+    # for `applied` would make `applied.X == "{level}"` trivially true and hide
+    # exactly the type mismatch this check exists to find -- a target echoing a
+    # bool where the level is the string "0" can never compare equal, and that
+    # failed 67 of 67 runs on a real campaign.
+    #
+    # The BASE is `runner._applied_namespace(row)` rather than a hand-built
+    # `{"applied": levels}`, so every namespace the schema tells authors to use
+    # is present here exactly as it is at run time. Built by hand, smoke supplied
+    # only `applied` -- so a predicate against `applied_env.X` or
+    # `applied_patches.<FACTOR_ID>.value`, both of which the schema explicitly
+    # recommends, reported a spurious smoke failure and then passed in
+    # production. A pre-flight check that disagrees with the run is worse than
+    # no pre-flight check: it trains the author to ignore it.
+    scope = dict(runner._applied_namespace(row))
+    scope["applied"] = dict(levels)
+    scope.update({k: v for k, v in obs.items()})
+    if isinstance(obs.get("applied"), dict):
+        merged = dict(levels)
+        merged.update(obs["applied"])
+        scope["applied"] = merged
+    for f in factors:
+        man = getattr(f, "manipulation", None)
+        if not man:
+            continue
+        try:
+            v = predicates.evaluate(man, scope, level=levels.get(f.id))
+            ok, detail = v.ok, v.detail
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"factor {f.id}: manipulation check raised: {exc}")
+            continue
+        if not ok:
+            problems.append(
+                f"factor {f.id}: manipulation predicate fails at its first "
+                f"level ({detail}). Every run would be rejected. Check the "
+                f"observable's TYPE -- a level is a string, and a target that "
+                f"emits a bool or int for it can never compare equal.",
+            )
+    return problems
 
 
 def _cmd_status(args):
@@ -611,6 +1620,60 @@ def _cmd_status(args):
             return
 
     print(format_watch_panel(read_status_snapshot(work_dir)))
+
+
+def _cmd_progress(args):
+    """Progress surface for a kind: optimization campaign (stage/rows/ETA).
+
+    Separate from ``nous status`` rather than folded into it, because the two
+    answer different questions from different artifacts. ``status`` reports the
+    engine PHASE from ``state.json`` and the last SDK tool-call event, which is
+    the right surface for a reflective campaign. It cannot report which STAGE an
+    optimization campaign is on -- the stage lives in ``transitions.jsonl`` and
+    the row counts live in each iteration's ``design_matrix.json`` / ``runs.jsonl``,
+    none of which ``status`` reads. A supervising human watching a real campaign
+    reported "confirm is running, 17 rows to go" for hours while it was actually
+    retry-looping, because no surface answered "which stage, how many rows".
+    """
+    import json
+    import time as _time
+
+    from orchestrator.optimize.progress import (
+        format_progress,
+        format_progress_line,
+        read_progress_snapshot,
+    )
+
+    work_dir = resolve_work_dir(args.target)
+    if not (work_dir / "state.json").exists():
+        print(f"Error: no state.json at {work_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, "json", False):
+        print(json.dumps(read_progress_snapshot(work_dir).as_dict(), indent=2,
+                         sort_keys=True))
+        return
+
+    if getattr(args, "line", False):
+        print(format_progress_line(read_progress_snapshot(work_dir)))
+        return
+
+    if getattr(args, "watch", False):
+        try:
+            while True:
+                snap = read_progress_snapshot(work_dir)
+                if sys.stdout.isatty():
+                    sys.stdout.write("\033[2J\033[H")
+                else:
+                    sys.stdout.write("\n" + "\u2500" * 60 + "\n")
+                sys.stdout.write(format_progress(snap) + "\n")
+                sys.stdout.flush()
+                _time.sleep(args.interval if args.interval > 0 else 2)
+        except KeyboardInterrupt:
+            print()
+            return
+
+    print(format_progress(read_progress_snapshot(work_dir)))
 
 
 def _cmd_cost(args):
@@ -1024,7 +2087,15 @@ def _cmd_package(args):
     print(f"Wrote {output}")
 
 
-def main():
+def build_parser():
+    """Build the ``nous`` argparse parser.
+
+    Factored out of ``main()`` so tests can exercise real flag wiring
+    (e.g. ``--auto-approve`` / ``--interactive`` resolution, #task-11a)
+    via ``build_parser().parse_args([...])`` instead of hand-rolling
+    ``argparse.Namespace`` objects that could silently drift from the
+    actual CLI surface.
+    """
     parser = argparse.ArgumentParser(
         prog="nous",
         description=(
@@ -1069,13 +2140,27 @@ def main():
              "campaign.run_id or a value derived from the file path.",
     )
     p_run.add_argument(
-        "--auto-approve", action="store_true",
+        "--auto-approve", dest="auto_approve",
+        action="store_const", const=True, default=None,
         help="Auto-approve all human gates — required for unattended "
              "runs (CI, agent-driven invocation). See README "
              "'--auto-approve safety preconditions' (#255 / F10) "
              "for when this is safe — at minimum, declare "
              "campaign.locked_parameters (#246 / F1) for every "
-             "campaign-spec-critical knob.",
+             "campaign-spec-critical knob. Default depends on "
+             "campaign kind: 'optimization' campaigns auto-approve "
+             "by default (no per-stage human decision changes the "
+             "pure-Python stage rule); 'reflective' campaigns (or no "
+             "kind) still default to prompting. Omitting this flag "
+             "lets the kind default apply; pass it explicitly to "
+             "force auto-approve for either kind. See --interactive "
+             "to force prompting instead.",
+    )
+    p_run.add_argument(
+        "--interactive", action="store_true",
+        help="Force human-gate prompting regardless of campaign kind "
+             "or --auto-approve. Wins over everything else in gate-"
+             "mode resolution.",
     )
     p_run.add_argument(
         "--timeout", type=int, default=1800,
@@ -1127,7 +2212,11 @@ def main():
     p_resume.add_argument("target")
     p_resume.add_argument("--max-iterations", type=int)
     p_resume.add_argument("--model")
-    p_resume.add_argument("--auto-approve", action="store_true")
+    p_resume.add_argument(
+        "--auto-approve", dest="auto_approve",
+        action="store_const", const=True, default=None,
+    )
+    p_resume.add_argument("--interactive", action="store_true")
     p_resume.add_argument("--timeout", type=int, default=1800)
     p_resume.add_argument("--max-cli-retries", type=int, default=10)
     p_resume.add_argument("--agent", choices=["inline", "sdk"], default="sdk")
@@ -1153,9 +2242,53 @@ def main():
     )
     p_schema.set_defaults(func=_cmd_schema)
 
-    p_validate = subparsers.add_parser("validate")
-    p_validate.add_argument("phase", choices=["design", "execution"])
-    p_validate.add_argument("--dir", required=True, type=Path)
+    p_validate = subparsers.add_parser(
+        "validate",
+        help="Validate a campaign.yaml before running it (`campaign FILE`), "
+             "or an iteration's on-disk artifacts (`design|execution --dir`).",
+    )
+    p_validate.add_argument("phase", choices=["campaign", "design", "execution"])
+    p_validate.add_argument(
+        "file", nargs="?", type=Path,
+        help="campaign.yaml to check (phase=campaign only).",
+    )
+    p_validate.add_argument(
+        "--dir", type=Path,
+        help="Iteration directory (phase=design|execution only).",
+    )
+    p_validate.add_argument(
+        "--smoke", action="store_true",
+        help="For `validate campaign` on a kind: optimization campaign, also "
+             "EXECUTE the test command and one configuration against the "
+             "target. Catches the failures static checks cannot see: an "
+             "unmatched native_test, a manipulation predicate whose type never "
+             "matches, an objective metric the target does not emit, and a "
+             "run_command that cannot exec.",
+    )
+    p_validate.add_argument(
+        "--liveness", action="store_true",
+        help="With --smoke: also run EVERY declared level of every factor once "
+             "(other factors at known_valid_baseline) and measure each factor's "
+             "effect against the workload's noise floor. Opt-in because it is "
+             "the only check whose cost scales with the design: "
+             "sum(len(levels)) + --liveness-repeats runs, not one. Catches a "
+             "level that ABORTS the target (caught otherwise only if it happens "
+             "to sit at the first design corner) and flags a factor whose "
+             "levels move the objective by less than 2x run-to-run noise — a "
+             "dead axis that consumes its share of the design and makes the "
+             "policy hash a pre-registration of a knob nothing reads. Also "
+             "reports each run's observed WALL CLOCK and fails when "
+             "run_timeout_sec leaves under 2x headroom over the slowest "
+             "completed run — a lower bound on the slowest CORNER, since the "
+             "sweep varies one factor at a time and never runs a corner.",
+    )
+    p_validate.add_argument(
+        "--liveness-repeats", type=int, default=3, metavar="N",
+        help="How many times --liveness runs the known_valid_baseline, varying "
+             "only the workload seed, to estimate the objective's noise floor "
+             "(default: 3). Below 2 no floor is estimable and every non-zero "
+             "effect clears it.",
+    )
     p_validate.set_defaults(func=_cmd_validate)
 
     p_stop = subparsers.add_parser(
@@ -1209,6 +2342,31 @@ def main():
         help="Watch redraw interval in seconds (default: 2).",
     )
     p_status.set_defaults(func=_cmd_status)
+
+    p_progress = subparsers.add_parser(
+        "progress",
+        help="Stage, row counts, elapsed and ETA for a kind: optimization "
+             "campaign (reads progress.json's inputs live).",
+    )
+    p_progress.add_argument("target")
+    p_progress.add_argument(
+        "--watch", action="store_true",
+        help="Loop and redraw every --interval seconds.",
+    )
+    p_progress.add_argument(
+        "--line", action="store_true",
+        help="Print a single-line summary suitable for shell prompts.",
+    )
+    p_progress.add_argument(
+        "--json", action="store_true",
+        help="Print the machine-readable snapshot (same shape as "
+             "progress.json at the work-dir root).",
+    )
+    p_progress.add_argument(
+        "--interval", type=float, default=2.0,
+        help="Watch redraw interval in seconds (default: 2).",
+    )
+    p_progress.set_defaults(func=_cmd_progress)
 
     p_cost = subparsers.add_parser("cost")
     p_cost.add_argument("target")
@@ -1341,10 +2499,35 @@ def main():
     )
     p_package.set_defaults(func=_cmd_package)
 
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     if not args.command:
         parser.print_help(sys.stderr)
         sys.exit(1)
+
+    # Reap the target adapter's process trees on SIGTERM/SIGINT. Installed HERE,
+    # at the entry point, and nowhere in library code: an application embedding
+    # `nous` has its own signal handling, and a library that silently replaced
+    # it would be a worse bug than the orphan this fixes. `install_signal_handlers`
+    # is additionally careful not to clobber a handler that is already set to
+    # something other than the default.
+    #
+    # What it buys: a campaign killed with SIGTERM used to leave the benchmark's
+    # children alive — an SDK child was found still running, and billing, 18
+    # hours after its campaign was stopped. `atexit` alone cannot cover that,
+    # because it does not run on a signal death.
+    try:
+        from orchestrator.optimize.reaper import install_signal_handlers
+        install_signal_handlers()
+    except Exception:  # pragma: no cover - never block the command
+        import logging as _logging
+        _logging.getLogger(__name__).debug(
+            "could not install child-reaping signal handlers", exc_info=True,
+        )
 
     try:
         args.func(args)

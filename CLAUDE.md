@@ -4,6 +4,26 @@ This file is auto-loaded by Claude Code on every session in this repo. The
 rules below are non-negotiable; when they conflict with general AI/coding
 defaults, **the rules here win**.
 
+## 🚧 Pre-GA: achieving goals outranks preserving behaviour
+
+**`nous` has not reached GA.** Until the project owner explicitly says
+otherwise, this applies repo-wide, not to any one branch or kind:
+achieving the stated goal of a piece of work outranks preserving `nous`'s
+existing observable behaviour. Semantic versioning is what covers the
+change for consumers — it is not a reason to avoid making it.
+
+This is **not** a license to regress silently. An unexplained behaviour
+change is still a defect. What changes is the *default when a legacy code
+path and the correct one disagree*: fix it and name the change, rather than
+contorting new work to reproduce an old defect or an incidental artifact of
+how something used to be implemented. Every task/PR that changes observable
+behaviour should still say so and say why the new behaviour is correct — a
+reviewer still checks that reasoning; they just no longer weigh it against
+a preservation requirement that does not apply pre-GA.
+
+This reverses only on explicit word from the project owner that `nous` has
+reached GA.
+
 ## 🚫 Tests must NEVER make live LLM calls
 
 **No unit, integration, or end-to-end test in this repo may make a real
@@ -101,12 +121,18 @@ adoption.
 
 ## PR workflow (project owner: @sriumcp)
 
-1. Branch off `upstream/reflective` (NOT `main`).
+1. Branch off `upstream/main`.
 2. Push to `origin` (the fork at `sriumcp/agentic-strategy-evolution`).
-3. Open PR with base `upstream/reflective`, head `sriumcp:<branch>`.
+3. Open PR with base `upstream/main`, head `sriumcp:<branch>`.
 4. PR body links the issue with `Closes #N` (or `Refs #N` for partials).
 5. Stack PRs when one logical change builds on another rather than waiting
    for merge — see `docs/plans/CHECKPOINT.md` for the pattern.
+
+`main` is the integration branch. `reflective` was the target during the
+#120 epic and is no longer it — do not branch from it or open PRs against
+it. If you find a branch that forked from `reflective`, rebase onto
+`upstream/main` before opening the PR rather than retargeting a diverged
+history.
 
 ## Graded-complexity tier discipline (issue #159)
 
@@ -129,6 +155,267 @@ gate (``orchestrator.complexity_tier.format_tier_summary``) prints the
 tier and prior-iteration tiers, and prominently flags jumps of more than
 one tier across iterations. Humans can override; agents cannot
 silently leap from tier 1 to tier 3.
+
+## Optimization campaigns (kind: optimization)
+
+`kind: optimization` is a second campaign type alongside the default
+`reflective` one: a factorial/response-surface flow where the campaign
+author (human or an AI writing the YAML) declares factors; `verify`
+certifies them and compiles the policy; Python drives the epoch; `report`
+writes the recommendation and its residual-regret certificate.
+**Substantive model calls per campaign: 0 without `build`, 1 with it —
+the only substantive model call in the kind is `build`.** Gate summaries and
+the end-of-campaign report use the existing shared machinery and are not part
+of the epoch. Compilation of the experimental policy is deterministic Python;
+every state inside the compiled epoch is tokenless.
+
+### 🔒 The compiled experimental policy — read this before touching `orchestrator/optimize/`
+
+**Binding design authority:** `docs/superpowers/specs/2026-08-16-compiled-policy-design.md`.
+**Implementation plan (16 tasks, TDD, phase-by-phase):**
+`docs/superpowers/plans/2026-08-16-compiled-policy.md`.
+Every claim below is an assertion the spec makes and the plan builds toward —
+if this section and the spec ever disagree, the spec wins; fix this section.
+
+The epoch (`screen`/`foldover`/`refine`/`confirm`/`report`/`exception`) is not
+Python control flow branching on `if`/`elif`. It is an **interpreted state
+machine**. Use the paper's own vocabulary consistently in this area of the
+codebase (docstrings, comments, dispatch/review language) rather than
+paraphrasing it: **compiled epoch**, **semantic exception**, `X_valid`,
+**residual regret** `R_δ(x)`, **registered branch** / **registered
+foldover** / **registered augmentation**, **terminal discrimination**,
+**known-valid baseline**, **inferential accounting rule** (the `accounting`
+field) are all load-bearing terms from `../papers/nousko/paper.tex`, not
+synonyms to vary. One deliberate exception: the paper's Figure 1 names the
+terminal-discrimination stage **`discriminate`**; this branch calls the same
+state `confirm` (its behavior already matches the paper's meaning exactly —
+spec §3.3). That name predates this alignment work and stays as-is rather
+than triggering a mechanical rename across six already-reviewed tasks'
+schema, code, and tests — but `confirm` **is** the paper's `discriminate`,
+and any prose introducing it should say so once rather than assume the
+reader already knows.
+
+1. At the end of `verify`, `orchestrator.optimize.policy.compile_policy(campaign)`
+   is a **pure function** (zero model tokens, no measurement read) that
+   compiles the campaign's `optimization` block into `policy.json` — a
+   schema-validated (`orchestrator/schemas/policy.schema.json`), content-hashed
+   (`policy.sha256`) document. This IS the pre-registration: a policy hash
+   written before the first benchmark run means every subsequent branch was
+   fixed before any result was seen.
+2. `check_policy(policy)` structurally validates it — every non-terminal state
+   has a default transition, every conditional transition names its
+   `accounting` rule, every `when` clause's observation key is in the closed
+   `OBSERVATION_KEYS` vocabulary and its comparison operator is in the closed
+   `COMPARISON_OPS` vocabulary (`>`, `>=`, `<`, `<=` only — **no** `==`/`!=`,
+   deliberately narrower than the general-purpose `predicates.OPS` used
+   elsewhere for manipulation checks; see the design spec §3.2 on why the
+   compiled policy's grammar must stay closed).
+3. `step(policy, state, observations) -> (next_state, rule)` is the *only*
+   thing that decides what happens next inside an epoch. It is pure, total
+   (defined for every observation, including an empty dict), and
+   deterministic. A measurement outside the declared vocabulary is a
+   **semantic exception that ends the epoch** — it is never a new branch
+   invented on the fly. Every `step()` call is logged to
+   `transitions.jsonl`, which is the audit trail `enumerate_paths`/
+   `current_state` read back.
+4. **Never add an `if`/`elif` branch to `stage_runner.py` that decides what
+   the NEXT stage is.** That decision belongs in the compiled policy. If a
+   new adaptive branch is needed, it is a new transition in
+   `compile_policy`'s output, gated behind its own named `accounting` rule
+   — not a new code path in the interpreter. An adaptive branch with no
+   named inferential accounting rule (POSI, data splitting, confidence
+   sequences) is explicitly a **non-goal**; it does not ship.
+5. **No model call is ever made inside a compiled epoch state**, for any
+   reason, including "just to interpret a result". A semantic exception ends
+   the epoch instead of improvising. This is the single most important
+   invariant in the kind — it is what makes the token-call table above true.
+
+**The epoch's artifacts, and where they live.** Work-dir root holds the
+epoch-scoped facts; `runs/iter-N/` holds the iteration-scoped ones. An
+epoch spans several iterations, so this split is load-bearing, not cosmetic.
+
+| Root | Written by |
+|---|---|
+| `policy.json` + `policy.sha256` | end of `verify` (`policy.write_policy`) |
+| `transitions.jsonl` | every `step()` — the audit trail `report.json`'s `path` is read back from |
+| `report.json` | `report` — `recommendation.basis`, both bounds, both deltas, finalists |
+| `epoch_end-<epoch>.json` | `exception` — why the epoch ended + `next_epoch_requires` |
+| `mechanism.patch` / `mechanism.sha256` / `pre_build_tests.json` / `baseline_equivalence.json` | the three build oracles |
+| `adapter_contract.json` + `adapter_contract.sha256` | the epoch's first **successful** row — the target adapter's output contract (key names + value **types**), re-checked on every later row |
+
+| `runs/iter-N/` | Written by |
+|---|---|
+| `design_matrix.json`, `runs.jsonl`, `relations.json` | pre-registration, execution, contract check |
+| `effects.json` (incl. the **alias classes**), `recommendation.json` (incl. `alias_consequential`, `residual_regret_model`) | every fitting state: `screen`, `foldover`, `refine` |
+| `fit_exclusions.json` | fitting states, **only** when rows were excluded from the fit |
+| `confirmation.json`, `shortlist.json` | `confirm` — finalists, fresh samples, `residual_regret_terminal` |
+| `findings.json`, `principle_updates.json` | projected deterministically from the fit — zero tokens |
+
+Two names where the spec and the code differ, and **the code is what is on
+disk**: spec §3.9's `epoch.json` is really `epoch_end-<epoch>.json` (one per
+epoch, at the root, so `_epoch_index` is a glob rather than a directory
+walk); spec §3.9's `alias_map.json` does **not exist** — its content is
+`effects.json`'s `aliases` plus `recommendation.json`'s
+`alias_consequential`. Fix the spec's table if it is ever revised; do not
+"fix" the code to match an idealized name.
+
+**Never edit `policy.json`.** `_load_or_compile_policy` compares it against
+`policy.sha256` on every stage and hard-aborts on a mismatch — a
+pre-registered policy that changed inside an epoch is not a pre-registration.
+The one legitimate way to change a design is to revise the campaign YAML and
+start a **new epoch**: the presence of `epoch_end-<e>.json` makes the next
+`nous run --resume` recompile from the revised campaign. Recompiling *across*
+an epoch boundary is the opposite operation from editing *inside* one — a new
+pre-registration, freshly hashed, whose `epoch` field says which execution it
+registers, with the previous epoch's registration preserved in
+`transitions.jsonl`'s per-row `policy_hash`.
+
+**The adapter is the other half of the apparatus, and it is guarded too.**
+`policy.json`'s hash freezes the *campaign* side of a pre-registration; a
+pre-registered design assumes the **measurement instrument** — the author-written
+`run_command` — is fixed for the epoch's duration as well.
+`orchestrator/optimize/adapter_contract.py` holds three guards over it, wired in
+at the observation boundary (`runner.execute_design`'s `adapter_guard=`), never as
+a branch in `stage_runner`:
+
+1. **Contract drift** — the epoch's first *successful* row fingerprints the
+   adapter's output contract (top-level key names plus each value's **type**,
+   never the values, which legitimately change per row) into
+   `adapter_contract.json` + `adapter_contract.sha256` at the work-dir root. A key
+   appearing, disappearing, or changing type — **including a real value becoming
+   `null`** — hard-aborts, exactly as a `policy.sha256` mismatch does. An added key
+   aborts too, deliberately: the rows damaged by a mid-epoch adapter edit are the
+   ones measured *before* the new key appeared. **An apparatus change is an epoch
+   boundary, not an edit.** `null` is its own type name because a key-set-only
+   fingerprint would read the real defect as no drift at all.
+2. **Output freshness** — a response byte-identical to the immediately preceding
+   row's while the levels differ fails that ROW (a cached or stale read).
+   `response.constant_fields` excludes fields that legitimately never vary, which
+   makes the check stricter on what remains. It cannot fire for an adapter that
+   echoes its own configuration back; that limit is asserted, not implied.
+3. **Declared self-check** — `response.self_check`, the same
+   `{observable|metric, op, value}` shape and the same `predicates` module as
+   `manipulation` / `constraints`. A violation fails only its own row (excluded
+   from the fit, verdicts recorded in `runs.jsonl`'s `self_check`), because in the
+   real defect 4 of 12 rows were sound. `--smoke` / `--liveness` evaluate declared
+   self-checks too, so a violated invariant surfaces pre-registration.
+
+All three are pure Python: no model call, no next-state decision. Only drift
+raises out of the loop, and `stage_runner` converts it to `OptimizationAborted`
+rather than routing it to the `exception` branch — the exception branch still
+returns an action from the fitted surface, and a surface fitted over two different
+instruments has no action to certify.
+
+**Two bounds, never collapsed.** `report.json` carries
+`residual_regret_model` (at `delta_screen`, method `bonferroni_one_sided_t` —
+carries the registered response-class assumption) and
+`residual_regret_terminal` (at `delta_terminal`, method
+`bonferroni_one_sided_t_paired` under common random numbers else
+`bonferroni_one_sided_welch_t` — does not depend on the fitted model at all)
+as **separate** fields. `Pr(wrong global decision) ≤ δ_s + δ_t` is only
+meaningful while they stay apart; one merged "regret" number would advertise
+the assumption-light guarantee while delivering the model-dependent one. A
+`null` bound means the variance was not estimable — an unknown is not a zero.
+
+**The fallback ladder is `report.json`'s `recommendation.basis`**, one of
+`certified` / `terminal_best` / `model` / `measured` / `baseline` / `none`.
+Six values for the spec §3.6 ladder's four rungs: the spec's rung 2 (model
+adequate, bound too wide) and rung 3 (model inadequate, re-measure) are
+`terminal_best` and `measured`, and `none` covers the no-baseline case that
+is not a rung at all. The report **always** names an action; a semantic
+exception removes only the `model` rung, because the fitted surface is what
+the exception impeached.
+
+**Oracle-first discipline (spec §2.1):** no paper-aligned mechanism is
+implemented before a synthetic surface exists (`orchestrator/optimize/synthetic.py`,
+nine closed-form response surfaces with known optima, each named for a past
+real bug) that *fails* without the mechanism and *passes* with it. If you are
+adding a capability to this module and cannot point to which synthetic
+surface would catch its absence, you have not finished specifying it.
+`orchestrator/optimize/harness.py` drives these surfaces through the real
+`stage_runner.run_stage` in-process, with no dispatcher and no LLM.
+
+**Two verified historical defects, fixed in this line of work** (do not
+reintroduce): a tabulated resolution-IV screen crashed at fit because one
+column per two-factor-interaction made `XᵀX` singular under aliasing (fixed
+by fitting one coefficient per **alias class**, spec §4 D1); one infeasible
+row silently NaN-poisoned every fitted coefficient because the abort guard
+excluded infeasible rows from its check but nothing downstream excluded them
+from the fit (fixed by fitting on the complete-row subset and recording
+exclusions, spec §4 D2).
+
+When the mechanism under study does not exist in the target yet, add the
+opt-in `build` stage first (`stages: [build, verify, screen, confirm]`).
+It spends **one** agent call authoring the mechanism plus the native tests
+its `relations` declare — the campaign's only substantive model call. `build`
+makes no
+correctness judgement — `verify` remains the gate, so the stage that writes
+the code is never the stage that certifies it. The validator rejects `build`
+anywhere but position 1 and warns when declared `native_test` files are
+absent with no `build` stage to author them. Omit `build` whenever every
+factor maps to a knob the target already exposes.
+
+**Model:** every phase of a `kind: optimization` campaign resolves to
+`claude-opus-5` (`orchestrator.campaign.OPTIMIZATION_MODEL`) rather than the
+per-phase `defaults.yaml` models the reflective kind uses — few calls, and the
+`build` call determines the quality of every downstream number. An explicit
+`campaign.models.<phase>` still overrides it.
+
+**The graded-complexity tier ladder above is scoped to `kind: reflective`
+only and does not apply here.** `complexity_tier` / `tier_justification`
+are rejected under `kind: optimization` wherever they appear — top level,
+under `metadata`, or under the `optimization` block — because a
+pre-registered design matrix already gives a *stronger* anti-p-hacking
+guarantee than the tier ladder protects (every configuration is fixed
+before any result is seen), so the two disciplines must not be
+half-adopted together.
+
+Before launching any optimization campaign, run
+`nous validate campaign FILE --smoke`. Static validation passes campaigns that
+cannot execute a single configuration; `--smoke` runs the test command and one
+config to check that declared `native_test` identifiers actually resolve, that
+`run_command` execs and emits parseable JSON, that the objective metric is
+present, and that the manipulation predicates hold. Each of those otherwise
+costs a full campaign to discover.
+
+Add `--liveness` (opt-in, alongside `--smoke`) to run **every declared level of
+every factor once**, other factors at `known_valid_baseline`:
+`sum(len(levels)) + --liveness-repeats` runs, linear in the design rather than
+combinatorial. One sweep, read two ways. A level whose run exits non-zero, times
+out, or emits unparseable output is a **smoke FAILURE naming the factor and the
+level** — a real level exited 2 on a Go panic and an author's harness, reusing a
+stale metrics file, reported it as a clean null result identical to baseline. And
+each factor's effect across its extreme levels is **reported** against the noise
+floor (the baseline re-run varying only the workload seed), flagged
+`not demonstrably live` under `2 x` the noise CV. Reported, not refused: a
+small-but-real effect is the author's call, but of 8 candidate factors on a real
+target 3 were dead axes, and a policy hash over dead axes pre-registers nothing.
+Plain `--smoke` stays one run and prints how many levels it did **not** exercise,
+so the gap is visible rather than silent.
+
+Even with `--liveness`, `--smoke` cannot see the apparatus properties that only
+appear across a *range* of configurations: a `run_timeout_sec` sized from the
+cheap corner of the design (run order is randomized, so the slow corner may run
+first), a noise floor measured in the wrong load regime, an objective that is
+censored by a request deadline, or a workload that leaves the mechanism under
+study entirely idle. `docs/optimization-campaign-guide.md` §7 is the pre-flight
+checklist for those — each one a defect a real campaign shipped.
+
+`--smoke` remains the **first** thing to run on any campaign, compiled policy
+or not: a policy compiles cleanly from a campaign whose `run_command` cannot
+exec, and a hashed pre-registration of an experiment that cannot execute a
+single configuration is a pre-registration of nothing.
+
+These campaigns are authored by AI: see
+`docs/optimization-campaign-guide.md` for the mental model, the
+field-by-field walkthrough of the `optimization` block, the **"The compiled
+policy"** section (the `policy` / `known_valid_baseline` / `workload` blocks,
+the states-and-branches table, how to read `report.json`, and how to start
+epoch 2), four worked end-to-end examples, and the anti-patterns to avoid.
+Per-artifact reference: `docs/data-model.md` §7. Target-side adapter
+contract (`run_command` / `test_command` shape, seed verification, SLA
+constraints as validity): `docs/targets.md`. Cross-field rules live in
+`orchestrator.validate.validate_optimization_campaign`.
 
 ## Meta-findings emit at campaign end (issue #155)
 
@@ -171,6 +458,45 @@ worked example). The full friction-report resolution map is in
 - `docs/campaign-authoring-guide.md` — locked_parameters, the
   "what to lock" inventory, rehearsal-as-instrument (#245
   resolution).
+- `docs/optimization-campaign-guide.md` §7 — **pre-flight checklist**: size the
+  timeout from the worst corner, verify each factor beats the noise floor,
+  measure noise at the real operating point, check the objective is fittable and
+  uncensored, confirm the workload exercises the mechanism, and make probe
+  harnesses fail loudly. Run it before a policy hash is written.
+- `docs/optimization-campaign-guide.md` — authoring guide for
+  `kind: optimization` factorial/response-surface campaigns, including
+  "The compiled policy" section (states, artifacts, `report.json`, epochs).
+- `docs/targets.md` — the **target adapter contract** for real systems
+  targets: `run_command` / `test_command` output shape, the
+  `NOUS_WORKLOAD_SEED` verification recipe, SLA constraints as validity
+  rather than penalty, and per-target notes (vLLM, Qdrant, ClickHouse,
+  Knative, Cilium).
+- `docs/data-model.md` §7 — per-artifact reference for everything a
+  compiled epoch writes.
+- `docs/optimization-invariants.md` — the **enumerated invariant inventory**
+  for the kind: stable IDs classified by TYPE (structural / closed-vocabulary /
+  semantic / statistical / temporal / provenance / resource / economic) and by
+  LEVEL (function → module → artifact → iteration → epoch → campaign), each
+  traced to a docstring, spec section, or historical defect; plus §8's
+  **behaviors** enumeration (the `recommendation.basis` ladder, the row-outcome
+  taxonomy, the three adapter guards' blast radii, and the
+  semantic-exception / measurement-failure / campaign-abort discriminator) and
+  §10's list of prose that turned out **not** to be invariant. Read it as a
+  reviewer's checklist before changing anything under `orchestrator/optimize/`.
+  The machine-readable half is `orchestrator/optimize/invariants.py` — do NOT
+  confuse it with the campaign-authored `design_space.invariants` (that asks
+  "is the TARGET behaving?"; this asks "is NOUS behaving?").
+  `tests/test_optimize_invariants.py` fails when document and registry drift,
+  which is what keeps the inventory alive. **If you add a "MUST NEVER" to a
+  docstring in that package, it needs an ID there and a checker — otherwise you
+  have added prose that cannot fail.**
+- `docs/superpowers/specs/2026-08-16-compiled-policy-design.md` — binding
+  design authority for the compiled experimental policy (`policy.json`,
+  `step()`, the closed observation/operator vocabularies, the residual-regret
+  certificate, the fallback ladder).
+- `docs/superpowers/plans/2026-08-16-compiled-policy.md` — the 16-task
+  implementation plan for the compiled policy, executed via
+  `superpowers:subagent-driven-development`.
 - `docs/friction-245-resolution.md` — F1..F21 → file map for
   paper-memorytime-mirage friction report.
 - `docs/plans/CHECKPOINT.md` — current state of the #120 epic.

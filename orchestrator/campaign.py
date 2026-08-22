@@ -30,6 +30,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 import jsonschema
@@ -42,6 +43,7 @@ from orchestrator.util import atomic_write
 from orchestrator.ledger import append_failed_row, append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.metrics import summarize_metrics
+from orchestrator.optimize import progress as _progress
 from orchestrator.iteration import (
     DEFAULTS_PATH,
     IterationOutcome,
@@ -53,11 +55,35 @@ from orchestrator.iteration import (
 logger = logging.getLogger(__name__)
 
 
+#: Model used for EVERY phase of a ``kind: optimization`` campaign.
+#:
+#: This kind makes at most one substantive model call — one ``build`` (which
+#: authors the mechanism every later stage measures), and nothing else —
+#: verify/screen/refine/confirm are tokenless, apart from a small gate summary
+#: per iteration and the shared end-of-campaign report (neither is part of the
+#: compiled epoch). Because the tokenless stages carry the
+#: bulk of the work, the marginal cost of using the strongest model for all of
+#: them is small, while the downside of a weaker model on the build call is that
+#: every downstream number describes worse code. Reflective keeps its own
+#: per-phase defaults, which are tuned for a different call profile.
+OPTIMIZATION_MODEL = "claude-opus-5"
+
+
 def _resolve_model(campaign: dict, phase_key: str, cli_model: str | None) -> str:
-    """Resolve model: campaign.models > defaults.yaml > --model flag."""
+    """Resolve model: campaign.models > kind default > defaults.yaml > --model.
+
+    An explicit ``campaign.models[phase]`` always wins, so a campaign can still
+    pin a cheaper model per phase. Absent that, ``kind: optimization`` resolves
+    every phase to :data:`OPTIMIZATION_MODEL`.
+    """
     campaign_models = campaign.get("models", {})
     if campaign_models.get(phase_key):
         return campaign_models[phase_key]
+
+    from orchestrator.validate import campaign_kind
+    if campaign_kind(campaign) == "optimization":
+        return OPTIMIZATION_MODEL
+
     if DEFAULTS_PATH.exists():
         defaults = yaml.safe_load(DEFAULTS_PATH.read_text()) or {}
         default_model = defaults.get("models", {}).get(phase_key)
@@ -372,6 +398,28 @@ def run_campaign(
         )
         preflight_dispatcher.preflight_check()
 
+    # An optimization campaign's length is a property of its COMPILED POLICY,
+    # not of the caller's default. The longest registered path (plus each
+    # spending state's registered self-loop rounds) is how many iterations the
+    # epoch can legitimately need, so a lower max_iterations would truncate a
+    # pre-registered path mid-epoch — the campaign would stop with no `report`
+    # and no `exception`, which is the one outcome the policy does not register.
+    # Raise to the floor rather than lowering the cap: the caller's value still
+    # wins whenever it is larger.
+    from orchestrator.validate import campaign_kind
+
+    if campaign_kind(campaign) == "optimization":
+        from orchestrator.optimize import policy as _policy
+
+        floor = (len(_policy.pre_epoch_stages(campaign))
+                 + _policy.longest_path(_policy.compile_policy(campaign)))
+        if floor > max_iterations:
+            logger.info(
+                "optimization kind: raising max_iterations %d -> %d "
+                "(longest registered path)", max_iterations, floor,
+            )
+            max_iterations = floor
+
     # #197: persist effective max_iterations into state.json so a later
     # `nous resume` (without --max-iterations) honors the original cap
     # instead of silently defaulting to 10. The state file is the single
@@ -380,9 +428,82 @@ def run_campaign(
 
     start_iter = _resume_completed_campaign(work_dir, max_iterations)
 
+    # ── campaign-loop robustness: the breaker, the budget, the progress file ──
+    #
+    # THIS LAYER, not the compiled policy, and the distinction is load-bearing.
+    # The policy decides which STATE runs next given this iteration's
+    # OBSERVATIONS. These three ask whether the LOOP should continue at all,
+    # and their inputs are iteration FAILURES — the absence of an observation.
+    # A failed iteration records no transition (which is why it repeats the
+    # same state), so there is no observation for a policy branch to fire on;
+    # the decision cannot live there even in principle. See
+    # ``orchestrator.optimize.progress``' module docstring.
+    _is_optimization = campaign_kind(campaign) == "optimization"
+    _opt_block = campaign.get("optimization") or {}
+    _budget_hours = _opt_block.get("max_wall_clock_hours")
+    _breaker_threshold = int(
+        _opt_block.get("max_identical_failures")
+        or _progress.DEFAULT_MAX_IDENTICAL_FAILURES,
+    )
+    _campaign_started = time.time()
+    if _is_optimization:
+        _progress.write_progress(work_dir)
+
     max_redesigns = 3
     for i in range(start_iter, max_iterations + 1):
         is_last = (i == max_iterations)
+
+        if _is_optimization:
+            # ── the wall-clock budget, checked BETWEEN iterations ──
+            # Never inside one: killing a running measurement leaves a
+            # half-measured row and produces no report, and the fallback
+            # ladder's guarantee that the report always names an action depends
+            # on the epoch ending through its normal terminal path. So this
+            # declines to START another iteration and lets the terminal
+            # machinery below produce the recommendation from what was
+            # measured.
+            _bud = _progress.check_budget(
+                budget_hours=_budget_hours, started_at=_campaign_started,
+            )
+            if _bud.exhausted:
+                logger.warning("wall-clock budget exhausted: %s", _bud.reason)
+                print(f"\n  CAMPAIGN BUDGET EXHAUSTED — {_bud.reason}")
+                _progress.write_halt(work_dir, {
+                    "kind": "wall_clock_budget",
+                    "reason": _bud.reason,
+                    "stopped_before_iteration": i,
+                    "budget": _bud.as_dict(),
+                })
+                _progress.write_progress(work_dir)
+                _emit_meta_findings(work_dir, campaign)
+                _write_repo_cache(work_dir, campaign)
+                # Through the SAME terminal path a clean stop takes, so the
+                # report is written and `recommendation.basis` names the rung
+                # the answer rests on.
+                _generate_report(campaign, work_dir, model, agent=agent,
+                                 timeout=timeout)
+                _write_metrics_summary(work_dir)
+                return
+
+            # ── the repeated-failure circuit breaker ──
+            _verdict = _progress.check_breaker(
+                _progress.failures_from_ledger(work_dir),
+                threshold=_breaker_threshold,
+            )
+            if _verdict.tripped:
+                logger.error("circuit breaker tripped: %s", _verdict.reason)
+                print(f"\n  CAMPAIGN HALTED — {_verdict.reason}")
+                _progress.write_halt(work_dir, {
+                    "kind": "repeated_failure",
+                    "reason": _verdict.reason,
+                    "stopped_before_iteration": i,
+                    "breaker": _verdict.as_dict(),
+                })
+                _progress.write_progress(work_dir)
+                _emit_meta_findings(work_dir, campaign)
+                _write_repo_cache(work_dir, campaign)
+                _write_metrics_summary(work_dir)
+                return
 
         for redesign_attempt in range(max_redesigns + 1):
             print(f"\n{'#'*60}")
@@ -435,7 +556,19 @@ def run_campaign(
             except Exception as exc:
                 logger.error("Iteration %d failed permanently: %s", i, exc)
                 print(f"\n  Iteration {i} FAILED: {exc}")
-                append_failed_row(work_dir, i, str(exc))
+                # The exception TYPE is prefixed into the recorded error, not
+                # dropped. The circuit breaker fingerprints on (type, stage,
+                # normalized message), and two different defects whose prose
+                # normalizes alike must stay distinguishable — an
+                # `OptimizationAborted` and a `KeyError` are not the same
+                # failure mode even when their text collapses to the same
+                # shape. `ledger.json`'s `error` is a free-text field and this
+                # is additive to it.
+                append_failed_row(
+                    work_dir, i, f"{type(exc).__name__}: {exc}",
+                )
+                if _is_optimization:
+                    _progress.write_progress(work_dir)
                 outcome = None
                 break
 
@@ -465,6 +598,11 @@ def run_campaign(
         if outcome == IterationOutcome.COMPLETED:
             append_ledger_row(work_dir, i)
             print(f"\n  Campaign complete after {i} iteration(s).")
+            # A final, accurate snapshot: a reader coming to a FINISHED campaign
+            # should not find a progress.json describing its second-to-last
+            # iteration.
+            if _is_optimization:
+                _progress.write_progress(work_dir)
             _emit_meta_findings(work_dir, campaign)
             _write_repo_cache(work_dir, campaign)
             _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
@@ -474,6 +612,10 @@ def run_campaign(
         if outcome == IterationOutcome.ABORTED:
             print(f"\n  Campaign aborted at iteration {i}.")
             print("  Engine state preserved for potential resume.")
+            # The state is preserved for a resume, so the progress surface a
+            # human consults before resuming must describe where it stopped.
+            if _is_optimization:
+                _progress.write_progress(work_dir)
             _emit_meta_findings(work_dir, campaign)
             _write_repo_cache(work_dir, campaign)
             _write_metrics_summary(work_dir)
@@ -485,6 +627,15 @@ def run_campaign(
 
         # Post-iteration: ledger
         append_ledger_row(work_dir, i)
+
+        # ... and refresh progress.json. Written on the SUCCESS path too, not
+        # only at the failure and halt paths: a long healthy campaign is exactly
+        # the case where a supervising human is left guessing, and a
+        # progress.json that only advanced when something went wrong would go
+        # stale for hours while the campaign was fine. Written AFTER the ledger
+        # row so the completed/failed iteration counts it reads are current.
+        if _is_optimization:
+            _progress.write_progress(work_dir)
 
         iter_dir = work_dir / "runs" / f"iter-{i}"
 

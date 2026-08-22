@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/confirmation.schema.json",
+  "title": "Optimization Terminal Discrimination Record",
+  "description": "runs/iter-N/confirmation.json (design spec 3.3, 3.5) -- the record of ONE round of TERMINAL DISCRIMINATION. The paper's Figure 1 names this state `discriminate`; this branch calls it `confirm`, and the behaviour here is the paper's: a shortlist S subset of X_valid is measured FRESHLY and its members are compared against each other, so the final comparison does not rest on the fitted response at all. Written by orchestrator.optimize.stage_runner._finish_confirm. shortlist.json is written next to it as a POINTER to this file (see shortlist.schema.json) so the finalists and their measurements have exactly one source of truth. This is the assumption-light half of the two-bound obligation: residual_regret_terminal lives here at delta_terminal, residual_regret_model lives in recommendation.json at delta_screen, and no artifact carries a combined number.",
+  "type": "object",
+  "required": [
+    "stage",
+    "iteration",
+    "round",
+    "finalists",
+    "best",
+    "bounds",
+    "epsilon",
+    "residual_regret_terminal",
+    "terminal_bound",
+    "certified",
+    "paired",
+    "delta_terminal",
+    "excluded_infeasible",
+    "excluded_unmeasured",
+    "confirmed_at_levels",
+    "replicates",
+    "usable_replicates",
+    "mean",
+    "spread",
+    "observations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "stage": {
+      "type": "string",
+      "const": "confirm",
+      "description": "The terminal-discrimination state's name in this branch. Constant because no other state writes this artifact."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The iteration index this round ran at. The terminal state can SELF-LOOP, so successive rounds land in successive iterations."
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Which terminal round this is. Round r > 1 keeps the previous winner plus every challenger whose bound still exceeded epsilon -- exactly those that could still change the epsilon-optimal decision. The registered round cap and the budget guard are what terminate the loop; the interpreter never decides it."
+    },
+    "finalists": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The REALIZED shortlist and its fresh measurements, one entry per finalist that was scheduled.",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "levels",
+          "why",
+          "samples",
+          "mean",
+          "n",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Stable per-round finalist handle (f0, f1, ...). `bounds` and `terminal_bound.challenger` reference finalists by this key rather than repeating their levels."
+          },
+          "levels": {
+            "type": "object",
+            "minProperties": 1
+          },
+          "why": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which rung of the seeding ladder seated this finalist -- the model's answer, the best measured valid configuration, a model top candidate, a round-r carry-over, or known_valid_baseline. Recorded so a reader can tell what the shortlist was PUTTING ON TRIAL from what it was TRUSTING."
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "This finalist's usable fresh replicate values. Empty when every replicate was excluded."
+          },
+          "mean": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "infeasible",
+              "unmeasured"
+            ],
+            "description": "Why this finalist left the running, not merely that it did. MEASURED INVALIDITY TRUMPS PREDICTION: a single measured violation excludes the finalist outright rather than being averaged away over its surviving replicates, because a configuration that is admissible only sometimes is not admissible. `infeasible` means a replicate was measured inadmissible (or rejected) -- real information about the design space, and the configuration should be struck off. `unmeasured` means the instrument could not measure an ADMISSIBLE configuration (timeout, crash, unparseable output) -- a re-run with a larger budget may recover it, and striking it off would be wrong. The two were one value (`excluded`) until a timed-out finalist was reported as though it had violated a constraint."
+          }
+        }
+      }
+    },
+    "best": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The winning finalist's `key`, or null when no finalist produced a valid measurement at all (which is a real outcome, not an error -- the report ladder then falls to `baseline` or `none`)."
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "description": "PER-CHALLENGER upper bounds against the winner alone, keyed by finalist key, each computed at delta_terminal with M=1. That is the right level for a `keep measuring this one?` screening decision and the WRONG level for a certificate -- the certified verdict reads terminal_bound.value (the simultaneous max) and never these. Round r+1 reads this to decide who is still in contention."
+    },
+    "epsilon": {
+      "type": "number",
+      "description": "The resolved epsilon-optimality tolerance residual_regret_terminal is compared against."
+    },
+    "residual_regret_terminal": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "R_delta(x) from terminal discrimination at delta_terminal (design spec 3.5) -- the simultaneous max over challengers, carrying nothing but the fresh measurements of the realized shortlist. Null when no finalist produced a valid measurement. DELIBERATELY UNAFFECTED by an exclusion: it is a valid WITHIN-SHORTLIST number even when the shortlist shrank, and suppressing it would hide the comparison that genuinely did happen. It is `certified` that an exclusion suppresses, not this. Never collapsed with recommendation.json's residual_regret_model, which is a different number at a different delta from disjoint inputs."
+    },
+    "terminal_bound": {
+      "type": "object",
+      "required": [
+        "value",
+        "challenger",
+        "delta",
+        "method",
+        "detail"
+      ],
+      "additionalProperties": false,
+      "description": "The full record behind residual_regret_terminal, including WHICH arithmetic ran. Recorded so a reader can tell which bound they are looking at rather than inferring it from the branch date: pairing that reached only the artifact would leave the campaign reporting the wider bound while claiming the narrower method.",
+      "properties": {
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "challenger": {
+          "type": [
+            "string",
+            "object",
+            "null"
+          ],
+          "description": "The finalist KEY that attains the bound (a levels dict at the model stage). A key rather than a dict because this file already records every finalist's levels against its key, and two representations of one fact can drift apart."
+        },
+        "delta": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 0.5
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "description": "bonferroni_one_sided_t_paired when common random numbers were actually shared (design spec 3.8), bonferroni_one_sided_welch_t otherwise. A campaign with no declared workload seed gets Welch deliberately: the paired form stays VALID when the seeds were not shared but loses efficiency, and worse, would record a paired method about an experiment that paired nothing."
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "certification_withheld": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "fit_exclusions_level_correlated"] },
+      "description": "Why `certified` is false, as named reasons rather than an unexplained boolean -- so a reader can tell a bound that was simply too wide from a GLOBAL claim withheld because the delta_screen premise was broken. Empty exactly when certified is true. `finalist_measured_infeasible` and `fit_exclusions_level_correlated` are the two premise-breaking reasons: both are evidence that the model's ranking is not tracking the constrained objective, so epsilon-optimality over X_valid is unearned even though residual_regret_terminal (a WITHIN-SHORTLIST number resting on fresh measurements and no model) remains valid and is still reported.",
+      "default": []
+    },
+    "certified": {
+      "type": "boolean",
+      "description": "The GLOBAL epsilon-optimality verdict over X_valid, which rests on Pr(wrong global decision) <= delta_screen + delta_terminal. False whenever ANY finalist was measured inadmissible, even if the within-shortlist bound came in at or below epsilon: an inadmissible finalist is direct evidence that the model's ranking is not tracking the CONSTRAINED objective, so the delta_screen premise (screening did not exclude the true optimum) does not hold and the sum bound is unearned. The within-shortlist number stays reported; only the global label is withheld."
+    },
+    "paired": {
+      "type": "boolean",
+      "description": "Whether replicate i of every finalist actually ran the same workload seed (common random numbers, design spec 3.8), set from the campaign's declared optimization.workload.seed_env. Forwarded to the bound computation, not merely recorded: the paired form works on DIFFERENCES so the workload's contribution cancels and the bound shrinks substantially."
+    },
+    "delta_terminal": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 0.5,
+      "description": "The terminal risk from the compiled policy's objective -- the delta this file's bound is stated at, kept distinct from delta_screen throughout."
+    },
+    "excluded_infeasible": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "The levels of every finalist measured INADMISSIBLE (or rejected). Non-empty is what withholds `certified` above, so it is recorded rather than derived. The name predates the infeasible/unmeasured split and is kept for existing readers; it now contains only genuinely inadmissible finalists."
+    },
+    "excluded_unmeasured": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "The levels of every finalist whose MEASUREMENT failed -- timeout, crash, unparseable output -- rather than being inadmissible. Also withholds `certified`, because the terminal comparison has no fresh samples for it either, but it carries the opposite authoring consequence from `excluded_infeasible`: re-run with a larger budget rather than strike the configuration off."
+    },
+    "confirmed_at_levels": {
+      "type": "object",
+      "description": "The WINNING finalist's levels. A legacy single-point field kept because readers of it exist (the harness's recommendation fallback, the guide's worked output, the report ladder's terminal rungs); it now names the winner rather than the only configuration run. Empty when there is no winner."
+    },
+    "replicates": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total replicate runs scheduled this round, across all finalists."
+    },
+    "usable_replicates": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many of those produced a usable measurement. The gap between this and `replicates` is what an exclusion looks like in aggregate."
+    },
+    "mean": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "The winner's mean over its fresh replicates -- a MEASUREMENT, unlike recommendation.json's `predicted`. Null when there is no winner."
+    },
+    "spread": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Population standard deviation of the winner's replicates; 0.0 with fewer than two of them."
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "The winner's individual replicate values, so the mean and spread above are auditable rather than asserted. Empty when there is no winner."
+    },
+    "best_observed": {
+      "type": "object",
+      "required": [
+        "levels"
+      ],
+      "description": "OPTIONAL and present only when there is both a winner and a best measured valid configuration to compare it against. Two keys: `levels`, and the campaign's own PRIMARY METRIC NAME carrying that configuration's value -- so the second key is campaign-dependent and cannot be enumerated here, which is why this object stays open. `the best finalist` and `the best configuration found` are different claims, and recording both keeps the artifact honest when they disagree -- a mis-specified surface can leave the winner below a corner an earlier state measured.",
+      "properties": {
+        "levels": {
+          "type": "object",
+          "minProperties": 1
+        }
+      }
+    },
+    "confirmed_is_best_observed": {
+      "type": "boolean",
+      "description": "OPTIONAL, written alongside best_observed: whether the winner actually matched or beat it."
+    },
+    "regression_vs_best_observed": {
+      "type": "object",
+      "required": [
+        "absolute",
+        "percent"
+      ],
+      "additionalProperties": false,
+      "description": "OPTIONAL, written ONLY when confirmed_is_best_observed is false -- the size of the shortfall. Its presence is the signal that the observed corner, not the winner, is the campaign's real answer and the surface is mis-specified.",
+      "properties": {
+        "absolute": {
+          "type": "number"
+        },
+        "percent": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

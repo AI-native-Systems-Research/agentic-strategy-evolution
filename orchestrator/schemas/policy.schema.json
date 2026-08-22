@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nous compiled experimental policy",
+  "type": "object",
+  "required": ["policy_version", "epoch", "compiled_from", "objective", "budget", "initial", "states", "transitions"],
+  "additionalProperties": false,
+  "properties": {
+    "policy_version": {"const": 1},
+    "epoch": {"type": "integer", "minimum": 1},
+    "compiled_from": {
+      "type": "object", "required": ["campaign_hash", "mechanism_patch_hash", "factor_ids", "pre_epoch"],
+      "properties": {
+        "campaign_hash": {"type": "string"},
+        "mechanism_patch_hash": {"type": "string"},
+        "factor_ids": {"type": "array", "items": {"type": "string"}},
+        "pre_epoch": {"type": "array", "items": {"enum": ["build", "verify"]}}
+      }
+    },
+    "objective": {
+      "type": "object", "required": ["metric", "direction", "epsilon", "delta_screen", "delta_terminal"],
+      "properties": {
+        "metric": {"type": "string"},
+        "direction": {"enum": ["maximize", "minimize"]},
+        "epsilon": {"type": "object", "oneOf": [
+          {"required": ["abs"], "properties": {"abs": {"type": "number", "minimum": 0}}, "additionalProperties": false},
+          {"required": ["pct"], "properties": {"pct": {"type": "number", "minimum": 0}}, "additionalProperties": false}]},
+        "delta_screen": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
+        "delta_terminal": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5}
+      }
+    },
+    "budget": {"type": "object", "required": ["max_runs"], "properties": {"max_runs": {"type": ["integer", "null"]}}},
+    "known_valid_baseline": {"type": ["object", "null"]},
+    "workload": {"type": ["object", "null"]},
+    "initial": {"type": "string"},
+    "states": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object", "required": ["spends"],
+        "properties": {
+          "spends": {"type": "boolean"},
+          "terminal": {"type": "boolean"},
+          "ends_epoch": {"type": "boolean"},
+          "design": {"type": "object"},
+          "estimator": {"type": "string"},
+          "accounting": {"type": "string"}
+        }
+      }
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["from"],
+        "properties": {
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "default": {"type": "string"},
+          "when": {"type": "object"},
+          "accounting": {"type": "string"}
+        },
+        "oneOf": [{"required": ["when", "to"]}, {"required": ["default"]}]
+      }
+    }
+  }
+}

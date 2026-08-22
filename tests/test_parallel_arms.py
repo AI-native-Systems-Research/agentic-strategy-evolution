@@ -133,6 +133,121 @@ class TestRunUnits:
             run_units([], runner=_RecordingRunner(), max_parallel=0)
 
 
+# ─── The bound is real, and ordering survives it ────────────────────────────
+#
+# `max_parallel` used to be validated and then ignored: `run_units` executed a
+# plain sequential loop, so a caller asking for 8 got serial execution with no
+# way to detect it. These tests are the ones that would have failed then, and
+# they assert the three properties that make the parameter trustworthy rather
+# than merely accepted: concurrency actually happens, the ceiling actually
+# holds, and position i of the result list is still unit i even when the units
+# finish in the opposite order from the one they were submitted in.
+
+class TestRunUnitsConcurrency:
+
+    @staticmethod
+    def _units(n: int) -> list[ArmUnit]:
+        return [ArmUnit("h-main", f"s{i}", "x", f"./cmd{i}") for i in range(n)]
+
+    def test_bounded_concurrency_beats_the_serial_sum(self):
+        """Wall clock, not a mock assertion: four 100ms units under a bound of
+        four must finish in well under the 400ms a sequential loop would take."""
+        import time
+
+        def slow(unit: ArmUnit) -> ArmUnitResult:
+            time.sleep(0.1)
+            return ArmUnitResult(unit=unit, status="complete")
+
+        units = self._units(4)
+        started = time.monotonic()
+        results = run_units(units, runner=slow, max_parallel=4)
+        elapsed = time.monotonic() - started
+
+        assert [r.status for r in results] == ["complete"] * 4
+        assert elapsed < 0.3, (
+            f"four 100ms units under max_parallel=4 took {elapsed:.3f}s; a "
+            f"sequential loop would take ~0.4s, so the bound is being ignored"
+        )
+
+    def test_never_more_than_max_parallel_in_flight(self):
+        """The ceiling is observed, not assumed: each runner call records the
+        live count on entry and the peak must never exceed the bound."""
+        import threading
+        import time
+
+        lock = threading.Lock()
+        state = {"live": 0, "peak": 0}
+
+        def tracking(unit: ArmUnit) -> ArmUnitResult:
+            with lock:
+                state["live"] += 1
+                state["peak"] = max(state["peak"], state["live"])
+            time.sleep(0.02)
+            with lock:
+                state["live"] -= 1
+            return ArmUnitResult(unit=unit, status="complete")
+
+        results = run_units(self._units(12), runner=tracking, max_parallel=3)
+
+        assert len(results) == 12
+        assert state["peak"] <= 3, f"observed {state['peak']} units in flight"
+        # ... and the bound was actually exercised, otherwise a runner that
+        # happened to serialize would pass the ceiling assertion trivially.
+        assert state["peak"] > 1, "no concurrency was observed at all"
+
+    def test_results_are_positional_under_reversed_completion(self):
+        """Ordering is a CONTRACT, not a side effect of sequential execution.
+
+        Completion order is scripted to be the exact REVERSE of submission
+        order: unit 0 sleeps longest and finishes last. A list appended to by
+        completing workers would come back reversed; `merge_unit_results` pairs
+        each result with its own unit, so that would silently mis-attribute
+        every seed rather than raise.
+        """
+        import time
+
+        n = 5
+
+        def reversed_completion(unit: ArmUnit) -> ArmUnitResult:
+            # s0 sleeps 5 ticks, s4 sleeps 1 -- so s4 completes first.
+            idx = int(unit.seed[1:])
+            time.sleep(0.02 * (n - idx))
+            return ArmUnitResult(unit=unit, status="complete", duration_ms=idx)
+
+        units = self._units(n)
+        results = run_units(units, runner=reversed_completion, max_parallel=n)
+
+        assert [r.unit.seed for r in results] == [f"s{i}" for i in range(n)]
+        assert [r.unit for r in results] == units
+        assert [r.duration_ms for r in results] == list(range(n))
+
+    def test_a_raising_runner_fails_only_its_own_unit_in_position(self):
+        """One bad unit must not take down the batch or shift its neighbours."""
+
+        def crash_on_two(unit: ArmUnit) -> ArmUnitResult:
+            if unit.seed == "s2":
+                raise RuntimeError("boom")
+            return ArmUnitResult(unit=unit, status="complete")
+
+        results = run_units(self._units(4), runner=crash_on_two, max_parallel=4)
+
+        assert [r.status for r in results] == [
+            "complete", "complete", "failed", "complete",
+        ]
+        assert results[2].unit.seed == "s2"
+        assert "RuntimeError: boom" in results[2].error
+        assert all(r.error == "" for i, r in enumerate(results) if i != 2)
+
+    def test_default_is_sequential_and_still_ordered(self):
+        """No bound given means the sequential path this function has always
+        been -- the concurrent path is opt-in, never a silent default."""
+        units = self._units(3)
+        runner = _RecordingRunner()
+        results = run_units(units, runner=runner)
+        assert [r.unit for r in results] == units
+        assert runner.calls == units
+
+
 # ─── Merge ─────────────────────────────────────────────────────────────────
 
 class TestMergeUnitResults:

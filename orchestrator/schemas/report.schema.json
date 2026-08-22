@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/report.schema.json",
+  "title": "Optimization Campaign Report",
+  "description": "report.json (design spec 3.6, 3.9) -- the end of a kind:optimization campaign: the recommended configuration, WHICH RUNG of the fallback ladder produced it, and the residual-regret certificate. Written by orchestrator.optimize.stage_runner._run_report at the compiled epoch's `report` state AND on the way out of a semantic exception, so every field must be expressible when the strongest rungs were unavailable. THE TWO REGRET BOUNDS ARE NEVER COLLAPSED (design spec 3.5): residual_regret_model and residual_regret_terminal are separate, independently required, independently nullable properties, and this schema declares no relationship, default, or derived combination between them -- collapsing them would advertise the assumption-light terminal guarantee while delivering the model-dependent one. There is deliberately no combined-regret property to add a value to.",
+  "type": "object",
+  "required": [
+    "recommendation",
+    "residual_regret_model",
+    "residual_regret_terminal",
+    "epsilon",
+    "delta_screen",
+    "delta_terminal",
+    "certified",
+    "finalists",
+    "known_valid_baseline",
+    "path",
+    "epoch",
+    "policy_hash",
+    "iteration"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "recommendation": {
+      "type": "object",
+      "required": ["levels", "basis"],
+      "additionalProperties": false,
+      "description": "The configuration the campaign returns. ALWAYS PRESENT: a finite-budget system that cannot certify must still act (design spec 3.6), so this object exists even when every rung above `none` was unavailable.",
+      "properties": {
+        "levels": {
+          "type": "object",
+          "description": "The recommended factor levels. Empty ONLY under basis `none`, where no legal configuration existed to return."
+        },
+        "basis": {
+          "type": "string",
+          "enum": ["certified", "terminal_best", "model", "measured", "baseline", "none"],
+          "description": "Which rung of the fallback ladder (design spec 3.6) produced this recommendation, strongest first. certified: terminal discrimination ran and R_terminal <= epsilon. terminal_best: terminal discrimination ran but the bound was too wide -- still a measured winner against measured rivals. model: no terminal stage ran; the fitted argmax stands on its model bound, and this is the ONE rung suppressed when epoch_ended is present, because a semantic exception is evidence against the fitted surface. measured: the best measured VALID configuration (complete rows only, never the largest noisy observation). baseline: the author's known_valid_baseline. none: NOT a rung -- no baseline was declared and nothing else survived, so there is genuinely nothing legal to return. A reader must be able to tell a certificate from a fallback without reading the log, which is why this enum is closed."
+        },
+        "value": {
+          "type": ["number", "null"],
+          "description": "The recommended configuration's objective value: the confirmed mean under certified/terminal_best, the model's prediction under `model`, the measurement under `measured`. ABSENT (not null) under `baseline` and `none`, where no value is known -- _run_report only includes the key when the value is not None, so a reader can distinguish `no value known` from `a value of null`."
+        }
+      }
+    },
+    "residual_regret_model": {
+      "type": ["number", "null"],
+      "description": "R_delta(x) from the FITTED surface at delta_screen (design spec 3.5), copied from the latest recommendation.json's residual_regret_model.value. Rests on the registered response class. Null when no fitting stage ran, or when the bound was not computable (pure error exactly zero). SEPARATE FROM residual_regret_terminal BY CONSTRUCTION: the two rest on different assumptions and are computed from disjoint inputs (fitted coefficients and their standard errors vs finalist sample means and variances), so one is never the other under a different key."
+    },
+    "residual_regret_terminal": {
+      "type": ["number", "null"],
+      "description": "R_delta(x) from TERMINAL DISCRIMINATION at delta_terminal (design spec 3.5), copied from the latest confirmation.json. Carries nothing but the fresh measurements of the realized shortlist -- no response model. Null when no confirm state ran, or when no finalist produced a valid measurement. SEPARATE FROM residual_regret_model BY CONSTRUCTION; see that property."
+    },
+    "epsilon": {
+      "type": ["number", "null"],
+      "description": "The resolved epsilon-optimality tolerance the bounds are compared against, from confirmation.json when a terminal stage ran, else from recommendation.json. Null when neither exists (e.g. an exception ended the epoch before any fit)."
+    },
+    "delta_screen": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 0.5,
+      "description": "The screening risk from the compiled policy's objective. Reported next to residual_regret_model because a bound without its delta is not a bound. The two deltas are what Pr(wrong global decision) <= delta_screen + delta_terminal sums, and keeping them apart here is the report-level half of the 3.5 obligation."
+    },
+    "delta_terminal": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 0.5,
+      "description": "The terminal-discrimination risk from the compiled policy's objective, the delta residual_regret_terminal is stated at."
+    },
+    "certified": {
+      "type": "boolean",
+      "description": "True only when terminal discrimination ran AND certified globally. A within-shortlist bound at or below epsilon is NOT enough: an inadmissible finalist is evidence against the delta_screen premise, so confirm withholds certification while still reporting residual_regret_terminal."
+    },
+    "finalists": {
+      "type": "array",
+      "description": "The realized terminal shortlist carried forward from confirmation.json, each entry as written there. Empty when no confirm state ran.",
+      "items": { "type": "object" }
+    },
+    "known_valid_baseline": {
+      "type": ["object", "null"],
+      "description": "The author's declared known-good configuration, from the compiled policy. Null when none was declared -- which is exactly what makes basis `none` reachable."
+    },
+    "path": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The states this EPOCH passed through, read back from transitions.jsonl scoped to this epoch (policy.epoch_transitions). Epoch-scoped deliberately: an unfiltered read would splice a previous epoch's rows in and name a transition this epoch never made."
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Which compiled epoch this report describes. A semantic exception ends an epoch; a recompilation from a revised campaign starts the next one."
+    },
+    "epoch_ended": {
+      "type": "string",
+      "minLength": 1,
+      "description": "GENUINELY OPTIONAL, not nullable: _run_report includes this key ONLY when a semantic exception ended the epoch, and its value is the guard that fired (state plus the `when` clause). Its mere PRESENCE is the signal -- a reader can tell an ordinary report from one written on the way out of a failed epoch without reading the log, and epoch_end-<epoch>.json carries the full record next to it. Its presence also suppresses the `model` rung of the ladder."
+    },
+    "policy_hash": {
+      "type": "string",
+      "description": "Content hash of the compiled policy this epoch ran under -- the pre-registration this report is accountable to. Joins to transitions.jsonl's rows and to policy.sha256."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The iteration index at which the report was written. May be LATER than the confirm it describes (a budget-exhausted route to `report`, or a resumed work_dir), which is why the terminal rungs read confirmation.json off disk rather than trusting a threaded argument."
+    }
+  }
+}

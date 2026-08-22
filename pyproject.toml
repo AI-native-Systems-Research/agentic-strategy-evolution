@@ -24,10 +24,39 @@ dev = [
     # guard tests run instead of skipping.
     "optuna>=3.0",
     "pymc>=5.0",
+    # Advanced test layer for kind: optimization (property/metamorphic,
+    # stateful state-machine, mutation testing, parallel suite execution).
+    # hypothesis drives the metamorphic + stateful invariants; mutmut proves
+    # those invariants have teeth; xdist keeps the suite fast.
+    "hypothesis>=6.100",
+    "mutmut>=3.0",
+    "pytest-xdist>=3.5",
 ]
 
 [project.scripts]
 nous = "orchestrator.cli:main"
+
+[tool.pytest.ini_options]
+# CI runs `pytest -ra --strict-markers`, so every custom marker MUST be
+# declared here or the run errors out instead of skipping.
+markers = [
+    "metamorphic: relations between runs that must hold with no oracle for any single run (spec §4 D1/D2 class).",
+    "statemachine: invariants over the compiled epoch's interpreted state machine (policy.step).",
+    "contract: producer/consumer invariants across the artifact chain (policy.json -> ... -> report.json).",
+    "boundary: boundary-value / equivalence-partition cases around abort-vs-proceed decisions.",
+    "combinatorial: pairwise covering-array sweep over campaign-configuration dimensions.",
+    "mutation_sentinel: named as the catching test in the mutation matrix; breaking source here MUST fail it.",
+    "pending_partial_fit: needs partial-design fitting — an iteration that loses SOME rows must refit on the complete subset and write fit_exclusions.json instead of aborting pre-fit.",
+    "pending_parallel: needs parallel execution at spending stages wired through the measured contention floor (orchestrator/optimize/concurrency.py).",
+    "robustness: campaign-completion robustness — resume/reuse, circuit breaker, progress, orphan reaping, wall-clock budget.",
+    "pending_duration: covers the per-row duration_ms clock and the failure `reason` on failed rows — the 'schema-valid but always the default value' contract.",
+]
+filterwarnings = [
+    # hypothesis emits this when a @given test also takes a function-scoped
+    # fixture. Ours are read-only (tmp_path per example is deliberate), so the
+    # warning is noise rather than signal.
+    "ignore::hypothesis.errors.HypothesisSideeffectWarning",
+]
 
 [tool.setuptools.packages.find]
 include = ["orchestrator*", "prompts*"]
