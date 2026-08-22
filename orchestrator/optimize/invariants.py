@@ -122,7 +122,12 @@ class Invariant:
     silently dropping the entry. ``violated_by`` names a historical defect, or
     is empty.
 
-    ``open_violation`` is the honest field: ``True`` means the CURRENT code
+    ``open_violation`` is the honest field, and it is currently ``False``
+    everywhere -- the five entries that carried ``True`` (INV-SEM02, INV-STAT05,
+    INV-STAT12, INV-TMP08, INV-PROV01) were all closed and each verified
+    empirically before the flag was cleared, not cleared because the fix was
+    believed. Do not clear a flag without reproducing the violation's absence.
+    ``True`` means the CURRENT code
     violates this stated invariant, verified empirically, and the checker (if
     any) is expected to fail against production artifacts until the underlying
     seam is fixed. An inventory that quietly omitted these would be worse than
@@ -1027,7 +1032,7 @@ _ENTRIES: tuple[Invariant, ...] = (
     Invariant("INV-SEM02", "A null bound means 'not estimable'. An unknown is never reported "
                            "as a zero.",
               "SEM", "artifact", "certificate.py 'an unknown is not a zero'; spec 3.5",
-              ALWAYS, check_bound_unknown_is_not_zero, open_violation=True,
+              ALWAYS, check_bound_unknown_is_not_zero, open_violation=False,
               violated_by="terminal_regret_bound returns value=0.0 with "
                           "method='bonferroni_one_sided_t_paired' on bit-identical "
                           "replicates -- a claim of exact epsilon-optimality from zero "
@@ -1133,7 +1138,7 @@ _ENTRIES: tuple[Invariant, ...] = (
     Invariant("INV-STAT05", "A bound computed from a zero-variance sample is None, not 0.0 -- "
                             "the deterministic-target case of spec 3.5.",
               "STAT", "function", "spec 3.5 'pure_error = 0 and every interval came back None'",
-              ALWAYS, check_bound_unknown_is_not_zero, open_violation=True,
+              ALWAYS, check_bound_unknown_is_not_zero, open_violation=False,
               violated_by="terminal_regret_bound; see INV-SEM02"),
     Invariant("INV-STAT06", "More replicates never widen a bound; fewer rows never narrow it. "
                             "Dropping information can only widen uncertainty.",
@@ -1167,7 +1172,7 @@ _ENTRIES: tuple[Invariant, ...] = (
     Invariant("INV-STAT12", "The terminal bound never RAISES on an admissible sample: "
                             "a variance it cannot estimate is None, not an exception.",
               "STAT", "function", "certificate.terminal_regret_bound Welch df denominator",
-              TEST, None, open_violation=True,
+              TEST, None, open_violation=False,
               violated_by="the Welch degrees-of-freedom denominator "
                           "(vk**2)/(nk-1) + (vb**2)/(nb-1) is guarded only by "
                           "`if (vk + vb) > 0`. For subnormal-magnitude variances that "
@@ -1229,7 +1234,7 @@ _ENTRIES: tuple[Invariant, ...] = (
                            "entered, INCLUDING one that aborted before its fit: an epoch that "
                            "died must leave a record of why.",
               "TMP", "epoch", "historical defect 7", AUDIT,
-              check_audit_trail_records_spending, open_violation=True,
+              check_audit_trail_records_spending, open_violation=False,
               violated_by="defect 7: transitions.jsonl completely empty after 14 hours. "
                           "REPRODUCED, and the trigger is LOWER than the design doc implies "
                           "-- the gate is _fitting_responses' 'N of M runs produced no usable "
@@ -1242,7 +1247,7 @@ _ENTRIES: tuple[Invariant, ...] = (
     Invariant("INV-PROV01", "policy.json must HAVE a sidecar and AGREE with it: absence is as "
                             "fatal as disagreement.",
               "PROV", "artifact", "_load_or_compile_policy; CLAUDE.md", ALWAYS,
-              check_policy_provenance, open_violation=True,
+              check_policy_provenance, open_violation=False,
               violated_by="the shipped guard is `if recorded.exists() and ...`, so DELETING "
                           "policy.sha256 disables it rather than failing closed. Verified: "
                           "with the sidecar deleted and screen's default rewritten "

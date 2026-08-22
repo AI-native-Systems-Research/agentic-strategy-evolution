@@ -476,11 +476,46 @@ exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check
 rather than of what must hold.
 
-**Open violations — invariants the current code is known to break** (5):
-`INV-SEM02`, `INV-STAT05`, `INV-STAT12`, `INV-TMP08`, `INV-PROV01`. Queryable as
-`invariants.open_violations()`. A disclosed violation is worth more than a hidden
-one: it tells a reviewer which guarantees not to rely on, and the next owner
-where the work is.
+**Open violations — invariants the current code is known to break: NONE.**
+Queryable as `invariants.open_violations()`, which now returns an empty list.
+
+Five entries carried the flag when this inventory was first written, and all five
+have since been closed. They are listed here because the closures are the clearest
+argument for keeping an honest open-violations list at all — every one was
+disclosed by the inventory rather than by a test failing:
+
+Five entries carried the flag when this inventory was first written; all five have
+since been closed, each verified empirically — violation reproduced, fix applied,
+absence reproduced — before its flag was cleared. The closures are the clearest
+argument for keeping an honest list, because every one was disclosed by the
+inventory rather than by a test failing. Written as prose rather than a table on
+purpose: a second table row per ID would give each of these two declarations, and
+a reader could not tell which is authoritative (the drift test enforces this).
+
+- The terminal bound (semantic + statistical entries) returned `value=0.0`
+  labelled `bonferroni_one_sided_t_paired` from zero-variance replicates — exact
+  ε-optimality from no information. Reachable by a CONSTANT OFFSET between
+  finalists, not only by identical numbers, so a replicate-count check could never
+  have caught it. Closed: an unestimable contrast returns `None`/`"none"` with a
+  detail naming the reason, and the ladder reports `terminal_best` instead.
+- The Welch degrees-of-freedom entry guarded `(vk + vb) > 0` while `vk ** 2`
+  underflowed to exactly `0.0`, raising `ZeroDivisionError` on the certification
+  path. Found by a property test, not by construction. Closed: the guard tests the
+  DENOMINATOR itself.
+- The audit-trail entry allowed an epoch to spend 60 benchmark runs across five
+  iterations and never create `transitions.jsonl`, because each iteration aborted
+  before the fit that precedes the transition write. Closed by partial-design
+  fitting: an iteration that loses rows completes and records its transition.
+- The provenance entry read `if recorded.exists() and <mismatch>`, so DELETING
+  `policy.sha256` skipped verification instead of failing it, and nothing
+  regenerates it — a tampered policy ran to completion and recorded its own hash
+  as the registration. Closed in `stage_runner` and in `adapter_contract`:
+  absence and disagreement abort alike.
+
+**Do not clear a flag because a fix is believed to have landed.** A disclosed
+violation is worth more than a hidden one: it tells a reviewer which guarantees not
+to rely on, and the next owner where the work is.
+
 
 **One entry was REMOVED after refutation**, and that is a feature of the process
 rather than an embarrassment: `INV-STAT07` (the CRN-tightening claim) failed
