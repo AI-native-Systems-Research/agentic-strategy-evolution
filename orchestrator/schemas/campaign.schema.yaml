@@ -1303,6 +1303,84 @@ properties:
           ``workload_seeds`` and ``policy_hash``, so a reader of a
           timed-out row can tell which ceiling produced it.
 
+      reuse_measured_rows:
+        type: boolean
+        description: >
+          Whether a retried iteration REUSES rows a previous attempt already
+          measured under the same pre-registration. Defaults to true.
+
+          Opt-OUT rather than opt-in, because re-measuring a row that was
+          already validly measured under the identical pre-registration is
+          never more correct, only slower -- on a real campaign 15 valid rows
+          were re-measured four times, which was most of a 14-hour run that
+          produced nothing. Reuse is refused automatically whenever it would
+          NOT be sound: a differing ``policy.sha256``, a changed adapter
+          contract (an apparatus change is an epoch boundary, not an edit), a
+          differing applied configuration INCLUDING the workload seed, a
+          different epoch, or a ``failed`` status (a measurement failure a
+          re-run repairs, so it is always re-measured).
+
+          Set false to force full re-measurement -- e.g. to reproduce a
+          historical run byte-for-byte. The decision, including every refusal
+          and its reason, is recorded per iteration in
+          ``runs/iter-N/reuse_manifest.json``, and each reused row carries a
+          ``reused_from`` marker in ``runs.jsonl`` so a reader can never
+          mistake reuse for fresh measurement.
+
+      max_wall_clock_hours:
+        type: number
+        exclusiveMinimum: 0
+        description: >
+          Optional ceiling, in HOURS, on the campaign's total wall clock.
+          Absent means unbounded, which is what every campaign authored before
+          this field existed runs at -- the field is opt-in precisely so that
+          adding it cannot shorten an existing campaign.
+
+          WHY IT EXISTS. ``design.max_runs`` bounds the run COUNT and
+          ``run_timeout_sec`` bounds ONE row, but nothing bounded the total, so
+          a mis-sized ``run_timeout_sec`` could burn a whole night: a real
+          campaign spent ~14 hours and produced zero usable output. Rule 18
+          warns when ``run_timeout_sec x runs`` commits a large worst case;
+          this is the field that lets an author CAP that exposure rather than
+          only be warned about it.
+
+          IT IS NOT A KILL SWITCH. The budget is checked BETWEEN iterations,
+          never inside one: killing a running measurement would leave a
+          half-measured row on disk and produce no report at all. On exhaustion
+          the campaign declines to START another iteration and ends through the
+          same terminal path a clean stop takes, so ``report.json`` is still
+          written and ``recommendation.basis`` still names which rung of the
+          fallback ladder the answer rests on (certified / terminal_best /
+          model / measured / baseline / none). The reason is recorded in
+          ``halt.json`` at the work-dir root.
+
+          Size it above the honest worst case for the rows you expect to
+          measure, not as a target: a budget that expires mid-screen buys a
+          report resting on a partial design.
+
+      max_identical_failures:
+        type: integer
+        minimum: 1
+        description: >
+          How many CONSECUTIVE iterations may fail the same way before the
+          campaign loop stops. Defaults to 3.
+
+          A failed optimization iteration records no transition, so
+          ``policy.current_state`` still returns the state it was on and the
+          next iteration legitimately re-registers the same design. That is
+          correct retry behaviour, and it is also an infinite loop when the
+          cause is deterministic: a real campaign failed identically four
+          times over ~14 hours. This bounds the retrying.
+
+          "The same way" is a fingerprint over (exception type, failing stage,
+          error message with per-attempt indices and tallies normalized away),
+          so a changed row count does not read as a new failure while two
+          genuinely different defects stay distinct. Counting is CONSECUTIVE,
+          not cumulative: an intervening different failure resets the run, so a
+          campaign that is still making progress through a flaky apparatus is
+          not stopped. The verdict lands in ``halt.json``, which records the
+          fingerprint, the failing iterations, and the messages verbatim.
+
       max_parallel:
         type: integer
         minimum: 1
@@ -1352,6 +1430,105 @@ properties:
           ``max_parallel``, beside ``run_order_seed``: a pre-registration
           asserting randomized run order while executing concurrently would
           be claiming a guarantee it did not provide.
+
+      concurrency:
+        type: object
+        additionalProperties: false
+        description: >
+          Opt-in license for concurrency at the SPENDING stages (``screen`` /
+          ``foldover`` / ``refine``). Declaring this block is what makes an
+          18-row screen finish in hours rather than most of a day; ``confirm``
+          is already parallel via ``max_parallel`` and needs nothing here.
+
+          WHY A LICENSE IS NEEDED AT ALL. The spending stages fit a surface over
+          DISTINCT configurations, so co-scheduled rows contend for machine
+          resources and a row's measured response comes to depend on which other
+          rows ran beside it. Contention lands UNEVENLY across a design -- a slow
+          corner runs beside different neighbours than a fast one -- and the
+          fitted coefficients absorb that as though it were a factor effect.
+          Run-order randomization does not help: a permutation spreads a TIME
+          trend across the design, and this is a NEIGHBOUR effect. For an
+          objective that measures where a system SATURATES, contention is the
+          measurement rather than noise around it.
+
+          But that is a property of LOAD-DEPENDENT objectives only. A solver's
+          iteration count, a compiler's output size, a simulated latency from a
+          discrete-event model: none is a function of how busy the machine was.
+          So declare ONE of the two fields below -- never both, since that would
+          record two different bases for one width.
+
+          When ``max_parallel`` is omitted, declaring this block resolves the
+          width to ``min(4, cpu_count - 2)`` rather than 1. The cap is modest on
+          purpose: an adapter's OWN internal fan-out multiplies it, and Nous
+          cannot see that. In the field campaign each row itself spawned 4
+          concurrent subprocess probes, so 4 rows meant 16 processes on a 10-CPU
+          box. Raise it knowing your adapter's internal width.
+
+          ISOLATION IS SEPARATE AND UNCONDITIONAL. Every run gets a private
+          ``NOUS_RUN_DIR`` (plus ``NOUS_ROW_INDEX`` / ``NOUS_RUN_SLOT``) at every
+          width including 1, and ``config_patch`` factors already materialise a
+          per-run copy of each patched file. Have the adapter write its build
+          output, metrics file and temp data under ``NOUS_RUN_DIR``: two rows
+          sharing one ``go build -o`` path is a real defect that produced
+          plausible numbers from the wrong binary. See ``docs/targets.md``.
+
+          CPU PINNING IS DELIBERATELY NOT OFFERED. A disjoint cpu set partitions
+          time slices and per-core L1/L2 and leaves L3, memory bandwidth, disk
+          queues, page cache, NIC queues, thermal budget and the GPU shared -- so
+          for the throughput and tail-latency objectives these campaigns declare
+          it isolates almost nothing the objective reads, while an artifact
+          recording a per-row cpu set would testify to an isolation the
+          measurement never had.
+        properties:
+          load_independent:
+            type: boolean
+            description: >
+              Declare ``true`` to assert that the objective is NOT a function of
+              machine load -- an iteration count, an allocation count, an output
+              size, a bit-identical checksum, a simulated time from a
+              discrete-event model that reads no wall clock. Such a target has no
+              contention problem, so the spending stages run at full width with
+              NO measurement required.
+
+              This is recorded in ``design_matrix.json`` as
+              ``concurrency_basis: load_independent`` -- as YOUR claim, not as
+              something Nous measured. Nous cannot verify it up front without
+              spending the runs the declaration exists to save, but it IS
+              falsified for free afterwards: if two rows with identical levels
+              and the same workload seed report different objectives, the
+              claim is contradicted and the stage says so.
+
+              Do NOT declare this for a throughput, a queue depth, a latency
+              percentile under load, or anything whose value moves when the
+              machine gets busy. Use ``contention_probe_levels`` instead and let
+              the measurement decide.
+          contention_probe_levels:
+            type: object
+            description: >
+              The configuration the CONTENTION FLOOR is measured at: a mapping of
+              factor id to level, naming the design's most heavily loaded corner.
+              Before the first spending stage writes its matrix, Nous runs this
+              corner serially several times to get the target's own noise floor,
+              then runs it at the declared width, and certifies the width only if
+              the objective moved LESS than 2x that noise floor. The certified
+              width is recorded as ``concurrency_certified_width``; a floor
+              measured at 2 never licenses 8.
+
+              NAME THE HEAVIEST CORNER, not the baseline. This is the one place
+              the obvious choice is unsound. Contention inflation grows with
+              load, so with a soft-knee throughput and co-scheduling costing 10%
+              of capacity, inflation is 1.0% at a light corner, 5.3% at mid load
+              and 9.2% at saturation. A floor measured at
+              ``known_valid_baseline`` would therefore PASS a 2x-noise gate and
+              certify the very design whose interesting corners it gets wrong by
+              9%. That is why this field is explicit and is not defaulted.
+
+              Any failure -- a refuted floor, a raising run, a non-numeric
+              response, too few samples -- leaves the stage SERIAL rather than
+              aborting. A target that genuinely contends should fail this, and
+              then the epoch runs exactly as it did before the field existed.
+            additionalProperties:
+              type: [string, number, boolean]
 
       integrity_command:
         type: string

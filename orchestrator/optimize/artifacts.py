@@ -176,11 +176,28 @@ def _sorted_effects(effects: tuple[Effect, ...]) -> list[Effect]:
 
 
 def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
-                   stage: str) -> Path:
+                   stage: str, exclusion_balance: dict | None = None) -> Path:
     """Write the fitted model: effects, pure error, lack-of-fit, aliases,
     dropped factors. ``factors`` supplies the factor-id universe that
     ``dropped_factors`` checks against -- the factors this fit was run
     over, in their declared order.
+
+    ``exclusion_balance`` (``orchestrator.optimize.exclusions.ExclusionBalance``
+    rendered by ``as_dict``) is present ONLY when rows were excluded from the
+    fit, and it carries whether that exclusion was independent of the factor
+    levels. It lives HERE, on the artifact that carries the coefficients, and
+    not only in ``fit_exclusions.json``, for the reason the exclusions module
+    documents: a balanced loss widens every confidence interval, so the
+    arithmetic already reports it, while a LEVEL-CORRELATED loss moves a point
+    estimate and leaves its interval exactly as tight as before. A reader (or a
+    downstream projection) consuming ``effects[i].estimate`` has to see the
+    caveat next to the number it qualifies, not in a sibling file they may not
+    open.
+
+    ``caveat`` is a rendered sentence rather than a flag alone because
+    ``project_findings`` and ``project_principle_updates`` derive prose from this
+    artifact, and a caveat that only exists as a boolean would be dropped by
+    every one of them.
     """
     iter_dir = Path(iter_dir)
     target = iter_dir / "effects.json"
@@ -202,6 +219,8 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
         "quadratic": [_effect_to_dict(e) for e in _sorted_effects(fit.quadratic)],
         "dropped_factors": sorted(dropped),
     }
+    if exclusion_balance is not None:
+        payload["exclusion_balance"] = exclusion_balance
     atomic_write(target, _dump(payload))
     return target
 

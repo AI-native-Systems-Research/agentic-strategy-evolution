@@ -350,5 +350,51 @@ def ranked(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict,
     sign = 1.0 if direction != "minimize" else -1.0
     scored = _scored(fit, factors, fitted_ids=fitted_ids, held_fixed=held_fixed,
                      exclude_levels=exclude_levels)
-    scored.sort(key=lambda c: -sign * c.predicted)
+    # DETERMINISTIC TIE-BREAK, and an honest account of what it does and does not
+    # buy. Exact ties are real and common here -- 53 tie groups in a 45-candidate
+    # 3-factor space on one fixture -- and they arise structurally: whenever a
+    # main effect cancels against an interaction it participates in
+    # (beta_A = -beta_AB), every level of A predicts the same response at the
+    # level of B where they cancel.
+    #
+    # WHAT THIS FIXES: nothing currently observable, and that was measured rather
+    # than assumed. `_scored` enumerates the grid in ascending factor order, which
+    # is exactly the order this key reproduces, and Python's sort is stable -- so
+    # across 200 random response vectors the key changed the emitted order ZERO
+    # times, and across 400 vectors rescaling the objective by 0.01/1.0/1000 moved
+    # the top-1 candidate ZERO times with OR without it. An earlier claim that
+    # this repaired a moving recommendation did not survive that check and is
+    # retracted.
+    #
+    # WHY IT STAYS: it makes the order a DECLARED FUNCTION OF THE LEVELS rather
+    # than an accident of how `_scored` happens to iterate. Today those agree; the
+    # guarantee is that they cannot silently stop agreeing. A future change to the
+    # enumeration -- a different candidate generator, a dict that stops preserving
+    # insertion order, parallel scoring -- would otherwise move a recommendation
+    # with no change to any measurement, and `confirm` draws its shortlist from
+    # this order, so a reorder at the shortlist boundary decides which
+    # configuration gets fresh replicates and can be certified.
+    #
+    # The secondary key is the (factor_id, level) pairs in FACTOR-ID order, with
+    # each level rendered as a (is_not_number, number, text) triple. Mixed level
+    # types are the reason for the triple rather than a bare `str(v)`: a level may
+    # be numeric on one factor and a string on another, so `("A", 2) < ("A", "lru")`
+    # raises, while plain stringification sorts 16 before 9 and would make the
+    # tie-break needlessly surprising to a reader comparing artifacts. Numbers
+    # therefore compare numerically among themselves and sort before strings, and
+    # strings compare lexicographically among themselves.
+    #
+    # No claim is made that the first tied configuration is BETTER. The
+    # requirement is only that the order is a declared function of the levels, so
+    # the same evidence always yields the same artifact.
+    def _tie_key(c):
+        levels = c.levels or {}
+        return tuple(
+            (fid, isinstance(levels[fid], str), 
+             0.0 if isinstance(levels[fid], str) else float(levels[fid]),
+             str(levels[fid]))
+            for fid in sorted(levels)
+        )
+
+    scored.sort(key=lambda c: (-sign * c.predicted, _tie_key(c)))
     return scored if top is None else scored[:top]

@@ -547,16 +547,29 @@ def test_an_explicit_stages_list_decides_which_stage_is_terminal(tmp_path):
     assert "confirm" not in compile_policy(no_confirm)["states"]
 
 
-def test_a_partially_failed_sweep_refuses_to_fit_rather_than_emit_nan(
+def test_a_partially_failed_sweep_refits_rather_than_emitting_nan_or_aborting(
     tmp_path, work_dir,
 ):
-    """One non-complete run NaN-poisons every coefficient.
+    """BEHAVIOUR REVERSED, deliberately, and the old claim was HALF right.
 
-    Verified: one NaN among eight runs makes every effect estimate AND the
-    intercept NaN, and the artifacts stay schema-valid because jsonschema
-    accepts NaN as "number". So the campaign would emit a confident-looking,
-    entirely-NaN effects.json with no error at all. Failing loudly is the
-    only honest option short of refitting on the completed subset.
+    The half that stands: one NaN among eight runs makes every effect estimate
+    AND the intercept NaN, and the artifacts stay schema-valid because
+    jsonschema accepts NaN as "number", so a campaign would emit a
+    confident-looking, entirely-NaN effects.json with no error at all. A NaN
+    must never reach ``fit_effects``. That is still asserted below.
+
+    The half that was wrong: this test used to require the campaign to ABORT,
+    and its own abort message named the better option it did not take ("or
+    refit on the completed subset and report the reduced resolution"). Two
+    guards over one condition disagreed, and the abort ran first, so the refit
+    that ``run_stage`` already implemented was unreachable for exactly the rows
+    it was written for. Measured on a real 14-hour campaign: 18 rows measured,
+    15 valid, 3 failed (two wall-clock timeouts, one adapter crash), and all
+    four attempted iterations threw away all 15 valid measurements — no
+    recommendation and no residual-regret certificate were ever produced.
+
+    So the invariant is unchanged (no NaN coefficient) and the RESPONSE to a
+    partial design is now to fit the retained subset and record the loss.
     """
     c = _campaign()
     wd = _init_work_dir(tmp_path, c)
@@ -571,11 +584,20 @@ def test_a_partially_failed_sweep_refuses_to_fit_rather_than_emit_nan(
         return {"cfg": {k.lower(): v for k, v in lv.items()},
                 "m": 10.0 + float(lv.get("A", 0))}
 
-    with pytest.raises(OptimizationAborted) as exc:
-        _run(c, wd, runner=flaky)
-    msg = str(exc.value)
-    assert "no usable measurement" in msg
-    assert "NaN-poison" in msg
+    _run(c, wd, stage="screen", iteration=2, runner=flaky)
+
+    eff = json.loads((Path(wd) / "runs" / "iter-2" / "effects.json").read_text())
+    ests = [e["estimate"] for e in eff["effects"]] + [eff["intercept"]]
+    assert ests, "no coefficients written"
+    assert all(v == v for v in ests), (
+        f"a NaN coefficient reached effects.json: {ests}"
+    )
+
+    fx = json.loads(
+        (Path(wd) / "runs" / "iter-2" / "fit_exclusions.json").read_text(),
+    )
+    assert fx["planned_rows"] == fx["fitted_rows"] + len(fx["excluded_row_indices"])
+    assert "failed_to_measure" in fx["excluded_by_reason"], fx
 
 
 def test_locked_parameters_is_not_claimed_as_a_wired_check():
@@ -625,10 +647,16 @@ def test_infeasible_and_rejected_rows_do_not_block_the_fit(tmp_path):
             f"carries — not abort the campaign"
         )
 
-    with pytest.raises(OptimizationAborted):
-        _fitting_responses(
-            [_O(0, "complete", {"m": 1.0}), _O(1, "failed", {})], spec, "m",
-        )
+    # A `failed` row is ALSO carried as NaN rather than aborting. It means
+    # something different scientifically — a repairable hole in the design
+    # rather than information about X_valid — and `fit_exclusions.json` records
+    # which reason applied to which row. What it must NOT do is end the
+    # campaign: `run_stage`'s partial-fit path drops it and refits.
+    failed_values = _fitting_responses(
+        [_O(0, "complete", {"m": 1.0}), _O(1, "failed", {})], spec, "m",
+    )
+    assert not math.isnan(failed_values[0])
+    assert math.isnan(failed_values[1])
 
 
 def test_a_non_numeric_primary_metric_aborts_cleanly(tmp_path):
@@ -652,29 +680,42 @@ def test_a_non_numeric_primary_metric_aborts_cleanly(tmp_path):
         assert "row 0" in str(exc.value)
 
 
-def test_a_null_primary_metric_on_a_complete_row_blocks_but_not_on_an_excluded_one(
+def test_a_null_primary_metric_is_carried_as_nan_under_a_distinct_reason(
     tmp_path,
 ):
     """`null` means the benchmark ran but could not compute the statistic.
 
-    On a *complete* row that is a measurement failure and must block. On a
-    row already excluded from the fit (infeasible/rejected) it is expected
-    and must not.
+    BEHAVIOUR REVERSED with the rest of the partial-fit reconciliation: this no
+    longer aborts on a `complete` row. It is excluded from the fit like any
+    unusable row, and it keeps a DISTINCT reason (`no_metric` rather than
+    `failed_to_measure`) because the two point a reader at different places —
+    the target ran successfully and only the statistic is missing, which
+    implicates the instrumentation rather than the run.
+
+    Not to be confused with a `complete` row reporting a genuine float NaN,
+    which is a SEMANTIC exception routed to the policy's `nan_response` branch
+    (`_primary_is_nan`) and is unchanged: `None` is an absent value, a float NaN
+    is the target asserting the objective is not measurable there.
     """
     import math
 
-    from orchestrator.optimize.stage_runner import _fitting_responses
+    from orchestrator.optimize.stage_runner import (
+        _exclusion_reason,
+        _fitting_responses,
+    )
 
     class _O:
         def __init__(self, idx, status, resp):
             self.row_index, self.status, self.response = idx, status, resp
 
     spec = {"primary": {"metric": "m", "direction": "maximize"}}
-    with pytest.raises(OptimizationAborted):
-        _fitting_responses([_O(0, "complete", {"m": None})], spec, "m")
+    values = _fitting_responses([_O(0, "complete", {"m": None})], spec, "m")
+    assert math.isnan(values[0])
+    assert _exclusion_reason(_O(0, "complete", {"m": None})) == "no_metric"
 
     values = _fitting_responses([_O(0, "infeasible", {"m": None})], spec, "m")
     assert math.isnan(values[0])
+    assert _exclusion_reason(_O(0, "infeasible", {"m": None})) == "infeasible"
 
 
 # ─── confirm actually confirms (F1 from the final whole-branch review) ─────
@@ -2028,9 +2069,18 @@ def test_a_finalist_measured_infeasible_is_excluded_from_the_recommendation(
     _run(c, wd, stage="confirm", iteration=3, runner=sla_runner)
 
     conf = json.loads((wd / "runs" / "iter-3" / "confirmation.json").read_text())
-    excluded = [f for f in conf["finalists"] if f["status"] == "excluded"]
+    # "infeasible", not the retired "excluded": the finalist status vocabulary
+    # distinguishes a config MEASURED inadmissible from one the instrument could
+    # not measure at all ("unmeasured"), because the two carry opposite authoring
+    # consequences — strike the configuration off vs re-run it with more budget.
+    # On the sla surface the exclusion is a real p99 constraint violation, so
+    # `infeasible` is the value under test here.
+    excluded = [f for f in conf["finalists"] if f["status"] == "infeasible"]
     assert excluded, conf["finalists"]
     assert conf["excluded_infeasible"], conf
+    # ...and nothing landed in the unmeasured bucket, which would mean the
+    # instrument failed rather than the constraint binding.
+    assert not conf["excluded_unmeasured"], conf
     # The excluded finalist is one the MODEL put on the shortlist, which is the
     # whole point: prediction proposed it, measurement removed it.
     assert all(3 <= f["levels"]["A"] <= 15 for f in excluded), excluded
@@ -2215,7 +2265,7 @@ def test_an_excluded_finalist_does_not_come_back_in_the_next_round(
         "finalists": [
             {"key": "f0", "levels": {"A": 16, "B": 16, "C": 16}, "status": "ok"},
             {"key": "f1", "levels": {"A": 2, "B": 2, "C": 2},
-             "status": "excluded"},
+             "status": "infeasible"},
         ],
     }))
     append_transition(wd, {"iteration": 3, "from": "confirm", "to": "confirm",
@@ -2287,8 +2337,8 @@ def test_a_round_whose_whole_carry_over_was_excluded_still_filters_the_ladder(
     (iter3 / "confirmation.json").write_text(json.dumps({
         "round": 1, "best": None, "epsilon": 0.5, "bounds": {},
         "finalists": [
-            {"key": "f0", "levels": bad_rec, "status": "excluded"},
-            {"key": "f1", "levels": bad_top, "status": "excluded"},
+            {"key": "f0", "levels": bad_rec, "status": "infeasible"},
+            {"key": "f1", "levels": bad_top, "status": "infeasible"},
         ],
     }))
     append_transition(wd, {"iteration": 3, "from": "confirm", "to": "confirm",
@@ -2628,12 +2678,22 @@ def test_a_self_check_violation_fails_only_its_own_row(tmp_path, work_dir):
     def _one_bad_row(row):
         return {"backlog_slope": 0.1234 if row.row_index == 1 else 0.01}
 
-    # `_fitting_responses` refuses to fit when a row produced no usable
-    # measurement, which is exactly the right outcome here -- the abort names the
-    # excluded row rather than NaN-poisoning every coefficient.
-    with pytest.raises(OptimizationAborted) as exc:
-        _run(c, wd, runner=_runner(extra=_one_bad_row))
-    assert "no usable measurement" in str(exc.value)
+    # THE DOCSTRING'S OWN CLAIM, now actually delivered. This used to assert a
+    # campaign ABORT — contradicting the line above it ("A row failure, not a
+    # campaign abort -- the sound rows must survive"), because
+    # `_fitting_responses` aborted on any row that produced no usable
+    # measurement before the partial-fit path could drop it. The point of a
+    # per-row self-check is that 8 sound rows out of 12 are still 8 sound rows;
+    # the fit runs on them, the reduced resolution is recorded, and the violated
+    # row keeps its reason and its verdicts.
+    _run(c, wd, stage="screen", iteration=2, runner=_runner(extra=_one_bad_row))
+    eff = json.loads((Path(wd) / "runs" / "iter-2" / "effects.json").read_text())
+    assert all(e["estimate"] == e["estimate"] for e in eff["effects"]), eff
+    fx = json.loads(
+        (Path(wd) / "runs" / "iter-2" / "fit_exclusions.json").read_text(),
+    )
+    assert fx["excluded_row_indices"] == [1], fx
+    assert fx["excluded_reasons"]["1"] == "failed_to_measure", fx
 
     rows = {r["row_index"]: r for r in
             artifacts.read_runs(Path(wd) / "runs" / "iter-2")}

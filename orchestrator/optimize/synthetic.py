@@ -31,6 +31,13 @@ Each surface is named for the historical failure it catches:
     the answer must be the argmax restricted to the valid region.
   * ``nan_at_corner`` — one configuration makes the target emit NaN, which
     is a semantic exception that ends the epoch rather than a datum to fit.
+  * ``fails_at_one_level`` — a whole CORNER of the space never produces a
+    measurement at all (wall-clock timeout / adapter crash), and the failures
+    sit on ONE level of ONE factor while the same corner at that factor's other
+    level measures fine. Aborting the iteration is the bug (18 rows measured,
+    15 valid, all 15 discarded four times over), and so is refitting silently:
+    the loss deletes the region where the mechanism under study does the most
+    work, which biases that factor's coefficient in a named direction.
 
 No numpy: the surfaces are closed-form arithmetic and the noise comes from
 ``random.Random``, so the oracle has no dependency the harness does not
@@ -67,6 +74,21 @@ class Surface:
     drift_per_run: float = 0.0
     invalid: Callable[[dict], bool] | None = None
     exception_at: dict | None = None
+    #: Level combinations at which the target produces NO MEASUREMENT: the
+    #: runner RAISES, which ``runner._run_once`` converts into a ``failed``
+    #: RunOutcome. Categorically different from ``exception_at``, and the
+    #: distinction is the whole point of the surface that uses it:
+    #:
+    #:   * ``exception_at`` — the row reaches ``complete`` and reports a
+    #:     non-numeric primary metric. SEMANTIC: the objective and the
+    #:     instrumentation disagree about what is measurable there, no re-run
+    #:     repairs it, and the paper's rule is that it ends the EPOCH.
+    #:   * ``fails_at`` — the row never completes. A MEASUREMENT failure a
+    #:     re-run repairs; nothing semantic has been discovered, so it must not
+    #:     end the epoch and must not end the campaign either. It is a hole in
+    #:     the design, and whether that hole is level-correlated is what decides
+    #:     whether the fit's coefficients are merely widened or actually biased.
+    fails_at: Callable[[dict], bool] | None = None
     direction: str = "maximize"
     extra_observables: Callable[[dict], dict] = field(default=lambda lv: {})
 
@@ -167,6 +189,48 @@ def _nan_at_corner() -> Surface:
     )
 
 
+def _fails_at_one_level() -> Surface:
+    """The BLIS defect, in closed form.
+
+    Three factors, and one CORNER of the space never produces a measurement:
+    ``EV=arc`` together with ``DEV=sata_ssd`` and ``CPU=40``. The same corner at
+    ``EV=lru`` measures fine — a perfect 2x2 separation, which is exactly what
+    the field campaign showed (rows 9 and 13 timed out at ``EV=arc, DEV=sata_ssd,
+    CPU=40GiB`` while both ``EV=lru`` rows at that identical corner completed).
+
+    The surface is built so the DELETED REGION IS THE ONE THAT MATTERS: ``EV=arc``
+    is worth ``+3.0`` at ``DEV=sata_ssd`` (the slow device, where a smarter
+    eviction policy earns its keep) and only ``+0.2`` elsewhere. So the rows lost
+    are precisely the rows carrying ``arc``'s advantage, and a fit over the
+    survivors underestimates the ``EV`` main effect. A campaign that refits
+    silently reports a small ``EV`` effect with a tight interval and recommends
+    ``lru``; the truth is that ``arc`` wins. Reporting the exclusion as
+    level-correlated is what stops that number being read as certified.
+
+    Two levels per factor so the screen design is a full ``2^3`` and every cell
+    has a one-factor sibling — the pattern ``exclusions.cell_holes`` reports.
+    """
+    return Surface(
+        name="fails_at_one_level", noise_sd=0.05,
+        factors=(
+            _choice("EV", levels=("lru", "arc")),
+            _choice("DEV", levels=("nvme", "sata_ssd")),
+            _numeric("CPU", levels=(8, 40), grid=1),
+        ),
+        fn=lambda lv: (
+            10.0
+            + (1.0 if lv["DEV"] == "nvme" else 0.0)
+            + 0.02 * float(lv["CPU"])
+            + ((3.0 if lv["DEV"] == "sata_ssd" else 0.2)
+               if lv["EV"] == "arc" else 0.0)
+        ),
+        fails_at=lambda lv: (
+            lv["EV"] == "arc" and lv["DEV"] == "sata_ssd"
+            and float(lv["CPU"]) >= 40
+        ),
+    )
+
+
 SURFACES: dict[str, Callable[[], Surface]] = {
     "additive": _additive,
     "interaction_only": _interaction_only,
@@ -177,6 +241,7 @@ SURFACES: dict[str, Callable[[], Surface]] = {
     "drift": _drift,
     "sla": _sla,
     "nan_at_corner": _nan_at_corner,
+    "fails_at_one_level": _fails_at_one_level,
 }
 
 
@@ -224,6 +289,13 @@ def true_optimum(surface: Surface) -> tuple[dict, float]:
     for lv in candidate_grid(list(surface.factors)):
         if surface.invalid is not None and surface.invalid(lv):
             continue
+        # `fails_at` points are deliberately NOT skipped. `invalid` is a fact
+        # about X_valid -- the configuration is inadmissible, so it cannot be the
+        # answer. `fails_at` is a fact about the INSTRUMENT -- the configuration
+        # is perfectly admissible and may well be optimal; the harness just
+        # cannot measure it. Skipping it here would redefine the truth to match
+        # the instrument's blind spot, which is the exact error the surface
+        # exists to detect in the campaign.
         v = surface.fn(lv)
         if best_v is None or sign * v > sign * best_v:
             best_lv, best_v = lv, v
@@ -244,6 +316,16 @@ def _observe(surface: Surface, levels: dict, *, rng: random.Random,
     target is instrumented to emit.
     """
     lv = dict(levels)
+    if surface.fails_at is not None and surface.fails_at(lv):
+        # RAISE, don't return a sentinel. `runner._run_once` converts a raising
+        # runner into a `failed` RunOutcome, which is the real shape of a
+        # wall-clock timeout or an adapter crash; a sentinel value would model
+        # the failure as a measurement and defeat the surface's whole purpose.
+        raise RuntimeError(
+            f"synthetic target failed to measure at {lv} (surface "
+            f"{surface.name!r}: fails_at). Models a wall-clock timeout or an "
+            f"adapter crash -- the row produces NO measurement.",
+        )
     if surface.exception_at and all(lv.get(k) == v for k, v in surface.exception_at.items()):
         m = float("nan")
     else:
