@@ -350,10 +350,30 @@ It spends **one** agent call authoring the mechanism plus the native tests
 its `relations` declare — the campaign's only substantive model call. `build`
 makes no
 correctness judgement — `verify` remains the gate, so the stage that writes
-the code is never the stage that certifies it. The validator rejects `build`
-anywhere but position 1 and warns when declared `native_test` files are
-absent with no `build` stage to author them. Omit `build` whenever every
-factor maps to a knob the target already exposes.
+the code is never the stage that certifies it.
+
+**Two things reach that one call and nothing else does:**
+`target_system.description` and `optimization.guidance.factor_nomination`
+(passed as "AUTHOR'S GUIDANCE ON THE MECHANISM"). `guidance.interpretation` is
+deliberately withheld — it steers how *results* are read, and the stage that
+writes the code must not pre-judge the measurement it is not allowed to make.
+If the build needs to know something, it goes in one of those two fields;
+anywhere else and it reaches nobody. That gap confounded a field test once:
+the author's own diagnosis of the target's crash mode sat unread in
+`factor_nomination` while the build shipped exactly that defect.
+
+**The build is told the mechanism must be CHEAP, not merely correct** — it
+carries the campaign's objective (metric + direction) and requires the
+asymptotic cost of *deciding* to take a fast path to be strictly below the
+cost of the work avoided. A skip whose check walks the same N it skips cannot
+pay for itself. This is not covered by any oracle: every `native_test` and all
+four build oracles check that the mechanism is RIGHT, and **nothing in the gate
+checks that it is FAST** — a slow mechanism surfaces only at `screen`, as a main
+effect with the wrong sign, after the build call is spent.
+
+The validator rejects `build` anywhere but position 1 and warns when declared
+`native_test` files are absent with no `build` stage to author them. Omit
+`build` whenever every factor maps to a knob the target already exposes.
 
 **Model:** every phase of a `kind: optimization` campaign resolves to
 `claude-opus-5` (`orchestrator.campaign.OPTIMIZATION_MODEL`) rather than the

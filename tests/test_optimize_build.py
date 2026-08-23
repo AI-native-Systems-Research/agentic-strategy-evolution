@@ -584,6 +584,52 @@ def test_build_prompt_forbids_fitting_reference_numbers(tmp_path: Path):
     assert "did not reproduce" in low
 
 
+def test_build_prompt_carries_optimization_guidance(tmp_path: Path):
+    """`optimization.guidance` must reach the stage that writes the mechanism.
+
+    Observed for real, and it confounded a two-arm field test: a campaign author
+    put the target's known failure mode ("naively skipping this call CRASHES with
+    IndexError because the shared buffer's claim goes unmade") into
+    `optimization.guidance.factor_nomination`, reasonably assuming a field named
+    *guidance* reaches the agent being guided. It did not — `build_prompt` read
+    only `research_question` and `target_system.description`, so the warning
+    reached nobody and the build shipped the exact defect the author had already
+    diagnosed. The reflective arm of the same comparison got the same facts via
+    its `research_question` (which IS its prompt) and avoided the defect, making
+    a 10x optimality gap partly an artifact of which field the author chose.
+    """
+    campaign = _campaign(tmp_path)
+    campaign["optimization"]["guidance"] = {
+        "factor_nomination": "Preserve the claim protocol; a naive skip raises IndexError.",
+        "interpretation": "Report a monotonicity break as the finding, not a defect.",
+    }
+    prompt = build_prompt(campaign, [])
+    assert "claim protocol" in prompt
+    assert "IndexError" in prompt
+    # `interpretation` steers how RESULTS are read, which is not this stage's job:
+    # build writes code and makes no correctness judgement, so feeding it the
+    # interpretation rules would invite it to pre-judge its own measurement.
+    assert "monotonicity break" not in prompt
+
+
+def test_build_prompt_demands_the_mechanism_be_cheap(tmp_path: Path):
+    """A time-objective campaign must tell the build that time is the point.
+
+    Observed for real: every REQUIREMENT in this prompt was about correctness, and
+    BUDGET DISCIPLINE told the agent that probing "buys no measurement" — so a
+    build authored a mechanism that removed 70% of the per-item work and ran 23.7%
+    SLOWER, because its per-frame decision was O(n) over the same n it was trying
+    to skip. Correct, well-tested, and a regression. The prompt has to say that the
+    cost of deciding must be cheaper than the work avoided.
+    """
+    prompt = build_prompt(_campaign(tmp_path), [])
+    low = prompt.lower()
+    assert "cost of deciding" in low
+    assert "asymptotic" in low
+    # And the objective's own direction must be visible, so "fast" is not abstract.
+    assert "goodput" in low and "maximize" in low
+
+
 def _decl(*names):
     class _F:
         def __init__(self, rels):

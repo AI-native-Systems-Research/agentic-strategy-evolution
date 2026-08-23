@@ -284,6 +284,34 @@ def build_prompt(campaign: dict, declared_tests: list[str]) -> str:
     locked = campaign.get("locked_parameters") or {}
     locked_block = "\n".join(f"  - {k}: {v}" for k, v in locked.items()) or "  (none)"
 
+    # `optimization.guidance.factor_nomination` is the author's steer about the
+    # MECHANISM — which knob reaches what, which pathway to use, which failure
+    # mode to avoid. It has to reach the stage that writes the mechanism, or a
+    # field named "guidance" guides nobody. Observed for real: an author put a
+    # target's known crash mode there, it reached no prompt, and the build shipped
+    # exactly that defect.
+    #
+    # `guidance.interpretation` is deliberately NOT passed. It steers how RESULTS
+    # are read, and `build` makes no correctness judgement — `verify` is the gate.
+    # Handing the authoring agent the interpretation rules would invite it to
+    # pre-judge the measurement it is not allowed to make.
+    guidance = (opt.get("guidance") or {}).get("factor_nomination") or ""
+    guidance = guidance.strip()
+    guidance_block = (
+        f"""
+
+AUTHOR'S GUIDANCE ON THE MECHANISM (optimization.guidance.factor_nomination)
+{guidance}"""
+        if guidance else ""
+    )
+
+    # The objective, so "make it fast" is a direction and a metric rather than a
+    # sentiment. A build that does not know which way is better cannot weigh its
+    # own bookkeeping against the work it removes.
+    primary = ((opt.get("response") or {}).get("primary") or {})
+    metric = str(primary.get("metric") or "the primary metric").strip()
+    direction = str(primary.get("direction") or "improve").strip()
+
     return f"""You are implementing a mechanism in a target repository so that a
 factorial optimization experiment can then measure it. Write code and tests only.
 Do NOT run the experiment, do not benchmark, do not tune parameters, and do not
@@ -308,6 +336,7 @@ RESEARCH QUESTION
 
 WHAT TO BUILD (authored by the campaign author; treat as the specification)
 {description}
+{guidance_block}
 
 NATIVE TESTS THAT MUST EXIST AND PASS
 These exact identifiers are declared as correctness relations. A later stage
@@ -344,6 +373,18 @@ REQUIREMENTS
    default turns a typo into a fabricated null result.
 5. Follow the plumbing path the specification names rather than inventing a
    parallel one.
+6. THE MECHANISM HAS TO BE CHEAP, not merely correct. This campaign's objective
+   is `{metric}` ({direction}), so a mechanism that is correct and slow is a
+   failed mechanism — it will be measured as a regression and the campaign will
+   recommend leaving it off. Before you write the fast path, state to yourself
+   the asymptotic cost of DECIDING to take it, against the asymptotic cost of the
+   work it avoids. **The cost of deciding must be strictly lower.** A skip whose
+   check walks the same N items it is trying to skip cannot pay for itself, no
+   matter how much work it then avoids; hoist the decision to something you can
+   read in O(1) — a counter or epoch bumped at the few places that actually
+   invalidate it — rather than recomputing a summary over every item every time.
+   Where the work you avoid is a long run of small per-item calls, avoid the RUN
+   in one step rather than each call in turn.
 
 BUDGET DISCIPLINE — read this before you start probing
 This is ONE call, and it is the only call in the campaign that spends tokens on

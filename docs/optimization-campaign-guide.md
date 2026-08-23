@@ -495,16 +495,36 @@ see §5 for the full rationale and the decision test for what belongs here.
 
 ### `guidance`
 
-Structured prose in two named slots. Both are **reserved, not read by any
-stage** — `verify` and `confirm` are pure Python, so nothing consumes these
-fields today. Keep them accurate: they document author intent for a human
-reader, and they are the slots a future model-facing stage would read.
+Structured prose in two named slots. The two are read very differently, and the
+difference matters:
 
-- **`factor_nomination`** — **reserved, not read by any stage.** Domain
-  knowledge about which axes matter, which mechanisms already exist in the
-  target, and what's out of scope belongs here.
-- **`interpretation`** — **reserved, not read by any stage.** Scope
-  limitations and "report X as a lead, not a result" belong here.
+- **`factor_nomination`** — **passed verbatim to the `build` stage's prompt**
+  when `build` is declared (as "AUTHOR'S GUIDANCE ON THE MECHANISM"), and
+  otherwise unread. Domain knowledge about which axes matter, which mechanisms
+  already exist in the target, which plumbing path to use, and which failure mode
+  to avoid belongs here. **This is the channel for anything the agent writing the
+  mechanism needs to know.** Without `build` in `stages`, nothing consumes it —
+  the tokenless stages have no prompt to put it in.
+- **`interpretation`** — **reserved, not read by any stage.** Scope limitations
+  and "report X as a lead, not a result" belong here. It is deliberately NOT
+  passed to `build`: it steers how *results* are read, and `build` makes no
+  correctness judgement (`verify` is the gate), so handing it the interpretation
+  rules would invite it to pre-judge a measurement it is not allowed to make.
+
+**Why `factor_nomination` reaching `build` is load-bearing.** It did not, until a
+two-arm field test was confounded by the gap. The author had written the target's
+known crash mode — *"naively skipping this call raises IndexError because the
+shared buffer's per-frame claim goes unmade"* — into `factor_nomination`,
+reasonably assuming a field named *guidance* reaches the agent being guided. It
+reached nobody: `build_prompt` read only `research_question` and
+`target_system.description`. The build then shipped the exact defect the author
+had already diagnosed, while the reflective arm of the same comparison — which
+carries the same facts in its `research_question`, and that *is* its prompt —
+avoided it. A 10x optimality gap between the two kinds was therefore partly an
+artifact of which YAML field the author happened to choose.
+
+**So: if `build` needs to know it, put it in `factor_nomination` or in
+`target_system.description`. Those two are the only prose that reaches it.**
 
 ### `test_command` / `integrity_command`
 
@@ -865,6 +885,25 @@ Three properties are worth understanding before you use it:
    loop would both burn tokens and let the model negotiate with its own
    gate. If `verify` fails, the campaign aborts with the failing relation
    IDs — fix the spec or the tests and re-run.
+
+**The build is told to make the mechanism CHEAP, not merely correct.** The prompt
+carries the campaign's own objective (metric and direction) and requires the agent
+to weigh the asymptotic cost of *deciding* to take its fast path against the cost
+of the work that path avoids — the cost of deciding must be strictly lower. This
+requirement exists because a build shipped the opposite: a dirty-tracking skip
+that removed **70 %** of the per-item work and ran **23.7 % slower**, because its
+per-frame decision rebuilt a state tuple over every one of the same N items it was
+trying to skip. Correct, well-tested, and a regression the campaign then correctly
+recommended disabling. A skip whose check is O(N) over the same N cannot pay for
+itself; the decision has to be hoisted to something readable in O(1) — a counter
+or epoch bumped at the few places that genuinely invalidate it.
+
+The corollary for authors: **a `correctness` relation cannot catch a slow
+mechanism.** All four oracles and every `native_test` check that the mechanism is
+*right*. Nothing in the gate checks that it is *fast* — that only shows up at
+`screen`, as a main effect with the wrong sign, by which point the build call is
+spent. If your mechanism's cost model is the hard part, say so in
+`guidance.factor_nomination`, which the build now reads.
 
 Because `verify` is fail-closed — a declared `native_test` that does not
 execute counts as a **failure**, not as "skipped" — the tests you declare in
