@@ -527,7 +527,14 @@ def run_build(
 
     resolved_model = model or _resolve_model(campaign, "build", None)
 
-    prompt = build_prompt(campaign, declared_tests)
+    # `work_dir` is REQUIRED here, not optional: it is how `build_prompt` finds
+    # `mechanism_plan.json` and renders the MECHANISM PLAN block. Omitting it made
+    # the `plan` stage write-only in production -- the stage ran, spent its agent
+    # call, wrote a schema-checked plan, and `build` never saw a word of it, so the
+    # build re-derived the mechanism from scratch (including alternatives the plan
+    # had already priced and rejected). The block is ~27K chars on a real plan, so
+    # the omission was a silent 26833-char difference in the prompt.
+    prompt = build_prompt(campaign, declared_tests, work_dir)
     runner = sdk_runner or _default_sdk_runner_factory()
 
     prompts_dir = ((campaign.get("prompts") or {}).get("methodology_layer"))

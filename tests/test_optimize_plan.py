@@ -777,6 +777,53 @@ def test_compiled_policy_with_plan_validates_against_its_own_schema(tmp_path: Pa
     write_policy(tmp_path / "wd", pol)
 
 
+def test_run_build_actually_passes_the_plan_to_the_prompt(tmp_path: Path):
+    """`run_build` must hand `work_dir` to `build_prompt`, or the plan is write-only.
+
+    The defect: `run_build` called `build_prompt(campaign, declared_tests)` with no
+    `work_dir`, and `work_dir` is precisely how `build_prompt` locates
+    `mechanism_plan.json`. So the `plan` stage ran, spent its agent call, wrote a
+    schema-checked plan -- and `build` received none of it, re-deriving the
+    mechanism from scratch including the alternatives the plan had already priced
+    and rejected. Silent: a 26833-char difference in the prompt with nothing in any
+    artifact to show it. This asserts the plan's own text reaches the prompt.
+    """
+    from orchestrator.optimize import build as build_mod
+
+    campaign = _campaign(tmp_path)
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    # A minimal plan whose text is unmistakable if it reaches the prompt.
+    (wd / "mechanism_plan.json").write_text(json.dumps({
+        "cost_model": {"currency": "t", "summary": "SENTINEL_COST_MODEL_TEXT"},
+        "approach": {"summary": "SENTINEL_APPROACH_TEXT",
+                     "cost_of_deciding": "c", "cost_avoided": "a"},
+        # `format_plan_for_build` renders rejected entries from `approach`/`why`.
+        "rejected": [{"approach": "SENTINEL_REJECTED_TEXT", "why": "w"}],
+        "failure_modes": [{"symptom": "s", "cause": "c", "guard": "g"}],
+    }))
+
+    seen = {}
+
+    def fake_runner(*a, **kw):
+        seen["prompt"] = kw.get("prompt") or (a[0] if a else "")
+        raise RuntimeError("stop after prompt assembly")
+
+    try:
+        build_mod.run_build(
+            campaign, wd, iteration=1, declared_tests=["t"],
+            sdk_runner=fake_runner,
+        )
+    except Exception:
+        pass
+
+    prompt = seen.get("prompt", "")
+    assert "SENTINEL_COST_MODEL_TEXT" in prompt, (
+        "the plan's cost model never reached the build prompt")
+    assert "SENTINEL_REJECTED_TEXT" in prompt, (
+        "the plan's rejected alternatives never reached the build prompt")
+
+
 def test_build_only_campaign_is_unchanged():
     """Backward compatibility: the pre-`plan` shape still resolves as before."""
     from orchestrator.optimize import policy
