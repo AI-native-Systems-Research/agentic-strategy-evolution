@@ -371,6 +371,15 @@ path (a check that walks the same N it skips cannot pay for itself); for
 memory it is the resident state added; and a constraint is a second budget the
 mechanism must not spend to buy the primary metric.
 
+**The build is asked to EXPLORE, not to economise** — the kind is frugal by
+design (one substantive call, every later state tokenless), so the prompt says the
+saving is already banked and to spend what the mechanism needs, profiling and
+timing candidates included. Out of scope is a set of wrong *activities*, not a
+cost ceiling: it must not search the declared factor **levels** or tune knobs to a
+result, which is `screen`/`confirm`'s job under a pre-registered design. The prompt
+ends on a 12-item checklist (C1–C6 correctness, O1–O6 optimality) the build must
+answer in its summary.
+
 None of this is covered by any oracle: every `native_test` and all four build
 oracles check that the mechanism is RIGHT, and **nothing in the gate checks that
 it is FAST** — a costly mechanism surfaces only at `screen`, as a main effect with

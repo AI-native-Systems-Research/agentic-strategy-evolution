@@ -407,27 +407,70 @@ REQUIREMENTS
      - If a constraint above names a second budget, the mechanism must not buy the
        primary metric by spending that one — that is infeasible, not optimal.
 
-BUDGET DISCIPLINE — read this before you start probing
-This is ONE call, and it is the only call in the campaign that spends tokens on
-the target. Everything after it is tokenless. So:
+SCOPE — what is and is not this stage's job
+`kind: optimization` is frugal BY DESIGN: this is the campaign's one substantive
+call and every state after it is tokenless. So do NOT economise here — the saving
+is already banked, and this call determines the quality of every number the
+campaign will report. Spend what the mechanism needs, including measuring your own
+implementation to establish that it is worth enabling.
 
-  - Write the mechanism and its tests. That is the deliverable. Exploratory
-    scripts, grid searches, and attribution probes are spend that buys no
-    measurement.
-  - Reference numbers in the specification are for a ONE-TIME sanity check, not
-    a target to fit. Reproduce them once. If your first faithful implementation
-    disagrees with one, say so in your summary and keep going — a documented
-    divergence is a finding for a human to adjudicate, and it is far cheaper
-    than a search for a variant that matches. The specification's author may
-    simply have mislabelled a leg.
-  - If the spec asks for behaviour you cannot find in the target, do not go
-    hunting for it across the codebase. Note it as absent and implement what is
-    specified minus that piece.
+What is out of scope is a set of wrong ACTIVITIES, not a cost ceiling:
+
+  - EXPLORE FREELY to find where the cost actually sits, to compare candidate
+    implementations, and to confirm your own mechanism pays for itself. Profiling,
+    counting calls, and timing two variants against each other are part of writing
+    a mechanism worth enabling, not a distraction from it.
+  - What you must NOT do is pre-empt the pre-registered experiment: do not search
+    the declared factor LEVELS for a winner, and do not tune the campaign's knobs
+    to a result. `screen` and `confirm` do that under a design fixed before any
+    result was seen, which is what makes their answer admissible. Your job is to
+    make the mechanism the best it can be at every level it will be measured at.
+  - Reference numbers in the specification are a ONE-TIME sanity check, not a
+    target to fit. Reproduce them once. If your faithful implementation disagrees
+    with one, say so in your summary and keep going — a documented divergence is a
+    finding for a human to adjudicate. The specification's author may simply have
+    mislabelled a leg.
+  - If the spec asks for behaviour you cannot find in the target, do not hunt for
+    it across the codebase. Note it as absent and implement what is specified
+    minus that piece.
   - Delete any temporary probe scripts you create before you finish.
 
-When you are done, reply with a short plain-text summary: the files you changed,
-the flag or API you added, the output of the test command, and any place where a
-reference number in the specification did not reproduce. No JSON.
+BEFORE YOU FINISH — answer every item below in your summary
+Each is a defect a real build shipped. "n/a, because ..." is an answer; silence is
+not. The list is short because each line cost a campaign.
+
+CORRECTNESS — the mechanism does what it claims
+  C1. Every declared native_test exists, is discoverable by the test command, and
+      passes. (An identifier the runner never reports counts as a FAILURE and
+      aborts the campaign even when your code is right.)
+  C2. The OFF/control level reproduces pre-existing behaviour exactly — bit-,
+      byte- or pixel-identical wherever the target admits that comparison.
+  C3. An unrecognised knob value fails LOUDLY. A silent fallback to the default
+      turns a typo into a fabricated null result.
+  C4. Every invariant the surrounding code relies on still holds on the fast
+      path. Name the ones you had to preserve and how. A fast path that leaves a
+      protocol half-finished crashes, or worse, computes the wrong answer.
+  C5. Existing tests still pass, and any test you had to CHANGE was updated
+      rather than deleted. Say which, and why the new assertion is the right one.
+  C6. Your new tests FAIL against the unmodified tree. A test that is green
+      without the mechanism is green for some other reason.
+
+OPTIMALITY — the mechanism is worth enabling
+  O1. The mechanism's own overhead, stated asymptotically in the objective's
+      currency, is strictly smaller than the cost it removes. Give both figures.
+  O2. Deciding to use the fast path is cheaper than the work that path skips.
+  O3. Cost sits where it is paid ONCE — setup, or the rare invalidating event —
+      not in the measured path.
+  O4. You changed the algorithm, not just a constant, wherever a better
+      complexity class was available. Say which you did.
+  O5. No declared constraint is spent to buy the primary metric.
+  O6. State the REGIME your choice assumes and roughly where it stops holding.
+      An unstated assumption becomes an unexplained interaction at `screen`.
+
+When you are done, reply with a plain-text summary: the files you changed, the
+flag or API you added, the output of the test command, your answers to the
+CORRECTNESS and OPTIMALITY items above, and any place where a reference number in
+the specification did not reproduce. No JSON.
 """
 
 

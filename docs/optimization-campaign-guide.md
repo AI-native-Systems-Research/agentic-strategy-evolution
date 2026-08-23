@@ -886,6 +886,24 @@ Three properties are worth understanding before you use it:
    gate. If `verify` fails, the campaign aborts with the failing relation
    IDs — fix the spec or the tests and re-run.
 
+**The build is asked to EXPLORE, not to economise.** `kind: optimization` is
+frugal by design — one substantive call, every later state tokenless — so the
+prompt tells the build the saving is already banked and to spend what the
+mechanism needs, including profiling the target and timing candidate
+implementations against each other. What is out of scope is a set of wrong
+*activities*, not a cost ceiling: it must not search the declared factor **levels**
+for a winner or tune the campaign's knobs to a result, because `screen` and
+`confirm` do that under a design fixed before any result was seen. (An earlier
+version of this prompt was headed "BUDGET DISCIPLINE" and told the agent that
+probes "buy no measurement" — which is exactly the wrong instruction for an agent
+that must check whether its own mechanism is cheaper than the work it avoids.)
+
+**And it ends on a checklist, not on prose.** Twelve items — six CORRECTNESS
+(C1–C6), six OPTIMALITY (O1–O6) — that the build must answer *in its summary*;
+"n/a, because …" is an answer and silence is not. This is the §7.9 argument applied
+to the build stage: each item is a defect a real build shipped, and prose advising
+against them was already present when several of them shipped anyway.
+
 **The build is told to make the mechanism OPTIMAL IN THE OBJECTIVE'S OWN
 CURRENCY, not merely correct.** The prompt carries the campaign's own objective
 (metric and direction) *and its declared `constraints`*, and requires the agent to
