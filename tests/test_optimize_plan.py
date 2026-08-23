@@ -752,6 +752,31 @@ def test_compiled_policy_has_no_plan_or_build_state(tmp_path: Path):
     assert "build" not in states
 
 
+def test_compiled_policy_with_plan_validates_against_its_own_schema(tmp_path: Path):
+    """`check_policy` must ACCEPT a policy compiled from a `plan` campaign.
+
+    The `_PRE` fix alone was not enough: `policy.schema.json` independently
+    enumerated `pre_epoch` items as ["build", "verify"], so once `plan` correctly
+    reached `compiled_from.pre_epoch` the SCHEMA rejected it --
+    "'plan' is not one of ['build', 'verify']" -- on every iteration, until the
+    circuit breaker stopped the campaign. Two copies of "what is pre-epoch"
+    drifted apart, and no test compiled a plan-campaign policy and validated it.
+    """
+    from orchestrator.optimize.policy import check_policy, compile_policy, write_policy
+
+    campaign = _campaign(tmp_path)
+    campaign["optimization"]["stages"] = ["plan", "build", "verify", "screen", "confirm"]
+    pol = compile_policy(campaign)
+    assert pol["compiled_from"]["pre_epoch"] == ["plan", "build", "verify"]
+    assert check_policy(pol) == []
+    # `write_policy` is where jsonschema.validate actually runs -- `check_policy`
+    # covers the closed vocabularies and reachability, NOT the schema's own shape
+    # constraints. Asserting only check_policy would have passed while production
+    # still aborted, which is exactly what happened: the campaign failed three
+    # consecutive iterations here and tripped the circuit breaker.
+    write_policy(tmp_path / "wd", pol)
+
+
 def test_build_only_campaign_is_unchanged():
     """Backward compatibility: the pre-`plan` shape still resolves as before."""
     from orchestrator.optimize import policy

@@ -13,7 +13,7 @@
         "campaign_hash": {"type": "string"},
         "mechanism_patch_hash": {"type": "string"},
         "factor_ids": {"type": "array", "items": {"type": "string"}},
-        "pre_epoch": {"type": "array", "items": {"enum": ["build", "verify"]}}
+        "pre_epoch": {"type": "array", "items": {"enum": ["plan", "build", "verify"]}}
       }
     },
     "objective": {
