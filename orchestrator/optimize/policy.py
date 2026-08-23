@@ -100,7 +100,21 @@ rejects an unknown operator instead of letting ``step`` treat the predicate as
 unsatisfiable and silently strand the branch it guards.
 """
 
-_PRE = ("build", "verify")
+# The stages that sit OUTSIDE the compiled epoch, in campaign order.
+#
+# ``plan`` and ``build`` are the kind's only model-facing stages; ``verify`` is
+# what compiles the policy, so it cannot be a state inside it. Everything after
+# these is an epoch state that ``step()`` may route to.
+#
+# ``plan`` MUST be listed here, and its omission broke both functions below in
+# the same way: ``pre_epoch_stages`` walks the declared order and BREAKS at the
+# first non-pre-epoch stage, so a ``[plan, build, verify, ...]`` campaign broke on
+# element 0 and returned ``[]`` -- skipping BOTH model-facing stages and running
+# ``verify`` first, which then aborted on the very relations ``build`` was there
+# to author. And ``_enabled`` subtracts this tuple, so ``plan`` leaked into the
+# epoch's state set, contradicting the kind's central invariant that no model
+# call is ever made inside a compiled epoch state.
+_PRE = ("plan", "build", "verify")
 _DEFAULT_STAGES = ("verify", "screen", "refine", "confirm")
 
 

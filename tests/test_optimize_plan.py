@@ -702,3 +702,60 @@ def test_write_effects_is_unchanged_without_the_new_arguments(tmp_path: Path):
     payload = json.loads(
         write_effects(iter_dir, fit, factors=factors, stage="screen").read_text())
     assert "plan_contradictions" not in payload
+
+
+# ---------------------------------------------------------------------------
+# `plan` is PRE-EPOCH. Regression tests for a defect that made the stage
+# unreachable from any campaign that declared it.
+#
+# `policy._PRE` is what implements "plan and build sit outside the compiled
+# epoch" (Stage.PLAN's docstring, CLAUDE.md, the guide's states table). It
+# omitted "plan", and because `pre_epoch_stages` walks the declared order and
+# BREAKS at the first non-pre-epoch stage, a `[plan, build, verify, ...]`
+# campaign broke on element 0 and returned []. Consequences, both observed on a
+# real launch: `_resolve_state` ran `verify` as iteration 1 -- skipping BOTH
+# model-facing stages -- and verify then aborted on the very relations `build`
+# was declared to author. Separately `_enabled` subtracts `_PRE`, so `plan`
+# leaked into the epoch's state set, contradicting the kind's central invariant
+# that no model call is ever made inside a compiled epoch state.
+# ---------------------------------------------------------------------------
+
+_FULL_STAGES = {
+    "optimization": {"stages": ["plan", "build", "verify", "screen", "refine", "confirm"]},
+}
+
+
+def test_plan_and_build_are_both_pre_epoch():
+    """The whole declared prefix is pre-epoch, in order."""
+    from orchestrator.optimize import policy
+
+    assert policy.pre_epoch_stages(_FULL_STAGES) == ["plan", "build", "verify"]
+
+
+def test_plan_is_never_an_epoch_state():
+    """A model-calling stage inside the epoch would break the tokenless claim."""
+    from orchestrator.optimize import policy
+
+    enabled = policy._enabled(_FULL_STAGES)
+    assert "plan" not in enabled
+    assert "build" not in enabled
+
+
+def test_compiled_policy_has_no_plan_or_build_state(tmp_path: Path):
+    """`step()` must not be able to route to either model-facing stage."""
+    from orchestrator.optimize.policy import compile_policy
+
+    campaign = _campaign(tmp_path)
+    campaign["optimization"]["stages"] = ["plan", "build", "verify", "screen", "confirm"]
+    states = compile_policy(campaign)["states"]
+    assert "plan" not in states
+    assert "build" not in states
+
+
+def test_build_only_campaign_is_unchanged():
+    """Backward compatibility: the pre-`plan` shape still resolves as before."""
+    from orchestrator.optimize import policy
+
+    assert policy.pre_epoch_stages(
+        {"optimization": {"stages": ["build", "verify", "screen", "confirm"]}},
+    ) == ["build", "verify"]
