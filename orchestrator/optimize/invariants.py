@@ -885,9 +885,14 @@ def check_no_model_call_reachable_from_epoch() -> list[str]:
     improvising, precisely so no state ever needs a model "just to interpret a
     result".
 
-    Checked STATICALLY, by import graph: the only dispatcher import anywhere in
-    the package must be function-local inside ``build.run_build``, the one stage
-    that is not part of the epoch. A dynamic tripwire complements this in the
+    Checked STATICALLY, by import graph: the only dispatcher imports anywhere in
+    the package must be function-local inside ``plan.run_plan`` and
+    ``build.run_build`` — the two PRE-EPOCH stages, both opt-in, both of which run
+    before the first measurement and neither of which is a state the compiled
+    policy can route to. The epoch itself stays at zero calls, which is what the
+    invariant protects; adding a pre-epoch stage moves the substantive-call count
+    (0 without them, 1 with ``build``, 2 with ``plan`` as well) and does not touch
+    this invariant. A dynamic tripwire complements this in the
     test suite (verified live, with a negative control that fires when ``build``
     is declared), but the static form is what can run always and cheaply.
     """
@@ -898,8 +903,11 @@ def check_no_model_call_reachable_from_epoch() -> list[str]:
     )
     out: list[str] = []
     for path in sorted(pkg.glob("*.py")):
-        if path.name in ("invariants.py", "build.py"):
-            continue          # build IS the one substantive call; this file names it
+        if path.name in ("invariants.py", "plan.py", "build.py"):
+            # `plan` and `build` ARE the substantive calls, and both are pre-epoch:
+            # `step()` can never route to either, so neither is reachable FROM an
+            # epoch state. This file names them, which is why it is skipped too.
+            continue
         text = path.read_text()
         for i, line in enumerate(text.splitlines(), 1):
             s = line.strip()

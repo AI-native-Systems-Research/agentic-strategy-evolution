@@ -345,7 +345,32 @@ from the fit (fixed by fitting on the complete-row subset and recording
 exclusions, spec §4 D2).
 
 When the mechanism under study does not exist in the target yet, add the
-opt-in `build` stage first (`stages: [build, verify, screen, confirm]`).
+opt-in `build` stage first (`stages: [build, verify, screen, confirm]`) — and
+consider `plan` before it (`stages: [plan, build, verify, screen, confirm]`).
+
+**`plan` designs the mechanism `build` then authors.** One call, no code, writing
+schema-checked `mechanism_plan.json` at the work-dir root: `cost_model` (where the
+cost is, in the objective's currency, read off the target), `approach` (with BOTH
+`cost_of_deciding` and `cost_avoided`), `rejected` (>=1 alternative, priced), and
+`failure_modes` (`symptom`/`cause`/`guard`). `check_plan` gates the file — an
+unparseable reply or a vacuous section raises and writes NOTHING, because `build`
+reads this file as its specification. The plan then appears in the build's prompt
+as `MECHANISM PLAN`, rejected alternatives included, so the build does not
+re-derive a loser the plan already priced.
+
+Both `plan` and `build` are **pre-epoch**: `step()` can never route to either, so
+the epoch stays tokenless. Substantive calls: 0 (neither) -> 1 (`build`) -> 2
+(both). Rule 11a pins `plan` to position 1 immediately before `build`; after
+`build` it would describe code that already exists, which reads as a
+pre-registered design but is a post-hoc rationalisation.
+
+Why it exists, measured: on one target, a build whose prompt never received the
+cost facts removed 70% of the per-item work and ran **23.7% SLOWER**; the same
+build given those facts reached **+3.65%, certified**; the reflective kind, which
+designs first, reached **-10.4%** and named the winning architecture in its design
+artifact before writing any code. 87% of that kind's design bundle was experiment
+design this kind already pre-registers and hashes — `plan` captures only the
+remaining fraction, which is the part that mattered.
 It spends **one** agent call authoring the mechanism plus the native tests
 its `relations` declare — the campaign's only substantive model call. `build`
 makes no

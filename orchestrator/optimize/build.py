@@ -253,7 +253,11 @@ class BuildFailed(RuntimeError):
     """
 
 
-def build_prompt(campaign: dict, declared_tests: list[str]) -> str:
+def build_prompt(
+    campaign: dict,
+    declared_tests: list[str],
+    work_dir: Path | str | None = None,
+) -> str:
     """Compose the build-stage prompt.
 
     Pure function of the campaign so it is testable without an SDK: the
@@ -295,6 +299,15 @@ def build_prompt(campaign: dict, declared_tests: list[str]) -> str:
     # are read, and `build` makes no correctness judgement — `verify` is the gate.
     # Handing the authoring agent the interpretation rules would invite it to
     # pre-judge the measurement it is not allowed to make.
+    # The `plan` stage's artifact, when that opt-in stage ran. Absent is the
+    # normal case and must render byte-identically to a campaign that never had a
+    # plan stage — this is opt-in, and every campaign authored before it existed
+    # has to behave the same.
+    plan_block = ""
+    if work_dir is not None:
+        from orchestrator.optimize.plan import format_plan_for_build, read_plan
+        plan_block = format_plan_for_build(read_plan(work_dir))
+
     guidance = (opt.get("guidance") or {}).get("factor_nomination") or ""
     guidance = guidance.strip()
     guidance_block = (
@@ -347,7 +360,7 @@ RESEARCH QUESTION
 
 WHAT TO BUILD (authored by the campaign author; treat as the specification)
 {description}
-{guidance_block}
+{guidance_block}{plan_block}
 
 NATIVE TESTS THAT MUST EXIST AND PASS
 These exact identifiers are declared as correctness relations. A later stage

@@ -50,13 +50,20 @@ _LOF_ALPHA = 0.05
 class Stage(str, Enum):
     """The stages of an optimization campaign, in order.
 
-    ``BUILD`` is opt-in and absent from the default order, so every campaign
-    written before it existed behaves exactly as before. Declare it in
+    ``PLAN`` and ``BUILD`` are opt-in and absent from the default order, so every
+    campaign written before they existed behaves exactly as before. Declare it in
     ``optimization.stages`` when the mechanism under study does not exist yet
     and the campaign has to author it first; omit it when the campaign only
     varies knobs the target already exposes.
     """
 
+    #: Opt-in, and legal ONLY immediately before ``BUILD``. Designs the mechanism
+    #: — where the target's cost is, which approach pays, what was rejected and
+    #: why, which invariants a naive version breaks — and writes
+    #: ``mechanism_plan.json``. Writes no code: ``BUILD`` implements the plan.
+    #: Like ``BUILD`` it sits OUTSIDE the compiled epoch, so the epoch stays
+    #: tokenless.
+    PLAN = "plan"
     BUILD = "build"
     VERIFY = "verify"
     SCREEN = "screen"

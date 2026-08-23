@@ -377,6 +377,55 @@ def _rule4_refine_needs_two_refinable_factors(
     ]
 
 
+def _rule11a_plan_stage_position(opt: dict) -> list[str]:
+    """Rule 11a: ``plan``, if present, must be first and immediately precede ``build``.
+
+    ``plan`` designs the mechanism ``build`` then authors. Anywhere else it is
+    schema-valid and useless in a specific way worth rejecting:
+
+    * ``plan`` with no ``build`` is a design nothing implements — the call is
+      spent and no code is written.
+    * ``plan`` AFTER ``build`` specifies code that already exists. The artifact
+      then reads as a pre-registered design while actually being a post-hoc
+      rationalisation of what was already committed, which is worse than absent.
+    * ``plan`` twice re-designs a mechanism a later stage already measured.
+    """
+    stages = opt.get("stages")
+    if not isinstance(stages, list) or not stages:
+        return []
+    names = [str(getattr(s, "value", s)) for s in stages]
+    count = names.count("plan")
+    if count == 0:
+        return []
+    errors: list[str] = []
+    if count > 1:
+        errors.append(
+            f"optimization.stages lists 'plan' {count} times. The plan stage "
+            f"spends an agent call designing the mechanism; running it again "
+            f"would re-design a mechanism the build already authored. Keep a "
+            f"single 'plan' as the first stage.",
+        )
+    if "build" not in names:
+        errors.append(
+            "optimization.stages declares 'plan' with no 'build'. The plan is a "
+            "specification for the build stage to implement — without 'build' the "
+            "call is spent and no code is written. Either add 'build' after "
+            "'plan', or drop 'plan'.",
+        )
+        return errors
+    if names[0] != "plan" or names[1] != "build":
+        errors.append(
+            f"optimization.stages has 'plan' at position "
+            f"{names.index('plan') + 1} (stages: {names}). 'plan' must come "
+            f"FIRST, immediately before 'build': it designs the mechanism that "
+            f"'build' authors. After 'build' it describes code that already "
+            f"exists, which reads as a pre-registered design but is a post-hoc "
+            f"rationalisation. Reorder to "
+            f"{['plan', 'build'] + [n for n in names if n not in ('plan', 'build')]}.",
+        )
+    return errors
+
+
 def _rule11_build_stage_position(opt: dict) -> list[str]:
     """Rule 11: ``build``, if present, must be the first stage and appear once.
 
@@ -402,7 +451,11 @@ def _rule11_build_stage_position(opt: dict) -> list[str]:
             f"would re-author code that later stages already measured. Keep a "
             f"single 'build' as the first stage.",
         )
-    if names[0] != "build":
+    # `plan` is the one stage allowed to precede `build`: it designs the mechanism
+    # `build` authors, and rule 11a pins it to position 1. So build at position 2
+    # behind `plan` is correct, and only that arrangement is.
+    expected_pos = 1 if names[0] == "plan" else 0
+    if names.index("build") != expected_pos:
         errors.append(
             f"optimization.stages has 'build' at position {names.index('build') + 1} "
             f"(stages: {names}). 'build' must come FIRST: it authors the "
@@ -410,7 +463,8 @@ def _rule11_build_stage_position(opt: dict) -> list[str]:
             f"aborts the campaign (verify gates tests for code that does not "
             f"exist yet); behind 'screen' the screen measures the old mechanism "
             f"and reports an effect table for a system the campaign replaced. "
-            f"Reorder to {['build'] + [n for n in names if n != 'build']}.",
+            f"(The sole exception is 'plan', which may precede it — see rule 11a.) "
+            f"Reorder to {[n for n in ('plan',) if n in names] + ['build'] + [n for n in names if n not in ('plan', 'build')]}.",
         )
     return errors
 
@@ -1602,6 +1656,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule9_no_complexity_tier_under_optimization(campaign, opt))
     errors.extend(_rule10_uncontrolled_knob_warning(campaign, opt))
     errors.extend(_rule11_build_stage_position(opt))
+    errors.extend(_rule11a_plan_stage_position(opt))
     errors.extend(_rule12_missing_native_tests_need_build(campaign, opt, factors))
     errors.extend(_rule13_known_valid_baseline(opt, factors))
     errors.extend(_rule14_policy_ranges(opt))

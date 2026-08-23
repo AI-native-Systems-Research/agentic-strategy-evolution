@@ -1560,7 +1560,7 @@ properties:
           already exposes --- then the campaign stays at ~3 model calls.
         items:
           type: string
-          enum: [build, verify, screen, refine, confirm]
+          enum: [plan, build, verify, screen, refine, confirm]
 
       workload:
         type: object

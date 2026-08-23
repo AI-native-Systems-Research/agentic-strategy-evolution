@@ -2218,6 +2218,28 @@ def run_stage(
     # iteration here hands the next iteration to verify, which runs the real test
     # command against the real repo and aborts if anything the campaign declared
     # is missing or failing.
+    if stage_name == Stage.PLAN.value:
+        # Designs the mechanism `build` will author. No measurement, no code, and
+        # never terminal — the epoch has not started, so there is no policy path
+        # to have reached its end. Fails CLOSED: a plan that does not parse or
+        # does not satisfy `check_plan` raises rather than letting `build` proceed
+        # on a specification nobody can hold it to.
+        from orchestrator.optimize import plan as plan_mod
+
+        plan_mod.run_plan(
+            campaign, work_dir,
+            iteration=iteration,
+            model=model,
+            max_turns=_plan_max_turns(campaign),
+            sdk_runner=sdk_runner,
+        )
+        _enter_phase(engine, "DESIGN", work_dir)
+        _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
+        _enter_phase(engine, "EXECUTE_ANALYZE", work_dir)
+        _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
+        append_ledger_row(work_dir, iteration)
+        return IterationOutcome.CONTINUE
+
     if stage_name == Stage.BUILD.value:
         _enter_phase(engine, "DESIGN", work_dir)
         _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
@@ -3537,6 +3559,22 @@ def _verify_abort_message(failures) -> str:
             "in its output.",
         )
     return "".join(parts)
+
+
+def _plan_max_turns(campaign: dict) -> int:
+    """``max_turns.plan``, else the plan stage's default.
+
+    Separate from the build's ceiling on purpose: designing reads and reasons,
+    authoring reads, writes and runs tests, so they do not need the same budget.
+    """
+    from orchestrator.optimize.plan import DEFAULT_MAX_TURNS
+
+    mt = campaign.get("max_turns")
+    if isinstance(mt, dict):
+        v = mt.get("plan")
+        if isinstance(v, int) and v > 0:
+            return v
+    return DEFAULT_MAX_TURNS
 
 
 def _build_max_turns(campaign: dict) -> int:

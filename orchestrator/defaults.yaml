@@ -15,6 +15,9 @@ models:
   # whole campaign, and every later stage measures whatever it writes, so this is
   # the highest-leverage call Nous makes and gets the strongest model available.
   # Ignored by `kind: reflective`, which has no build stage.
+  # The plan stage designs the mechanism the build then authors, so a weaker
+  # model here degrades every downstream number exactly as a weak build would.
+  plan: "claude-opus-5"
   build: "claude-opus-5"
 
   # DESIGN — explores repo via claude -p, frames problem, designs hypothesis bundle.

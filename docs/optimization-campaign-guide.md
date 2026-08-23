@@ -852,6 +852,55 @@ an all-`choice` campaign, e.g. `[verify, screen, confirm]`. An iteration
 index beyond the list resolves to `confirm`, never a fresh screen (which
 would re-spend the screening budget).
 
+#### `plan` — design the mechanism before authoring it
+
+`plan` is **opt-in** and legal only as the first stage, immediately before
+`build`:
+
+```yaml
+stages: [plan, build, verify, screen, confirm]
+max_turns:
+  plan: 60          # optional; defaults to 60
+```
+
+It spends **one** agent call reading the target and reasoning about the
+mechanism, then writes `mechanism_plan.json` at the work-dir root. **It writes no
+code** — `build` implements the plan. Like `build`, it sits OUTSIDE the compiled
+epoch, so the epoch stays tokenless; the kind's substantive-call count goes 0
+(neither declared) → 1 (`build`) → 2 (both).
+
+**Why it exists, measured rather than argued.** Three builds of the same mechanism
+on one target, same objective, same adapter:
+
+| build | outcome |
+|---|---|
+| prompt never received the cost facts | removed 70 % of the per-item work and ran **23.7 % SLOWER** |
+| prompt received them | **+3.65 %**, certified |
+| the reflective kind, which designs first | **−10.4 %** — and it named the winning architecture in its design artifact **before writing any code** |
+
+The reflective arm's advantage was not a bigger authoring call. It was a
+*separate* call that priced the mechanism first. Its design bundle was 29.4 K
+characters, of which **87 % was experiment design** (hypothesis arms, locked
+parameters, run plans) that this kind already carries pre-registered and
+content-hashed — a strictly stronger guarantee. Only the remaining fraction
+produced the better mechanism, and that fraction is all `plan` captures.
+
+**The artifact is schema-checked, and the check gates the file.** Four sections,
+each required and each rejected when present-but-vacuous:
+
+| section | what it forces |
+|---|---|
+| `cost_model` | where the cost actually is, in the objective's currency, with numbers read off the target — not derivable from the YAML |
+| `approach` | the chosen strategy plus **both** halves of the comparison: `cost_of_deciding` and `cost_avoided` |
+| `rejected` | at least one alternative, priced. This is the field that catches "my check walks the same N I am skipping" while catching it is still free |
+| `failure_modes` | `symptom` / `cause` / `guard` — a named crash mode with no guard is how one build shipped one |
+
+A reply that does not parse, or a plan that fails `check_plan`, raises and writes
+**nothing**: `build` reads this file as its specification, so a half-formed plan on
+disk is worse than none. The plan then appears in the build's prompt as
+`MECHANISM PLAN`, including the rejected alternatives — so the build does not
+re-derive a loser the plan already priced.
+
 #### `build` — when the mechanism does not exist yet
 
 `build` is **opt-in and absent from the default order**, so every campaign
