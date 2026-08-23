@@ -467,3 +467,59 @@ def format_plan_for_build(plan: dict) -> str:
         "documented divergence is a finding, not a failure.",
     )
     return "\n".join(lines)
+
+
+def check_plan_against_effect(
+    plan: dict,
+    *,
+    factor_id: str,
+    effect: float,
+    direction: str,
+    noise_pct: float,
+    baseline: float,
+) -> list[str]:
+    """Hold the plan to its own prediction, using the screen's measured effect.
+
+    The plan asserts ``cost_avoided > cost_of_deciding`` — i.e. that enabling the
+    mechanism moves the objective the way ``direction`` calls better. ``screen``
+    measures exactly that as the main effect of the mechanism's factor. Comparing
+    the two is what stops the plan being write-only, and it catches, one stage
+    later but still before the recommendation is believed, the defect the stage
+    exists to prevent: a decision path that costs more than the work it removes.
+
+    Reported, never fatal. A refuted plan is a *finding* — the campaign's own
+    ``screen`` did its job, and the honest outcome is a recommendation that leaves
+    the mechanism off plus a flag saying the plan's cost model was wrong. Aborting
+    would throw away a correct measurement.
+
+    ``effect`` is the objective's change when the mechanism goes from its control
+    level to its enabled level, in the objective's units. An effect inside the
+    workload's own noise floor is not a contradiction: below the floor the
+    measurement cannot refute anything, and claiming otherwise manufactures
+    findings.
+    """
+    if not plan:
+        return []          # opt-in: no plan, no prediction to falsify
+    approach = plan.get("approach") or {}
+    if not approach:
+        return []
+
+    floor = abs(float(baseline)) * float(noise_pct) / 100.0
+    if abs(float(effect)) <= floor:
+        return []
+
+    better_is_lower = str(direction).strip().lower() == "minimize"
+    helped = (effect < 0) if better_is_lower else (effect > 0)
+    if helped:
+        return []
+
+    return [
+        f"the mechanism plan predicted its overhead would be smaller than the "
+        f"work it removes (cost_of_deciding {approach.get('cost_of_deciding')!r} "
+        f"vs cost_avoided {approach.get('cost_avoided')!r}), but screen measured "
+        f"factor {factor_id} moving the objective by {effect:+.6g} — the wrong way "
+        f"for direction={direction}, and larger than the {noise_pct:g}% noise floor "
+        f"({floor:.6g}). The plan's cost model is contradicted by the measurement: "
+        f"treat the mechanism as not worth enabling, and read the plan's "
+        f"`rejected` alternatives as the candidates that were priced but not built."
+    ]

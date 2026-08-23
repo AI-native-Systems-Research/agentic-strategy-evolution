@@ -364,6 +364,14 @@ the epoch stays tokenless. Substantive calls: 0 (neither) -> 1 (`build`) -> 2
 `build` it would describe code that already exists, which reads as a
 pre-registered design but is a post-hoc rationalisation.
 
+**The plan is a PREDICTION, and `screen` falsifies it.** `effects.json` gains
+`plan_contradictions` when the mechanism factor's measured main effect moves the
+objective the wrong way by more than the noise floor — the plan claimed
+`cost_avoided > cost_of_deciding`, and the screen measures that claim. Reported,
+never fatal: a refuted plan is a finding, and aborting would discard a correct
+measurement. On `effects.json` rather than a sibling file for the same reason
+`exclusion_balance` is — a caveat the reader never opens is not a caveat.
+
 Why it exists, measured: on one target, a build whose prompt never received the
 cost facts removed 70% of the per-item work and ran **23.7% SLOWER**; the same
 build given those facts reached **+3.65%, certified**; the reflective kind, which

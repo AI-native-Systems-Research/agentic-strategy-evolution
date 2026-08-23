@@ -176,7 +176,10 @@ def _sorted_effects(effects: tuple[Effect, ...]) -> list[Effect]:
 
 
 def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
-                   stage: str, exclusion_balance: dict | None = None) -> Path:
+                   stage: str, exclusion_balance: dict | None = None,
+                   work_dir: Path | str | None = None,
+                   direction: str | None = None,
+                   noise_pct: float | None = None) -> Path:
     """Write the fitted model: effects, pure error, lack-of-fit, aliases,
     dropped factors. ``factors`` supplies the factor-id universe that
     ``dropped_factors`` checks against -- the factors this fit was run
@@ -221,6 +224,30 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
     }
     if exclusion_balance is not None:
         payload["exclusion_balance"] = exclusion_balance
+
+    # Hold the `plan` stage to its own prediction, on the artifact that carries
+    # the coefficient the prediction was about. Same reasoning as
+    # `exclusion_balance` above: a caveat in a sibling file is one the reader may
+    # never open, and `project_findings` derives its prose from here. All three
+    # arguments are optional, so every caller written before `plan` existed keeps
+    # working and produces a byte-identical payload.
+    if work_dir is not None and direction and noise_pct is not None:
+        from orchestrator.optimize.plan import check_plan_against_effect, read_plan
+
+        plan = read_plan(work_dir)
+        if plan:
+            flags: list[str] = []
+            for eff in fit.effects:
+                if len(getattr(eff, "terms", ()) or ()) != 1:
+                    continue      # main effects only: one term, one factor
+                flags += check_plan_against_effect(
+                    plan, factor_id=str(eff.label), effect=float(eff.estimate),
+                    direction=direction, noise_pct=float(noise_pct),
+                    baseline=float(fit.intercept),
+                )
+            if flags:
+                payload["plan_contradictions"] = flags
+
     atomic_write(target, _dump(payload))
     return target
 

@@ -540,3 +540,165 @@ def test_plan_iteration_is_never_terminal(tmp_path: Path, monkeypatch):
         _campaign(repo), work, iteration=1, stage="plan", test_results={},
     )
     assert outcome is IterationOutcome.CONTINUE
+
+
+# --------------------------------------------------------------------------
+# ACCOUNTABILITY: the plan is a PREDICTION, so screen can falsify it
+# --------------------------------------------------------------------------
+
+def test_plan_prediction_is_checked_against_the_measured_effect():
+    """A plan that predicted a win against a screen that measured a loss must be FLAGGED.
+
+    Without this the plan is write-only: `build` reads it, nothing ever compares
+    it to reality, and the exact defect the stage exists to prevent — a mechanism
+    whose decision path costs more than it saves — passes silently one stage later.
+    The plan asserts `cost_avoided > cost_of_deciding`; the screen's main effect on
+    the mechanism's own factor is the measurement of that claim.
+    """
+    from orchestrator.optimize.plan import check_plan_against_effect
+
+    plan = _valid_plan()
+    # Screen says enabling the mechanism made the objective WORSE (minimize).
+    flags = check_plan_against_effect(
+        plan, factor_id="DT", effect=+0.056, direction="minimize",
+        noise_pct=2.4, baseline=0.234,
+    )
+    assert flags, "a contradicted plan must be flagged"
+    joined = " ".join(flags)
+    assert "cost_of_deciding" in joined or "overhead" in joined
+    assert "DT" in joined
+
+
+def test_a_plan_borne_out_by_the_measurement_is_not_flagged():
+    """The other direction: a correct prediction must stay silent."""
+    from orchestrator.optimize.plan import check_plan_against_effect
+
+    flags = check_plan_against_effect(
+        _valid_plan(), factor_id="DT", effect=-0.024, direction="minimize",
+        noise_pct=2.4, baseline=0.234,
+    )
+    assert flags == [], f"a borne-out plan must not be flagged: {flags}"
+
+
+@pytest.mark.parametrize("effect,direction,flagged", [
+    (+0.056, "minimize", True),    # slower when minimising -> contradicted
+    (-0.056, "minimize", False),   # faster when minimising -> borne out
+    (-0.056, "maximize", True),    # smaller when maximising -> contradicted
+    (+0.056, "maximize", False),   # bigger when maximising -> borne out
+])
+def test_direction_is_honoured_in_both_senses(effect, direction, flagged):
+    """Property: the sign test must follow the objective's direction, not assume time.
+
+    Reasoned before asserting: "the mechanism helped" means the objective moved
+    the way `direction` says is better. A checker that hardcoded "lower is better"
+    would silently invert on every maximise campaign — and most of the corpus
+    maximises.
+    """
+    from orchestrator.optimize.plan import check_plan_against_effect
+
+    flags = check_plan_against_effect(
+        _valid_plan(), factor_id="DT", effect=effect, direction=direction,
+        noise_pct=2.4, baseline=0.234,
+    )
+    assert bool(flags) is flagged
+
+
+@pytest.mark.parametrize("effect", [0.0, 0.001, -0.002])
+def test_an_effect_inside_the_noise_floor_is_not_a_contradiction(effect):
+    """Property: below the noise floor the measurement cannot contradict anything.
+
+    Claiming a plan was refuted by an effect smaller than run-to-run variation
+    would manufacture findings — the same error as reading a 1% difference as real
+    when the floor is 2.4%.
+    """
+    from orchestrator.optimize.plan import check_plan_against_effect
+
+    assert check_plan_against_effect(
+        _valid_plan(), factor_id="DT", effect=effect, direction="minimize",
+        noise_pct=2.4, baseline=0.234,
+    ) == []
+
+
+def test_no_plan_means_nothing_to_check():
+    """Opt-in stays opt-in: with no plan there is no prediction to falsify."""
+    from orchestrator.optimize.plan import check_plan_against_effect
+
+    assert check_plan_against_effect(
+        {}, factor_id="DT", effect=+0.9, direction="minimize",
+        noise_pct=2.4, baseline=0.234,
+    ) == []
+
+
+def test_effects_json_carries_the_plan_contradiction(tmp_path: Path):
+    """CONTRACT with the artifact a reader actually opens.
+
+    The flag has to land on `effects.json` — the file carrying the coefficient it
+    qualifies — for the same reason `exclusion_balance` does: a caveat in a sibling
+    file is a caveat the reader may never open, and `project_findings` derives its
+    prose from this artifact.
+    """
+    from orchestrator.optimize.artifacts import write_effects
+    from orchestrator.optimize.effects import Effect, Fit
+    from orchestrator.optimize.factors import parse_factors
+
+    work = tmp_path / "wd"
+    (work / "runs" / "iter-3").mkdir(parents=True)
+    (work / PLAN_FILENAME).write_text(json.dumps(_valid_plan()))
+
+    factors = parse_factors(_campaign(tmp_path)["optimization"]["factors"])
+    fit = Fit(
+        intercept=0.234, n_runs=8, pure_error_var=None, pure_error_df=0,
+        lack_of_fit_f=None, lack_of_fit_p=None,
+        effects=(Effect(label="DT", terms=("DT",), estimate=+0.056),),
+    )
+    path = write_effects(
+        work / "runs" / "iter-3", fit, factors=factors, stage="screen",
+        work_dir=work, direction="minimize", noise_pct=2.4,
+    )
+    payload = json.loads(path.read_text())
+    assert payload.get("plan_contradictions"), (
+        "effects.json must carry the plan contradiction beside the coefficient"
+    )
+    assert "DT" in " ".join(payload["plan_contradictions"])
+
+
+def test_effects_json_has_no_flag_when_the_plan_is_borne_out(tmp_path: Path):
+    """The negative half: a correct plan must add no noise to the artifact."""
+    from orchestrator.optimize.artifacts import write_effects
+    from orchestrator.optimize.effects import Effect, Fit
+    from orchestrator.optimize.factors import parse_factors
+
+    work = tmp_path / "wd"
+    (work / "runs" / "iter-3").mkdir(parents=True)
+    (work / PLAN_FILENAME).write_text(json.dumps(_valid_plan()))
+
+    factors = parse_factors(_campaign(tmp_path)["optimization"]["factors"])
+    fit = Fit(
+        intercept=0.234, n_runs=8, pure_error_var=None, pure_error_df=0,
+        lack_of_fit_f=None, lack_of_fit_p=None,
+        effects=(Effect(label="DT", terms=("DT",), estimate=-0.030),),
+    )
+    path = write_effects(
+        work / "runs" / "iter-3", fit, factors=factors, stage="screen",
+        work_dir=work, direction="minimize", noise_pct=2.4,
+    )
+    assert "plan_contradictions" not in json.loads(path.read_text())
+
+
+def test_write_effects_is_unchanged_without_the_new_arguments(tmp_path: Path):
+    """Backward compatible: every existing caller keeps working untouched."""
+    from orchestrator.optimize.artifacts import write_effects
+    from orchestrator.optimize.effects import Effect, Fit
+    from orchestrator.optimize.factors import parse_factors
+
+    iter_dir = tmp_path / "iter-1"
+    iter_dir.mkdir()
+    factors = parse_factors(_campaign(tmp_path)["optimization"]["factors"])
+    fit = Fit(
+        intercept=0.2, n_runs=4, pure_error_var=None, pure_error_df=0,
+        lack_of_fit_f=None, lack_of_fit_p=None,
+        effects=(Effect(label="DT", terms=("DT",), estimate=+0.9),),
+    )
+    payload = json.loads(
+        write_effects(iter_dir, fit, factors=factors, stage="screen").read_text())
+    assert "plan_contradictions" not in payload

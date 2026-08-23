@@ -901,6 +901,23 @@ disk is worse than none. The plan then appears in the build's prompt as
 `MECHANISM PLAN`, including the rejected alternatives — so the build does not
 re-derive a loser the plan already priced.
 
+**The plan is a PREDICTION, and `screen` falsifies it.** The plan asserts
+`cost_avoided > cost_of_deciding` — i.e. that enabling the mechanism moves the
+objective the way `direction` calls better. `screen` measures exactly that as the
+mechanism factor's main effect, so `effects.json` gains a
+`plan_contradictions` entry when the two disagree by more than the workload's own
+noise floor. Without that comparison the plan would be write-only: `build` reads
+it, nothing checks it, and the very defect the stage exists to prevent — a
+decision path costing more than the work it removes — passes silently one stage
+later.
+
+The flag is **reported, never fatal**. A refuted plan is a *finding*: the
+campaign's own screen did its job, and the honest outcome is a recommendation that
+leaves the mechanism off plus a note that the cost model was wrong. Aborting would
+discard a correct measurement. It lives on `effects.json` rather than a sibling
+file for the same reason `exclusion_balance` does — a caveat the reader may never
+open is not a caveat, and `project_findings` derives its prose from that artifact.
+
 #### `build` — when the mechanism does not exist yet
 
 `build` is **opt-in and absent from the default order**, so every campaign
