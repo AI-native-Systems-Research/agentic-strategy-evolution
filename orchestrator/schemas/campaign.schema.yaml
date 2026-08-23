@@ -263,6 +263,16 @@ properties:
       budgets — a 50-arm fanout may need 200+ design turns while a
       probe-only campaign fits in 30.
     properties:
+      plan:
+        type: integer
+        minimum: 1
+        description: >
+          Max turns for the ``plan`` stage of a ``kind: optimization``
+          campaign (pricing the mechanism before ``build`` authors it; reads
+          and reasons, writes no code). Read by
+          ``stage_runner._plan_max_turns``. Ignored by ``kind: reflective``,
+          which has no plan stage. Defaults to
+          ``orchestrator.optimize.plan.DEFAULT_MAX_TURNS`` (60).
       build:
         type: integer
         minimum: 1
