@@ -362,14 +362,19 @@ anywhere else and it reaches nobody. That gap confounded a field test once:
 the author's own diagnosis of the target's crash mode sat unread in
 `factor_nomination` while the build shipped exactly that defect.
 
-**The build is told the mechanism must be CHEAP, not merely correct** — it
-carries the campaign's objective (metric + direction) and requires the
-asymptotic cost of *deciding* to take a fast path to be strictly below the
-cost of the work avoided. A skip whose check walks the same N it skips cannot
-pay for itself. This is not covered by any oracle: every `native_test` and all
-four build oracles check that the mechanism is RIGHT, and **nothing in the gate
-checks that it is FAST** — a slow mechanism surfaces only at `screen`, as a main
-effect with the wrong sign, after the build call is spent.
+**The build is told the mechanism must be OPTIMAL IN THE OBJECTIVE'S OWN
+CURRENCY, not merely correct** — it carries the campaign's objective
+(metric + direction) and its declared `constraints`, and requires the
+mechanism's own overhead, stated asymptotically in that currency, to be
+strictly smaller than what it saves. For time that overhead is the decision
+path (a check that walks the same N it skips cannot pay for itself); for
+memory it is the resident state added; and a constraint is a second budget the
+mechanism must not spend to buy the primary metric.
+
+None of this is covered by any oracle: every `native_test` and all four build
+oracles check that the mechanism is RIGHT, and **nothing in the gate checks that
+it is FAST** — a costly mechanism surfaces only at `screen`, as a main effect with
+the wrong sign, after the build call is spent.
 
 The validator rejects `build` anywhere but position 1 and warns when declared
 `native_test` files are absent with no `build` stage to author them. Omit

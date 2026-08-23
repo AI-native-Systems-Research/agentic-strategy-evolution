@@ -308,9 +308,20 @@ AUTHOR'S GUIDANCE ON THE MECHANISM (optimization.guidance.factor_nomination)
     # The objective, so "make it fast" is a direction and a metric rather than a
     # sentiment. A build that does not know which way is better cannot weigh its
     # own bookkeeping against the work it removes.
-    primary = ((opt.get("response") or {}).get("primary") or {})
+    response = (opt.get("response") or {})
+    primary = (response.get("primary") or {})
     metric = str(primary.get("metric") or "the primary metric").strip()
     direction = str(primary.get("direction") or "improve").strip()
+    constraints = [
+        f"{c.get('metric') or c.get('observable')} {c.get('op')} {c.get('value')}"
+        for c in (response.get("constraints") or [])
+        if isinstance(c, dict)
+    ]
+    constraints_clause = (
+        " It is also subject to these declared constraints, which the mechanism "
+        "must not spend to buy the primary metric: " + "; ".join(constraints) + "."
+        if constraints else ""
+    )
 
     return f"""You are implementing a mechanism in a target repository so that a
 factorial optimization experiment can then measure it. Write code and tests only.
@@ -373,18 +384,28 @@ REQUIREMENTS
    default turns a typo into a fabricated null result.
 5. Follow the plumbing path the specification names rather than inventing a
    parallel one.
-6. THE MECHANISM HAS TO BE CHEAP, not merely correct. This campaign's objective
-   is `{metric}` ({direction}), so a mechanism that is correct and slow is a
-   failed mechanism — it will be measured as a regression and the campaign will
-   recommend leaving it off. Before you write the fast path, state to yourself
-   the asymptotic cost of DECIDING to take it, against the asymptotic cost of the
-   work it avoids. **The cost of deciding must be strictly lower.** A skip whose
-   check walks the same N items it is trying to skip cannot pay for itself, no
-   matter how much work it then avoids; hoist the decision to something you can
-   read in O(1) — a counter or epoch bumped at the few places that actually
-   invalidate it — rather than recomputing a summary over every item every time.
-   Where the work you avoid is a long run of small per-item calls, avoid the RUN
-   in one step rather than each call in turn.
+6. THE MECHANISM HAS TO BE OPTIMAL IN THE OBJECTIVE'S OWN CURRENCY, not merely
+   correct. This campaign is measured on `{metric}` ({direction}).{constraints_clause}
+   A mechanism that is correct but costly in that currency is a FAILED mechanism:
+   it will be measured as a regression and the campaign will recommend leaving it
+   off, and the one call that could have authored it differently is already spent.
+
+   So before you write it, state the cost of the mechanism ITSELF in the same
+   currency as the objective, against the cost it removes. **The mechanism's own
+   overhead must be strictly smaller than what it saves.** Say the two costs in
+   asymptotic terms, in the size that actually varies at run time.
+     - If the objective is TIME: the decision path is the overhead. A check that
+       walks the same N items it is trying to skip cannot pay for itself no matter
+       how much work it then avoids — hoist the decision to something readable in
+       O(1), such as a counter or epoch bumped at the few places that genuinely
+       invalidate it, rather than recomputing a summary over every item every
+       time. Where the work avoided is a long run of small per-item calls, avoid
+       the RUN in one step rather than each call in turn.
+     - If the objective is MEMORY or space: the resident state you add is the
+       overhead, and per-item bookkeeping that scales with N is the thing to
+       avoid.
+     - If a constraint above names a second budget, the mechanism must not buy the
+       primary metric by spending that one — that is infeasible, not optimal.
 
 BUDGET DISCIPLINE — read this before you start probing
 This is ONE call, and it is the only call in the campaign that spends tokens on

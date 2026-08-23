@@ -612,6 +612,31 @@ def test_build_prompt_carries_optimization_guidance(tmp_path: Path):
     assert "monotonicity break" not in prompt
 
 
+def test_build_prompt_states_the_cost_currency_generally(tmp_path: Path):
+    """"Be cheap" has to name the campaign's OWN currency, not assume time.
+
+    The first version of this requirement was overfitted to the defect that
+    prompted it: a time-objective campaign whose mechanism was a per-frame skip.
+    It said "skip", "per-item" and "O(1) counter" and never mentioned memory, so a
+    campaign minimising resident bytes — or one whose mechanism is not a skip at
+    all — got advice in the wrong currency. And a campaign's `constraints` are part
+    of what "optimal" means: a mechanism that buys the primary metric by spending
+    the constrained budget is not optimal, it is infeasible.
+    """
+    campaign = _campaign(tmp_path)
+    campaign["optimization"]["response"]["constraints"] = [
+        {"metric": "peak_rss_mb", "op": "<=", "value": 512},
+    ]
+    prompt = build_prompt(campaign, [])
+    low = " ".join(prompt.lower().split())   # wrap-insensitive
+    # the objective's currency, named generically rather than assumed to be time
+    assert "same currency as the objective" in low
+    # memory is named as a currency the requirement covers
+    assert "memory" in low
+    # and the declared constraint reaches the agent that must not violate it
+    assert "peak_rss_mb" in prompt
+
+
 def test_build_prompt_demands_the_mechanism_be_cheap(tmp_path: Path):
     """A time-objective campaign must tell the build that time is the point.
 
@@ -623,8 +648,11 @@ def test_build_prompt_demands_the_mechanism_be_cheap(tmp_path: Path):
     cost of deciding must be cheaper than the work avoided.
     """
     prompt = build_prompt(_campaign(tmp_path), [])
-    low = prompt.lower()
-    assert "cost of deciding" in low
+    low = " ".join(prompt.lower().split())   # wrap-insensitive
+    # The decision path is named as the overhead when the objective is time —
+    # phrased generically now ("the decision path is the overhead") rather than
+    # assuming every mechanism is a skip.
+    assert "the decision path is the overhead" in low
     assert "asymptotic" in low
     # And the objective's own direction must be visible, so "fast" is not abstract.
     assert "goodput" in low and "maximize" in low

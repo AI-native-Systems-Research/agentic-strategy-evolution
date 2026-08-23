@@ -886,10 +886,15 @@ Three properties are worth understanding before you use it:
    gate. If `verify` fails, the campaign aborts with the failing relation
    IDs — fix the spec or the tests and re-run.
 
-**The build is told to make the mechanism CHEAP, not merely correct.** The prompt
-carries the campaign's own objective (metric and direction) and requires the agent
-to weigh the asymptotic cost of *deciding* to take its fast path against the cost
-of the work that path avoids — the cost of deciding must be strictly lower. This
+**The build is told to make the mechanism OPTIMAL IN THE OBJECTIVE'S OWN
+CURRENCY, not merely correct.** The prompt carries the campaign's own objective
+(metric and direction) *and its declared `constraints`*, and requires the agent to
+state the cost of the mechanism itself in that same currency against the cost it
+removes — the mechanism's own overhead must be strictly smaller than what it
+saves. The currency matters: for a time objective the overhead is the decision
+path; for a memory objective it is the resident state added; and a constraint
+names a second budget the mechanism must not spend to buy the primary metric,
+which would be infeasible rather than optimal. This
 requirement exists because a build shipped the opposite: a dirty-tracking skip
 that removed **70 %** of the per-item work and ran **23.7 % slower**, because its
 per-frame decision rebuilt a state tuple over every one of the same N items it was
