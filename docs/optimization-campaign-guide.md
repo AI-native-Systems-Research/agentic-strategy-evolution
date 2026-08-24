@@ -1034,6 +1034,17 @@ therefore different fixes:
   what makes it the right lever; a turn cap costs the work itself.
 * **Truncation is the ceiling, and the only fix is to raise it.**
 
+**And if the mechanism genuinely does not fit one context window, the fix is a
+longer window — not fewer turns.** A third launch of the same build, uncapped at
+400 turns and with 0 unbounded reads, still exhausted a 200 K window at 418 events
+/ 164 tool calls: it had written 6 of the 8 declared tests and compiling production
+code, and ran out before it could compile and fix a test file that referenced
+struct fields which did not exist. ~2200 lines of production plus test code, wired
+into a 366-file codebase, in ONE call with no compaction available through the SDK,
+is simply larger than 200 K. Pin `models.build` to a longer-context variant of the
+same model (`claude-opus-5[1m]`) rather than shrinking the work: fewer turns
+truncates the mechanism, a bigger window does not.
+
 So set `max_turns.build` high enough that it cannot bind on a mechanism of the size
 you are asking for, and control context through the prompt instead. If you are
 tempted to lower it because the campaign feels expensive, re-read the token table

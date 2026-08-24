@@ -159,6 +159,25 @@ properties:
       design: { type: string, description: "Model for DESIGN phase (claude -p). Default: claude-opus-4-6." }
       execute_analyze: { type: string, description: "Model for EXECUTE_ANALYZE phase (claude -p). Default: claude-sonnet-4-6." }
       report: { type: string, description: "Model for report generation (LLM API). Default: claude-sonnet-4-6." }
+      plan:
+        type: string
+        description: >
+          Model for the ``plan`` stage of a ``kind: optimization`` campaign.
+          ``_resolve_model`` reads this key; without it declared here the schema
+          rejected the documented override. Defaults to OPTIMIZATION_MODEL.
+      build:
+        type: string
+        description: >
+          Model for the ``build`` stage of a ``kind: optimization`` campaign.
+          ``_resolve_model`` reads this key; without it declared here the schema
+          rejected the documented override, so the ONE substantive call of the
+          kind could not be pinned to a different model from the rest. That
+          matters beyond cost: a build authoring a large mechanism plus its
+          native tests in a single call, with no compaction available, can
+          exhaust a 200K context window, and the remedy is a longer-context
+          variant of the same model (e.g. ``claude-opus-5[1m]``) rather than
+          fewer turns -- fewer turns truncates the work instead.
+          Defaults to OPTIMIZATION_MODEL.
 
   sdk_timeouts:
     type: object

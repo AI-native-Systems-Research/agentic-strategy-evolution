@@ -831,3 +831,53 @@ def test_build_only_campaign_is_unchanged():
     assert policy.pre_epoch_stages(
         {"optimization": {"stages": ["build", "verify", "screen", "confirm"]}},
     ) == ["build", "verify"]
+
+
+def test_models_plan_and_build_are_schema_valid_overrides():
+    """`_resolve_model` reads models.plan / models.build; the schema must allow them.
+
+    Third instance of one defect family on this branch (after `max_turns.plan` and
+    `policy.schema.json`'s `pre_epoch` enum): production code reads a key that the
+    schema's `additionalProperties: false` rejects, so the documented override
+    fails validation and the code path is unreachable from any valid campaign.
+
+    `models.build` matters beyond cost. `build` is the kind's only substantive
+    call, and a large mechanism plus its native tests can exhaust a 200K context
+    window in a single call with no compaction -- the remedy is a longer-context
+    variant of the same model, which requires exactly this override.
+    """
+    import jsonschema
+    import yaml as _yaml
+
+    from orchestrator.campaign import SCHEMAS_DIR, _resolve_model
+
+    campaign = {
+        "kind": "optimization",
+        "run_id": "r",
+        "research_question": "q",
+        "target_system": {"name": "t", "repo_path": "/tmp", "description": "d"},
+        "models": {"plan": "model-a", "build": "model-b[1m]"},
+        "optimization": {
+            "run_command": "bench --config c.json",
+            "stages": ["plan", "build", "verify", "screen", "confirm"],
+            "known_valid_baseline": {"A": "off"},
+            "response": {"primary": {"metric": "m", "direction": "maximize"}},
+            "factors": [{
+                "id": "A", "name": "a", "type": "choice", "levels": ["off", "on"],
+                "apply": "--a={level}",
+                "manipulation": {"observable": "cfg.a", "op": "==", "value": "{level}"},
+                "relations": [{"id": "R", "kind": "correctness",
+                               "statement": "s", "native_test": "t"}],
+            }],
+            "design": {"screen": {"resolution": 3}, "confirm": {"replicates": 2}},
+            "design_space": {"invariants": [{
+                "id": "I", "statement": "s", "observable": "o",
+                "op": "<=", "value": 1}]},
+        },
+    }
+    schema = _yaml.safe_load((SCHEMAS_DIR / "campaign.schema.yaml").read_text())
+    # Validates the `models` subschema specifically -- the whole campaign carries
+    # required top-level keys unrelated to what this test is about.
+    jsonschema.validate(campaign["models"], schema["properties"]["models"])
+    assert _resolve_model(campaign, "plan", None) == "model-a"
+    assert _resolve_model(campaign, "build", None) == "model-b[1m]"
