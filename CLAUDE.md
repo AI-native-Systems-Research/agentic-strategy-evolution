@@ -358,6 +358,35 @@ reads this file as its specification. The plan then appears in the build's promp
 as `MECHANISM PLAN`, rejected alternatives included, so the build does not
 re-derive a loser the plan already priced.
 
+`plan` and `build` are **pre-epoch**, and that fact lives in exactly two places
+that must agree: `policy._PRE` and `policy.schema.json`'s `compiled_from.pre_epoch`
+enum. Both omitted `plan` until the first real `[plan, build, …]` campaign ran, and
+the two failures looked nothing alike — `pre_epoch_stages` *breaks* at the first
+non-pre-epoch stage, so the missing entry skipped **both** model stages and ran
+`verify` first; then, once fixed, `write_policy`'s jsonschema rejected every
+compiled policy. A regression test for anything schema-shaped must call
+`write_policy`, not just `check_policy`: the latter covers the closed vocabularies
+and reachability, **not** the schema's shape, so it passes while production aborts.
+`run_build` must also pass `work_dir` to `build_prompt` — that is the only way the
+plan reaches the build, and omitting it made the stage write-only (a silent 26.8 K
+character hole in the prompt).
+
+**`max_turns.build` is a runaway-loop backstop, not a budget lever.** The kind's
+frugality is structural — one substantive call, every epoch state tokenless — so
+capping the one call whose quality every later number inherits fights the design.
+Measured on one target: at 90 turns a build wired the mechanism across 8 files with
+`go build` green and the affected suite passing, and still failed the gate because
+it had written none of the declared tests; context was clean at ~5 K tokens. The
+separate context-exhaustion failure at 200 turns was tool-output **volume** (a bare
+`go test ./...` over 3343 tests), fixed by output hygiene in
+`guidance.factor_nomination`, never by fewer turns. Different causes, opposite
+fixes; do not read them as one tradeoff.
+
+`plan` is **not idempotent**. To reuse a reviewed plan after a failed run, seed
+`mechanism_plan.json` into the new work-dir root and drop `plan` from `stages`;
+re-running it spends a second call and yields a *different* design, leaving the
+campaign measuring a mechanism whose plan nobody read.
+
 Both `plan` and `build` are **pre-epoch**: `step()` can never route to either, so
 the epoch stays tokenless. Substantive calls: 0 (neither) -> 1 (`build`) -> 2
 (both). Rule 11a pins `plan` to position 1 immediately before `build`; after

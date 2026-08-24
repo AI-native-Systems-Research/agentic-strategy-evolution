@@ -901,6 +901,36 @@ disk is worse than none. The plan then appears in the build's prompt as
 `MECHANISM PLAN`, including the rejected alternatives — so the build does not
 re-derive a loser the plan already priced.
 
+**Three defects lived on the `plan` → `build` seam until the first real campaign
+ran it end to end**, and all three were invisible from the artifacts, which is why
+they are named here rather than only in the changelog:
+
+| Symptom an author would see | Cause |
+|---|---|
+| `verify` runs as iteration 1 and aborts on the relations `build` was declared to author | `policy._PRE` did not list `plan`, and `pre_epoch_stages` *breaks* at the first non-pre-epoch stage — so a `[plan, build, verify, …]` campaign broke on element 0 and skipped **both** model-facing stages |
+| `'plan' is not one of ['build', 'verify']` on every iteration until the circuit breaker trips | `policy.schema.json`'s `pre_epoch` enum was a **second** copy of "what is pre-epoch" and drifted from the first |
+| plan runs, `check_plan` passes, `mechanism_plan.json` is on disk — and the build re-derives everything from scratch, including alternatives the plan priced and rejected | `run_build` called `build_prompt(campaign, declared_tests)` **without** the `work_dir` it already had, and `work_dir` is how the prompt locates the plan. A silent 26 833-character hole. |
+
+The last one is the same failure class as `factor_nomination` not reaching the
+build prompt: a field is populated, a stage consumes something else, and nothing in
+any artifact shows the gap. **If you add a field the build is supposed to read,
+assert its text appears in the assembled prompt** — not that a function was called
+with an argument.
+
+**`plan` is not idempotent, and re-running it is not the way to recover.** The
+stage runs whenever it appears in `stages`, so a campaign that fails *after* `plan`
+and is simply relaunched spends a second call — and gets a *different* design. That
+is worse than the cost: the campaign then measures a mechanism whose plan nobody
+read, which is the one thing the artifact exists to prevent.
+
+To reuse a plan you have already reviewed, copy its `mechanism_plan.json` to the
+new work-dir root and drop `plan` from `stages`. `build` reads the artifact from
+that path regardless of whether the stage ran in this campaign, so the reviewed
+cost model still reaches the prompt, still appears as `MECHANISM PLAN`, and
+`screen` still falsifies it. Record in the YAML that you did this and why — a
+`stages` list without `plan` and a plan artifact on disk should not look like an
+accident to the next reader.
+
 **The plan is a PREDICTION, and `screen` falsifies it.** The plan asserts
 `cost_avoided > cost_of_deciding` — i.e. that enabling the mechanism moves the
 objective the way `direction` calls better. `screen` measures exactly that as the
@@ -927,7 +957,8 @@ campaign has to *extend the target* before it can measure anything:
 ```yaml
 stages: [build, verify, screen, confirm]
 max_turns:
-  build: 160        # optional; defaults to 120
+  build: 400        # optional; defaults to 120. A runaway-loop backstop, NOT a
+                    # budget lever -- see below before lowering it.
 ```
 
 It spends exactly one agent call in the target repo to write the mechanism
@@ -963,6 +994,70 @@ for a winner or tune the campaign's knobs to a result, because `screen` and
 version of this prompt was headed "BUDGET DISCIPLINE" and told the agent that
 probes "buy no measurement" — which is exactly the wrong instruction for an agent
 that must check whether its own mechanism is cheaper than the work it avoids.)
+
+##### `max_turns.build` is a runaway-loop backstop, not a budget lever
+
+The corollary of "explore, don't economise" is that **the author must not
+re-impose the ceiling the prompt just removed.** `max_turns.build` exists to bound
+a pathological loop. It is not a place to express thrift, and tuning it down is the
+most direct way to make a campaign fail at the gate while every diagnostic looks
+healthy.
+
+This was measured on one target across three launches of the same build, and the
+two failure modes are worth separating because they look alike and have opposite
+fixes:
+
+| ceiling | outcome | cause |
+|---|---|---|
+| 200 | died at turn 83, `"Prompt is too long"` | **tool-output volume.** It ran unfiltered commands; the repo has 3343 tests, so one bare `go test ./...` floods a context window in a handful of calls. It had written 1401 lines of tests and an *unwired* package — the shape that fails the gate while looking like progress. |
+| 90 | died at turn 91, `error_max_turns` | **the ceiling.** Context was still clean (~5 K tokens of accumulated tool results, 0 unbounded reads, 103 productive tool calls). It had wired the mechanism across 8 files, `go build ./...` was green, and the target's whole affected suite still passed — with **none** of the 8 declared tests written. |
+| 400 | — | neither binds |
+
+Read the middle row carefully: that build produced a complete, compiling,
+regression-free mechanism **and still failed**, because `verify` is fail-closed and
+a declared `native_test` that never ran counts as a failed correctness relation.
+The cap did not save tokens; it spent a whole authoring call and got nothing
+certifiable.
+
+The two rows tempt you to read a tradeoff — "too many turns exhausts context, too
+few truncates the work" — and that reading is wrong. They have different causes and
+therefore different fixes:
+
+* **Context exhaustion is an output-hygiene problem, not a turn-count problem.**
+  The fix belongs in `guidance.factor_nomination` and is about *how* to run
+  commands: filter at the source (`go build ./... 2>&1 | tail -5`), use the test
+  runner's own selector while iterating (`-run`), prefer `grep -n` plus a bounded
+  `sed -n START,ENDp` over reading a whole large file, and never let an unfiltered
+  full-suite run print. The 90-turn build followed exactly this and held its
+  accumulated tool output to ~5 K tokens across 91 turns — roughly 4× headroom —
+  while touching 8 files. **Output hygiene costs nothing in thoroughness**, which is
+  what makes it the right lever; a turn cap costs the work itself.
+* **Truncation is the ceiling, and the only fix is to raise it.**
+
+So set `max_turns.build` high enough that it cannot bind on a mechanism of the size
+you are asking for, and control context through the prompt instead. If you are
+tempted to lower it because the campaign feels expensive, re-read the token table
+in §1: this stage is the *reason* the rest of the kind is free, and it is the one
+call whose quality every later number inherits.
+
+##### Tell the build that the declared tests are the contract, not polish
+
+The 90-turn failure above also exposes an ordering hazard that no oracle catches.
+Both failing builds got the *order* right in isolation and still failed: one wrote
+tests without wiring, the other wired without tests. Since `verify` is fail-closed
+on every declared `native_test`, a build that spends its whole call perfecting the
+mechanism fails exactly as hard as one that never wrote it.
+
+Say so explicitly in `guidance.factor_nomination`, with a concrete split — get the
+build green early, then write **all** the declared tests, and if the tests are still
+unwritten late in the call, stop polishing the mechanism and write them. An
+unpolished mechanism with eight passing declared tests clears the gate; a perfect
+mechanism with none does not.
+
+**And ordering is the one thing `--smoke` cannot warn you about**, because before
+the build runs, "declared test does not exist" is the *expected* state (validator
+rule 12 correctly stays silent when `build` is declared). The only signal is the
+`verify` abort, after the call is spent.
 
 **And it ends on a checklist, not on prose.** Twelve items — six CORRECTNESS
 (C1–C6), six OPTIMALITY (O1–O6) — that the build must answer *in its summary*;
