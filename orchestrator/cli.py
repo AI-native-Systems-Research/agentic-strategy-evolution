@@ -889,6 +889,31 @@ def _smoke_check_optimization(
         problems.extend(_smoke_probe_one_config(
             opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
         ))
+        # 2b. The GENERATED CENTER POINT, when the design asks for one.
+        #
+        # Neither of the other probes can reach this configuration. Check 2 runs
+        # ONE CORNER (every factor's first level); `--liveness` runs every declared
+        # LEVEL. A center point is neither: its numeric coordinates are midpoints
+        # that appear in no `levels` list, and its `choice` factors are PINNED to
+        # their first level because a choice factor has no midpoint (see
+        # `matrix.expand`'s `center_choice_pinned`).
+        #
+        # That combination is unreachable by declaration and therefore unchecked,
+        # and on a CONSTRAINED factor space it can be unrunnable. Observed: a
+        # campaign whose numeric factor was only meaningful when a choice factor
+        # was ON declared the numeric's OFF sentinel as a level; the generated
+        # center paired the numeric's midpoint with the choice's OFF level, the
+        # target rejected the combination as nonsense (correctly), and all three
+        # center points failed -- taking the design's only replication, hence its
+        # pure-error estimate and its lack-of-fit test, with them. Static
+        # validation passed, `--smoke` passed, and `--liveness` passed.
+        if _screen_center_points(opt) > 0:
+            centre = _center_levels(factors)
+            if centre:
+                problems.extend(_smoke_probe_one_config(
+                    opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
+                    levels=centre, label="generated center point",
+                ))
         # 5. Per-level abort sweep + liveness (opt-in). Gated behind
         # `--liveness` because it costs REAL runs -- one per declared level plus
         # the baseline repeats -- unlike everything above it, which is one run
@@ -1368,8 +1393,47 @@ def _liveness_run_one(
     return obs, None, time.monotonic() - started
 
 
+def _screen_center_points(opt: dict) -> int:
+    """How many center points the screen will generate. 0 when none."""
+    design = (opt.get("design") or {})
+    screen = (design.get("screen") or {})
+    try:
+        return int(screen.get("center_points") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _center_levels(factors) -> dict:
+    """The levels a generated CENTER POINT will take, decoded exactly as the
+    design will decode them.
+
+    Delegates to ``matrix._decode_level`` with a synthetic center ``DesignPoint``
+    rather than reimplementing the rule, because the rule has two halves that
+    must not drift: a numeric factor takes ``decode_coded(f, 0.0)`` (its
+    midpoint, grid-snapped), and a ``choice`` factor is PINNED to
+    ``screen_levels[0]`` since it has no midpoint. A probe that guessed either
+    half differently would test a configuration the epoch never runs.
+    """
+    from orchestrator.optimize.design import DesignPoint
+    from orchestrator.optimize.matrix import _decode_level
+
+    levels: dict = {}
+    for idx, f in enumerate(factors):
+        if not getattr(f, "levels", None):
+            continue
+        point = DesignPoint(
+            coded=tuple(0.0 for _ in factors), role="center", replicate=0,
+        )
+        try:
+            levels[f.id] = _decode_level(f, point, idx)
+        except Exception:  # noqa: BLE001 -- a factor we cannot decode is skipped
+            return {}
+    return levels
+
+
 def _smoke_probe_one_config(
     opt: dict, factors, *, repo: Path, probe_dir: Path,
+    levels: dict | None = None, label: str = "",
 ) -> list[str]:
     """Run ONE configuration and check everything that run makes answerable.
 
@@ -1385,7 +1449,12 @@ def _smoke_probe_one_config(
     from orchestrator.optimize.stage_runner import resolve_run_timeout
 
     problems: list[str] = []
-    levels = {f.id: f.levels[0] for f in factors if getattr(f, "levels", None)}
+    # Default: every factor's FIRST level (the corner `--smoke` has always run).
+    # An explicit `levels` lets a caller probe a configuration the design will
+    # generate but no declared level names -- notably a CENTER POINT, whose
+    # numeric midpoints are not levels at all.
+    if levels is None:
+        levels = {f.id: f.levels[0] for f in factors if getattr(f, "levels", None)}
     # A log dir is supplied so that any config_patch copies materialized for the
     # probe SURVIVE the run: check 2b below reads them back to confirm the patch
     # landed, and without a log dir the runner cleans its scratch copies up (as

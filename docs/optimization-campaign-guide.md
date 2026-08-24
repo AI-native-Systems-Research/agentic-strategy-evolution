@@ -4260,10 +4260,15 @@ runs against a budget of 60–90.
 | 10 | The design survives losing rows (§7.1b) | 0 runs | any factor whose coefficient becomes **unestimable** if one corner's rows fail; no `center_points`; `max_runs` with no headroom to re-measure |
 | 11 | The adapter emits its own diagnostics (§7.7) | 0 runs (read #1's JSON) | one row's response cannot distinguish a mis-set lever, a stale result, a censored measurement, and an idle mechanism — notably, no per-row **duration**, so the next epoch cannot size its ceiling from data |
 | 12 | Levels state their region, and match any campaign this will be compared against (§4.1) | 0 runs | a shared factor with no level in common across the two campaigns, while a single comparative ratio is the deliverable |
+| 13 | `--smoke` probes the generated **center point** when `center_points > 0` (automatic since the check below) | 1 run | a CONSTRAINED factor space whose center is unrunnable — it costs the design its only replication, hence its pure-error estimate *and* its lack-of-fit test, while static validation, `--smoke`'s corner, and `--liveness` all pass |
+| 14 | The design's **minimum detectable effect** exceeds nothing you care about | 0 runs | `epsilon` set below what the design can resolve. Compute it: with `c` corners and `df` pure-error degrees of freedom, MDE ≈ `t(0.975, df) · 2·sd/√c`. A 2⁴ factorial with 3 center points has **df = 2**, so `t = 4.30` and the MDE is ~2× the pure-error sd — a campaign that declared `epsilon: 3%` against a measured 2.35% sd could not have certified from the screen at any effect size |
 
-Checks 8–12 cost nothing but one run between them, and each is a defect a real
+Checks 8–14 cost nothing but two runs between them, and each is a defect a real
 campaign shipped **after** the prose advising against it was already in this
-guide. That is the argument for running them as a list rather than trusting that
+guide. Checks 13 and 14 are the two that a campaign can fail while every other
+signal reads green: the center point is generated rather than declared, so no
+declaration-driven check reaches it, and the MDE is a property of the design's
+*shape* rather than of any field, so no field-level validation can flag it. That is the argument for running them as a list rather than trusting that
 you remember them: the author of §7.1 mis-sized a ceiling from the cheap corner
 three times in a row on the campaign immediately following.
 
