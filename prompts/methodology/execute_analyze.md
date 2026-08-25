@@ -143,9 +143,6 @@ operational handoff from DESIGN. Specifically:
 - **`experiment_spec.timing_observations`** *(when populated by a prior
   rehearsal iter)* (#226): use the per-policy wall-time observations
   to set per-arm timeouts in the fan-out (e.g. `parallel --timeout`).
-  The engine has already read
-  `recommended_turn_silence_threshold_seconds` and applied it to the
-  watchdog — you don't need to reconfigure that yourself.
 
 ### Step 1: Build the system
 Use the build command from the designer handoff (or

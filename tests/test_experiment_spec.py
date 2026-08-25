@@ -367,14 +367,13 @@ class TestRehearsalSubsetSchema:
             jsonschema.validate(b, _load_bundle_schema())
 
 
-# ─── #226: timing_observations + watchdog override ────────────────────────
+# ─── #226: timing_observations schema ─────────────────────────────────────
 
 
 class TestTimingObservationsSchema:
     """#226: timing_observations records per-policy wall-time observations
-    from rehearsal feasibility probes. iter-2's SDKDispatcher reads
-    `recommended_turn_silence_threshold_seconds` to calibrate the
-    watchdog."""
+    from rehearsal feasibility probes. These are informational metadata
+    only — the dispatcher ignores them (#305)."""
 
     def test_timing_observations_validates(self):
         b = _make_bundle(experiment_spec={
@@ -430,81 +429,26 @@ def _campaign_with_default_threshold(repo: Path | None = None) -> dict:
     }
 
 
-class TestWatchdogReadsBundleOverride:
-    """#226: ``SDKDispatcher.dispatch`` should resolve the watchdog
-    threshold per-iter from the prior iter's bundle.experiment_spec.
-    timing_observations.recommended_turn_silence_threshold_seconds —
-    falling back to the campaign-level default (or factory default)
-    when the bundle doesn't carry one. Tests the resolver as a pure
-    function (no SDK needed) AND the dispatcher's per-call override.
+class TestWatchdogIgnoresBundleOverride:
+    """#305: the dispatcher no longer reads
+    recommended_turn_silence_threshold_seconds from bundles.
+    Watchdog thresholds come exclusively from the campaign config.
     """
 
-    def test_resolver_reads_recommended_threshold(self, tmp_path: Path) -> None:
-        from orchestrator.sdk_dispatch import SDKDispatcher
-        # Pre-write iter-1 bundle with timing_observations
-        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
-        bundle = _make_bundle(experiment_spec={
-            "timing_observations": {
-                "recommended_turn_silence_threshold_seconds": 360.0,
-            },
-        })
-        (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
-            yaml.safe_dump(bundle),
-        )
-        d = SDKDispatcher(
-            work_dir=tmp_path, campaign=_campaign_with_default_threshold(tmp_path),
-            sdk_runner=lambda **_: None,  # never called
-        )
-        # Asking about iter-2 → reads iter-1's bundle.
-        v = d._bundle_recommended_turn_silence_threshold(2)
-        assert v == 360.0
-
-    def test_resolver_returns_none_for_iter_1(self, tmp_path: Path) -> None:
-        """No prior iter exists for iter-1 → nothing to read."""
-        from orchestrator.sdk_dispatch import SDKDispatcher
-        d = SDKDispatcher(
-            work_dir=tmp_path, campaign=_campaign_with_default_threshold(tmp_path),
-            sdk_runner=lambda **_: None,
-        )
-        assert d._bundle_recommended_turn_silence_threshold(1) is None
-
-    def test_resolver_returns_none_when_field_missing(self, tmp_path: Path) -> None:
-        """Bundle exists but has no timing_observations.recommended."""
-        from orchestrator.sdk_dispatch import SDKDispatcher
-        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
-        # No timing_observations → falls through to None
-        bundle = _make_bundle(experiment_spec={
-            "verified_parameters": {"x": 1},
-        })
-        (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
-            yaml.safe_dump(bundle),
-        )
-        d = SDKDispatcher(
-            work_dir=tmp_path, campaign=_campaign_with_default_threshold(tmp_path),
-            sdk_runner=lambda **_: None,
-        )
-        assert d._bundle_recommended_turn_silence_threshold(2) is None
-
-    def test_dispatch_applies_bundle_override_then_restores(
+    def test_bundle_threshold_does_not_affect_dispatch(
             self, tmp_path: Path) -> None:
-        """Behavioral: with an iter-1 bundle that recommends 100s, an
-        iter-2 dispatch sees the 100s threshold flow to the runner.
-        After the dispatch, the dispatcher's stored threshold returns
-        to its campaign default — no leak into subsequent calls.
-        """
+        """Even with a bundle that writes recommended_turn_silence_threshold_seconds,
+        the dispatcher uses the campaign default (600s for all phases)."""
         from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult
-        # iter-1 bundle: recommends 100s
         (tmp_path / "runs" / "iter-1").mkdir(parents=True)
         b1 = _make_bundle(experiment_spec={
             "timing_observations": {
-                "recommended_turn_silence_threshold_seconds": 100.0,
+                "recommended_turn_silence_threshold_seconds": 15.0,
             },
         })
         (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
             yaml.safe_dump(b1),
         )
-        # iter-2 needs a problem.md / handoff.md for the LLMDispatcher
-        # path — but SDKDispatcher just needs an output path.
         (tmp_path / "runs" / "iter-2").mkdir(parents=True)
 
         thresholds_seen: list[float | None] = []
@@ -519,47 +463,21 @@ class TestWatchdogReadsBundleOverride:
             sdk_runner=runner,
             max_retries=0,
         )
-        default_threshold = d._turn_silence_threshold  # campaign default
-
-        # iter-2 dispatch: should see the bundle override (100.0)
         d.dispatch(
             "planner", "design",
             output_path=tmp_path / "runs" / "iter-2" / "design_log.md",
             iteration=2,
         )
-        assert thresholds_seen == [100.0], (
-            f"#226: iter-2 runner should see bundle override 100.0; "
-            f"got {thresholds_seen!r}"
-        )
-        # Post-dispatch: dispatcher's stored threshold restored to default.
-        assert d._turn_silence_threshold == default_threshold, (
-            "#226: bundle override must NOT leak past the dispatch — "
-            "next dispatch with no bundle override should see the "
-            "campaign default again."
-        )
+        # #305: bundle's 15s MUST NOT override the campaign default 600s.
+        assert thresholds_seen == [600.0]
 
     def test_dispatch_restores_threshold_when_runner_raises(
             self, tmp_path: Path,
             monkeypatch: pytest.MonkeyPatch) -> None:
-        """#226 + post-PR-#227-review: the override-and-restore must
-        survive a runner failure. If a regression moved the restore
-        line out of ``finally``, this test catches it: dispatch() raises,
-        but the dispatcher's stored threshold is still the campaign
-        default — no leak into subsequent dispatches.
-        """
+        """The per-phase override-and-restore must survive a runner failure."""
         from orchestrator.sdk_dispatch import SDKDispatcher, SDKTransientError
         monkeypatch.setattr(
             "orchestrator.sdk_dispatch.time.sleep", lambda _s: None,
-        )
-        # iter-1 bundle: recommends 100s
-        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
-        b1 = _make_bundle(experiment_spec={
-            "timing_observations": {
-                "recommended_turn_silence_threshold_seconds": 100.0,
-            },
-        })
-        (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
-            yaml.safe_dump(b1),
         )
         (tmp_path / "runs" / "iter-2").mkdir(parents=True)
 
@@ -581,47 +499,29 @@ class TestWatchdogReadsBundleOverride:
                 iteration=2,
             )
 
-        # Critical: post-failure, dispatcher's stored threshold MUST be
-        # the campaign default — not the iter-1 override that was
-        # applied transiently.
-        assert d._turn_silence_threshold == default_threshold, (
-            "post-PR-#227-review: try/finally must restore "
-            "_turn_silence_threshold even when super().dispatch raises. "
-            "A regression here would leak the override into all "
-            "subsequent iterations of a long-running campaign."
-        )
+        assert d._turn_silence_threshold == default_threshold
 
-    def test_dispatch_uses_campaign_default_when_no_bundle_override(
-            self, tmp_path: Path) -> None:
-        """When the prior iter's bundle has no timing_observations,
-        the campaign-level default is used unchanged."""
-        from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult
-        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
-        b1 = _make_bundle()  # no experiment_spec at all
-        (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
-            yaml.safe_dump(b1),
-        )
-        (tmp_path / "runs" / "iter-2").mkdir(parents=True)
+    def test_per_phase_campaign_config_respected(self, tmp_path: Path) -> None:
+        """Campaign-level per-phase thresholds are the sole control."""
+        from orchestrator.sdk_dispatch import SDKDispatcher
 
-        thresholds_seen: list[float | None] = []
-
-        def runner(*, turn_silence_threshold=None, **_):
-            thresholds_seen.append(turn_silence_threshold)
-            return SDKResult(text="ok", input_tokens=1, output_tokens=1)
-
+        campaign = _campaign_with_default_threshold(tmp_path)
+        campaign["sdk_timeouts"] = {
+            "turn_silence_threshold_seconds": {
+                "design": 900.0,
+                "execute_analyze": 180.0,
+                "report": 300.0,
+            },
+        }
         d = SDKDispatcher(
             work_dir=tmp_path,
-            campaign=_campaign_with_default_threshold(tmp_path),
-            sdk_runner=runner,
+            campaign=campaign,
+            sdk_runner=lambda **_: None,
             max_retries=0,
         )
-        d.dispatch(
-            "planner", "design",
-            output_path=tmp_path / "runs" / "iter-2" / "design_log.md",
-            iteration=2,
-        )
-        # No bundle override → fall back to campaign default (600s).
-        assert thresholds_seen == [600.0]
+        assert d._resolve_turn_silence_threshold("design") == 900.0
+        assert d._resolve_turn_silence_threshold("execute_analyze") == 180.0
+        assert d._resolve_turn_silence_threshold("report") == 300.0
 
 
 # ─── #223 v1: structured brief_amendments.jsonl schema + REPORT renderer ─

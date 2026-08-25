@@ -708,11 +708,6 @@ class SDKDispatcher(CLIDispatcher):
         # #127 Phase B: event log path is recomputed per-dispatch (it depends
         # on the iteration), so we don't store it on the dispatcher.
         self._event_log_path: Path | None = None
-        # #264 (F19): bundle-side per-iter silence threshold side-effect
-        # state. Populated by ``_bundle_recommended_turn_silence_threshold``
-        # at dispatch start; consumed by ``_resolve_turn_silence_threshold``.
-        self._bundle_silence_phase_overrides: dict[str, float] = {}
-        self._bundle_silence_scalar_override: float | None = None
 
     # ------------------------------------------------------------------
     # Per-iteration event log (#127 Phase B)
@@ -747,139 +742,26 @@ class SDKDispatcher(CLIDispatcher):
             )
 
     def _resolve_turn_silence_threshold(self, phase: str) -> float:
-        """#264 (F19): the live watchdog threshold for THIS phase.
+        """Return the live watchdog threshold for THIS phase.
 
-        Resolution chain (highest priority first):
-          1. Bundle-side per-phase override (rehearsal-recorded).
-          2. Bundle-side scalar override (rehearsal-recorded, legacy).
-          3. Campaign-side per-phase value (set in __init__).
-          4. Phase default (design=600, execute_analyze=120, report=240).
-        Returns 0 only if every layer evaluated to 0 (operator opted out).
+        Uses the campaign-configured per-phase value (set in __init__),
+        falling back to the legacy scalar. Bundle-written overrides were
+        removed in #305 — the LLM has no basis to set watchdog ceilings
+        for phases it didn't run.
         """
-        bundle_per_phase = self._bundle_silence_phase_overrides
-        if bundle_per_phase and phase in bundle_per_phase:
-            return bundle_per_phase[phase]
-        bundle_scalar = self._bundle_silence_scalar_override
-        if bundle_scalar is not None:
-            return bundle_scalar
         return self._phase_silence_thresholds.get(phase, self._turn_silence_threshold)
 
-    def _bundle_recommended_turn_silence_threshold(
-            self, iteration: int) -> float | None:
-        """Read the rehearsal-recorded watchdog threshold override from the
-        prior iter's bundle.experiment_spec.timing_observations.
-
-        Returns ``None`` for: iter-1 (no prior bundle), missing bundle file,
-        unparseable YAML, or absent/malformed
-        ``recommended_turn_silence_threshold_seconds``. On parse failures
-        (corrupt YAML, missing PyYAML), logs a warning so operators see
-        why the override didn't apply — silently falling back to the
-        campaign default would be the silent-failure pattern PR #218
-        was specifically meant to kill.
-
-        Side effect: also populates
-        ``self._bundle_silence_phase_overrides`` (for the per-phase map
-        form, #264/F19). Callers that want phase-aware resolution
-        should use ``_resolve_turn_silence_threshold(phase)`` instead
-        of this scalar return value.
-        """
-        # Reset side-effect state.
-        self._bundle_silence_phase_overrides = {}
-        self._bundle_silence_scalar_override: float | None = None
-        if iteration < 2:
-            return None
-        prior_iter_dir = self.work_dir / "runs" / f"iter-{iteration - 1}"
-        bundle_path = prior_iter_dir / "bundle.yaml"
-        if not bundle_path.exists():
-            return None
-        # Import yaml outside the try/except: an ImportError here is
-        # an environmental defect that should propagate, not a
-        # silent fallback to the campaign default.
-        import yaml as _yaml
-        try:
-            text = bundle_path.read_text()
-            data = _yaml.safe_load(text)
-        except OSError as exc:
-            logger.warning(
-                "iter-%d bundle unreadable; skipping timing-override "
-                "(%s: %s)",
-                iteration - 1, type(exc).__name__, exc,
-            )
-            return None
-        except _yaml.YAMLError as exc:
-            logger.warning(
-                "iter-%d bundle YAML invalid; skipping timing-override "
-                "(falling back to campaign default %.0fs): %s",
-                iteration - 1, self._turn_silence_threshold, exc,
-            )
-            return None
-        if not isinstance(data, dict):
-            return None
-        spec = data.get("experiment_spec") or {}
-        if not isinstance(spec, dict):
-            return None
-        timing = spec.get("timing_observations") or {}
-        if not isinstance(timing, dict):
-            return None
-        val = timing.get("recommended_turn_silence_threshold_seconds")
-        # #264 (F19): per-phase map form. Populate the side-effect dict
-        # so _resolve_turn_silence_threshold() can use it.
-        if isinstance(val, dict):
-            for phase_key in ("design", "execute_analyze", "report"):
-                if phase_key in val:
-                    try:
-                        v = float(val[phase_key])
-                    except (TypeError, ValueError):
-                        continue
-                    if v < 0:
-                        continue
-                    self._bundle_silence_phase_overrides[phase_key] = v
-            # Legacy callers that use the scalar return value get the
-            # max — preserves "iter-2 watchdog at least catches what the
-            # rehearsal saw" semantics.
-            if self._bundle_silence_phase_overrides:
-                return max(self._bundle_silence_phase_overrides.values())
-            return None
-        try:
-            v = float(val) if val is not None else None
-        except (TypeError, ValueError):
-            return None
-        if v is None or v < 0:
-            return None
-        self._bundle_silence_scalar_override = v
-        return v
 
     def dispatch(  # type: ignore[override]
         self, role: str, phase: str, *, output_path, iteration: int,
         perspective=None, h_main_result="CONFIRMED",
     ) -> None:
-        # Compute the executor_log.jsonl path for this iteration so the
-        # runner tees SDK events to a place the status reader can find.
-        # #190: live under inputs/ so the design-phase validator's iter-root
-        # whitelist (problem.md, bundle.yaml, handoff_snapshot.md, design_log.md)
-        # is preserved. The streaming log is dispatcher telemetry, not a
-        # design artifact, and inputs/ is where non-artifact context lives.
         inputs_dir = self.work_dir / "runs" / f"iter-{iteration}" / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=True)
         self._event_log_path = inputs_dir / "executor_log.jsonl"
-        # #226: per-iter watchdog threshold override. Resolution chain:
-        # bundle.experiment_spec.timing_observations.recommended_turn_silence_threshold_seconds
-        # > campaign.sdk_timeouts.turn_silence_threshold_seconds (set in
-        # __init__) > 600s default. Resolve here so the runner sees the
-        # right value for THIS iter; reset after to avoid leaking state
-        # to subsequent dispatches in long-running campaigns.
-        original_threshold = self._turn_silence_threshold
-        # Calling this populates the per-phase override side-effect dict
-        # used by _resolve_turn_silence_threshold().
-        self._bundle_recommended_turn_silence_threshold(iteration)
-        # #264 (F19): resolve phase-aware threshold for THIS phase.
-        # Mapping is loose — phase strings vary across the codebase
-        # ("design"/"execute_analyze"/"report" are the canonical
-        # buckets; phases like "summarize-gate" fall back to the
-        # nearest match or the legacy global).
         phase_key = self._normalize_phase(phase)
-        resolved = self._resolve_turn_silence_threshold(phase_key)
-        self._turn_silence_threshold = resolved
+        original_threshold = self._turn_silence_threshold
+        self._turn_silence_threshold = self._resolve_turn_silence_threshold(phase_key)
         try:
             super().dispatch(
                 role, phase,
@@ -888,14 +770,9 @@ class SDKDispatcher(CLIDispatcher):
             )
         finally:
             self._turn_silence_threshold = original_threshold
-            # #201: post-turn silence diagnostic. Read the streaming log
-            # we just produced and surface excessive event gaps to
-            # retry_log.jsonl. Best-effort — never raise from the finally.
             try:
                 self._maybe_log_silence(iteration=iteration, phase=phase)
-            except Exception as exc:  # noqa: BLE001 — never break the turn
-                # warning, not debug: if the diagnostic crashes every
-                # turn, debug-only logs would never surface that.
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("silence diagnostic skipped: %s", exc)
             self._event_log_path = None
 

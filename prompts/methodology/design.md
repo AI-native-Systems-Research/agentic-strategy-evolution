@@ -297,13 +297,8 @@ Now design a hypothesis bundle based on what you actually observed and verified:
    - `timing_observations` *(populate when iteration_mode == rehearsal — #226)*:
      per-policy wall-time observations from feasibility probes.
      Required sub-fields: `expected_wall_time_seconds_per_policy: { policy: number }`
-     and `recommended_turn_silence_threshold_seconds: number` (~3×
-     the slowest observed policy + buffer). iter-2's
-     `SDKDispatcher` reads `recommended_turn_silence_threshold_seconds`
-     to calibrate the live watchdog (#205). Without these
-     measurements, the watchdog uses the campaign's global default,
-     which is a one-size-fits-all that doesn't catch a runaway
-     `wfq` while tolerating a slow `externality-credit`.
+     and `observation_method: string`. These are informational
+     metadata for operators reviewing the campaign.
 
 4. Each arm must have:
    - `type`: One of h-main, h-ablation, h-super-additivity, h-control-negative, h-robustness, h-dose-response, h-tradeoff.
