@@ -751,17 +751,29 @@ class SDKDispatcher(CLIDispatcher):
 
         Resolution chain (highest priority first):
           1. Bundle-side per-phase override (rehearsal-recorded).
-          2. Bundle-side scalar override (rehearsal-recorded, legacy).
-          3. Campaign-side per-phase value (set in __init__).
-          4. Phase default (design=600, execute_analyze=120, report=240).
+          2. Campaign-side per-phase value (set in __init__).
+          3. Phase default (design=600, execute_analyze=120, report=240).
         Returns 0 only if every layer evaluated to 0 (operator opted out).
+
+        Scalar-override refusal (SDK_SILENCE_FAILURE_POSTMORTEM + IOCR
+        follow-up run): the bundle's *scalar* form of
+        ``recommended_turn_silence_threshold_seconds`` is refused for
+        every phase, not just ``design``. A rehearsal-recorded scalar
+        reflects per-op timing (e.g. per-image OCR ~3.5s in
+        iocr-hrl-ocr-models-detection-word-unet-v2-cand-0001), but
+        every dispatched phase wraps LLM-driven tool calls around a
+        benchmark: the SDK-event gap between ``UserMessage`` and the
+        pre-tool ``HookEventMessage`` reflects the *subprocess* wall-
+        time (10+ minutes for a 6-policy × 25-repeat benchmark), not
+        the per-op timing. So the scalar is never phase-portable. The
+        original postmortem refused it only for ``design``; the IOCR
+        follow-up showed ``execute-analyze`` failing the same way.
+        Authors who want to tune a phase must emit the per-phase map
+        form — priority 1 above.
         """
         bundle_per_phase = self._bundle_silence_phase_overrides
         if bundle_per_phase and phase in bundle_per_phase:
             return bundle_per_phase[phase]
-        bundle_scalar = self._bundle_silence_scalar_override
-        if bundle_scalar is not None:
-            return bundle_scalar
         return self._phase_silence_thresholds.get(phase, self._turn_silence_threshold)
 
     def _bundle_recommended_turn_silence_threshold(

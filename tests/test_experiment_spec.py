@@ -487,25 +487,36 @@ class TestWatchdogReadsBundleOverride:
 
     def test_dispatch_applies_bundle_override_then_restores(
             self, tmp_path: Path) -> None:
-        """Behavioral: with an iter-1 bundle that recommends 100s, an
-        iter-2 dispatch sees the 100s threshold flow to the runner.
-        After the dispatch, the dispatcher's stored threshold returns
-        to its campaign default — no leak into subsequent calls.
+        """Behavioral: with an iter-1 bundle whose per-phase map
+        recommends 100s for ``execute_analyze``, an iter-2
+        ``execute-analyze`` dispatch sees the 100s threshold flow to
+        the runner. After the dispatch, the dispatcher's stored
+        threshold returns to its campaign default — no leak into
+        subsequent calls.
+
+        Uses the per-phase map form (not a scalar) because after
+        SDK_SILENCE_FAILURE_POSTMORTEM, scalar bundle overrides are
+        refused for every phase. Only the map form is honored.
         """
         from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult
-        # iter-1 bundle: recommends 100s
+        # iter-1 bundle: per-phase map recommends 100s for execute_analyze.
         (tmp_path / "runs" / "iter-1").mkdir(parents=True)
         b1 = _make_bundle(experiment_spec={
             "timing_observations": {
-                "recommended_turn_silence_threshold_seconds": 100.0,
+                "recommended_turn_silence_threshold_seconds": {
+                    "execute_analyze": 100.0,
+                },
             },
         })
         (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
             yaml.safe_dump(b1),
         )
-        # iter-2 needs a problem.md / handoff.md for the LLMDispatcher
-        # path — but SDKDispatcher just needs an output path.
+        # iter-2 needs its own bundle.yaml for the execute-analyze
+        # phase gate (LLMDispatcher requires it).
         (tmp_path / "runs" / "iter-2").mkdir(parents=True)
+        (tmp_path / "runs" / "iter-2" / "bundle.yaml").write_text(
+            yaml.safe_dump(_make_bundle()),
+        )
 
         thresholds_seen: list[float | None] = []
 
@@ -523,8 +534,8 @@ class TestWatchdogReadsBundleOverride:
 
         # iter-2 dispatch: should see the bundle override (100.0)
         d.dispatch(
-            "planner", "design",
-            output_path=tmp_path / "runs" / "iter-2" / "design_log.md",
+            "executor", "execute-analyze",
+            output_path=tmp_path / "runs" / "iter-2" / "execute_analyze_log.md",
             iteration=2,
         )
         assert thresholds_seen == [100.0], (
@@ -546,22 +557,31 @@ class TestWatchdogReadsBundleOverride:
         line out of ``finally``, this test catches it: dispatch() raises,
         but the dispatcher's stored threshold is still the campaign
         default — no leak into subsequent dispatches.
+
+        Uses the per-phase map form because scalar overrides are refused
+        for every phase post-postmortem; the override-and-restore
+        invariant this test guards is orthogonal to the refusal rule.
         """
         from orchestrator.sdk_dispatch import SDKDispatcher, SDKTransientError
         monkeypatch.setattr(
             "orchestrator.sdk_dispatch.time.sleep", lambda _s: None,
         )
-        # iter-1 bundle: recommends 100s
+        # iter-1 bundle: per-phase map recommends 100s for execute_analyze.
         (tmp_path / "runs" / "iter-1").mkdir(parents=True)
         b1 = _make_bundle(experiment_spec={
             "timing_observations": {
-                "recommended_turn_silence_threshold_seconds": 100.0,
+                "recommended_turn_silence_threshold_seconds": {
+                    "execute_analyze": 100.0,
+                },
             },
         })
         (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
             yaml.safe_dump(b1),
         )
         (tmp_path / "runs" / "iter-2").mkdir(parents=True)
+        (tmp_path / "runs" / "iter-2" / "bundle.yaml").write_text(
+            yaml.safe_dump(_make_bundle()),
+        )
 
         def runner(**_):
             raise SDKTransientError("simulated runner failure")
@@ -576,8 +596,8 @@ class TestWatchdogReadsBundleOverride:
 
         with pytest.raises(RuntimeError):
             d.dispatch(
-                "planner", "design",
-                output_path=tmp_path / "runs" / "iter-2" / "design_log.md",
+                "executor", "execute-analyze",
+                output_path=tmp_path / "runs" / "iter-2" / "execute_analyze_log.md",
                 iteration=2,
             )
 
@@ -622,6 +642,211 @@ class TestWatchdogReadsBundleOverride:
         )
         # No bundle override → fall back to campaign default (600s).
         assert thresholds_seen == [600.0]
+
+    # ─── Scalar-override refusal (SDK_SILENCE_FAILURE_POSTMORTEM + IOCR run) ─
+    #
+    # Rationale: a bundle-recommended scalar
+    # ``recommended_turn_silence_threshold_seconds`` is measured during
+    # rehearsal on a single specific op (e.g. per-image OCR latency,
+    # ~3.5s for iocr-hrl-ocr-models-detection-word-unet-v2-cand-0001's
+    # iter-2). The scalar is not phase-portable — every phase in the
+    # campaign wraps LLM-driven tool calls around a benchmark, and the
+    # SDK-event gap between ``UserMessage`` and the pre-tool
+    # ``HookEventMessage`` reflects the subprocess wall-time (10+
+    # minutes for a 6-policy × 25-repeat × 8MP-image benchmark run),
+    # not the per-op timing. The original postmortem refused the
+    # scalar only for ``design``; the IOCR follow-up run showed
+    # ``execute-analyze`` failing the same way. The refusal is now
+    # uniform: only the per-phase map form is honored (an explicit
+    # design/execute_analyze/report entry means the author *did*
+    # intend to override that phase).
+
+    def test_resolver_refuses_scalar_override_for_design_phase(
+            self, tmp_path: Path) -> None:
+        """A scalar bundle override must NOT apply to ``design``. The
+        resolver returns the per-phase default instead (600s in the
+        factory table, or the campaign default when set).
+        """
+        from orchestrator.sdk_dispatch import SDKDispatcher
+        d = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_campaign_with_default_threshold(tmp_path),
+            sdk_runner=lambda **_: None,
+        )
+        # Simulate a bundle that emitted a scalar 15s (the poisoned form).
+        d._bundle_silence_scalar_override = 15.0
+        d._bundle_silence_phase_overrides = {}
+
+        resolved = d._resolve_turn_silence_threshold("design")
+        assert resolved != 15.0, (
+            "scalar bundle overrides must NOT apply to design — a 15s "
+            "watchdog kills every LLM think turn"
+        )
+        # Falls through to the campaign default (600.0 via _campaign_with_
+        # default_threshold's silence_threshold fallback).
+        assert resolved == 600.0, (
+            f"expected fall-through to campaign default 600.0, got {resolved}"
+        )
+
+    def test_resolver_refuses_scalar_override_for_execute_analyze_phase(
+            self, tmp_path: Path) -> None:
+        """A scalar bundle override must NOT apply to ``execute_analyze``
+        either. The rehearsal-measured scalar reflects per-op timing,
+        not the wall-time of the full subprocess the phase actually
+        invokes (10+ minutes in the IOCR-follow-up run's iter-3).
+        """
+        from orchestrator.sdk_dispatch import SDKDispatcher
+        d = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_campaign_with_default_threshold(tmp_path),
+            sdk_runner=lambda **_: None,
+        )
+        d._bundle_silence_scalar_override = 15.0
+        d._bundle_silence_phase_overrides = {}
+
+        resolved = d._resolve_turn_silence_threshold("execute_analyze")
+        assert resolved != 15.0
+        assert resolved == 600.0, (
+            f"expected fall-through to campaign default 600.0, got {resolved}"
+        )
+
+    def test_resolver_refuses_scalar_override_for_report_phase(
+            self, tmp_path: Path) -> None:
+        """Same refusal applies to ``report`` — the rule is uniform."""
+        from orchestrator.sdk_dispatch import SDKDispatcher
+        d = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_campaign_with_default_threshold(tmp_path),
+            sdk_runner=lambda **_: None,
+        )
+        d._bundle_silence_scalar_override = 15.0
+        d._bundle_silence_phase_overrides = {}
+
+        resolved = d._resolve_turn_silence_threshold("report")
+        assert resolved != 15.0
+        assert resolved == 600.0
+
+    def test_resolver_per_phase_map_with_design_entry_wins_over_refusal(
+            self, tmp_path: Path) -> None:
+        """The refusal targets *scalar* overrides. If the bundle explicitly
+        emits a per-phase map with a ``design`` entry, the author has
+        chosen the value on purpose — that entry is honored.
+        """
+        from orchestrator.sdk_dispatch import SDKDispatcher
+        d = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_campaign_with_default_threshold(tmp_path),
+            sdk_runner=lambda **_: None,
+        )
+        d._bundle_silence_scalar_override = None
+        d._bundle_silence_phase_overrides = {"design": 30.0}
+
+        assert d._resolve_turn_silence_threshold("design") == 30.0
+
+    def test_resolver_per_phase_map_with_execute_analyze_entry_honored(
+            self, tmp_path: Path) -> None:
+        """Same intent-honoring for ``execute_analyze``: an explicit
+        per-phase map entry is honored even alongside a scalar."""
+        from orchestrator.sdk_dispatch import SDKDispatcher
+        d = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_campaign_with_default_threshold(tmp_path),
+            sdk_runner=lambda **_: None,
+        )
+        d._bundle_silence_scalar_override = 15.0
+        d._bundle_silence_phase_overrides = {"execute_analyze": 60.0}
+
+        assert d._resolve_turn_silence_threshold("execute_analyze") == 60.0
+
+    def test_dispatch_refuses_scalar_override_on_design_iter2(
+            self, tmp_path: Path) -> None:
+        """Behavioral: iter-1 bundle emits a scalar 15s recommendation
+        (the poison from the 71-minute-grind postmortem). An iter-2
+        ``design`` dispatch must NOT pass 15s to the runner — the
+        campaign default (600s) flows through instead.
+        """
+        from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult
+        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
+        b1 = _make_bundle(experiment_spec={
+            "timing_observations": {
+                "recommended_turn_silence_threshold_seconds": 15.0,
+            },
+        })
+        (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
+            yaml.safe_dump(b1),
+        )
+        (tmp_path / "runs" / "iter-2").mkdir(parents=True)
+
+        thresholds_seen: list[float | None] = []
+
+        def runner(*, turn_silence_threshold=None, **_):
+            thresholds_seen.append(turn_silence_threshold)
+            return SDKResult(text="ok", input_tokens=1, output_tokens=1)
+
+        d = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_campaign_with_default_threshold(tmp_path),
+            sdk_runner=runner,
+            max_retries=0,
+        )
+        d.dispatch(
+            "planner", "design",
+            output_path=tmp_path / "runs" / "iter-2" / "design_log.md",
+            iteration=2,
+        )
+        assert thresholds_seen == [600.0], (
+            "iter-2 design must NOT inherit the iter-1 scalar 15s; "
+            f"got {thresholds_seen!r}. See "
+            "SDK_SILENCE_FAILURE_POSTMORTEM.md — a 15s watchdog on "
+            "design deterministically kills every attempt at the first "
+            "ThinkingBlock gap."
+        )
+
+    def test_dispatch_refuses_scalar_override_on_execute_analyze_iter2(
+            self, tmp_path: Path) -> None:
+        """Same iter-1 bundle scalar 15s; ``execute-analyze`` also
+        refuses it. The IOCR follow-up run showed the rehearsal
+        recommendation was measured on per-image OCR (~3.5s) but the
+        iter-3 execute-analyze phase actually wraps a 10+ minute
+        subprocess, so 15s is guaranteed to fire on the very first
+        UserMessage->HookEventMessage gap.
+        """
+        from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult
+        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
+        b1 = _make_bundle(experiment_spec={
+            "timing_observations": {
+                "recommended_turn_silence_threshold_seconds": 15.0,
+            },
+        })
+        (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(
+            yaml.safe_dump(b1),
+        )
+        (tmp_path / "runs" / "iter-2").mkdir(parents=True)
+        (tmp_path / "runs" / "iter-2" / "bundle.yaml").write_text(
+            yaml.safe_dump(_make_bundle()),
+        )
+
+        thresholds_seen: list[float | None] = []
+
+        def runner(*, turn_silence_threshold=None, **_):
+            thresholds_seen.append(turn_silence_threshold)
+            return SDKResult(text="ok", input_tokens=1, output_tokens=1)
+
+        d = SDKDispatcher(
+            work_dir=tmp_path,
+            campaign=_campaign_with_default_threshold(tmp_path),
+            sdk_runner=runner,
+            max_retries=0,
+        )
+        d.dispatch(
+            "executor", "execute-analyze",
+            output_path=tmp_path / "runs" / "iter-2" / "execute_analyze_log.md",
+            iteration=2,
+        )
+        assert thresholds_seen == [600.0], (
+            "iter-2 execute-analyze must NOT inherit the iter-1 scalar "
+            f"15s; got {thresholds_seen!r}"
+        )
 
 
 # ─── #223 v1: structured brief_amendments.jsonl schema + REPORT renderer ─
