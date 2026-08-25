@@ -125,18 +125,19 @@ properties:
     description: >
       SDK turn timing controls (#201). Per-campaign tunables for the
       silence detector that surfaces excessive event gaps to
-      retry_log.jsonl after each turn. Observation-only today —
-      operators can scan retry_log for ``failure_type: sdk_silence`` to
-      catch hung subprocesses, polling-loop stalls, and API stalls
-      without watching the run live.
+      retry_log.jsonl after each turn. Operators can scan retry_log
+      for ``failure_type: sdk_silence`` to catch hung subprocesses,
+      polling-loop stalls, and API stalls without watching the run live.
 
-      #264 (F19): ``turn_silence_threshold_seconds`` (and the bundle-side
-      override at experiment_spec.timing_observations.recommended_turn_silence_threshold_seconds)
-      may be either a scalar (legacy: same threshold for every phase) or
-      a per-phase map ``{design, execute_analyze, report}``. Different
-      phases have different rhythms — DESIGN does heavy reasoning between
-      tool calls, EXECUTE_ANALYZE does frequent simulator calls — so
-      one number for both is wrong by construction.
+      ``turn_silence_threshold_seconds`` may be either a scalar (same
+      threshold for every phase) or a per-phase map
+      ``{design, execute_analyze, report}``. Different phases have
+      different rhythms — DESIGN does heavy reasoning between tool
+      calls, EXECUTE_ANALYZE does frequent simulator calls — so one
+      number for both is wrong by construction.
+
+      These are the sole source of truth for watchdog thresholds —
+      bundle-written overrides are not supported (#305).
     properties:
       silence_threshold_seconds:
         type: number
@@ -156,10 +157,9 @@ properties:
               execute_analyze: { type: number, minimum: 0 }
               report: { type: number, minimum: 0 }
         description: >
-          Live mid-turn watchdog (#205) override. Scalar form applies
-          globally (legacy). Map form (#264 / F19) applies per-phase —
-          recommended defaults: design=600, execute_analyze=120,
-          report=240. Phases not listed in the map fall back to
+          Live mid-turn watchdog (#205). Scalar form applies globally.
+          Map form applies per-phase — default when unset: 600s for all
+          phases. Phases not listed in the map fall back to
           ``silence_threshold_seconds`` (or 600 if also unset).
 
   sandbox:

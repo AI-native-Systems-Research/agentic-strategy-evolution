@@ -157,9 +157,8 @@ run it untouched). YOUR JOB this iter:
    feasibility / contrast-pair runs, measure wall-clock per policy.
    Record into ``experiment_spec.timing_observations``:
    ``expected_wall_time_seconds_per_policy: { ea-wfq: 25, wfq: 23, ... }``
-   and a derived ``recommended_turn_silence_threshold_seconds``
-   (~3× the slowest observed policy + buffer). iter-2's watchdog
-   reads these to calibrate.
+   and ``observation_method``. These are informational metadata for
+   operators reviewing the campaign.
 
 4. **Emit ``brief_amendments.jsonl``** at
    ``runs/iter-N/inputs/brief_amendments.jsonl`` if you find any
