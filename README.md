@@ -410,6 +410,10 @@ See [docs/nous-wiki.md](docs/nous-wiki.md) for detailed usage, the full data mod
 pytest -v
 ```
 
+## Benchmark harness
+
+The `bench/` directory contains nous-bench, a benchmark harness that runs the same research question through multiple agent configurations (variants) and produces side-by-side comparisons scored by Claude-as-judge. Variants currently include `claude_plain` (L0 baseline), `claude_loop`, `claude_methodology` (L1, methodology-as-prompt), `claude_methodology_loop`, and `nous` itself (L3 reference). See [docs/bench/walkthrough.md](docs/bench/walkthrough.md) for an overview and [docs/bench/variants.md](docs/bench/variants.md) for the variant contract.
+
 ## Project Structure
 
 ```
@@ -428,7 +432,12 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   util.py                  Shared utilities (atomic_write)
 prompts/methodology/     Methodology prompt templates
 examples/                Example campaigns
-docs/                    Quickstart, protocol, data model, architecture
+bench/                   Benchmark harness comparing nous vs prompt-based baselines
+  variants/              Variant implementations (claude_plain, claude_methodology, etc.)
+  campaigns/             Research-question yamls
+  experiments/           Campaign × variants × budget configurations
+  methodology/           Pinned system prompt for claude_methodology variants
+docs/                    Quickstart, protocol, data model, architecture, bench/
 tests/                   Comprehensive test suite
 ```
 

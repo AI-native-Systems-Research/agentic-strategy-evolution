@@ -1,0 +1,7 @@
+id: ablation_flow_control_v2
+campaign: campaigns/flow_control_v2.yaml
+variants: [claude_plain, claude_methodology, claude_methodology_loop]
+budget:
+  max_tokens: 1500000
+  max_iterations: 5
+  max_wall_seconds: 10800

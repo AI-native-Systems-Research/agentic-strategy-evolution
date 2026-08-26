@@ -1,0 +1,62 @@
+id: flow_control_v2
+research_question: |
+  Can we discover a per-band dispatch ceiling policy that is parameter-free
+  (no user-tuned thresholds) and automatically prioritizes high-priority
+  requests as load increases — reducing critical-band tail latency with at
+  most 10% overall throughput reduction (≤10% is acceptable)? The policy
+  must be simple enough to migrate into llm-d as a drop-in UsageLimitPolicy
+  plugin implementing a single method:
+  ComputeLimit(ctx, saturation, priorities) → []float64, with minimal code
+  and no new user-facing configuration.
+
+  Today llm-d uses a single static ceiling for all bands (NewConstPolicy);
+  BLIS matches this as the default (--flow-control with no extra flags).
+  BLIS also supports linear interpolation across bands via
+  --usage-limit-threshold < 1.0, where the top band gets ceiling 1.0 and
+  the lowest band gets the threshold value, with others linearly
+  interpolated. The entire ceiling logic lives in DequeueGated() in
+  sim/cluster/gateway_queue.go (~3 lines), and the current saturation value
+  is already passed as a parameter — so evolving the formula is
+  straightforward.
+
+  Focus only on the ceiling policy. Other flow-control knobs (queue
+  shedding, dispatch tick interval, fairness policy, dispatch order,
+  in-flight eviction) are independent and out of scope for this campaign.
+  Do NOT use --in-flight-eviction or --queue-shedding.
+
+  Use mixed-priority workloads (critical + batch) under increasing load.
+  Measure critical-band P99 and mean TTFT and e2e latency, overall
+  throughput, and shed/reject counts.
+
+  BLIS setup:
+    | Flag                       | Value             | Notes                                       |
+    |----------------------------|-------------------|---------------------------------------------|
+    | --model                    | qwen/qwen3-14b    |                                             |
+    | --latency-model            | trained-physics   | Physics-informed with learned corrections   |
+    | --flow-control             | (enabled)         |                                             |
+    | --saturation-detector      | utilization       |                                             |
+    | --queue-depth-threshold    | 5                 |                                             |
+    | --kv-cache-util-threshold  | 0.8               |                                             |
+    | --dispatch-order           | priority          |                                             |
+    | --num-instances            | 2, 4, 5           | Depends on workload                         |
+
+  Record additional flags or other LLMs if you add them accordingly.
+
+  System constraints (avoid rediscovering these):
+  - DequeueGated processes one request per tick in priority order. By the
+    time a lower-priority band's ceiling is evaluated, all higher-priority
+    bands are already empty. Live queue depths of higher bands are always
+    zero — use persistent/sticky state across ticks for cross-band signals.
+
+  Workloads: use files in workloads/ directory as the primary test suite.
+  You may create additional workloads to explore specific regimes.
+  Regression-test the best policy across all provided workloads before
+  declaring victory.
+
+  The goal is to evolve beyond static and linear toward an elegant
+  self-tuning policy that derives ceilings entirely from observable system
+  state (saturation, queue depth, arrival rate). Start with simple ceiling
+  formulas (constant, linear) and validate the measurement setup before
+  layering in more sophisticated mechanisms.
+target_repo: "/Users/naimaabrar/Desktop/nous/inference-sim"
+target_ref: "main"

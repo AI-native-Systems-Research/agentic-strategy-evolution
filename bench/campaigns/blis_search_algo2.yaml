@@ -1,0 +1,21 @@
+id: blis_search_algo2
+research_question: |
+  Design a generic multi-objective configuration search algorithm for BLIS
+  that discovers Pareto-optimal configurations efficiently. The algorithm
+  must:
+  1. Accept a user-defined parameter space (knobs + candidate values +
+     constraints) and user-defined objective metrics (any metrics from BLIS
+     output, with direction).
+  2. Invoke ./blis run as a subprocess per evaluation (~100-250ms each).
+  3. Support parallel evaluation workers (user-configurable concurrency).
+  4. Achieve hypervolume ratio ≥ 95% of exhaustive search within 3 minutes
+     wall time.
+
+  Implementation in Python. Output: Pareto-optimal configs as JSON with
+  metric values.
+
+  Establish a random search baseline and at least one structured approach.
+  Use a single model/hardware/rate combo for the primary comparison. Test
+  portability across hardware/models/workloads as part of the investigation.
+target_repo: "/Users/naimaabrar/Desktop/nous/inference-sim"
+target_ref: "main"

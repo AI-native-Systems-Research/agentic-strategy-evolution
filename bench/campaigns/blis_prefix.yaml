@@ -1,0 +1,4 @@
+id: blis_prefix
+research_question: "With total input length held fixed, does increasing the prefix portion (cached tokens) reduce TTFT under moderate load?"
+target_repo: "/Users/naimaabrar/Desktop/nous/inference-sim"
+target_ref: "main"

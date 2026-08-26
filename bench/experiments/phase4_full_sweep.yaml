@@ -1,0 +1,7 @@
+id: phase4_full_sweep
+campaign: campaigns/blis_prefix.yaml
+variants: [claude_plain, claude_loop, claude_methodology, claude_methodology_loop, nous]
+budget:
+  max_tokens: 200000
+  max_iterations: 3
+  max_wall_seconds: 1800

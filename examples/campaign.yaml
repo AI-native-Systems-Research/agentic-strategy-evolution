@@ -10,8 +10,13 @@ target_system:
   description: >
     BLIS is a discrete-event simulator for LLM inference serving.
     It models request arrivals, scheduling, and KV-cache management.
-  repo_path: /path/to/your/blis  # Set to your local checkout
+  repo_path: /Users/naimaabrar/Desktop/nous/inference-sim
 
 prompts:
   methodology_layer: "prompts/methodology"
   domain_adapter_layer: null
+
+models:
+  design: "claude-sonnet-4-6"
+  execute_analyze: "claude-sonnet-4-6"
+  report: "claude-sonnet-4-6"

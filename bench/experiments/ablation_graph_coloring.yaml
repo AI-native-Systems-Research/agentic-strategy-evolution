@@ -1,0 +1,7 @@
+id: ablation_graph_coloring
+campaign: campaigns/graph_coloring.yaml
+variants: [claude_plain, claude_methodology, claude_methodology_loop]
+budget:
+  max_tokens: 1000000
+  max_iterations: 4
+  max_wall_seconds: 7200

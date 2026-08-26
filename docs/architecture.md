@@ -454,3 +454,7 @@ To create a custom dispatcher, extend `LLMDispatcher`. Your dispatcher must prod
 
 1. Add the type to the `enum` in `schemas/bundle.schema.yaml` (arm type) and `schemas/findings.schema.json` (arm_type)
 2. Add test cases to `tests/test_schemas.py`
+
+## Bench harness (`bench/`)
+
+A separate benchmark harness lives at `bench/` — used to compare nous against prompt-based baselines on the same research question with the same budget. Variants (`claude_plain`, `claude_loop`, `claude_methodology`, `claude_methodology_loop`, `nous`) are graded by Claude-as-judge on correctness + completeness. See [bench/](../bench/) and [docs/bench/walkthrough.md](bench/walkthrough.md) for details. The bench imports nous as a library; nothing in `orchestrator/` or `prompts/` imports `bench/`.
