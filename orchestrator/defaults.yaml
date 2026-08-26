@@ -21,6 +21,12 @@ models:
   # REPORT — generates final report.md at campaign end.
   report: "claude-sonnet-4-6"
 
+  # SUMMARIZER — generates per-iteration gate summaries via OpenAI-compatible
+  # proxy. Decoupled from `design` so DESIGN can use [1m] context variants
+  # via claude -p without forcing the same tag through a proxy that may not
+  # serve it.
+  summarizer: "claude-opus-4-6"
+
 # Max tool-use turns for claude -p phases.
 max_turns:
   design: 80
