@@ -56,7 +56,7 @@ done < "${ENV_FILE}"
 # ── Defaults ──────────────────────────────────────────────────────────────────
 IMAGE_NAME="${IMAGE_NAME:-nous}"
 IMAGE_TAG="${IMAGE_TAG:-0.4.0}"
-CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-2.1.150}"
+CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-2.1.112}"
 CONTAINER_NAME="${CONTAINER_NAME:-nous-s390x}"
 # Host-side directory for campaign artifacts (created on remote host, bind-mounted into container)
 NOUS_CAMPAIGN_HOST_DIR="${NOUS_CAMPAIGN_HOST_DIR:-/home/${REMOTE_USER:-}/nous-campaigns}"
@@ -170,8 +170,10 @@ cmd_clone_repo() {
 
     log "Provisioning target repo on ${REMOTE_HOST}:${TARGET_REPO_PATH} ..."
 
-    # Clone or update — token is passed only through the URL, never via a
-    # shell variable visible in `ps`. The credential is not stored on disk.
+    # Clone or update — token is injected into the remote URL only (never passed
+    # as a shell variable visible in `ps`). Note: `git remote set-url` writes the
+    # authenticated URL into .git/config on the remote host; rotate or revoke the
+    # token if the remote host is untrusted.
     remote bash -s << EOF
 set -euo pipefail
 if [ -d "${TARGET_REPO_PATH}/.git" ]; then
@@ -207,7 +209,8 @@ cmd_build() {
     _build_ssh_opts
     local rsh_opt
     if [[ -n "${SSH_PASSWORD}" && -z "${SSH_KEY}" ]]; then
-        rsh_opt="SSHPASS=${SSH_PASSWORD} sshpass -e ssh ${SSH_OPTS[*]}"
+        export SSHPASS="${SSH_PASSWORD}"
+        rsh_opt="sshpass -e ssh ${SSH_OPTS[*]}"
     else
         rsh_opt="ssh ${SSH_OPTS[*]}"
     fi
@@ -321,8 +324,8 @@ EOF
     # ── Step 7: sync campaign artifacts back to local machine ────────────────
     cmd_sync
 
-    if [[ ${run_exit} -ne 0 ]]; then
-        log "nous run finished with exit code ${run_exit}."
+    if [[ "${run_exit:-0}" -ne 0 ]]; then
+        die "Campaign failed with exit code ${run_exit}. Artifacts (if any) are in: ${LOCAL_ARTIFACTS_DIR}"
     fi
     log "Campaign complete. Artifacts in: ${LOCAL_ARTIFACTS_DIR}"
 }
@@ -337,7 +340,8 @@ cmd_sync() {
     _build_ssh_opts
     local rsh_opt
     if [[ -n "${SSH_PASSWORD}" && -z "${SSH_KEY}" ]]; then
-        rsh_opt="SSHPASS=${SSH_PASSWORD} sshpass -e ssh ${SSH_OPTS[*]}"
+        export SSHPASS="${SSH_PASSWORD}"
+        rsh_opt="sshpass -e ssh ${SSH_OPTS[*]}"
     else
         rsh_opt="ssh ${SSH_OPTS[*]}"
     fi

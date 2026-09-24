@@ -58,17 +58,18 @@ print("   OpenAI:", openai.__version__)
 print("   Claude Agent SDK:", claude_agent_sdk.__version__)
 '
 
-echo "6. Checking Claude Code & SDK CLI integration..."
+echo "6. Checking Claude Code CLI..."
 podman run --rm --platform linux/s390x "${IMAGE}" bash -c '
-echo "   Checking claude executable location..."
+set -euo pipefail
 if which claude >/dev/null 2>&1; then
     echo "   Claude path: $(which claude)"
-    claude --version || true
+    claude --version
 elif [ -x /usr/local/bin/claude ]; then
     echo "   Claude path: /usr/local/bin/claude"
-    /usr/local/bin/claude --version || true
+    /usr/local/bin/claude --version
 else
-    echo "   WARNING: claude executable not found in image"
+    echo "FAIL: claude executable not found in image"
+    exit 1
 fi
 '
 
