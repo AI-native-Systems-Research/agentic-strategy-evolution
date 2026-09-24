@@ -437,6 +437,14 @@ def _default_sdk_runner_factory() -> SDKRunner:
             # Operators can opt out via campaign.sandbox="default" or
             # `nous run --sandbox default` if they want the SDK's default
             # permission gating.
+            #
+            # CLAUDE_CLI_PATH lets operators (and the s390x QEMU container)
+            # substitute an alternative Claude executable without patching
+            # the SDK installation.  When unset the SDK's own discovery
+            # logic applies (shutil.which("claude"), bundled binary, etc.).
+            import os as _os
+            _cli_path: str | None = _os.environ.get("CLAUDE_CLI_PATH") or None
+
             if permission_mode:
                 options = ClaudeAgentOptions(
                     model=model,
@@ -446,6 +454,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     settings=str(settings_path) if settings_path else None,
                     permission_mode=permission_mode,  # type: ignore[arg-type]
                     effort=effort,
+                    **({"cli_path": _cli_path} if _cli_path else {}),
                 )
             else:
                 options = ClaudeAgentOptions(
@@ -455,6 +464,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     system_prompt=system_prompt,
                     settings=str(settings_path) if settings_path else None,
                     effort=effort,
+                    **({"cli_path": _cli_path} if _cli_path else {}),
                 )
             text_chunks: list[str] = []
             usage: dict = {}
