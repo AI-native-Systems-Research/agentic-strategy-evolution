@@ -1,0 +1,93 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Nous campaign — Flask request routing overhead
+#
+# Target repo : https://github.com/pallets/flask (public, no token needed)
+# Research Qs : Does the number of registered routes affect per-request latency
+#               on the Flask development server, and if so, at what scale does
+#               the overhead become measurable?
+#
+# This is a self-contained example suitable for running on any s390x host.
+# Flask and its dependencies install from PyPI in seconds; benchmarks run with
+# the built-in development server and wrk/ab — no GPU or special hardware needed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+research_question: >
+  Does increasing the number of registered Flask routes cause measurable
+  per-request latency regression on a fixed workload, and at what route-count
+  threshold (if any) does the overhead exceed 5% compared to a minimal app?
+
+run_id: flask-routing-overhead-1
+max_iterations: 5
+
+target_system:
+  name: "Flask — Python web framework"
+
+  description: >
+    Flask is a lightweight WSGI web application framework written in Python.
+    It uses Werkzeug as its WSGI toolkit and Jinja2 for templating.
+
+    Architecture relevant to this campaign:
+    - Request routing is handled by Werkzeug's Map/Rule system. Each call to
+      @app.route() registers a Rule in a Map. On first request the Map compiles
+      all rules into a regex matcher (Map.bind()). Subsequent lookups call
+      MapAdapter.match(), which iterates compiled rules.
+    - The development server (app.run()) is single-threaded by default.
+    - Key files: src/flask/app.py (Flask class, wsgi_app, full_dispatch_request),
+      src/flask/sansio/app.py (add_url_rule, url_map), and
+      werkzeug/routing/map.py (Map, MapAdapter).
+
+    Observable metrics:
+    - Mean request latency (ms) measured by wrk or Apache Bench (ab)
+    - Requests per second (RPS)
+    - p99 latency
+
+    Controllable knobs:
+    - Number of registered routes (10, 100, 500, 1000, 5000)
+    - Matched route position (first vs last registered — tests linear scan cost)
+    - Request concurrency (wrk -c parameter)
+    - Threading mode (threaded=True vs False in app.run())
+
+    Execution method:
+    - Create a minimal Flask app with N routes via a Python script, start it
+      with app.run(port=5000), benchmark with:
+        wrk -t1 -c10 -d10s http://localhost:5000/route_N
+      or ab -n 10000 -c 10 http://localhost:5000/route_N
+    - wrk and ab are available via dnf on RHEL/UBI9.
+    - Install Flask from the checked-out repo with: pip install -e .
+
+  repo_path: /workspace
+
+# ── Prompts ───────────────────────────────────────────────────────────────────
+# Required. Points to the methodology prompt templates inside the nous package.
+# This path is resolved relative to the container's installed nous package.
+prompts:
+  methodology_layer: "prompts/methodology"
+
+# ── Models ────────────────────────────────────────────────────────────────────
+# Use defaults (opus for design, sonnet for execute_analyze).
+# Override here if your LiteLLM proxy exposes different model names.
+# models:
+#   design: "claude-opus-4-6"
+#   execute_analyze: "claude-sonnet-4-6"
+
+# ── Turn budget ───────────────────────────────────────────────────────────────
+# Flask experiments are fast — keep budgets lean.
+max_turns:
+  design: 60
+  execute_analyze: 80
+
+# ── Theory references ─────────────────────────────────────────────────────────
+# Anchor the agent to known algorithmic complexity of the routing subsystem.
+theory_references:
+  - name: "Werkzeug URL routing complexity"
+    statement: >
+      Werkzeug's Map compiles rules into a single combined regex at bind time.
+      MapAdapter.match() runs one re.search() call against the compiled pattern,
+      so match time is O(R) in the number of rules R only if the regex engine
+      backtracks; in the common case it is effectively O(1) per request after
+      the initial compile.
+  - name: "Python function-call overhead"
+    statement: >
+      Each Flask request dispatches through wsgi_app → full_dispatch_request →
+      dispatch_request → view function. The fixed per-call overhead is
+      measurable at high RPS even when route matching is O(1).
