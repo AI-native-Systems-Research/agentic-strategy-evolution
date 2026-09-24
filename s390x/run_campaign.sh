@@ -115,7 +115,7 @@ remote() {
     local SSH_OPTS=()
     _build_ssh_opts
     if [[ -n "${SSH_PASSWORD}" && -z "${SSH_KEY}" ]]; then
-        sshpass -p "${SSH_PASSWORD}" ssh "${SSH_OPTS[@]}" "${REMOTE_USER}@${REMOTE_HOST}" "$@"
+        SSHPASS="${SSH_PASSWORD}" sshpass -e ssh "${SSH_OPTS[@]}" "${REMOTE_USER}@${REMOTE_HOST}" "$@"
     else
         ssh "${SSH_OPTS[@]}" "${REMOTE_USER}@${REMOTE_HOST}" "$@"
     fi
@@ -127,7 +127,7 @@ remote_copy() {
     local SSH_OPTS=()
     _build_ssh_opts
     if [[ -n "${SSH_PASSWORD}" && -z "${SSH_KEY}" ]]; then
-        sshpass -p "${SSH_PASSWORD}" scp "${SSH_OPTS[@]}" "${src}" "${REMOTE_USER}@${REMOTE_HOST}:${dst}"
+        SSHPASS="${SSH_PASSWORD}" sshpass -e scp "${SSH_OPTS[@]}" "${src}" "${REMOTE_USER}@${REMOTE_HOST}:${dst}"
     else
         scp "${SSH_OPTS[@]}" "${src}" "${REMOTE_USER}@${REMOTE_HOST}:${dst}"
     fi
@@ -205,9 +205,11 @@ cmd_build() {
 
     local SSH_OPTS=()
     _build_ssh_opts
-    local rsh_opt="ssh ${SSH_OPTS[*]}"
+    local rsh_opt
     if [[ -n "${SSH_PASSWORD}" && -z "${SSH_KEY}" ]]; then
-        rsh_opt="sshpass -p ${SSH_PASSWORD} ssh ${SSH_OPTS[*]}"
+        rsh_opt="SSHPASS=${SSH_PASSWORD} sshpass -e ssh ${SSH_OPTS[*]}"
+    else
+        rsh_opt="ssh ${SSH_OPTS[*]}"
     fi
 
     # Sync Dockerfile, environment.yml, verify script, and local codebase to the build context root
@@ -228,8 +230,11 @@ cmd_build() {
 
     # ── Step 2: build natively on the remote s390x host ──────────────────────
     log "Building image ${REMOTE_IMAGE_REF} on ${REMOTE_HOST} (native s390x) ..."
+    local build_arg_claude_version=""
+    [[ -n "${CLAUDE_CODE_VERSION}" ]] && build_arg_claude_version="--build-arg CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}"
     remote "podman build \
         --tag ${REMOTE_IMAGE_REF} \
+        ${build_arg_claude_version} \
         ${remote_build_dir}"
     log "Build complete: ${REMOTE_IMAGE_REF} on ${REMOTE_HOST}."
 
@@ -330,9 +335,11 @@ cmd_sync() {
 
     local SSH_OPTS=()
     _build_ssh_opts
-    local rsh_opt="ssh ${SSH_OPTS[*]}"
+    local rsh_opt
     if [[ -n "${SSH_PASSWORD}" && -z "${SSH_KEY}" ]]; then
-        rsh_opt="sshpass -p ${SSH_PASSWORD} ssh ${SSH_OPTS[*]}"
+        rsh_opt="SSHPASS=${SSH_PASSWORD} sshpass -e ssh ${SSH_OPTS[*]}"
+    else
+        rsh_opt="ssh ${SSH_OPTS[*]}"
     fi
 
     log "Syncing campaign artifacts from ${REMOTE_HOST}:${NOUS_CAMPAIGN_HOST_DIR}/ → ${LOCAL_ARTIFACTS_DIR}/ ..."
@@ -386,7 +393,7 @@ cmd_shell() {
     local SSH_OPTS=()
     _build_ssh_opts
     if [[ -n "${SSH_PASSWORD}" && -z "${SSH_KEY}" ]]; then
-        sshpass -p "${SSH_PASSWORD}" ssh -t "${SSH_OPTS[@]}" \
+        SSHPASS="${SSH_PASSWORD}" sshpass -e ssh -t "${SSH_OPTS[@]}" \
             "${REMOTE_USER}@${REMOTE_HOST}" \
             "podman exec -it ${CONTAINER_NAME} /bin/bash"
     else

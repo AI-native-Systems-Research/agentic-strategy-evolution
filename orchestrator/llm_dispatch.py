@@ -762,9 +762,6 @@ class LLMDispatcher:
         if phase == "summarize-gate":
             gate_type = perspective or "design"
             ctx["gate_type"] = gate_type
-            from orchestrator.iteration_mode import iteration_mode_for
-            mode = iteration_mode_for(self.campaign, iteration)
-            ctx["mode"] = mode
             # Build context based on gate type
             if gate_type == "design":
                 bundle_path = self.work_dir / "runs" / f"iter-{iteration}" / "bundle.yaml"

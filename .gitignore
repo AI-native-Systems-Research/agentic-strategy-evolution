@@ -215,6 +215,3 @@ docs/plans/
 
 # Nous s390x — local campaign artifact sync
 s390x/campaigns/
-
-# Bob AI assistant workspace
-.bob/

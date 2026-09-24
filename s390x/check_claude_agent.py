@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Test Claude Code CLI and Claude Agent SDK on the remote s390x container.
+"""Smoke-check script: Claude Code CLI and Claude Agent SDK on the remote s390x container.
 
-Reads environment configuration from s390x/.env (or environment variables)
-and tests:
+**This is a MANUAL operator script — it is NOT a pytest test and must never be
+run by CI.**  It requires a live s390x host, valid API credentials, and an
+already-built container image.  Run it by hand after deployment to verify the
+stack end-to-end:
+
+    python3 s390x/check_claude_agent.py
+
+Reads connection details from s390x/.env (or environment variables) and runs
+four checks against the remote container:
   1. Claude CLI executable availability and --version
   2. Direct Claude Code stream-json invocation via stdin
   3. Claude Agent SDK query() invocation via Python
   4. Tool execution capabilities (bash, file access)
-
-Usage:
-  python3 s390x/test_claude_agent.py
 """
 
 import json
@@ -64,7 +68,7 @@ def run_remote_in_container(script: str, timeout: int = 90) -> tuple[str, str, i
     
     # Upload script
     upload_proc = subprocess.run(
-        [*ssh_base, "cat > /tmp/test_claude_run.sh && chmod +x /tmp/test_claude_run.sh"],
+        [*ssh_base, "cat > /tmp/check_claude_run.sh && chmod +x /tmp/check_claude_run.sh"],
         input=script.encode("utf-8"),
         capture_output=True,
         timeout=20,
@@ -89,8 +93,8 @@ def run_remote_in_container(script: str, timeout: int = 90) -> tuple[str, str, i
     remote_cmd = (
         f"timeout {timeout} podman run --rm "
         + " ".join(env_flags)
-        + " -v /tmp/test_claude_run.sh:/tmp/test_claude_run.sh:ro,Z "
-        + f"{CONTAINER_IMAGE} bash /tmp/test_claude_run.sh"
+        + " -v /tmp/check_claude_run.sh:/tmp/check_claude_run.sh:ro,Z "
+        + f"{CONTAINER_IMAGE} bash /tmp/check_claude_run.sh"
     )
 
     proc = subprocess.run(
@@ -199,7 +203,7 @@ import asyncio
 import sys
 from claude_agent_sdk import ClaudeAgentOptions, query
 
-async def test_sdk():
+async def run_sdk_check():
     opts = ClaudeAgentOptions(
         model="claude-haiku-4-5",
         max_turns=1,
@@ -228,7 +232,7 @@ async def test_sdk():
         sys.exit(1)
 
 try:
-    asyncio.run(test_sdk())
+    asyncio.run(run_sdk_check())
 except Exception as e:
     print(f"SDK_EXCEPTION: {type(e).__name__}: {e}")
     sys.exit(2)

@@ -981,3 +981,93 @@ class TestSDKDispatchEffort:
         dispatcher.dispatch("planner", "design", output_path=out, iteration=1)
 
         assert runner.calls[0]["effort"] is None
+
+
+# ─── CLAUDE_CLI_PATH threading through the default runner ─────────────────────
+
+class TestClaudeCliPathEnvVar:
+    """CLAUDE_CLI_PATH env var threads cli_path into ClaudeAgentOptions (#s390x).
+
+    The default runner reads the var inside _run() so we test it via the
+    _default_sdk_runner_factory() directly, with claude_agent_sdk mocked.
+    Setting the var must pass cli_path=<value>; leaving it unset must not
+    pass the kwarg at all (SDK uses its own discovery logic in that case).
+    """
+
+    @staticmethod
+    def _make_mock_sdk(constructed_options: list):
+        """Return a (ClaudeAgentOptions, query) mock pair.
+
+        constructed_options is mutated by appending every ClaudeAgentOptions
+        instance the runner creates, letting tests inspect the kwargs.
+        """
+        import types
+
+        class _FakeOptions:
+            def __init__(self, **kwargs):
+                self._kwargs = kwargs
+                constructed_options.append(self)
+
+        class _FakeResult:
+            is_error = False
+            usage = {}
+            total_cost_usd = 0.0
+            duration_ms = 0
+            num_turns = 1
+
+        class _FakeAssistant:
+            content = []
+
+        async def _fake_query(*, prompt, options):  # noqa: ARG001
+            yield _FakeAssistant()
+            yield _FakeResult()
+
+        module = types.ModuleType("claude_agent_sdk")
+        module.ClaudeAgentOptions = _FakeOptions
+        module.query = _fake_query
+        return module
+
+    def test_cli_path_set_when_env_var_present(self, monkeypatch, tmp_path):
+        """Setting CLAUDE_CLI_PATH passes cli_path into ClaudeAgentOptions."""
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+
+        constructed: list = []
+        fake_sdk = self._make_mock_sdk(constructed)
+
+        monkeypatch.setenv("CLAUDE_CLI_PATH", "/custom/path/claude")
+        monkeypatch.setitem(__import__("sys").modules, "claude_agent_sdk", fake_sdk)
+        monkeypatch.setitem(__import__("sys").modules, "anyio", __import__("anyio"))
+
+        runner = _default_sdk_runner_factory()
+        runner(
+            prompt="hello",
+            model="claude-haiku-4-5",
+            cwd=tmp_path,
+            max_turns=1,
+        )
+
+        assert len(constructed) == 1
+        assert constructed[0]._kwargs.get("cli_path") == "/custom/path/claude"
+
+    def test_cli_path_absent_when_env_var_unset(self, monkeypatch, tmp_path):
+        """When CLAUDE_CLI_PATH is not set, cli_path must not appear in options
+        so the SDK applies its own discovery logic unchanged."""
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+
+        constructed: list = []
+        fake_sdk = self._make_mock_sdk(constructed)
+
+        monkeypatch.delenv("CLAUDE_CLI_PATH", raising=False)
+        monkeypatch.setitem(__import__("sys").modules, "claude_agent_sdk", fake_sdk)
+        monkeypatch.setitem(__import__("sys").modules, "anyio", __import__("anyio"))
+
+        runner = _default_sdk_runner_factory()
+        runner(
+            prompt="hello",
+            model="claude-haiku-4-5",
+            cwd=tmp_path,
+            max_turns=1,
+        )
+
+        assert len(constructed) == 1
+        assert "cli_path" not in constructed[0]._kwargs

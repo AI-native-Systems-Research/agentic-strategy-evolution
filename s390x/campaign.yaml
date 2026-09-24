@@ -8,7 +8,7 @@
 #
 # This is a self-contained example suitable for running on any s390x host.
 # Flask and its dependencies install from PyPI in seconds; benchmarks run with
-# the built-in development server and wrk/ab — no GPU or special hardware needed.
+# the built-in development server and a load generator — no GPU or special hardware needed.
 # ─────────────────────────────────────────────────────────────────────────────
 
 research_question: >
@@ -52,7 +52,9 @@ target_system:
       with app.run(port=5000), benchmark with:
         wrk -t1 -c10 -d10s http://localhost:5000/route_N
       or ab -n 10000 -c 10 http://localhost:5000/route_N
-    - wrk and ab are available via dnf on RHEL/UBI9.
+    - wrk and ab are NOT pre-installed in the UBI10 image. Install them on
+      the remote host (e.g. dnf install httpd-tools for ab, or build wrk from
+      source), or use a Python-based load generator such as locust instead.
     - Install Flask from the checked-out repo with: pip install -e .
 
   repo_path: /workspace

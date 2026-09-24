@@ -9,6 +9,7 @@ LABEL name="nous" \
 
 ARG CONDA_INSTALLER_URL=https://repo.anaconda.com/miniconda/Miniconda3-py312_25.1.1-2-Linux-s390x.sh
 ARG CONDA_INSTALLER_SHA256=55c681937c27e13a8ed818d1fec182e623e0308fffc1b10605896dac15f90077
+ARG CLAUDE_CODE_VERSION=2.1.112
 
 ENV CONDA_ROOT=/opt/conda
 ENV CONDA_ENV=/opt/conda/envs/nous
@@ -52,7 +53,7 @@ RUN set -eux; \
         pkgconf-pkg-config \
         nodejs \
         nodejs-npm; \
-    npm install -g @anthropic-ai/claude-code@2.1.112; \
+    npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}; \
     npm cache clean --force; \
     dnf clean all; \
     rm -rf /var/cache/dnf

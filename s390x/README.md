@@ -166,18 +166,20 @@ Run it manually at any time:
 
 ---
 
-## Integration test
+## Smoke check (manual only)
 
-[`test_claude_agent.py`](test_claude_agent.py) runs a four-test suite against the live container on the remote host over SSH. It reads connection details from `s390x/.env` and tests:
+[`check_claude_agent.py`](check_claude_agent.py) is a **manual operator smoke-check** — it is **not** a pytest test and must never be run by CI. It requires a live s390x host, valid API credentials, and a built container image. Run it by hand after deployment to confirm the stack end-to-end:
+
+```bash
+python3 s390x/check_claude_agent.py
+```
+
+It reads connection details from `s390x/.env` and runs four checks against the remote container:
 
 1. Claude CLI binary is discoverable in `$PATH`
 2. `claude --version` returns a valid version string
 3. Claude CLI can execute a `stream-json` query end-to-end
 4. `claude-agent-sdk` Python `query()` call completes successfully
-
-```bash
-python3 s390x/test_claude_agent.py
-```
 
 ---
 
