@@ -430,7 +430,15 @@ prompts/methodology/     Methodology prompt templates
 examples/                Example campaigns
 docs/                    Quickstart, protocol, data model, architecture
 tests/                   Comprehensive test suite
+s390x/                   Run Nous on IBM Z (s390x) via Podman — see s390x/README.md
 ```
+
+## Deployment
+
+Nous runs on IBM Z (s390x) mainframe hardware via Podman containers, orchestrated
+from your local machine over SSH. See [s390x/README.md](s390x/README.md) for the
+full setup. This is opt-in — it does not change default Nous behavior on other
+platforms.
 
 ## Contributing
 
