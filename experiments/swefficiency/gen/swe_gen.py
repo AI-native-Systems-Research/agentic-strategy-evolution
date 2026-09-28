@@ -37,7 +37,7 @@ def load_instance(iid, dataset="swefficiency/swefficiency", split="test"):
 
 def build_prompt(iid, inst, cname):
     covering = inst.get("covering_tests") or []
-    ct = " ".join(covering[:6])
+    ct = " ".join(covering)  # ALL covering tests — scoring runs the full set
     return f"""You are optimizing the runtime performance of a Python library in a Docker container.
 
 CONTAINER: {cname}  (target repo at /testbed, conda env 'testbed').
