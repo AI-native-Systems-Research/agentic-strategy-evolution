@@ -1,0 +1,4 @@
+# Keep lightweight summaries (results.json, meta.json, final_state.txt); drop heavy artifacts.
+nous_runs/
+workspace/
+*.log
