@@ -49,6 +49,12 @@ feasibility/breadth demonstration, not a discriminator for Nous.** The "Nous win
 open-ended benchmark with continuous quality headroom (e.g., SWE-fficiency perf optimization), where
 solution quality varies and methodology can plausibly separate.
 
+## MITIGATION (multi-step: apply a real fix + verify recovery) — `misconfig_app_hotel_res-mitigation-1`
+| Config | Success | TTM (s) | Notes |
+|:--|:--|--:|:--|
+| **Nous** (adapter) | **True** | 285.4 | applied fix, verified recovery |
+| plain Claude Code (L0) | _running_ | — | same base agent, no methodology |
+
 ## Config note
 "AIOpsLab-agent (Opus)" = AIOpsLab's *own* GenericOpenAI shell agent on claude-opus-4-6 (their
 scaffolding, OpenAI-compatible API). It is NOT "plain Claude Code". A separate **plain Claude Code**
