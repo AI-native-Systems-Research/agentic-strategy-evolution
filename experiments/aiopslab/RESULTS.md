@@ -8,7 +8,7 @@ investigation is inside Nous (see each run's `meta.json` `nous_seconds` and `nou
 | Config | Detection Accuracy | TTD (s) | steps | tokens in/out | Notes |
 |:--|:--|--:|--:|:--|:--|
 | **Nous** (adapter) | **Correct** | 267.8 | 1 | (internal) | 1 iteration, observe-only |
-| plain-Claude (GenericOpenAI) | **Correct** | 9.0 | 4 | 1547 / 149 | same model |
+| AIOpsLab-agent (Opus) | **Correct** | 9.0 | 4 | 1547 / 149 | AIOpsLab GenericOpenAI agent |
 
 **Takeaway:** detection is a binary Yes/No task — both configs solve it and plain-Claude is ~30x
 faster, so Nous's campaign overhead is not justified here. Detection is a poor discriminator of
@@ -19,13 +19,27 @@ cause), where investigation depth matters. Comparison focus moves there.
 | Config | Localization Acc | TTL (s) | steps | tokens in/out | Notes |
 |:--|:--|--:|--:|:--|:--|
 | **Nous** (adapter) | **100%** (`["geo"]`) | 241.6 | 1 | (internal) | 1 iteration, observe-only |
-| plain-Claude | **100%** (`["geo"]`) | 25.9 | 6 | 3860 / 248 | same model |
+| AIOpsLab-agent (Opus) | **100%** (`["geo"]`) | 25.9 | 6 | 3860 / 248 | AIOpsLab GenericOpenAI agent |
+
+## NoOp (no fault) — `noop_detection_hotel_reservation-1`  (false-positive test)
+| Config | Detection | TTD (s) | Notes |
+|:--|:--|--:|:--|
+| **Nous** | **Correct ("No")** | 315.6 | no false positive |
+| AIOpsLab-agent (Opus) | **Correct ("No")** | ~fast | no false positive either |
+
+## Config note
+"AIOpsLab-agent (Opus)" = AIOpsLab's *own* GenericOpenAI shell agent on claude-opus-4-6 (their
+scaffolding, OpenAI-compatible API). It is NOT "plain Claude Code". A separate **plain Claude Code**
+L0 (the same base agent Nous wraps, no methodology; `run_claude.py`) is pending — it isolates the
+*methodology* contribution with the base agent held constant.
 
 ## Pilot conclusion (honest)
-The adapter works and is scored fairly by AIOpsLab. But on these hotel-reservation **misconfig**
-tasks, **both Nous and plain-Claude score perfectly** on detection and localization, and plain-Claude
-is ~10-30x faster. Single-fault misconfig tasks are too easy to discriminate methodology on a binary
-accuracy metric; Nous's campaign overhead is not justified here.
+The adapter works and is scored fairly by AIOpsLab. But across detection, localization, AND the NoOp
+false-positive test on hotel-reservation, **Nous and the AIOpsLab agent both score perfectly**, and the
+baseline is ~10-30x faster. Easy single-fault tasks (and even the NoOp negative) do not discriminate
+methodology; the AIOpsLab GenericOpenAI agent on Opus is already a strong baseline. Discrimination, if
+any, must come from the **hard `astronomy_shop` perf-localization tasks** (subtle degradation across ~20
+services). If Nous does not separate there either, AIOpsLab is not the right benchmark to showcase Nous.
 
 ## To actually discriminate Nous (next)
 - **Negative / NoOp tasks** (`noop_detection_*`): correct answer is "No fault". Raw agents tend to
