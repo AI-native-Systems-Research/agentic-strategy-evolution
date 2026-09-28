@@ -29,7 +29,7 @@ async def main():
     ap.add_argument("problem_id")
     ap.add_argument("--model", default="claude-opus-4-6")
     ap.add_argument("--max-steps", type=int, default=30)
-    ap.add_argument("--label", default="plain_claude")
+    ap.add_argument("--label", default="aiopslab_generic")
     ap.add_argument("--results-root", default=str(RESULTS_ROOT))
     args = ap.parse_args()
 
