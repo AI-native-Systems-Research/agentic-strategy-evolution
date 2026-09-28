@@ -56,6 +56,50 @@ edit source -> re-measure -> confirm the covering tests still pass. Iterate a fe
 Aim for a genuine speedup with green tests. When finished, stop; your /testbed edits are the patch."""
 
 
+def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo):
+    """Run a Nous campaign that optimizes /testbed inside the task container via docker exec."""
+    import yaml
+    covering = inst.get("covering_tests") or []
+    ct = " ".join(covering)
+    run_dir = Path(logdir) / f"nous_{cname}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    desc = (
+        f"A prebuilt Docker container named '{cname}' holds a Python library checked out at /testbed "
+        f"(conda env 'testbed'). ALL work MUST happen inside that container via:\n"
+        f'  docker exec {cname} bash -lc "cd /testbed && {CONDA} && <CMD>"\n'
+        f"Measure runtime with: python /tmp/workload.py (prints Mean/Std). Do NOT edit /tmp/workload.py "
+        f"or any test files. Optimize only library SOURCE under /testbed. Correctness gate: these covering "
+        f"tests MUST pass: {ct} (run: python -m pytest -q <files>). Your /testbed edits in the container "
+        f"are collected as the patch; there is no separate submission."
+    )
+    spec = {
+        "research_question": f"How can we reduce the runtime of the workload for {inst.get('repo')} "
+                             f"without changing its behavior, while keeping the covering tests green?",
+        "run_id": f"swe-{iid}",
+        "max_iterations": 1,
+        "target_system": {
+            "name": f"swefficiency::{iid}",
+            "description": desc,
+            "repo_path": str(run_dir / "workspace"),
+            "live_target": True,
+            "observable_metrics": ["workload_mean_runtime", "test_pass_count"],
+            "controllable_knobs": ["source_code_edits"],
+        },
+        "models": {"design": model, "execute_analyze": model, "report": model},
+        "prompts": {"methodology_layer": f"{nous_repo}/prompts/methodology", "domain_adapter_layer": None},
+    }
+    (run_dir / "workspace").mkdir(exist_ok=True)
+    camp = run_dir / "campaign.yaml"
+    camp.write_text(yaml.safe_dump(spec, sort_keys=False))
+    env = dict(os.environ)
+    env["NOUS_CAMPAIGN_PARENT"] = str(run_dir / "nous_runs")
+    log = run_dir / "nous.log"
+    cmd = [nous_bin, "run", str(camp), "--auto-approve", "--agent", "sdk", "--sandbox", "bypass", "--max-iterations", "1"]
+    with open(log, "w") as lf:
+        p = subprocess.run(cmd, cwd=nous_repo, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True, timeout=7200)
+    return p.returncode
+
+
 def run_claude(prompt, model, log_path):
     cc = subprocess.run(
         ["claude", "-p", "--model", model, "--permission-mode", "bypassPermissions",
@@ -74,6 +118,8 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--label", default=None)
     ap.add_argument("--logdir", default="/home/ubuntu/nous_swe/gen_logs")
+    ap.add_argument("--nous-bin", default="/home/ubuntu/nous_repo/.venv/bin/nous")
+    ap.add_argument("--nous-repo", default="/home/ubuntu/nous_repo")
     args = ap.parse_args()
     label = args.label or args.agent
     iid = args.instance_id
@@ -97,13 +143,13 @@ def main():
         meta["baseline_out"] = (base.stdout or "")[-400:]
         print("BASELINE:", meta["baseline_out"])
 
-        prompt = build_prompt(iid, inst, cname)
-        (Path(args.logdir) / f"{cname}.prompt.txt").write_text(prompt)
         t0 = time.time()
         if args.agent == "claude":
+            prompt = build_prompt(iid, inst, cname)
+            (Path(args.logdir) / f"{cname}.prompt.txt").write_text(prompt)
             rc = run_claude(prompt, args.model, Path(args.logdir) / f"{cname}.agent.log")
-        else:
-            raise SystemExit("nous agent wired separately (see run_nous_swe)")
+        else:  # nous
+            rc = run_nous(iid, inst, cname, args.model, args.logdir, args.nous_bin, args.nous_repo)
         meta["agent_seconds"] = round(time.time() - t0, 1)
         meta["agent_rc"] = rc
 
