@@ -30,9 +30,24 @@ cause), where investigation depth matters. Comparison focus moves there.
 ## HARD — `astronomy_shop_ad_service_high_cpu-localization-1` (subtle perf fault, ~20 services)
 | Config | Localization Acc | TTL (s) | Notes |
 |:--|:--|--:|:--|
-| **Nous** (adapter) | **100%** (`["ad"]`) | 527.8 | 1 iteration, observe-only, correct service |
-| plain Claude Code (L0) | _running_ | — | same base agent, no methodology |
-| AIOpsLab-agent (Opus) | _pending_ | — | AIOpsLab GenericOpenAI agent |
+| **Nous** (adapter) | **100%** (`["ad"]`) | 527.8 | Claude Code + methodology |
+| plain Claude Code (L0) | **100%** (`["ad"]`) | 92.0 | Claude Code, no methodology — also correct, ~6x faster |
+| AIOpsLab-agent (Opus) | **0%** (failed) | 131.9 | GenericOpenAI scaffold; 30 steps, 28.7k tok, wrong/no answer |
+
+**Hard-task takeaway (careful):** the split is Nous ≈ plain-Claude-Code (both 100%) vs the AIOpsLab
+GenericOpenAI scaffold (0%). That is a **base-agent/harness effect** (Claude Code >> AIOpsLab's
+OpenAI-compat ReAct loop), **not a Nous-methodology effect** — Nous shows no gain over plain Claude
+Code, at ~6x the time. Reporting "Nous beats AIOpsLab's agent 100 vs 0" would be misleading as
+methodology evidence, since plain Claude Code also beats it 100 vs 0, and would invite the
+"model not methodology" critique.
+
+## Overall conclusion
+Across detection, localization, NoOp, and hard perf-localization, **Nous never exceeds plain Claude
+Code on AIOpsLab** (parity on accuracy, slower). AIOpsLab tasks have definite lookup-style answers a
+strong base model already finds, so they do not exercise Nous's methodology. **AIOpsLab is a
+feasibility/breadth demonstration, not a discriminator for Nous.** The "Nous wins" story needs an
+open-ended benchmark with continuous quality headroom (e.g., SWE-fficiency perf optimization), where
+solution quality varies and methodology can plausibly separate.
 
 ## Config note
 "AIOpsLab-agent (Opus)" = AIOpsLab's *own* GenericOpenAI shell agent on claude-opus-4-6 (their
