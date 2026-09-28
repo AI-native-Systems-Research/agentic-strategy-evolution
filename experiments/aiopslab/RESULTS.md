@@ -27,6 +27,13 @@ cause), where investigation depth matters. Comparison focus moves there.
 | **Nous** | **Correct ("No")** | 315.6 | no false positive |
 | AIOpsLab-agent (Opus) | **Correct ("No")** | ~fast | no false positive either |
 
+## HARD — `astronomy_shop_ad_service_high_cpu-localization-1` (subtle perf fault, ~20 services)
+| Config | Localization Acc | TTL (s) | Notes |
+|:--|:--|--:|:--|
+| **Nous** (adapter) | **100%** (`["ad"]`) | 527.8 | 1 iteration, observe-only, correct service |
+| plain Claude Code (L0) | _running_ | — | same base agent, no methodology |
+| AIOpsLab-agent (Opus) | _pending_ | — | AIOpsLab GenericOpenAI agent |
+
 ## Config note
 "AIOpsLab-agent (Opus)" = AIOpsLab's *own* GenericOpenAI shell agent on claude-opus-4-6 (their
 scaffolding, OpenAI-compatible API). It is NOT "plain Claude Code". A separate **plain Claude Code**
