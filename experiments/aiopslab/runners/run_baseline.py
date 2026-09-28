@@ -16,8 +16,10 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "adapter"))
 from aiopslab.orchestrator import Orchestrator
 from clients.generic_openai import GenericOpenAIAgent
+from bedrock_client import BedrockSafeOpenAIClient  # noqa: E402
 
 RESULTS_ROOT = Path(__file__).resolve().parents[1] / "results"
 
@@ -39,6 +41,8 @@ async def main():
     run_dir.mkdir(parents=True, exist_ok=True)
 
     agent = GenericOpenAIAgent(base_url=base_url, model=args.model, api_key=api_key)
+    # Bedrock Claude rejects temperature+top_p together; swap in the safe client.
+    agent.llm = BedrockSafeOpenAIClient(base_url=base_url, model=args.model, api_key=api_key)
     orch = Orchestrator()
     orch.register_agent(agent, name=args.label)
     desc, instr, apis = orch.init_problem(args.problem_id)
