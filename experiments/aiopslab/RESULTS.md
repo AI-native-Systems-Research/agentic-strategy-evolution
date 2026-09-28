@@ -16,13 +16,23 @@ methodology. The informative tasks are **localization** (which component) and **
 cause), where investigation depth matters. Comparison focus moves there.
 
 ## Localization — `misconfig_app_hotel_res-localization-1`
-| Config | Correct? | TTL (s) | Notes |
-|:--|:--|--:|:--|
-| **Nous** (adapter) | _running_ | — | 1 iteration, observe-only |
-| plain-Claude | _pending_ | — | same model |
+| Config | Localization Acc | TTL (s) | steps | tokens in/out | Notes |
+|:--|:--|--:|--:|:--|:--|
+| **Nous** (adapter) | **100%** (`["geo"]`) | 241.6 | 1 | (internal) | 1 iteration, observe-only |
+| plain-Claude | **100%** (`["geo"]`) | 25.9 | 6 | 3860 / 248 | same model |
 
-## TODO
-- Surface Nous internal step/token counts from `nous_runs/.../llm_metrics_summary.json` for fair token accounting.
-- Consider analysis/mitigation tasks (harder) once localization is in.
+## Pilot conclusion (honest)
+The adapter works and is scored fairly by AIOpsLab. But on these hotel-reservation **misconfig**
+tasks, **both Nous and plain-Claude score perfectly** on detection and localization, and plain-Claude
+is ~10-30x faster. Single-fault misconfig tasks are too easy to discriminate methodology on a binary
+accuracy metric; Nous's campaign overhead is not justified here.
+
+## To actually discriminate Nous (next)
+- **Negative / NoOp tasks** (`noop_detection_*`): correct answer is "No fault". Raw agents tend to
+  false-positive; Nous's negative-control discipline should avoid it. Strong candidate discriminator.
+- **Analysis (root-cause) tasks**: require naming the fault *type/mechanism*, more room to be wrong.
+- **Harder fault types**: network delay/loss, kafka queue, high-CPU, disk — subtler than a misconfig.
+- Possibly **social-network** app (more services) and multi-symptom faults.
+- Also: surface Nous internal step/token counts (`nous_runs/.../llm_metrics_summary.json`).
 
 _Runs persisted under `results/<config>/<problem_id>/<timestamp>/` (results.json, meta.json)._

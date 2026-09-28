@@ -1,0 +1,12 @@
+{
+  "problem_id": "misconfig_app_hotel_res-localization-1",
+  "task_type": "localization",
+  "model": "claude-opus-4-6",
+  "max_iterations": 1,
+  "campaign": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/aiopslab/results/nous/misconfig_app_hotel_res-localization-1/20260928-131141/campaign.yaml",
+  "nous_cmd": "nous run /Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/aiopslab/results/nous/misconfig_app_hotel_res-localization-1/20260928-131141/campaign.yaml --auto-approve --agent sdk --sandbox bypass --max-iterations 1",
+  "nous_seconds": 241.6,
+  "nous_exit": 0,
+  "raw_answer": "[\"geo\"]",
+  "answer_valid": true
+}
