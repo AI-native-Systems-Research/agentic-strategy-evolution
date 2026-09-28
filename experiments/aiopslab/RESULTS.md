@@ -41,13 +41,43 @@ Code, at ~6x the time. Reporting "Nous beats AIOpsLab's agent 100 vs 0" would be
 methodology evidence, since plain Claude Code also beats it 100 vs 0, and would invite the
 "model not methodology" critique.
 
-## Overall conclusion
-Across detection, localization, NoOp, and hard perf-localization, **Nous never exceeds plain Claude
-Code on AIOpsLab** (parity on accuracy, slower). AIOpsLab tasks have definite lookup-style answers a
-strong base model already finds, so they do not exercise Nous's methodology. **AIOpsLab is a
-feasibility/breadth demonstration, not a discriminator for Nous.** The "Nous wins" story needs an
-open-ended benchmark with continuous quality headroom (e.g., SWE-fficiency perf optimization), where
-solution quality varies and methodology can plausibly separate.
+## FINAL VERDICT — AIOpsLab (Opus 4.6, kind local)
+
+Full scoreboard (✓ = correct/success):
+
+| Task | Type | Nous | plain Claude Code (L0) | AIOpsLab-agent |
+|:--|:--|:--|:--|:--|
+| misconfig hotel-res | detection | ✓ 268s | — | ✓ 9s |
+| misconfig hotel-res | localization | ✓ 242s | — | ✓ 26s |
+| NoOp hotel-res (no fault) | detection | ✓ "No" 316s | — | ✓ "No" |
+| astronomy ad high-cpu | localization | ✓ 528s | ✓ 92s | ✗ 0% (fail) |
+| misconfig hotel-res | mitigation | ✓ 285s | ✓ 57s | — |
+| astronomy kafka-queue | mitigation | ✓ 417s | ✓ 209s | — |
+
+**Nous never beats plain Claude Code on AIOpsLab.** On every head-to-head with the true L0 (same base
+agent, no methodology) — including the two hardest tasks (astronomy high-cpu localization, kafka
+mitigation) — both succeed and Nous is 2-6x slower. The only non-parity anywhere is AIOpsLab's *own*
+GenericOpenAI agent failing hard localization (0%), which plain Claude Code also beats — a
+**base-agent effect (Claude Code >> GenericOpenAI loop), not a Nous-methodology effect.**
+
+**Why:** AIOpsLab tasks have a **definite answer** (which service is faulty / apply the known fix) that a
+strong base model finds in a few kubectl commands. They do not exercise Nous's value (controlled
+multi-arm experiments, prediction-error taxonomy, compounding principles), which is for **open-ended
+problems with a continuous quality gradient**.
+
+**Decision:** AIOpsLab = a **feasibility/breadth** demonstration ("Nous runs as an investigator on a
+standard ops benchmark and matches strong agents"), **not** a discriminator for methodology. Do NOT
+build the MLSys "Nous wins" claim on it. Move the discriminating comparison to **SWE-fficiency**
+(perf optimization: continuous speedup metric, hard correctness gate, baseline ~0.04 of expert
+parity → real headroom).
+
+### Coverage / honesty note
+- The methodology-isolation comparison is **Nous vs plain Claude Code** (3 tasks incl. the 2 hardest).
+  Easy detection/localization/NoOp used the AIOpsLab-agent as the comparator (all solved); plain
+  Claude Code was not separately run on those (base agent strictly stronger, would also solve them).
+- Single run per (config, task); AIOpsLab metrics are objective (no LLM judge). Adapter dry-runs
+  validated; all runs reproducible via `runners/` + `results/`.
+- Infra caveat: astronomy first-deploy needs image pre-caching (300s readiness window); documented in `ai_ops_setup.md`.
 
 ## MITIGATION (multi-step: apply a real fix + verify recovery) — `misconfig_app_hotel_res-mitigation-1`
 | Config | Success | TTM (s) | Notes |
@@ -59,7 +89,7 @@ solution quality varies and methodology can plausibly separate.
 | Config | Success | TTM (s) | Notes |
 |:--|:--|--:|:--|
 | **Nous** (adapter) | **True** | 417.3 | fixed the kafka-queue perf fault + verified |
-| plain Claude Code (L0) | _running_ | — | same base agent, no methodology |
+| plain Claude Code (L0) | **True** | 208.6 | also fixed it, ~2x faster |
 
 ## Config note
 "AIOpsLab-agent (Opus)" = AIOpsLab's *own* GenericOpenAI shell agent on claude-opus-4-6 (their
