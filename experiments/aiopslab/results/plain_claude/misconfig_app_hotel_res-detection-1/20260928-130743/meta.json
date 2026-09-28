@@ -1,0 +1,7 @@
+{
+  "problem_id": "misconfig_app_hotel_res-detection-1",
+  "model": "claude-opus-4-6",
+  "label": "plain_claude",
+  "max_steps": 30,
+  "final_state": "SubmissionStatus.VALID_SUBMISSION"
+}
