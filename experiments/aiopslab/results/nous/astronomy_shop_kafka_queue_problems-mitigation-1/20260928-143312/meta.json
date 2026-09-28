@@ -1,0 +1,12 @@
+{
+  "problem_id": "astronomy_shop_kafka_queue_problems-mitigation-1",
+  "task_type": "mitigation",
+  "model": "claude-opus-4-6",
+  "max_iterations": 1,
+  "campaign": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/aiopslab/results/nous/astronomy_shop_kafka_queue_problems-mitigation-1/20260928-143312/campaign.yaml",
+  "nous_cmd": "nous run /Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/aiopslab/results/nous/astronomy_shop_kafka_queue_problems-mitigation-1/20260928-143312/campaign.yaml --auto-approve --agent sdk --sandbox bypass --max-iterations 1",
+  "nous_seconds": 417.3,
+  "nous_exit": 0,
+  "raw_answer": "DONE",
+  "answer_valid": true
+}

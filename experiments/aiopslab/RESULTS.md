@@ -55,6 +55,12 @@ solution quality varies and methodology can plausibly separate.
 | **Nous** (adapter) | **True** | 285.4 | applied fix, verified recovery |
 | plain Claude Code (L0) | **True** | 56.8 | also fixed it, ~5x faster |
 
+### HARD mitigation — `astronomy_shop_kafka_queue_problems-mitigation-1` (~20 services)
+| Config | Success | TTM (s) | Notes |
+|:--|:--|--:|:--|
+| **Nous** (adapter) | **True** | 417.3 | fixed the kafka-queue perf fault + verified |
+| plain Claude Code (L0) | _running_ | — | same base agent, no methodology |
+
 ## Config note
 "AIOpsLab-agent (Opus)" = AIOpsLab's *own* GenericOpenAI shell agent on claude-opus-4-6 (their
 scaffolding, OpenAI-compatible API). It is NOT "plain Claude Code". A separate **plain Claude Code**
