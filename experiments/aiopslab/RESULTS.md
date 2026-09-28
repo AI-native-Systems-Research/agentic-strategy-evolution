@@ -53,7 +53,7 @@ solution quality varies and methodology can plausibly separate.
 | Config | Success | TTM (s) | Notes |
 |:--|:--|--:|:--|
 | **Nous** (adapter) | **True** | 285.4 | applied fix, verified recovery |
-| plain Claude Code (L0) | _running_ | — | same base agent, no methodology |
+| plain Claude Code (L0) | **True** | 56.8 | also fixed it, ~5x faster |
 
 ## Config note
 "AIOpsLab-agent (Opus)" = AIOpsLab's *own* GenericOpenAI shell agent on claude-opus-4-6 (their
