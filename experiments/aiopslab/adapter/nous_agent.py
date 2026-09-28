@@ -86,6 +86,11 @@ class NousAgent:
             fmt = 'Write EXACTLY one word: Yes (if anomalies/faults present) or No.'
         elif self.task_type == "localization":
             fmt = 'Write a JSON list of faulty component service name(s), e.g. ["geo"], or [] if none.'
+        elif self.task_type == "analysis":
+            fmt = ('Write a JSON object with keys "system_level" (one of: Hardware, '
+                   '"Operating System", Virtualization, Application) and "fault_type" (one of: '
+                   'Misconfiguration, "Code Defect", "Authentication Issue", "Network/Storage Issue", '
+                   '"Operation Error", "Dependency Problem"). If no fault, write exactly: NONE')
         else:
             fmt = "Write your final answer."
         return ("ANSWER CONTRACT (mandatory terminal step): " + fmt
@@ -110,14 +115,21 @@ class NousAgent:
         self.meta["nous_seconds"] = round(time.time() - t0, 1)
         self.meta["nous_exit"] = proc.returncode
 
+    _EMPTY = "__EMPTY_SUBMIT__"
+
     def _read_answer(self):
         raw = self.answer_file.read_text().strip() if self.answer_file.exists() else None
         self.meta["raw_answer"] = raw
         literal = self._to_literal(raw) if raw else None
         self.meta["answer_valid"] = literal is not None
-        if literal is None:
-            literal = '"No"' if self.task_type == "detection" else "[]"
+        if literal == self._EMPTY:                      # no-fault submission -> submit()
+            return "```\nsubmit()\n```"
+        if literal is None:                             # fallback default (marked invalid)
             self.meta["used_default"] = True
+            default = {"detection": '"No"', "localization": "[]", "analysis": None}.get(self.task_type, "[]")
+            if default is None:
+                return "```\nsubmit()\n```"
+            literal = default
         # one fenced code block, single call — required by AIOpsLab ResponseParser
         return f"```\nsubmit({literal})\n```"
 
@@ -134,6 +146,14 @@ class NousAgent:
             if self.task_type == "localization":
                 data = json.loads(raw)
                 return json.dumps(data) if isinstance(data, list) else None
+            if self.task_type == "analysis":
+                if raw.strip().upper() == "NONE":
+                    return self._EMPTY
+                data = json.loads(raw)
+                if isinstance(data, dict) and "system_level" in data and "fault_type" in data:
+                    return json.dumps({"system_level": data["system_level"],
+                                       "fault_type": data["fault_type"]})
+                return None
             return json.dumps(raw)
         except Exception:
             return None
