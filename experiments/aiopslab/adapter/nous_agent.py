@@ -79,6 +79,10 @@ class NousAgent:
             return ("CRITICAL: OBSERVE-ONLY. Do NOT modify, restart, scale, delete, patch, or "
                     "reconfigure any cluster resource. Use only read commands (kubectl "
                     "get/describe/logs/top, prometheus queries). Mutating the cluster invalidates the result.")
+        if self.task_type == "mitigation":
+            return ("You MUST apply a fix to the LIVE cluster (kubectl edit/patch/scale/apply/rollout/"
+                    "delete as appropriate) to mitigate the fault, then VERIFY the affected pods/services "
+                    "recover (pods Ready, errors cleared) before finishing.")
         return ""
 
     def _answer_contract(self):
@@ -91,6 +95,9 @@ class NousAgent:
                    '"Operating System", Virtualization, Application) and "fault_type" (one of: '
                    'Misconfiguration, "Code Defect", "Authentication Issue", "Network/Storage Issue", '
                    '"Operation Error", "Dependency Problem"). If no fault, write exactly: NONE')
+        elif self.task_type == "mitigation":
+            fmt = ('After you have APPLIED a fix to the cluster AND verified the affected service '
+                   'recovered (pods Ready, errors cleared), write the single word DONE.')
         else:
             fmt = "Write your final answer."
         return ("ANSWER CONTRACT (mandatory terminal step): " + fmt
@@ -118,6 +125,11 @@ class NousAgent:
     _EMPTY = "__EMPTY_SUBMIT__"
 
     def _read_answer(self):
+        if self.task_type == "mitigation":
+            raw = self.answer_file.read_text().strip() if self.answer_file.exists() else None
+            self.meta["raw_answer"] = raw
+            self.meta["answer_valid"] = bool(raw)   # DONE written = agent claims it finished the fix
+            return "```\nsubmit()\n```"              # mitigation submit takes no args; eval checks recovery
         raw = self.answer_file.read_text().strip() if self.answer_file.exists() else None
         self.meta["raw_answer"] = raw
         literal = self._to_literal(raw) if raw else None
