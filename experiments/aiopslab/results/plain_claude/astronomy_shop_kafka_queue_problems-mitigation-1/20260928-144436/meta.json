@@ -1,0 +1,13 @@
+{
+  "problem_id": "astronomy_shop_kafka_queue_problems-mitigation-1",
+  "task_type": "mitigation",
+  "model": "claude-opus-4-6",
+  "max_iterations": 1,
+  "prompt_file": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/aiopslab/results/plain_claude/astronomy_shop_kafka_queue_problems-mitigation-1/20260928-144436/prompt.txt",
+  "agent": "plain_claude_code",
+  "claude_cmd": "claude -p --model claude-opus-4-6 --permission-mode bypassPermissions --allowedTools Bash --output-format text (prompt via stdin)",
+  "claude_seconds": 208.6,
+  "claude_exit": 0,
+  "raw_answer": "DONE",
+  "answer_valid": true
+}
