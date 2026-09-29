@@ -141,6 +141,8 @@ def main():
         wf = Path(tempfile.mkdtemp()) / "workload.py"
         wf.write_text(inst["workload"])
         sh(f"docker cp {wf} {cname}:/tmp/workload.py")
+        # ensure the agent can actually RUN the covering tests to self-validate correctness
+        dexec(cname, "pip install -q pytest hypothesis 2>/dev/null; true", timeout=300)
         base = dexec(cname, "python /tmp/workload.py", timeout=1200)
         meta["baseline_out"] = (base.stdout or "")[-400:]
         print("BASELINE:", meta["baseline_out"])
