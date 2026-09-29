@@ -55,6 +55,18 @@ def load_instance(iid, dataset="swefficiency/swefficiency", split="test"):
     raise SystemExit(f"instance {iid} not found")
 
 
+def isolated_workload(raw):
+    """Rewrite the workload so each timeit repeat runs in a forked child, exactly as the official
+    scorer does. Without this, in-process memoization (e.g. sympy @cacheit) makes repeated calls
+    look near-instant and the agent optimizes a caching artifact instead of the real cold cost."""
+    try:
+        from swefficiency.harness.run_to_run_isolation import transform_to_isolated_workload
+        return transform_to_isolated_workload(raw, method="fork")
+    except Exception as e:
+        print("WARN: could not isolate workload, using raw:", e)
+        return raw
+
+
 def build_description(iid, inst, pkg, ct, base_mean):
     return (
         f"You are optimizing the RUNTIME PERFORMANCE of the Python library '{pkg}' "
@@ -159,6 +171,9 @@ def main():
     ap.add_argument("--cpuset", default="",
                     help="dedicated CPU cores for this container (e.g. '2-3'); isolates the "
                          "timing-sensitive workload measurement so parallel tasks don't corrupt it")
+    ap.add_argument("--artifacts-dir", default="/home/ubuntu/nous_swe/nous_artifacts",
+                    help="host dir to persist the full campaign (nous_runs, candidate patches) "
+                         "before the container is removed, for reproducibility")
     args = ap.parse_args()
     iid = args.instance_id
     Path(args.logdir).mkdir(parents=True, exist_ok=True)
@@ -182,7 +197,7 @@ def main():
     try:
         # workload + nous source + setup script into the container
         wf = Path(tempfile.mkdtemp()) / "workload.py"
-        wf.write_text(inst["workload"])
+        wf.write_text(isolated_workload(inst["workload"]))
         sh(f"docker cp {wf} {cname}:/tmp/workload.py", check=True)
         sh(f"docker exec {cname} mkdir -p /opt/nous_repo", check=True)
         sh(f"docker cp {args.nous_src_tgz} {cname}:/tmp/nous_src.tgz", check=True)
@@ -250,6 +265,14 @@ def main():
         (Path(args.logdir) / f"{cname}.meta.json").write_text(json.dumps(meta, indent=2))
         print("PATCH bytes:", len(diff), "-> best_speedup", meta.get("nous_best_speedup"), "->", args.out)
     finally:
+        # persist the full campaign (artifacts + candidate patches) before tearing down the container
+        adir = Path(args.artifacts_dir) / iid
+        adir.mkdir(parents=True, exist_ok=True)
+        sh(f"docker cp {cname}:/tmp/nous_runs {adir}/nous_runs", timeout=600)
+        sh(f"docker cp {cname}:/tmp/cands {adir}/cands", timeout=300)
+        sh(f"docker cp {cname}:/tmp/best.patch {adir}/best.patch", timeout=120)
+        (adir / "meta.json").write_text(json.dumps(meta, indent=2))
+        print(f"[persist] campaign artifacts -> {adir}")
         sh(f"docker rm -f {cname}")
 
 

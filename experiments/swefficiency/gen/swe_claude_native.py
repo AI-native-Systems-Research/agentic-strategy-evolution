@@ -43,6 +43,17 @@ def load_instance(iid, dataset="swefficiency/swefficiency", split="test"):
     raise SystemExit(f"instance {iid} not found")
 
 
+def isolated_workload(raw):
+    """Match the official scorer: each timeit repeat runs in a forked child, so in-process
+    memoization can't fake a speedup. Keeps the agent optimizing the real cold cost."""
+    try:
+        from swefficiency.harness.run_to_run_isolation import transform_to_isolated_workload
+        return transform_to_isolated_workload(raw, method="fork")
+    except Exception as e:
+        print("WARN: could not isolate workload, using raw:", e)
+        return raw
+
+
 def prompt_text(iid, inst, pkg, base_mean):
     return f"""You are optimizing the RUNTIME PERFORMANCE of the Python library '{pkg}' (repo {inst.get('repo')}).
 The source is at /testbed. Edit only library SOURCE under /testbed, never test files.
@@ -89,7 +100,7 @@ def main():
         raise SystemExit("container run failed: " + r.stderr)
     try:
         wf = Path(tempfile.mkdtemp()) / "workload.py"
-        wf.write_text(inst["workload"])
+        wf.write_text(isolated_workload(inst["workload"]))
         sh(f"docker cp {wf} {cname}:/tmp/workload.py", check=True)
         # measure/test helper scripts (wrap conda activate so the agent's calls are one-liners)
         tmp = Path(tempfile.mkdtemp())
