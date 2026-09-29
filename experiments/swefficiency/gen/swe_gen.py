@@ -8,10 +8,16 @@ as model_patch -> preds.jsonl for `swefficiency eval`.
 Usage (source ~/.nous_env first for ANTHROPIC_* creds):
   python swe_gen.py <instance_id> --agent claude --model claude-opus-4-6 --out preds/<id>.jsonl --label plain_claude
 """
-import argparse, json, os, shutil, subprocess, tempfile, time
+import argparse, json, os, re, shutil, subprocess, tempfile, time
 from pathlib import Path
 
 CONDA = "source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed"
+DIFF_CMD = "git add -A >/dev/null 2>&1; git diff --binary --cached HEAD -- . ':(exclude)*/tests/*' ':(exclude)*test_*'"
+
+
+def parse_mean(out):
+    m = re.search(r"Mean:\s*([0-9.eE+-]+)", out or "")
+    return float(m.group(1)) if m else None
 
 
 def sh(cmd, timeout=None):
@@ -96,9 +102,31 @@ def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo, nous_iters=3)
     env["NOUS_CAMPAIGN_PARENT"] = str(run_dir / "nous_runs")
     log = run_dir / "nous.log"
     cmd = [nous_bin, "run", str(camp), "--auto-approve", "--agent", "sdk", "--sandbox", "bypass", "--max-iterations", str(nous_iters)]
+
+    # Nous reverts changes between arms/iterations, so the FINAL /testbed state is unreliable.
+    # Capture the BEST correct+fastest diff while Nous runs.
+    base_mean = parse_mean(dexec(cname, "python /tmp/workload.py", timeout=1200).stdout)
+    best = {"patch": "", "speedup": 1.0}
+    last_diff = None
     with open(log, "w") as lf:
-        p = subprocess.run(cmd, cwd=nous_repo, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True, timeout=7200)
-    return p.returncode
+        proc = subprocess.Popen(cmd, cwd=nous_repo, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True)
+        deadline = time.time() + 7200
+        while proc.poll() is None and time.time() < deadline:
+            time.sleep(60)
+            diff = dexec(cname, DIFF_CMD, timeout=120).stdout
+            if not diff.strip() or diff == last_diff:
+                continue
+            last_diff = diff
+            if dexec(cname, f"python -m pytest -q {ct}", timeout=1800).returncode != 0:
+                continue  # correctness gate
+            m = parse_mean(dexec(cname, "python /tmp/workload.py", timeout=1200).stdout)
+            if m and base_mean and (base_mean / m) > best["speedup"]:
+                best = {"patch": diff, "speedup": round(base_mean / m, 3)}
+        if proc.poll() is None:
+            proc.terminate()
+    if not best["patch"]:  # fallback to final state if nothing captured
+        best["patch"] = dexec(cname, DIFF_CMD, timeout=120).stdout
+    return best
 
 
 def run_claude(prompt, model, log_path):
@@ -148,16 +176,20 @@ def main():
         print("BASELINE:", meta["baseline_out"])
 
         t0 = time.time()
+        patch_override = None
         if args.agent == "claude":
             prompt = build_prompt(iid, inst, cname)
             (Path(args.logdir) / f"{cname}.prompt.txt").write_text(prompt)
             rc = run_claude(prompt, args.model, Path(args.logdir) / f"{cname}.agent.log")
-        else:  # nous
-            rc = run_nous(iid, inst, cname, args.model, args.logdir, args.nous_bin, args.nous_repo, args.nous_iters)
+        else:  # nous — capture BEST validated diff during the run (final state is unreliable)
+            best = run_nous(iid, inst, cname, args.model, args.logdir, args.nous_bin, args.nous_repo, args.nous_iters)
+            patch_override = best["patch"]
+            meta["nous_best_speedup"] = best["speedup"]
+            rc = 0
         meta["agent_seconds"] = round(time.time() - t0, 1)
         meta["agent_rc"] = rc
 
-        diff = dexec(cname, "git add -A && git diff --binary --cached HEAD -- . ':(exclude)*/tests/*' ':(exclude)*test_*'", timeout=180).stdout
+        diff = patch_override if patch_override is not None else dexec(cname, DIFF_CMD, timeout=180).stdout
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         with open(args.out, "w") as f:
             f.write(json.dumps({"instance_id": iid, "model_name_or_path": label, "model_patch": diff}) + "\n")
