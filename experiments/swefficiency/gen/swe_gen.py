@@ -8,7 +8,7 @@ as model_patch -> preds.jsonl for `swefficiency eval`.
 Usage (source ~/.nous_env first for ANTHROPIC_* creds):
   python swe_gen.py <instance_id> --agent claude --model claude-opus-4-6 --out preds/<id>.jsonl --label plain_claude
 """
-import argparse, json, os, subprocess, tempfile, time
+import argparse, json, os, shutil, subprocess, tempfile, time
 from pathlib import Path
 
 CONDA = "source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed"
@@ -62,6 +62,7 @@ def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo, nous_iters=3)
     covering = inst.get("covering_tests") or []
     ct = " ".join(covering)
     run_dir = Path(logdir) / f"nous_{cname}"
+    shutil.rmtree(run_dir, ignore_errors=True)  # clean stale Nous state (avoid "already in progress")
     run_dir.mkdir(parents=True, exist_ok=True)
     desc = (
         f"A prebuilt Docker container named '{cname}' holds a Python library checked out at /testbed "

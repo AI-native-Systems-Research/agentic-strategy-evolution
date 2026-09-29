@@ -12,12 +12,14 @@ def load(run):
     k = list(d)[0]
     p = d[k].get("perf_report") or {}
     cr = d[k].get("correctness_report") or {}
-    c = collections.Counter((cr.get("test_results") or {}).values())
+    tr = cr.get("test_results") or {}
+    p2p = cr.get("PASS_TO_PASS") or list(tr.keys())
+    cpct = (sum(1 for t in p2p if tr.get(t) == "PASSED") / len(p2p)) if p2p else None
     return {
         "impr": p.get("improvement"),
-        "cpct": cr.get("correctness_pct"),
-        "failed": c.get("FAILED", 0),
-        "passed": c.get("PASSED", 0),
+        "cpct": cpct,
+        "failed": sum(1 for v in tr.values() if v == "FAILED"),
+        "passed": sum(1 for v in tr.values() if v == "PASSED"),
     }
 
 
