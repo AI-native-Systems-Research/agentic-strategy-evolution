@@ -62,13 +62,13 @@ edit source -> re-measure -> confirm the covering tests still pass. Iterate a fe
 Aim for a genuine speedup with green tests. When finished, stop; your /testbed edits are the patch."""
 
 
-def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo, nous_iters=3):
+def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo, nous_iters=5, stop_speedup=None):
     """Run a Nous campaign that optimizes /testbed inside the task container via docker exec."""
     import yaml
     covering = inst.get("covering_tests") or []
     ct = " ".join(covering)
-    run_dir = Path(logdir) / f"nous_{cname}"
-    shutil.rmtree(run_dir, ignore_errors=True)  # clean stale Nous state (avoid "already in progress")
+    # timestamped run dir => every trial's artifacts persist (reproducible), no stale-state collision
+    run_dir = Path(logdir) / f"nous_{cname}_{time.strftime('%Y%m%d-%H%M%S')}"
     run_dir.mkdir(parents=True, exist_ok=True)
     desc = (
         f"A prebuilt Docker container named '{cname}' holds a Python library checked out at /testbed "
@@ -122,6 +122,9 @@ def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo, nous_iters=3)
             m = parse_mean(dexec(cname, "python /tmp/workload.py", timeout=1200).stdout)
             if m and base_mean and (base_mean / m) > best["speedup"]:
                 best = {"patch": diff, "speedup": round(base_mean / m, 3)}
+                if stop_speedup and best["speedup"] >= stop_speedup:
+                    best["early_stopped"] = True  # beat the baseline target -> stop early
+                    break
         if proc.poll() is None:
             proc.terminate()
     if not best["patch"]:  # fallback to final state if nothing captured
@@ -149,7 +152,9 @@ def main():
     ap.add_argument("--logdir", default="/home/ubuntu/nous_swe/gen_logs")
     ap.add_argument("--nous-bin", default="/home/ubuntu/nous_repo/.venv/bin/nous")
     ap.add_argument("--nous-repo", default="/home/ubuntu/nous_repo")
-    ap.add_argument("--nous-iters", type=int, default=3)
+    ap.add_argument("--nous-iters", type=int, default=5)
+    ap.add_argument("--stop-speedup", type=float, default=None,
+                    help="early-stop Nous once a correct diff reaches this speedup (e.g. 1.2x best baseline)")
     args = ap.parse_args()
     label = args.label or args.agent
     iid = args.instance_id
@@ -182,7 +187,7 @@ def main():
             (Path(args.logdir) / f"{cname}.prompt.txt").write_text(prompt)
             rc = run_claude(prompt, args.model, Path(args.logdir) / f"{cname}.agent.log")
         else:  # nous — capture BEST validated diff during the run (final state is unreliable)
-            best = run_nous(iid, inst, cname, args.model, args.logdir, args.nous_bin, args.nous_repo, args.nous_iters)
+            best = run_nous(iid, inst, cname, args.model, args.logdir, args.nous_bin, args.nous_repo, args.nous_iters, args.stop_speedup)
             patch_override = best["patch"]
             meta["nous_best_speedup"] = best["speedup"]
             rc = 0
