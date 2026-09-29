@@ -56,7 +56,7 @@ edit source -> re-measure -> confirm the covering tests still pass. Iterate a fe
 Aim for a genuine speedup with green tests. When finished, stop; your /testbed edits are the patch."""
 
 
-def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo):
+def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo, nous_iters=3):
     """Run a Nous campaign that optimizes /testbed inside the task container via docker exec."""
     import yaml
     covering = inst.get("covering_tests") or []
@@ -76,7 +76,7 @@ def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo):
         "research_question": f"How can we reduce the runtime of the workload for {inst.get('repo')} "
                              f"without changing its behavior, while keeping the covering tests green?",
         "run_id": f"swe-{iid}",
-        "max_iterations": 1,
+        "max_iterations": nous_iters,
         "target_system": {
             "name": f"swefficiency::{iid}",
             "description": desc,
@@ -94,7 +94,7 @@ def run_nous(iid, inst, cname, model, logdir, nous_bin, nous_repo):
     env = dict(os.environ)
     env["NOUS_CAMPAIGN_PARENT"] = str(run_dir / "nous_runs")
     log = run_dir / "nous.log"
-    cmd = [nous_bin, "run", str(camp), "--auto-approve", "--agent", "sdk", "--sandbox", "bypass", "--max-iterations", "1"]
+    cmd = [nous_bin, "run", str(camp), "--auto-approve", "--agent", "sdk", "--sandbox", "bypass", "--max-iterations", str(nous_iters)]
     with open(log, "w") as lf:
         p = subprocess.run(cmd, cwd=nous_repo, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True, timeout=7200)
     return p.returncode
@@ -120,6 +120,7 @@ def main():
     ap.add_argument("--logdir", default="/home/ubuntu/nous_swe/gen_logs")
     ap.add_argument("--nous-bin", default="/home/ubuntu/nous_repo/.venv/bin/nous")
     ap.add_argument("--nous-repo", default="/home/ubuntu/nous_repo")
+    ap.add_argument("--nous-iters", type=int, default=3)
     args = ap.parse_args()
     label = args.label or args.agent
     iid = args.instance_id
@@ -149,7 +150,7 @@ def main():
             (Path(args.logdir) / f"{cname}.prompt.txt").write_text(prompt)
             rc = run_claude(prompt, args.model, Path(args.logdir) / f"{cname}.agent.log")
         else:  # nous
-            rc = run_nous(iid, inst, cname, args.model, args.logdir, args.nous_bin, args.nous_repo)
+            rc = run_nous(iid, inst, cname, args.model, args.logdir, args.nous_bin, args.nous_repo, args.nous_iters)
         meta["agent_seconds"] = round(time.time() - t0, 1)
         meta["agent_rc"] = rc
 
