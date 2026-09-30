@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether adding bitmap-based gap-filling to the existing skyline greedy packer improves the judge score for polyomino rectangle packing. The experiment compares a new variant (v8, with gap-filling) against the established v7 baseline (no gap-filling) that has scored 79-86 in prior iterations.",
+  "key_points": [
+    "Two arms: h-main (v8 with bitmap gap-filling) and h-control-negative (v7 baseline without gap-filling). Each arm runs the judge once (~45s), producing a score from 0-100.",
+    "The hypothesis predicts v8 will score equal to or marginally better (0-2 points) than v7, since gap-filling targets internal voids below the skyline that non-rectangular pieces create. The expected improvement is small relative to ~5-point inter-run variance.",
+    "Confirmation: v8 scores \u2265 v7 (or within noise). Refutation: v8 scores >3 points below v7, suggesting the bitmap overhead (cache pollution, slower inner loop) outweighs the density benefit. The diagnostic suggests checking whether v8 explores fewer width candidates if it underperforms.",
+    "Risk is low: this is an incremental single-mechanism test on top of a well-characterized baseline (skyline greedy + dynamic lookahead + column compaction + 3 orderings). No parameter tuning is involved \u2014 gap-filling is binary on/off.",
+    "Design is clean: no ablation arm needed (mechanism is atomic), no dose-response (binary feature). The two arms are sufficient to measure the gap-filling effect within the noise floor of the scoring system."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

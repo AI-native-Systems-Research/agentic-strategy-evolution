@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed: P\u00f3sa rotation with Warnsdorff greedy scored 72/100, beating the greedy-only control at 41/100 by 31 points. The rotation mechanism is decisive on medium graphs (n=1K\u20138K) where it converts partial coverage into full Hamiltonian paths on 7/10 tests, but fails on 3 hard tests with sparse/low-degree structures (tests 4, 8, 10 scoring 1/10, 1/10, 0/10 respectively).",
+  "key_points": [
+    "h-main (P\u00f3sa rotations): predicted \u226550, observed 72 \u2014 CONFIRMED. Achieves full Hamiltonian path on 7/10 tests (70 points from those), with partial credit of 1 each on tests 4 and 8.",
+    "h-control-negative (greedy only): predicted 35\u201345, observed 41 \u2014 CONFIRMED. Gets stuck at 56\u201384% vertex coverage on medium graphs, only solves the 3 smallest tests perfectly.",
+    "The 31-point gap is entirely from tests 5\u20137 and 9 (medium graphs, n=1K\u20138K, avg degree \u22655.4), where rotations escape dead ends and find the full Hamiltonian path (10/10 each) while greedy alone scores only 2\u20133/10.",
+    "Remaining 28 points are lost on 3 hard tests: test 4 (n=500, k=223, score 1/10), test 8 (n=9000, k=3309, score 1/10), test 10 (n=100K, k=4966, score 0/10) \u2014 all have high proportions of low-degree vertices (16\u201341%) making rotation ineffective.",
+    "Next iteration should target the 3 failing tests with stronger techniques: DFS backtracking for small test 4 (n=500), multi-restart or simulated annealing for test 8, and a scalable heuristic (e.g., Lin-Kernighan style or SCC-based ordering) for the large test 10 (n=100K)."
+  ]
+}

@@ -40,16 +40,76 @@
     },
     {
       "id": "RP-3",
-      "statement": "The skyline packer's score is sensitive to the time-managed width sweep budget \u2014 fewer candidate widths evaluated (due to slower machine or shorter time budget) can reduce the score by ~5 points, from ~76 to ~72.",
-      "confidence": "medium",
-      "regime": "Skyline packer with time limit of 1900ms, ~160 candidate widths. Observed on n up to 10000, k up to 10.",
+      "statement": "The skyline packer's score is sensitive to time-managed width sweep budget \u2014 system load variations cause score ranges of 6+ points (iter-2: 6.28 for h-main; iter-3: 6.31 for h-control-negative, 5.08 for h-main). This variance is the dominant source of noise and prevents detection of algorithmic improvements smaller than ~3 points. Reducing this variance (via faster pack operations or smarter width search) is the highest-leverage path to consistent improvement.",
+      "confidence": "high",
+      "regime": "Skyline greedy packing with time-managed width sweep, 2s time limit, random polyominoes k=1-10, n=100-10000.",
       "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-ablation",
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "The time-managed width sweep explores different numbers of widths depending on system speed. On a fast system, 15+ widths are explored and the optimal is likely found. On a slow system, only 3-4 widths are explored, and missing the optimal width costs 5+ points. Any algorithmic overhead that slows down the pack function reduces the number of widths explored, potentially hurting rather than helping.",
+      "applicability_bounds": "Applies under the 2s time limit with the current time management strategy. If the time budget were larger or the width search were adaptive (golden section, Bayesian), the variance would decrease.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "Dynamic lookahead (examining K = n/4 candidate pieces) is the dominant improvement mechanism for greedy skyline packing, contributing ~63% of total score improvement (6.94 of 11.10 points over the iter-1 baseline). The mechanism allows the greedy packer to escape locally suboptimal choices by selecting the best-fitting piece from a window rather than the fixed-order next piece.",
+      "confidence": "high",
+      "regime": "Random polyominoes (k=1-10, n=100-10000), 2-second time limit, greedy skyline placement",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "At each step, the packer examines min(n/4, remaining) candidate pieces and selects the one whose best orientation minimizes global height. This avoids placing large pieces in suboptimal positions and matches small pieces to skyline gaps. The window is dynamically adjusted for large instances to stay within the 2s time limit.",
+      "applicability_bounds": "Holds for the specific polyomino packing problem with random inputs (k=1-10). The 63% contribution figure is for the combined baseline of roughness + compaction + multi-ordering; the absolute lookahead contribution depends on what other improvements are present. May not hold for structured (non-random) inputs where piece ordering matters less.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "Secondary packing improvements (roughness tiebreaker, column compaction, multi-ordering with hybrid time strategy) contribute ~4 points over the iter-1 skyline baseline (~76 vs ~72), independent of lookahead. These are complementary but not individually dominant.",
+      "confidence": "high",
+      "regime": "Random polyominoes (k=1-10, n=100-10000), 2-second time limit",
+      "evidence": [
+        "iteration-2-h-ablation",
         "iteration-1-h-main"
       ],
       "contradicts": [],
-      "extraction_iteration": 1,
-      "mechanism": "The width sweep evaluates candidate widths sorted by distance from the estimated optimal. The time manager breaks the loop when elapsed + 1.3*avgTime > 1900ms. On slower hardware, the per-width packing is slower, so fewer widths are evaluated, potentially missing the width that produces the minimum-area rectangle.",
-      "applicability_bounds": "Most relevant for large n (6000+) where per-width packing time is substantial. For small n (~100), the sweep completes all candidates quickly regardless of machine speed.",
+      "extraction_iteration": 2,
+      "mechanism": "Roughness tiebreaker keeps skyline smooth for future placements. Column compaction removes empty columns to reduce effective width. Multi-ordering tries 3 strategies (ascending-min-dim, descending-cell-count, descending-max-dim) to capture different packing opportunities. Hybrid time strategy allocates 60% to width sweep and 40% to alternative orderings.",
+      "applicability_bounds": "The ~4 point improvement is measured against the iter-1 skyline packer (no roughness, no compaction, single ordering). The absolute contribution may vary with different baseline implementations.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "Bitmap-based gap-filling during skyline packing produces no statistically detectable improvement over the v7 baseline (mean paired difference +0.50 points, t=0.226, p>>0.05). The effect size (0-2 points predicted, 0.50 observed) is an order of magnitude smaller than the system-load variance (~6 points range). Gap-filling is not a viable optimization path for this problem at the current algorithm maturity.",
+      "confidence": "medium",
+      "regime": "Skyline greedy packing with dynamic lookahead (K=n/4), roughness tiebreaker, column compaction, 3 orderings, hybrid time strategy, 2s time limit, random polyominoes k=1-10, n=100-10000.",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Gap-filling maintains a 2D bitmap alongside the skyline array and scans for lower placement positions in internal gaps. While theoretically sound (internal gaps exist below the skyline due to non-rectangular pieces), the practical benefit is negligible because: (1) the skyline profile already approximates the optimal placement height for most pieces, (2) the bitmap allocation and scan add per-pack-call overhead that may reduce the number of width-sweep iterations under the time budget, and (3) the time-managed width sweep's sensitivity to system load creates variance (~6 points) that overwhelms any sub-1-point algorithmic improvement.",
+      "applicability_bounds": "Applies to the specific gap-filling strategy tested (integrated bitmap scan after scoring-loop candidate selection). Does not rule out other gap-filling approaches (e.g., separate gap-filling passes, or BL-bitmap for small instances only). Also does not apply if the time budget were significantly larger (>2s), which would reduce the load-variance dominance.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",

@@ -42,6 +42,64 @@
         }
       ],
       "frontier_update": null
+    },
+    {
+      "iteration": 2,
+      "family": "lookahead-enhanced-packing",
+      "timestamp": "2026-09-30T13:13:24.762585+00:00",
+      "candidate_id": "iter-2",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {
+        "ablation-0": "CONFIRMED"
+      },
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-3",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-4",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 3,
+      "family": "gap-filling-packing",
+      "timestamp": "2026-09-30T14:29:38.483549+00:00",
+      "candidate_id": "iter-3",
+      "h_main_result": "PARTIALLY_CONFIRMED",
+      "ablation_results": {},
+      "control_result": "CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 2,
+        "accuracy_pct": 50.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-3",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-6",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
     }
   ]
 }

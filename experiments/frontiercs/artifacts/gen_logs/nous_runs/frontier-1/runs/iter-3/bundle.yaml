@@ -1,0 +1,57 @@
+metadata:
+  iteration: 3
+  family: "treasure-packing-amortized-walltime-guard"
+  research_question: "Can an amortized wall-time guard (chrono::steady_clock every 512 B&B nodes) with fast I/O and conditional LS2 reliably achieve 100/100, eliminating Docker-induced score drops?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism refinement (amortized wall-time guard + I/O performance) building on iter-2's partial confirmation and prior iter-3 attempt's failure. Tier 1 insufficient because iter-2 showed clock()-based approach was inadequate (RP-5) and prior attempt showed naive chrono was also inadequate (per-node overhead). Not tier 3 because still addressing a single mechanism (execution time management) rather than multi-mechanism interaction."
+
+arms:
+  - type: h-main
+    prediction: "The amortized wall-time guard (chrono::steady_clock checked every 512 B&B nodes at 700ms threshold) combined with fast I/O (char[]/fread/printf) and conditional LS2 will reliably produce a judge score of 100, improving upon iter-2's 70% reliability rate at 100. The amortization eliminates the ~100% chrono overhead observed in the prior iter-3 attempt (TC1: 21ms->40ms with per-node, 19ms with amortized), while fast I/O eliminates the string/stream overhead of the prior attempt."
+    mechanism: "Three synergistic optimizations address the Docker timing issue: (1) chrono::steady_clock measures wall time (not CPU time like clock()), directly matching Docker's 1s limit. (2) Amortization every 512 nodes (via bnb_nodes & 511 == 0) reduces chrono overhead from ~100% to <1%, keeping the solution at ~19ms locally for the hardest case. (3) Conditional LS2 (only when B&B timed out and time < 800ms) eliminates unnecessary post-B&B work. Together, these keep total wall time well under 300ms in Docker, leaving >700ms of headroom for Docker overhead. The greedy+LS1 fallback (scoring ~90.6) is always available if the guard triggers."
+    diagnostic: "If score still drops to 95: (a) the 700ms guard is not the bottleneck — Docker process startup overhead alone exceeds 300ms on some runs, leaving insufficient time for even a 100ms algorithm; (b) try reducing guard to 500ms; (c) the remaining ~20% failure rate may be irreducible Docker variance where container startup + algorithm + output exceeds 1s regardless of algorithm speed. If score drops to 90 or below: (d) the amortized guard has a bug (check that bnb_timed_out propagates correctly); (e) the code change broke optimality (verify output matches unmodified solution on all 20 test cases locally)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Starting from the worktree's existing full B&B solver (fast char[]/fread/printf I/O, 12 ternary iterations, multi-greedy heuristics, local search), add four changes: (1) Add globals: chrono::steady_clock::time_point start_time and bool bnb_timed_out = false. (2) In solve(), after bnb_nodes++, add amortized time guard: if (bnb_nodes & 511) == 0, check chrono::steady_clock; if >700ms elapsed, set bnb_timed_out = true and return. Also add if (bnb_timed_out) return after the guard block for fast recursion unwinding. (3) Set start_time = chrono::steady_clock::now() as first line of main(). (4) Replace unconditional local_search() after solve() with conditional: only run if bnb_timed_out && elapsed < 800ms."
+        rationale: "Addresses RP-5 (clock vs wall time), the prior iter-3 failure (per-node chrono overhead), and unnecessary LS2 work. The amortized approach preserves the original solution's speed (<20ms locally) while adding wall-time visibility."
+
+# Arms chosen:
+# - h-main only. This is a targeted fix for a well-characterized issue (RP-5 + prior
+#   iter-3 failure analysis). The prior attempt failed due to per-node chrono overhead
+#   and slow I/O, not because the approach was wrong. The control condition is iter-2's
+#   documented 7/10 at 100 (10 runs) — re-running it adds cost without new information.
+#   Design-phase testing confirms 8/10 at 100 with the amortized approach.
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -pipe -static -s -std=gnu++17 -o solution solution.cpp"
+  verified_parameters:
+    max_mass_mg: 20000000
+    max_volume_ul: 25000000
+    n_item_types: 12
+    n_test_cases: 20
+    time_limit_seconds: 1
+    ternary_iterations: 12
+    time_guard_ms: 700
+    time_guard_type: "chrono::steady_clock (wall time, amortized every 512 nodes)"
+    time_guard_amortization: 512
+    start_time_location: "first line of main() (before parsing)"
+    io_method: "fread + manual parsing + printf (zero heap allocations)"
+    conditional_ls2: true
+  unlocked_parameters_audit:
+    - name: "greedy_alpha_step"
+      default_value: 0.05
+      justification: "21 alpha-parameterized greedy variants provide good density-space coverage without significant runtime cost — validated across 3 iterations."
+    - name: "tight_ub_depth_cutoff"
+      default_value: 8
+      justification: "Tight Lagrangian bounds for first 8 of 12 tree levels captures most impactful pruning — reducing to 4 causes all cases to hit 700ms time guard (measured during exploration)."
+    - name: "local_search_remove_depth"
+      default_value: 10
+      justification: "Removing up to 10 of each item in remove-refill covers useful swap neighborhoods — increasing to 20 showed no improvement in iter-1 testing."
+    - name: "chrono_amortization_period"
+      default_value: 512
+      justification: "512 nodes between chrono checks balances guard latency (<0.5ms worst case) vs overhead (<0.1ms total). Measured: 19ms with guard vs 21ms without (faster due to measurement noise)."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+    observation_method: "Design-phase testing: 10 judge runs completed in ~30-45s each. Each run evaluates 20 test cases in Docker containers."

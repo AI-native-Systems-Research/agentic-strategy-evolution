@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether five micro-optimizations (compiler pragma, early-exit detection, write() syscall output, tighter time-guard interval, and removing unnecessary post-B&B local search) can eliminate the remaining ~15-20% of judge runs that hit the Docker time limit, pushing the score from the current ~99.0 mean (80% at 100/100) to a reliable 100/100. This is iteration 4 of a knapsack solver that already produces exact-optimal solutions but intermittently times out in the containerized judge environment.",
+  "key_points": [
+    "The core branch-and-bound algorithm is correct and fast \u2014 all prior failures are due to Docker sandbox overhead causing TLE on ~15-20% of runs, not algorithmic errors.",
+    "One experiment arm (h-main) applies five synergistic changes: #pragma O3, early-exit on ~8/20 test cases where greedy+LS already finds the optimum (skipping B&B entirely), write() syscall to avoid stdio buffering loss on SIGKILL, 256-node chrono check interval (halved from 512), and removal of redundant post-B&B local search.",
+    "Success criterion: judge score of 100 on the official measurement (bash fmeasure_1.sh). Prior baseline is 26 runs with 22 at 100, 3 at 95, 1 at 90 (mean ~99.0). If score < 100, diagnostic paths are specified: check if early-exit precision is wrong, if pragma causes compilation failure, or if Docker overhead remains irreducible.",
+    "Risk is low \u2014 changes are additive optimizations to a working solution. The main risk is that #pragma may not be supported by the judge's GCC version (fallback: remove pragma). No control arm is included because iter-3 already provides the baseline with 15+ measured runs."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

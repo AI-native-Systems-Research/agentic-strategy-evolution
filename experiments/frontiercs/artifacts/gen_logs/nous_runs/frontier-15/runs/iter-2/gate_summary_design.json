@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether the circular buffer rotation sorting algorithm from iteration 1 (which already scored 100) can be micro-optimized by handling the last 3 unsorted elements via BFS-optimal sequences instead of the last 2, reducing worst-case operations from 2n+1 to 2n-2. A second arm ablates the prefix-restoration step (Op2) to confirm it is mechanistically necessary for correctness.",
+  "key_points": [
+    "h-main: Optimized endgame dispatches on 6 permutations of the final 3 elements using BFS-derived operation sequences (2-4 ops each). Predicted outcome: score 100 with ~1.4 fewer average operations than iter-1 (worst-case 1998 vs 2001 for n=1000). This tests whether the scoring formula rewards fewer operations beyond the 100-point threshold.",
+    "h-ablation: Removes Op2 (the step that restores the sorted prefix to position [0..cf-1] after each rotation). Predicted outcome: score 0, because without restoring the invariant the algorithm scrambles the permutation. This validates that the 2-operation mechanism (Op1+Op2) is indivisible \u2014 neither step alone suffices.",
+    "Confirmation criteria: h-main confirmed if score=100 and operation count \u2264 1998 on all cases; refuted if any case exceeds 1998 ops or score drops below 100. h-ablation confirmed if score=0; refuted if score>0 (would indicate some cases are trivially sorted or the invariant break is recoverable).",
+    "Risk note: The scoring formula is 100*clamp((4n - ops)/(4n - best_ops), 0, 1). If 'best_ops' is the judge's internal optimal, h-main's score depends on how close our ops are to that benchmark. If the judge's best is significantly below 1998, our score could be <100 despite producing the correct (identity) permutation.",
+    "Design is clean: two arms, one optimization and one ablation, both modifying the same file with clearly separable code changes. Preflight compilation check is specified. Each arm calls the judge exactly once."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

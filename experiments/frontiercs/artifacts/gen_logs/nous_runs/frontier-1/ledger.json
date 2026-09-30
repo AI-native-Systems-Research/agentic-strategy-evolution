@@ -70,6 +70,58 @@
         }
       ],
       "frontier_update": null
+    },
+    {
+      "iteration": 3,
+      "family": "treasure-packing-amortized-walltime-guard",
+      "timestamp": "2026-09-30T13:35:50.563995+00:00",
+      "candidate_id": "iter-3",
+      "h_main_result": "PARTIALLY_CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 0,
+        "arms_total": 1,
+        "accuracy_pct": 0.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-6",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 4,
+      "family": "treasure-packing-optimized-bnb-v4",
+      "timestamp": "2026-09-30T14:31:00.879520+00:00",
+      "candidate_id": "iter-4",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 1,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-7",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
     }
   ]
 }

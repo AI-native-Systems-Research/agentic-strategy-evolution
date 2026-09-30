@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether P\u00f3sa rotation-extension (a technique that restructures a path via O(1) pointer surgery when the greedy extension gets stuck) is the key mechanism for maximizing path length on a directed Hamiltonian path problem. During prior exploration, this approach scored 72 vs 41 without rotations, and we now formalize this as a controlled A/B experiment.",
+  "key_points": [
+    "Two arms: h-main (Warnsdorff greedy + P\u00f3sa rotations using doubly-linked list, predicted score \u226550) vs h-control-negative (identical algorithm but with rotations disabled, predicted score ~35-45). The only difference is the rotation mechanism.",
+    "Confirmation criteria: h-main scores significantly higher than h-control (exploratory gap was 72 vs 41). If the gap is <5 points, the rotation mechanism is not the active ingredient and we'd investigate alternative explanations (e.g., graph structure allows easy greedy solutions).",
+    "Key implementation details are well-specified: O(1) linked-list rotations, dynamic Warnsdorff heuristic, bidirectional extension, 3.6s time budget, smart start selection (30 candidates), up to 2M rotations per restart. Parameters were tuned during exploration with justifications provided.",
+    "Risk factors: seed sensitivity was observed (seed 42\u219272, seed 123\u219254), so results may vary across test cases. The design locks seed at 42 for reproducibility but this could mask robustness issues \u2014 a dose-response arm exploring seed diversity is deferred to iteration 2.",
+    "The problem guarantees a Hamiltonian path exists, so the theoretical maximum score is 100 (all 10 threshold parameters satisfied). The scoring function is a step function over 10 thresholds a_i, meaning partial improvements in path length may not change the score unless they cross a threshold boundary."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

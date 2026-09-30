@@ -214,7 +214,7 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
     camp_dir = ws.parent / "nous_runs" / f"frontier-{pid}"
     seen, cands = set(), []
     globbed = (list((ws / ".nous-experiments").glob("**/solution.cpp"))
-               + list(camp_dir.glob("runs/iter-*/inputs/*-solution.cpp"))
+               + list(camp_dir.glob("runs/iter-*/inputs/*solution.cpp"))
                + [ws / "solution.cpp"])
     for sc in globbed:
         if not sc.exists():

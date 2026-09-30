@@ -1,0 +1,26 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The gap-filling variant (v8) will score equal to or marginally higher (0-2 points) than the v7 baseline on average. The improvement is expected to be small relative to the ~5-point inter-run variance, so a single run may show either direction.",
+      "observed": "Scores: 81.24, 86.33, 82.53. Mean: 83.37, stdev: 2.64, range: 5.08. Paired differences vs interleaved h-control-negative runs: +1.33, +3.88, -3.70. Mean paired diff: +0.50 points (h-main higher). Paired t-test: t=0.226, df=2, not statistically significant (critical t=4.303 at alpha=0.05). The mean difference (+0.50) is within the predicted 0-2 point range, but the paired variance (stdev=3.86) is far larger than the effect size, confirming the prediction that the improvement is small relative to system-load-induced variance. One of three pairs showed v7 beating v8 by 3.70 points.",
+      "status": "PARTIALLY_CONFIRMED",
+      "error_type": "magnitude",
+      "diagnostic_note": "Direction is weakly positive (+0.50 mean paired diff) but not statistically distinguishable from zero. The prediction anticipated this: 'the improvement is expected to be small relative to the ~5-point inter-run variance, so a single run may show either direction.' The observed data matches this self-aware prediction. The gap-filling mechanism may provide a marginal benefit, but the time-managed width sweep's load sensitivity creates ~6 point variance that dwarfs any sub-1-point algorithmic improvement. The diagnostic question (does bitmap overhead reduce width exploration?) cannot be answered without per-run width-exploration counts, which the judge does not report. Practically, gap-filling does NOT reliably improve the score \u2014 it is within noise of the baseline."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The v7 baseline (no gap-filling) will score in the range 79-86, matching prior iteration results.",
+      "observed": "Scores: 79.92, 82.45, 86.23. Mean: 82.87, stdev: 3.18, range: 6.31. All three scores fall within the predicted 79-86 range. The mean (82.87) matches the iter-2 h-main mean (82.86) almost exactly, confirming the baseline is stable across iterations.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "v7 baseline performs as expected. The range (6.31 points) confirms the system-load sensitivity observed in all prior iterations (RP-3). The highest score (86.23) is comparable to the human reference solution (~86), confirming v7 is near-ceiling for this algorithm family."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The experiment is valid but the predicted effect size (0-2 points) is too small to detect reliably against the ~5-point system-load variance (RP-3). h-main scored +0.50 points higher on average (mean paired difference), which is within the prediction's 0-2 point range, but paired t-test gives t=0.226 (df=2), far from significance. The prediction's self-aware framing ('small relative to variance') is confirmed \u2014 the gap-filling mechanism may work but its effect is swamped by load-induced score variance. The h-control-negative arm is cleanly CONFIRMED: all scores within 79-86, mean of 82.87 matching iter-2 exactly. Key practical finding: bitmap-based gap-filling during skyline packing does NOT provide a reliably detectable improvement over the v7 baseline. Further score improvements require either (a) reducing the dominant variance source (time-managed width sweep sensitivity to load) or (b) a mechanism with larger effect size than gap-filling.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

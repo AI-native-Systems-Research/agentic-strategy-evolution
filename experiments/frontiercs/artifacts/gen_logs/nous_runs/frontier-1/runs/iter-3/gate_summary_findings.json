@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 3 improved judge score reliability to 80% at 100 (mean 99.0) from iter-2's 70% at 100 (mean 98.5) by switching to an amortized chrono::steady_clock wall-time guard with fast I/O. The prediction of 'reliable 100' was not fully met \u2014 20% of runs still score 95 due to irreducible Docker container timing variance.",
+  "key_points": [
+    "Score: 8/10 runs at 100, 2/10 at 95, mean = 99.0 (up from iter-2: 7/10 at 100, mean = 98.5). Single best score remains 100.",
+    "Three mechanism changes all worked as designed: (1) chrono::steady_clock correctly measures wall time instead of CPU time, (2) amortized checking every 512 B&B nodes eliminates chrono overhead, (3) fread/printf fast I/O preserves <25ms algorithm speed.",
+    "The 700ms wall-time threshold leaves 300ms for Docker overhead, but container startup + CPU scheduling occasionally exceeds this budget, causing the residual 5-point drops in ~20% of runs \u2014 this appears to be an irreducible environment artifact rather than an algorithmic issue.",
+    "The algorithm (branch-and-bound with local search fallback) is effectively optimal for this bounded knapsack problem; further score gains would require addressing Docker timing variance (e.g., lowering the timeout further or making the algorithm faster), with diminishing returns from the current 99.0 mean."
+  ]
+}

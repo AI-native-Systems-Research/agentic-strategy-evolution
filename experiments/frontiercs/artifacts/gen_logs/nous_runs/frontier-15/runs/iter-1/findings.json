@@ -1,0 +1,28 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The circular buffer rotation algorithm will achieve score 100 on all test cases by sorting every n=1000 permutation in \u2264 2001 operations (2n+1). Probe data shows mean 1985 ops across 50 random trials.",
+      "observed": "SCORE: 100. Independently verified on the full judge (10 test cases, all n=1000). The algorithm sorts every test permutation within the 2n+1 operation bound, achieving perfect score.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The no-algorithm baseline (output 0 operations, leave permutation unchanged) will score 0 because the checker requires a fully sorted final permutation.",
+      "observed": "SCORE: 0. The no-operation solution leaves the permutation unsorted. The checker detects the unsorted state and assigns score 0, confirming that algorithmic effort is required.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "This confirms that the h-main score of 100 is due to the circular buffer rotation algorithm, not a trivial property of the problem or the checker."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main achieves perfect score (100) via the circular buffer rotation algorithm using \u2264 2n+1 operations. h-control-negative confirms score 0 without any sorting algorithm. The contrast validates that the mechanism (structured rotation of circular buffer) is causally responsible for the score.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}

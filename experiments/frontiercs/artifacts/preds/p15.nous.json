@@ -1,0 +1,6 @@
+{
+  "problem_id": "15",
+  "agent": "nous",
+  "best_score": 100.0,
+  "solution": "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-2/inputs/baseline_solution.cpp"
+}

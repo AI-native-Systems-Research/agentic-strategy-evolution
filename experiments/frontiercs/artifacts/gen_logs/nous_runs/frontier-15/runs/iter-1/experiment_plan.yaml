@@ -1,0 +1,20 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+  mode: "real"
+setup:
+  - cmd: "g++ -O2 -std=c++17 -o solution solution.cpp"
+    description: "Build the solution from stub"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "circular-buffer-rotation-sort"
+        cmd: "git checkout -- . && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-1/patches/h-main.patch && g++ -O2 -std=c++17 -o solution solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_15.sh $PWD/solution.cpp | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-1/results/h-main/score.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-1/results/h-main/score.txt"
+        inputs: []
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "no-operation-baseline"
+        cmd: "git checkout -- . && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-1/patches/h-control-negative.patch && g++ -O2 -std=c++17 -o solution solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_15.sh $PWD/solution.cpp | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-1/results/h-control-negative/score.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-1/results/h-control-negative/score.txt"
+        inputs: []

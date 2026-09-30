@@ -1,0 +1,34 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The optimized algorithm with BFS-derived last-3-element endgame will achieve score 100 on all 10 test cases. The optimization reduces worst-case operations from 2n+1 to 2n-2 (1998 for n=1000). Average operation count will decrease by ~1.4 ops compared to the iter-1 algorithm.",
+      "observed": "SCORE: 100 on all 10 judge test cases. Operation count statistics over 100 random n=1000 permutations: mean=1983.8, max=1995, min=1971, std=4.9. All 100 trials at or below 1998 (=2n-2). Compared to iter-1 baseline (mean=1985.4, max=2000), average decreased by ~1.6 ops and worst case decreased by 5 ops.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The optimization works exactly as predicted. The 6-way endgame case dispatch on the last 3 elements produces BFS-optimal operation sequences. Score remains 100 (clamped maximum). The average improvement of 1.6 ops is close to the predicted ~1.4.",
+      "metadata": {
+        "score": 100
+      }
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Removing Op2 (the prefix-restoration step) will cause score 0 on all test cases because the sorted-prefix invariant breaks after the first Op1-only placement.",
+      "observed": "SCORE: 0. The ablated algorithm fails to produce sorted output on any test case. Manual verification on n=5 permutation [3,1,5,2,4] confirmed the output [1,5,2,4,3] is not sorted.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Op2 is confirmed essential to the mechanism. Without prefix restoration, the algorithm's loop invariant (p[0..cf-1] = [1..cf]) breaks immediately. Subsequent element searches operate on incorrect position assumptions, producing a scrambled output.",
+      "metadata": {
+        "score": 0
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed. h-main: the optimized last-3-element endgame achieves score 100 with reduced operation count (worst case 2n-2 vs 2n+1), confirming that BFS-optimal endgame sequences improve the algorithm without changing its core mechanism. h-ablation: removing Op2 yields score 0, confirming that the prefix-restoration step is essential to maintaining the sorted-prefix invariant that enables the circular buffer rotation strategy. The mean ops improvement (1.6) slightly exceeds the predicted 1.4 but is within expectation given random permutation variance.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}
