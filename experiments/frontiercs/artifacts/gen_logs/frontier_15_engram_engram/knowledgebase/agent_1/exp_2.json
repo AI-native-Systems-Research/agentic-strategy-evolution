@@ -1,0 +1,7 @@
+{
+  "round": 2,
+  "plan": null,
+  "score": 0,
+  "status": "success",
+  "code": "#include <bits/stdc++.h>\nusing namespace std;\nint main(){\n    int n;\n    scanf(\"%d\",&n);\n    vector<int> p(n);\n    for(int i=0;i<n;i++) scanf(\"%d\",&p[i]);\n    vector<pair<int,int>> ops;\n    auto apply_op=[&](int x,int y){\n        vector<int> np;\n        for(int i=n-y;i<n;i++) np.push_back(p[i]);\n        for(int i=x;i<n-y;i++) np.push_back(p[i]);\n        for(int i=0;i<x;i++) np.push_back(p[i]);\n        p=np;\n        ops.push_back({x,y});\n    };\n    // Place elements from right to left\n    for(int target=n-1;target>=1;target--){\n        // Find where target+1 is\n        int j=-1;\n        for(int k=0;k<=target;k++) if(p[k]==target+1){j=k;break;}\n        if(j==target) continue;\n        // Move p[j] to position target\n        // First move to position 0: x=1, y=n-j -> need j>=1\n        if(j>0){\n            apply_op(1,n-j);\n            // now target+1 is at position 0\n        }\n        // Now move position 0 to position target: x=n-target, y=target\n        if(target>0){\n            apply_op(n-target,target);\n        }\n    }\n    printf(\"%d\\n\",(int)ops.size());\n    for(auto&[a,b]:ops) printf(\"%d %d\\n\",a,b);\n}\n"
+}

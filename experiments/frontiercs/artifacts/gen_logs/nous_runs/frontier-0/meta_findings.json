@@ -1,0 +1,30 @@
+{
+  "schema_version": "1",
+  "generated_at": "2026-09-30T18:20:20.271602+00:00",
+  "run_id": "frontier-0",
+  "iterations_completed": 5,
+  "campaign_design_lessons": [],
+  "target_system_asks": [
+    {
+      "ask": "Reduce api_error failures during design: the dispatcher retried 2 times in this campaign.",
+      "evidence": "retry_log.jsonl: phase=design failure_type=api_error count=2 sample=\"SDK reported is_error=True with no result text; captured context: stop_reason=tool_use subtype=error_max_turns num_turns\"",
+      "kind": "reproducibility"
+    }
+  ],
+  "nous_asks": [],
+  "deployment_recommendation": {
+    "verdict": "fall_back_to_baseline",
+    "top_candidate_id": "iter-1/h-main/0",
+    "score": 0.0,
+    "citations": [
+      {
+        "iteration": 1,
+        "arm_id": "h-main",
+        "evidence_snippet": "iter-1 arm_id=h-main score=0.000"
+      }
+    ],
+    "caveats": [
+      "iter-1 arm h-main: best_score = 0.000 <= baseline = 0.000"
+    ]
+  }
+}

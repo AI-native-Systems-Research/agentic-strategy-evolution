@@ -1,0 +1,84 @@
+{
+  "problem_id": "5",
+  "agent": "engram",
+  "label": "engram",
+  "model": "claude-opus-4-6",
+  "final_score": 36.00000000000001,
+  "status": "success",
+  "solution": "/home/ubuntu/frontier/gen_logs/frontier_5_engram.solution.cpp",
+  "best_score": 36.00000000000001,
+  "method": "Engram-style (reimplementation)",
+  "agents": 3,
+  "rounds_per_agent": 3,
+  "code_generations": 9,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 36.00000000000001,
+      "status": "success",
+      "plan": "Use a multi-strategy approach: (1) Try topological sort if DAG - if the topo order has all consecutive edges, it's a Hamiltonian path. (2) Use an ore-type greedy path extension algorithm: start with a random vertex, try to extend the path forward/backward, and when stuck use rotation/reversal tricks"
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 28.000000000000007,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 11.000000000000002,
+      "status": "success",
+      "plan": "Implement a proper P\u00f3sa-style rotation-extension algorithm using a deque-based path with position tracking, randomized neighbor ordering, chained rotations when stuck, and many random restarts within the time limit."
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 26.000000000000007,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 29.00000000000001,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 10,
+      "status": "success",
+      "plan": "Implement a robust P\u00f3sa rotation-extension algorithm with chained rotations, fast position tracking via arrays, randomized restarts with time budget, and Warnsdorff-style neighbor prioritization to find the longest possible path."
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 23.000000000000004,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 20,
+      "status": "success",
+      "plan": null
+    }
+  ],
+  "input_tokens": 16088,
+  "output_tokens": 14947,
+  "cost_usd_est": 1.3623,
+  "journal": "/home/ubuntu/frontier/gen_logs/frontier_5_engram_engram/research_journal.md",
+  "seconds": 469.5
+}

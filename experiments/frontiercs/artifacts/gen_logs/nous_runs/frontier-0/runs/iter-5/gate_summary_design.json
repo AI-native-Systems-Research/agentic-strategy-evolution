@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a composite set of speed and quality improvements (v12) to the skyline-based polyomino packer produces a higher judge score than the established v10 baseline. The experiment runs two arms \u2014 v12 (treatment) and v10 (control) \u2014 each measured once via the judge, which aggregates scores across 70 test cases.",
+  "key_points": [
+    "v12 adds four improvements over v10: precomputed maxHiP1 to speed up pack() calls, orientation-level skip pruning, 5 orderings instead of 3, and a culprit-repair phase that repacks pieces at the height boundary. Design probes showed v12 scoring 82.72\u201386.54 vs v10's iter-4 mean of 82.71.",
+    "Confirmation criterion: v12 should score higher than v10 in this paired comparison. The prediction is v12 > v10 by roughly 1\u20136 points, with v10 expected in the 79\u201386 range.",
+    "Refutation / diagnostic: If v12 does NOT beat v10, the leading explanations are (a) compiler optimizations already eliminate the precomputed-field benefit, (b) the extra orderings and culprit repair consume time that would otherwise go to width exploration, or (c) the speed gain is real but too small to shift the score on the current test set.",
+    "Each arm takes ~70 seconds (one judge call over 70 test cases). Total experiment time is ~2.5 minutes. No ablation arm is included to keep within time budget; decomposition is deferred to iter-6 if the composite improvement is confirmed.",
+    "Risk check: Both solutions were pre-validated during design (compile + valid output). The only unlocked parameter that differs between arms is the solution code itself; compiler flags, time budget, and width-factor table are identical."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}
