@@ -1,0 +1,84 @@
+{
+  "problem_id": "1",
+  "agent": "engram",
+  "label": "engram",
+  "model": "claude-opus-4-6",
+  "final_score": 88.31299999999999,
+  "status": "success",
+  "solution": "/home/ubuntu/frontier/gen_logs/frontier_1_engram.solution.cpp",
+  "best_score": 98.31299999999999,
+  "method": "Engram-style (reimplementation)",
+  "agents": 3,
+  "rounds_per_agent": 3,
+  "code_generations": 9,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 22.169500000000003,
+      "status": "success",
+      "plan": "Branch and bound with LP relaxation upper bounds on the 2-constraint bounded knapsack with 12 item types, using greedy fractional relaxation for bounding and DFS with pruning."
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 6.0275,
+      "status": "success",
+      "plan": "Branch-and-bound with Lagrangian relaxation bounding (binary search over \u03bb to get tight dual bound from combining the 2 constraints), with items sorted by efficiency and aggressive pruning, plus time-limited search."
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 89.99499999999999,
+      "status": "success",
+      "plan": "Implement branch-and-bound with proper 2D Lagrangian relaxation bounding (binary search over lambda to get tight dual bound combining both constraints), seed with a strong greedy initial solution, handle high-quantity items by computing exact max-take at each node, sort items to maximize pruning, an"
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 98.31299999999999,
+      "status": "success",
+      "plan": null
+    }
+  ],
+  "input_tokens": 24818,
+  "output_tokens": 22729,
+  "cost_usd_est": 2.0769,
+  "journal": "/home/ubuntu/frontier/gen_logs/frontier_1_engram_engram/research_journal.md",
+  "seconds": 431.1
+}

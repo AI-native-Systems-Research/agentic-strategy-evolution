@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "The v12 composite improvement (precomputed maxHiP1, orientation-level skip, 5 orderings, culprit repair) was tested against the v10 baseline across 3 seeds. The hypothesis that v12 would outperform v10 by 2-4 points was refuted: v12 averaged 81.90 vs v10's 82.62 (paired mean difference -0.71, t=-0.787, p>>0.05). The v10 baseline remains the best-performing variant at a stable ~83 score plateau.",
+  "key_points": [
+    "REFUTED: v12 (mean 81.90, std 0.70) did not beat v10 (mean 82.62, std 1.30). Paired differences were +0.12, -2.52, +0.26 \u2014 statistically indistinguishable from zero.",
+    "Design-phase back-to-back probes (+6.29, +3.84 for v12) were misleading artifacts of system load variance; the formal alternating-execution experiment showed no real effect.",
+    "CONFIRMED: v10 control scored 82.62 \u00b1 1.30, consistent with iter-4's 82.71 mean, validating measurement stability.",
+    "Root cause analysis: the four v12 enhancements roughly cancel each other \u2014 speed savings from maxHiP1 precomputation are tiny (~14ms), extra orderings don't add meaningful diversity, and culprit repair consumes time that random restarts would use more effectively.",
+    "The system appears to be at a hardware-limited plateau (~83) for the greedy skyline approach. Further gains likely require a fundamentally different algorithmic strategy (e.g., bottom-left with backtracking, simulated annealing over placements, or NFDH/FFDH strip-packing variants)."
+  ]
+}

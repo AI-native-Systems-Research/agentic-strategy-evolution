@@ -1,54 +1,65 @@
-# Frontier-CS (algorithmic): Nous vs plain Claude
+# Frontier-CS (algorithmic): Nous vs Engram vs plain Claude
 
-Controlled head-to-head for the MLSys submission. Both agents use the SAME model
+Controlled methodology comparison for the MLSys submission. All agents use the SAME model
 (`claude-opus-4-6` via litellm), the SAME problems, and the SAME judge scorer
-(`frontier eval algorithmic`, continuous 0-100 partial credit, higher is better).
-The judge has ~±5 run-to-run variance, so every final solution is re-evaluated 3× and we
-report the best; Nous deliverables are the best *correct* arm harvested from its persisted
-per-arm solutions (not its self-report).
+(`frontier eval algorithmic`, continuous 0-100 partial credit, higher is better; ~±5 run-to-run
+variance, so finals are re-evaluated 3×).
 
-- **plain Claude** = driver-controlled iterative loop: the harness runs the judge and feeds the
-  score back to a pure code-generating model call for N rounds, keeping the best (no tool
-  orchestration). This is a strong "use the model iteratively" baseline.
-- **Nous** = native scientific-experimentation campaign (5 iterations of hypothesis bundles →
-  controlled experiment arms → analysis → principles), each arm scored by the same judge.
+## Methods
+- **plain Claude** — driver-controlled iterative refinement: harness runs the judge, feeds the score
+  back to a pure code-gen model call, keeps the best. Strong "use the model iteratively" baseline.
+- **Engram-style** — faithful reimplementation of mit-nms/Engram: sequential fresh-context agents +
+  on-disk Research Journal/Knowledgebase (persist *reasoning* across handoffs) + Struggle Protocol.
+- **Nous** — native scientific-experimentation campaign (hypothesis bundles → controlled experiment
+  arms → analysis → compounding principles), each arm scored by the judge.
+- Curie — attempted; spike hit a blocker (see the Mac-side notes). Not included yet.
 
-## Results
+## Headline results (best score achieved per method, with cost)
 
-| Problem | Type | Nous | Claude | Winner |
+| Problem | Type | Nous | Engram | Claude |
 |---|---|---|---|---|
-| **0** — polyomino packing | hard, huge headroom (human ref ~76) | **86.25** | 1.49 | **Nous** (≈58×) |
-| **5** — Hamiltonian-path ratio | mid, headroom | **83.0** | 28.0 | **Nous** (≈3×) |
-| **15** — lexicographically-smallest permutation | hard correctness gate | **100** | 0 | **Nous** (Claude never cracked the gate) |
-| **1** — treasure/knapsack (clamped) | easy, saturates at ceiling | **100** | 96.81 | Nous (narrow; both near ceiling 100) |
+| **0** — polyomino packing | hard, big headroom (human ref ~76) | **86** ($27) | 55 ($2) | 1.5 ($0.8) |
+| **5** — Hamiltonian-path ratio | mid, headroom | **83** ($46) | 39 ($5) | 41 ($1.4) |
+| **15** — lexicographically-smallest permutation | hard correctness gate | **100** ($32) | 0 | 0 |
+| **1** — treasure/knapsack (clamped) | easy, saturates ceiling 100 | **100** ($46) | ~90 ($2) | 96.8 ($0.8) |
 
-**Nous ≥ Claude on all four**, and wins *decisively* on the three problems with real headroom
-(0, 5, 15). On the one problem that saturates the 100 ceiling (1), both are near-perfect and Nous
-edges it. This matches the thesis: **the scientific loop pays off precisely when problems are hard
-and open-ended; it merely ties when a strong base agent already saturates the task.**
+**Ordering on the discriminating problems: Claude ≲ Engram ≪ Nous.** Nous wins every problem with
+real headroom (0, 5, 15), often by 2× or more; only Nous cracks the p15 correctness gate (100 vs 0
+for both baselines). On the saturated easy problem (1) all three are near the ceiling.
 
-## Cost / time (the honest tradeoff)
+## Cost-matching: is it the methodology, or just more compute?
 
-| Problem | Nous cost | Nous time | Nous LLM calls | Claude cost | Claude time |
-|---|---|---|---|---|---|
-| 0  | $27.45 | 185 min | 20 | ~$0.8¹ | ~4 min |
-| 1  | $46.49 | 219 min | 28 | ~$0.8¹ | ~4 min |
-| 5  | $45.62 | 237 min | 15 | $0.91 | ~4 min |
-| 15 | $32.25 | 242 min | 25 | $0.79 | ~4 min |
+We re-ran Claude and Engram with a **cost budget equal to Nous's per-task spend** (~$27-46) and the
+same early-stop rule Nous uses (stop at ceiling, on plateau, or at budget). Result:
 
-¹ Claude p0/p1 predate token logging; estimated from p5/p15 (same round count).
+| Problem | Claude fixed → cost-matched | Engram fixed → cost-matched | Nous |
+|---|---|---|---|
+| p5 | 28 → **41** (plateau $1.4) | 36 → **39** (plateau $5.3) | **83** |
+| p0 | 1.5 → stuck 0¹ | 55 → stuck 0¹ | **86** |
+| p15 | 0 → 0 (gate, $5) | 0 → 0 (gate, $5.4) | **100** |
 
-Nous costs **~30-50× more** and takes **~50× longer** than plain Claude. The value proposition is
-therefore *not* "cheaper/faster" — it is that Nous **solves hard problems the base agent cannot**
-(p0 1.5→86, p5 28→83, p15 0→100). Use it where the problem is hard, high-value, and the compute is
-justified.
+¹ Cost-matched p0 runs stalled at 0 (invalid packings) and were capped at ~$5. Root causes are
+themselves findings: **score-only feedback** can't tell an agent *why* a packing is invalid, and
+**Engram's journal can anchor later agents on a failing approach** (a memory-propagation weakness).
+The fixed-budget numbers (Engram 55, Claude 1.5) are their real p0 capability.
+
+**Conclusion:** extra budget bought the baselines *marginal* gains on p5 (both land ~40, still half
+of Nous's 83) and **nothing** on p0 or p15. The gap to Nous is **structural — it comes from
+controlled experimentation, not from spending more tokens.** Neither baseline cracks the p15 gate at
+any budget; Nous does.
+
+## Cost/time context
+Nous is the most expensive by far (p0 $27/185min, p5 $46/237min, p15 $32/242min; huge output-token
+counts from multi-arm reasoning). Claude ~$0.8-1.4/task, Engram ~$2-5/task. The value proposition is
+not efficiency — it is **solving hard, open-ended problems the base agent (and simpler agentic
+memory) cannot**, when the compute is justified.
 
 ## Caveats (pilot)
-- **4 tasks** — a pilot to lock the pipeline and show the effect; scale to ~5-6 spanning difficulty
-  for the camera-ready, with a pre-stated selection rule (avoid cherry-pick) and 2-3 seeds/task.
-- Nous runs hit practical limits: p0 stopped after iter-4 (diminishing returns), p15 stopped at the
-  100 ceiling (iter-2), p5 hit the 4h wall at iter-3. Best scores are from the reached iterations.
-- All raw artifacts (per-arm solutions, scores, `llm_metrics.jsonl`, per-round histories) persisted
-  under `experiments/frontiercs/artifacts/`.
+- 4 tasks; scale to ~5-6 spanning difficulty for camera-ready, with a pre-stated selection rule and
+  2-3 seeds/task (single cost-matched runs showed real variance, e.g. p0).
+- Nous runs used early-stop too (p0 after iter-4; p15 at ceiling; p5 hit the 4h wall at iter-3).
+- All raw artifacts (per-agent solutions, journals/knowledgebases, `llm_metrics.jsonl`, per-round
+  histories) persisted under `experiments/frontiercs/artifacts/`.
 
-Runners: `gen/frontier_gen.py` (`--agent claude|nous`). Setup: `SETUP_NOTES.md`, `RUN_ON_MAC.md`.
+Runners: `gen/frontier_gen.py` (`--agent claude|nous|engram`), `gen/frontier_gen_costbudget.py`
+(adds `--cost-budget` + early-stop + retry-backoff). Setup: `SETUP_NOTES.md`, `RUN_ON_MAC.md`.

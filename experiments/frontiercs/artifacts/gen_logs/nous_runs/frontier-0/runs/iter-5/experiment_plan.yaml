@@ -1,0 +1,42 @@
+metadata:
+  iteration: 5
+  bundle_ref: "runs/iter-5/bundle.yaml"
+setup: []
+  # No build step needed - judge compiles internally
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "v12-seed42"
+        cmd: "cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-main-solution.cpp /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/results/h-main/seed42.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-main-solution.cpp"
+      - name: "v12-seed43"
+        cmd: "cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-main-solution.cpp /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/results/h-main/seed43.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-main-solution.cpp"
+      - name: "v12-seed44"
+        cmd: "cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-main-solution.cpp /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/results/h-main/seed44.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-main-solution.cpp"
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "v10-seed42"
+        cmd: "cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-control-negative-solution.cpp /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/results/h-control-negative/seed42.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-control-negative-solution.cpp"
+      - name: "v10-seed43"
+        cmd: "cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-control-negative-solution.cpp /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/results/h-control-negative/seed43.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-control-negative-solution.cpp"
+      - name: "v10-seed44"
+        cmd: "cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-control-negative-solution.cpp /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/results/h-control-negative/seed44.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-5/inputs/h-control-negative-solution.cpp"
+# Execution order: alternating to control for load drift
+# v12-seed42, v10-seed42, v12-seed43, v10-seed43, v12-seed44, v10-seed44

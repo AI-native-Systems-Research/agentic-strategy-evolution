@@ -1,0 +1,7 @@
+{
+  "round": 2,
+  "plan": null,
+  "score": 0,
+  "status": "success",
+  "code": "#include <bits/stdc++.h>\nusing namespace std;\nint main(){\n    int n;\n    scanf(\"%d\",&n);\n    vector<int> p(n);\n    for(int i=0;i<n;i++) scanf(\"%d\",&p[i]);\n    vector<pair<int,int>> ops;\n    auto apply=[&](int x,int y){\n        ops.push_back({x,y});\n        vector<int> np(n);\n        for(int i2=0;i2<y;i2++) np[i2]=p[n-y+i2];\n        for(int i2=y;i2<n-x;i2++) np[i2]=p[x+i2-y];\n        for(int i2=n-x;i2<n;i2++) np[i2]=p[i2-(n-x)];\n        p=np;\n    };\n    auto pos=[&](int v)->int{for(int k=0;k<n;k++)if(p[k]==v)return k;return -1;};\n    for(int i=0;i<n-1;i++){\n        int j=pos(i+1);\n        if(j==i) continue;\n        if(n<=2){break;}\n        // Bring to position 0\n        if(j>0 && j<n-1) apply(j,n-1-j); // works since j+(n-1-j)=n-1<n\n        else if(j==n-1) apply(1,1); // brings pos n-1 to pos 0\n        j=pos(i+1);\n        if(j==i) continue;\n        // Now at position 0, bring to position i\n        if(i==0) continue;\n        if(i==1){apply(1,1);j=pos(i+1);if(j==i)continue;if(j==0){int x2=n-2;apply(x2,1);}continue;}\n        apply(n-i,1);\n    }\n    printf(\"%d\\n\",(int)ops.size());\n    for(auto&[a,b]:ops) printf(\"%d %d\\n\",a,b);\n}\n"
+}

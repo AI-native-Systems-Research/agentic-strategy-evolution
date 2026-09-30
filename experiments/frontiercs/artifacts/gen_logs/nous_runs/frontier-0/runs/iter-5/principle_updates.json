@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-8",
+    "statement": "Incremental inner-loop optimizations to the greedy skyline packer (precomputed orientation metadata, orientation-level skip, additional fixed orderings, culprit repair) produce no statistically detectable improvement over the v10 baseline at the current hardware-limited score plateau (~83). The greedy skyline approach has reached diminishing returns where constant-factor speedups don't translate to measurable score gains.",
+    "confidence": "medium",
+    "regime": "Polyomino packing with skyline greedy, K=n/4 lookahead, 2s time limit, 70 test cases with n=100-10000",
+    "evidence": [
+      "iteration-5-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "The composite v12 improvements save ~14ms per pack() call (less than one additional width exploration) and add two orderings + culprit repair to Phase 2/3. The speed savings are too small to enable meaningful additional width exploration, and the quality improvements from extra orderings and culprit repair are offset by reduced random restart time. The net effect is indistinguishable from zero (paired t=-0.787, p>>0.05).",
+    "applicability_bounds": "Applies to constant-factor inner-loop optimizations of the greedy skyline packer. Does NOT apply to fundamentally different algorithms (local search, constraint programming) or to optimizations that provide order-of-magnitude speedups (e.g., reducing position search from O(W) to O(1) via valley-only targeting).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3-update",
+    "statement": "UPDATE to RP-3: v10's load-induced variance is NOT always negligible. Under heavy system load, v10 shows std=1.30 and range=2.59 (compared to iter-4's std=0.11 and range=0.21). The unified time allocation reduces variance relative to v7's 60/40 split, but doesn't eliminate it under extreme load conditions.",
+    "confidence": "high",
+    "regime": "v10 skyline packer under variable system load",
+    "evidence": [
+      "iteration-5-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "Under heavy system load, pack() calls take longer, reducing the number of widths explored in the time budget. The variation in pack() call time (due to CPU contention) translates to variation in the number of widths tried, which varies the quality of the best width found.",
+    "applicability_bounds": "RP-3's original observation (std=0.11) was under moderate load. Under heavy load, variance increases 10x+. The unified allocation still helps vs the 60/40 split, but absolute variance depends on load conditions.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

@@ -1,0 +1,26 @@
+{
+  "iteration": 5,
+  "bundle_ref": "runs/iter-5/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "v12 will achieve a higher mean score than v10 across 3 seeds. The improvement direction will be positive in at least 2 of 3 paired comparisons. Design probes showed paired improvements of +6.29 and +3.84 points in back-to-back comparisons.",
+      "observed": "v12 scores: 82.71, 81.41, 81.60 (mean 81.90, std 0.70). v10 scores: 82.58, 83.93, 81.34 (mean 82.62, std 1.30). Paired differences (v12-v10): +0.12, -2.52, +0.26 (mean -0.71, std 1.57). Paired t-test: t=-0.787, p>>0.05. Direction: v12 > v10 in 2/3 seeds but the negative seed (-2.52) dominates the mean. The composite improvements (precomputed maxHiP1, orientation-level skip, 5 orderings, culprit repair) produce no statistically detectable benefit over v10. The design-phase back-to-back probes (+6.29, +3.84) were misleading due to system load fluctuations \u2014 the formal experiment with alternating execution shows the effect is indistinguishable from noise.",
+      "status": "REFUTED",
+      "error_type": "magnitude",
+      "diagnostic_note": "The predicted improvement of 2-4 points did not materialize. Four possible explanations: (1) Precomputed maxHiP1 saves only ~14ms per pack() call \u2014 less than one additional width exploration. (2) Orientation-level skip rarely triggers because maxH >> maxHiP1 for most of the packing. (3) The 2 additional orderings (orderDecDim, orderAscK) don't provide meaningfully different search diversity from the existing 3 orderings. (4) Culprit repair consumes Phase 3 time that would otherwise be used for random restarts, which may be more effective. Net effect: the speed improvements and quality improvements approximately cancel, producing a null result. The system is at a plateau where incremental inner-loop optimizations don't translate to measurable score improvements."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "v10 will score in the range 79-86, consistent with iter-4 measurements (mean 82.71) but with potentially higher variance due to current system load conditions.",
+      "observed": "v10 scores: 82.58, 83.93, 81.34 (mean 82.62, std 1.30). Range 81.34-83.93 is within the predicted 79-86 range. Mean (82.62) is close to iter-4's 82.71. Variance is higher than iter-4 (std 1.30 vs 0.11), confirming system load was more variable in this session. The highest single-run score was 83.93.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The h-main prediction of +2-4 mean improvement was wrong \u2014 the observed mean difference is -0.71 (v10 slightly better), t=-0.787, p>>0.05. The design-phase back-to-back probes were misleading: two paired runs showed v12 winning by +6.29 and +3.84, but these were during a period of high load variance where sequential measurements were unreliable. The formal 3-seed experiment with alternating execution produced a null result. This confirms that incremental optimizations to the greedy skyline inner loop (maxHiP1 precomputation, orientation skip) and Phase 2/3 enhancements (more orderings, culprit repair) are below the noise floor. The v10 algorithm established in iter-4 remains the best-performing variant, and the ~83 score plateau appears to be a hardware-limited ceiling for the greedy skyline approach on this system.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

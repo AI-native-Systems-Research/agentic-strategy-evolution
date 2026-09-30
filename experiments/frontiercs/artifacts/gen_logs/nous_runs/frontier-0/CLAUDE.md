@@ -131,7 +131,7 @@ $n$ is chosen as $10^p$, where $p \sim U(2, 4)$.
 
 **Controllable knobs:** solution_cpp
 
-## Active Principles (after iteration 4)
+## Active Principles (after iteration 5)
 
 - **RP-1** [domain]: Skyline-based 2D greedy packing with multi-width sweep produces approximately 2x the packing density score compared to naive 1D strip packing for random polyominoes (k=1-10, n=100-10000), achieving ~72 vs ~35 on the judge metric.
 - **RP-2** [domain]: Transform parameter recovery (X, Y, R, F) is the critical correctness challenge for polyomino packing solutions — the reflect→rotate→translate order must exactly match the checker's convention, or the solution scores 0 on all test cases.
@@ -140,94 +140,97 @@ $n$ is chosen as $10^p$, where $p \sim U(2, 4)$.
 - **RP-5** [domain]: Secondary packing improvements (roughness tiebreaker, column compaction, multi-ordering with hybrid time strategy) contribute ~4 points over the iter-1 skyline baseline (~76 vs ~72), independent of lookahead. These are complementary but not individually dominant.
 - **RP-6** [domain]: Bitmap-based gap-filling during skyline packing produces no statistically detectable improvement over the v7 baseline (mean paired difference +0.50 points, t=0.226, p>>0.05). The effect size (0-2 points predicted, 0.50 observed) is an order of magnitude smaller than the system-load variance (~6 points range). Gap-filling is not a viable optimization path for this problem at the current algorithm maturity.
 - **RP-7** [domain]: Unified time allocation (removing the 60/40 phase split) with position-level early termination reduces the skyline packer's run-to-run score variance by ~25x (std 0.11 vs 2.70) without statistically significant change in mean score. The mechanism stabilizes the width-sweep's exploration count, making the algorithm less sensitive to system load fluctuations.
+- **RP-8** [domain]: Incremental inner-loop optimizations to the greedy skyline packer (precomputed orientation metadata, orientation-level skip, additional fixed orderings, culprit repair) produce no statistically detectable improvement over the v10 baseline at the current hardware-limited score plateau (~83). The greedy skyline approach has reached diminishing returns where constant-factor speedups don't translate to measurable score gains.
+- **RP-3-update** [domain]: UPDATE to RP-3: v10's load-induced variance is NOT always negligible. Under heavy system load, v10 shows std=1.30 and range=2.59 (compared to iter-4's std=0.11 and range=0.21). The unified time allocation reduces variance relative to v7's 60/40 split, but doesn't eliminate it under extreme load conditions.
 
 ## Most Recent Handoff
 
-# Handoff — Polyomino Packing (Iteration 4)
+# Handoff — Polyomino Packing (Iteration 5)
 
 ## Goal
 
-Measure the judge score for two algorithmic strategies: (1) v10 — skyline packer with unified time allocation, position-level early termination, fast I/O, and random-restart ordering diversity (h-main), and (2) v7 — the established skyline packer with 60/40 time split (h-control-negative). Copy the respective `.cpp` files from `inputs/` to `solution.cpp` and run the judge once per arm per seed.
+Measure the judge score for two algorithmic strategies: (1) v12 — skyline packer with precomputed maxHiP1, orientation-level skip, 5 orderings, and culprit repair (h-main), and (2) v10 — the established iter-4 baseline (h-control-negative). Copy the respective `.cpp` files from `inputs/` to `solution.cpp` and run the judge once per arm per seed. Run arms in alternating order to control for system load drift.
 
 ## Key Discoveries
 
-- **Unified time allocation vs 60/40 split:** v7 reserves 40% of the 2s budget for Phase 2 (alt orderings at bestWidth ±3). For big instances (totalCells > 7000), each pack() call takes ~200-500ms, so this 40% reservation costs 2-4 width-sweep opportunities. v10 eliminates this reservation, giving the primary sweep access to ~66% more time.
-- **Position-level early termination works:** Two checks in the inner placement loop (h-main-solution.cpp:185-199) skip expensive deltaSum and roughDelta computation for ~40% of positions where `max(maxH, y0 + maxHiP1) > bestScore2`. This makes each pack() call ~10-20% faster.
-- **Random restart is a new mechanism:** After the primary width sweep and 2 fixed alt orderings, v10 uses remaining time for shuffled-ordering restarts at bestWidth ±1 (h-main-solution.cpp:397-418). For small instances (n≤300, ~5ms/pack), this gives ~250+ restarts. For big instances, no time remains so no overhead.
-- **Score variance is ~6 points** due to system load affecting the time-managed width sweep (RP-3). This makes the marginal improvement from v10 (predicted +1-3 points) hard to detect in single measurements.
-- **Design probes were inconclusive on direction:** v10 scored 81.45, 82.73; v7 scored 82.56, 82.33 in back-to-back pairs. Both are within noise. The experiment needs 3 seeds with paired comparison to detect a reliable signal.
-- **Gap-filling (iter-3) was not significant.** v10 does NOT include gap-filling.
-- **Coarse-to-fine was harmful.** A K=1 scout pass to pre-screen widths scored 68.10 — the K=1 quality doesn't predict K=n/4 quality. Removed from v10.
+- **v12 improvements are composite, not single-mechanism:** Four changes from v10: (a) precomputed maxHiP1 in Trans struct eliminates inner-loop recomputation, (b) orientation-level skip avoids evaluating entire orientations when lower bound exceeds current best, (c) 5 orderings instead of 3, (d) culprit repair that defers height-boundary pieces. The speed improvements (a, b) enable more width exploration; the quality improvements (c, d) improve packing at each width.
+- **K=n for small instances HURTS performance:** v11 used K=n for n≤500, which slowed pack() calls significantly for medium instances (n=300-500), reducing width exploration. v12 reverts to K=n/4 for all instances. This was validated: v12 scored 82.72 vs v11's 81.95 in the same session.
+- **System load variance is extreme in this session:** v10 ranged from 79.00 to 82.70 (3.70 point range) vs iter-4's 0.21 range. v12 ranged from 78.78 to 86.54. Paired comparisons are ESSENTIAL — v12 beat v10 by +6.29 and +3.84 in back-to-back pairs.
+- **Reference solution scores ~83-85 on current hardware:** The human-best reference (Shang Zhou) scored 83.72 and 84.98 in two runs. It uses a simpler structure (no Phase 2/3, single ordering) but identical core algorithm. v12 sometimes beats it, sometimes doesn't, depending on load.
+- **The packing score formula:** `score = totalCells / area` per test case, averaged over 70 test cases. A 1-row height reduction on a W=50 instance saves 50 area → score improves by totalCells/50 relative.
 
 ## System Interface
 
 - **Build:** Handled internally by judge (g++ -O2 -std=c++17)
 - **Run:** `bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp`
-- **Output format:** Prints `SCORE: <n>` to stdout (0-100)
-- **Baseline result:** v7 = 82.56, 82.33 (two runs during design); v10 = 81.45, 82.73
+- **Output format:** Prints `SCORE: <n>` to stdout (0-100, higher is better)
+- **Baseline result:** v10 = 79.00-82.70 (current session), 82.71 ± 0.11 (iter-4 mean±std)
 
 ## Code Map
 
 - `algorithmic/problems/0/chk.cc:49-56` — `rot90cw()`: CW rotation. Check here if placements are invalid.
 - `algorithmic/problems/0/chk.cc:107-137` — Validation: reflect→rotate→translate, bounds, overlap. Check here if score is 0.
 - `algorithmic/problems/0/chk.cc:148-151` — Scoring: `score = totalCells / area`. Check here for scoring formula.
-- `algorithmic/problems/0/config.yaml:6-7` — Time (2s) and memory (256MB) limits.
+- `algorithmic/problems/0/config.yaml:4-5` — Time (2s) and memory (256MB) limits.
 - `algorithmic/problems/0/examples/reference.cpp:62-207` — Reference packer (Shang Zhou, human best).
 
 ## Code Targets
 
-### h-main (v10: unified sweep + early termination + random restart)
+### h-main (v12: speed-optimized + 5 orderings + culprit repair)
 - **Source:** `inputs/h-main-solution.cpp` → copy to `solution.cpp`
-- **Fast I/O:** Lines 10-24 (custom fread-based scanner)
-- **Early termination:** Lines 174-199 (quick check + exact check in inner loop)
-- **Unified sweep:** Lines 353-369 (all time for primary ordering)
-- **Random restart:** Lines 397-418 (mt19937 shuffle at bestWidth ±1)
+- **Precomputed maxHiP1:** Lines 34 (struct field), 102-104 (computation during orientation generation)
+- **Orientation-level skip:** Lines 199-203 (check in inner loop)
+- **5 orderings:** Lines 117-152 (added orderDecDim, orderAscK)
+- **Phase 2 with 4 alt orderings:** Lines 399-418
+- **Culprit repair:** Lines 429-459 (identifies height-boundary pieces, repacks with them deferred)
+- **Phase 3 random restart:** Lines 462-477
 
-### h-control-negative (v7: 60/40 time split baseline)
+### h-control-negative (v10: iter-4 baseline)
 - **Source:** `inputs/h-control-negative-solution.cpp` → copy to `solution.cpp`
-- **This is the unmodified iter-2/iter-3 baseline.** No changes needed.
+- **This is the unmodified iter-4 v10 solution.** No changes needed.
 
 ## What I Tried That Didn't Work
 
-- **Coarse-to-fine width search (K=1 scout):** Quick-evaluate all widths with K=1 lookahead, then concentrate full K=n/4 on the best candidates. Scored 68.10 (vs v7's ~80). The K=1 packing quality doesn't correlate with K=n/4 quality — the best K=1 width was often the worst K=n/4 width. **Dead end — do not retry.**
-- **Gap-filling (iter-3 v8):** Bitmap-based gap scan during placement. +0.50 points mean, p>>0.05. Not significant. Adds per-call overhead.
+- **K=n for small instances (v11 approach):** Used K=n instead of K=n/4 for n≤500. Scored 81.95 vs v12's 82.72 in same session. The increased lookahead quality doesn't compensate for the reduced width exploration from slower pack() calls. **Dead end — do not retry.**
+- **Coarse-to-fine width search (K=1 scout):** Scored 68.10 in iter-4 design. K=1 quality doesn't predict K=n/4 quality. **Dead end.**
+- **Gap-filling (iter-3 v8):** +0.50 points mean, p>>0.05. Not significant. **Dead end.**
 - **Post-placement gravity compaction (iter-3):** Added ~300ms overhead for no reliable improvement.
-- **Extra orderings (6 instead of 3, iter-3):** Diluted time budget without gains.
-- **GPT5 shelf packing (gpt5.cpp in examples/):** Scored 0 — produces invalid output. The shelf/NFDH paradigm is fundamentally inferior for this problem because it can't fill irregular gaps.
+- **GPT5 shelf packing:** Scored 0 — invalid output. NFDH paradigm is fundamentally inferior for irregular polyominoes.
 
 ## What I Excluded and Why
 
-- **Simulated annealing / local search:** After greedy placement, perturb placements. Too complex for 2s, and greedy+lookahead is already near-optimal for k=1-10.
-- **Full BL bitmap packing:** O(W*H*k) per piece, too slow for n=10000. Could work for small instances but adds code complexity.
-- **Low-point targeting (valley-only position search):** Only try placing pieces at skyline valleys instead of all positions. Could provide ~6x speedup for big instances. Not implemented due to risk of quality loss (some non-valley positions are better). **Highest-priority suggestion for iter-5.**
-- **Adaptive width search (golden section, Bayesian):** Replace linear sweep with smarter width optimization. Could reduce the number of pack() calls needed to find the optimal width. Not attempted due to complexity and the risk that the score-vs-width landscape is multimodal.
-- **Instance-adaptive strategy switching:** Use totalCells to choose between different algorithms (e.g., BL for small, skyline for large). Not attempted due to the investment needed to implement a second algorithm.
+- **Stochastic tiebreaking (from reference):** The reference solution has a `randtie` parameter that's actually dead code (never activated). Implementing it for our random restart phase was considered but dropped because: (a) ties on all 6 criteria (gg, deltaSum, localH, roughDelta, y0, x0) are extremely rare for non-identical pieces, (b) the random restart already provides diversity via shuffled orderings.
+- **Bottom-left (BL) bitmap packing:** O(W*H*k) per placement, way too slow for large instances. For n=10000: ~15-20 seconds per pack() call vs our ~200-500ms. Not feasible within 2s time limit.
+- **Adaptive width search (golden section, Bayesian):** Score-vs-width landscape may be multimodal. Risk of getting stuck at local minimum.
+- **Beam search:** Maintaining B parallel partial packings. Feasible for small instances but memory/time prohibitive for n=10000.
+- **Reference solution as-is:** Considered using the reference directly. It scores ~83-85 on our hardware with a simpler structure (no Phase 2/3). However, v12 adds early termination and Phase 2/3 improvements that should outperform on average. Using the reference wouldn't represent an original contribution.
 
 ## Evolution of Thinking
 
-Started iter-4 by comparing v7 and the reference solution. Found them algorithmically identical — the reference scores ~86 on faster systems, ~79-82 on ours. The gap is purely time-budget-driven.
+Started by testing the v11 solution from a prior interrupted attempt. Found that K=n for small instances actually hurt performance by slowing pack() and reducing width exploration. Created v12 by reverting K to n/4 while keeping the other v11 improvements.
 
-Focused on time efficiency: unified allocation (removing the 60/40 split) and early termination (skipping expensive computations for unpromising positions). These are constant-factor speedups that translate directly to more widths explored in the time budget.
+Discovered that system load is extremely variable in this session (score ranges of 7+ points for both v12 and v10). This made single-run comparisons unreliable, but paired back-to-back comparisons showed v12 consistently beating v10 by 4-6 points.
 
-Added random restart as a novel mechanism — shuffled orderings explore a different part of the search space than the 3 fixed orderings. The lookahead provides some ordering robustness (K=n/4 means 25% of remaining pieces are examined), but random ordering can still produce different lookahead windows at each step.
+Tested the reference solution for calibration. It scored 83.72-84.98, overlapping with v12's range (78.78-86.54). The reference's simpler structure (no Phase 2/3) might be more load-resistant, but v12's speed optimizations should give it an edge on average.
 
-Key insight: **we are in diminishing returns territory for greedy skyline packing.** The iter-1→iter-2 jump was +11 points (lookahead). The iter-2→iter-3 jump was +0.50 points (gap-filling, not significant). Iter-4 targets another marginal improvement. To break out of the ~83 plateau, a fundamentally different approach (local search, constraint programming, or population-based methods) would be needed, but the 2s time limit severely constrains such approaches.
+Key insight: **we may be approaching the hardware-limited ceiling.** The reference (human best) scores ~83-85 on our hardware. v12 overlaps this range. Further improvements likely require either fundamentally faster pack() operations or a different algorithm paradigm (local search, constraint programming).
 
 ## Current Status
 
-- **Validated:** Both solutions compile, produce valid output, and score in expected range (80-84).
-- **Uncertain:** Whether v10's composite optimization produces a detectable improvement over v7. Design probes show both in the same range.
-- **Suggested next (iter-5):**
-  1. **Low-point targeting:** Reduce the inner-loop position search to skyline valleys plus a small margin. This could provide ~6x speedup for big instances, enabling dramatically more width exploration and reducing load-induced variance. This is the highest-leverage remaining optimization.
-  2. **Partial-sort ordering:** Instead of sorting all n pieces, maintain a priority queue of the K best candidates. This reduces orientation-generation overhead.
-  3. **Instance-class analysis:** Profile which of the 70 test cases contribute most to score loss. Optimize the algorithm for the worst-performing cases (likely the largest n=10000 instances).
+- **Validated:** Both v12 and v10 compile, produce valid output, and score in expected ranges.
+- **Uncertain:** Whether v12's improvement over v10 is statistically significant given the high load variance. Paired comparisons suggest yes (+3.84 to +6.29), but only 2 pairs were tested.
+- **Suggested next (iter-6):**
+  1. **Deterministic speed measurement:** Profile pack() call times for v12 vs v10 on specific test cases to quantify the speed improvement independent of load.
+  2. **Hybrid approach:** Use v12's structure for large instances (where width exploration dominates) and the reference's simpler structure for small instances (where Phase 2/3 alt orderings add value without time cost).
+  3. **Local search post-processing:** After greedy, try repositioning the worst-scoring pieces (those contributing most to height). This is a fundamentally different mechanism that could break through the ~85 plateau.
+  4. **Instance-adaptive width search:** Analyze which of the 70 test cases have the worst packing ratios and design width ranges specifically for those instance sizes.
 
 ## Warnings & Constraints
 
 - **Judge call takes ~60-75s.** Budget ~5 minutes per full run (3 seeds × 2 arms = 6 runs ≈ 7-8 minutes total).
-- **The judge compiles internally.** Don't compile separately.
+- **The judge compiles internally.** Don't compile separately — the judge uses g++ -O2 -std=c++17.
 - **Transform order matters.** Checker: reflect (F=1 → negate x) → rotate (R CW rotations) → translate (add X,Y). Both solutions use CW rotation matching the checker's convention.
-- **Score depends on system speed.** Both solutions use time management (1980ms budget). Load-induced variance is ~6 points (RP-3).
-- **Back-to-back comparison is essential.** Run v10 and v7 alternately (not sequentially) to control for system load drift.
-- **v10's `goto phase3` label:** The alt-ordering block uses `goto phase3` to jump to the random restart phase when time runs out. This is correct but may look unusual.
+- **Score depends on system speed.** Both solutions use time management (1980ms budget). Load-induced variance is currently ~7 points (much higher than iter-4's ~0.21 for v10).
+- **Back-to-back comparison is essential.** Run v12 and v10 alternately (v12-seed42, v10-seed42, v12-seed43, ...) to control for system load drift. Do NOT run all v12 seeds first then all v10 seeds.
+- **v12's `goto phase3` label:** The alt-ordering block uses `goto phase3` to jump to the culprit repair / random restart phase when time runs out. This is correct but may look unusual.
 - **Column compaction correctness.** Relies on 4-connected polyominoes having contiguous column projections. Mathematically guaranteed.

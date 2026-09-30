@@ -1,0 +1,84 @@
+{
+  "problem_id": "0",
+  "agent": "engram",
+  "label": "engram",
+  "model": "claude-opus-4-6",
+  "final_score": 55.96924472857143,
+  "status": "success",
+  "solution": "/home/ubuntu/frontier/gen_logs/frontier_0_engram.solution.cpp",
+  "best_score": 54.93280027857145,
+  "method": "Engram-style (reimplementation)",
+  "agents": 3,
+  "rounds_per_agent": 3,
+  "code_generations": 9,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 53.62748030857142,
+      "status": "success",
+      "plan": "Implement a bottom-left-first greedy packing algorithm with multiple rectangle aspect ratios tried, where for each target rectangle I place pieces (trying all 8 orientations) greedily into the lowest available position using a skyline/bitmap approach, sorting pieces by decreasing bounding box area/s"
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 54.93280027857145,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 21.870074350000003,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Improve the greedy bottom-left packing by using a proper grid-based placement that scans all positions (not just skyline-based estimates), trying multiple randomized piece orderings within the time budget, and optimizing placement scoring to minimize area increase."
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Improve the greedy packer by (1) using a proper bottom-left scan over all grid positions (not just skyline estimates), (2) scoring placements by contact area with existing pieces to promote tight packing, (3) trying multiple piece orderings (decreasing area, decreasing height, decreasing max-dimensi"
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    }
+  ],
+  "input_tokens": 30686,
+  "output_tokens": 34063,
+  "cost_usd_est": 3.015,
+  "journal": "/home/ubuntu/frontier/gen_logs/frontier_0_engram_engram/research_journal.md",
+  "seconds": 678.1
+}

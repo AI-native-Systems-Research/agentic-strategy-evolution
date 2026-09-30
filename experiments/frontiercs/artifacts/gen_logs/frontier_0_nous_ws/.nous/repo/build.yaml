@@ -1,0 +1,3 @@
+schema_version: '1'
+build_command: Handled internally by judge (g++ -O2 -std=c++17)
+run_command: bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp

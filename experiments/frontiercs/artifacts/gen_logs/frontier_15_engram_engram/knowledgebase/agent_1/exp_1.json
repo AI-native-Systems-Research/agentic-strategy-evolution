@@ -1,0 +1,7 @@
+{
+  "round": 1,
+  "plan": null,
+  "score": 0,
+  "status": "success",
+  "code": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main(){\n    int n;\n    scanf(\"%d\", &n);\n    vector<int> p(n);\n    for(int i = 0; i < n; i++) scanf(\"%d\", &p[i]);\n    \n    vector<pair<int,int>> ops;\n    \n    auto apply_op = [&](int x, int y){\n        vector<int> np;\n        for(int i = n-y; i < n; i++) np.push_back(p[i]);\n        for(int i = x; i < n-y; i++) np.push_back(p[i]);\n        for(int i = 0; i < x; i++) np.push_back(p[i]);\n        p = np;\n        ops.push_back({x, y});\n    };\n    \n    for(int i = 0; i < n-1; i++){\n        // Find position of element i+1\n        int j = -1;\n        for(int k = i; k < n; k++) if(p[k] == i+1){ j = k; break; }\n        if(j == i) continue;\n        \n        // Step 1: move element from position j to position 0\n        if(j > 0){\n            // x=1, y=n-j: C=[j..n-1], B=[1..j-1], A=[0] -> C B A\n            // element at j goes to position 0\n            apply_op(1, n-j);\n        }\n        // Now element i+1 is at position 0\n        \n        // Step 2: move element from position 0 to position i\n        if(i > 0){\n            // x=n-i, y=i: C=[n-i..n-1], B=empty(if x+y=n), A=[0..n-i-1]\n            // Result: C, A = [n-i..n-1, 0..n-i-1], element at 0 goes to position i\n            apply_op(n-i, i);\n        }\n    }\n    \n    printf(\"%d\\n\", (int)ops.size());\n    for(auto& [a,b] : ops) printf(\"%d %d\\n\", a, b);\n}\n"
+}
