@@ -1,0 +1,42 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For AHC001 rectangle packing, simulated annealing with boundary-shift moves nearly doubles the score over greedy expansion alone (81.6 vs 46.8), making SA the dominant algorithmic component.",
+      "confidence": "high",
+      "regime": "N=50-200 companies, 10000x10000 grid, 10s time limit",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Greedy expansion gets stuck when neighboring rectangles block each other. SA's ability to shrink rectangles and redistribute space (via boundary shifts, expand-to-limit, and target-aware moves) enables escape from local optima.",
+      "applicability_bounds": "Holds for the standard AHC001 problem constraints. May not hold if the time limit were much shorter (<2s) since SA needs sufficient iterations to converge.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "For AHC001 rectangle packing with SA, multi-restart (3x3s) with randomized greedy initialization does not improve over a single long SA run (1x9s). SA convergence time dominates over starting-point diversity.",
+      "confidence": "medium",
+      "regime": "N<=200, 10s time limit, 10000x10000 grid, linear cooling T0=0.01, 8-move uniform SA",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "SA moves 6 (expand-to-limit) and 7 (target-aware resize) are effective at restructuring the layout, making the initial greedy ordering largely irrelevant after sufficient SA time. Splitting the SA budget into shorter runs reduces per-run convergence quality, approximately offsetting any benefit from exploring different starting configurations.",
+      "applicability_bounds": "Applies to this specific SA design with 8 uniform moves including expand-to-limit. May not hold for SA variants with weaker exploration moves (e.g., only boundary shifts) where the starting point would matter more.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

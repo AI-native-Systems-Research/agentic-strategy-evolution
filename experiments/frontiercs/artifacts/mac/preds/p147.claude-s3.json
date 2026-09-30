@@ -1,0 +1,62 @@
+{
+  "problem_id": "147",
+  "agent": "claude",
+  "label": "claude-s3",
+  "model": "claude-opus-4-6",
+  "final_score": 60.7314,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_147_claude-s3.solution.cpp",
+  "best_score": 59.9938,
+  "rounds": 9,
+  "history": [
+    {
+      "round": 0,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 1,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 2,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 3,
+      "score": 18.925399999999993,
+      "status": "success"
+    },
+    {
+      "round": 4,
+      "score": 18.925399999999993,
+      "status": "success"
+    },
+    {
+      "round": 5,
+      "score": 11.582300000000005,
+      "status": "success"
+    },
+    {
+      "round": 6,
+      "score": 59.9938,
+      "status": "success"
+    },
+    {
+      "round": 7,
+      "score": 36.810199999999995,
+      "status": "success"
+    },
+    {
+      "round": 8,
+      "score": 36.02760000000001,
+      "status": "success"
+    }
+  ],
+  "input_tokens": 25588,
+  "output_tokens": 16067,
+  "cost_usd_est": 1.5888,
+  "seconds": 501.8
+}

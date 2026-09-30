@@ -1,0 +1,40 @@
+[
+  {
+    "id": "RP-6",
+    "statement": "For AHC001 rectangle packing SA, extending the time budget from 2.85s to 4.8s provides a statistically significant score improvement (+2.28 points, p=0.025 one-sided) and reduces score variance by ~4x (stdev 0.53 vs 2.16). The judge accepts solutions running up to ~5.8s without TLE.",
+    "confidence": "high",
+    "regime": "AHC001 with N<=200 rectangles, exponential cooling SA with best-tracking, total_time in [2.85, 5.8] seconds",
+    "evidence": [
+      "iteration-4-h-main",
+      "iteration-4-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "SA quality improves monotonically with iteration count. The exponential cooling schedule T = T0 * (T1/T0)^progress is parametrized by elapsed/budget ratio, so extending the budget increases iterations at every temperature level without changing the cooling curve shape. More iterations enable deeper exploration and more reliable convergence to high-quality configurations.",
+    "applicability_bounds": "Holds for total_time up to ~5.8s. Beyond that, marginal TLEs on some test cases may degrade the average score (observed at 8.0s: score dropped to 91.9). The optimal time budget is likely in the 4.5-5.5s range.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "Single-run probes during the design phase are unreliable for estimating effect sizes in AHC001 because judge variance (~5 points stdev from random test set selection) overwhelms treatment effects. However, the variance is asymmetric: interventions that increase SA iteration count (e.g., extended time budget) also reduce judge variance, making them easier to detect statistically.",
+    "confidence": "high",
+    "regime": "AHC001 judge evaluation with 50 random test cases per run",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-4-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "More SA iterations allow the algorithm to converge more reliably to high-quality configurations, reducing sensitivity to the specific test set. With fewer iterations, the algorithm may converge to different local optima depending on which test cases are drawn.",
+    "applicability_bounds": "The variance reduction effect may not hold for interventions that don't increase iteration count (e.g., changing temperature schedule, move types).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

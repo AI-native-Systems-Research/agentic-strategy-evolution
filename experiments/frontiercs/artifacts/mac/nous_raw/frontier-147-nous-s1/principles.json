@@ -1,0 +1,117 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For rectangle packing SA, computing max expansion bounds per edge before proposing moves (valid-by-construction proposals) yields higher scores than random-step + overlap-rejection, despite the O(N) cost per bound computation.",
+      "confidence": "high",
+      "regime": "N <= 200, 10000x10000 grid, 2.8s SA budget",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Random step proposals waste most SA iterations on collisions (especially in crowded regions). Computing the exact valid range per edge ensures every proposal is feasible, dramatically increasing the effective iteration count and enabling larger moves.",
+      "applicability_bounds": "Holds when N is small enough that O(N) bound computation is cheap. May not hold for N >> 200 where bound computation dominates.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "SA is the dominant score mechanism for AHC001 rectangle packing, providing ~70 points over greedy-only (89.5 vs 20.2).",
+      "confidence": "high",
+      "regime": "N in [50,200], time budget ~3s",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Greedy expansion can only grow rectangles and cannot redistribute area from oversized to undersized rects. SA enables both grow and shrink moves, allowing area redistribution that matches the satisfaction function's area-matching requirement.",
+      "applicability_bounds": "Greedy alone will always be weak for this problem because area targets sum to grid area, meaning redistribution is essential.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "For rectangle packing SA on AHC001, greedy initialization quality (single-cell vs multi-cell expansion) does not significantly affect final SA score. SA converges to similar quality (~89-90) regardless of init method, given sufficient SA budget (>2.5s).",
+      "confidence": "medium",
+      "regime": "AHC001 rectangle packing with N<=200, 10000x10000 grid, 3s time limit, SA with valid-by-construction moves",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "SA with max-expansion-bound proposals explores the solution space broadly enough that initial rectangle sizes don't constrain final quality. The landscape is well-connected under single-edge moves, so SA reaches similar basins from different starting points.",
+      "applicability_bounds": "Holds when SA budget >= 2.5s and N <= 200. May not hold for much larger N where init quality determines which basin SA falls into.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "For AHC001 rectangle packing SA, best-state tracking (saving peak configuration during SA and restoring it at the end) combined with wider temperature schedule (T0=0.08, T1=0.0005 vs T0=0.05, T1=0.001) provides a small directional score improvement (~0.65 points, 4/5 wins) over the no-tracking baseline, but the effect is within judge noise and not statistically significant with 5 runs per arm.",
+      "confidence": "low",
+      "regime": "AHC001 with N<=200, 2.85s time budget, exponential cooling SA with valid-by-construction proposals",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Best-tracking captures the peak score encountered during SA, avoiding degradation from noise at low temperatures. Wider temperature range increases exploration diversity. The effect is real but small relative to judge variance.",
+      "applicability_bounds": "Effect may be larger for problems with more local optima or longer SA runs. Judge variance (~5 points) dominates the ~0.65 point treatment effect, making significance hard to reach without many more runs.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "Single-run probes during the design phase are unreliable for estimating effect sizes in AHC001 because judge variance (~5 points stdev from random test set selection) overwhelms treatment effects. However, the variance is asymmetric: interventions that increase SA iteration count (e.g., extended time budget) also reduce judge variance, making them easier to detect statistically.",
+      "confidence": "high",
+      "regime": "AHC001 judge evaluation with 50 random test cases per run",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-4-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "More SA iterations allow the algorithm to converge more reliably to high-quality configurations, reducing sensitivity to the specific test set. With fewer iterations, the algorithm may converge to different local optima depending on which test cases are drawn.",
+      "applicability_bounds": "The variance reduction effect may not hold for interventions that don't increase iteration count (e.g., changing temperature schedule, move types).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "For AHC001 rectangle packing SA, extending the time budget from 2.85s to 4.8s provides a statistically significant score improvement (+2.28 points, p=0.025 one-sided) and reduces score variance by ~4x (stdev 0.53 vs 2.16). The judge accepts solutions running up to ~5.8s without TLE.",
+      "confidence": "high",
+      "regime": "AHC001 with N<=200 rectangles, exponential cooling SA with best-tracking, total_time in [2.85, 5.8] seconds",
+      "evidence": [
+        "iteration-4-h-main",
+        "iteration-4-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "SA quality improves monotonically with iteration count. The exponential cooling schedule T = T0 * (T1/T0)^progress is parametrized by elapsed/budget ratio, so extending the budget increases iterations at every temperature level without changing the cooling curve shape. More iterations enable deeper exploration and more reliable convergence to high-quality configurations.",
+      "applicability_bounds": "Holds for total_time up to ~5.8s. Beyond that, marginal TLEs on some test cases may degrade the average score (observed at 8.0s: score dropped to 91.9). The optimal time budget is likely in the 4.5-5.5s range.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+metadata:
+  iteration: 3
+  family: "sa-best-tracking-wider-temps"
+  research_question: "Does SA best-state tracking combined with wider temperature schedule (T0=0.08, T1=0.0005) push the AHC001 rectangle-packing score above the iter-2 plateau of ~90?"
+  complexity_tier: 2
+  tier_justification: "iter 3 — single mechanism (SA) + multi-knob (best-tracking + temperature schedule). Tier 1 was sufficient for iter-1 (SA vs greedy), tier 2 adds the knob interaction."
+
+arms:
+  - type: h-main
+    prediction: "SA with best-tracking and wider temperature schedule (T0=0.08, T1=0.0005) will score consistently higher than the iter-2 baseline SA (T0=0.05, T1=0.001, no best-tracking), because wider temperatures explore more diverse configurations and best-tracking captures the peak score rather than the degraded final state. Probe showed 92.7 vs 89.9."
+    mechanism: "Standard SA with exponential cooling converges monotonically at low temperatures but the final state may be worse than intermediate peaks due to noise. Best-tracking eliminates this degradation. Wider temperatures (T0=0.08 vs 0.05) increase exploration diversity, generating more candidate peaks. The combination is super-additive: wider temps without tracking scored ~88.4 (iter-2 dead end), tracking alone scored 91.8, combined scored 92.7."
+    diagnostic: "If prediction fails: (1) check if best-tracking overhead reduces total iterations enough to negate the benefit, (2) check if judge variance masks the effect, (3) check if wider temps cause too much disruption with N=200 (many constraints)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Full rewrite: greedy init (0.12s) + SA with best-tracking (save best configuration every 32K iters, restore at end) + wider temperature schedule (T0=0.08, T1=0.0005). SA runs until 2.85s total."
+        rationale: "Best-tracking captures peak quality during SA run. Wider temperature range increases exploration. Combined effect observed as ~3 points improvement in probes."
+
+  - type: h-control-negative
+    prediction: "The iter-2 baseline SA (T0=0.05, T1=0.001, no best-tracking) will score in the 88-91 range, consistently below h-main. This arm establishes that the improvement comes from the algorithmic changes, not from judge variance."
+    mechanism: "Without best-tracking, the final SA state is returned even if it's degraded from the peak. With narrower temperature range, less diverse configurations are explored."
+    diagnostic: "If this arm scores above 92: the improvement in h-main is within noise, suggesting judge variance dominates."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Full rewrite: identical to iter-2 h-main. Greedy init (0.12s) + SA with T0=0.05, T1=0.001, no best-tracking. SA runs until 2.85s total."
+        rationale: "Baseline reference to quantify the improvement from best-tracking + wider temps."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    h_main_T0: 0.08
+    h_main_T1: 0.0005
+    h_control_T0: 0.05
+    h_control_T1: 0.001
+    total_time: 2.85
+    init_time: 0.12
+    best_check_interval: 0x7FFF
+  unlocked_parameters_audit:
+    - name: "xorshift_seed"
+      default_value: 88172645463325252
+      justification: "Fixed seed ensures determinism within a single test case. Changing it would shift the SA trajectory but not systematically affect quality."
+    - name: "greedy_init_passes"
+      default_value: 200
+      justification: "RP-3 shows init quality doesn't affect final SA score. 200 passes is more than enough to converge."
+    - name: "greedy_init_step_fraction"
+      default_value: 0.5
+      justification: "Half-dimension growth per step is a reasonable balance between init speed and quality. RP-3 makes this non-critical."

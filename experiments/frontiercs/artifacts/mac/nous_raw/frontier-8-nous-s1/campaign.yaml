@@ -1,0 +1,67 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #8?'
+run_id: frontier-8-nous-s1
+max_iterations: 5
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::8
+  description: "You are solving Frontier-CS algorithmic problem #8. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /Users/toslali/frontier/gen_logs/fmeasure_8.sh $PWD/solution.cpp\nIt\
+    \ prints a single line 'SCORE: <n>' where n is the judge score (0-100). Record\
+    \ that number in the finding metadata under key 'score'. Each experiment arm should\
+    \ try a distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nOUTPUT FORMAT: Match the statement's Output section EXACTLY: the number\
+    \ of lines, the separators (spaces vs newlines), and the token order. A correct\
+    \ algorithm can score near zero purely from a format mismatch (for example printing\
+    \ one value per line when a single space-separated line is required, or emitting\
+    \ extra or blank lines). Re-read the Output section and conform to it precisely.\n\
+    TIME BUDGET: Respect the per-test time limit stated in the problem. A solution\
+    \ that exceeds the limit on a test case scores 0 for that case even if its answer\
+    \ is correct, so choose an algorithm and parameters (iteration counts, restarts)\
+    \ that comfortably finish within the limit on the largest inputs.\n\nPROBLEM STATEMENT:\n\
+    The Empress\n\nCapoo invented an interesting language named Push-Pop. This language\
+    \ is an interpreted language. The interpreter starts with an empty stack with\
+    \ infinite capacity and reads the first instruction of the custom program. There\
+    \ are only two kinds of instructions in this language:\n\nPOP a GOTO x PUSH b\
+    \ GOTO y\n\nIf the top element of the stack is a, then pop the stack once and\
+    \ transfer the control flow to the x-th instruction (which means the next instruction\
+    \ will be the x-th).\n\nOtherwise, push an element b into the stack and transfer\
+    \ the control flow to the y-th instruction.\n\nHALT PUSH b GOTO y\n\nIf the stack\
+    \ is empty, halt the whole program after executing this instruction. Otherwise,\
+    \ push an element b into the stack and transfer the control flow to the y-th instruction.\
+    \ Capoo wants to construct a Push-Pop program that halts after executing exactly\
+    \ k instructions. A program can contain at most 512 instructions. Then, let n\
+    \ be the number of instructions, your score will be (512 - n) / 512.\n\nInput\n\
+    \nThe only line contains a single integer k (1 <= k <= 2^31 \u2212 1, k is odd).\n\
+    \nOutput\n\nThe first line contains an integer n (1 <= n <= 512) denoting the\
+    \ number of instructions, and then follows n lines denoting the Push-Pop program.\
+    \ For each instruction, 1 <= a, b \u2264 1024, 1 <= x, y <= n should hold. It\
+    \ is guaranteed that a solution exists for given input.\n\nExample Input 1:\n\n\
+    1\n\nExample Output 1:\n\n1\nHALT PUSH 1 GOTO 1\n\nExample Input 2:\n\n5\n\nExample\
+    \ Output 2:\n\n5\nPOP 1 GOTO 2 PUSH 1 GOTO 2\nHALT PUSH 1 GOTO 3\nPOP 1 GOTO 4\
+    \ PUSH 2 GOTO 4\nPOP 1 GOTO 2 PUSH 2 GOTO 4\nHALT PUSH 99 GOTO 4"
+  repo_path: /Users/toslali/frontier/gen_logs/frontier_8_nous-s1_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/asr-frontier-mac/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: 06cfc0cf3f76feda57fafe15e2a3f289822f3ce2
+  nous_version: 0.5.0
+  started_at: '2026-09-30T19:39:44.827805+00:00'
