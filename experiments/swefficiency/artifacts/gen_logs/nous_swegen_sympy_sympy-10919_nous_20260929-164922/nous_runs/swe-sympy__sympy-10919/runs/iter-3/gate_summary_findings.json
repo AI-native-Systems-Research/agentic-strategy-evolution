@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Both the main optimization (C float-path helper + Python inlining/precomputation) and the ablation (Python-only optimizations) were confirmed as faster than baseline, with all correctness tests passing. The combined patch reduced workload runtime by 37.1% (21.39ms \u2192 13.45ms) and warm-cache runtime by 17.8% (13.89ms \u2192 11.41ms). The C helper contributed only ~7% of the improvement, far less than the predicted 30-40%, because cProfile had inflated per-call overhead estimates.",
+  "key_points": [
+    "h-main CONFIRMED: 37.1% workload speedup (21.39ms \u2192 13.45ms), 17.8% warm-cache speedup (13.89ms \u2192 11.41ms). All covering tests pass. Cumulative speedup from original baseline is ~98x (1.29s \u2192 13.1ms).",
+    "h-ablation CONFIRMED: 35.9% workload speedup (21.39ms \u2192 13.70ms), 16.6% warm-cache speedup (13.89ms \u2192 11.58ms). Pure-Python optimizations (inlining, precomputed constants, as_mantissa_exp, local attribute caching) account for 93% of the total improvement.",
+    "Key surprise: The C float-path helper contributed only 6.8% of warm-cache improvement (0.17ms), not the predicted 30-40%. cProfile instrumentation overhead (~0.05\u03bcs per call) had artificially inflated the apparent cost of the Python math.cos loop, misleading the profiling-based estimate.",
+    "h-main is consistently faster than h-ablation (13.45ms vs 13.70ms workload; 11.41ms vs 11.58ms warm-cache), but the margin is small. The C helper adds marginal value and could be dropped to reduce code complexity with minimal performance loss.",
+    "The warm-cache improvement (17.8%) was close to the predicted 20%; the workload improvement (37.1%) exceeded it because inlining also reduces first-call/cache-build overhead that the prediction didn't fully account for."
+  ]
+}

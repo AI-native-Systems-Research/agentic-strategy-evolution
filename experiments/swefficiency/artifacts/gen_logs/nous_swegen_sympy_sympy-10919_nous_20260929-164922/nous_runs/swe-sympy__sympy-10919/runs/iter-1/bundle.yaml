@@ -1,0 +1,37 @@
+metadata:
+  iteration: 1
+  family: "npartitions-hrr-optimization"
+  research_question: "How can we reduce the runtime of npartitions(10^6) via algorithmic and implementation improvements to the HRR formula computation, while maintaining exact correctness?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (optimizing _a inner sum computation)"
+
+arms:
+  - type: h-main
+    prediction: "Replacing the O(j) Dedekind sum with O(log j) memoized reciprocity, adding Kloosterman symmetry to halve iterations, using hardware floats at low precision, and using gmpy2 MPFR cos at high precision will decrease workload_mean_runtime by more than an order of magnitude (from ~1.29s to <0.05s) consistently across repeated runs, while maintaining exact numerical correctness."
+    mechanism: "The original _a function has three nested inefficiencies: (1) an O(j) loop computing Dedekind sums inline for each coprime h (sympy/ntheory/partitions_.py:22-34), which becomes O(j^2) total per outer iteration; (2) iterating h from 1 to j-1 when Kloosterman symmetry D(j-h,j)=-D(h,j) allows iterating only to j/2; (3) using mpf_cos (arbitrary precision, pure Python) even when precision has dropped to hardware float level. The Dedekind reciprocity law reduces sum computation from O(j) to O(log j) and lru_cache prevents recomputation across outer iterations. gmpy2.cos uses C-level MPFR which is 1.5-2.2x faster than mpmath's pure-Python cos_sin_basecase at 100-2000 bit precision. Combined, these changes eliminate the O(j^2) bottleneck and replace expensive pure-Python trig with C-level implementations."
+    diagnostic: "If the prediction is wrong (runtime not reduced), check: (1) whether _d_dedekind cache is being hit (should show near-zero time after warmup); (2) whether the float path at prec<=53 is being reached (should activate around q=127); (3) whether gmpy2.cos conversion overhead exceeds the computation savings; (4) whether the workload is dominated by import time or first-call overhead rather than steady-state computation."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "Replace the entire _a function with an optimized version that: (a) adds a new _d_dedekind helper using Dedekind sum reciprocity with @lru_cache for O(log k) memoized computation; (b) exploits Kloosterman symmetry to iterate only h=1..(j-1)//2; (c) uses math.gcd instead of sympy's igcd; (d) adds a hardware float path (math.cos) when prec<=53; (e) uses gmpy2.cos (MPFR C implementation) for the fixed-point path when prec>53. Also add necessary imports: math, functools.lru_cache, gmpy2. Remove the igcd import from sympy.core.numbers."
+        rationale: "The _a function accounts for 90%+ of runtime. The original O(j) Dedekind sum computed inline for each of O(j) coprimes creates O(j^2) work per outer iteration. Reciprocity reduces this to O(j * log j) with caching making repeated lookups O(1). Kloosterman symmetry halves the coprime iteration count. The float path eliminates arbitrary-precision overhead for ~48% of outer iterations. gmpy2 MPFR cos is 1.5-2.2x faster than pure-Python cos_sin_basecase for the remaining high-precision iterations."
+
+# Arm selection rationale:
+# Only h-main is included because this is iteration 1 (tier 1, single mechanism).
+# The optimization is a bundle of four synergistic changes to the same function (_a).
+# A negative control is not meaningful here because the baseline IS the unoptimized code.
+# Ablation of individual changes would be tier 2 material for iteration 2.
+
+experiment_spec:
+  preflight_commands:
+    - "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+  verified_parameters: {}
+  unlocked_parameters_audit:
+    - name: "M_factor"
+      default_value: 0.24
+      justification: "The series truncation factor M=max(6, int(0.24*n^0.5+4)) is unchanged from the original; verified correct for n up to 10^6."
+    - name: "precision_margin"
+      default_value: "1.1x + 100"
+      justification: "The initial precision formula prec=int(pbits*1.1+100) is unchanged from the original; provides sufficient safety margin for exact integer result."
+    - name: "dynamic_precision_offset"
+      default_value: 50
+      justification: "The offset p=bitcount(|d|)+50 in dynamic precision reduction is unchanged; provides headroom for accumulation without loss."

@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both iteration-5 hypotheses are CONFIRMED. The h-main arm (combining set elimination, first-iteration unrolling, Q_prev recurrence, and early Q_i check) achieved a direct warm-call time of 79.8\u03bcs \u2014 a 1.54x incremental speedup over the iter-4 baseline (122.9\u03bcs) and a campaign speedup of ~240,000x over the original 57.3288s baseline. All 41 covering tests pass.",
+  "key_points": [
+    "h-main measured 79.8\u03bcs direct (predicted ~78\u03bcs, within 2.3%), harness mean 0.239ms \u2192 campaign speedup 240,106x over 57.3288s baseline. All correctness tests green (41 pass, 1 expected XFAIL).",
+    "h-ablation (set elimination only, no Q_prev recurrence) measured 86.0\u03bcs direct, confirming the Q_prev recurrence contributes a genuine 1.08x additional speedup (6.2\u03bcs saved). The directional ordering h-main < h-ablation < iter-4 baseline held on all 3 seeds.",
+    "The set elimination optimization is the dominant contributor (saves ~37\u03bcs, 1.43x), while Q_prev recurrence adds a smaller but consistent gain (~6\u03bcs, 1.08x). The Q_prev benefit was smaller than predicted (1.08x vs 1.13x), likely because CPython integer division is faster than estimated for machine-word-sized values.",
+    "Three uncommitted source files modified: sympy/core/basic.py, sympy/matrices/matrices.py, sympy/plotting/plot.py. The vast majority of the cumulative speedup (~240,000x) comes from earlier iterations that restructured the Diophantine solver's core loop; iter-5 adds a solid 1.54x on top."
+  ]
+}

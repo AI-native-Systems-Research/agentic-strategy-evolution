@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether replacing sympy's symbolic sqrt(D) with pure integer arithmetic (isqrt) in the two hottest functions\u2014PQa() and length()\u2014within diophantine.py can eliminate virtually all remaining runtime overhead, building on iteration 1's loop-invariant hoisting that already reduced the workload from 57.3s to ~0.97s.",
+  "key_points": [
+    "Single arm (h-main): modify PQa() to use integer_nthroot(D,2)[0] instead of symbolic sqrt+floor for computing CF quotients, and replace length()'s call to continued_fraction_periodic with an inline integer-only CF period computation\u2014both changes target the same root cause (symbolic algebra overhead).",
+    "Prediction: workload mean drops from ~0.97s (iter-1 treatment) to under 0.01s, yielding >5000\u00d7 speedup over the 57.3s baseline. Profiling from iter-1 showed length() accounts for ~84% and PQa() for ~16% of remaining runtime, both dominated by symbolic sqrt calls.",
+    "Key risk: the integer floor formula (P + isqrt(D)) // Q must handle truncation-toward-zero semantics correctly for negative quotients in length(); incorrect handling would silently produce wrong CF periods and fail the pytest correctness gate on test_diophantine.py.",
+    "Confirmation criteria: workload mean < 0.01s with all 48+ tests in test_diophantine.py passing. Refutation: if mean stays above 0.1s, another bottleneck dominates; if tests fail, the integer truncation logic has a bug for some (P, Q, D) triple.",
+    "No ablation arms needed\u2014profiling already established the 84/16 split between length() and PQa(), and both changes share the identical mechanism (symbolic\u2192integer sqrt), so testing them separately adds no scientific value at this tier."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

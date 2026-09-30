@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether hoisting a loop-invariant `length(z, abs(m), D)` call out of an inner loop in `diop_DN` can eliminate ~228 redundant continued-fraction-period computations (each ~0.335s), reducing the workload runtime from ~57.3s to under 2s (>25\u00d7 speedup). This is a single, minimal code change in `sympy/solvers/diophantine.py`.",
+  "key_points": [
+    "The `length()` function is called on every iteration of the inner PQa loop (~231 times total across 3 (z,m) pairs), but its arguments (z, abs(m), D) never change within the loop \u2014 making it a textbook loop-invariant hoisting opportunity.",
+    "The experiment has one arm (h-main): move the `length()` call from inside the `for j in range(...)` loop (line ~1181) to just before the loop starts, storing the result in a local variable. The predicted speedup is >25\u00d7 with identical mathematical results.",
+    "Confirmation criteria: workload mean drops below ~2s (speedup >25\u00d7) AND `pytest sympy/solvers/tests/test_diophantine.py` stays fully green. Refutation: if speedup is <5\u00d7 or tests fail, the diagnostic plan checks whether the workload actually exercises this code path and profiles for other bottlenecks (e.g., PQa's symbolic sqrt or recursive diop_DN calls).",
+    "Risk is very low: the change is a mechanical code motion with no semantic alteration \u2014 the same value is computed fewer times. A prior probe already confirmed ~59.6\u00d7 speedup with identical output."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

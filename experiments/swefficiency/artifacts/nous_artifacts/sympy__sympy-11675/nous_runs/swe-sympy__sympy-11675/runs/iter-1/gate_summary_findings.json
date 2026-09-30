@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "The hypothesis is CONFIRMED with a massive speedup. Hoisting a loop-invariant `length()` call out of an inner loop in `diop_DN()` reduced workload runtime from 57.3s (campaign baseline) to 0.97s, yielding a 59.3x speedup. All 41 covering tests pass and outputs are identical to baseline.",
+  "key_points": [
+    "Treatment mean: 0.967s vs campaign baseline 57.33s \u2192 59.28x speedup (vs measured baseline 42.71s \u2192 44.15x speedup)",
+    "Root cause validated: ~228 of 231 redundant `length()` calls eliminated, each costing ~0.335s of repeated continued-fraction/symbolic-sqrt computation",
+    "All 41 tests in test_diophantine.py pass (1 expected XFAIL); diop_DN(15591784605, -20) returns identical 3 solution tuples in both conditions",
+    "Treatment standard deviation is only 0.011s across runs, indicating highly stable improvement",
+    "NOTE: Three unrelated files appear in uncommitted writes (basic.py, matrices.py, plot.py) \u2014 these should be reviewed to ensure no accidental edits are included in the final patch"
+  ]
+}

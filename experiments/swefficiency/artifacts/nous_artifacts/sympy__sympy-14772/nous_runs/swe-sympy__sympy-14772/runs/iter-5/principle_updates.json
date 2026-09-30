@@ -1,0 +1,45 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Replacing two-argument pow(base, exp) % mod with three-argument pow(base, exp, mod) in Python eliminates construction of exponentially-large intermediate integers and yields multiple-orders-of-magnitude speedup for large exponents.",
+    "confidence": "high",
+    "regime": "Any Python code path where pow(a, exp) computes a very large intermediate before modular reduction. Specifically validated for _legendre(87389, 131071) where the intermediate is ~1.1M bits.",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main",
+      "iteration-3-h-main",
+      "iteration-4-h-main",
+      "iteration-5-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "CPython's three-arg pow(base, exp, mod) uses C-level modular exponentiation (square-and-multiply with per-step modular reduction), keeping all intermediates bounded by mod (~17 bits for p=131071). Two-arg pow computes the full base^exp (~1.1M bits for 87389^65535) as an arbitrary-precision integer before the final modulo. The intermediate size reduction is ~65,000:1.",
+    "applicability_bounds": "Applies when exponents are large enough that the intermediate integer becomes expensive to compute. For small exponents (e.g., exp<100), the overhead difference is negligible.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "update_type": "strengthen",
+    "update_rationale": "Iter-5 provides the definitive 5-seed confirmation: speedup = 3,535x (campaign formula), consistent across all seeds (2,797x-3,585x). Combined with 15+ measurements from iterations 1-4, this principle is thoroughly validated."
+  },
+  {
+    "id": "RP-5",
+    "statement": "For the _legendre workload, the three-arg pow optimization captures the entire practical performance improvement \u2014 stacking additional micro-optimizations (bitshift exponent, branchless return) provides no statistically significant further speedup, as the ~16\u03bcs multiprocessing fork overhead dominates the remaining measured time.",
+    "confidence": "high",
+    "regime": "The _legendre(87389, 131071) workload measured via multiprocessing fork isolation harness. The fork overhead (~16\u03bcs) dwarfs the function execution time (~3\u03bcs), making sub-microsecond micro-optimizations invisible.",
+    "evidence": [
+      "iteration-5-h-main",
+      "iteration-5-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "After three-arg pow, the remaining _legendre per-call time is ~3.16\u03bcs (measured via in-process microbenchmark). Bitshift exponent saves ~0.01\u03bcs, branchless return saves ~0.01\u03bcs. Combined savings <0.1\u03bcs per call. The workload measures through a multiprocessing fork, adding ~16\u03bcs overhead per measurement. At 19-21\u03bcs total measured time, sub-microsecond savings are completely invisible. Welch's t-test: t=1.35, df=4.3, not significant (p>0.05).",
+    "applicability_bounds": "Specific to this measurement harness. In a direct in-process measurement without fork overhead, the micro-optimizations might show measurable (but tiny, <3%) differences.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

@@ -1,0 +1,31 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+setup:
+  - cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+    description: "Preflight: verify covering tests pass on unmodified code"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && git reset HEAD sympy/ntheory/partitions_.py 2>/dev/null; git checkout -- sympy/ntheory/partitions_.py && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous_20260929-164922/nous_runs/swe-sympy__sympy-10919/runs/iter-1/results/h-main/baseline.json"
+        description: "Measure original unoptimized code (10 repeats of npartitions(10^6))"
+      - name: "baseline-tests"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous_20260929-164922/nous_runs/swe-sympy__sympy-10919/runs/iter-1/results/h-main/baseline.json"
+        description: "Verify covering tests pass on baseline"
+      - name: "treatment"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && git apply /tmp/h-main.patch && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous_20260929-164922/nous_runs/swe-sympy__sympy-10919/runs/iter-1/results/h-main/treatment.json"
+        description: "Measure optimized code with memoized Dedekind sums, Kloosterman symmetry, gmpy2 MPFR cos, hardware float path"
+        inputs:
+          - "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous_20260929-164922/nous_runs/swe-sympy__sympy-10919/runs/iter-1/patches/h-main.patch"
+      - name: "treatment-tests"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous_20260929-164922/nous_runs/swe-sympy__sympy-10919/runs/iter-1/results/h-main/treatment.json"
+        description: "Verify covering tests pass with optimized code"
+      - name: "treatment-correctness"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -c \"from sympy import npartitions; expected={0:1,1:1,2:2,3:3,4:5,5:7,25:1958,100:190569292,200:3972999029388}; results={n:(npartitions(n),e) for n,e in expected.items()}; [print(f\\\"npartitions({n})={r[0]} expected={r[1]} {'OK' if r[0]==r[1] else 'FAIL'}\\\") for n,r in results.items()]\"'"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous_20260929-164922/nous_runs/swe-sympy__sympy-10919/runs/iter-1/results/h-main/treatment.json"
+        description: "Verify numerical correctness for various n values"

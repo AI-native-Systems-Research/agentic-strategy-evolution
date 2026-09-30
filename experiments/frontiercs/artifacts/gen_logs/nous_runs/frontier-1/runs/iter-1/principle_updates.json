@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For 2D bounded knapsack with n=12 item types, branch-and-bound with Lagrangian LP relaxation (relax one constraint, ternary search for optimal dual variable) finds exact integer optima, scoring 100/100 on the judge across all 20 test cases.",
+    "confidence": "high",
+    "regime": "2D bounded knapsack, 12 item types, quantities up to 10000, mass <= 20M mg, volume <= 25M uL, 1s time limit",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Lagrangian relaxation of one constraint (volume) reduces the 2D LP to a sequence of 1D fractional knapsack problems parameterized by the dual variable lambda. Ternary search over lambda finds the optimal multiplier, recovering the exact LP optimum (by strong duality). With only 12 item types giving B&B tree depth 12, and the tight LP bound pruning aggressively, the solver completes well within 1 second.",
+    "applicability_bounds": "Depends on n=12 being small enough for B&B depth. For n >> 12 (e.g., 100+ item types), the approach may be too slow. Also depends on item quantities being bounded by capacity, keeping effective max_k manageable.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "A single greedy heuristic sorted by v/(m+l) scores 0/100 on the 2D bounded knapsack judge \u2014 it fails to beat even the NSA baseline on any of 20 test cases.",
+    "confidence": "high",
+    "regime": "Same as RP-1",
+    "evidence": [
+      "iteration-1-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The combined density metric v/(m+l) poorly approximates the true shadow prices of the two constraints. Items favorable in one dimension (e.g., low mass) may be wasteful in the other (e.g., high volume). Without backtracking, greedy commits capacity irreversibly to suboptimal items.",
+    "applicability_bounds": "Specific to the single v/(m+l) metric. Multiple greedy heuristics with alpha-parameterized metrics perform better and are used as the initial lower bound in the B&B approach.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

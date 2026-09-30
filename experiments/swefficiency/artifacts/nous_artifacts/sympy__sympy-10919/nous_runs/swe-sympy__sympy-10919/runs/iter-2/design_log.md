@@ -1,0 +1,27 @@
+I'll start by exploring the codebase, understanding the current state after iteration 1's findings, and identifying further optimization opportunities.Good, I can see the iter-1 optimizations are already applied in the codebase. Let me now run the baseline, profile to find remaining bottlenecks, and explore additional optimization opportunities.Current baseline is ~0.494s (speedup ≈ 2.81x from reference 1.3901s). Tests pass. Now let me profile to find remaining bottlenecks.Now let me profile more deeply to understand where time is spent in the inner loop, and verify the key mathematical insights I'm developing.The h/j-h symmetry is confirmed (pair (2,5) at j=7 differs only at 10^-1259 magnitude — negligible). Now let me verify the small-int inner sum optimization.The small-int approach produces negligible differences (10^-1248). Let me now implement and test the full optimized version with both optimizations: small-int inner sum + h/j-h symmetry halving.Excellent! 2.21x speedup over iter-1 code, bit-identical results. That's ~6.6x over the reference baseline. Let me profile the optimized version to find remaining opportunities.Very strong results. Let me now quantify the contribution of each optimization separately by testing the ablation (small-int sum only, without symmetry).Clear decomposition: small-int sum saves 0.104s, symmetry halving saves 0.178s. Let me now check for additional micro-optimizations and finalize the code.Aha — the bulk of time (0.213s) is in q=25..243 with low precision but many Python loop iterations. The bottleneck is the small-int inner loop count, not big-int operations. Let me try numpy vectorization.Numpy is marginally slower (0.219s vs 0.212s) due to array creation overhead for small j. Let me try a batch approach — computing all coprime h values at once per j.Excellent — batch numpy gets us to 0.147s, which is 9.46x over reference! Let me fine-tune the threshold and explore further optimizations.Let me now explore early termination in the outer loop and check for other micro-optimizations.103 iterations with zero d! Let me add early termination and measure.Early termination is too aggressive — breaks correctness. Let me investigate a safe termination condition.Safe cutoff is at q=196 — only 48 skippable iterations. The savings would be modest. Let me instead explore another approach: moving the d computation before _a so we can skip when d is zero.Good — the optimized version is correct across all test values and achieves ~8-10x speedup. Let me now verify with the actual workload harness by writing the code changes and running them.Good, I can see the iter-1 changes already applied. Now let me create the iter-2 experiment structure and write the artifacts.Now let me look at what the nous validate command expects:Good. Now let me read the source lines for precise code citations, then write the problem.md, bundle.yaml, and handoff.Now let me verify the exact baseline by running the workload harness one more time, then write all artifacts.Good — current baseline (iter-1 optimized code) is ~0.465s. Now let me write all the design artifacts.Now let me write the handoff document:Now write the campaign-level handoff copy:Now let me run the validation:Validation passes. Let me verify the artifacts are complete and do a final sanity check on the design:All three required artifacts are in place (`problem.md`, `bundle.yaml`, `handoff_snapshot.md`), and the campaign-level `handoff.md` is updated. Let me do a final read of the bundle to make sure it's well-formed:Everything looks good. Let me provide a summary of the design.
+
+---
+
+## Design Summary — Iteration 2
+
+**Validation status: PASS** ✅
+
+### What was designed
+
+A tier-2 hypothesis bundle (`hrr-inner-sum-advanced`) with two arms building on iteration 1's confirmed frac_table precomputation (RP-1, ~2.8x speedup):
+
+**h-main** — Three combined optimizations to the `_a()` function:
+1. **Small-integer inner sum**: Replace per-iteration big-integer multiplication (`k * frac_table[...]` on ~4148-bit numbers) with small-integer arithmetic (`T += k * ((h*k) % j)`, values < 59049), doing one big-int multiply at the end. Error is ~15 bits out of 4148 — negligible. Produces bit-identical results.
+2. **h/j-h cosine symmetry**: Mathematically proven that `cos(angle(h)) = cos(angle(j-h))` because the angles differ by 2nπ. Halves mpf_cos calls from 18,055 to ~9,028.
+3. **NumPy batch vectorization**: For j > 50, computes all coprime h values' T-sums simultaneously via 2D array broadcasting, eliminating ~1.46M Python loop iterations.
+
+Probed at **0.142–0.168s** → **8–10x speedup** over the 1.3901s reference baseline.
+
+**h-ablation** — Same algorithmic optimizations (small-int + symmetry) but without NumPy. Pure Python. Probed at **0.212s** → **6.5x speedup**. Isolates NumPy's ~1.4x contribution.
+
+### Key evidence gathered
+- Small-int approximation verified bit-identical for n=0 through 10^6
+- Symmetry verified for j=7, 13 (all coprime pairs match)
+- NumPy threshold=50 optimized via sweep over [5, 10, 15, 20, 30, 50, 70, 100]
+- Early termination at q=141 explored and rejected (breaks correctness: tail sum ≈ 32)
+- Profiling decomposition: small-int saves 0.104s, symmetry saves 0.178s, numpy saves 0.068s

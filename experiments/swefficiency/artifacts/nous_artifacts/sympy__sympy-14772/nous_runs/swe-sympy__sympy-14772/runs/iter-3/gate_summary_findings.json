@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both arms confirmed their predictions with high statistical confidence across 5 seeds each. The core fix \u2014 replacing `pow(a%p, (p-1)//2) % p` with Python's built-in three-argument `pow(a, (p-1)//2, p)` in the `_legendre` function \u2014 delivers a ~3,924x mean speedup (from 74.3ms to 19.07\u03bcs), changing the algorithm's complexity class from O(2^n \u00b7 n) to O(n\u00b2). An alternative Jacobi-symbol implementation delivers statistically indistinguishable performance (~4,155x), confirming we've hit the measurement floor of the workload harness.",
+  "key_points": [
+    "h-main (three-arg pow fix): Mean 19.07\u03bcs across 5 seeds, speedup 3,924x (range 3,318\u20134,186x). All 38 covering tests pass. This is a one-line change in sympy/crypto/crypto.py.",
+    "h-robustness (Jacobi algorithm): Mean 18.07\u03bcs across 5 seeds, speedup 4,155x (range 3,683\u20134,696x). All 38 tests pass. The 5.2% difference from h-main is not statistically significant (t=0.80, p\u226b0.05), confirming ~16\u03bcs harness overhead dominates both variants.",
+    "Recommendation: Approve the h-main (three-arg pow) fix. It is minimal (one line), maximally understandable, and achieves the same practical performance ceiling as the more complex Jacobi alternative. No further optimization is meaningful given the harness overhead floor.",
+    "The root cause was a catastrophic performance bug: computing `pow(a%p, (p-1)//2)` creates an astronomically large intermediate integer before reducing mod p, whereas `pow(a, (p-1)//2, p)` uses modular exponentiation internally."
+  ]
+}

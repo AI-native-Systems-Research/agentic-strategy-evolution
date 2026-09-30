@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "Iteration 3 proposes eliminating redundant continued-fraction computation in diop_DN's |N|>1 branch by inlining PQa arithmetic with set-based period detection, building on iter-2's confirmed integer arithmetic optimization (speedup from 57.3s baseline to ~0.001s). The hypothesis predicts a further ~2x speedup over iter-2 by removing ~465 redundant CF iterations, generator overhead, and list appends.",
+  "key_points": [
+    "Prior iterations confirmed: iter-1 replaced symbolic sqrt with integer arithmetic in PQa/length(), achieving massive speedup (~57s \u2192 ~0.001s). Iter-2 refined this. Both passed correctness tests.",
+    "Iter-3's single arm (h-main) merges period detection directly into the PQa loop for diop_DN's |N|>1 path, eliminating 3 separate length() calls that each repeat ~155 CF iterations already done by PQa. It also removes tuple packing (generator protocol), list.append for G/B arrays, and unused A_i recurrence computation.",
+    "The design includes a critical correctness detail: negative Q_i values require a different floor formula (a_i = -((P_i + sD) // (-Q_i)) - 1), verified needed for cases like D=23 N=13. This must be tested via the existing test_diophantine.py suite.",
+    "Confirmation criteria: workload mean drops from iter-2's ~0.35ms to ~0.16ms (\u22651.5x further speedup) while all 283+ diophantine tests remain green. Refutation: if sqrt_mod() or divisors() now dominate runtime, the inlining yields <1.2x improvement.",
+    "Risk is low: the optimization is strictly fewer operations on the same code path, with no algorithmic change. Only one arm is proposed because the three sub-optimizations (inline PQa, period detection, scalar tracking) are interdependent and cannot be meaningfully ablated separately."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

@@ -1,0 +1,48 @@
+metadata:
+  iteration: 1
+  family: "skyline-packing-vs-naive"
+  research_question: "Does skyline-based greedy packing with multi-width sweep produce significantly higher packing density scores than naive strip packing for the polyomino rectangle packing problem?"
+  complexity_tier: 1
+  tier_justification: "Iteration 1: single mechanism (skyline greedy packing) vs. trivial baseline (strip packing)"
+
+# Arm selection rationale:
+# - h-main: Tests the core skyline packing mechanism which should dramatically outperform naive approaches
+# - h-control-negative: Naive strip packing establishes a floor and validates the measurement pipeline
+# Only two arms because tier 1 requires the simplest possible design, and the mechanism contrast
+# (2D skyline vs 1D strip) is the most fundamental question to answer first.
+
+arms:
+  - type: h-main
+    prediction: "The skyline-based greedy packer with multi-width sweep will achieve a score substantially higher than the naive strip packer (observed ~76 vs ~34 in probes), because the skyline approach exploits 2D spatial structure — fitting pieces into gaps between previously placed pieces — while strip packing wastes all vertical space."
+    mechanism: "The skyline algorithm maintains a per-column height array and places each piece at the position that minimizes the resulting maximum height. By trying all orientations and all x-positions, it finds near-optimal placements that fill gaps in the skyline. The multi-width sweep then selects the rectangle width W that minimizes total area W*H. This fundamentally differs from strip packing which makes each piece occupy its full bounding-box width, creating a single long row with height = max piece height."
+    diagnostic: "If the skyline packer scores lower than expected: (1) check transform parameter recovery — incorrect X,Y,R,F values cause the checker to reject placements, (2) check time management — if individual test cases exceed 2s, the judge gives 0 for those cases, (3) check piece ordering — if smaller pieces are placed first, they may fragment the skyline for larger pieces."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the empty stub with the skyline-based greedy packer from inputs/h-main-solution.cpp. The implementation: (1) reads all polyominoes and generates all unique orientations via reflect+rotate, (2) sorts pieces by decreasing cell count, (3) for each candidate width W, greedily places pieces at the position minimizing max height using a per-column skyline array, (4) sweeps ~160 candidate widths around sqrt(totalCells*factor), (5) outputs the best W,H and transform parameters (X,Y,R,F) for each piece."
+        rationale: "This is the core algorithm under test — skyline-based 2D packing is the standard approach for rectangle packing with irregular shapes."
+
+  - type: h-control-negative
+    prediction: "The naive strip packer will score approximately 30-35 (observed ~34 in probe), because placing pieces in a 1D horizontal strip with no vertical compaction wastes the vast majority of vertical space — only the tallest piece determines the strip height, and all other columns have empty cells above their content."
+    mechanism: "Strip packing places each piece adjacent to the previous one horizontally, using the trivial orientation that makes it wider than tall. The resulting rectangle has width = Σ(piece_widths) and height = max(piece_heights), yielding area much larger than the sum of cell counts. The packing ratio Σkᵢ / A is thus very low."
+    diagnostic: "If the strip packer scores 0: check that the transform parameter calculation is correct (translation offsets after rotation must account for the shift to positive coordinates). If it scores much higher than ~35, the test case distribution may favor long thin inputs."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the empty stub with the naive strip packer from inputs/h-control-negative-solution.cpp. The implementation: (1) reads all polyominoes, (2) for each piece, computes its bounding box and picks the wider orientation (R=0 or R=1), (3) places pieces left-to-right with no vertical compaction, (4) outputs total width and max height."
+        rationale: "This establishes the baseline showing what happens without 2D spatial awareness, validating that the score difference is due to the skyline mechanism."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters: {}
+  unlocked_parameters_audit:
+    - name: "compilation_flags"
+      default_value: "-O2 -std=c++17"
+      justification: "Standard competitive programming flags; -O2 is sufficient for the greedy algorithm and matches judge behavior."
+    - name: "time_limit"
+      default_value: "2s"
+      justification: "Set by config.yaml, not controllable; both solutions are well within this limit."
+    - name: "piece_ordering"
+      default_value: "decreasing cell count (h-main), input order (h-control-negative)"
+      justification: "Ordering is part of the algorithmic strategy being tested; the h-main uses decreasing size which is standard for bin packing heuristics."
+    - name: "width_sweep_range"
+      default_value: "~160 candidate widths centered on sqrt(totalCells * factor)"
+      justification: "This range was validated to cover the optimal width for all 70 test cases within the 2s time budget."

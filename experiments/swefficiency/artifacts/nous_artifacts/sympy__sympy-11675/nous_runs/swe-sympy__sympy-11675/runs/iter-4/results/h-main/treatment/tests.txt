@@ -1,0 +1,111 @@
+...................................F......                               [100%]
+=================================== FAILURES ===================================
+_______________________________ test_fail_holzer _______________________________
+
+    @XFAIL
+    def test_fail_holzer():
+        eq = lambda x, y, z: a*x**2 + b*y**2 - c*z**2
+        a, b, c = 4, 79, 23
+        x, y, z = xyz = 26, 1, 11
+        X, Y, Z = ans = 2, 7, 13
+        assert eq(*xyz) == 0
+        assert eq(*ans) == 0
+        assert max(a*x**2, b*y**2, c*z**2) <= a*b*c
+        assert max(a*X**2, b*Y**2, c*Z**2) <= a*b*c
+        h = holzer(x, y, z, a, b, c)
+>       assert h == ans  # it would be nice to get the smaller soln
+        ^^^^^^^^^^^^^^^
+E       assert (26, 1, 11) == (2, 7, 13)
+E         
+E         At index 0 diff: 26 != 2
+E         Use -v to get more diff
+
+sympy/solvers/tests/test_diophantine.py:778: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+    def wrapper():
+        try:
+            func()
+        except Exception as e:
+            message = str(e)
+            if message != "Timeout":
+>               raise XFail(get_function_name(func))
+E               sympy.utilities.pytest.XFail: test_fail_holzer
+
+sympy/utilities/pytest.py:121: XFail
+=============================== warnings summary ===============================
+../opt/miniconda3/lib/python3.11/site-packages/mpmath/ctx_mp.py:35
+  /opt/miniconda3/lib/python3.11/site-packages/mpmath/ctx_mp.py:35: DeprecationWarning: mpnumeric is deprecated
+    warnings.warn(f"{name} is deprecated", DeprecationWarning)
+
+../opt/miniconda3/lib/python3.11/site-packages/mpmath/rational.py:4
+../opt/miniconda3/lib/python3.11/site-packages/mpmath/rational.py:4
+  /opt/miniconda3/lib/python3.11/site-packages/mpmath/rational.py:4: DeprecationWarning: the rational private module is deprecated
+    warnings.warn("the rational private module is deprecated",
+
+sympy/matrices/matrices.py:2068
+  /testbed/sympy/matrices/matrices.py:2068: DeprecationWarning: invalid escape sequence '\m'
+    """
+
+sympy/solvers/diophantine.py:1232
+  /testbed/sympy/solvers/diophantine.py:1232: DeprecationWarning: invalid escape sequence '\g'
+    """
+
+sympy/solvers/diophantine.py:1294
+  /testbed/sympy/solvers/diophantine.py:1294: DeprecationWarning: invalid escape sequence '\s'
+    """
+
+sympy/solvers/diophantine.py:1356
+  /testbed/sympy/solvers/diophantine.py:1356: DeprecationWarning: invalid escape sequence '\s'
+    """
+
+sympy/solvers/diophantine.py:1482
+  /testbed/sympy/solvers/diophantine.py:1482: DeprecationWarning: invalid escape sequence '\s'
+    """
+
+sympy/solvers/diophantine.py:2269
+  /testbed/sympy/solvers/diophantine.py:2269: DeprecationWarning: invalid escape sequence '\ '
+    """
+
+sympy/solvers/diophantine.py:2432
+  /testbed/sympy/solvers/diophantine.py:2432: DeprecationWarning: invalid escape sequence '\e'
+    """
+
+sympy/solvers/diophantine.py:2473
+  /testbed/sympy/solvers/diophantine.py:2473: DeprecationWarning: invalid escape sequence '\e'
+    """
+
+sympy/solvers/diophantine.py:2484
+  /testbed/sympy/solvers/diophantine.py:2484: DeprecationWarning: invalid escape sequence '\c'
+    """
+
+sympy/solvers/diophantine.py:2494
+  /testbed/sympy/solvers/diophantine.py:2494: DeprecationWarning: invalid escape sequence '\g'
+    """
+
+sympy/solvers/diophantine.py:2622
+  /testbed/sympy/solvers/diophantine.py:2622: DeprecationWarning: invalid escape sequence '\i'
+    """
+
+sympy/solvers/diophantine.py:2849
+  /testbed/sympy/solvers/diophantine.py:2849: DeprecationWarning: invalid escape sequence '\g'
+    """
+
+sympy/solvers/diophantine.py:2928
+  /testbed/sympy/solvers/diophantine.py:2928: DeprecationWarning: invalid escape sequence '\g'
+    """
+
+sympy/solvers/diophantine.py:3067
+  /testbed/sympy/solvers/diophantine.py:3067: SyntaxWarning: "is" with a literal. Did you mean "=="?
+    if feasible is 1:  # it's prime and k == 2
+
+sympy/solvers/tests/test_diophantine.py: 11116 warnings
+  /opt/miniconda3/lib/python3.11/site-packages/mpmath/libmp/libintmath.py:75: DeprecationWarning: bitcount function is deprecated
+    warnings.warn("bitcount function is deprecated",
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+                                DO *NOT* COMMIT!                                
+=========================== short test summary info ============================
+FAILED sympy/solvers/tests/test_diophantine.py::test_fail_holzer - sympy.util...
+1 failed, 41 passed, 11133 warnings in 20.07s

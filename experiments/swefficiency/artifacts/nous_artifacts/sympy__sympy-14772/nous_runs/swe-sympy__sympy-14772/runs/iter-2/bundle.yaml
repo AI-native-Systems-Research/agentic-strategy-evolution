@@ -1,0 +1,77 @@
+metadata:
+  iteration: 2
+  family: "legendre-modpow-optimization"
+  research_question: "Can replacing two-argument pow with three-argument modular pow in _legendre reduce workload runtime by multiple orders of magnitude, and does the a%p pre-reduction contribute measurable overhead?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — tier 1 confirmed in iter-1 (3,900x speedup), escalating to tier 2 with ablation of the a%p pre-reduction component"
+
+arms:
+  - type: h-main
+    prediction: "Replacing pow(a%p, (p-1)//2) % p with pow(a%p, (p-1)//2, p) in _legendre will decrease the workload mean runtime from ~0.070s to ~0.000019s, yielding a speedup of ~3,900x (0.0743 / mean) consistently across all seeds. All 38 covering tests will pass."
+    mechanism: >
+      Python's two-argument pow(base, exp) computes the full integer base^exp before
+      taking mod. For a=87389, p=131071, this creates an intermediate integer of
+      ~1.1 million bits (65535 * ~17 bits). The three-argument pow(base, exp, mod)
+      performs modular exponentiation in C using square-and-multiply with mod reduction
+      at each step, keeping all intermediates below p (~17 bits). This eliminates
+      arbitrary-precision arithmetic on million-bit integers.
+      Code location: sympy/crypto/crypto.py:2075.
+    diagnostic: >
+      If the prediction is wrong: (1) verify the workload actually calls the modified
+      code path by checking import resolution, (2) check if clear_cache() in the
+      workload setup interacts with the change, (3) verify the Python version's
+      three-arg pow uses C-level modular exponentiation.
+    code_changes:
+      - file: "sympy/crypto/crypto.py"
+        intent: "On line 2075, change `sig = pow(a%p, (p - 1)//2) % p` to `sig = pow(a % p, (p - 1) // 2, p)` — use Python's native three-argument modular exponentiation instead of computing the full power then reducing."
+        rationale: "This is the sole hot path in the workload. The two-arg pow creates a ~1M-bit intermediate; three-arg pow keeps intermediates bounded by p."
+
+  - type: h-ablation
+    prediction: "Removing the a%p pre-reduction (using pow(a, (p-1)//2, p) instead of pow(a%p, (p-1)//2, p)) will produce speedup indistinguishable from h-main within measurement noise. The pre-reduction contributes ~0.1μs overhead, which is negligible relative to the ~19μs total and the workload harness variance."
+    mechanism: >
+      Python's three-arg pow(a, exp, mod) internally reduces a mod before beginning
+      square-and-multiply. The explicit a%p pre-reduction is therefore redundant.
+      However, since a=87389 < p=131071 in the workload, the pre-reduction is a
+      no-op (just a comparison), so removing it saves only one integer comparison.
+      The effect is sub-microsecond and undetectable in the workload harness.
+      Code location: sympy/crypto/crypto.py:2075.
+    diagnostic: >
+      If h-ablation shows meaningfully different performance from h-main: (1) check
+      if the workload values have a > p, where pre-reduction would be more expensive,
+      (2) verify that Python 3.6's three-arg pow handles the no-pre-reduction case
+      identically to later versions, (3) check if function call overhead variance
+      masks the difference.
+    code_changes:
+      - file: "sympy/crypto/crypto.py"
+        intent: "On line 2075, change `sig = pow(a%p, (p - 1)//2) % p` to `sig = pow(a, (p - 1) // 2, p)` — use three-argument pow AND remove the redundant a%p pre-reduction."
+        rationale: "Tests whether the a%p step contributes measurable overhead. If not, the simpler form (without pre-reduction) is preferable for code clarity."
+
+# Arm selection rationale:
+# h-main: Applies the confirmed RP-1 mechanism (three-arg pow). This is the
+#   core optimization delivering ~3,900x speedup from iter-1.
+# h-ablation: Tests whether the a%p pre-reduction is a measurable component
+#   of overhead. Microbenchmark probes suggest ~3% difference (~0.1μs), which
+#   is below workload harness noise. This validates the simplest possible fix.
+# No h-control-negative: The effect is ~3,900x and mechanism is a complexity
+#   class change (confirmed in iter-1). A control regime adds no diagnostic value.
+# No h-dose-response: The knob is binary (two-arg vs three-arg pow); there is
+#   no continuous parameter to sweep.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    baseline_mean_seconds: 0.0743
+    workload_a: 87389
+    workload_p: 131071
+    test_suite: "sympy/crypto/tests/test_crypto.py"
+    python_executable: "/opt/miniconda3/envs/testbed/bin/python"
+  unlocked_parameters_audit:
+    - name: "timeit_number"
+      default_value: 1
+      justification: "Workload uses number=1 per timing iteration; a single _legendre call is sufficient signal at both baseline (~70ms) and treatment (~19μs) scales."
+    - name: "timeit_repeat"
+      default_value: 10
+      justification: "10 repetitions per seed provide tight variance for a 3,900x effect; increasing repeat count would not change conclusions."
+    - name: "multiprocessing_start_method"
+      default_value: "fork"
+      justification: "The workload harness uses fork on Linux; this does not affect the computation being measured."

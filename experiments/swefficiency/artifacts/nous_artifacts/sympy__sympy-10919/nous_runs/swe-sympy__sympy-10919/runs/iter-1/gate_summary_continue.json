@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 confirmed a 3.08x speedup (0.451s vs 1.3901s reference baseline) by optimizing the `_a()` inner sum in `npartitions()`. The optimization replaces per-iteration big-integer divisions with a precomputed lookup table and swaps sympy's `igcd` for `math.gcd`. All covering tests pass and results are bit-identical to the original.",
+  "key_points": [
+    "CONFIRMED: The h-main arm predicted >1.5x speedup and delivered 3.08x vs reference baseline (0.451s mean, std 0.017s). Results are bit-identical across all 10 repetitions with non-overlapping confidence intervals.",
+    "The core insight: the fractional-part computation `(h*k*one // j) & onemask` inside a double loop depends only on `h*k mod j`, so precomputing a table of size j converts O(\u03c6(j)\u00b7j) big-integer divisions into O(j) precomputed divisions plus cheap table lookups.",
+    "Remaining optimization headroom: profiling shows `mpf_cos` (18k calls, ~0.29s) is now likely the next dominant cost. Possible future directions include (1) investigating whether the outer loop term count M is conservative, (2) exploiting Dedekind sum reciprocity for O(log j) inner sums, or (3) Cython/C for the inner loop.",
+    "Risk: The 4 Python 3.11 compatibility patches in uncommitted files (basic.py, function.py, egyptian_fraction.py, plot.py) are infrastructure fixes, not part of the optimization. They must be preserved but are not performance-relevant.",
+    "Recommendation: The 3.08x speedup is already substantial and well-validated. A second iteration could target mpf_cos or outer-loop precision, but diminishing returns are likely. Continuing is justified only if the goal is to push beyond ~3x."
+  ]
+}

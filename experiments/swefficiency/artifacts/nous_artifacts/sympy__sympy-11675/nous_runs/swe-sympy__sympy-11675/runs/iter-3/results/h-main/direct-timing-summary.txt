@@ -1,0 +1,17 @@
+=== Direct Timing Results (no fork overhead) ===
+
+Iter-2 treatment (integer PQa + length + hoisting):
+  Mean: 0.3925 ms per call (500 calls, 5 × 100)
+  StdDev: 0.0122 ms
+  Campaign speedup: 146,046x
+
+Iter-3 treatment (inlined PQa + period detection + scalar tracking):
+  Mean: 0.1713 ms per call (500 calls, 5 × 100)
+  StdDev: 0.0056 ms
+  Campaign speedup: 334,595x
+
+Incremental speedup (iter-3 vs iter-2): 2.29x
+Total speedup vs campaign baseline (57.3288s): 334,595x
+
+Correctness: 3 solutions, all satisfy x² - D·y² = -20
+Tests: 41 passed, 1 XFAIL (test_fail_holzer)

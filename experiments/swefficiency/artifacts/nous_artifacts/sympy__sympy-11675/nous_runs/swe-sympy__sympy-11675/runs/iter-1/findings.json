@@ -1,0 +1,34 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Hoisting the length(z, abs(m), D) call from inside the inner for-loop to before it will reduce the workload mean runtime from ~57.3s to under 2s (speedup > 25x), because 228 of the 231 length() calls (~0.335s each) are eliminated while producing identical results.",
+      "observed": "Baseline mean: 42.714s (std dev: 0.417s). Treatment mean: 0.967s (std dev: 0.011s). Measured speedup vs own baseline: 44.15x. Speedup vs campaign baseline (57.3288s): 59.28x. All 41 covering tests passed (1 expected @XFAIL failure). diop_DN(15591784605, -20) returns identical 3 solution tuples in both conditions.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Measured baseline (42.714s) is lower than campaign baseline (57.3288s), likely due to different machine or Python environment. The relative speedup (44x) is consistent with the predicted mechanism. Using campaign baseline for the official speedup metric as specified.",
+      "metadata": {
+        "speedup": 59.28,
+        "treatment_mean": 0.967,
+        "treatment_stddev": 0.011,
+        "measured_baseline_mean": 42.714,
+        "measured_baseline_stddev": 0.417,
+        "campaign_baseline_mean": 57.3288,
+        "tests_passed": 41,
+        "tests_xfail": 1,
+        "solutions_count": 3,
+        "results_identical": true
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The h-main prediction is CONFIRMED. The predicted directional effect (dramatic speedup from eliminating redundant length() calls) is strongly observed. Treatment mean of 0.967s vs baseline of 42.714s represents a 44x speedup on this machine, or 59.28x using the campaign baseline of 57.3288s. The mechanism is validated: hoisting the loop-invariant length(z, abs(m), D) call from inside the inner PQa loop to before it eliminates ~228 redundant calls to continued_fraction_periodic(), each costing ~0.335s of symbolic sqrt evaluation. All covering tests pass and output is identical.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "sympy/core/basic.py",
+    "sympy/matrices/matrices.py",
+    "sympy/plotting/plot.py"
+  ]
+}

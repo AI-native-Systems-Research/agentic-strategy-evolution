@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "The hypothesis is confirmed: adding a scalar fast-path to `_check_hour_range` reduced mean runtime from ~0.000139s to ~2.51e-06s (\u224855\u00d7 speedup), exceeding the predicted ~50\u00d7 improvement. All 764 relevant tests pass; the single failure is a pre-existing infrastructure issue (stale IERS leap-second file) unrelated to the change.",
+  "key_points": [
+    "Confirmed: Bypassing NumPy ufunc dispatch for plain-int inputs to `_check_hour_range` via an `isinstance` guard delivers a 55\u201363\u00d7 speedup, consistent across 6 independent measurement runs (3 baseline, 3 treatment).",
+    "Baseline mean runtime: ~0.000155s (range 0.000139\u20130.000161s); Treatment mean runtime: ~2.44\u00b5s (range 2.36\u20132.55\u00b5s). The effect size is large, stable, and exceeds the predicted ~50\u00d7 by a small margin.",
+    "Correctness gate fully satisfied: 764 tests passed, 45 skipped, 5 xfailed. The 1 pre-existing failure (test_helioecliptic_induced_velocity / IERSStaleWarning) is identical in baseline and treatment, confirming no regression from the patch.",
+    "Root cause validated: NumPy ufunc dispatch overhead dominates when called on Python scalar inputs; replacing it with native Python comparisons eliminates that overhead entirely."
+  ]
+}

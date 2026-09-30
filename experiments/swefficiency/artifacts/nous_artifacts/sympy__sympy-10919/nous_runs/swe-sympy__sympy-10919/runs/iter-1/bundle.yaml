@@ -1,0 +1,66 @@
+metadata:
+  iteration: 1
+  family: "hrr-inner-sum-optimization"
+  research_question: "Can precomputing fractional-part lookup tables, using C-level math.gcd, and hoisting loop-invariant computations in the _a() inner sum of the HRR partition formula reduce npartitions(10^6) runtime while preserving exact results?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (inner-loop optimization in _a function), treatment vs control"
+
+# Arms rationale: Tier 1 requires treatment vs control. The h-main arm tests the
+# combined optimization of _a(). No ablation or dose-response is needed because
+# the optimization is a single coherent change (all sub-optimizations target the same
+# inner loop and are interdependent — the frac_table enables the half_sum factoring).
+
+arms:
+  - type: h-main
+    prediction: "The optimized _a function will reduce npartitions(10^6) wall-clock time consistently across all 10 workload repetitions, yielding speedup > 1.5x relative to the 1.3901s reference baseline, because the inner k-loop performs fewer and cheaper big-integer operations per iteration."
+    mechanism: >
+      The original _a() function performs 5+ big-integer operations per inner k-loop
+      iteration: (1) multiply h*k*one (creating ~4164-bit intermediate), (2) integer
+      divide by j, (3) bitmask with onemask, (4) subtract half, (5) multiply by k,
+      (6) accumulate. It also recomputes one/onemask/half for every h value, and uses
+      sympy's igcd (Python-level with cache+type-check overhead) instead of C-level
+      math.gcd. The optimization: (a) precompute frac_table[r] = (r*one)//j for
+      r=0..j-1 once per _a call — only j big-int divisions instead of ~euler_totient(j)*(j-1);
+      (b) replace the inner loop body with a single table lookup + small-int multiply +
+      accumulate; (c) factor out the half-subtraction to one big-int operation after the loop;
+      (d) use math.gcd (C builtin, 9x faster than igcd); (e) hoist constants outside h-loop.
+      Net effect: ~2.5x fewer big-int operations per inner iteration, eliminating ~5.8M
+      unnecessary big-int ops across the full computation.
+    diagnostic: >
+      If speedup is smaller than predicted: profile the optimized version to check whether
+      mpf_cos now dominates (irreducible cost) or whether the frac_table precomputation
+      is unexpectedly expensive for large j. If results differ: check that
+      (h*k*one//j) & onemask == ((h*k % j) * one) // j for all h,k,j — the algebraic
+      identity assumes h,k > 0 which holds since both range from 1..j-1.
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: >
+          In the _a function: (1) replace 'from sympy.core.numbers import igcd' with
+          'from math import gcd' at module level; (2) move computation of one, half
+          outside the h-loop; (3) precompute frac_table[r] = (r*one)//j for r in range(j)
+          and half_sum = half*j*(j-1)//2 before the h-loop; (4) precompute n2one = 2*n*one;
+          (5) replace the inner k-loop body with 'g += k * frac_table[(h*k) % j]' followed
+          by 'g -= half_sum' after the loop; (6) replace igcd(h,j) with gcd(h,j);
+          (7) replace '2*h*n*one' with 'h * n2one' in the final g computation.
+        rationale: >
+          Profiling shows _a takes 70% of runtime. The inner k-loop executes ~2.9M
+          iterations of big-integer arithmetic. The frac_table precomputation replaces
+          per-iteration big-int division + bitmask with a table lookup (O(j) precomp
+          amortized across euler_totient(j) h-values). Factoring out half_sum eliminates
+          one big-int subtraction per iteration. Using math.gcd eliminates Python-level
+          overhead on 29k coprimality checks. All changes preserve the mathematical
+          computation exactly — verified by checking npartitions(10^6) returns identical
+          integer for original and optimized code.
+
+experiment_spec:
+  preflight_commands:
+    - "pip install mpmath pytest 2>/dev/null"
+  verified_parameters:
+    baseline_mean_reference: 1.3901
+  unlocked_parameters_audit:
+    - name: "python_version"
+      default_value: "3.11.15"
+      justification: "Runtime environment is fixed; Python version affects big-integer performance but is not a controllable knob."
+    - name: "mpmath_version"
+      default_value: "1.4.1"
+      justification: "mpmath provides the mpf_* primitives; version is fixed by environment and affects baseline equally."

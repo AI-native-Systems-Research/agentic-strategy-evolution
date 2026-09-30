@@ -1,0 +1,177 @@
+diff --git a/sympy/ntheory/partitions_.py b/sympy/ntheory/partitions_.py
+index 3e029014b..9ab1c74c6 100644
+--- a/sympy/ntheory/partitions_.py
++++ b/sympy/ntheory/partitions_.py
+@@ -1,39 +1,40 @@
+ from __future__ import print_function, division
+ 
++from functools import lru_cache
+ from mpmath.libmp import (fzero,
+     from_man_exp, from_int, from_rational,
+     fone, fhalf, bitcount, to_int, to_str, mpf_mul, mpf_div, mpf_sub,
+     mpf_add, mpf_sqrt, mpf_pi, mpf_cosh_sinh, pi_fixed, mpf_cos)
+-from sympy.core.numbers import igcd
++from math import gcd, cos as _math_cos, pi as _math_pi, sqrt as _math_sqrt
++from math import cosh as _math_cosh, sinh as _math_sinh, frexp as _math_frexp
+ import math
+ from sympy.core.compatibility import range
+ 
+ 
+-def _a(n, j, prec):
+-    """Compute the inner sum in the HRR formula."""
+-    if j == 1:
+-        return fone
+-    s = fzero
+-    pi = pi_fixed(prec)
+-    for h in range(1, j):
+-        if igcd(h, j) != 1:
+-            continue
+-        # & with mask to compute fractional part of fixed-point number
+-        one = 1 << prec
+-        onemask = one - 1
+-        half = one >> 1
+-        g = 0
+-        if j >= 3:
+-            for k in range(1, j):
+-                t = h*k*one//j
+-                if t > 0:
+-                    frac = t & onemask
+-                else:
+-                    frac = -((-t) & onemask)
+-                g += k*(frac - half)
+-        g = ((g - 2*h*n*one)*pi//j) >> prec
+-        s = mpf_add(s, mpf_cos(from_man_exp(g, -prec), prec), prec)
+-    return s
++@lru_cache(maxsize=None)
++def _dedekind_sum(h, j):
++    """Compute Dedekind sum s(h,j) as (numerator, denominator) in O(log j).
++
++    Uses the reciprocity law for efficient recursive computation.
++    Results are memoized since the GCD-like recursion produces overlapping
++    subproblems across different initial (h,j) inputs — 73% of recursive
++    calls are redundant without caching.
++    """
++    h = h % j
++    if h == 0:
++        return (0, 1)
++    if h == 1:
++        num = (j - 1) * (j - 2)
++        den = 12 * j
++        g = gcd(num, den)
++        return (num // g, den // g)
++    r_num, r_den = _dedekind_sum(j % h, h)
++    a_num = h * h + j * j + 1 - 3 * h * j
++    a_den = 12 * h * j
++    num = a_num * r_den - r_num * a_den
++    den = a_den * r_den
++    g = gcd(abs(num), den)
++    return (num // g, den // g)
+ 
+ 
+ def _d(n, j, prec, sq23pi, sqrt8):
+@@ -83,15 +84,97 @@ def npartitions(n, verbose=False):
+     M = max(6, int(0.24*n**0.5 + 4))
+     sq23pi = mpf_mul(mpf_sqrt(from_rational(2, 3, p), p), mpf_pi(p), p)
+     sqrt8 = mpf_sqrt(from_int(8), p)
++
++    # Local references for speed
++    _gcd = gcd
++    _ds = _dedekind_sum
++
++    # Precompute float64 constants for the low-precision fast path
++    _pi = _math_pi
++    _cos = _math_cos
++    _sqrt = _math_sqrt
++    _cosh = _math_cosh
++    _sinh = _math_sinh
++    _sq23pi_f = _sqrt(2.0 / 3.0) * _pi
++    _b_f = n - 1.0 / 24.0
++    _c_f = _sqrt(_b_f)
++    _inv_b_pi = 1.0 / (_sqrt(8.0) * _b_f * _pi)
++
++    float_accum = 0.0
++    two_n_f = 2.0 * n
+     for q in range(1, M):
+-        a = _a(n, q, p)
+-        d = _d(n, q, p, sq23pi, sqrt8)
+-        s = mpf_add(s, mpf_mul(a, d), prec)
+-        if verbose:
+-            print("step", q, "of", M, to_str(a, 10), to_str(d, 10))
+-        # On average, the terms decrease rapidly in magnitude. Dynamically
+-        # reducing the precision greatly improves performance.
+-        p = bitcount(abs(to_int(d))) + 50
++        if p <= 64:
++            # Float64 fast path: both _a and _d computed in hardware floats.
++            # T values are computed inline using the memoized Dedekind sum,
++            # avoiding a separate precomputation pass over all j values.
++            if q == 1:
++                a_f = 1.0
++            elif q == 2:
++                a_f = _cos(-n * _pi)
++            else:
++                a_val = 0.0
++                pi_div_j = _pi / q
++                jm1_j_quarter = (q - 1) * q * 0.25
++                half_j = (q - 1) // 2
++                for h in range(1, half_j + 1):
++                    if _gcd(h, q) != 1:
++                        continue
++                    sn, sd = _ds(h, q)
++                    T_over_j = q * (sn / sd) + jm1_j_quarter
++                    a_val += _cos((T_over_j - jm1_j_quarter - two_n_f * h) * pi_div_j)
++                a_f = a_val + a_val
++            # _d in float
++            a_coeff = _sq23pi_f / q
++            D = _sqrt(q) * _inv_b_pi
++            arg = a_coeff * _c_f
++            E = a_coeff * _cosh(arg) - _sinh(arg) / _c_f
++            float_accum += a_f * D * E
++        else:
++            # High-precision mpf path. T values are computed inline using
++            # the memoized Dedekind sum. Processing q from small to large
++            # maximizes cache hits, since smaller (h,j) pairs are
++            # subproblems of larger ones via the GCD-like recursion.
++            if q == 1:
++                a = fone
++            elif q == 2:
++                one = 1 << p
++                pi = pi_fixed(p)
++                n2one = 2 * n * one
++                half = one >> 1
++                g = one // 2 - half
++                g = ((g - n2one) * pi // 2) >> p
++                a = mpf_cos(from_man_exp(g, -p), p)
++            else:
++                one = 1 << p
++                pi = pi_fixed(p)
++                half = one >> 1
++                n2one = 2 * n * one
++                half_sum_big = half * (q - 1) * q // 2
++                a = fzero
++                half_q = (q - 1) // 2
++                for h in range(1, half_q + 1):
++                    if _gcd(h, q) != 1:
++                        continue
++                    sn, sd = _ds(h, q)
++                    T = (4 * q * q * sn + q * q * (q - 1) * sd) // (4 * sd)
++                    g = T * one // q - half_sum_big
++                    g = ((g - h * n2one) * pi // q) >> p
++                    cos_val = mpf_cos(from_man_exp(g, -p), p)
++                    a = mpf_add(a, cos_val, p)
++                    a = mpf_add(a, cos_val, p)
++            d = _d(n, q, p, sq23pi, sqrt8)
++            s = mpf_add(s, mpf_mul(a, d), prec)
++            if verbose:
++                print("step", q, "of", M, to_str(a, 10), to_str(d, 10))
++            # On average, the terms decrease rapidly in magnitude. Dynamically
++            # reducing the precision greatly improves performance.
++            p = bitcount(abs(to_int(d))) + 50
++
++    # Add accumulated float contributions to the mpf sum
++    if float_accum != 0.0:
++        man, exp = _math_frexp(float_accum)
++        s = mpf_add(s, from_man_exp(int(man * (1 << 53)), exp - 53), prec)
++
+     return int(to_int(mpf_add(s, fhalf, prec)))
+ 
+ __all__ = ['npartitions']

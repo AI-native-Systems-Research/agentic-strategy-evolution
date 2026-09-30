@@ -1,0 +1,61 @@
+metadata:
+  iteration: 2
+  family: "npartitions-per-iteration-overhead"
+  research_question: "Can precomputing coprime lists with Dedekind sums and replacing mpmath's pure-Python _d with gmpy2 MPFR at low precision further reduce npartitions(10^6) runtime from ~23ms to ~14ms while maintaining exact correctness?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (per-iteration overhead reduction) + ablation to isolate coprime precomputation vs gmpy2 _d contributions"
+
+arms:
+  - type: h-main
+    prediction: "Precomputing coprime lists with Dedekind sums (eliminating per-iteration gcd and lru_cache dispatch) and replacing mpmath _d with gmpy2 MPFR at prec <= 1000 will decrease workload_mean_runtime from ~23ms to ~14ms consistently across repeated runs, while maintaining exact numerical correctness. The combined optimization targets both _a overhead (saving ~5ms) and _d overhead (saving ~3ms)."
+    mechanism: "Two independent sources of overhead remain after iter-1. (1) _a per-iteration overhead: each of 243 iterations calls math.gcd up to (j-1)/2 times (14641 total) and _d_dedekind via @lru_cache (9028 hits but Python function dispatch adds ~0.001ms per hit). Precomputing a dict mapping j -> [(h, D)] at loop start eliminates both overheads, converting the inner loop from gcd-check + cache-lookup to direct tuple iteration. Probed saving: 5.4ms. (2) _d pure-Python overhead: mpmath's mpf_cosh_sinh, mpf_div, mpf_sqrt are pure Python tuple operations. For 239 of 243 iterations (prec <= 1000 bits), gmpy2's C-level cosh/sinh/sqrt/div are ~2x faster. Probed saving: 2.7ms. Total probed: 24.7ms -> 13.4ms."
+    diagnostic: "If the prediction is wrong: (1) check that _precompute_coprimes is being called and cached correctly (the first call should be ~6ms, subsequent calls O(1) from module-level cache); (2) check that gmpy2 _d results are numerically close enough — if correctness fails, increase guard bits from 50 to 100; (3) if no speedup, profile to check whether the overhead shifted to a different location (e.g., gmpy2 context switching)."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "Add _precompute_coprimes function that builds per-j (h, D) pair lists. For j=2, store as unpaired (single term without doubling). For j>=3, store paired items that get doubled via Kloosterman symmetry. Cache result at module level keyed by M."
+        rationale: "Eliminates 14641 math.gcd calls and 9028 _d_dedekind function dispatches per npartitions invocation. The precomputation does the same work but stores results for O(1) tuple-iteration access."
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "Rewrite _a to accept precomputed coprime data parameter. For float path (prec<=53), iterate precomputed (h, D) tuples directly with math.cos. For gmpy2 path (prec>53), iterate precomputed tuples with gmpy2.cos. Handle j=2 unpaired term without doubling."
+        rationale: "The precomputed data eliminates per-iteration gcd checks and lru_cache function-call overhead, reducing _a from 15ms to 9ms."
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "In npartitions, precompute gmpy2 constants (pi, sqrt(2/3)*pi, sqrt(8), n-1/24) at initial precision + 50 guard bits. For iterations where prec <= 1000, compute _d inline using gmpy2 MPFR (cosh, sinh, sqrt, div). For prec > 1000 (4 iterations), keep original mpmath _d. Convert gmpy2 result to mpf tuple via from_man_exp."
+        rationale: "gmpy2's C-level MPFR operations are 2x faster than mpmath's pure-Python mpf_* operations at prec <= 1000. Only 4 iterations have prec > 1000 where mpmath is faster. Guard bits (50) ensure accumulated rounding differences don't affect final integer."
+
+  - type: h-ablation
+    prediction: "Applying only the coprime precomputation (without gmpy2 _d) will decrease workload_mean_runtime from ~23ms to ~18ms. This is less than the h-main improvement (~14ms), confirming the gmpy2 _d optimization contributes an additional ~4ms saving."
+    mechanism: "The ablation removes the gmpy2 _d optimization, keeping only the coprime precomputation. Since the coprime precomputation targets _a overhead (saving ~5ms) and the gmpy2 _d targets _d overhead (saving ~3ms), removing the latter should give approximately the coprime-only benefit."
+    diagnostic: "If the ablation shows the same speedup as h-main, then the gmpy2 _d optimization contributes nothing and the speedup is entirely from coprime precomputation."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "Same coprime precomputation and _a rewrite as h-main, but keep the original _d function unchanged. No gmpy2 constants precomputation in npartitions."
+        rationale: "Isolates the contribution of coprime precomputation by removing the gmpy2 _d component."
+
+# Arm selection rationale:
+# h-main tests the full optimization (coprime precomp + gmpy2 _d).
+# h-ablation isolates the coprime precomputation contribution by removing gmpy2 _d.
+# This is tier 2: single mechanism (per-iteration overhead) + ablation.
+# The baseline is the current iter-1 optimized code (already applied to the container).
+# No h-control-negative: the control IS the iter-1 baseline (unchanged code).
+
+experiment_spec:
+  preflight_commands:
+    - "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+  verified_parameters:
+    gmpy2_d_prec_cutoff: 1000
+    gmpy2_guard_bits: 50
+  unlocked_parameters_audit:
+    - name: "M_factor"
+      default_value: 0.24
+      justification: "Series truncation factor preserved from original; verified correct for n up to 10^6 (RP-2)."
+    - name: "precision_margin"
+      default_value: "1.1x + 100"
+      justification: "Initial precision formula unchanged; provides sufficient safety margin for exact integer result."
+    - name: "dynamic_precision_offset"
+      default_value: 50
+      justification: "The offset p=bitcount(|d|)+50 in dynamic precision reduction is unchanged from original."
+    - name: "gmpy2_d_prec_cutoff"
+      default_value: 1000
+      justification: "Probed: gmpy2 is 2x faster at prec<=1000, 0.7x slower at prec>1000. Only 4 of 243 iterations have prec>1000. Cutoff at 1000 captures 98% of _d iterations while avoiding the high-prec regime where gmpy2 is slower."
+    - name: "gmpy2_guard_bits"
+      default_value: 50
+      justification: "50 guard bits ensure gmpy2 _d results, when rounded to target precision, don't accumulate enough error to shift the final integer. Verified correct for n=25 through n=10^6."

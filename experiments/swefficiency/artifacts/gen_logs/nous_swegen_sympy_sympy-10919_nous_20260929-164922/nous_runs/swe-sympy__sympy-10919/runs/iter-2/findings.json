@@ -1,0 +1,25 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Precomputing coprime lists with Dedekind sums and replacing mpmath _d with gmpy2 MPFR at prec <= 1000 will decrease workload_mean_runtime from ~23ms to ~14ms consistently across repeated runs, while maintaining exact numerical correctness.",
+      "observed": "Baseline (iter-1 code): Mean=0.0241s across 3 runs (0.02417, 0.02444, 0.02357). Treatment (h-main): Mean=0.0148s across 3 runs (0.01458, 0.01490, 0.01502). Speedup: 1.62x (38.3% reduction). All covering tests pass (1/1). Direction consistent across all 3 runs: every h-main run is faster than every baseline run.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The predicted ~40% reduction (23ms->14ms) closely matches the observed 38.3% reduction (24.1ms->14.8ms). Both optimizations contribute: coprime precomputation saves ~5.6ms and gmpy2 _d saves an additional ~3.7ms. All correctness tests pass, confirming the 50 guard bits in gmpy2 _d are sufficient."
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Applying only the coprime precomputation (without gmpy2 _d) will decrease workload_mean_runtime from ~23ms to ~18ms, less than h-main's ~14ms, confirming the gmpy2 _d optimization contributes additional saving.",
+      "observed": "Ablation (coprime precomp only): Mean=0.0185s across 3 runs (0.01904, 0.01843, 0.01803). Speedup over baseline: 1.30x (23.1% reduction). h-main is 1.25x faster than h-ablation (3.7ms additional saving from gmpy2 _d). Direction consistent: every h-main run is faster than every h-ablation run, and every h-ablation run is faster than every baseline run.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The ablation confirms that coprime precomputation accounts for approximately 60% of the total improvement (5.6ms of 9.3ms), and gmpy2 _d accounts for approximately 40% (3.7ms of 9.3ms). Both optimizations are necessary for the full effect."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed as predicted. h-main achieves 1.62x speedup (predicted ~1.7x, observed 1.62x — magnitude slightly lower due to measurement variance but direction and mechanism confirmed). h-ablation achieves 1.30x (predicted ~1.3x). The gmpy2 _d component provides the predicted additional improvement: h-main is consistently faster than h-ablation across all runs. Cumulative speedup from original baseline: ~87x (1.29s → 0.0148s).",
+  "dominant_component_pct": 60
+}

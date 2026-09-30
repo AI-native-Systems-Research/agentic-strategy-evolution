@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether two combined optimizations \u2014 precomputing coprime/Dedekind-sum lists and replacing mpmath's pure-Python arithmetic with gmpy2 MPFR for low-precision iterations \u2014 can reduce npartitions(10^6) runtime from ~23ms (iter-1 baseline) to ~14ms while preserving exact correctness. An ablation arm isolates the contribution of each optimization.",
+  "key_points": [
+    "Main arm (h-main) applies both optimizations: (1) precompute per-j coprime (h, D) pair lists to eliminate ~14,641 gcd calls and ~9,028 lru_cache dispatches per invocation (predicted saving ~5ms), and (2) use gmpy2 C-level cosh/sinh/sqrt/div for 239 of 243 iterations where prec \u2264 1000 bits (predicted saving ~3ms). Combined predicted runtime: ~14ms.",
+    "Ablation arm (h-ablation) applies only the coprime precomputation, keeping the original mpmath _d function. Predicted runtime: ~18ms. If the ablation matches h-main (~14ms), the gmpy2 _d optimization contributes nothing and should be dropped.",
+    "Confirmation criteria: (1) correctness \u2014 sympy/ntheory/tests/test_partitions.py must pass for both arms; (2) h-main mean runtime \u2264 16ms (vs baseline ~23ms); (3) h-ablation mean runtime between 17\u201320ms, demonstrating that gmpy2 _d adds measurable benefit (~4ms) beyond coprime precomputation alone.",
+    "Key risk: gmpy2 context-switching overhead or precision mismatches could negate the _d speedup or cause correctness failures. Diagnostic: if correctness fails, increase guard bits from 50 to 100; if no speedup, profile to check whether overhead shifted to gmpy2 context management.",
+    "Unlocked parameters (M_factor=0.24, precision_margin=1.1x+100, dynamic_precision_offset=50, gmpy2_prec_cutoff=1000, guard_bits=50) are all justified by probing data and unchanged from validated defaults where applicable."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

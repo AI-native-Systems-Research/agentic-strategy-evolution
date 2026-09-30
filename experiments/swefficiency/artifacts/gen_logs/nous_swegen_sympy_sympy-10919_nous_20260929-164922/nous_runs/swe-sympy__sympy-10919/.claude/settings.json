@@ -1,0 +1,58 @@
+{
+  "permissions": {
+    "allowOnly": [
+      "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous_20260929-164922/nous_runs/swe-sympy__sympy-10919",
+      "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous_20260929-164922/workspace"
+    ],
+    "allow": [
+      "Bash(cargo:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(git:*)",
+      "Bash(go:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(ls:*)",
+      "Bash(make:*)",
+      "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(pip:*)",
+      "Bash(pytest:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(rg:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)"
+    ],
+    "deny": [
+      "Bash(curl http://*)",
+      "Bash(curl https://*)",
+      "Bash(wget http://*)",
+      "Bash(wget https://*)",
+      "Bash(rm -rf /*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/ubuntu/nous_repo/bin/nous-execute-stop"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/ubuntu/nous_repo/bin/nous-plan-enforcer"
+          }
+        ]
+      }
+    ]
+  }
+}

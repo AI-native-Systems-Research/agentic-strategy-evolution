@@ -1,0 +1,21 @@
+{
+  "condition": "treatment",
+  "workload_mean_runtime": 0.02341639060032321,
+  "workload_std_dev": 0.003362107896563048,
+  "test_pass_count": 1,
+  "test_total_count": 1,
+  "correctness_verified": true,
+  "speedup_factor": 54.55,
+  "correctness_check": {
+    "npartitions(0)": 1,
+    "npartitions(1)": 1,
+    "npartitions(2)": 2,
+    "npartitions(3)": 3,
+    "npartitions(4)": 5,
+    "npartitions(5)": 7,
+    "npartitions(25)": 1958,
+    "npartitions(100)": 190569292,
+    "npartitions(200)": 3972999029388
+  },
+  "notes": "Optimized _a function with memoized Dedekind sums, Kloosterman symmetry, gmpy2 MPFR cos, and hardware float fast path"
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": "1",
+  "generated_at": "2026-09-28T21:58:57.311094+00:00",
+  "run_id": "swe-astropy__astropy-16295",
+  "iterations_completed": 1,
+  "campaign_design_lessons": [],
+  "target_system_asks": [],
+  "nous_asks": [],
+  "deployment_recommendation": {
+    "verdict": "deploy",
+    "top_candidate_id": "iter-1/h-main/0",
+    "score": 1.0,
+    "citations": [
+      {
+        "iteration": 1,
+        "arm_id": "h-main",
+        "evidence_snippet": "iter-1 arm_id=h-main status=1.000"
+      }
+    ],
+    "caveats": []
+  },
+  "notes": "No surprises detected from artifacts. This is rare \u2014 typically indicates a very short campaign (single iteration, no retries, no token-budget anomalies)."
+}

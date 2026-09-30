@@ -1,0 +1,36 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Replacing pow(a%p, (p-1)//2) % p with pow(a%p, (p-1)//2, p) in _legendre will decrease the workload mean runtime by multiple orders of magnitude (observed ~4000x in probe), consistently across all measurement repetitions.",
+      "observed": "Baseline means across 3 runs (each 10 reps): 0.07061s, 0.07073s, 0.07111s (avg 0.07082s). Treatment means across 3 runs (each 10 reps): 0.00001905s, 0.00001861s, 0.00001941s (avg 0.00001902s). Speedup vs campaign baseline (0.0743s): 0.0743 / 0.00001902 = 3,906x. Speedup vs measured baseline: 0.07082 / 0.00001902 = 3,724x. All 38 covering tests pass with treatment applied.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The effect is decisive and consistent across all measurement repetitions. The mechanism is exactly as predicted: three-argument pow avoids constructing a ~1.1 million-bit intermediate integer, replacing O(exp * log(base)^2) big-integer arithmetic with O(log(exp) * log(p)^2) modular arithmetic.",
+      "metadata": {
+        "speedup": 3906,
+        "baseline_mean_measured": 0.07082,
+        "treatment_mean_measured": 1.902e-05,
+        "campaign_baseline_mean": 0.0743,
+        "baseline_runs": [
+          0.07061,
+          0.07073,
+          0.07111
+        ],
+        "treatment_runs": [
+          1.905e-05,
+          1.861e-05,
+          1.941e-05
+        ],
+        "tests_passed": 38,
+        "tests_failed": 0
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Prediction confirmed. The directional effect (massive runtime decrease) is consistent across all 3 baseline and 3 treatment runs. The observed speedup (~3,900x) is within the same order of magnitude as the probe estimate (~4,000x). Minor variation is expected from system-level noise. The mechanism \u2014 avoiding construction of a million-bit intermediate integer \u2014 is confirmed by the magnitude of the effect.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

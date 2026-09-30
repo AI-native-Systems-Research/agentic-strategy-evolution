@@ -1,0 +1,20 @@
+{
+  "last_entered_phase": "DONE",
+  "iteration": 5,
+  "run_id": "swe-sympy__sympy-14772",
+  "family": null,
+  "timestamp": "2026-09-30T01:29:30.062740+00:00",
+  "config_ref": null,
+  "work_dir": "/tmp/nous_runs/swe-sympy__sympy-14772",
+  "repo_path": "/testbed",
+  "reproducibility_metadata": {
+    "captured_at": "2026-09-30T00:13:45Z",
+    "repo_commit": "cb0ea62fdb5df23a8320032ca356c8280c4404fb",
+    "repo_dirty": false,
+    "language_versions": {
+      "python": "Python 3.11.15",
+      "node": "v26.10.0"
+    }
+  },
+  "max_iterations": 5
+}

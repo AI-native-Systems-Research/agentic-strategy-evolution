@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are running a final confirmation of a massive (~3,500-4,500x) speedup from replacing Python's two-argument pow() with three-argument modular pow() in the _legendre function, plus a negative control to verify the speedup is specific to that code path and not an artifact.",
+  "key_points": [
+    "h-main: Change `pow(a%p, (p-1)//2) % p` to `pow(a, (p-1)//2, p)` on line 2075 of sympy/crypto/crypto.py. This avoids computing a ~1.1 million-bit intermediate integer by using CPython's built-in modular exponentiation. Predicted speedup: ~3,500-4,500x (mean dropping from ~0.069s to ~15-22\u03bcs). This same optimization was confirmed in iterations 1-3 with consistent results.",
+    "h-control-negative: Apply the identical optimization class (two-arg pow \u2192 three-arg pow) to encipher_gm on line 2221, which is NOT called by the workload. Predicted speedup: ~1.0x (no change). This validates that h-main's speedup comes specifically from optimizing the _legendre hot path, not from side effects like module reloading or bytecode changes.",
+    "Confirmation criteria: h-main succeeds if mean < 0.0003s (speedup > 200x, though we expect ~3,500x) and all 38 crypto tests pass. h-control-negative succeeds if mean remains within \u00b110% of baseline (~0.067-0.081s). If the control shows unexpected speedup, the h-main mechanism claim would be suspect.",
+    "This is iteration 4 of a tier-1 (simple, high-confidence) optimization. Iterations 1-3 already confirmed the effect across 10 seeds, confirmed removal of the redundant a%p pre-reduction is safe (iter-2 ablation), and showed no additional benefit from a Jacobi-symbol algorithm change (iter-3). This iteration adds one more independent replication plus the first mechanism-specificity control."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

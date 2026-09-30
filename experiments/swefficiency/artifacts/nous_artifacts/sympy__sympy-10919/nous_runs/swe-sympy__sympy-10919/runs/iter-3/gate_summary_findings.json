@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed. The main optimization (h-main) achieved a 22.8x speedup over the 1.3901s reference baseline (mean 0.0611s), exceeding the predicted >15x. The ablation arm (h-ablation) achieved 10.3x, confirming the float64 fast path contributes an additional 2.2x on top of the Dedekind sum algorithm change. All covering tests pass and results are bit-identical to the original implementation.",
+  "key_points": [
+    "h-main: 22.8x speedup (0.0611s vs 1.3901s baseline), bit-identical output for npartitions(10^6), all tests green \u2014 ready to approve.",
+    "The dominant optimization is replacing the O(j) inner loop with an O(log j) Dedekind sum computation, responsible for ~10x of the speedup. The float64 fast path for low-precision outer-loop terms (73% of iterations) adds another ~2.2x, confirmed by ablation (0.1349s without it vs 0.0611s with it).",
+    "Four unrelated source files show uncommitted writes (basic.py, function.py, egyptian_fraction.py, plot.py) \u2014 these should be reviewed to ensure no stray edits are included in the final patch. The actual optimization lives in the ntheory partitions module.",
+    "Risk is low: the algorithm produces bit-identical results for the benchmark case, and the existing test suite passes. The Dedekind sum is a well-known mathematical equivalence to the original trigonometric sum in the Hardy-Ramanujan-Rademacher formula."
+  ]
+}

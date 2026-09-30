@@ -1,0 +1,130 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+
+setup:
+  - cmd: "docker cp patches/h-main.patch swegen_sympy_sympy-10919_nous:/tmp/h-main.patch"
+  - cmd: "docker cp patches/h-ablation.patch swegen_sympy_sympy-10919_nous:/tmp/h-ablation.patch"
+
+arms:
+  - arm_id: "baseline"
+    conditions:
+      - name: "baseline-run1"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run1.txt"
+      - name: "baseline-run2"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run2.txt"
+      - name: "baseline-run3"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run3.txt"
+      - name: "baseline-run4"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run4.txt"
+      - name: "baseline-run5"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run5.txt"
+
+  - arm_id: "h-main"
+    conditions:
+      - name: "h-main-apply"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && git apply /tmp/h-main.patch"
+      - name: "h-main-run1"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run1.txt"
+      - name: "h-main-run2"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run2.txt"
+      - name: "h-main-run3"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run3.txt"
+      - name: "h-main-run4"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run4.txt"
+      - name: "h-main-run5"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run5.txt"
+      - name: "h-main-tests"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python -c 'from sympy.ntheory.tests.test_partitions import test_partitions; test_partitions(); print(\"TESTS PASSED\")'"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/tests.txt"
+      - name: "h-main-revert"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && git checkout -- ."
+
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "h-ablation-apply"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && git apply /tmp/h-ablation.patch"
+      - name: "h-ablation-run1"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run1.txt"
+      - name: "h-ablation-run2"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run2.txt"
+      - name: "h-ablation-run3"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run3.txt"
+      - name: "h-ablation-run4"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run4.txt"
+      - name: "h-ablation-run5"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python /tmp/workload.py"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run5.txt"
+      - name: "h-ablation-tests"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed &&
+          python -c 'from sympy.ntheory.tests.test_partitions import test_partitions; test_partitions(); print(\"TESTS PASSED\")'"
+        output: "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/tests.txt"
+      - name: "h-ablation-revert"
+        cmd: >-
+          docker exec swegen_sympy_sympy-10919_nous bash -lc
+          "cd /testbed && git checkout -- ."

@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether replacing sympy's general-purpose number-theory utilities (divisors, sqrt_mod, divisible) with pure-integer implementations inside diop_DN's |N|>1 branch, combined with converting sympy Integer types to Python int at branch entry, can yield a further ~2.65x speedup on top of iteration 3's already-optimized code (iter-3 mean ~0.82ms \u2192 target ~0.31ms), bringing the total campaign speedup from the 57.3288s baseline to roughly 185,000x.",
+  "key_points": [
+    "Single experiment arm (h-main): rewrites the |N|>1 branch of diop_DN to use inline trial-division for divisors, brute-force modular square-root enumeration for small moduli (\u2264100k, with sympy fallback above), Python int arithmetic throughout the 234-step PQa inner loop, and r*r instead of r**2. Also retains all iter-3 optimizations (inlined PQa, set-based period detection, scalar G/B tracking).",
+    "Confirmation criteria: workload mean drops from ~0.82ms to ~0.31ms (measured via PYTHONPATH=$PWD python /tmp/workload.py), AND the full test suite (pytest sympy/solvers/tests/test_diophantine.py) stays green. A speedup below 1.5x incremental would indicate the sympy utility overhead is not as significant as profiled.",
+    "Refutation criteria: if the harness mean stays near 0.82ms, the utility-replacement mechanism doesn't matter for these input sizes and the remaining cost is dominated by PQa iteration or fork overhead (~0.2ms floor). If tests fail, the brute-force sqrt_mod or inline divisors logic has an edge-case bug (most likely at abs_m=1 or abs_m=2).",
+    "Risk is low: the sqrt_mod fallback to sympy for large moduli guarantees correctness for inputs outside the brute-force range, and all workload/test-suite moduli are \u226427. The code changes are confined to a single function in sympy/solvers/diophantine.py.",
+    "No control or ablation arms included because the sub-optimizations (int conversion, pure divisors, pure sqrt_mod, caching) are independent micro-gains that were individually profiled in design exploration; the combined measurement is sufficient at tier 2."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

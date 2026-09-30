@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether three compounding optimizations to the HRR partition function's inner sum (_a() function) \u2014 replacing big-integer arithmetic with small-integer residue math, exploiting cosine symmetry to halve evaluations, and optionally using NumPy batch vectorization \u2014 can achieve >5x speedup over the 1.3901s baseline. Two experiment arms isolate NumPy's incremental contribution.",
+  "key_points": [
+    "The main arm (h-main) combines all three optimizations: small-int inner loop (eliminates ~4148-bit multiplications), h/j-h cosine symmetry (cuts ~18K cos calls to ~9K), and NumPy 2D array batching for j>50 (eliminates ~1.46M Python loop iterations). Predicted speedup: >5x (target mean <0.278s).",
+    "The ablation arm (h-ablation) uses the same algorithmic optimizations but pure Python loops instead of NumPy, predicted at ~4x speedup (~0.35s). Comparing the two arms isolates NumPy's contribution, expected to be ~1.4x additional.",
+    "Confirmation criteria: h-main achieves consistently >5x speedup with all pytest tests passing; h-ablation is measurably slower than h-main but still >4x; both produce bit-identical partition results. Refutation: if speedup <5x, diagnostics check whether the small-int identity introduces precision errors, whether NumPy array creation overhead dominates, or whether cosine symmetry was incorrectly applied.",
+    "Key risk: the algebraic identity replacing big-int frac_table lookups with small-int T*one//j must preserve correctness to within the 50-bit precision margin. This was reportedly verified experimentally but must pass the pytest correctness gate.",
+    "Design builds on iteration 1's confirmed frac_table approach (RP-1) and prior profiling showing _a() self-time is 0.561s (58% of 0.97s total after iter-1 optimizations). The numpy_threshold=50 was tuned via parameter sweep."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

@@ -1,0 +1,48 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+
+setup:
+  - cmd: "mv /testbed/.nous-experiments/iter-3-0ba44c29/conftest.py /testbed/.nous-experiments/iter-3-0ba44c29/conftest.py.bak"
+    description: "Move worktree conftest.py to avoid pytest double-registration conflict with parent /testbed/conftest.py"
+  - cmd: "git apply --check /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/patches/h-main.patch"
+    description: "Verify h-main patch applies cleanly"
+  - cmd: "git apply --check /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/patches/h-robustness.patch"
+    description: "Verify h-robustness patch applies cleanly"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "h-main-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && git checkout -- sympy/crypto/crypto.py && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/patches/h-main.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-main/seed42.json"
+      - name: "h-main-seed43"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-main/seed43.json"
+      - name: "h-main-seed44"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-main/seed44.json"
+      - name: "h-main-seed45"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-main/seed45.json"
+      - name: "h-main-seed46"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-main/seed46.json"
+
+  - arm_id: "h-robustness"
+    conditions:
+      - name: "h-robustness-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && git checkout -- sympy/crypto/crypto.py && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/patches/h-robustness.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-robustness/seed42.json"
+      - name: "h-robustness-seed43"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-robustness/seed43.json"
+      - name: "h-robustness-seed44"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-robustness/seed44.json"
+      - name: "h-robustness-seed45"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-robustness/seed45.json"
+      - name: "h-robustness-seed46"
+        cmd: "cd /testbed/.nous-experiments/iter-3-0ba44c29 && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-3/results/h-robustness/seed46.json"

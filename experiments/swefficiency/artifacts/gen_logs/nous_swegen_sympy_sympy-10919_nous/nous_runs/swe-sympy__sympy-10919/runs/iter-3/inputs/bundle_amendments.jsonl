@@ -1,0 +1,1 @@
+{"parameter": "baseline_container_state", "prescribed_value": "iter-2 ablation (0.082s)", "actual_value": "original unoptimized code (0.236s)", "reason": "Container had no iter-2 changes. Both patches include all optimizations from scratch. Absolute treatment times (0.026s h-main, 0.047s h-ablation) match designer predictions."}

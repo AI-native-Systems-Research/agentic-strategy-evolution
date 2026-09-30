@@ -1,0 +1,21 @@
+[
+  {
+    "id": "RP-6",
+    "statement": "In the HRR partition formula, memoizing the recursive _dedekind_sum function with @lru_cache and eliminating the upfront precomputation pass (computing T values inline during the main loop) yields 25.7x end-to-end speedup on npartitions(10^6), a 13.9% improvement over iter-3's non-memoized approach. The memoization exploits 73% call redundancy in the GCD-like recursion (37,715 total calls, 10,230 unique pairs), while inline computation avoids the 15ms Python loop overhead of precomputing T values for 7,700 float-path coprime pairs. Ablation shows memoization accounts for ~71% of the improvement; inlining provides ~29%.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 10^4 where the outer HRR loop has M >= 50 terms and the Dedekind sum recursion produces substantial subproblem overlap",
+    "evidence": [
+      "iteration-4-h-main",
+      "iteration-4-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "The Dedekind sum _dedekind_sum(h,j) reduces via the Euclidean algorithm: _dedekind_sum(h,j) -> _dedekind_sum(j%h, h). Different initial (h,j) pairs from the 9,027 coprime pairs across j=3..243 converge to the same small-value base cases \u2014 e.g., _dedekind_sum(1,2) is the base case for 3,008 different chains. @lru_cache(maxsize=None) converts these O(log j) recursive recomputations to O(1) dict lookups. Separately, the iter-3 precomputation loop iterates all j=3..243 coprime pairs upfront (21ms total, 15ms for float path j=94..243), but the float-path T values are only used once each during the main loop. Computing inline during the main loop eliminates this upfront cost, with the memoized _dedekind_sum ensuring subproblems are still shared across sequential q iterations.",
+    "applicability_bounds": "Holds for n >= 10^4 where M >= 50. For small n (n < 100, M < 10), the Dedekind sum call count is too low for memoization to matter. The @lru_cache only helps within a single npartitions() call \u2014 the workload's per-fork measurement starts with a cold cache each time.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

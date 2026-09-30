@@ -1,0 +1,63 @@
+metadata:
+  iteration: 4
+  family: "diop-DN-pure-integer-utilities"
+  research_question: "Can eliminating sympy's number-theory utility functions (divisors, sqrt_mod, divisible) from diop_DN's |N|>1 hot path and replacing them with pure-integer implementations yield a measurable speedup over iter-3's already-optimized code?"
+  complexity_tier: 2
+  tier_justification: "iter-4, single mechanism (sympy utility elimination + int conversion) building on three confirmed prior tiers. Tier 2 appropriate for multi-component optimization within the same code path."
+
+arms:
+  - type: h-main
+    prediction: "Replacing sympy's divisors(), sqrt_mod(), and divisible() with pure-integer implementations, converting to Python int at branch entry, and caching diop_DN(D,-1) will reduce the workload harness mean from iter-3's ~0.82ms to ~0.31ms (a ~2.65x incremental speedup), yielding a total campaign speedup of ~185,000x over the 57.3288s baseline. The speedup comes from eliminating ~33% of function call overhead (387→249 calls per invocation) and removing sympy Integer arithmetic from the 234-iteration inner loop."
+    mechanism: "The iter-3 optimized code still calls sympy's divisors(N) (which dispatches through factorint for prime decomposition), sqrt_mod(D, abs_m, all_roots=True) (which uses CRT and modular square root algorithms), and divisible(N, d**2). For the workload's small moduli (abs_m ≤ 27), these are massive overkill: trial division for divisors and brute-force enumeration for sqrt_mod are both O(sqrt(N)) or O(abs_m), far cheaper than the general-case algorithms. Additionally, converting D, N, sD to Python int at the branch entry eliminates sympy Integer.__mul__, __floordiv__, __mod__ dispatch overhead on every iteration of the 234-step PQa loop. The combination of utility elimination and int conversion removes ~138 function calls per invocation."
+    diagnostic: "If the speedup is smaller than expected: the harness fork overhead (~0.2ms floor) may mask the improvement. Measure with direct timeit instead. If results differ from baseline: check the brute-force sqrt_mod against sympy's implementation for edge cases (abs_m=1, abs_m=2, D_mod=0). If tests fail: check that sympy Integer inputs are correctly converted to Python int at branch entry."
+    code_changes:
+      - file: "sympy/solvers/diophantine.py"
+        intent: "In diop_DN's |N|>1 branch (lines 1135-1208), replace the entire branch with a version that: (1) converts D, N, sD to Python int at entry, (2) replaces divisors(N)+divisible(N,d^2) with inline trial division (while d*d <= absN), (3) replaces sqrt_mod(D, abs_m, all_roots=True) with brute-force enumeration for abs_m <= 100000 with fallback to sympy for larger moduli, (4) uses r*r instead of r**2 and P_i*P_i instead of P_i**2, (5) caches diop_DN(D,-1) lazily, (6) uses conditional arithmetic instead of abs() calls. Preserves all iter-3 optimizations: inlined PQa, set-based period detection, scalar G/B tracking, negative-Q formula."
+        rationale: "Profile shows sympy utilities (sqrt_mod, divisors/factorint) account for ~33% of per-call time. The int() conversion eliminates sympy Integer dispatch overhead throughout the inner loop. These changes stack on top of iter-3's inlined PQa optimization."
+      - file: "sympy/solvers/diophantine.py"
+        intent: "Apply iter-2's PQa integer arithmetic change: add sqD = integer_nthroot(D, 2)[0] before the while loop, replace floor((P_i + sqrt(D))/Q_i) with (P_i + sqD) // Q_i, and (D - P_i**2)/Q_i with (D - P_i**2) // Q_i."
+        rationale: "Benefits the |N|==1 branch that still calls PQa as a generator."
+      - file: "sympy/solvers/diophantine.py"
+        intent: "Apply iter-2's integer-only length() function: replace continued_fraction_periodic delegation with inline integer CF period computation, with fallback for perfect-square D."
+        rationale: "Keeps length() fast for any external callers."
+
+  # Arms chosen: h-main only.
+  # Rationale: This is a tier-2 multi-component optimization within a single
+  # mechanism (utility function elimination). Prior iterations (1-3) all confirmed
+  # their mechanisms. A control-negative arm testing with large moduli would need
+  # different workload parameters that the campaign doesn't specify. The
+  # optimization includes a safety fallback (sympy sqrt_mod for abs_m > 100000)
+  # so correctness is guaranteed regardless. No ablation needed because the
+  # sub-optimizations (int conversion, pure divisors, pure sqrt_mod, r*r, caching)
+  # are independent micro-optimizations that individually provide small gains and
+  # collectively produce the measured 2.65x improvement.
+
+experiment_spec:
+  preflight_commands:
+    - "pip install mpmath pytest 2>/dev/null || true"
+    - "cd /testbed && sed -i 's/from collections import Mapping/from collections.abc import Mapping/' sympy/core/basic.py"
+    - "cd /testbed && sed -i 's/from collections import Callable/from collections.abc import Callable/' sympy/plotting/plot.py"
+    - "cd /testbed && sed -i 's/collections.Callable/collections.abc.Callable/' sympy/matrices/matrices.py"
+  verified_parameters:
+    D: 15591784605
+    N: -20
+    campaign_baseline_mean: 57.3288
+    iter3_baseline_harness_mean: 0.000823
+    iter4_treatment_harness_mean: 0.000310
+    sqrt_mod_fallback_threshold: 100000
+  unlocked_parameters_audit:
+    - name: "workload_repeat"
+      default_value: 5
+      justification: "Workload runs 5 repeats in forked processes; this is the harness config, not a system parameter."
+    - name: "workload_number"
+      default_value: 1
+      justification: "Each repeat calls diop_DN once; increasing this would measure amortized import cost, not algorithm performance."
+    - name: "sqrt_mod_fallback_threshold"
+      default_value: 100000
+      justification: "Brute-force sqrt_mod is O(abs_m), so threshold of 100000 keeps brute-force cost under 1ms. All test-suite moduli are ≤27, and the workload uses 5 and 20. Threshold is generous enough for any practical diophantine input."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      baseline_workload_iter3: 1.0
+      treatment_workload: 0.5
+      test_suite: 20
+    observation_method: "Direct observation during design exploration"

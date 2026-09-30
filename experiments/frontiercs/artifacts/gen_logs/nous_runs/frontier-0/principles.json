@@ -1,0 +1,60 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "Skyline-based 2D greedy packing with multi-width sweep produces approximately 2x the packing density score compared to naive 1D strip packing for random polyominoes (k=1-10, n=100-10000), achieving ~72 vs ~35 on the judge metric.",
+      "confidence": "high",
+      "regime": "Random polyomino sets with k in [1,10], n in [100,10000], 2-second time limit per test case. Pieces sorted by decreasing size. ~160 candidate widths swept around sqrt(totalCells * factor).",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The skyline algorithm maintains a per-column height array and places each piece at the (orientation, x-position) that minimizes max height. By exploiting vertical gaps in the skyline, it packs pieces into irregular spaces that strip packing leaves empty. The multi-width sweep finds the near-optimal rectangle width W that minimizes W*H, converging to a near-square shape.",
+      "applicability_bounds": "Holds for the greedy single-pass placement order (largest pieces first). Does not account for lookahead, roughness tiebreaking, or column compaction \u2014 these features in the reference solution add ~7 more points (reference scores ~79). The time management sensitivity means scores may vary by ~5 points depending on machine speed.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Transform parameter recovery (X, Y, R, F) is the critical correctness challenge for polyomino packing solutions \u2014 the reflect\u2192rotate\u2192translate order must exactly match the checker's convention, or the solution scores 0 on all test cases.",
+      "confidence": "high",
+      "regime": "Any solution to the polyomino packing problem. The checker applies: reflect (negate x if F=1) \u2192 rotate (R clockwise 90\u00b0 rotations) \u2192 translate (add X, Y).",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The checker at chk.cc:109-124 applies transforms in a specific order. Many LLM-generated solutions in the solutions directory score 0, likely due to incorrect transform recovery. Both our solutions carefully computed X = placement_x - orig_minx, Y = placement_y - orig_miny after normalizing the reflected-and-rotated cells to origin.",
+      "applicability_bounds": "Universal for this problem's checker. The formula X = pl.x - t.orig_minx, Y = pl.y - t.orig_miny works when orig_minx/orig_miny are captured before normalization during orientation generation.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "The skyline packer's score is sensitive to the time-managed width sweep budget \u2014 fewer candidate widths evaluated (due to slower machine or shorter time budget) can reduce the score by ~5 points, from ~76 to ~72.",
+      "confidence": "medium",
+      "regime": "Skyline packer with time limit of 1900ms, ~160 candidate widths. Observed on n up to 10000, k up to 10.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The width sweep evaluates candidate widths sorted by distance from the estimated optimal. The time manager breaks the loop when elapsed + 1.3*avgTime > 1900ms. On slower hardware, the per-width packing is slower, so fewer widths are evaluated, potentially missing the width that produces the minimum-area rectangle.",
+      "applicability_bounds": "Most relevant for large n (6000+) where per-width packing time is substantial. For small n (~100), the sweep completes all candidates quickly regardless of machine speed.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

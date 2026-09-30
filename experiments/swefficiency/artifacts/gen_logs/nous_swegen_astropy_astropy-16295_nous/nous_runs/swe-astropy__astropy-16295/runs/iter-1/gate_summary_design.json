@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether adding a Python scalar fast-path to the `_check_hour_range` function in astropy's angle-parsing code can reduce workload runtime by avoiding expensive NumPy ufunc overhead when the input is a plain Python number (e.g., `int(15)`). The workload benchmarks this exact function 10\u00d72000 times, and profiling shows NumPy scalar operations cost ~50-100\u00d7 more than native Python equivalents for non-array inputs.",
+  "key_points": [
+    "Single treatment arm (h-main): insert an `isinstance(hrs, np.ndarray)` guard at line 322 of `astropy/coordinates/angles/formats.py` so scalar inputs use `abs(hrs)` and plain comparisons instead of `np.any(np.abs(hrs))`, while the array path remains unchanged.",
+    "Prediction: workload mean runtime should decrease noticeably from the ~0.000145s baseline because the per-call cost drops from ~6.4\u00b5s (NumPy path) to ~0.08\u00b5s (Python builtins) \u2014 roughly 50-100\u00d7 faster per invocation.",
+    "Confirmation criteria: mean runtime drops measurably and all 13 covering test files still pass. Refutation: if import/setup overhead dominates the benchmark or the isinstance check itself offsets gains, runtime stays flat.",
+    "Risk is low \u2014 the code change is a 5-line guard clause that preserves the existing array code path exactly; correctness is verified by the required test suite covering angle parsing, coordinate transforms, and sky-coord operations."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

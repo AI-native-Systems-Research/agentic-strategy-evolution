@@ -1,0 +1,19 @@
+{
+  "last_entered_phase": "DONE",
+  "iteration": 1,
+  "run_id": "swe-astropy__astropy-16295",
+  "family": null,
+  "timestamp": "2026-09-28T21:58:57.293184+00:00",
+  "config_ref": null,
+  "work_dir": "/home/ubuntu/nous_swe/gen_logs/nous_swegen_astropy_astropy-16295_nous/nous_runs/swe-astropy__astropy-16295",
+  "repo_path": "/home/ubuntu/nous_swe/gen_logs/nous_swegen_astropy_astropy-16295_nous/workspace",
+  "reproducibility_metadata": {
+    "captured_at": "2026-09-28T21:44:37Z",
+    "repo_dirty": false,
+    "language_versions": {
+      "python": "Python 3.12.3",
+      "node": "v20.20.2"
+    }
+  },
+  "max_iterations": 1
+}

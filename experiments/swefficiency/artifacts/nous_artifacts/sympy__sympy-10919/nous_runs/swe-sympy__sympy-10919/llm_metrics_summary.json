@@ -1,0 +1,47 @@
+{
+  "total_calls": 26,
+  "total_cost_usd": 41.09806875,
+  "total_input_tokens": 69579,
+  "total_output_tokens": 461297,
+  "total_duration_ms": 8655845,
+  "by_phase": {
+    "design": {
+      "calls": 6,
+      "cost_usd": 29.720270499999994,
+      "input_tokens": 7895,
+      "output_tokens": 368852
+    },
+    "summarize-gate": {
+      "calls": 14,
+      "cost_usd": 0,
+      "input_tokens": 38293,
+      "output_tokens": 6754
+    },
+    "execute-analyze": {
+      "calls": 5,
+      "cost_usd": 11.377798250000001,
+      "input_tokens": 16798,
+      "output_tokens": 84176
+    },
+    "report": {
+      "calls": 1,
+      "cost_usd": 0,
+      "input_tokens": 6593,
+      "output_tokens": 1515
+    }
+  },
+  "by_dispatcher": {
+    "sdk": {
+      "calls": 11,
+      "cost_usd": 41.09806875,
+      "input_tokens": 24693,
+      "output_tokens": 453028
+    },
+    "llm": {
+      "calls": 15,
+      "cost_usd": 0,
+      "input_tokens": 44886,
+      "output_tokens": 8269
+    }
+  }
+}

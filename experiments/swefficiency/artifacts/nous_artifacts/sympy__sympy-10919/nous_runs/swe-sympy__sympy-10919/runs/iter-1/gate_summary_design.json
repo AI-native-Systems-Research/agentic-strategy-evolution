@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether optimizing the inner loop of the _a() function in sympy's Hardy-Ramanujan-Rademacher partition formula can speed up npartitions(10^6) beyond 1.5x vs. the 1.3901s baseline. The core idea is to replace per-iteration big-integer divisions with a precomputed lookup table, switch from Python-level igcd to C-level math.gcd, and hoist invariant computations out of the loop.",
+  "key_points": [
+    "Single treatment arm (h-main) vs. the unmodified baseline (1.3901s). The optimization targets _a() in sympy/ntheory/partitions_.py, which profiling indicates consumes ~70% of runtime.",
+    "Key changes: (1) precompute frac_table[r] for r=0..j-1 to eliminate ~2.9M big-integer divisions+bitmasks in the inner k-loop; (2) factor out the half-subtraction into a single post-loop operation (half_sum); (3) replace sympy igcd with math.gcd (~9x faster per call across ~29k coprimality checks); (4) hoist one/half/n2one outside the h-loop.",
+    "Prediction: speedup > 1.5x (mean < 0.927s). Confirmation requires measured mean consistently below baseline with identical npartitions(10^6) output and all tests in test_partitions.py passing. Refutation if speedup < 1.2x, which would suggest mpf_cos or other irreducible costs dominate rather than _a() arithmetic.",
+    "Algebraic correctness rests on the identity (h*k*one)//j & onemask == ((h*k % j)*one)//j, valid for h,k \u2265 1. The correctness gate (pytest test_partitions.py) guards against any subtle breakage.",
+    "Diagnostic plan: if speedup is underwhelming, profile to check whether mpf_cos now dominates or whether frac_table precomputation for large j values is unexpectedly costly."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

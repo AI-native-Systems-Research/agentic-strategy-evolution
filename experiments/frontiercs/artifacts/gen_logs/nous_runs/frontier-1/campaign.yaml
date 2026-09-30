@@ -1,0 +1,84 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #1?'
+run_id: frontier-1
+max_iterations: 5
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::1
+  description: "You are solving Frontier-CS algorithmic problem #1. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp\nIt prints\
+    \ a single line 'SCORE: <n>' where n is the judge score (0-100). Record that number\
+    \ in the finding metadata under key 'score'. Each experiment arm should try a\
+    \ distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nPROBLEM STATEMENT:\nProblem F: Treasure Packing\n\nA dragon has terrorized\
+    \ the region for decades, breathing fire and stealing treasures. A hero has decided\
+    \ to steal back the treasures and return them to the community. However, they\
+    \ drastically underestimated the size of the dragon's hoard, bringing only a single\
+    \ 25 liter bag, only strong enough to hold 20 kg, to carry out the treasures.\
+    \ The hero has decided to try to return as much value as possible. The dragon\
+    \ has 12 different types of items of different values, masses, and volumes: crowns,\
+    \ figurines, jeweled goblets, gold helms, etc., where each item of the same type\
+    \ has the same mass and volume. For example, all goblets have the same mass and\
+    \ volume. Write a program helping the hero determine what items they should put\
+    \ in the bag so as to maximize value accounting for the constraints on the bag.\n\
+    \nInput\nThe input is JSON keyed by treasure category name, such as \"goblet\"\
+    . Every category has a unique name composed of at most 100 lowercase ASCII characters.\
+    \ There are exactly twelve treasure categories. Each corresponding value is a\
+    \ list with one integer q (1 <= q <= 10000) and three integers v (0 < v <= 10^9),\
+    \ m (0 < m <= 20 * 10^6), and l (0 < l <= 25 * 10^6), where q is the maximum number\
+    \ of treasures of this category that can be looted, v is the value of one item,\
+    \ m is the mass (in mg) of one item, and l the volume (in \xB5liters) of one item.\
+    \ (There are one million mg per kg and \xB5liters per liter.)\n\nPlease see the\
+    \ sample input for an example of how the JSON is formatted.\n\nOutput\nPrint a\
+    \ JSON with the same keys as the input, but with single a nonnegative integer\
+    \ values giving the numbers of items of that category added to the bag in your\
+    \ solution.\n\nScoring\nProducing an algorithm that always generates optimal solutions\
+    \ is very difficult, so your solution only needs to be \"good enough\". We will\
+    \ compare your output to a baseline heuristic provided by the NSA, and to a best\
+    \ effort to compute the true optimum. You must beat the NSA heuristic to receive\
+    \ points; after that, the better your solution, the higher your score. Specifically,\
+    \ your score on this problem is your average of the per-test-case score.\n\n100\
+    \ * clamp((your value - baseline value) / (best value - baseline value), 0, 1).\n\
+    \nTime limit: \n1 second\n\nMemoriy limit:\n1024 MB\n\nSample input:\n{\n    \"\
+    circlet\": [\n        19,\n        113005,\n        146800,\n        514247\n\
+    \    ],\n    \"coppercoin\": [\n        887,\n        6171,\n        12593,\n\
+    \        18081\n    ],\n    \"crown\": [\n        13,\n        726439,\n     \
+    \   1079353,\n        1212213\n    ],\n    \"dagger\": [\n        21,\n      \
+    \  279513,\n        558367,\n        522344\n    ],\n    \"figurine\": [\n   \
+    \     18,\n        26272,\n        1488281,\n        2295986\n    ],\n    \"goblet\"\
+    : [\n        22,\n        300053,\n        698590,\n        986387\n    ],\n \
+    \   \"goldcoin\": [\n        129,\n        14426,\n        82176,\n        27597\n\
+    \    ],\n    \"helm\": [\n        3,\n        974983,\n        2470209,\n    \
+    \    882803\n    ],\n    \"jewelry\": [\n        23,\n        272450,\n      \
+    \  171396,\n        262226\n    ],\n    \"plate\": [\n        22,\n        98881,\n\
+    \        246257,\n        363420\n    ],\n    \"silvercoin\": [\n        288,\n\
+    \        12587,\n        53480,\n        28654\n    ],\n    \"torc\": [\n    \
+    \    17,\n        244957,\n        388222,\n        500000\n    ]\n}\n\nSample\
+    \ Output:\n{\n \"circlet\": 2,\n \"coppercoin\": 8,\n \"crown\": 13,\n \"dagger\"\
+    : 0,\n \"figurine\": 0,\n \"goblet\": 0,\n \"goldcoin\": 0,\n \"helm\": 0,\n \"\
+    jewelry\": 23,\n \"plate\": 0,\n \"silvercoin\": 1,\n \"torc\": 4\n}"
+  repo_path: /home/ubuntu/frontier/gen_logs/frontier_1_nous_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /home/ubuntu/nous_repo/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: 4429199a2fb99fcf0f65b153cbff6d573726477d
+  nous_version: 0.5.0
+  started_at: '2026-09-30T11:40:28.363285+00:00'

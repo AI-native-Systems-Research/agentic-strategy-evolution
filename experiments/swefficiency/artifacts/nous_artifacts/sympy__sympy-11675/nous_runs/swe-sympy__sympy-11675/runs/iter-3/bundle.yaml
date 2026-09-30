@@ -1,0 +1,57 @@
+metadata:
+  iteration: 3
+  family: "diop-DN-inline-period-detection"
+  research_question: "Can eliminating the redundant length() CF computation by merging period detection into an inlined PQa loop in diop_DN's |N|>1 branch yield an additional ~2x speedup over iter-2's integer arithmetic optimization?"
+  complexity_tier: 2
+  tier_justification: "iter-3, single mechanism (redundant computation elimination + Python overhead reduction) applied to one code path. Tiers 1 and 2 both confirmed in prior iterations; escalating to tier 2 for multi-component optimization within the same mechanism."
+
+arms:
+  - type: h-main
+    prediction: "Inlining PQa arithmetic with set-based period detection in diop_DN's |N|>1 branch will reduce the workload mean from iter-2's ~0.35ms to ~0.16ms (a ~2x further speedup), yielding a total speedup of >200,000x over the campaign baseline of 57.3288s. The speedup comes from eliminating 465 redundant CF iterations (3 length() calls × 155 iterations each) and reducing Python overhead (no generator protocol, no tuple packing, no list appends)."
+    mechanism: "The current algorithm computes the continued fraction expansion TWICE per (z,m) pair: once in length() to find the period bound, and again in PQa to search for |Q_i|==1. Merging period detection (via a set of (P_i, Q_i) pairs) into the PQa loop eliminates the first computation entirely. Additionally, inlining PQa removes generator/tuple overhead (~234 6-tuples per call), and replacing G/B arrays with scalars removes 484 list.append calls. The A_i recurrence (computed but unused by diop_DN) is eliminated."
+    diagnostic: "If the speedup is smaller than expected: profile to check if sqrt_mod() or divisors() now dominate. If results differ from baseline: check the negative-Q formula — Q_i can be negative for small D, and the integer floor formula requires a branch (a_i = -((P_i + sD) // (-Q_i)) - 1 for Q_i < 0)."
+    code_changes:
+      - file: "sympy/solvers/diophantine.py"
+        intent: "Apply iter-2's PQa integer arithmetic change: replace floor((P_i + sqrt(D))/Q_i) with (P_i + sqD) // Q_i and (D - P_i**2)/Q_i with (D - P_i**2) // Q_i, where sqD = integer_nthroot(D, 2)[0]. This is computed once before the while loop."
+        rationale: "Eliminates symbolic sqrt overhead in PQa, which benefits the |N|==1 branch that still calls PQa as a generator."
+      - file: "sympy/solvers/diophantine.py"
+        intent: "Apply iter-2's integer-only length() function: replace the continued_fraction_periodic delegation with an inline integer CF period computation. Falls back to symbolic path for perfect-square D."
+        rationale: "Keeps length() fast for any external callers. Though diop_DN's |N|>1 branch no longer calls length(), other code paths or external users might."
+      - file: "sympy/solvers/diophantine.py"
+        intent: "In diop_DN's |N|>1 inner loop (lines 1154-1183), replace the PQa generator + length() + G/B arrays with: (1) inline PQa integer arithmetic (B_i = a_i * B_1 + B_2, G_i = a_i * G_1 + G_2, no A_i), (2) set-based period detection on (P_i, Q_i) pairs replacing the length() call, (3) scalar prev-value tracking (G_1/B_1 used directly as previous-iteration values), (4) correct negative-Q floor formula: for Q_i > 0 use (P_i + sD) // Q_i, for Q_i < 0 use -((P_i + sD) // (-Q_i)) - 1."
+        rationale: "This is the core iter-3 optimization. Eliminates redundant CF computation (length does the same work PQa does), generator overhead (tuple packing/unpacking per iteration), list append overhead (G/B arrays), and unused A_i computation. The negative-Q formula is needed because Q_i can be negative in PQa for small D (verified: D=23 N=13 has Q_1=-1, D=13 N=27 has Q_1=-4)."
+
+  # Arms chosen: h-main only.
+  # Rationale: iter-1 (tier 1) and iter-2 (tier 2) both confirmed their mechanisms.
+  # Iter-3 applies a single well-understood mechanism (redundant computation elimination)
+  # to a profiled hot path. A control-negative arm would test a regime where length()
+  # doesn't dominate (e.g., small D with short CF periods), but this is unnecessary:
+  # the optimization is strictly better (fewer iterations, less overhead) regardless
+  # of regime. No ablation is needed because the three sub-optimizations (inline PQa,
+  # period detection, scalar tracking) are interdependent — you can't merge period
+  # detection without inlining PQa.
+
+experiment_spec:
+  preflight_commands:
+    - "pip install mpmath pytest 2>/dev/null || true"
+    - "cd /testbed && sed -i 's/from collections import Mapping/from collections.abc import Mapping/' sympy/core/basic.py"
+    - "cd /testbed && sed -i \"s/isinstance(googol, collections.Callable)/isinstance(googol, collections.abc.Callable)/\" sympy/plotting/plot.py"
+    - "cd /testbed && sed -i 's/collections.Callable/collections.abc.Callable/' sympy/matrices/matrices.py"
+  verified_parameters:
+    D: 15591784605
+    N: -20
+    campaign_baseline_mean: 57.3288
+    iter2_baseline_mean: 0.000929
+  unlocked_parameters_audit:
+    - name: "workload_repeat"
+      default_value: 5
+      justification: "Workload runs 5 repeats in forked processes; this is the harness config, not a system parameter."
+    - name: "workload_number"
+      default_value: 1
+      justification: "Each repeat calls diop_DN once; increasing this would measure amortized import cost, not algorithm performance."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      baseline_workload: 0.5
+      treatment_workload: 0.5
+      test_suite: 20
+    observation_method: "Direct observation during design exploration"

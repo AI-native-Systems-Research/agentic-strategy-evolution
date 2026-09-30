@@ -1,0 +1,103 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "Replacing two-argument pow(base, exp) % mod with three-argument pow(base, exp, mod) in Python eliminates construction of exponentially-large intermediate integers and yields multiple-orders-of-magnitude speedup for large exponents.",
+      "confidence": "high",
+      "regime": "Any Python code path where pow(a, exp) computes a very large intermediate before modular reduction. Specifically validated for _legendre(87389, 131071) where the intermediate is ~1.1M bits.",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-3-h-main",
+        "iteration-4-h-main",
+        "iteration-5-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "CPython's three-arg pow(base, exp, mod) uses C-level modular exponentiation (square-and-multiply with per-step modular reduction), keeping all intermediates bounded by mod (~17 bits for p=131071). Two-arg pow computes the full base^exp (~1.1M bits for 87389^65535) as an arbitrary-precision integer before the final modulo. The intermediate size reduction is ~65,000:1.",
+      "applicability_bounds": "Applies when exponents are large enough that the intermediate integer becomes expensive to compute. For small exponents (e.g., exp<100), the overhead difference is negligible.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "update_type": "strengthen",
+      "update_rationale": "Iter-5 provides the definitive 5-seed confirmation: speedup = 3,535x (campaign formula), consistent across all seeds (2,797x-3,585x). Combined with 15+ measurements from iterations 1-4, this principle is thoroughly validated."
+    },
+    {
+      "id": "RP-2",
+      "action": "add",
+      "statement": "When using three-argument pow(a, exp, mod), an explicit a%mod pre-reduction is redundant and adds no measurable performance benefit \u2014 Python's C-level implementation handles unreduced inputs internally.",
+      "confidence": "high",
+      "regime": "Any Python code using three-arg pow where a < mod or a is moderately larger than mod. The pre-reduction is at most a single integer modulo operation (~0.1\u03bcs), which is negligible compared to the modular exponentiation itself (~3\u03bcs) and well within workload harness noise.",
+      "evidence": [
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "CPython's three-arg pow implementation (Objects/longobject.c) reduces the base modulo the modulus before beginning square-and-multiply. An explicit a%p before the call is therefore redundant \u2014 it performs the same comparison/subtraction that pow() will do internally. For the tested case where a < p, the pre-reduction is a pure no-op (just a comparison returning the original value).",
+      "applicability_bounds": "Always applies for three-arg pow. The pre-reduction becomes slightly more expensive when a >> mod (the modulo operation itself takes longer), but remains negligible relative to the exponentiation for any non-trivial exponent.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "action": "add",
+      "statement": "For the _legendre workload (a=87389, p=131071), replacing modular exponentiation with a Jacobi-symbol / quadratic-reciprocity algorithm yields no statistically significant improvement beyond three-arg pow \u2014 the ~16\u03bcs multiprocessing harness overhead dominates both algorithms' per-call times (~4\u03bcs for Jacobi vs ~7\u03bcs for three-arg pow).",
+      "confidence": "high",
+      "regime": "When the workload measurement harness overhead (multiprocessing fork + timeit with number=1) significantly exceeds the computation time per call. At ~16\u03bcs overhead vs ~4-7\u03bcs computation, the harness contributes ~70-80% of measured time, making algorithmic micro-optimizations invisible.",
+      "evidence": [
+        "iteration-3-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "The Jacobi algorithm computes the Legendre symbol using only integer shifts, comparisons, and modular reductions (O(log^2 p)), avoiding modular exponentiation entirely. Per-call it is ~1.7x faster than three-arg pow. However, the workload measures each call in a separate forked process with timeit(number=1), adding ~16\u03bcs of overhead per measurement. This overhead swamps the ~3\u03bcs per-call improvement, making the two algorithms indistinguishable in the workload.",
+      "applicability_bounds": "Specific to measurement regimes where harness overhead exceeds computation time. With a tighter measurement harness (e.g., batch calls within a single process), the Jacobi algorithm would show a measurable improvement.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "The three-arg pow optimization speedup in _legendre is mechanism-specific: applying the same optimization class to a code path outside the workload (encipher_gm, line 2221) produces no measurable speedup, confirming the effect is attributable to the _legendre code path and not to any side effect of modifying crypto.py.",
+      "confidence": "high",
+      "regime": "Workload calls only _legendre(87389, 131071). Other pow() call sites in crypto.py are not in the workload's execution path.",
+      "evidence": [
+        "iteration-4-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "The workload's timing loop calls only _legendre(a, p). Optimizing pow() at line 2221 (encipher_gm) cannot affect the timed computation because encipher_gm is not in the call graph. The control-negative measured 1.06x (within noise), versus h-main's 3,441x. This eliminates confounders: module reload side effects, bytecode compilation differences, or import-chain effects.",
+      "applicability_bounds": "Applies to any workload-path-specific optimization: to attribute a speedup to a code change, verify the optimized path is actually exercised by the workload.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "For the _legendre workload, the three-arg pow optimization captures the entire practical performance improvement \u2014 stacking additional micro-optimizations (bitshift exponent, branchless return) provides no statistically significant further speedup, as the ~16\u03bcs multiprocessing fork overhead dominates the remaining measured time.",
+      "confidence": "high",
+      "regime": "The _legendre(87389, 131071) workload measured via multiprocessing fork isolation harness. The fork overhead (~16\u03bcs) dwarfs the function execution time (~3\u03bcs), making sub-microsecond micro-optimizations invisible.",
+      "evidence": [
+        "iteration-5-h-main",
+        "iteration-5-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "After three-arg pow, the remaining _legendre per-call time is ~3.16\u03bcs (measured via in-process microbenchmark). Bitshift exponent saves ~0.01\u03bcs, branchless return saves ~0.01\u03bcs. Combined savings <0.1\u03bcs per call. The workload measures through a multiprocessing fork, adding ~16\u03bcs overhead per measurement. At 19-21\u03bcs total measured time, sub-microsecond savings are completely invisible. Welch's t-test: t=1.35, df=4.3, not significant (p>0.05).",
+      "applicability_bounds": "Specific to this measurement harness. In a direct in-process measurement without fork overhead, the micro-optimizations might show measurable (but tiny, <3%) differences.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

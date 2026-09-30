@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether four synergistic optimizations to the `_a` function in SymPy's Hardy-Ramanujan-Rademacher partition computation can reduce `npartitions(10^6)` runtime from ~1.29s to <0.05s while preserving exact correctness. The changes target the dominant bottleneck: an O(j\u00b2) Dedekind sum loop replaced by O(j\u00b7log j) memoized reciprocity, plus Kloosterman symmetry, hardware floats at low precision, and gmpy2 MPFR cos at high precision.",
+  "key_points": [
+    "Single experiment: modify `sympy/ntheory/partitions_.py` with four changes to `_a` \u2014 (1) O(log k) Dedekind sum via reciprocity with lru_cache, (2) Kloosterman symmetry to halve coprime iteration, (3) math.cos for prec\u226453 (~48% of outer iterations), (4) gmpy2.cos for prec>53 \u2014 then run correctness tests (`test_partitions.py`) and measure runtime via `/tmp/workload.py`.",
+    "Confirmation criteria: all tests in `sympy/ntheory/tests/test_partitions.py` pass AND mean runtime drops by >10\u00d7 (from ~1.29s to <0.13s). The hypothesis predicts <0.05s. Refutation: tests fail (incorrect results) or runtime reduction is less than 2\u00d7 (indicating the bottleneck was misidentified or overhead from gmpy2/caching dominates).",
+    "Key risk: gmpy2 may not be installed in the container, which would require falling back to mpmath-only optimizations (still expecting ~3-5\u00d7 speedup from Dedekind reciprocity + symmetry alone). Preflight command verifies baseline test passage before any edits.",
+    "Diagnostic plan if prediction is wrong: instrument _d_dedekind cache hit rate, check whether float path activates, profile gmpy2 conversion overhead, and verify workload isn't dominated by import/first-call costs rather than steady-state HRR computation."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

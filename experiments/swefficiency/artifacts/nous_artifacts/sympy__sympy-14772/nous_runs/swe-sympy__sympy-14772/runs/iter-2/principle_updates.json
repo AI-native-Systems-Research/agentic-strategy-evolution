@@ -1,0 +1,41 @@
+[
+  {
+    "id": "RP-1",
+    "action": "reinforce",
+    "statement": "Replacing two-argument pow(base, exp) % mod with three-argument pow(base, exp, mod) in Python eliminates construction of exponentially-large intermediate integers and yields multiple-orders-of-magnitude speedup for large exponents.",
+    "confidence": "high",
+    "regime": "Any Python code computing modular exponentiation where the exponent is large enough that the intermediate base^exp exceeds ~10,000 bits. For a 1.1M-bit intermediate (exp~65535, base~17 bits), speedup is ~3,900-4,100x consistently across 6 independent measurement seeds (3 in iter-1, 3 in iter-2).",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Python's two-argument pow(base, exp) computes the full integer base^exp using arbitrary-precision arithmetic, creating an intermediate proportional to exp * log2(base) bits. Three-argument pow(base, exp, mod) uses CPython's C-level modular exponentiation (square-and-multiply with mod reduction at each step), keeping all intermediates bounded by mod.",
+    "applicability_bounds": "Applies when: (1) the exponent is large (hundreds or more), (2) the base is non-trivial, (3) the modulus is much smaller than base^exp. Does NOT apply when the exponent is small or when the full integer result is needed downstream.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "action": "add",
+    "statement": "When using three-argument pow(a, exp, mod), an explicit a%mod pre-reduction is redundant and adds no measurable performance benefit \u2014 Python's C-level implementation handles unreduced inputs internally.",
+    "confidence": "high",
+    "regime": "Any Python code using three-arg pow where a < mod or a is moderately larger than mod. The pre-reduction is at most a single integer modulo operation (~0.1\u03bcs), which is negligible compared to the modular exponentiation itself (~3\u03bcs) and well within workload harness noise.",
+    "evidence": [
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "CPython's three-arg pow implementation (Objects/longobject.c) reduces the base modulo the modulus before beginning square-and-multiply. An explicit a%p before the call is therefore redundant \u2014 it performs the same comparison/subtraction that pow() will do internally. For the tested case where a < p, the pre-reduction is a pure no-op (just a comparison returning the original value).",
+    "applicability_bounds": "Always applies for three-arg pow. The pre-reduction becomes slightly more expensive when a >> mod (the modulo operation itself takes longer), but remains negligible relative to the exponentiation for any non-trivial exponent.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

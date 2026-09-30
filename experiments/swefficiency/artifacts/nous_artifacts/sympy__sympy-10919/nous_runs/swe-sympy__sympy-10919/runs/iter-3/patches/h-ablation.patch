@@ -1,0 +1,96 @@
+diff --git a/sympy/ntheory/partitions_.py b/sympy/ntheory/partitions_.py
+index 3e029014b..2ddbb78d7 100644
+--- a/sympy/ntheory/partitions_.py
++++ b/sympy/ntheory/partitions_.py
+@@ -4,35 +4,71 @@
+     from_man_exp, from_int, from_rational,
+     fone, fhalf, bitcount, to_int, to_str, mpf_mul, mpf_div, mpf_sub,
+     mpf_add, mpf_sqrt, mpf_pi, mpf_cosh_sinh, pi_fixed, mpf_cos)
+-from sympy.core.numbers import igcd
++from math import gcd
+ import math
+ from sympy.core.compatibility import range
+ 
+ 
++def _dedekind_sum(h, j):
++    """Compute Dedekind sum s(h,j) as (numerator, denominator) in O(log j)."""
++    h = h % j
++    if h == 0:
++        return (0, 1)
++    if h == 1:
++        num = (j - 1) * (j - 2)
++        den = 12 * j
++        g = gcd(num, den)
++        return (num // g, den // g)
++    r_num, r_den = _dedekind_sum(j % h, h)
++    a_num = h * h + j * j + 1 - 3 * h * j
++    a_den = 12 * h * j
++    num = a_num * r_den - r_num * a_den
++    den = a_den * r_den
++    g = gcd(abs(num), den)
++    return (num // g, den // g)
++
++
++def _T(h, j):
++    """Compute T(h,j) = sum_{k=1}^{j-1} k*((h*k) mod j) via Dedekind sum."""
++    s_num, s_den = _dedekind_sum(h, j)
++    num = 4 * j * j * s_num + j * j * (j - 1) * s_den
++    return num // (4 * s_den)
++
++
+ def _a(n, j, prec):
+-    """Compute the inner sum in the HRR formula."""
++    """Compute the inner sum in the HRR formula.
++
++    Uses Dedekind sum O(log j) and h/j-h cosine symmetry.
++    No float64 fast path (ablation: mpf path only).
++    """
+     if j == 1:
+         return fone
+-    s = fzero
+-    pi = pi_fixed(prec)
+-    for h in range(1, j):
+-        if igcd(h, j) != 1:
+-            continue
+-        # & with mask to compute fractional part of fixed-point number
++    if j == 2:
+         one = 1 << prec
+-        onemask = one - 1
++        pi = pi_fixed(prec)
++        n2one = 2 * n * one
+         half = one >> 1
+-        g = 0
+-        if j >= 3:
+-            for k in range(1, j):
+-                t = h*k*one//j
+-                if t > 0:
+-                    frac = t & onemask
+-                else:
+-                    frac = -((-t) & onemask)
+-                g += k*(frac - half)
+-        g = ((g - 2*h*n*one)*pi//j) >> prec
+-        s = mpf_add(s, mpf_cos(from_man_exp(g, -prec), prec), prec)
++        g = one // 2 - half
++        g = ((g - n2one) * pi // 2) >> prec
++        return mpf_cos(from_man_exp(g, -prec), prec)
++
++    one = 1 << prec
++    pi = pi_fixed(prec)
++    half = one >> 1
++    n2one = 2 * n * one
++    half_sum_big = half * (j - 1) * j // 2
++
++    s = fzero
++    half_j = (j - 1) // 2
++    for h in range(1, half_j + 1):
++        if gcd(h, j) != 1:
++            continue
++        T = _T(h, j)
++        g = T * one // j - half_sum_big
++        g = ((g - h * n2one) * pi // j) >> prec
++        cos_val = mpf_cos(from_man_exp(g, -prec), prec)
++        s = mpf_add(s, cos_val, prec)
++        s = mpf_add(s, cos_val, prec)
+     return s
+ 
+ 

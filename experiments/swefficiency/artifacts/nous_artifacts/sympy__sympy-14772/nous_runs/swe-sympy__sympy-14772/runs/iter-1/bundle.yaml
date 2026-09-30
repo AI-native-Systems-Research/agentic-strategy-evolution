@@ -1,0 +1,53 @@
+metadata:
+  iteration: 1
+  family: "legendre-modpow-optimization"
+  research_question: "Can replacing the two-argument pow with three-argument modular pow in _legendre reduce workload runtime while preserving correctness?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (modular exponentiation), single knob (pow call form), treatment vs control"
+
+arms:
+  - type: h-main
+    prediction: "Replacing pow(a%p, (p-1)//2) % p with pow(a%p, (p-1)//2, p) in _legendre will decrease the workload mean runtime by multiple orders of magnitude (observed ~4000x in probe), consistently across all measurement repetitions."
+    mechanism: >
+      Python's two-argument pow(base, exp) computes the full integer base^exp before
+      taking mod. For a=87389, p=131071, this creates an intermediate integer of
+      ~1.1 million bits (65535 * ~17 bits per digit). The three-argument pow(base, exp, mod)
+      performs modular exponentiation in C using square-and-multiply with mod reduction
+      at each step, keeping all intermediates below p (~17 bits). This eliminates the
+      bottleneck of arbitrary-precision integer arithmetic on a million-bit number.
+      Code location: sympy/crypto/crypto.py:2075.
+    diagnostic: >
+      If the prediction is wrong, check: (1) whether the workload actually calls the
+      modified code path (import caching could bypass it), (2) whether setup's
+      clear_cache() interacts with the change, (3) whether Python version affects
+      three-arg pow performance.
+    code_changes:
+      - file: "sympy/crypto/crypto.py"
+        intent: "On line 2075, change `sig = pow(a%p, (p - 1)//2) % p` to `sig = pow(a % p, (p - 1) // 2, p)` — use Python's native three-argument modular exponentiation instead of computing the full power then reducing."
+        rationale: "This is the sole hot path in the workload. The two-arg pow creates a ~1M-bit intermediate integer; three-arg pow keeps intermediates bounded by p, giving O(log(exp) * log(p)^2) instead of O(exp * log(base)^2) cost."
+
+# Arm selection rationale:
+# Only h-main is included. A negative control would test a regime where the
+# optimization doesn't matter (e.g. tiny p where pow is already fast), but
+# the effect is so decisive (~4000x) and the mechanism so clear (algorithmic
+# complexity class change) that additional arms add no diagnostic value for
+# iter-1 at tier 1.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    baseline_mean_seconds: 0.0743
+    workload_a: 87389
+    workload_p: 131071
+    test_suite: "sympy/crypto/tests/test_crypto.py"
+    python_executable: "/opt/miniconda3/envs/testbed/bin/python"
+  unlocked_parameters_audit:
+    - name: "timeit_number"
+      default_value: 1
+      justification: "Workload uses number=1 per timing iteration; the function is slow enough at baseline that a single call captures meaningful signal."
+    - name: "timeit_repeat"
+      default_value: 10
+      justification: "10 repetitions provide sufficient statistical power for an effect size of ~4000x; variance is negligible relative to effect."
+    - name: "multiprocessing_start_method"
+      default_value: "fork"
+      justification: "The workload harness uses fork; this is the default on Linux and does not affect the computation being measured."

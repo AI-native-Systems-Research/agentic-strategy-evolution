@@ -1,0 +1,59 @@
+metadata:
+  iteration: 5
+  family: "pow-three-arg-ceiling"
+  research_question: "Has the _legendre optimization space reached its practical ceiling with three-arg pow, or can stacking micro-optimizations (branchless return, bitshift exponent) produce measurable further improvement?"
+  complexity_tier: 2
+  tier_justification: "iter 5 — tier 1 mechanism (three-arg pow) is thoroughly confirmed; tier 2 adds a robustness arm testing the performance ceiling with combined micro-optimizations"
+
+# Arm selection rationale:
+# - h-main: The canonical three-arg pow optimization. This is iteration 5 (final).
+#   Provides the definitive 5-seed measurement for the campaign's primary finding.
+# - h-robustness: Combines ALL known micro-optimizations (three-arg pow + bitshift
+#   exponent + branchless return) to test whether any measurable headroom remains.
+#   Prior microbenchmarks showed 3.22μs vs 3.16μs (noise), but full workload
+#   measurement across 5 seeds provides the definitive answer.
+# - No additional arms needed: ablation (iter-2), alternative algorithm (iter-3),
+#   and control-negative (iter-4) are all completed with high confidence.
+
+arms:
+  - type: h-main
+    prediction: "Replacing pow(a%p, (p-1)//2) % p with pow(a, (p-1)//2, p) at line 2075 will decrease workload mean from ~0.069s to ~0.000015-0.000025s, yielding a speedup of ~3,000-5,000x consistently across all 5 seeds. All 38 covering tests will pass."
+    mechanism: "Python's two-arg pow(87389, 65535) computes the full 87389^65535 as a ~1.1M-bit arbitrary-precision integer before the final modulo reduction. Three-arg pow(87389, 65535, 131071) delegates to CPython's C-level modular exponentiation (square-and-multiply with per-step reduction), keeping all intermediates bounded by 131071 (~17 bits). The intermediate size reduction is ~65,000:1, explaining the ~3,500x speedup. Code: sympy/crypto/crypto.py:2075."
+    diagnostic: "If speedup is significantly lower than 3,000x, check whether the workload harness has changed (fork overhead), whether Python version differs from 3.6.13, or whether the code path has been modified by another change."
+    code_changes:
+      - file: "sympy/crypto/crypto.py"
+        intent: "Replace line 2075: change `sig = pow(a%p, (p - 1)//2) % p` to `sig = pow(a, (p - 1) // 2, p)`. This is the three-arg pow optimization that eliminates the giant intermediate integer. Keep the return logic (lines 2076-2081) unchanged."
+        rationale: "This single line is the sole hot path. The two-arg pow with external modulo creates a ~1.1M-bit intermediate; three-arg pow eliminates it entirely. RP-1 and RP-2 together confirm that three-arg pow without pre-reduction is the optimal form."
+
+  - type: h-robustness
+    prediction: "Combining three-arg pow with bitshift exponent (p>>1 instead of (p-1)//2) and branchless return (sig if sig<=1 else -1) will produce speedup statistically indistinguishable from h-main — within ±20% of h-main's mean, well within the measurement noise imposed by the ~16μs multiprocessing fork overhead. All 38 covering tests will pass."
+    mechanism: "The bitshift saves one integer subtraction and one floor division, replacing them with a single right-shift (~0.01μs savings). The branchless return replaces a 3-branch if/elif/else with a single comparison and conditional expression (~0.01μs savings). Combined savings are <0.1μs per call — completely invisible against the ~16μs fork overhead that dominates the measured workload time (~20μs total). Microbenchmarks confirm: branched function = 3.16μs, branchless function = 3.22μs (identical within noise)."
+    diagnostic: "If h-robustness is measurably faster than h-main (>20% improvement), the fork overhead assumption is wrong — investigate whether the multiprocessing harness overhead has decreased, allowing micro-optimizations to surface. If h-robustness is measurably slower, the branchless expression may have introduced unexpected overhead (Python's conditional expression bytecode may be less efficient for this pattern)."
+    code_changes:
+      - file: "sympy/crypto/crypto.py"
+        intent: "Replace lines 2075-2081 (the sig computation and the if/elif/else return block) with two lines: `sig = pow(a, p >> 1, p)` followed by `return sig if sig <= 1 else -1`. This combines three-arg pow, bitshift exponent, and branchless return in a single variant."
+        rationale: "This represents the theoretical maximum micro-optimization for this function. Correctness: for odd primes, p>>1 == (p-1)//2 algebraically. The branchless return works because pow(a, (p-1)//2, p) returns only 0, 1, or p-1: sig<=1 captures 0 and 1 correctly, and the else branch maps p-1 to -1."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    workload_command: "PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py"
+    test_command: "/opt/miniconda3/envs/testbed/bin/python -m pytest -q sympy/crypto/tests/test_crypto.py"
+    baseline_mean: 0.0743
+    python_binary: "/opt/miniconda3/envs/testbed/bin/python"
+    target_file: "sympy/crypto/crypto.py"
+    target_line: 2075
+    tests_expected: 38
+  unlocked_parameters_audit:
+    - name: "python_version"
+      default_value: "3.6.13"
+      justification: "Locked to testbed conda environment; system Python 3.11 cannot import this sympy version."
+    - name: "timeit_number"
+      default_value: 1
+      justification: "Workload hardcodes number=1 in timeit; cannot be changed (read-only workload)."
+    - name: "timeit_repeat"
+      default_value: 10
+      justification: "Workload hardcodes repeat=10; each run produces 10 measurements averaged to a mean."
+    - name: "multiprocessing_start_method"
+      default_value: "fork"
+      justification: "Workload hardcodes start_method='fork'; contributes ~16μs overhead per measurement but cannot be changed."

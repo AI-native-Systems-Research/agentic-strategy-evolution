@@ -1,0 +1,31 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "A branch-and-bound solver with Lagrangian LP relaxation will achieve judge score >= 95, finding optimal or near-optimal solutions for all 20 test cases within the 1-second time limit.",
+      "observed": "Judge SCORE: 100. The B&B with Lagrangian LP relaxation achieves perfect score on all 20 test cases, finding optimal solutions that exactly match the reference best values. The algorithm completes well within the 1-second time limit.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null,
+      "metadata": {
+        "score": 100
+      }
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "A single greedy heuristic without B&B will score measurably lower than h-main, demonstrating that the optimization beyond greedy matters for this problem.",
+      "observed": "Judge SCORE: 0. The pure greedy by v/(m+l) density fails to beat the NSA baseline heuristic on any test case. The single density metric v/(m+l) is a poor proxy when mass and volume have different effective shadow prices across test cases.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The gap is larger than expected \u2014 greedy doesn't even beat the baseline. This confirms: (1) v/(m+l) is a poor proxy when the two constraints have different tightness, (2) without backtracking or multi-metric search, greedy cannot balance 2D constraints, (3) the B&B with Lagrangian LP bound is responsible for the entire score improvement from 0 to 100."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main achieves perfect score (100) via B&B with Lagrangian LP relaxation. h-control-negative scores 0, confirming the optimization mechanism is essential. The control arm's failure is more severe than predicted \u2014 it fails to beat even the NSA baseline, not just scoring lower than h-main.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}

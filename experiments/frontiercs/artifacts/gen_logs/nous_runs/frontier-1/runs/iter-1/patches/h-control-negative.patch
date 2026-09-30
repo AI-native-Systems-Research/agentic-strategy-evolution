@@ -1,0 +1,75 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..5d0cf51 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,69 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++static const long long MAX_MASS = 20000000LL;
++static const long long MAX_VOL  = 25000000LL;
++
++struct Item {
++    string name;
++    long long q, v, m, l;
++};
++
++int main() {
++    string input;
++    { ostringstream ss; ss << cin.rdbuf(); input = ss.str(); }
++
++    Item items[12];
++    int n = 0;
++    size_t pos = 0;
++    while ((pos = input.find('"', pos)) != string::npos && n < 12) {
++        size_t end = input.find('"', pos + 1);
++        if (end == string::npos) break;
++        string key = input.substr(pos + 1, end - pos - 1);
++        pos = end + 1;
++        size_t bracket = input.find('[', pos);
++        if (bracket == string::npos) break;
++        size_t close = input.find(']', bracket);
++        if (close == string::npos) break;
++        string nums = input.substr(bracket + 1, close - bracket - 1);
++        vector<long long> vals;
++        istringstream iss(nums);
++        string token;
++        while (getline(iss, token, ',')) {
++            long long val = 0;
++            for (char c : token) if (isdigit(c)) val = val * 10 + (c - '0');
++            vals.push_back(val);
++        }
++        if ((int)vals.size() == 4) {
++            items[n] = {key, vals[0], vals[1], vals[2], vals[3]};
++            n++;
++        }
++        pos = close + 1;
++    }
++
++    // Sort by v/(m+l) density descending (single greedy metric)
++    int order[12];
++    for (int i = 0; i < n; i++) order[i] = i;
++    sort(order, order + n, [&](int a, int b) {
++        return items[a].v * (items[b].m + items[b].l) > items[b].v * (items[a].m + items[a].l);
++    });
++
++    // Greedy fill
++    int counts[12] = {};
++    long long rm = MAX_MASS, rv = MAX_VOL;
++    for (int ii = 0; ii < n; ii++) {
++        int i = order[ii];
++        long long k = min(items[i].q, min(rm / items[i].m, rv / items[i].l));
++        counts[i] = (int)k;
++        rm -= k * items[i].m;
++        rv -= k * items[i].l;
++    }
++
++    cout << "{\n";
++    for (int i = 0; i < n; i++) {
++        cout << "\"" << items[i].name << "\": " << counts[i];
++        if (i < n - 1) cout << ",";
++        cout << "\n";
++    }
++    cout << "}\n";
++}
