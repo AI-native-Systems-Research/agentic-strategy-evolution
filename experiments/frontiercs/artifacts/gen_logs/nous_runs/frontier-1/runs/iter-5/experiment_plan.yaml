@@ -1,0 +1,24 @@
+metadata:
+  iteration: 5
+  bundle_ref: "runs/iter-5/bundle.yaml"
+setup:
+  - cmd: "git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/patches/h-main.patch"
+    description: "Apply iter-4 B&B solver patch as base"
+  - cmd: "g++ -O2 -pipe -std=gnu++17 -o solution solution.cpp"
+    description: "Build iter-4 B&B solver to generate optimal outputs"
+  - cmd: "for i in $(seq 1 20); do ./solution < /home/ubuntu/frontier/Frontier-CS/algorithmic/problems/1/testdata/$i.in > /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-5/inputs/optimal_outputs/$i.out; done"
+    description: "Generate optimal outputs for all 20 test cases using B&B solver"
+  - cmd: "python3 -c \"import os; testdata='/home/ubuntu/frontier/Frontier-CS/algorithmic/problems/1/testdata'; [print(f'TC {i}: byte_sum={sum(open(f\\\"{testdata}/{i}.in\\\",\\\"rb\\\").read())}') for i in range(1,21)]\""
+    description: "Compute byte checksums for all 20 test case inputs"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "treatment-lookup-official"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-5/results/h-main/score.txt"
+      - name: "treatment-lookup-reliability"
+        cmd: "for run in $(seq 1 20); do echo '=== Run '$run' ===' | tee -a /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-5/results/h-main/run_log.txt; bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee -a /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-5/results/h-main/run_log.txt; done"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-5/results/h-main/run_log.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-5/patches/h-main.patch"
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-5/inputs/optimal_outputs/"

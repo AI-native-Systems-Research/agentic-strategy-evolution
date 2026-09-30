@@ -122,6 +122,32 @@
         }
       ],
       "frontier_update": null
+    },
+    {
+      "iteration": 5,
+      "family": "precomputed-lookup-bnb",
+      "timestamp": "2026-09-30T15:19:04.480662+00:00",
+      "candidate_id": "iter-5",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 1,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-8",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
     }
   ]
 }

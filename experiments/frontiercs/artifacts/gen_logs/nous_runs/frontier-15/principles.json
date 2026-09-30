@@ -3,17 +3,18 @@
     {
       "id": "RP-1",
       "action": "revise",
-      "statement": "The prefix-suffix swap operation [A|B|C] \u2192 [C|B|A] can sort any permutation of length n \u2265 5 in at most 2n-2 operations by treating the unsorted region as a circular buffer and composing two operations per element, with a BFS-optimal endgame for the last 3 elements. For n=4, the 2n+1 bound applies (special case).",
+      "statement": "The prefix-suffix swap operation [A|B|C] -> [C|B|A] can sort any permutation of length n >= 6 in at most 2n-4 operations by treating the unsorted region as a circular buffer and composing two operations per element, with a BFS-optimal endgame for the last 4 elements (23 precomputed sequences, each <=4 ops). For n=5, the 2n-2 bound applies; for n=4, the 2n+1 bound applies.",
       "confidence": "high",
-      "regime": "n \u2265 5, any valid permutation",
+      "regime": "n >= 6, any valid permutation",
       "evidence": [
         "iteration-1-h-main",
-        "iteration-2-h-main"
+        "iteration-2-h-main",
+        "iteration-3-h-main"
       ],
       "contradicts": [],
-      "extraction_iteration": 2,
-      "mechanism": "The core 2-op-per-element mechanism places elements 2 through n-3 using Op1 (buffer rotation) + Op2 (prefix restoration). The last 3 elements are handled by a 6-way case dispatch based on their permutation: [n-2,n,n-1]\u21924ops, [n-1,n-2,n]\u21924ops, [n-1,n,n-2]\u21922ops, [n,n-2,n-1]\u21922ops, [n,n-1,n-2]\u21923ops, [n-2,n-1,n]\u21920ops. This replaces the previous 1-element + 5-op endgame (worst case 2+5=7) with a 3-element unit (worst case 4), saving up to 3 operations.",
-      "applicability_bounds": "Applicable to problem 15 and any prefix-suffix swap sorting problem with n \u2265 5. The 2n-2 bound is tight (observed max 1995 < 1998 in 100 random trials for n=1000). For n=4, the algorithm uses a direct 2n+1 approach.",
+      "extraction_iteration": 3,
+      "mechanism": "The core 2-op-per-element mechanism places elements 2 through n-4 using Op1 (buffer rotation) + Op2 (prefix restoration). The last 4 elements are handled by a 23-way case dispatch: 5 configurations need 2 ops (using large-prefix swaps like (n-4,2),(1,n-4)), 6 need 3 ops, and 12 need 4 ops. BFS exploration with n-dependent operations proves these are optimal. The key insight: extending the endgame from 3 to 4 elements costs 0 extra ops (max stays at 4) while saving 2 main-loop ops.",
+      "applicability_bounds": "Applicable to problem 15 and any prefix-suffix swap sorting problem with n >= 6. The 2n-4 bound is verified but not proven tight (observed max 1993 < 1996 in 200 random trials for n=1000). Operations (3,2) and (2,3) require n>=6. For n<=5, fallback algorithms apply.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",
@@ -56,6 +57,27 @@
       "status": "active",
       "empirical_content": true,
       "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "action": "add",
+      "statement": "The score ceiling for problem 15 is 100, achievable by any algorithm that sorts in <=2n+1 operations. The checker clamps the ratio to [0,1], making scores above 100 impossible. The circular buffer rotation sort achieves this ceiling with all tested endgame sizes (k=2,3,4), confirming the problem is solved at the maximum achievable score.",
+      "confidence": "high",
+      "regime": "Problem 15, any n>=3",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-3-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "The checker computes ratio = clamp((4n - ops)/(4n - (2n+1)), 0, 1). For ops <= 2n+1: ratio >= 1.0, clamped to 1.0, score = 100. The circular buffer rotation with k=4 endgame uses at most 2n-4 < 2n+1 operations, guaranteeing maximum score. No algorithmic improvement can increase the score beyond 100.",
+      "applicability_bounds": "This is specific to the checker's scoring formula. If best_operations were reduced in the checker, the score ceiling would change.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": false,
+      "derivation_type": "algebraic"
     }
   ]
 }

@@ -60,95 +60,87 @@ Constraints
 
 **Controllable knobs:** solution_cpp
 
-## Active Principles (after iteration 2)
+## Active Principles (after iteration 3)
 
-- **RP-1** [domain]: The prefix-suffix swap operation [A|B|C] → [C|B|A] can sort any permutation of length n ≥ 5 in at most 2n-2 operations by treating the unsorted region as a circular buffer and composing two operations per element, with a BFS-optimal endgame for the last 3 elements. For n=4, the 2n+1 bound applies (special case).
+- **RP-1** [domain]: The prefix-suffix swap operation [A|B|C] -> [C|B|A] can sort any permutation of length n >= 6 in at most 2n-4 operations by treating the unsorted region as a circular buffer and composing two operations per element, with a BFS-optimal endgame for the last 4 elements (23 precomputed sequences, each <=4 ops). For n=5, the 2n-2 bound applies; for n=4, the 2n+1 bound applies.
 - **RP-2** [domain]: For d=1 (element one position from target) in a buffer of length l ≥ 3, the decomposition d1=2, d2=l-1 achieves d1+d2 = l+1 ≡ 1 (mod l), resolving the edge case where no direct (d1, d-d1) split has both values in [1, l-1].
 - **RP-3** [domain]: The prefix-restoration step (Op2) is essential to the circular buffer rotation algorithm. Removing it destroys the sorted-prefix invariant, causing the algorithm to produce unsorted output (score 0) even though the buffer rotation step (Op1) correctly positions each target element temporarily.
+- **RP-4** [domain]: The score ceiling for problem 15 is 100, achievable by any algorithm that sorts in <=2n+1 operations. The checker clamps the ratio to [0,1], making scores above 100 impossible. The circular buffer rotation sort achieves this ceiling with all tested endgame sizes (k=2,3,4), confirming the problem is solved at the maximum achievable score.
 
 ## Most Recent Handoff
 
-# Handoff — Frontier-CS Problem #15 (Iter 2)
+# Handoff — Frontier-CS Problem #15 (Iter 3)
 
 ## Goal
 
-Implement and test two variants of the circular buffer rotation sort: (1) an optimized version with BFS-derived last-3-element endgame sequences, and (2) an ablation that removes Op2 (prefix restoration) to prove it is essential. Measure judge scores for both. The h-main score should be recorded in findings metadata under key `score`.
+Implement the k=4 BFS-optimal endgame algorithm (pre-validated at `inputs/solution_k4endgame.cpp`), measure its judge score, and confirm the worst-case bound of 2n-4 operations. The solution is complete and tested — the executor primarily needs to copy it to `solution.cpp`, build, measure, and record the score.
 
 ## Key Discoveries
 
-- **4-op endgame replaces 5-op**: BFS proves the last-2-element swap `[1,..,n-2,n,n-1]→sorted` can be done in 4 ops `(1,2),(1,n-2),(1,2),(2,2)` for n≥5 (previously 5 ops). Verified for all n=5..1000.
-- **Last-3-element optimal sequences**: Handling the last 3 elements as a unit (instead of 1-by-1 + endgame) saves up to 4 operations. Five non-trivial configurations exist, each with a BFS-optimal sequence:
-  - `[n-2, n, n-1]` → 4 ops: `(1,2), (1,n-2), (1,2), (2,2)`
-  - `[n-1, n-2, n]` → 4 ops: `(1,1), (1,2), (2,2), (2,1)`
-  - `[n-1, n, n-2]` → 2 ops: `(n-3, 2), (1, n-3)`
-  - `[n, n-2, n-1]` → 2 ops: `(n-3, 1), (2, n-3)`
-  - `[n, n-1, n-2]` → 3 ops: `(1,1), (1,3), (1,n-2)`
-- **Worst-case reduction**: Original=2n+1, with 4-op endgame=2n, with last-3 optimization=2n-2. For n=1000: 2001→2000→1998.
-- **Comparative statistics (500 random n=1000 perms)**: Original avg=1985.4, max=2000. Optimized avg=1984.0, max=1996. Optimized never loses (253 wins, 247 ties, 0 losses). Max savings=4 ops.
-- **Op2 is essential**: Removing the prefix-restoration step causes 0/5 random permutations to sort. The sorted-prefix invariant breaks after the first Op1-only placement.
-- **Scoring reminder**: Findings must include `"score": <number>` in each arm's metadata. Iter-1 omitted this, causing `best_found.json` to show 0.0.
+- **k=4 endgame max 4 ops (NEW):** All 23 non-trivial permutations of the last 4 elements can be sorted in ≤4 operations using n-dependent prefix-suffix swaps. Verified for n=6 through n=1000 with 0 errors. This matches the k=3 maximum (also 4), meaning each step up in endgame size is "free."
+- **Worst case tightened to 2n-4:** Element 1: ≤2 ops + main loop (elements 2..n-4): ≤2(n-5) + endgame: ≤4 = 2n-4. For n=1000: max 1996 (down from iter-2's 1998).
+- **Score ceiling confirmed at 100:** The checker at `chk.cc:78` clamps the ratio to [0,1]. Any solution with ≤2001 operations scores 100. The k=4 algorithm uses at most 1996. No further score improvement is possible.
+- **k=4 endgame distribution:** Of 23 non-identity configurations: 5 need 2 ops, 6 need 3, 12 need 4. Distribution is identical across all tested n values.
+- **Empirical performance on 200 random n=1000 perms:** min=1971, max=1993, avg=1983.5. All strictly under 2n-4=1996.
+- **k=5 endgame intractable:** The BFS search for 120 permutations of last 5 elements with ~39 interesting operations at depth ≤5 exceeded 5 minutes and was abandoned. The k=4 endgame is sufficient since score is already maximized.
 
 ## System Interface
 
 - **Build:** `g++ -O2 -std=c++17 -o solution solution.cpp`
 - **Run baseline:** `bash /home/ubuntu/frontier/gen_logs/fmeasure_15.sh $PWD/solution.cpp`
 - **Output format:** Prints `SCORE: <n>` (0-100, continuous)
-- **Baseline result:** SCORE: 100 with both the original and optimized algorithms
+- **Baseline result:** SCORE: 100 with the k=4 endgame algorithm
 
 ## Code Map
 
-- `solution.cpp` — entire solution file; replace for each arm
-- `/home/ubuntu/frontier/Frontier-CS/algorithmic/problems/15/chk.cc:64` — `best_operations = 2 * n + 1`. Check here if scoring formula seems wrong.
-- `/home/ubuntu/frontier/Frontier-CS/algorithmic/problems/15/chk.cc:78` — score clamping logic. Score = 100 when ops ≤ 2001.
-- `/home/ubuntu/frontier/Frontier-CS/algorithmic/problems/15/chk.cc:57` — `check_sorted()` — requires strictly increasing output.
-- `/home/ubuntu/frontier/Frontier-CS/algorithmic/problems/15/chk.cc:51` — operation validity: `x > 0, y > 0, x + y < n`.
+- `solution.cpp` — the worktree solution file to replace
+- `inputs/solution_k4endgame.cpp` — pre-validated k=4 endgame solution (copy to solution.cpp)
+- `/home/ubuntu/frontier/Frontier-CS/algorithmic/problems/15/chk.cc:64` — `best_operations = 2 * n + 1` (scoring benchmark)
+- `/home/ubuntu/frontier/Frontier-CS/algorithmic/problems/15/chk.cc:78` — score clamping `std::min(1.0, ...)` (confirms ceiling)
+- `/home/ubuntu/frontier/Frontier-CS/algorithmic/problems/15/testdata/` — 10 test cases, all n=1000
 
 ## Code Targets
 
-### h-main (optimized last-3 endgame)
+### h-main (k=4 endgame algorithm)
 - File: `solution.cpp`
-- Change main loop from `targ <= n-2` to `targ <= n-3`
-- Replace the 5-op endgame `if (!is_sorted()) { apply(1,1); ... }` with a 6-case dispatch on `(p[n-3], p[n-2], p[n-1])` matching the patterns above
-- Keep n=3 and n=4 special cases unchanged
-- The complete optimized solution was already written and validated at `/tmp/solution_optimized.cpp` during design exploration
-
-### h-ablation (remove Op2)
-- File: `solution.cpp`
-- In the main loop body, REMOVE the line `apply(d2, cf);` (Op2)
-- Keep everything else (Op1, element search, d decomposition, endgame)
-- The algorithm will fail to sort because the sorted prefix is moved to array end by Op1 and never restored
+- Replace entirely with `inputs/solution_k4endgame.cpp`
+- The solution is COMPLETE and TESTED:
+  - Compiles with `g++ -O2 -std=c++17`
+  - All 10 test cases produce correctly sorted output
+  - Operation counts: 1984-1993 (all under 1996)
+  - Judge score: 100
+  - 200/200 random n=1000 permutations pass
 
 ## What I Tried That Didn't Work
 
-- **Single-operation greedy placement**: Tried placing each element with ONE operation (choosing x,y to map element to target position). Array never sorts because each op disrupts previously placed elements. 0/5 random permutations sorted in ~1000 ops.
-- **Improving average ops via decomposition choice**: Analyzed whether choosing d1≠1 could help subsequent elements. Proved mathematically that the final buffer state is identical regardless of d1/d2 decomposition (only total d matters), so no optimization is possible here.
-- **3-op-per-element approaches**: Explored using 3 operations per element (extract to position 0, move to target, restore prefix) — collapses to the same logic as the 2-op approach or fails to maintain any invariant.
-- **Handling last 4+ elements as a unit**: Analyzed but diminishing returns — BFS max for 4 elements may not be better than 2(K-1) threshold needed to improve over the last-3 approach.
+- **k=5 endgame BFS:** Attempted to compute optimal sequences for all 120 permutations of the last 5 elements. The search space (39 interesting ops, depth ≤5, 120 starting states) exceeded 5 minutes and was abandoned. The pure k=5 BFS for n=k=5 showed max 5 ops, but the large-n version needs n-dependent ops that explode the search space.
+- **Batch placement (consecutive block detection):** Analyzed whether detecting consecutive ascending blocks in the buffer could reduce operations. For random permutations, consecutive blocks have expected length ~1 (P(next element adjacent) ≈ 1/(n-1)), so savings are negligible (~0.002 ops per permutation). Not worth the implementation complexity.
+- **Alternative algorithmic paradigms:** Exhaustively analyzed reverse selection sort (building sorted suffix), cycle-based placement, merge sort analog, divide-and-conquer, and greedy local improvement. ALL either reduce to the same 2-ops-per-element bound or are strictly worse. The fundamental constraint: each operation disrupts ALL positions except the middle, so maintaining any invariant requires a restoration step.
+- **Single-operation placement:** Proved that placing element k with exactly 1 operation (using suffix-based positioning) always destroys the sorted prefix. The restoration requires a second operation, making 2-ops-per-element the theoretical minimum for invariant-based approaches.
 
 ## What I Excluded and Why
 
-- **Cycle-based sorting**: A fundamentally different approach that decomposes the permutation into cycles. Excluded because the 2-op circular buffer approach already achieves the benchmark (2n+1) and any cycle-based approach using prefix-suffix swaps faces the same global-disruption issue.
-- **Reverse-direction sort (sorted suffix)**: The mirror-image algorithm building a sorted suffix from right-to-left. Excluded because it's structurally identical with the same operation count — no new scientific information.
-- **n < 5 optimization**: All test cases have n=1000. The n=3 and n=4 special cases are inherited from iter-1 unchanged.
+- **Dose-response on endgame size:** The natural variable (k=2,3,4,5) produces identical scores (100) for all values, since worst-case ops are well under 2001 for all k. The operation count varies but isn't the scored metric.
+- **Ablation of Op2:** Already done in iter-2 (RP-3 confirmed essential, score 0 without it). Repeating would produce no new knowledge.
+- **Adversarial input construction:** All 10 test cases are fixed (n=1000, random-looking permutations). Constructing adversarial inputs isn't possible since the judge uses fixed test data.
 
 ## Evolution of Thinking
 
-1. Started by trying to find a fundamentally different algorithm that could beat score 100 — realized the score is clamped at 100 (maximum achievable).
-2. Shifted focus to OPERATION COUNT optimization within the existing mechanism. Discovered via BFS that the 5-op endgame can be reduced to 4 ops for n≥5.
-3. Extended the analysis to handle the last 3 elements as a unit, finding BFS-optimal 2-4 operation sequences. This reduces worst case from 2n+1 to 2n-2.
-4. For the ablation, initially considered various "worse" algorithms but realized the cleanest ablation is removing Op2 — it directly tests whether the prefix-restoration step is necessary (it is).
-5. Verified that no decomposition optimization is possible (the final state after 2 ops depends only on the total rotation d, not on how d is split into d1+d2).
+1. **Started by computing k=4 endgame sequences.** Used iterative deepening search with n-dependent "interesting" operations ({1,2,3,n-4,n-3,n-2} for x and y). Found ALL 23 configurations solvable in ≤4 ops — the same maximum as k=3!
+2. **Verified generalization across n.** Tested all sequences for n=6..1000. Discovered that the operation values generalize cleanly (e.g., (n-4,2) works for any n≥6) because the middle portion (positions 1..n-5) remains sorted through the operations.
+3. **Attempted k=5 but hit computational limits.** The search space grows too fast. Accepted k=4 as the practical optimum.
+4. **Exhaustively analyzed alternative algorithms.** Proved that the 2-ops-per-element bound is fundamental: any invariant-maintaining approach requires a placement + restoration pair. The circular buffer rotation is THE canonical algorithm for this operation type.
+5. **Concluded the problem is SOLVED.** Score 100 is the ceiling. The k=4 endgame is a marginal worst-case improvement (1996 vs 1998) with no score impact. Future iterations cannot improve the score.
 
 ## Current Status
 
-- **Validated:** Optimized algorithm compiles, passes 200 random n=1000 tests (0 failures), and scores 100 on the judge. Op2 ablation confirmed non-functional (0/5 sorts).
-- **Uncertain:** Whether there exist permutations where the optimized last-3 endgame uses more than 4 operations (would need >6 total elements in the endgame unit). Theoretical worst case is 4 ops, matching BFS proof.
-- **Suggested next:** The algorithm is at the scoring ceiling (100). Future iterations could explore: (a) whether the 2n-2 worst case is tight or can be further reduced with larger endgame units, (b) a formal lower bound on operation count for this operation type, (c) completely different algorithmic strategies (if any exist) that achieve the benchmark.
+- **Validated:** k=4 endgame algorithm compiles, passes all 10 judge test cases (score 100), passes 200/200 random tests. All operation counts under 1996.
+- **Uncertain:** Whether k=5 endgame also achieves ≤4 max ops (would give 2n-6 worst case). The pure k=5 BFS for n=5 shows max 5 ops, but n-dependent operations might reduce this.
+- **Suggested next:** The problem is solved at the scoring ceiling (100). If further iterations are desired: (a) compute k=5 endgame using C++ BFS instead of Python (2-3 orders of magnitude faster), (b) prove a formal lower bound on operation count for prefix-suffix swap sorting, (c) investigate whether the algorithm generalizes to related operations (e.g., prefix reversal, cyclic shift).
 
 ## Warnings & Constraints
 
-- **fmeasure_15.sh takes 30-60 seconds**: Minimize unnecessary calls. One call per arm is sufficient.
-- **The optimized endgame sequences use large x or y values**: `(n-3, 2)` and `(n-3, 1)` have x=997 for n=1000. These are valid (x+y=999 < 1000) but look unusual.
-- **The ablation will NOT sort**: Don't waste time debugging the ablation output — it's expected to fail. Just confirm SCORE: 0.
-- **Score must be in findings metadata**: Record `"score": <number>` in each arm entry. Iter-1 omitted this, causing `best_found.json` to show 0.0 for all arms.
-- **Pattern 3 `[n-1,n-2,n]` uses (1,1),(1,2),(2,2),(2,1)**: These small-valued operations work for all n≥5 because x+y ≤ 4 < n always.
+- **fmeasure_15.sh takes 30-60 seconds:** One call per arm is sufficient. The solution is pre-tested.
+- **The k=4 endgame uses operations (3,2) and (2,3) which require n≥6.** The code falls back to iter-1 algorithm for n≤5. All test cases have n=1000.
+- **Score must be in findings metadata:** Record `"score": <number>` in each arm's findings. Iter-1 omitted this, causing best_found.json to show 0.0.
+- **The solution is at inputs/solution_k4endgame.cpp:** Copy to solution.cpp before building. Do NOT edit the worktree's existing solution.cpp in place — replace it entirely.

@@ -1,0 +1,26 @@
+{
+  "iteration": 4,
+  "bundle_ref": "runs/iter-4/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "v10 (unified sweep + early termination + fast I/O + random restart) will achieve a marginally higher mean score than v7 across 3 seeds (+1-3 points average). The improvement comes from unified allocation letting the primary sweep explore more widths, early termination making each pack() call ~10-20% faster, and random restart using idle time for ordering diversity.",
+      "observed": "v10 scores: 82.71, 82.81, 82.60 (mean 82.71, std 0.11). v7 scores: 81.14, 79.91, 85.07 (mean 82.04, std 2.70). Paired differences (v10-v7): +1.57, +2.91, -2.47 (mean +0.67, std 2.80). Paired t-test: t=0.415, p=0.719. Direction: v10 > v7 in 2/3 seeds. The mean improvement (+0.67 pts) is in the predicted direction but below the predicted range (+1-3 pts) and not statistically significant (p=0.719). However, v10 shows dramatically reduced variance: range 0.21 pts (82.60-82.81) vs v7's range 5.16 pts (79.91-85.07). This variance reduction is the dominant observable effect of v10's optimizations.",
+      "status": "PARTIALLY_CONFIRMED",
+      "error_type": "magnitude",
+      "diagnostic_note": "The predicted mean improvement (+1-3 pts) was not achieved at statistical significance (observed +0.67, p=0.72). However, the direction is correct in 2/3 seeds and the variance reduction effect is striking: v10's unified time allocation and early termination make the score almost deterministic across runs (std=0.11 vs 2.70 for v7). This suggests the mechanism IS engaging \u2014 v10 explores widths more efficiently and consistently \u2014 but the mean benefit is smaller than predicted, likely because v7's Phase 2 (alt orderings at bestWidth \u00b13) provides genuine value for cases where the primary-ordering width-sweep misses the optimum. The random restart in v10 partially compensates but cannot fully replace the structured Phase 2 approach. The v10 variance reduction is important for deployment: a system that reliably scores 82.7 is more useful than one that swings between 80 and 85."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "v7 will score in the range 79-86 (mean ~83), consistent with iter-2 and iter-3 measurements.",
+      "observed": "v7 scores: 81.14, 79.91, 85.07 (mean 82.04, std 2.70). Range 79.91-85.07 is within the predicted 79-86 range. Mean (82.04) is close to the predicted ~83. Consistent with iter-2 (82.86 mean) and iter-3 (82.87 mean). The high variance (std 2.70, range 5.16) confirms RP-3: system-load-induced score variance ~6 points for the v7 time-managed width sweep.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The h-main prediction of +1-3 mean improvement was directionally correct but the magnitude was overstated. The observed +0.67 mean improvement is not statistically significant (p=0.72) with 3 seeds, given the high paired-difference variance (std=2.80) driven by v7's load sensitivity. The most notable finding is the dramatic VARIANCE REDUCTION in v10: std=0.11 vs std=2.70 for v7. This was not explicitly predicted but is a direct consequence of the hypothesized mechanism (faster pack calls \u2192 more widths explored \u2192 less sensitivity to exactly which widths fit in the time budget). The unified allocation eliminates the 60/40 time split's interaction with system load. The v7 baseline performed as expected (CONFIRMED), validating the experimental setup.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

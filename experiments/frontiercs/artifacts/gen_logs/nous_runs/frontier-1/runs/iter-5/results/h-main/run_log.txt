@@ -1,0 +1,40 @@
+=== Run 1 (official measurement) ===
+SCORE: 100
+=== Run 2 ===
+SCORE: 100
+=== Run 3 ===
+SCORE: 100
+=== Run 4 ===
+SCORE: 100
+=== Run 5 ===
+SCORE: 100
+=== Run 6 ===
+SCORE: 100
+=== Run 7 ===
+SCORE: 95
+=== Run 8 ===
+SCORE: 100
+=== Run 9 ===
+SCORE: 100
+=== Run 10 ===
+SCORE: 100
+=== Run 11 ===
+SCORE: 100
+=== Run 12 ===
+SCORE: 100
+=== Run 13 ===
+SCORE: 100
+=== Run 14 ===
+SCORE: 100
+=== Run 15 ===
+SCORE: 95
+=== Run 16 ===
+SCORE: 100
+=== Run 17 ===
+SCORE: 100
+=== Run 18 ===
+SCORE: 95
+=== Run 19 ===
+SCORE: 100
+=== Run 20 ===
+SCORE: 100

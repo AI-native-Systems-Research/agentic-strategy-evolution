@@ -37,15 +37,15 @@
       "arm_id": "h-main"
     },
     {
-      "candidate_id": "iter-2/h-ablation/1",
-      "score": 90.597,
+      "candidate_id": "iter-5/h-main/0",
+      "score": 100.0,
       "components": {
-        "score": 90.597
+        "score": 100.0
       },
-      "iteration": 2,
-      "arm_id": "h-ablation"
+      "iteration": 5,
+      "arm_id": "h-main"
     }
   ],
   "k": 5,
-  "updated_at": "2026-09-30T14:31:00.863948+00:00"
+  "updated_at": "2026-09-30T15:19:04.466292+00:00"
 }

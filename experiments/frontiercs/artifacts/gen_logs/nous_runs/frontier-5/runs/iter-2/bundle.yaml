@@ -1,0 +1,56 @@
+metadata:
+  iteration: 2
+  family: "scc-aware-hamiltonian"
+  research_question: "Can SCC-aware graph decomposition combined with Pósa rotation improve Hamiltonian path scores beyond pure rotation on structurally diverse directed graphs?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — tier 1 (single mechanism, greedy+rotation) was confirmed in iter-1 but left 28 points on the table; escalating to tier 2 with ablation of SCC component"
+
+arms:
+  - type: h-main
+    prediction: "The SCC-aware construction will score strictly higher than the rotation-only baseline, with the improvement concentrated on test 4 (DAG-like structure with 366 SCCs). Expected score: ~81 vs ~72 for control, a gain of approximately 9 points from test 4 alone."
+    mechanism: "Test 4's graph has 366 small SCCs (max size 9) — essentially a DAG of tiny clusters. Rotation fails because it treats the graph as monolithic, wasting time trying to find shortcuts across SCC boundaries (which don't exist in a DAG). The SCC-aware approach: (1) decomposes into SCCs via iterative Kosaraju, (2) finds Hamiltonian path in condensation DAG using DFS with backtracking (366 nodes, fast), (3) solves each internal SCC with bitmask DP (max 2^9 states). This guarantees full HP on DAG-like graphs where rotation fails. For single-SCC graphs (tests 5-10), falls back to the proven rotation approach."
+    diagnostic: "If score does not improve: check if SCC detection runs (num_sccs > 10 triggers it); verify DFS backtracking finds the full condensation DAG HP; verify bitmask DP produces valid internal subpaths. If test 4 specifically fails: the condensation DAG might have branching that defeats DFS within the 1s time limit."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the stub with the full SCC-aware + rotation algorithm (solution_iter2c.cpp). Adds: iterative Kosaraju SCC decomposition, DFS with backtracking on condensation DAG, bitmask DP for internal SCC HPs, multi-seed rotation fallback."
+        rationale: "Tests the hypothesis that structure-aware decomposition resolves the DAG-like graph failure mode identified in iter-1's RP-2."
+
+  - type: h-control-negative
+    prediction: "The rotation-only baseline (v6) will score approximately 72, matching iter-1 results. It will fail on test 4 with k≈223/500 because it cannot exploit the DAG structure."
+    mechanism: "Without SCC awareness, the algorithm treats test 4's DAG as a monolithic graph. Rotation requires shortcuts (tail → on-path vertex) and break points, but in a DAG, the path must traverse SCCs in topological order — rotations that violate this ordering create dead ends."
+    diagnostic: "If score differs significantly from 72: check for timing variance (the algorithm is seed-sensitive). Multiple runs should cluster around 72."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Use the v6 algorithm (Warnsdorff greedy + directed Pósa rotation with O(1) linked-list pointer surgery, fixed seed 42). This is the validated iter-1 implementation."
+        rationale: "Provides the control baseline to isolate the effect of SCC-aware construction."
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -o sol solution.cpp"
+  verified_parameters:
+    time_limit_seconds: 4
+    memory_limit_mb: 512
+    num_test_cases: 10
+    seed_primary: 42
+    scc_threshold: 10
+    scc_n_cutoff: 2000
+    rotation_budget_formula: "min(n*50, 2000000)"
+    primary_seed_time_budget: 3.0
+  unlocked_parameters_audit:
+    - name: max_rotation_count
+      default_value: "min(n*50, 2000000)"
+      justification: "v6 used this formula; changing it would confound the SCC comparison"
+    - name: warnsdorff_tie_breaking
+      default_value: "random among min-degree"
+      justification: "Standard Warnsdorff; changing would confound the ablation"
+    - name: smart_start_count
+      default_value: 30
+      justification: "v6 default; sufficient to cover in-degree 0 vertices and low-degree candidates"
+    - name: insertion_pass_limit
+      default_value: 15
+      justification: "v6 default; empirically sufficient"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+      h-control-negative: 45
+    observation_method: "Manual runs: each arm invokes fmeasure_5.sh which runs 10 test cases sequentially, each with 4s time limit"
