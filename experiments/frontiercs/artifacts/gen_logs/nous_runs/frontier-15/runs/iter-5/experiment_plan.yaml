@@ -1,0 +1,15 @@
+metadata:
+  iteration: 5
+  bundle_ref: "runs/iter-5/bundle.yaml"
+setup:
+  - cmd: "git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-4/patches/h-main.patch"
+    description: "Apply k=5 BFS-optimal endgame solution from iter-4"
+  - cmd: "g++ -O2 -std=c++17 -o solution solution.cpp"
+    description: "Build the k=5 BFS-optimal endgame solution"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "k5-endgame-full-judge"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_15.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-5/results/h-main/judge_output.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-5/results/h-main/judge_output.txt"
+        inputs: []

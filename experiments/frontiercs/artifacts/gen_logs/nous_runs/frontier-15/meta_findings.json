@@ -1,0 +1,23 @@
+{
+  "schema_version": "1",
+  "generated_at": "2026-09-30T16:25:10.507935+00:00",
+  "run_id": "frontier-15",
+  "iterations_completed": 5,
+  "campaign_design_lessons": [],
+  "target_system_asks": [],
+  "nous_asks": [],
+  "deployment_recommendation": {
+    "verdict": "deploy",
+    "top_candidate_id": "iter-2/h-main/0",
+    "score": 100.0,
+    "citations": [
+      {
+        "iteration": 2,
+        "arm_id": "h-main",
+        "evidence_snippet": "iter-2 arm_id=h-main score=100.000"
+      }
+    ],
+    "caveats": []
+  },
+  "notes": "No surprises detected from artifacts. This is rare \u2014 typically indicates a very short campaign (single iteration, no retries, no token-budget anomalies)."
+}

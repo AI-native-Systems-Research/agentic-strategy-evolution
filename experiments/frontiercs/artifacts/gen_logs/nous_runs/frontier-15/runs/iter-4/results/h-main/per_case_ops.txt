@@ -1,0 +1,10 @@
+case 1: 1987
+case 2: 1987
+case 3: 1983
+case 4: 1987
+case 5: 1990
+case 6: 1984
+case 7: 1982
+case 8: 1990
+case 9: 1987
+case 10: 1983

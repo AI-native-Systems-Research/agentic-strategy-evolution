@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 4's k=5 BFS-optimal endgame strategy achieved a perfect score of 100 on all 10 test cases, confirming the prediction exactly. The average operation count was 1986.0 (predicted ~1986), a marginal improvement over iteration 3's k=4 approach (1987.3 avg). The algorithm has reached the scoring ceiling \u2014 further operation-count reductions won't increase the score beyond 100.",
+  "key_points": [
+    "CONFIRMED: Score = 100 on all 10 test cases (the maximum possible), unchanged from iteration 3 but with fewer operations.",
+    "Average operations: 1986.0 (down from 1987.3 with k=4). Max operations: 1990 (down from 1993). 6 of 10 cases improved, 4 unchanged, 0 regressed.",
+    "The k=5 endgame handles all 119 non-identity permutations of the last 5 elements in 2\u20135 operations (4 hardest cases need 5 ops, 73 need 4, 33 need 3, 9 need 2).",
+    "The scoring formula clamp((4n - ops)/(4n - best_ops), 0, 1) means score = 100 when ops \u2264 best_ops. Since our ops are at or near optimal, we're at the ceiling; further optimization yields no score benefit.",
+    "The algorithm is mature: circular-buffer rotation placing elements 1 through n\u22125, then a BFS-precomputed dispatch for the final 5 elements. Worst-case bound is 2n\u22125 = 1995 operations, well within the 4n budget."
+  ]
+}

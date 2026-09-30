@@ -1,0 +1,49 @@
+{
+  "iteration": 5,
+  "bundle_ref": "runs/iter-5/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The k=5 BFS-optimal endgame solution will achieve score 100 on all 10 test cases, with per-case operation counts identical to iter-4: [1987, 1987, 1983, 1987, 1990, 1984, 1982, 1990, 1987, 1983], average 1986.0, maximum 1990. The score ceiling of 100 is algebraically guaranteed for any algorithm using <= 2001 operations per case (RP-4), and the k=5 algorithm's worst-case bound of 1995 (RP-1) provides substantial margin.",
+      "observed": "SCORE: 100 on all 10 judge test cases. Per-case operation counts: [1987, 1987, 1983, 1987, 1990, 1984, 1982, 1990, 1987, 1983]. Average: 1986.0. Maximum: 1990. Minimum: 1982. Results are byte-identical to iter-4, confirming determinism on fixed test data. All operation counts well under the 2n-5=1995 worst-case bound and the 2n+1=2001 score-100 threshold.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Deterministic confirmation of iter-4 results. The k=5 BFS-optimal endgame circular buffer rotation sort achieves the algebraic score ceiling of 100. This is the fifth iteration; score 100 was first achieved in iter-3 (k=4 endgame) and refined in iter-4 (k=5 endgame). The algorithm is provably optimal within the circular buffer framework: mathematical analysis shows the (d1,d2) decomposition choice is irrelevant \u2014 all valid decompositions produce identical buffer states.",
+      "metadata": {
+        "score": 100,
+        "per_case_ops": [
+          1987,
+          1987,
+          1983,
+          1987,
+          1990,
+          1984,
+          1982,
+          1990,
+          1987,
+          1983
+        ],
+        "avg_ops": 1986.0,
+        "max_ops": 1990,
+        "min_ops": 1982,
+        "worst_case_bound": 1995,
+        "endgame_type": "k=5 BFS-optimal",
+        "algorithm": "circular_buffer_rotation_k5_endgame",
+        "iter4_match": true,
+        "all_cases_match_iter4": true,
+        "iterations_at_score_100": [
+          3,
+          4,
+          5
+        ]
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "All predictions confirmed exactly. Score 100 matches the algebraic ceiling (RP-4). Per-case operation counts are identical to iter-4, confirming determinism of the algorithm on fixed test data. Maximum operations (1990) are well within the 2n-5=1995 worst-case bound (RP-1). The problem is definitively solved at the maximum achievable score.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution",
+    "solution.cpp"
+  ]
+}

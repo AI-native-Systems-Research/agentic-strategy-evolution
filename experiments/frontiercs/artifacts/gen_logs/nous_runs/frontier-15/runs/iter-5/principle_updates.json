@@ -1,0 +1,44 @@
+[
+  {
+    "id": "RP-4",
+    "action": "revise",
+    "statement": "The score ceiling for problem 15 is 100, achievable by any algorithm that sorts in <=2n+1 operations. The checker clamps the ratio to [0,1], making scores above 100 impossible. The circular buffer rotation sort achieves this ceiling with all tested endgame sizes (k=2,3,4,5), confirmed across iterations 3, 4, and 5.",
+    "confidence": "high",
+    "regime": "Problem 15, any n>=3",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main",
+      "iteration-3-h-main",
+      "iteration-4-h-main",
+      "iteration-5-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "The checker computes ratio = clamp((4n - ops)/(4n - (2n+1)), 0, 1). For ops <= 2n+1: ratio >= 1.0, clamped to 1.0, score = 100. The k=5 endgame uses at most 1995 < 2001 operations, guaranteeing maximum score. No algorithmic improvement can increase the score beyond 100.",
+    "applicability_bounds": "Specific to the checker's scoring formula with best_operations = 2n+1. If the checker's benchmark were tightened, the ceiling could change.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": false,
+    "derivation_type": "algebraic"
+  },
+  {
+    "id": "RP-6",
+    "action": "add",
+    "statement": "In the circular buffer rotation sort, the buffer state after each 2-op element placement (Op1+Op2) is deterministic and independent of the decomposition (d1, d2) choice. All valid decompositions satisfying d1+d2 \u2261 d (mod l) produce identical buffer permutations. No per-step lookahead or adaptive decomposition can reduce the operation count within this framework.",
+    "confidence": "high",
+    "regime": "Any buffer length l >= 3, any rotation distance d",
+    "evidence": [
+      "iteration-5-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "After Op1 (rotation by d1) and Op2 (prefix restoration with d2), the new buffer is always the original buffer with the target element removed, left-rotated so that B[(d+1) mod l] is first. The proof: Op2 places the sorted prefix back at positions [0..cf], with the target at position cf. The remaining buffer elements follow in the order rotated_buffer[d2+1..l-1] ++ rotated_buffer[0..d2-1] = B[(d+1) mod l], B[(d+2) mod l], ..., B[(d-1+l) mod l]. This sequence is independent of d1.",
+    "applicability_bounds": "Applies only to the sorted-prefix circular buffer approach. Alternative sorting paradigms (cycle sort, block transposition) are not constrained by this result.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": false,
+    "derivation_type": "algebraic"
+  }
+]

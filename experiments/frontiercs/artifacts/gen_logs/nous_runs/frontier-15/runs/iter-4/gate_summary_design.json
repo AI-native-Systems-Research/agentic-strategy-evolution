@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether extending the BFS-optimal endgame from 4 elements to 5 elements reduces the operation count while maintaining a perfect score of 100. This is iteration 4 of a prefix-suffix sorting algorithm that uses circular buffer rotation to place elements, then dispatches to precomputed optimal sequences for the final k elements.",
+  "key_points": [
+    "Single arm (h-main): Replace k=4 endgame with k=5 endgame. BFS at n=11 proves all 119 non-identity permutations of 5 elements are solvable in \u22645 operations (distribution: 9\u00d72ops, 33\u00d73ops, 73\u00d74ops, 4\u00d75ops). This saves 2 main-loop ops at cost of at most 1 extra endgame op, reducing worst case from 2n\u22124=1996 to 2n\u22125=1995 for n=1000.",
+    "Prediction: Score = 100 on all 10 test cases (same as iterations 2-3). Average operations expected to drop from ~1987.3 to ~1986. The scoring formula 100\u00d7clamp((4n\u2212ops)/(4n\u2212best),0,1) saturates at 100 when ops \u2264 4n, so the improvement is in operation efficiency rather than score.",
+    "Confirm/refute criteria: Score=100 confirms the k=5 endgame is correct and generalizes. Score<100 would indicate a bug in the 119-case dispatch table or an edge case at small n. If operations exceed 1995, a specific endgame configuration failed BFS optimality. The pre-validated solution (inputs/solution_k5endgame.cpp) was tested on 200 random n=1000 permutations during development.",
+    "Risk assessment: Low. The solution was pre-verified at multiple n values (20, 50, 100, 500, 1000). The only meaningful change from iteration 3 is absorbing two more elements into the endgame. Score ceiling of 100 is algebraically confirmed (RP-4 from iter 3). No additional arms are justified since ablation (iter 2), dose-response, and robustness tests all yield no discriminating information at score=100.",
+    "Diminishing returns note: Going from k=4 to k=5 saves ~1 operation on average out of ~1987. Further extension to k=6 (720 permutations, BFS over 12! states) is computationally expensive to precompute and would save at most 1 more operation. This iteration may represent the practical optimization limit for this approach."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

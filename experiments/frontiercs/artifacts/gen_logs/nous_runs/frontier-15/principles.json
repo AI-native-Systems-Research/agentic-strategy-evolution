@@ -3,18 +3,19 @@
     {
       "id": "RP-1",
       "action": "revise",
-      "statement": "The prefix-suffix swap operation [A|B|C] -> [C|B|A] can sort any permutation of length n >= 6 in at most 2n-4 operations by treating the unsorted region as a circular buffer and composing two operations per element, with a BFS-optimal endgame for the last 4 elements (23 precomputed sequences, each <=4 ops). For n=5, the 2n-2 bound applies; for n=4, the 2n+1 bound applies.",
+      "statement": "The prefix-suffix swap operation [A|B|C] -> [C|B|A] can sort any permutation of length n >= 7 in at most 2n-5 operations by treating the unsorted region as a circular buffer and composing two operations per element, with a BFS-optimal endgame for the last 5 elements (119 precomputed sequences, each <=5 ops). For n=6, the 2n-4 bound applies (k=4 endgame). For n=5, the 2n-2 bound applies; for n=4, the 2n+1 bound applies.",
       "confidence": "high",
-      "regime": "n >= 6, any valid permutation",
+      "regime": "n >= 7, any valid permutation",
       "evidence": [
         "iteration-1-h-main",
         "iteration-2-h-main",
-        "iteration-3-h-main"
+        "iteration-3-h-main",
+        "iteration-4-h-main"
       ],
       "contradicts": [],
-      "extraction_iteration": 3,
-      "mechanism": "The core 2-op-per-element mechanism places elements 2 through n-4 using Op1 (buffer rotation) + Op2 (prefix restoration). The last 4 elements are handled by a 23-way case dispatch: 5 configurations need 2 ops (using large-prefix swaps like (n-4,2),(1,n-4)), 6 need 3 ops, and 12 need 4 ops. BFS exploration with n-dependent operations proves these are optimal. The key insight: extending the endgame from 3 to 4 elements costs 0 extra ops (max stays at 4) while saving 2 main-loop ops.",
-      "applicability_bounds": "Applicable to problem 15 and any prefix-suffix swap sorting problem with n >= 6. The 2n-4 bound is verified but not proven tight (observed max 1993 < 1996 in 200 random trials for n=1000). Operations (3,2) and (2,3) require n>=6. For n<=5, fallback algorithms apply.",
+      "extraction_iteration": 4,
+      "mechanism": "The core 2-op-per-element mechanism places elements 2 through n-5 using Op1 (buffer rotation) + Op2 (prefix restoration). The last 5 elements are handled by a 119-way case dispatch: 9 configs need 2 ops, 33 need 3, 73 need 4, and 4 need 5 ops. BFS at n=11 (chosen for clean small/large op separation: small={1,2,3,4}, large={n-5,...,n-2}={6,...,9} with no overlap) proves these are optimal among interesting operations. Path generalization verified at n=20,50,100,500,1000. Going from k=4 to k=5: saves 2 main-loop ops, costs at most 1 extra endgame op, netting 1 op worst-case improvement.",
+      "applicability_bounds": "Applicable to problem 15 and any prefix-suffix swap sorting problem with n >= 7. The 2n-5 bound is verified but not proven tight (observed max 1990 < 1995 in 10 judge cases for n=1000). For n<=6, fallback algorithms with looser bounds apply.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",
@@ -60,19 +61,59 @@
     },
     {
       "id": "RP-4",
-      "action": "add",
-      "statement": "The score ceiling for problem 15 is 100, achievable by any algorithm that sorts in <=2n+1 operations. The checker clamps the ratio to [0,1], making scores above 100 impossible. The circular buffer rotation sort achieves this ceiling with all tested endgame sizes (k=2,3,4), confirming the problem is solved at the maximum achievable score.",
+      "action": "revise",
+      "statement": "The score ceiling for problem 15 is 100, achievable by any algorithm that sorts in <=2n+1 operations. The checker clamps the ratio to [0,1], making scores above 100 impossible. The circular buffer rotation sort achieves this ceiling with all tested endgame sizes (k=2,3,4,5), confirmed across iterations 3, 4, and 5.",
       "confidence": "high",
       "regime": "Problem 15, any n>=3",
       "evidence": [
         "iteration-1-h-main",
         "iteration-2-h-main",
-        "iteration-3-h-main"
+        "iteration-3-h-main",
+        "iteration-4-h-main",
+        "iteration-5-h-main"
       ],
       "contradicts": [],
-      "extraction_iteration": 3,
-      "mechanism": "The checker computes ratio = clamp((4n - ops)/(4n - (2n+1)), 0, 1). For ops <= 2n+1: ratio >= 1.0, clamped to 1.0, score = 100. The circular buffer rotation with k=4 endgame uses at most 2n-4 < 2n+1 operations, guaranteeing maximum score. No algorithmic improvement can increase the score beyond 100.",
-      "applicability_bounds": "This is specific to the checker's scoring formula. If best_operations were reduced in the checker, the score ceiling would change.",
+      "extraction_iteration": 5,
+      "mechanism": "The checker computes ratio = clamp((4n - ops)/(4n - (2n+1)), 0, 1). For ops <= 2n+1: ratio >= 1.0, clamped to 1.0, score = 100. The k=5 endgame uses at most 1995 < 2001 operations, guaranteeing maximum score. No algorithmic improvement can increase the score beyond 100.",
+      "applicability_bounds": "Specific to the checker's scoring formula with best_operations = 2n+1. If the checker's benchmark were tightened, the ceiling could change.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": false,
+      "derivation_type": "algebraic"
+    },
+    {
+      "id": "RP-5",
+      "action": "add",
+      "statement": "For BFS-based endgame precomputation in prefix-suffix swap sorting, the reference n must be chosen so that 'small' operation values {1,...,k-1} and 'n-dependent' values {n-k,...,n-2} do not overlap. At n=2k, the sets overlap at value k, causing sequences to fail generalization. The minimum safe n is 2k+1 (e.g., n=11 for k=5).",
+      "confidence": "high",
+      "regime": "Any k >= 3 where BFS endgame is computed at a small n and generalized to large n",
+      "evidence": [
+        "iteration-4-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "When BFS is computed at n=2k (e.g., n=10 for k=5), operation value k is simultaneously 'small' (literal) and 'large' (n-k). The path tracer may use k as n-dependent, mapping it to n-k at target n (e.g., 5 maps to 995 at n=1000). This changes the operation's effect (prefix of 5 vs prefix of 995), breaking the sequence. At n=2k+1, the gap at value k eliminates the ambiguity.",
+      "applicability_bounds": "Specific to the BFS endgame generalization technique. Does not apply if BFS is run at the actual target n (which is intractable for large n).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "action": "add",
+      "statement": "In the circular buffer rotation sort, the buffer state after each 2-op element placement (Op1+Op2) is deterministic and independent of the decomposition (d1, d2) choice. All valid decompositions satisfying d1+d2 \u2261 d (mod l) produce identical buffer permutations. No per-step lookahead or adaptive decomposition can reduce the operation count within this framework.",
+      "confidence": "high",
+      "regime": "Any buffer length l >= 3, any rotation distance d",
+      "evidence": [
+        "iteration-5-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "After Op1 (rotation by d1) and Op2 (prefix restoration with d2), the new buffer is always the original buffer with the target element removed, left-rotated so that B[(d+1) mod l] is first. The proof: Op2 places the sorted prefix back at positions [0..cf], with the target at position cf. The remaining buffer elements follow in the order rotated_buffer[d2+1..l-1] ++ rotated_buffer[0..d2-1] = B[(d+1) mod l], B[(d+2) mod l], ..., B[(d-1+l) mod l]. This sequence is independent of d1.",
+      "applicability_bounds": "Applies only to the sorted-prefix circular buffer approach. Alternative sorting paradigms (cycle sort, block transposition) are not constrained by this result.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",
