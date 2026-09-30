@@ -314,3 +314,11 @@
 {"type": "UserMessage", "ts": 1790809386.797494, "content": "[ToolResultBlock(tool_use_id='toolu_bdrk_01DaLEbwVCyEzJnT4YHpRASw', content='Running h-ablation run 2...\\nSCORE: 84.7643', is_error=False)]"}
 {"type": "AssistantMessage", "ts": 1790809391.20981, "content": "[ToolUseBlock(id='toolu_bdrk_017FUJ9RTebKWVDxYoVM1P1X', name='Bash', input={'command': 'cd /Users/toslali/frontier/gen_logs/frontier_147_nous-s2_ws/.nous-experiments/iter-3-ca34b7db\\necho \"Running h-a", "tool_name": "Bash"}
 {"type": "TaskStartedMessage", "ts": 1790809394.226259, "tool_use_id": "toolu_bdrk_017FUJ9RTebKWVDxYoVM1P1X"}
+{"type": "TaskNotificationMessage", "ts": 1790809515.367222, "tool_use_id": "toolu_bdrk_017FUJ9RTebKWVDxYoVM1P1X"}
+{"type": "UserMessage", "ts": 1790809515.36974, "content": "[ToolResultBlock(tool_use_id='toolu_bdrk_017FUJ9RTebKWVDxYoVM1P1X', content='Running h-ablation run 3...\\nSCORE: 86.09000000000003', is_error=False)]"}
+{"type": "AssistantMessage", "ts": 1790809521.191797, "content": "[TextBlock(text='Now the h-main arm (multi-restart SA):')]"}
+{"type": "AssistantMessage", "ts": 1790809521.1927328, "content": "[ToolUseBlock(id='toolu_bdrk_012QkTPidnVWUBGdQWtZVBoS', name='Bash', input={'command': 'cd /Users/toslali/frontier/gen_logs/frontier_147_nous-s2_ws/.nous-experiments/iter-3-ca34b7db\\ncp solution_hmain", "tool_name": "Bash"}
+{"type": "TaskStartedMessage", "ts": 1790809524.208322, "tool_use_id": "toolu_bdrk_012QkTPidnVWUBGdQWtZVBoS"}
+{"type": "TaskNotificationMessage", "ts": 1790809697.662305, "tool_use_id": "toolu_bdrk_012QkTPidnVWUBGdQWtZVBoS"}
+{"type": "UserMessage", "ts": 1790809697.663818, "content": "[ToolResultBlock(tool_use_id='toolu_bdrk_012QkTPidnVWUBGdQWtZVBoS', content='Running h-main run 1...\\nSCORE: 85.8632', is_error=False)]"}
+{"type": "AssistantMessage", "ts": 1790809706.9082, "content": "[ToolUseBlock(id='toolu_bdrk_0127KMFu7zbyw42bd43Zspbh', name='Bash', input={'command': 'cd /Users/toslali/frontier/gen_logs/frontier_147_nous-s2_ws/.nous-experiments/iter-3-ca34b7db\\necho \"Running h-m", "tool_name": "Bash"}
