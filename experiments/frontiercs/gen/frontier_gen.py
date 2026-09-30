@@ -121,17 +121,34 @@ def claude_text(prompt, model, timeout=600):
     the judge and feeds the score back, so the model only needs to emit code. Using the CLI here
     is a trap: without --allowedTools it enables ALL tools and tries to orchestrate the slow
     frontier-eval/docker loop itself, which hangs."""
-    import urllib.request
+    import urllib.request, urllib.error, random
     base = os.environ["OPENAI_BASE_URL"].rstrip("/")
     url = base + ("/chat/completions" if base.endswith("/v1") else "/v1/chat/completions")
     body = json.dumps({"model": model, "max_tokens": 8000,
                        "messages": [{"role": "user", "content": prompt}]}).encode()
-    req = urllib.request.Request(url, data=body, headers={
-        "Authorization": "Bearer " + os.environ["OPENAI_API_KEY"],
-        "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        d = json.load(r)
-    return d["choices"][0]["message"]["content"] or "", (d.get("usage") or {})
+    max_retries = 6
+    for attempt in range(max_retries + 1):
+        req = urllib.request.Request(url, data=body, headers={
+            "Authorization": "Bearer " + os.environ["OPENAI_API_KEY"],
+            "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                d = json.load(r)
+            return d["choices"][0]["message"]["content"] or "", (d.get("usage") or {})
+        except urllib.error.HTTPError as e:
+            # Retry transient gateway errors (429 rate-limit, 5xx) with exponential backoff + jitter,
+            # honoring Retry-After. The litellm gateway is shared with the VM runs, so bursts of 429
+            # are expected under concurrency; a single 429 must not kill a whole run.
+            transient = e.code == 429 or 500 <= e.code < 600
+            if not transient or attempt == max_retries:
+                raise
+            ra = e.headers.get("Retry-After") if e.headers else None
+            wait = float(ra) if (ra and str(ra).strip().isdigit()) else min(60.0, 5 * (2 ** attempt))
+            time.sleep(wait + random.uniform(0, 3))
+        except urllib.error.URLError:
+            if attempt == max_retries:
+                raise
+            time.sleep(min(60.0, 5 * (2 ** attempt)) + random.uniform(0, 3))
 
 
 def gen_prompt(pid, stmt, prev_code, prev_score, best_score, prev_status=None):
