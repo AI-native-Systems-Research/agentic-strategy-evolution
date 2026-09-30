@@ -76,16 +76,73 @@ RULES:
 Start by reading the statement, write a first correct solution, score it, then iterate to improve."""
 
 
-def run_claude(pid, stmt, sol_path, model, logdir, label):
-    prompt = build_prompt(pid, stmt, sol_path)
-    (Path(logdir) / f"frontier_{pid}_{label}.prompt.txt").write_text(prompt)
-    cc = subprocess.run(
-        ["claude", "-p", "--model", model, "--permission-mode", "bypassPermissions",
-         "--allowedTools", "Bash", "Write", "Read", "Edit", "--output-format", "text"],
-        input=prompt, text=True, capture_output=True, timeout=7200,
-    )
-    (Path(logdir) / f"frontier_{pid}_{label}.agent.log").write_text((cc.stdout or "") + "\n---STDERR---\n" + (cc.stderr or ""))
-    return cc.returncode
+def _extract_cpp(text):
+    """Pull the C++ source from a model reply (```cpp block, or raw if it looks like code)."""
+    m = re.search(r"```(?:cpp|c\+\+)?\s*\n(.*?)```", text or "", re.DOTALL)
+    if m:
+        return m.group(1).strip() + "\n"
+    if text and ("#include" in text or "int main" in text):
+        return text.strip() + "\n"
+    return None
+
+
+def claude_text(prompt, model, timeout=600):
+    """Pure code generation via the litellm chat API (no agentic CLI, no tools). The driver runs
+    the judge and feeds the score back, so the model only needs to emit code. Using the CLI here
+    is a trap: without --allowedTools it enables ALL tools and tries to orchestrate the slow
+    frontier-eval/docker loop itself, which hangs."""
+    import urllib.request
+    base = os.environ["OPENAI_BASE_URL"].rstrip("/")
+    url = base + ("/chat/completions" if base.endswith("/v1") else "/v1/chat/completions")
+    body = json.dumps({"model": model, "max_tokens": 8000,
+                       "messages": [{"role": "user", "content": prompt}]}).encode()
+    req = urllib.request.Request(url, data=body, headers={
+        "Authorization": "Bearer " + os.environ["OPENAI_API_KEY"],
+        "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        d = json.load(r)
+    return d["choices"][0]["message"]["content"] or ""
+
+
+def gen_prompt(pid, stmt, prev_code, prev_score, best_score):
+    base = (f"You are solving competitive-programming optimization problem Frontier-CS algorithmic #{pid}. "
+            f"Scoring is CONTINUOUS partial credit 0..100 (higher is better); MAXIMIZE it with the best "
+            f"algorithm/heuristic you can. Output a single self-contained C++17 program.\n\n"
+            f"PROBLEM STATEMENT:\n{stmt}\n\n")
+    if prev_code is None:
+        return base + "Output ONLY the C++17 code in a single ```cpp code block."
+    return (base + f"Your previous solution scored {prev_score}/100 (best so far {best_score}). "
+            f"Previous solution:\n```cpp\n{prev_code}\n```\n"
+            f"Diagnose what limited the score and output an IMPROVED full C++17 solution. "
+            f"Output ONLY the C++17 code in a single ```cpp code block.")
+
+
+def run_claude(pid, stmt, sol_path, model, logdir, label, rounds=6):
+    """Driver-controlled iterative refinement: the driver evaluates each solution and feeds the
+    score + judge detail back to the model for the next round, keeping the best. Mirrors the
+    submit.sh iterative-feedback protocol, but the harness (not the agent) drives the judge."""
+    sol_path = Path(sol_path)
+    best_code, best_score = None, None
+    history = []
+    prev_code, prev_score = None, None
+    for r in range(rounds):
+        prompt = gen_prompt(pid, stmt, prev_code, prev_score, best_score)
+        reply = claude_text(prompt, model)
+        code = _extract_cpp(reply)
+        if not code:
+            history.append({"round": r, "score": None, "status": "no_code"})
+            continue
+        sol_path.write_text(code)
+        score, status, _ = evaluate(pid, sol_path)
+        history.append({"round": r, "score": score, "status": status})
+        print(f"  [claude round {r}] score={score} status={status}")
+        prev_code, prev_score = code, score
+        if score is not None and (best_score is None or score > best_score):
+            best_code, best_score = code, score
+    if best_code is not None:
+        sol_path.write_text(best_code)
+    (Path(logdir) / f"frontier_{pid}_{label}.history.json").write_text(json.dumps(history, indent=2))
+    return best_score, history
 
 
 def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
@@ -93,15 +150,30 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
     ws = Path(ws); ws.mkdir(parents=True, exist_ok=True)
     (ws / "solution.cpp").write_text(SEED)
     sh("git init -q && git add -A && git -c user.email=x@x -c user.name=x commit -q -m seed", cwd=str(ws))
+    # Clean measure wrapper: the executor runs ONE simple command that prints just "SCORE: <n>",
+    # instead of orchestrating `frontier eval` + JSON parsing itself (which is slow/error-prone).
+    fmeasure = ws.parent / f"fmeasure_{pid}.sh"
+    fmeasure.write_text(
+        "#!/bin/bash\n"
+        "# Usage: fmeasure.sh <solution.cpp> -> prints 'SCORE: <n>' (judge score 0-100, higher is better)\n"
+        f"cd {FRONTIER} || exit 2\n"
+        'export PATH="$HOME/.local/bin:$PATH"\n'
+        f'out=$({FEVAL} eval algorithmic {pid} "$1" --json 2>/dev/null)\n'
+        "s=$(printf '%s' \"$out\" | python3 -c \"import sys,re;t=sys.stdin.read();m=re.findall(r'\\\"score\\\"\\s*:\\s*([0-9.]+)',t);print(m[-1] if m else 'ERR')\")\n"
+        'echo "SCORE: $s"\n')
+    fmeasure.chmod(0o755)
     desc = (
         f"You are solving Frontier-CS algorithmic problem #{pid}. Scoring is CONTINUOUS partial "
         f"credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory is a git "
-        f"worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp with your algorithm.\n\n"
-        f"MEASURE the objective (the judge score) by running from {FRONTIER}:\n"
-        f"    {FEVAL} eval algorithmic {pid} $PWD/solution.cpp --json\n"
-        f"It prints JSON with a 'score' field (0-100). Record that score in the finding metadata "
-        f"under key 'score'. Each experiment arm should try a distinct algorithmic strategy "
-        f"(different heuristic, exact method, or optimization) and report its measured score.\n\n"
+        f"worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp with your algorithm, "
+        f"then compile-check and measure.\n\n"
+        f"MEASURE the objective (the judge score) with this ONE command (do not run the judge any "
+        f"other way):\n"
+        f"    bash {fmeasure} $PWD/solution.cpp\n"
+        f"It prints a single line 'SCORE: <n>' where n is the judge score (0-100). Record that "
+        f"number in the finding metadata under key 'score'. Each experiment arm should try a "
+        f"distinct algorithmic strategy (different heuristic, exact method, or optimization) and "
+        f"report its measured score. The judge call takes ~30-60s; call it once per arm.\n\n"
         f"PROBLEM STATEMENT:\n{stmt}"
     )
     spec = {
@@ -154,6 +226,7 @@ def main():
     ap.add_argument("--label", default=None)
     ap.add_argument("--logdir", default=os.path.expanduser("~/frontier/gen_logs"))
     ap.add_argument("--nous-iters", type=int, default=5)
+    ap.add_argument("--rounds", type=int, default=6, help="claude iterative-refinement rounds")
     args = ap.parse_args()
     pid = args.problem_id
     label = args.label or args.agent
@@ -165,9 +238,10 @@ def main():
     if args.agent == "claude":
         sol = Path(args.logdir) / f"frontier_{pid}_{label}.solution.cpp"
         sol.write_text(SEED)
-        meta["rc"] = run_claude(pid, stmt, sol, args.model, args.logdir, label)
+        best_score, history = run_claude(pid, stmt, sol, args.model, args.logdir, label, rounds=args.rounds)
         final_score, status, _ = evaluate(pid, sol)
-        meta.update(final_score=final_score, status=status, solution=str(sol))
+        meta.update(final_score=final_score, status=status, solution=str(sol),
+                    best_score=best_score, rounds=len(history), history=history)
     else:
         ws = Path(args.logdir) / f"frontier_{pid}_{label}_ws"
         cands = run_nous(pid, stmt, ws, args.model, args.logdir, args.nous_iters, label)
