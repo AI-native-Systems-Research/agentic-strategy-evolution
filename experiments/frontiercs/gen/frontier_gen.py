@@ -201,10 +201,16 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
            "--max-iterations", str(nous_iters), "--timeout", "2400"]
     with open(log, "w") as lf:
         subprocess.run(cmd, cwd=NOUS_REPO, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True, timeout=14400)
-    # harvest candidate solutions: every per-arm worktree's solution.cpp + the final workspace copy.
-    # Nous worktrees live at <repo_path>/.nous-experiments/<run>/<arm>/ (issue #133).
+    # harvest candidate solutions from every place Nous persists an arm:
+    #  - per-arm worktrees at <repo_path>/.nous-experiments/<run>/<arm>/ (issue #133)
+    #  - the campaign's per-arm saved inputs (runs/iter-*/inputs/<arm>-solution.cpp) — robust even
+    #    if the worktrees are cleaned or the run is interrupted before completion
+    #  - the final workspace copy
+    camp_dir = ws.parent / "nous_runs" / f"frontier-{pid}"
     seen, cands = set(), []
-    globbed = list((ws / ".nous-experiments").glob("**/solution.cpp")) + [ws / "solution.cpp"]
+    globbed = (list((ws / ".nous-experiments").glob("**/solution.cpp"))
+               + list(camp_dir.glob("runs/iter-*/inputs/*-solution.cpp"))
+               + [ws / "solution.cpp"])
     for sc in globbed:
         if not sc.exists():
             continue
