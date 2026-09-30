@@ -1,0 +1,22 @@
+{
+  "baseline": {
+    "workload_mean_runtime": 1.280,
+    "workload_std_dev": 0.021,
+    "tests_passed": 1,
+    "tests_total": 1
+  },
+  "treatment": {
+    "run1": {
+      "workload_mean_runtime": 0.0259,
+      "workload_std_dev": 0.0050
+    },
+    "run2": {
+      "workload_mean_runtime": 0.0264,
+      "workload_std_dev": 0.0040
+    },
+    "tests_passed": 1,
+    "tests_total": 1
+  },
+  "speedup_factor": 49.0,
+  "runtime_reduction_pct": 97.9
+}

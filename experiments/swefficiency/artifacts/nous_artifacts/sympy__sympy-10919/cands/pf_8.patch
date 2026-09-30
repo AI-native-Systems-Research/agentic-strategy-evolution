@@ -1,0 +1,53 @@
+diff --git a/sympy/core/basic.py b/sympy/core/basic.py
+index 2126598bc..707400d08 100644
+--- a/sympy/core/basic.py
++++ b/sympy/core/basic.py
+@@ -1,6 +1,6 @@
+ """Base class for all the objects in SymPy"""
+ from __future__ import print_function, division
+-from collections import Mapping
++from collections.abc import Mapping
+ 
+ from .assumptions import BasicMeta, ManagedProperties
+ from .cache import cacheit
+diff --git a/sympy/core/function.py b/sympy/core/function.py
+index 94eb5128f..38d0ad5d6 100644
+--- a/sympy/core/function.py
++++ b/sympy/core/function.py
+@@ -104,7 +104,7 @@ class FunctionClass(ManagedProperties):
+ 
+     def __init__(cls, *args, **kwargs):
+         if hasattr(cls, 'eval'):
+-            evalargspec = inspect.getargspec(cls.eval)
++            evalargspec = inspect.getfullargspec(cls.eval)
+             if evalargspec.varargs:
+                 evalargs = None
+             else:
+diff --git a/sympy/ntheory/egyptian_fraction.py b/sympy/ntheory/egyptian_fraction.py
+index fd6f58cd8..2e031c1fe 100644
+--- a/sympy/ntheory/egyptian_fraction.py
++++ b/sympy/ntheory/egyptian_fraction.py
+@@ -3,7 +3,7 @@
+ import sympy.polys
+ from sympy import Integer
+ from sympy.core.compatibility import range
+-from fractions import gcd
++from math import gcd
+ 
+ 
+ def egyptian_fraction(r, algorithm="Greedy"):
+diff --git a/sympy/plotting/plot.py b/sympy/plotting/plot.py
+index 18ea416a4..0c2faabb0 100644
+--- a/sympy/plotting/plot.py
++++ b/sympy/plotting/plot.py
+@@ -24,8 +24,8 @@
+ 
+ from __future__ import print_function, division
+ 
+-from inspect import getargspec
+-from collections import Callable
++from inspect import getfullargspec as getargspec
++from collections.abc import Callable
+ import warnings
+ 
+ from sympy import sympify, Expr, Tuple, Dummy, Symbol

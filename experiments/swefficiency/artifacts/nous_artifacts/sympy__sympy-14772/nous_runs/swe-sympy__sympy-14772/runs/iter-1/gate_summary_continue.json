@@ -1,0 +1,9 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 confirmed a ~3,906x speedup (0.0743s \u2192 0.000019s) by replacing two-argument pow with three-argument modular pow in the `_legendre` function. All 38 covering tests pass. The optimization is a single-line change with a well-understood mechanism \u2014 avoiding construction of a million-bit intermediate integer.",
+  "key_points": [
+    "CONFIRMED: Changing `pow(a%p, (p-1)//2) % p` to `pow(a%p, (p-1)//2, p)` at crypto.py:2075 yields a 3,906x speedup vs the campaign baseline (0.0743s / 0.0000190s). All 38 tests green.",
+    "The effect is consistent across 6 independent measurement runs (3 baseline, 3 treatment) with negligible variance, and the mechanism is a textbook algorithmic complexity improvement (modular exponentiation vs. giant-integer exponentiation).",
+    "There is essentially nothing left to optimize: the remaining ~19\u03bcs is dominated by Python function-call overhead and the inherently fast three-arg pow on 17-bit numbers. Further iteration is unlikely to yield meaningful additional gains. Recommend applying this patch and closing the campaign."
+  ]
+}

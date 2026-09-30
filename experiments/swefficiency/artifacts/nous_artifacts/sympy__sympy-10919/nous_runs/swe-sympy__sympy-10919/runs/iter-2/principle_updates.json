@@ -1,0 +1,58 @@
+[
+  {
+    "id": "RP-3",
+    "statement": "In the HRR partition formula's _a() inner sum, replacing per-k big-integer arithmetic (k * frac_table[(h*k) % j], where frac_table entries are ~4148-bit numbers) with small-integer accumulation T += k * ((h*k) % j) followed by a single big-int multiply T * one // j per coprime h, combined with h/j-h cosine symmetry halving (cos(angle(h)) = cos(angle(j-h))), yields 6-8x end-to-end speedup on npartitions(10^6). The small-int sum introduces < 15 bits of approximation error in ~4148-bit precision, producing bit-identical final integer results.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 10^5. The speedup comes from two independent sources: (1) eliminating ~2.9M big-int multiplies saves ~0.56s self-time in _a(), and (2) halving mpf_cos calls from ~18055 to ~9028 saves ~0.14s. Effect is strongest for large n where more outer-loop terms contribute.",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The identity sum_k(k * floor(r_k * one / j)) \u2248 (sum_k(k * r_k)) * one / j holds because the per-term rounding errors (each < 1) sum to at most j*(j-1)/2 \u2248 29403 for j=243, which is negligible against one = 2^4148. The cosine symmetry follows from frac((j-h)*k/j) = 1 - frac(h*k/j), implying g_raw(j-h) = -g_raw(h), so angle(j-h) = -(angle(h) + 2n\u03c0), and cos is even.",
+    "applicability_bounds": "Requires prec >> 2*log2(j). For n=10^6: prec >= 50 (dynamic minimum) and j <= 243, so j^2/one < 10^-10. For very large j (> ~sqrt(2^prec)), the small-int approximation error could accumulate enough to affect the result. Supersedes RP-1's frac_table approach since the small-int sum is strictly faster (eliminates the table entirely).",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-4",
+    "statement": "NumPy 2D batch vectorization of the small-integer inner sum (computing T values for all coprime h simultaneously via (hs[:, None] * ks[None, :]) % j) provides ~1.2x additional speedup over pure Python loops for j > 50, by eliminating ~1.46M Python loop iterations with C-level array operations.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 10^5, specifically for outer-loop terms q > 50 where j is large and many coprime h values exist. For j <= 50, NumPy array creation overhead exceeds the vectorization benefit.",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "For j > 50, the number of coprime h values times j-1 iterations exceeds the fixed overhead of numpy array creation and int64 computation. The 2D broadcasting computes all residues (hs[:, None] * ks[None, :]) % j in one operation, then sums across the k axis. The benefit is 1.24x measured: h-main (numpy for j>50) at 0.173s vs h-ablation (pure Python) at 0.216s.",
+    "applicability_bounds": "Benefit depends on the numpy threshold (j > 50). The optimal threshold was tuned by the designer via sweep. Benefit magnitude is modest (~1.2x) relative to the algorithmic optimizations (~6.4x), and introduces a numpy dependency. For deployments where numpy is unavailable, the pure Python ablation (6.44x speedup) is a viable alternative.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-1",
+    "statement": "In the HRR partition formula's inner sum, replacing per-iteration big-integer division with a precomputed fractional-part lookup table yields 2-3x end-to-end speedup on npartitions(10^6), because the fractional part of h*k*one//j depends only on the residue (h*k) mod j, and there are only j distinct residues shared across all euler_totient(j) coprime h-values.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 10^5, where the inner k-loop's ~2.9M iterations of big-integer arithmetic dominate runtime. Effect scales with precision (number of bits in fixed-point representation), so it's strongest for the early outer-loop terms where precision is highest (~4148 bits).",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The original _a() function computes h*k*one//j (a big-int division of ~4148-bit numbers by a small integer) for every (h,k) pair in the inner loop. Since the fractional part depends only on (h*k) mod j, precomputing frac_table[r] = (r*one)//j for r=0..j-1 converts ~2.9M big-int divisions to O(sum_of_j) precomputed divisions (~50k) plus ~2.9M table lookups. Additionally, factoring out the per-iteration half-subtraction into a single post-loop operation eliminates ~2.9M big-int subtractions. Combined with replacing sympy's igcd (Python-level with type checking) with C-level math.gcd, the net effect is a 3.08x speedup.",
+    "applicability_bounds": "Applies when _a() dominates runtime, which requires n large enough that the inner loop iterates many times (n >= ~10^5). For small n, the overhead of precomputing frac_table may not be amortized. The identity (h*k*one//j) & onemask == ((h*k%j)*one)//j requires h,k > 0, which holds given the range(1,j) loops.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": "RP-3",
+    "category": "domain",
+    "status": "active"
+  }
+]

@@ -1,0 +1,4 @@
+schema_version: '1'
+metrics:
+- name: workload_mean_runtime
+- name: test_pass_count

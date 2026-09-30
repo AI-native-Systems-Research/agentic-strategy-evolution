@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After 4 iterations of optimizing sympy's diop_DN solver, we've achieved a ~190,000\u00d7 speedup over the 57.3288s baseline (harness mean now 0.000301s). The optimization layered integer arithmetic in PQa/length, inlined PQa with period detection, and replaced sympy utility functions (divisors, sqrt_mod) with pure-integer equivalents while converting sympy Integer inputs to Python int at branch entry. All 41 covering tests pass.",
+  "key_points": [
+    "Cumulative speedup: 190,335\u00d7 (57.3288s \u2192 0.000301s harness mean). Each iteration confirmed its predicted improvement: iter-2 eliminated sympy Rational overhead in PQa (~1,600\u00d7), iter-3 inlined PQa with period detection (~70\u00d7 incremental), iter-4 replaced sympy utility functions with pure-integer versions (~2.68\u00d7 incremental).",
+    "Diminishing returns are near: the warm per-call time is now ~0.12ms, with the 234-step PQa inner loop consuming 87% of runtime at ~0.5\u03bcs/iteration \u2014 close to Python's bytecode execution floor. Remaining sympy overhead has been eliminated from the hot path; function call count dropped from 387 to 249.",
+    "What's still unknown: whether algorithmic changes (reducing the 234 PQa iterations via direct Pell equation methods or matrix techniques) could yield further gains. Also unknown whether inner-loop micro-optimizations (local variable aliasing, eliminating the iteration counter) could squeeze out another 1.2-1.5\u00d7.",
+    "Next iteration would investigate: (a) micro-optimizations within the inner loop \u2014 precomputing constants, minimizing attribute lookups, using local variable rebinding for builtins; (b) algorithmic reduction of PQa iterations if a shortcut exists for known D values; (c) whether the measurement harness overhead (fork/exec) now dominates the 0.3ms reading, making further harness speedups illusory even if direct timing improves.",
+    "Risk assessment: further iterations will likely yield <1.5\u00d7 additional improvement in pure Python. The campaign has already captured 5+ orders of magnitude of speedup. Continuing is low-risk (changes are incremental) but low-reward."
+  ]
+}

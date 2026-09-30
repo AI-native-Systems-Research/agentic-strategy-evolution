@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "In the HRR partition function implementation, replacing the O(j) inline Dedekind sum computation with O(log j) memoized reciprocity, plus Kloosterman symmetry, gmpy2 MPFR cos, and hardware float fast path reduces npartitions(10^6) from 1.28s to 0.023s (54.5x speedup), with _a function going from dominant (90%+ of runtime) to negligible.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 1000 where M = max(6, int(0.24*sqrt(n)+4)) outer iterations dominate runtime",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The original _a function computes Dedekind sums via an O(j) inner loop for each of O(j/2) coprimes, creating O(j^2) work per outer iteration q. The reciprocity law s(h,k) + s(k,h) = (h^2+k^2+1)/(12hk) - 1/4 allows recursive computation in O(log k) steps. Combined with @lru_cache memoization, repeated lookups across q iterations become O(1). Kloosterman symmetry D(j-h,j)=-D(h,j) halves the iteration count. Hardware float math.cos replaces mpf_cos for prec<=53 (q>=127). gmpy2 MPFR cos replaces pure-Python mpf_cos for higher precision iterations.",
+    "applicability_bounds": "Applies to HRR formula implementations using Dedekind sums. The reciprocity-based approach requires integer h,k with h>0, k>2, gcd(h,k)=1. Cache size grows with max(j) across all outer iterations. gmpy2 must be available for MPFR cos speedup.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Early termination of the HRR series when individual terms round to zero is unsafe for exact integer results. For n=10^6, terms individually round to 0 around q>=167, but collectively they shift the final integer. M must be preserved at max(6, int(0.24*sqrt(n)+4)).",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 2000 where exact integer result is required",
+    "evidence": [
+      "iteration-1-exploration"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The HRR formula is an exact formula for p(n). While individual terms a_q*d_q become negligible for large q, the sum of many such terms can shift the final rounded integer. The 0.24 safety factor in M=max(6, int(0.24*sqrt(n)+4)) must be preserved for correctness across all n.",
+    "applicability_bounds": "Applies whenever the HRR formula result must be an exact integer. Does not apply if only an approximation is needed.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

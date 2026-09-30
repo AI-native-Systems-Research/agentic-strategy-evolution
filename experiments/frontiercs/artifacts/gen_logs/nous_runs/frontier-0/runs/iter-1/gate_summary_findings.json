@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both arms confirmed predictions. The skyline-based greedy packer scored 71.76, a 2.07x improvement over the naive strip packer's 34.59, validating that 2D spatial awareness (fitting pieces into gaps) is the dominant factor in packing quality. The skyline score fell ~4.5 points below the designer's probe estimate of 76.21, likely due to time-management sensitivity reducing the number of candidate widths explored.",
+  "key_points": [
+    "h-main (skyline packer): scored 71.76 vs predicted ~76 \u2014 CONFIRMED directionally, but 4.5 points below probe estimate. The width-sweep heuristic is sensitive to wall-clock time; fewer widths tried on slower hardware means potentially missing better rectangle dimensions.",
+    "h-control-negative (strip packer): scored 34.59 vs predicted ~34 \u2014 CONFIRMED precisely. Validates the measurement pipeline and establishes a solid baseline showing that naive 1D packing wastes ~65% of rectangle area.",
+    "The reference solution scores 78.7, meaning ~7 points of headroom remain. Known improvement levers include: lookahead during piece placement, roughness-based tiebreaking in skyline selection, column compaction post-placement, and trying multiple piece orderings (e.g., largest-first, tallest-first). These should be the focus of iteration 2.",
+    "All 70 test cases produced valid output for both arms \u2014 no correctness failures, confirming the transform logic (rotation/reflection/translation) is implemented correctly."
+  ]
+}

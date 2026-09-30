@@ -1,0 +1,41 @@
+[
+  {
+    "id": "RP-6",
+    "statement": "In diop_DN's |N|>1 PQa inner loop, replacing set-based period detection with a counter-based for-range bound and unrolling the first iteration achieves 1.43x incremental speedup over iter-4 (122.9\u03bcs \u2192 86.0\u03bcs direct). Adding the Q_prev recurrence Q_{i+1} = Q_{i-1} + a_i\u00b7(P_i - P_{i+1}) yields 1.54x total (122.9\u03bcs \u2192 79.8\u03bcs). Set elimination is the dominant contributor (1.43x), while Q_prev adds 1.08x. Combined campaign speedup: 719,000x (direct) / 240,000x (harness) over the 57.3288s baseline.",
+    "confidence": "high",
+    "regime": "diop_DN with D>0, non-square D, |N|>1, where all z values find solutions via Q_i==\u00b11 (set period detection never triggers). Most effective when inner loop iteration count is >100.",
+    "evidence": [
+      "iteration-5-h-main",
+      "iteration-5-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "Three independent overhead sources are eliminated: (1) CPython tuple allocation for (P_i, Q_i) + set hash computation + set insertion/lookup cost ~0.16\u03bcs/iteration \u00d7 231 iterations = 37\u03bcs. This dominates because set operations require heap allocation per tuple and hash computation per insert/lookup. (2) The j counter and j!=0 check add ~0.01\u03bcs/iteration overhead (branch prediction and integer comparison). (3) The P\u00b2/Q formula computes P_{i+1}\u00b2 and divides by Q_i; the Q_prev recurrence replaces this with two multiplications and one addition, saving ~0.03\u03bcs/iteration \u00d7 231 = 6.2\u03bcs. Integer division is slightly slower than multiplication in CPython even for machine-word-sized integers.",
+    "applicability_bounds": "Applies to PQa-based Pell equation solvers using Python. The Q_prev recurrence requires Q_0 | (D - P_0\u00b2) and Q_i \u2260 0 (guaranteed for non-square D). The counter bound must be sufficient to cover the CF period (4\u00b7isqrt(D) is generous). If the set IS the exit condition (no solution found via Q_i==\u00b11), the counter bound provides correct termination but may iterate longer than the set-based approach for extremely long periods.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5-update",
+    "statement": "Updated: At 79.8\u03bcs per warm call (719,000x campaign speedup), the diop_DN optimization for the tested workload (D=15591784605, N=-20) has reached CPython's bytecode execution floor for this algorithm. The 231-iteration PQa inner loop accounts for ~92% of per-call time at ~0.32\u03bcs per iteration (6 multiplications/additions + 2 comparisons + 7 assignments per step). Further speedups within pure Python are limited to <1.1x without algorithmic changes or C extensions. The set elimination (1.43x) was the last significant micro-optimization opportunity; the Q_prev recurrence (1.08x) provided marginal gains.",
+    "confidence": "high",
+    "regime": "diop_DN with D=15591784605, N=-20, using pure Python (CPython 3.11)",
+    "evidence": [
+      "iteration-5-h-main",
+      "iteration-5-h-ablation",
+      "iteration-4-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "Per-iteration cost at 0.32\u03bcs/iteration consists of: (a) a_i computation (1 addition + 1 division or 1 addition + 1 division + 1 negation), (b) B_i and G_i convergent updates (2 multiplications + 2 additions), (c) Q_i == \u00b11 check (2 comparisons), (d) P_new/Q_new computation via Q_prev recurrence (2 multiplications + 1 subtraction + 1 addition), (e) variable assignments (7 STORE_FAST operations). Each operation costs ~15-40ns in CPython due to bytecode dispatch + integer object creation overhead.",
+    "applicability_bounds": "CPython 3.11 on this specific workload. PyPy or Cython could potentially achieve 5-10x further improvement via JIT compilation of the inner loop. Algorithmic changes (reducing PQa iterations via direct Pell solution methods) could help but would require significant algorithmic redesign.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

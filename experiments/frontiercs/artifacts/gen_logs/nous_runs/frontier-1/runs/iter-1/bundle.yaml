@@ -1,0 +1,48 @@
+metadata:
+  iteration: 1
+  family: "treasure-packing-bnb"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #1 (2D bounded knapsack with 12 item types)?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism: branch-and-bound with Lagrangian LP relaxation vs greedy baseline"
+
+arms:
+  - type: h-main
+    prediction: "A branch-and-bound solver with Lagrangian LP relaxation will achieve judge score >= 95, finding optimal or near-optimal solutions for all 20 test cases within the 1-second time limit."
+    mechanism: "With only 12 item types, the B&B tree has depth 12. Sorting items by value density ensures the most impactful decisions are made first. The Lagrangian relaxation (relax volume constraint, optimize dual variable via ternary search) yields the exact LP optimum as an upper bound — this is tight enough (LP gap ≤ value of 2 items) to prune the vast majority of the search tree. Multiple greedy heuristics establish a strong initial lower bound, making the pruning immediately effective. Local search closes any remaining gap between greedy and optimal."
+    diagnostic: "If score < 95: check (1) Docker TLE — look at per-case timing, reduce ternary search iterations; (2) LP bound too loose — check if the Lagrangian converges correctly; (3) JSON parsing failure — verify output format matches checker expectations."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the empty stub with a full 2D bounded knapsack solver: JSON parser, multiple greedy heuristics with 21 density metrics, hill-climbing local search (add/swap/remove-refill), and branch-and-bound with Lagrangian LP relaxation (relax volume, ternary search, 20 iterations) at node level plus cheap min-of-two-1D-relaxation bounds for per-k pruning."
+        rationale: "This combination exploits the problem's key structural property (only 12 item types) to achieve exact or near-exact solutions within the 1-second constraint."
+
+  - type: h-control-negative
+    prediction: "A single greedy heuristic without B&B will score measurably lower than h-main, demonstrating that the optimization beyond greedy matters for this problem."
+    mechanism: "Greedy by v/(m+l) makes locally optimal choices but cannot backtrack when a combination of lower-density items would yield higher total value. The 2D constraint (mass AND volume) makes greedy particularly suboptimal because items have different mass/volume ratios, and the greedy cannot balance the two constraints."
+    diagnostic: "If greedy score equals h-main: the test cases may be structured so greedy is optimal (unlikely for 2D knapsack). Check if the answer files show tight baseline-to-best gaps."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the stub with a simple greedy solver: parse JSON, sort items by v/(m+l) density, greedily take as many as possible of each item type in order. No branch-and-bound, no local search."
+        rationale: "Establishes the baseline performance of the simplest reasonable algorithm, validating that the B&B and local search in h-main are responsible for the score improvement."
+
+# Arms chosen: h-main (the primary algorithm) and h-control-negative (simple greedy to validate
+# that the optimization matters). This is tier 1 — single mechanism, treatment vs control.
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -pipe -static -s -std=gnu++17 -o solution solution.cpp"
+  verified_parameters:
+    max_mass_mg: 20000000
+    max_volume_ul: 25000000
+    n_item_types: 12
+    n_test_cases: 20
+    time_limit_seconds: 1
+  unlocked_parameters_audit:
+    - name: "ternary_search_iterations"
+      default_value: 20
+      justification: "20 iterations gives precision ~10^-9 which is far beyond needed for LP bound; fewer iterations risk loose bounds, more waste CPU."
+    - name: "greedy_alpha_step"
+      default_value: 0.05
+      justification: "21 greedy variants (α from 0 to 1 in steps of 0.05) provides good coverage of the density metric space without significant runtime cost."
+    - name: "tight_ub_depth_cutoff"
+      default_value: 8
+      justification: "Using tight Lagrangian bounds for the first 8 of 12 tree levels captures the most impactful pruning; deeper levels have small remaining capacity and the cheap bound suffices."

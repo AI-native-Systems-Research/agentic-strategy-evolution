@@ -1,0 +1,17 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Replacing the O(j) inner k-loop with O(log j) Dedekind sum computation, halving coprime iterations via Kloosterman symmetry, and using direct cos_sin_basecase will decrease workload_mean_runtime consistently, with order-of-magnitude speedup due to eliminating ~2.9M big-integer operations.",
+      "observed": "Baseline mean=1.280s (std=0.021). Treatment run1 mean=0.0259s (std=0.005), run2 mean=0.0264s (std=0.004). Speedup factor: 49x. All covering tests pass (1/1) for both baseline and treatment. The npartitions function produces identical results for all tested values (n=0..12, 100, 200, 1000, 2000, 10000, 100000).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The speedup (49x) exceeds the theoretical estimate of ~10x from the Dedekind sum alone, indicating the additional optimizations (Kloosterman symmetry 2x, direct cos_sin_basecase, float path for prec<=53) compound significantly. The float path is especially effective because dynamic precision reduction causes most of the 243 HRR terms to be computed at prec<=53."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Prediction confirmed. Direction correct (large decrease in runtime). Magnitude larger than conservatively estimated due to compounding of four synergistic optimizations. No correctness regressions detected.",
+  "dominant_component_pct": null
+}

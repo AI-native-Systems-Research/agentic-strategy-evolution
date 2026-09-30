@@ -1,0 +1,54 @@
+metadata:
+  iteration: 2
+  family: "diop-dn-integer-arithmetic"
+  research_question: "Can replacing symbolic sqrt(D) with integer isqrt(D) in PQa() and length() eliminate all symbolic arithmetic overhead, compounding on iter-1's loop-invariant hoisting to achieve >5000x speedup?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (integer arithmetic replacing symbolic sqrt) applied at two code locations (PQa and length), building on iter-1's confirmed hoisting"
+
+arms:
+  - type: h-main
+    prediction: "Replacing symbolic sqrt(D) with integer_nthroot(D,2)[0] in both PQa() and length() will reduce the workload mean from ~0.97s (iter-1 treatment) to under 0.01s, achieving a speedup >5000x over the campaign baseline of 57.3288s, because all symbolic algebra overhead (evalf, simplify, cache lookups) is eliminated from the two hottest functions in the call chain."
+    mechanism: "PQa (diophantine.py:1296) computes floor((P_i + sqrt(D))/Q_i) using sympy's symbolic sqrt and floor on every inner-loop iteration, triggering the full symbolic engine (3.5M function calls, ~0.43s total). length() (diophantine.py:1473) delegates to continued_fraction_periodic (continued_fraction.py:64) which uses sd = sqrt(d) symbolically for its CF iteration (~0.7s per call × 3 calls = 2.1s). Both computations can be done with pure integer arithmetic: for non-perfect-square D with Q > 0, floor((P + sqrt(D))/Q) = (P + isqrt(D)) // Q exactly, since the fractional part of sqrt(D) cannot push the remainder past Q. The integer path avoids ~3.5M sympy function calls per diop_DN invocation."
+    diagnostic: "If speedup is smaller than expected: (1) profile to check if another function now dominates (e.g., sqrt_mod, divisors); (2) verify PQa integer formula gives correct a_i values for all iterations; (3) check if length() integer path diverges from symbolic path for any test case — the truncation-toward-zero formula for negative quotients is the most likely failure point."
+    code_changes:
+      - file: "sympy/solvers/diophantine.py"
+        intent: "In PQa() (lines 1285-1308): compute isqrt_D = integer_nthroot(D, 2)[0] once before the while loop. Replace line 1296 'a_i = floor((P_i + sqrt(D))/Q_i)' with 'a_i = (P_i + isqrt_D) // Q_i'. Replace line 1308 'Q_i = (D - P_i**2)/Q_i' with 'Q_i = (D - P_i**2) // Q_i' (integer division instead of float)."
+        rationale: "For Q_i > 0 (guaranteed by both call sites in diop_DN), floor((P + sqrt(D))/Q) = (P + isqrt(D)) // Q exactly. This eliminates the sympy sqrt and floor calls that account for 0.43s of the 2.5s per-call runtime. Using // instead of / for Q_i update prevents float precision loss for large D."
+      - file: "sympy/solvers/diophantine.py"
+        intent: "In length() (lines 1473-1481): replace the call to continued_fraction_periodic(P, Q, D) with an inline integer-only CF period computation. Compute sd = integer_nthroot(D, 2)[0]. If D is a perfect square, fall back to the original continued_fraction_periodic path. Otherwise, replicate the CF iteration using only integer arithmetic: normalize (d, p, q) so that (d - p²) % q == 0, recompute sd = integer_nthroot(d, 2)[0] after normalization, then iterate tracking (p, q) pairs in a dict until a repeat is found. The CF quotient must use proper truncation-toward-zero semantics (matching int() behavior) for negative quotients: when p + sd < 0 and q > 0, use -((-p-sd) // q) or adjust by +1 when (-p-sd) % q == 0; similarly handle q < 0 cases."
+        rationale: "length() calls continued_fraction_periodic which uses symbolic sqrt(d) at line 64 of continued_fraction.py. This costs ~0.7s per call for large D due to the symbolic engine. With 3 calls after hoisting, this accounts for 2.1s of the 2.5s total. The integer path reduces each call from ~0.7s to ~0.06ms. The truncation-toward-zero handling is critical: the original uses int() which truncates toward zero, not floor(), and this matters when the CF iteration produces negative quotients (occurs for small D with large |P|). Must recompute isqrt after the normalization step (d *= q²) because isqrt(a·b²) ≠ isqrt(a)·b in general."
+
+# Arm selection rationale: Tier 2, iteration 2. Only h-main is needed because
+# this is a single mechanism (integer arithmetic) applied to two locations that
+# share the same root cause (symbolic sqrt overhead). A control-negative would
+# require a workload that bypasses both PQa and length, but that would test a
+# different code path (e.g., |N|==1) that doesn't exercise the mechanism.
+# An ablation (PQa-only vs length-only) could show relative contributions
+# but the profile already established them: length≈84%, PQa≈16% of runtime.
+# Both changes are necessary for maximum speedup and neither is independently
+# interesting to falsify.
+
+experiment_spec:
+  preflight_commands:
+    - "pip install mpmath pytest -q"
+  verified_parameters:
+    baseline_mean: 57.3288
+    D: 15591784605
+    N: -20
+    workload_repeats: 5
+    iter1_treatment_mean: 0.967
+  unlocked_parameters_audit:
+    - name: "python_version"
+      default_value: "3.11.15"
+      justification: "Pre-installed runtime; relative speedup measurement is version-independent."
+    - name: "timeit_number"
+      default_value: 1
+      justification: "Hardcoded in workload script; one diop_DN call per repeat."
+    - name: "timeit_repeat"
+      default_value: 5
+      justification: "Hardcoded in workload script; sufficient given the massive effect size."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      baseline: 5.0
+      treatment: 0.1
+    observation_method: "Direct measurement during design exploration (5 repeats each)."

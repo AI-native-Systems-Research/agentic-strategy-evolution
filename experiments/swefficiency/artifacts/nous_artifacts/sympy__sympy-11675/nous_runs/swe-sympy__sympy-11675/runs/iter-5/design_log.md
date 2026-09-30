@@ -1,0 +1,25 @@
+Now let me understand the current state of the code and profile it. Let me check the working tree, run baselines, and explore optimization opportunities.Good. Current baseline: warm call ~0.116ms, harness ~0.291ms. Now let me instrument the inner loop to understand iteration counts and time distribution.Now I understand the structure: 3 z values, 127+27+77=231 inner loop iterations, all exit via Q_i==±1 (never via set detection). The set is pure overhead. Let me investigate further optimizations.Excellent! 1.31x speedup from eliminating set operations and unrolling first iteration (115.9μs → 88.5μs). Now let me also test the Q_prev recurrence to avoid the P²/Q division.1.49x with Q_prev recurrence (no P²/Q division). Now let me try more optimizations: for-range loop, Q_i check reordering, and measure full function overhead.Good, for-range is fastest (78.4μs). Now let me measure the full diop_DN function overhead vs. inner computation.Now let me check the `as_int` function and see if the function preamble can be streamlined:Let me now think about what additional optimizations are possible and run a comprehensive benchmark of the full optimized function:Let me explore one more optimization angle — checking whether we can compute the CF period length more tightly and whether there's any redundant iteration:Good — CF period is 154, our z values exit at 127/27/77. Now let me implement the full optimization in the actual `diop_DN` function and validate it end-to-end:Now let me apply the full optimization:Now let me validate correctness and measure performance:Direct warm: 75.4μs (1.54x vs 116μs baseline). Let me now run the test suite and the workload harness:All 41 tests pass (1 XFAIL as expected). Harness: 0.229ms (campaign speedup ~250,342x). Let me run the harness a few more times for stability and check for any additional optimization opportunities:Good, version A is faster. Let me now also try one more thing — testing if we can gain from using the original P²/Q formula but with the set elimination and unroll only (to compare):Now I have all measurements. Let me create the patch file and start writing the artifacts:Now let me also save an ablation patch (set elimination + unroll only, no Q_prev):Now let me also create the ablation patch (set elimination + unroll only, keeping P²/Q formula):Now let me write the problem.md:Now write the bundle.yaml:Now write the handoff:Now write the campaign-level handoff copy:Now run validation:Validation passes. Now let me proceed to the **execute_analyze** phase. Let me first verify the patch applies cleanly from the working tree state:Good. Now let me prepare the ablation patch. I need to create it by modifying the code to the ablation version:Now apply only the set elimination + unroll (no Q_prev) as the ablation:Ablation: 88.9μs (vs h-main 75.4μs and iter-4 baseline 116μs). Now save this as the ablation patch:Now restore the h-main version:Now let me write the experiment plan and execute the full experiment:Now execute the experiment. First, h-main (already applied):Good. 41 passed, 1 XFAIL. Now run h-main seed measurements:Need to install mpmath for subprocess. Let me fix and re-run:Good. Let me now run all seeds properly for h-main:Now run the ablation arm:Good. Now run ablation seeds:Now let me also get a baseline measurement (iter-4 code without any iter-5 changes) for comparison:Excellent! Now I have all measurements. Let me restore h-main and write findings:Now let me verify the speedup with the actual workload measurement:Now write the findings:Now write principle updates:Now run validation:The validator expects output files to exist. Let me update the plan to reference the actual JSON output files we already created:Validation passes. Let me verify the final state and output a summary:All validation passes. Here's a summary of the iteration 5 results:
+
+---
+
+## Iteration 5 Summary — PQa Inner-Loop Micro-Optimizations
+
+### Both arms CONFIRMED
+
+**h-main** (all optimizations combined):
+| Metric | Iter-4 Baseline | Iter-5 h-main | Improvement |
+|--------|----------------|---------------|-------------|
+| Direct warm (μs) | 120.3 | 80.2 | **1.50×** |
+| Harness (ms) | 0.320 | 0.244 | **1.31×** |
+| Campaign speedup (direct) | 476,000× | **715,000×** | — |
+| Campaign speedup (harness) | 179,000× | **235,000×** | — |
+
+**h-ablation** (set elimination + unroll only, no Q_prev): Direct 91.7μs, 1.31× over baseline — confirms Q_prev recurrence provides **1.14× additional** speedup.
+
+### Three optimizations applied:
+1. **Set elimination** → replaced `seen = set()` + tuple alloc with `for _ in range(max_period)` counter (~29μs saved)
+2. **First iteration unrolled** → eliminated `j` counter and `j != 0` check from hot loop
+3. **Q_prev recurrence** → `Q_{i+1} = Q_{i-1} + a_i·(P_i - P_{i+1})` replaces `Q_{i+1} = (D - P²)/Q_i` (~11.5μs saved)
+
+### Key finding (RP-6):
+At 80μs per warm call with 231 inner-loop iterations at ~0.35μs each, we are at CPython's bytecode execution floor for this algorithm. Further pure-Python improvements would yield <1.1× additional speedup.

@@ -1,0 +1,43 @@
+metadata:
+  iteration: 1
+  family: "diop-dn-length-hoisting"
+  research_question: "Can hoisting the loop-invariant length() call outside the inner PQa iteration loop in diop_DN eliminate redundant continued-fraction-period computations and dramatically reduce runtime?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (loop-invariant hoisting), single knob (code placement of length() call), treatment vs control"
+
+arms:
+  - type: h-main
+    prediction: "Hoisting the length(z, abs(m), D) call from inside the inner for-loop to before it will reduce the workload mean runtime from ~57.3s to under 2s (speedup > 25x), because 228 of the 231 length() calls (~0.335s each) are eliminated while producing identical results."
+    mechanism: "In diop_DN's general case (D>0, not perfect square, |N|>1) at sympy/solvers/diophantine.py:1181, length(z, abs(m), D) is called on every iteration j of the inner PQa loop. Since z, m, and D are loop-invariant, each call recomputes the same continued-fraction period via continued_fraction_periodic(), which internally uses symbolic sqrt(D) — an expensive symbolic evaluation taking ~0.335s per call. The inner loop runs up to length() iterations per (z,m) pair, so for 3 (z,m) pairs with period lengths summing to ~231, the function is called 231 times instead of 3. Hoisting to before the loop reduces calls from O(sum_of_periods) to O(num_z_values), eliminating ~76s of redundant computation per diop_DN call."
+    diagnostic: "If the prediction is wrong: (1) check whether the workload actually exercises the general-case branch (line 1135) — verify D is not a perfect square and |N|!=1; (2) check whether length() is being called the expected number of times via a counter; (3) profile to see if another function dominates after length is hoisted (candidates: PQa's symbolic sqrt at line 1294, or diop_DN(D,-1) recursion at line 1174)."
+    code_changes:
+      - file: "sympy/solvers/diophantine.py"
+        intent: "Hoist the length(z, abs(m), D) call from line 1181 (inside the inner for-loop) to just before the loop starts (after line 1159). Store the result in a local variable 'l' and replace 'if j == length(z, abs(m), D):' with 'if j == l:' on line 1181."
+        rationale: "length(z, abs(m), D) is loop-invariant — its arguments don't change inside the inner for-loop. Computing it once per (z, m) pair instead of once per iteration eliminates ~228 redundant calls at ~0.335s each."
+
+# Arm selection rationale: Tier 1, iteration 1. Only h-main is needed because
+# this is a straightforward single-mechanism optimization (loop-invariant code
+# motion) with a clear causal chain. The probe already confirmed a ~59.6x
+# speedup with identical results. A control-negative arm would require a
+# workload that doesn't exercise the general-case branch, but that would test
+# a different code path entirely rather than validating mechanism specificity.
+# An ablation would be vacuous since there's only one change.
+
+experiment_spec:
+  preflight_commands:
+    - "pip install mpmath pytest -q"
+  verified_parameters:
+    baseline_mean: 57.3288
+    D: 15591784605
+    N: -20
+    workload_repeats: 5
+  unlocked_parameters_audit:
+    - name: "python_version"
+      default_value: "3.11.15"
+      justification: "Pre-installed runtime; workload timing is relative so Python version affects both baseline and treatment equally."
+    - name: "timeit_number"
+      default_value: 1
+      justification: "Workload script hardcodes number=1; each repeat runs one diop_DN call, so this is fixed by the workload harness."
+    - name: "timeit_repeat"
+      default_value: 5
+      justification: "Workload script hardcodes repeat=5; sufficient for stable mean estimation given the large effect size."

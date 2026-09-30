@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed: the h-main arm (memoized _dedekind_sum + inline restructuring) achieves 25.7\u00d7 speedup over the 1.3901s clean baseline (mean 0.0541s), while the h-ablation arm (memoization only) achieves 24.6\u00d7 (mean 0.0566s). Both improve over the iter-3 baseline of 22.1\u00d7 speedup, and all covering tests pass with bit-identical outputs.",
+  "key_points": [
+    "h-main delivers 25.7\u00d7 speedup (0.0541s mean, 8 runs, \u03c3=0.0016s) \u2014 13.9% faster than iter-3's 0.0628s baseline. All tests green, results bit-identical.",
+    "Ablation decomposition: memoizing _dedekind_sum via @lru_cache accounts for ~71% of the improvement over iter-3 (9.9%), while eliminating the precomputation loop and inlining contributes the remaining ~29% (4.4%).",
+    "h-ablation (24.6\u00d7, mean 0.0566s) is consistently slower than h-main across 8 runs each with minimal overlap, confirming both optimization components contribute genuine speedup.",
+    "Note: worktree has uncommitted writes in 4 files (basic.py, function.py, egyptian_fraction.py, plot.py) \u2014 only ntheory/partitions changes are relevant; the others should be reviewed or reverted before finalizing.",
+    "Cumulative progress: from 1.0\u00d7 (clean baseline) \u2192 22.1\u00d7 (iter-3) \u2192 25.7\u00d7 (iter-4 h-main). Diminishing returns suggest we are near the practical optimization ceiling for this workload."
+  ]
+}

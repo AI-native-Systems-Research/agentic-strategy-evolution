@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 3's hypothesis is CONFIRMED. Inlining the PQa continued-fraction arithmetic with set-based period detection in diop_DN yielded a 2.29x incremental speedup over iteration 2, closely matching the predicted ~2x. The workload now completes in ~0.17ms versus the original 57.3s baseline \u2014 a 66,584x harness-level speedup (334,595x on direct timing). All 41 covering tests pass.",
+  "key_points": [
+    "Treatment mean: 0.171ms direct timing (predicted ~0.16ms), 0.861ms harness timing; baseline was 57.3288s \u2014 confirmed campaign speedup of 66,584x (harness) / 334,595x (direct).",
+    "Incremental speedup over iter-2: 2.29x (predicted ~2x), achieved by eliminating 465 redundant CF iterations (3 length() calls \u00d7 155 iterations each), removing generator protocol overhead, and using scalar G/B tracking instead of list appends.",
+    "All 41 tests in test_diophantine.py pass (1 expected XFAIL). Solutions are identical to baseline: 3 tuples, all mathematically verified to satisfy x\u00b2 - D\u00b7y\u00b2 = -20.",
+    "The harness speedup (66,584x) is lower than direct timing speedup (334,595x) because process-fork overhead (~0.7ms) now dominates when computation itself takes only 0.17ms \u2014 this is a measurement floor, not a real limitation.",
+    "The optimization is near its practical ceiling: further gains would require reducing Python interpreter startup/fork overhead rather than algorithmic improvements, since the actual computation is already sub-millisecond."
+  ]
+}

@@ -1,0 +1,40 @@
+[
+  {
+    "id": "RP-7",
+    "statement": "In the HRR partition formula, the q=2 term computes cos(-n*pi) at 3728-bit precision via mpf_cos. Replacing this with the exact analytical value (-1)^n (fone if n%2==0, mpf_neg(fone) otherwise) yields a 5.9% end-to-end speedup over iter-4, accounting for ~75% of iter-5's total improvement. Combined with angle pre-reduction mod 2*pi and mpf_shift doubling, the full package achieves 29.5x speedup on npartitions(10^6) vs the 1.3901s reference (8.1% improvement over iter-4). Results are bit-identical.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 10^5 where the HRR formula's first few high-precision terms dominate runtime. The q=2 term's cos(-n*pi) is always analytically evaluable for integer n.",
+    "evidence": [
+      "iteration-5-h-main",
+      "iteration-5-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "The original code computes the q=2 Kloosterman-like sum as cos(-n*pi) via fixed-point arithmetic and mpf_cos at precision p=3728 bits. Since n is always a positive integer, cos(-n*pi) = (-1)^n exactly. The mpf_cos call at 3728-bit precision invokes mpmath's exponential_series with full precision and mod_pi2 angle reduction on an angle of magnitude ~10^6 radians, costing ~3.4ms. The analytical replacement is a constant-time operation. This is the highest-impact remaining optimization because it eliminates the single most expensive individual operation. The ablation confirms: analytical q=2 alone achieves 28.8x (vs 27.1x iter-4 local baseline), while the full package reaches 29.5x.",
+    "applicability_bounds": "Applies to all integer n. For non-integer n (which npartitions does not support), the analytical evaluation would not be valid. The speedup benefit decreases for smaller n where the q=2 term's cost is a smaller fraction of total runtime.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-8",
+    "statement": "Pre-reducing mpf_cos angles modulo 2*pi in integer arithmetic (g = g % (pi_fixed(p) << 1)) before calling mpf_cos, combined with mpf_shift doubling and local variable caching, provides a consistent ~2.4% additional speedup over the analytical q=2 fix alone in cold-cache workload measurements on npartitions(10^6). The benefit is directionally consistent across all 3 matched seed pairs but modest in absolute terms (~1.15ms). The angle pre-reduction is mathematically sound (introduces ~10^-560 rounding difference, negligible vs 0.5 rounding tolerance) and produces bit-identical results.",
+    "confidence": "medium",
+    "regime": "npartitions(n) for n >= 10^5 where HRR angles are ~2n*h/q*pi/q \u2248 10^6 radians. The pre-reduction benefit scales with the magnitude of angles passed to mpf_cos. For warm-cache scenarios the benefit would be proportionally larger.",
+    "evidence": [
+      "iteration-5-h-main",
+      "iteration-5-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "mpf_cos internally calls mod_pi2 (mpmath/libmp/libelefun.py:1288) which divides the angle by pi/2 at full precision to find the quadrant. For angles of ~10^6 radians, this requires computing a ~20-bit quotient via high-precision division. Pre-reducing g % (2*pi_fixed(p)) in integer arithmetic makes the angle < 2*pi, so mod_pi2's division quotient is 0-3 (trivial). Additionally, mpf_shift(cos_val, 1) replaces two mpf_add calls with one shift+add (mpf_shift is a tuple exponent increment, essentially free). However, in the cold-cache forked workload, the Dedekind sum cache warming (~9ms) dilutes the relative mpf_cos savings.",
+    "applicability_bounds": "The pre-reduction is always safe for integer n. The rounding error is bounded by 2/2^p \u2248 10^-560 for the angles encountered at n=10^6. The combined ~2.4% improvement is small enough that it could become noise-dominated on different hardware or under system load.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  }
+]

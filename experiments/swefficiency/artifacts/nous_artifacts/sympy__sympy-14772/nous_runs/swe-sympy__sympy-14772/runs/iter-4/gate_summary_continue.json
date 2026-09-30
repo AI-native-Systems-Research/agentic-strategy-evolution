@@ -1,0 +1,10 @@
+{
+  "gate_type": "continue",
+  "summary": "Across 4 iterations and 15 independent seeds, a single-line change in `_legendre()` \u2014 replacing two-arg `pow(a%p, (p-1)//2) % p` with three-arg `pow(a, (p-1)//2, p)` \u2014 delivers a consistent ~3,400\u00d7 speedup (iter-4 mean: 0.0000216s vs baseline 0.0743s) with all 38 tests passing. The optimization space is exhausted; no further gains are achievable within this workload.",
+  "key_points": [
+    "CONFIRMED (h-main): Three-arg pow yields 3,441\u00d7 average speedup across 5 seeds (range 2,958\u20133,951\u00d7). This is consistent with 10 prior seeds from iters 1\u20133 (~3,300\u20134,700\u00d7). The mechanism is elimination of a ~1.1M-bit intermediate integer.",
+    "CONFIRMED (h-control-negative): Applying the same optimization to `encipher_gm` (not in the workload path) produces 1.06\u00d7 \u2014 pure noise \u2014 validating that h-main's speedup is path-specific, not a side effect of touching crypto.py.",
+    "All alternative approaches exhausted: Jacobi algorithm (no workload-level improvement due to ~16\u03bcs harness overhead), `sympy.ntheory.jacobi_symbol` delegation (same speed as three-arg pow), micro-optimizations like local `pow` binding and bitshift exponent (all within noise). No further speedup opportunities exist for this workload.",
+    "RECOMMENDATION: Apply the one-line patch (`pow(a, (p-1)//2, p)` at line 2075 of crypto.py) and close the campaign. The evidence is overwhelming across 15 seeds and 4 iterations with validated controls. The reported speedup vs campaign baseline (0.0743s) is ~3,441\u00d7."
+  ]
+}

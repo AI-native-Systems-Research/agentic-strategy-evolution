@@ -1,0 +1,154 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "In the HRR partition formula's inner sum, replacing per-iteration big-integer division with a precomputed fractional-part lookup table yields 2-3x end-to-end speedup on npartitions(10^6), because the fractional part of h*k*one//j depends only on the residue (h*k) mod j, and there are only j distinct residues shared across all euler_totient(j) coprime h-values.",
+      "confidence": "high",
+      "regime": "npartitions(n) for n >= 10^5, where the inner k-loop's ~2.9M iterations of big-integer arithmetic dominate runtime. Effect scales with precision (number of bits in fixed-point representation), so it's strongest for the early outer-loop terms where precision is highest (~4148 bits).",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The original _a() function computes h*k*one//j (a big-int division of ~4148-bit numbers by a small integer) for every (h,k) pair in the inner loop. Since the fractional part depends only on (h*k) mod j, precomputing frac_table[r] = (r*one)//j for r=0..j-1 converts ~2.9M big-int divisions to O(sum_of_j) precomputed divisions (~50k) plus ~2.9M table lookups. Additionally, factoring out the per-iteration half-subtraction into a single post-loop operation eliminates ~2.9M big-int subtractions. Combined with replacing sympy's igcd (Python-level with type checking) with C-level math.gcd, the net effect is a 3.08x speedup.",
+      "applicability_bounds": "Applies when _a() dominates runtime, which requires n large enough that the inner loop iterates many times (n >= ~10^5). For small n, the overhead of precomputing frac_table may not be amortized. The identity (h*k*one//j) & onemask == ((h*k%j)*one)//j requires h,k > 0, which holds given the range(1,j) loops.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": "RP-3",
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Python's math.gcd (C builtin) is approximately 9x faster than sympy's igcd for integer coprimality checks in tight loops, due to igcd's Python-level as_int() type checking and dictionary-based cache overhead.",
+      "confidence": "high",
+      "regime": "Any hot path calling igcd repeatedly with plain integer arguments. The overhead is per-call, so it matters most in loops with >10k iterations.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "igcd (sympy/core/numbers.py:142) wraps each call with as_int() type conversion and uses a Python-level cache. math.gcd is implemented in C (cpython/Modules/mathmodule.c) and operates directly on Python int objects without wrapper overhead.",
+      "applicability_bounds": "Applies when inputs are already Python ints (no mpz or symbolic). If inputs require sympification, igcd's type handling is necessary.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-3",
+      "statement": "In the HRR partition formula's _a() inner sum, replacing per-k big-integer arithmetic (k * frac_table[(h*k) % j], where frac_table entries are ~4148-bit numbers) with small-integer accumulation T += k * ((h*k) % j) followed by a single big-int multiply T * one // j per coprime h, combined with h/j-h cosine symmetry halving (cos(angle(h)) = cos(angle(j-h))), yields 6-8x end-to-end speedup on npartitions(10^6). The small-int sum introduces < 15 bits of approximation error in ~4148-bit precision, producing bit-identical final integer results.",
+      "confidence": "high",
+      "regime": "npartitions(n) for n >= 10^5. The speedup comes from two independent sources: (1) eliminating ~2.9M big-int multiplies saves ~0.56s self-time in _a(), and (2) halving mpf_cos calls from ~18055 to ~9028 saves ~0.14s. Effect is strongest for large n where more outer-loop terms contribute.",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "The identity sum_k(k * floor(r_k * one / j)) \u2248 (sum_k(k * r_k)) * one / j holds because the per-term rounding errors (each < 1) sum to at most j*(j-1)/2 \u2248 29403 for j=243, which is negligible against one = 2^4148. The cosine symmetry follows from frac((j-h)*k/j) = 1 - frac(h*k/j), implying g_raw(j-h) = -g_raw(h), so angle(j-h) = -(angle(h) + 2n\u03c0), and cos is even.",
+      "applicability_bounds": "Requires prec >> 2*log2(j). For n=10^6: prec >= 50 (dynamic minimum) and j <= 243, so j^2/one < 10^-10. Superseded by RP-5's Dedekind sum approach which is both exact and faster (O(log j) vs O(j) per h).",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": "RP-5",
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-4",
+      "statement": "NumPy 2D batch vectorization of the small-integer inner sum (computing T values for all coprime h simultaneously via (hs[:, None] * ks[None, :]) % j) provides ~1.2x additional speedup over pure Python loops for j > 50, by eliminating ~1.46M Python loop iterations with C-level array operations.",
+      "confidence": "high",
+      "regime": "npartitions(n) for n >= 10^5, specifically for outer-loop terms q > 50 where j is large and many coprime h values exist. For j <= 50, NumPy array creation overhead exceeds the vectorization benefit.",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "For j > 50, the number of coprime h values times j-1 iterations exceeds the fixed overhead of numpy array creation and int64 computation.",
+      "applicability_bounds": "Superseded by RP-5's Dedekind sum approach. The O(log j) Dedekind sum eliminates the inner loop entirely, making NumPy batch vectorization unnecessary. The Dedekind approach also avoids the NumPy dependency.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": "RP-5",
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-5",
+      "statement": "In the HRR partition formula, replacing the O(j) inner k-loop in _a() with an O(log j) Dedekind sum computation via the identity T(h,j) = j^2 * s(h,j) + j^2*(j-1)/4, combined with h/j-h cosine symmetry halving and a float64 fast path for outer-loop terms where dynamic precision p <= 64 bits, yields 22.8x end-to-end speedup on npartitions(10^6). The Dedekind sum alone with symmetry accounts for 10.3x; the float64 path adds 2.2x on top. Results are bit-identical to the original algorithm.",
+      "confidence": "high",
+      "regime": "npartitions(n) for n >= 10^5. The Dedekind sum is exact (not an approximation) and works for all j. The float64 path is valid when dynamic precision p <= 64 bits, which occurs for q >= ~94 at n=10^6 (62% of outer-loop terms). The float64 contribution increases with n as more terms fall below the precision threshold.",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "The inner sum T(h,j) = sum_{k=1}^{j-1} k*((h*k) mod j) equals j^2 * s(h,j) + j^2*(j-1)/4 where s(h,j) is the Dedekind sum, computable in O(log j) via the reciprocity law s(h,j) + s(j,h) = (h^2+j^2+1)/(12hj) - 1/4. This replaces ~2.9M Python loop iterations with ~9000 O(log j) recursive calls. Cosine symmetry cos(angle(h)) = cos(angle(j-h)) halves mpf_cos calls. For terms where p <= 64, hardware float64 cos/cosh/sinh replace mpf_cos/mpf_cosh_sinh, eliminating ~73% of remaining mpf calls. The accumulated float error is bounded by ~2.4e-11, negligible vs the 0.5 rounding tolerance.",
+      "applicability_bounds": "The Dedekind sum identity is exact for all positive integers h, j with gcd(h,j)=1. The float64 fast path requires that the accumulated floating-point error across all float-path terms stays well below 0.5; for n=10^6 this holds with a margin of ~10^10. For very large n (n >> 10^8), the number of float-path terms grows and the error bound should be re-validated.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-6",
+      "statement": "In the HRR partition formula, memoizing the recursive _dedekind_sum function with @lru_cache and eliminating the upfront precomputation pass (computing T values inline during the main loop) yields 25.7x end-to-end speedup on npartitions(10^6), a 13.9% improvement over iter-3's non-memoized approach. The memoization exploits 73% call redundancy in the GCD-like recursion (37,715 total calls, 10,230 unique pairs), while inline computation avoids the 15ms Python loop overhead of precomputing T values for 7,700 float-path coprime pairs. Ablation shows memoization accounts for ~71% of the improvement; inlining provides ~29%.",
+      "confidence": "high",
+      "regime": "npartitions(n) for n >= 10^4 where the outer HRR loop has M >= 50 terms and the Dedekind sum recursion produces substantial subproblem overlap",
+      "evidence": [
+        "iteration-4-h-main",
+        "iteration-4-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "The Dedekind sum _dedekind_sum(h,j) reduces via the Euclidean algorithm: _dedekind_sum(h,j) -> _dedekind_sum(j%h, h). Different initial (h,j) pairs from the 9,027 coprime pairs across j=3..243 converge to the same small-value base cases \u2014 e.g., _dedekind_sum(1,2) is the base case for 3,008 different chains. @lru_cache(maxsize=None) converts these O(log j) recursive recomputations to O(1) dict lookups. Separately, the iter-3 precomputation loop iterates all j=3..243 coprime pairs upfront (21ms total, 15ms for float path j=94..243), but the float-path T values are only used once each during the main loop. Computing inline during the main loop eliminates this upfront cost, with the memoized _dedekind_sum ensuring subproblems are still shared across sequential q iterations.",
+      "applicability_bounds": "Holds for n >= 10^4 where M >= 50. For small n (n < 100, M < 10), the Dedekind sum call count is too low for memoization to matter. The @lru_cache only helps within a single npartitions() call \u2014 the workload's per-fork measurement starts with a cold cache each time.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "In the HRR partition formula, the q=2 term computes cos(-n*pi) at 3728-bit precision via mpf_cos. Replacing this with the exact analytical value (-1)^n (fone if n%2==0, mpf_neg(fone) otherwise) yields a 5.9% end-to-end speedup over iter-4, accounting for ~75% of iter-5's total improvement. Combined with angle pre-reduction mod 2*pi and mpf_shift doubling, the full package achieves 29.5x speedup on npartitions(10^6) vs the 1.3901s reference (8.1% improvement over iter-4). Results are bit-identical.",
+      "confidence": "high",
+      "regime": "npartitions(n) for n >= 10^5 where the HRR formula's first few high-precision terms dominate runtime. The q=2 term's cos(-n*pi) is always analytically evaluable for integer n.",
+      "evidence": [
+        "iteration-5-h-main",
+        "iteration-5-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "The original code computes the q=2 Kloosterman-like sum as cos(-n*pi) via fixed-point arithmetic and mpf_cos at precision p=3728 bits. Since n is always a positive integer, cos(-n*pi) = (-1)^n exactly. The mpf_cos call at 3728-bit precision invokes mpmath's exponential_series with full precision and mod_pi2 angle reduction on an angle of magnitude ~10^6 radians, costing ~3.4ms. The analytical replacement is a constant-time operation. This is the highest-impact remaining optimization because it eliminates the single most expensive individual operation. The ablation confirms: analytical q=2 alone achieves 28.8x (vs 27.1x iter-4 local baseline), while the full package reaches 29.5x.",
+      "applicability_bounds": "Applies to all integer n. For non-integer n (which npartitions does not support), the analytical evaluation would not be valid. The speedup benefit decreases for smaller n where the q=2 term's cost is a smaller fraction of total runtime.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-8",
+      "statement": "Pre-reducing mpf_cos angles modulo 2*pi in integer arithmetic (g = g % (pi_fixed(p) << 1)) before calling mpf_cos, combined with mpf_shift doubling and local variable caching, provides a consistent ~2.4% additional speedup over the analytical q=2 fix alone in cold-cache workload measurements on npartitions(10^6). The benefit is directionally consistent across all 3 matched seed pairs but modest in absolute terms (~1.15ms). The angle pre-reduction is mathematically sound (introduces ~10^-560 rounding difference, negligible vs 0.5 rounding tolerance) and produces bit-identical results.",
+      "confidence": "medium",
+      "regime": "npartitions(n) for n >= 10^5 where HRR angles are ~2n*h/q*pi/q \u2248 10^6 radians. The pre-reduction benefit scales with the magnitude of angles passed to mpf_cos. For warm-cache scenarios the benefit would be proportionally larger.",
+      "evidence": [
+        "iteration-5-h-main",
+        "iteration-5-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "mpf_cos internally calls mod_pi2 (mpmath/libmp/libelefun.py:1288) which divides the angle by pi/2 at full precision to find the quadrant. For angles of ~10^6 radians, this requires computing a ~20-bit quotient via high-precision division. Pre-reducing g % (2*pi_fixed(p)) in integer arithmetic makes the angle < 2*pi, so mod_pi2's division quotient is 0-3 (trivial). Additionally, mpf_shift(cos_val, 1) replaces two mpf_add calls with one shift+add (mpf_shift is a tuple exponent increment, essentially free). However, in the cold-cache forked workload, the Dedekind sum cache warming (~9ms) dilutes the relative mpf_cos savings.",
+      "applicability_bounds": "The pre-reduction is always safe for integer n. The rounding error is bounded by 2/2^p \u2248 10^-560 for the angles encountered at n=10^6. The combined ~2.4% improvement is small enough that it could become noise-dominated on different hardware or under system load.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    }
+  ]
+}

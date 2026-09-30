@@ -1,0 +1,26 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+  mode: real
+
+setup:
+  - cmd: "pip install mpmath pytest 2>/dev/null"
+    description: "Install dependencies"
+  - cmd: |
+      cd /testbed/.nous-experiments/iter-1-4227fd23 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/patches/py311-compat.patch
+    description: "Apply Python 3.11 compatibility patches (infrastructure, not experiment)"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline"
+        description: "Run workload with original _a() function (compat patches only)"
+        cmd: |
+          cd /testbed/.nous-experiments/iter-1-4227fd23 && git checkout -- sympy/ntheory/partitions_.py && PYTHONPATH=$PWD python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/results/h-main/baseline.txt
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/results/h-main/baseline.txt"
+
+      - name: "treatment"
+        description: "Run workload with optimized _a() function (frac_table, math.gcd, hoisted constants)"
+        cmd: |
+          cd /testbed/.nous-experiments/iter-1-4227fd23 && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/results/h-main/treatment.txt
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/results/h-main/treatment.txt"

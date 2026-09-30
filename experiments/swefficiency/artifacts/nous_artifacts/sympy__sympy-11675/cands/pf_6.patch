@@ -1,0 +1,59 @@
+diff --git a/sympy/core/basic.py b/sympy/core/basic.py
+index 627630fea..92677698c 100644
+--- a/sympy/core/basic.py
++++ b/sympy/core/basic.py
+@@ -1,6 +1,6 @@
+ """Base class for all the objects in SymPy"""
+ from __future__ import print_function, division
+-from collections import Mapping
++from collections.abc import Mapping
+ 
+ from .assumptions import BasicMeta, ManagedProperties
+ from .cache import cacheit
+diff --git a/sympy/matrices/matrices.py b/sympy/matrices/matrices.py
+index 2fd4efa8c..5bcf26ac0 100644
+--- a/sympy/matrices/matrices.py
++++ b/sympy/matrices/matrices.py
+@@ -386,7 +386,7 @@ def _handle_creation_inputs(cls, *args, **kwargs):
+             cols = as_int(args[1])
+ 
+             # Matrix(2, 2, lambda i, j: i+j)
+-            if len(args) == 3 and isinstance(args[2], collections.Callable):
++            if len(args) == 3 and isinstance(args[2], collections.abc.Callable):
+                 op = args[2]
+                 flat_list = []
+                 for i in range(rows):
+diff --git a/sympy/plotting/plot.py b/sympy/plotting/plot.py
+index b1ead153e..f3dc7f60f 100644
+--- a/sympy/plotting/plot.py
++++ b/sympy/plotting/plot.py
+@@ -25,7 +25,7 @@
+ from __future__ import print_function, division
+ 
+ import inspect
+-from collections import Callable
++from collections.abc import Callable
+ import warnings
+ import sys
+ 
+diff --git a/sympy/solvers/diophantine.py b/sympy/solvers/diophantine.py
+index 0960e35a7..76bd75565 100644
+--- a/sympy/solvers/diophantine.py
++++ b/sympy/solvers/diophantine.py
+@@ -1157,6 +1157,7 @@ def diop_DN(D, N, t=symbols("t", integer=True)):
+                         j = 0
+                         G = []
+                         B = []
++                        l = length(z, abs(m), D)
+ 
+                         for i in pqa:
+ 
+@@ -1178,7 +1179,7 @@ def diop_DN(D, N, t=symbols("t", integer=True)):
+                                 break
+ 
+                             j = j + 1
+-                            if j == length(z, abs(m), D):
++                            if j == l:
+                                 break
+ 
+                 return sol

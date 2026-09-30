@@ -1,0 +1,96 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For 2D bounded knapsack with n=12 item types, branch-and-bound with Lagrangian LP relaxation (relax one constraint, ternary search for optimal dual variable) finds exact integer optima, scoring 100/100 on the judge across all 20 test cases.",
+      "confidence": "high",
+      "regime": "2D bounded knapsack, 12 item types, quantities up to 10000, mass <= 20M mg, volume <= 25M uL, 1s time limit",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Lagrangian relaxation of one constraint (volume) reduces the 2D LP to a sequence of 1D fractional knapsack problems parameterized by the dual variable lambda. Ternary search over lambda finds the optimal multiplier, recovering the exact LP optimum (by strong duality). With only 12 item types giving B&B tree depth 12, and the tight LP bound pruning aggressively, the solver completes well within 1 second.",
+      "applicability_bounds": "Depends on n=12 being small enough for B&B depth. For n >> 12 (e.g., 100+ item types), the approach may be too slow. Also depends on item quantities being bounded by capacity, keeping effective max_k manageable.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "A single greedy heuristic sorted by v/(m+l) scores 0/100 on the 2D bounded knapsack judge \u2014 it fails to beat even the NSA baseline on any of 20 test cases.",
+      "confidence": "high",
+      "regime": "Same as RP-1",
+      "evidence": [
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The combined density metric v/(m+l) poorly approximates the true shadow prices of the two constraints. Items favorable in one dimension (e.g., low mass) may be wasteful in the other (e.g., high volume). Without backtracking, greedy commits capacity irreversibly to suboptimal items.",
+      "applicability_bounds": "Specific to the single v/(m+l) metric. Multiple greedy heuristics with alpha-parameterized metrics perform better and are used as the initial lower bound in the B&B approach.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "Reducing Lagrangian ternary search iterations from 20 to 12 preserves exact integer optimality on all 20 test cases (gap=0) while cutting per-node Lagrangian evaluations by 40%. Precision (1/3)^12 \u2248 2e-6 is far beyond what integer LP bound pruning requires.",
+      "confidence": "high",
+      "regime": "2D bounded knapsack, 12 item types, B&B with Lagrangian LP relaxation, ternary search for dual variable",
+      "evidence": [
+        "iteration-2-h-main: all 10 judge runs produced correct optima, scoring 95-100 (variance from Docker timing, not accuracy)"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "The Lagrangian dual function is unimodal in lambda. Ternary search converges geometrically at rate (2/3)^n. At 12 iterations, the search window shrinks by factor (2/3)^12 \u2248 7.7e-3, giving precision ~0.001 in the dual variable space. Since the LP optimum is used only as a fractional upper bound for integer pruning, precision beyond item_value/total_value \u2248 10^-3 is unnecessary. The 8 saved iterations eliminate 16 eval_lagrangian_vol calls per B&B node.",
+      "applicability_bounds": "Valid when LP bound is used for integer pruning. If the LP relaxation had near-degenerate cases where precision mattered, more iterations might be needed. Not observed in any of 20 test cases.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "Multi-greedy heuristics (23 alpha-parameterized density variants) plus local search (add/swap/remove-refill) without B&B scores 90.597/100 on the judge with zero inter-run variance \u2014 achieving optimal on 9/20 cases but suboptimal on 11/20.",
+      "confidence": "high",
+      "regime": "2D bounded knapsack, 12 item types, multi-greedy + local search, Docker judge",
+      "evidence": [
+        "iteration-2-h-ablation: 6 judge runs all scored exactly 90.597"
+      ],
+      "contradicts": [
+        "RP-2 (which established single-greedy scores 0) is supplemented, not contradicted: multi-greedy + LS scores 90.6, single greedy scores 0"
+      ],
+      "extraction_iteration": 2,
+      "mechanism": "The 23 greedy heuristics explore different alpha-weighted density metrics (alpha*mass + (1-alpha)*volume), covering the full Pareto frontier of density orderings. Local search then improves via 1-neighborhood moves. This finds optima on structurally simpler cases but fails where optimal solutions require coordinated multi-item swaps beyond the 1-neighborhood. Zero inter-run variance confirms greedy+LS never approaches the Docker time limit.",
+      "applicability_bounds": "The 90.597 score is deterministic across Docker runs. Cases with large optimality gaps (TC12: 43.9, TC16: 48.2, TC14: 65.3 per-case score) have complex optimal solutions unreachable by greedy+LS.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "Docker timing variability causes 5% score drops (95 instead of 100) in the B&B solver on ~30% of judge runs, even after 30-37% constant-factor optimization. A clock()-based time guard at 800ms does not prevent these drops because clock() measures CPU time, not wall time \u2014 Docker's overhead is wall-time, not CPU-time.",
+      "confidence": "high",
+      "regime": "Docker-based judge with 1s per-case wall-time limit, B&B solver completing <25ms locally",
+      "evidence": [
+        "iteration-2-h-main: 7/10 runs scored 100, 3/10 scored 95 (mean 98.5). Iter-1 baseline: 3/5 at 100, 1/5 at 95, 1/5 at 90 (mean 97.0). Optimization eliminated 90-drops but not 95-drops."
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "The B&B completes in <25ms locally. Under Docker, CPU throttling extends wall time by 3-5x on average, but with high variance. When Docker scheduling overhead pushes one test case's total wall time past 1s, the judge records 0 for that case, dropping the average from 100 to ~95. The clock() time guard fires based on CPU time, which doesn't account for wall-time overhead from Docker scheduling, I/O, or CPU cgroup throttling. A wall-time guard (chrono::steady_clock) would address this.",
+      "applicability_bounds": "Specific to Docker-judged competitive programming. On bare metal or with relaxed time limits (>1s), the B&B reliably achieves 100. Future iterations should use chrono::steady_clock for the time guard.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

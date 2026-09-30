@@ -1,0 +1,26 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+
+setup:
+  - cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && git checkout HEAD -- sympy/ntheory/partitions_.py'"
+    description: "Restore original (unoptimized) partitions_.py from HEAD"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        description: "Run workload with original unoptimized code"
+      - name: "baseline-tests"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+        description: "Verify covering tests pass with original code"
+      - name: "apply-patch"
+        cmd: "docker cp patches/h-main.patch swegen_sympy_sympy-10919_nous:/tmp/h-main.patch && docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && git apply /tmp/h-main.patch'"
+        description: "Apply the optimization patch"
+      - name: "treatment"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        description: "Run workload with optimized code"
+      - name: "treatment-tests"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+        description: "Verify covering tests still pass with optimized code"

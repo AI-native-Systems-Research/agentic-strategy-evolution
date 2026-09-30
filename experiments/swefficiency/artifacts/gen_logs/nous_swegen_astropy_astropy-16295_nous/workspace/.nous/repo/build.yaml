@@ -1,0 +1,5 @@
+schema_version: '1'
+build_command: "No build step \u2014 pure Python."
+run_command: docker exec swegen_astropy_astropy-16295_nous bash -lc "cd /testbed &&
+  source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python
+  /tmp/workload.py"

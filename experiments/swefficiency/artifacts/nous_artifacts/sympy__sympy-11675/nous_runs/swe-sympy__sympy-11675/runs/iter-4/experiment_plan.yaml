@@ -1,0 +1,55 @@
+metadata:
+  iteration: 4
+  bundle_ref: "runs/iter-4/bundle.yaml"
+
+setup:
+  - cmd: "cd /testbed && sed -i 's/from collections import Mapping/from collections.abc import Mapping/' sympy/core/basic.py && sed -i 's/from collections import Callable/from collections.abc import Callable/' sympy/plotting/plot.py && sed -i 's/collections.Callable/collections.abc.Callable/' sympy/matrices/matrices.py"
+    description: "Apply Python 3.11 compatibility fixes"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      # Baseline conditions (original code + compat fixes only)
+      - name: "baseline-seed1"
+        cmd: "cd /testbed && git checkout -- sympy/solvers/diophantine.py && sed -i 's/from collections import Mapping/from collections.abc import Mapping/' sympy/core/basic.py && sed -i 's/from collections import Callable/from collections.abc import Callable/' sympy/plotting/plot.py && sed -i 's/collections.Callable/collections.abc.Callable/' sympy/matrices/matrices.py && PYTHONPATH=$PWD python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/baseline/seed1.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/baseline/seed1.txt"
+        inputs: []
+      - name: "baseline-seed2"
+        cmd: "cd /testbed && PYTHONPATH=$PWD python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/baseline/seed2.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/baseline/seed2.txt"
+        inputs: []
+      - name: "baseline-seed3"
+        cmd: "cd /testbed && PYTHONPATH=$PWD python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/baseline/seed3.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/baseline/seed3.txt"
+        inputs: []
+
+      # Treatment conditions (full iter-4 patch applied)
+      - name: "treatment-seed1"
+        cmd: "cd /testbed && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/seed1.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/seed1.txt"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/patches/h-main.patch"
+      - name: "treatment-seed2"
+        cmd: "cd /testbed && PYTHONPATH=$PWD python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/seed2.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/seed2.txt"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/patches/h-main.patch"
+      - name: "treatment-seed3"
+        cmd: "cd /testbed && PYTHONPATH=$PWD python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/seed3.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/seed3.txt"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/patches/h-main.patch"
+
+      # Direct timing comparison (warm calls, high precision)
+      - name: "treatment-direct-timing"
+        cmd: "cd /testbed && PYTHONPATH=$PWD python -c \"import timeit, statistics; from sympy.solvers.diophantine import diop_DN; D=15591784605; N=-20; [sorted(diop_DN(D,N)) for _ in range(10)]; results=[timeit.Timer(lambda: sorted(diop_DN(D,N))).timeit(500)/500*1000 for _ in range(3)]; print(f'Mean: {statistics.mean(results):.4f}ms'); print(f'StdDev: {statistics.stdev(results):.4f}ms'); print(f'Runs: {results}')\" 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/direct_timing.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/direct_timing.txt"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/patches/h-main.patch"
+
+      # Tests verification
+      - name: "treatment-tests"
+        cmd: "cd /testbed && PYTHONPATH=$PWD python -m pytest -q sympy/solvers/tests/test_diophantine.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/tests.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/results/h-main/treatment/tests.txt"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/patches/h-main.patch"

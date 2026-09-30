@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, we achieved a 49,519x speedup over the campaign baseline (57.3s \u2192 0.0012s) by (1) hoisting redundant PQa/length calls out of a loop in diop_DN and (2) replacing symbolic sqrt arithmetic with pure integer arithmetic in PQa() and length(). All 41 covering tests pass. The optimization is essentially complete \u2014 remaining code paths contribute negligibly.",
+  "key_points": [
+    "Iter-1 hoisted repeated PQa/length calls out of diop_DN's inner loop, reducing mean from 57.3s to ~0.97s (59x speedup). Iter-2 replaced symbolic sqrt(D) with integer_nthroot in both PQa and length, reducing mean to 0.0012s (49,519x cumulative speedup).",
+    "The two dominant bottlenecks were: (a) length() calling continued_fraction_periodic with symbolic sqrt (84% of runtime after iter-1), and (b) PQa computing floor((P+sqrt(D))/Q) symbolically (17%). Both eliminated by integer-only arithmetic with careful handling of truncation-toward-zero semantics and isqrt recomputation after normalization.",
+    "Key pitfalls discovered: isqrt(d\u00b7q\u00b2) \u2260 isqrt(d)\u00b7q (must recompute after normalization), and Python's // operator floors rather than truncating toward zero (matters for negative numerators in length's CF computation). Both required non-trivial code fixes.",
+    "All 41 tests in test_diophantine.py pass (1 expected XFAIL). Solutions from the workload are mathematically verified identical to the original.",
+    "Further optimization is possible but unnecessary \u2014 after these changes, the entire diop_DN call takes ~0.4ms, and remaining time is dominated by divisors()/sqrt_mod() which contribute negligibly. A next iteration could focus on robustness (cross-checking integer length against symbolic for edge cases) or applying similar integer-arithmetic patterns to other Diophantine solvers, but the speedup goal is comprehensively met."
+  ]
+}

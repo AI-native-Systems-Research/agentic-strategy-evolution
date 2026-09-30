@@ -1,0 +1,41 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Replacing two-argument pow(base, exp) % mod with three-argument pow(base, exp, mod) in Python eliminates construction of exponentially-large intermediate integers and yields multiple-orders-of-magnitude speedup for large exponents.",
+    "confidence": "high",
+    "regime": "Python integer arithmetic where exp is large (e.g., (p-1)/2 for p=131071, yielding exp=65535). Effect is ~3,000-4,000x speedup for this workload.",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main",
+      "iteration-3-h-main",
+      "iteration-4-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Python's two-argument pow(base, exp) computes the full integer base^exp using arbitrary-precision arithmetic, creating an intermediate of ~1.1 million bits. Three-argument pow(base, exp, mod) delegates to CPython's C-level modular exponentiation (square-and-multiply with mod reduction at each step), keeping all intermediates bounded by mod (~17 bits). Code: sympy/crypto/crypto.py:2075.",
+    "applicability_bounds": "Applies whenever pow(a, large_exp) % mod is used in Python. The larger the exponent, the greater the speedup. For small exponents (e.g., b in {0,1} as in encipher_gm line 2221), the intermediate is trivially small and no speedup is observable.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-4",
+    "statement": "The three-arg pow optimization speedup in _legendre is mechanism-specific: applying the same optimization class to a code path outside the workload (encipher_gm, line 2221) produces no measurable speedup, confirming the effect is attributable to the _legendre code path and not to any side effect of modifying crypto.py.",
+    "confidence": "high",
+    "regime": "Workload calls only _legendre(87389, 131071). Other pow() call sites in crypto.py are not in the workload's execution path.",
+    "evidence": [
+      "iteration-4-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "The workload's timing loop calls only _legendre(a, p). Optimizing pow() at line 2221 (encipher_gm) cannot affect the timed computation because encipher_gm is not in the call graph. The control-negative measured 1.06x (within noise), versus h-main's 3,441x. This eliminates confounders: module reload side effects, bytecode compilation differences, or import-chain effects.",
+    "applicability_bounds": "Applies to any workload-path-specific optimization: to attribute a speedup to a code change, verify the optimized path is actually exercised by the workload.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

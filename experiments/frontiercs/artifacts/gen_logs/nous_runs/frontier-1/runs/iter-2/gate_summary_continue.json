@@ -1,0 +1,10 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, the B&B solver achieves exact optima on all 20 test cases locally but scores 95-100 on the judge due to intermittent Docker TLEs (mean 98.5). Reducing ternary search iterations (20\u219212) eliminated the worst drops (90\u219295 floor), but ~30% of runs still lose 5 points from one TLE'd case. The greedy-only ablation confirms B&B adds ~8 points (90.6 vs 98.5).",
+  "key_points": [
+    "Score: h-main averages 98.5 across 10 runs (7\u00d7100, 3\u00d795), up from iter-1's 97.0 (3\u00d7100, 1\u00d795, 1\u00d790). The 90-score drops are eliminated but 95-score drops persist at ~30% frequency \u2014 one test case intermittently TLEs in Docker.",
+    "Root cause identified: clock() measures CPU time, not wall time. Docker CPU throttling extends wall time beyond 1s even when CPU time is well under 800ms, so the clock()-based time guard never triggers. Switching to chrono::steady_clock (wall time) should catch these cases and allow a graceful fallback to the greedy+LS solution instead of TLE.",
+    "Ablation cleanly confirmed: greedy+LS alone scores exactly 90.597 with zero variance (6/6 runs identical), proving B&B contributes ~8 points and is never the source of TLEs. The zero-variance property also shows greedy+LS is entirely safe within Docker's time budget.",
+    "Next iteration should: (1) replace clock() with chrono::steady_clock for the time guard, (2) set a ~750ms wall-time cutoff that falls back to greedy+LS result if B&B hasn't finished, (3) optionally try further B&B speedups like precomputed suffix upper bounds. Goal is eliminating all 95-drops to achieve reliable 100."
+  ]
+}

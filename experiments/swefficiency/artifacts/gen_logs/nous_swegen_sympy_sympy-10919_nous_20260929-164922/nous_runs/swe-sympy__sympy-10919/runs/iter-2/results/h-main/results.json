@@ -1,0 +1,12 @@
+{
+  "arm": "h-main",
+  "description": "Precomputed coprimes + gmpy2 _d for prec <= 1000",
+  "runs": [
+    {"run": 1, "mean": 0.01458, "std": 0.00429},
+    {"run": 2, "mean": 0.01490, "std": 0.00443},
+    {"run": 3, "mean": 0.01502, "std": 0.00441}
+  ],
+  "aggregate_mean": 0.0148,
+  "tests_pass": true,
+  "speedup_over_baseline": 1.62
+}

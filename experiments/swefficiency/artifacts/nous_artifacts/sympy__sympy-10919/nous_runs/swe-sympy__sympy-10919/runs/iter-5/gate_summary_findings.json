@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Both iteration-5 arms confirmed their predictions. The main arm (h-main) achieved a 29.5x speedup over the 1.3901s baseline (mean 0.0471s), combining an analytical shortcut for q=2 terms, angle pre-reduction mod 2\u03c0, mpf_shift-based doubling, and local caching in the npartitions Hardy-Ramanujan-Rademacher implementation. The ablation arm confirmed that the analytical q=2 fix is the dominant contributor (~75% of the iter-4\u2192iter-5 improvement), with the remaining optimizations adding a consistent but modest 2.4%.",
+  "key_points": [
+    "h-main: 29.5x speedup (0.0471s mean), confirmed >29x prediction; all 3 runs between 29.4x\u201329.7x; bit-identical output, all tests pass.",
+    "h-ablation (analytical q=2 only): 28.8x speedup (0.0483s mean), consistently slower than h-main in all 3 paired-seed comparisons, confirming the additional optimizations provide a real ~2.4% incremental benefit.",
+    "Cumulative campaign progress: from 1.3901s baseline \u2192 0.0471s (29.5x), with the analytical q=2 shortcut being the single highest-impact optimization at this iteration stage, responsible for ~75% of the 8.1% improvement over iteration 4.",
+    "No regressions: covering test (test_partitions.py) passes, and npartitions(10^6) returns bit-identical results to the unmodified library.",
+    "Diminishing returns are evident \u2014 the last 2.4% required three separate micro-optimizations (angle reduction, mpf_shift, local caching), suggesting further gains in this code path will be increasingly marginal."
+  ]
+}

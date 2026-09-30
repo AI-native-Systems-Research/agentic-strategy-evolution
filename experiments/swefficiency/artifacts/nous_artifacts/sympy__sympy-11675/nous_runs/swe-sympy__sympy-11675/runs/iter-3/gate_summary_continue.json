@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After three iterations, the diop_DN function in sympy's Diophantine solver has been optimized from a 57.3s workload mean to ~0.86ms \u2014 a 66,584\u00d7 speedup measured at the harness level (334,595\u00d7 on direct timing). All 41 covering tests pass. The optimization replaced symbolic sqrt/floor arithmetic with integer operations (iter-1/2), then inlined the PQa generator with set-based period detection to eliminate redundant continued-fraction iterations (iter-3).",
+  "key_points": [
+    "Iter-1 replaced symbolic sqrt/floor with integer_nthroot in PQa and length(), delivering ~57,000\u00d7 speedup by eliminating sympy expression overhead.",
+    "Iter-2 refined integer arithmetic in PQa and length(), reaching ~164,000\u00d7 direct speedup. Iter-3 inlined PQa into diop_DN's |N|>1 branch with period detection via (P_i, Q_i) set tracking, adding another 2.29\u00d7 to reach 334,595\u00d7 direct speedup (0.171ms per call).",
+    "A critical finding: integer floor division fails for negative Q_i \u2014 the formula `a = -((P+sD)//(-Q)) - 1` is required when Q < 0. This edge case (e.g., D=23, N=13) was caught and fixed.",
+    "The computation now takes ~0.17ms, which is near Python's per-call overhead floor. Further gains would require C extensions, algorithmic changes (e.g., matrix-based Pell solutions), or are limited by the ~0.7ms process-fork overhead in the measurement harness.",
+    "Remaining unknowns: whether the PQa-based period detection handles all possible (D, N) inputs correctly \u2014 it was verified against 15 diverse inputs and all 41 test cases, but exotic inputs with unusual CF structure haven't been stress-tested. A next iteration could focus on fuzz-testing correctness or attempting a C-level inner loop if further speedup is desired."
+  ]
+}

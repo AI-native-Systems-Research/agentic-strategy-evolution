@@ -1,0 +1,39 @@
+research_question: How can we reduce the runtime of the workload for sympy/sympy without
+  changing observable behavior, while keeping the covering tests green?
+run_id: swe-sympy__sympy-14772
+max_iterations: 5
+sandbox: bypass
+target_system:
+  name: swefficiency::sympy__sympy-14772
+  description: "You are optimizing the RUNTIME PERFORMANCE of the Python library 'sympy'\
+    \ (repo sympy/sympy). Your working directory is a git worktree containing the\
+    \ full library source; edit only library SOURCE, never test files.\n\nMEASURE\
+    \ runtime of the fixed workload with:\n    PYTHONPATH=$PWD python /tmp/workload.py\n\
+    It prints 'Mean:' seconds (lower is faster). The clean baseline mean is 0.0743s.\
+    \ Your speedup = 0.0743 / your_mean.\n\nCORRECTNESS GATE (must stay green, run\
+    \ from your worktree):\n    python -m pytest -q sympy/crypto/tests/test_crypto.py\n\
+    Do NOT edit /tmp/workload.py or any test files. A change that speeds up the workload\
+    \ but breaks any covering test is worthless (speedup nullified to 1.0).\n\nFor\
+    \ every experiment arm, record the measured mean and the speedup (baseline_mean\
+    \ / arm_mean) in the finding's metadata under key 'speedup', and keep the covering\
+    \ tests passing. Aim for the largest genuine speedup with green tests."
+  repo_path: /testbed
+  observable_metrics:
+  - speedup
+  controllable_knobs:
+  - source_code_edits
+objective:
+  weights:
+    speedup: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /opt/nous_repo/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: cb0ea62fdb5df23a8320032ca356c8280c4404fb
+  nous_version: 0.5.0
+  started_at: '2026-09-30T00:13:45.356784+00:00'

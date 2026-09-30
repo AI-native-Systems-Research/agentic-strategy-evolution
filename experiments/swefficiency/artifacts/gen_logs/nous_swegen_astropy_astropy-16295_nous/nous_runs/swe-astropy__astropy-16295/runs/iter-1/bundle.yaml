@@ -1,0 +1,41 @@
+metadata:
+  iteration: 1
+  family: "scalar-fast-path-range-checks"
+  research_question: "Can adding a scalar fast-path to _check_hour_range in astropy/coordinates/angles/formats.py significantly reduce workload runtime for scalar inputs by avoiding unnecessary NumPy overhead?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (scalar dispatch), single knob (isinstance guard), treatment vs control"
+
+# Arms rationale: Tier 1, iter 1 — simplest treatment-vs-control design.
+# h-main tests the core scalar fast-path optimization.
+# No additional arms needed: the mechanism is straightforward (NumPy overhead
+# on scalars is well-understood), and the workload is deterministic enough
+# that a control-negative arm wouldn't add value.
+
+arms:
+  - type: h-main
+    prediction: "Adding a scalar fast-path (isinstance guard against np.ndarray) to _check_hour_range will decrease workload_mean_runtime consistently across repeated measurements, because the workload calls the function with a plain int (15) and the current implementation pays ~50x unnecessary NumPy overhead per call."
+    mechanism: "The current _check_hour_range unconditionally calls np.any(np.abs(hrs) == 24.0) and np.any(hrs < -24.0) for all inputs including Python scalars. NumPy ufunc dispatch (np.abs, np.any) involves C-level type resolution, array creation, and iterator setup that dominates for scalar inputs. An isinstance(hrs, np.ndarray) guard routes scalars to Python builtins (abs(), <, >) which are ~50x faster for non-array types. The array path is preserved unchanged for np.ndarray inputs."
+    diagnostic: "If the prediction is wrong, check: (1) whether the workload's import-time overhead dominates the per-call cost, making the per-call optimization invisible; (2) whether timeit.repeat's number=10 is too small to surface the per-call difference; (3) whether the isinstance check itself adds overhead that offsets the gains."
+    code_changes:
+      - file: "astropy/coordinates/angles/formats.py"
+        intent: "In _check_hour_range (line 322), add a guard: if not isinstance(hrs, np.ndarray), use plain Python abs(hrs) == 24.0 and hrs < -24.0 / hrs > 24.0 comparisons with the same warn/raise logic. Otherwise fall through to the existing np.any/np.abs code path."
+        rationale: "This is the exact function the workload benchmarks. Profiling showed np.any(np.abs(15) == 24.0) takes ~6.4us while abs(15) == 24.0 takes ~0.08us — a 50-100x difference. The isinstance check costs ~0.15us, negligible compared to the savings."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    workload_script: "/tmp/workload.py"
+    target_function: "_check_hour_range"
+    target_file: "astropy/coordinates/angles/formats.py"
+    target_line: 322
+    baseline_mean_runtime: 0.000145
+  unlocked_parameters_audit:
+    - name: "timeit_number"
+      default_value: 10
+      justification: "Set by the immutable workload.py; we cannot and should not change it."
+    - name: "timeit_repeat"
+      default_value: 2000
+      justification: "Set by the immutable workload.py; provides sufficient statistical samples."
+    - name: "python_version"
+      default_value: "conda testbed environment default"
+      justification: "Fixed by the Docker container; not a tunable for this experiment."

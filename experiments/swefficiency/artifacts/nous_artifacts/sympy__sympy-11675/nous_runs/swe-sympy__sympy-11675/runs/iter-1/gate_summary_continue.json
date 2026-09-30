@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 confirmed a 59.28x speedup (57.33s \u2192 0.97s) by hoisting a loop-invariant `length()` call out of an inner loop in `diop_DN()`. All 41 covering tests pass. The fix is a single two-line change in `sympy/solvers/diophantine.py` that eliminates ~228 redundant calls to an expensive continued-fraction computation.",
+  "key_points": [
+    "CONFIRMED: Moving `length(z, abs(m), D)` from inside the PQa iteration loop (line 1181) to before it reduced the workload from 57.33s baseline to 0.97s mean \u2014 a 59.28x speedup. The function was called 231 times instead of the needed 3, at ~0.335s each.",
+    "All 41 covering tests in `test_diophantine.py` pass (1 expected `@XFAIL`). The output of `diop_DN(15591784605, -20)` is identical (3 solution tuples) before and after the change.",
+    "Three Python 3.11 compatibility fixes (`collections` \u2192 `collections.abc`) were required in `basic.py`, `plot.py`, and `matrices.py` as prerequisites \u2014 these are not part of the optimization itself.",
+    "Further speedup opportunities exist but offer diminishing returns: (a) replacing symbolic `sqrt(D)` with integer `isqrt(D)` inside `PQa()` and `continued_fraction_periodic()`, (b) caching the redundant `diop_DN(D, -1)` double-call at lines 1174-1175. These could reduce the remaining 0.97s further but the dominant bottleneck is already resolved.",
+    "Recommendation: The 59.28x speedup with green tests is a strong result. A next iteration could investigate PQa integer arithmetic to squeeze out additional gains, but the cost-benefit ratio is low \u2014 the remaining runtime is already under 1 second. Approving and finalizing is reasonable."
+  ]
+}

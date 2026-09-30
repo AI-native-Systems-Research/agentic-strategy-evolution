@@ -1,0 +1,55 @@
+metadata:
+  iteration: 2
+  bundle_ref: "runs/iter-2/bundle.yaml"
+
+setup:
+  - cmd: "pip install numpy mpmath pytest -q"
+    description: "Install dependencies"
+  - cmd: |
+      cd /testbed/.nous-experiments/iter-2-f9acca7f && \
+      sed -i 's/from collections import Mapping/from collections.abc import Mapping/' sympy/core/basic.py && \
+      sed -i 's/inspect.getargspec/inspect.getfullargspec/' sympy/core/function.py && \
+      sed -i 's/from fractions import gcd/from math import gcd/' sympy/ntheory/egyptian_fraction.py && \
+      sed -i "s/from inspect import getargspec/from inspect import getfullargspec as getargspec/" sympy/plotting/plot.py && \
+      sed -i 's/from collections import Callable/from collections.abc import Callable/' sympy/plotting/plot.py
+    description: "Apply Python 3.11 compatibility patches"
+
+arms:
+  - arm_id: "baseline"
+    conditions:
+      - name: "baseline-run"
+        cmd: "cd /testbed/.nous-experiments/iter-2-f9acca7f && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-2/results/baseline/run.txt"
+        description: "Run workload 10 reps with original code"
+
+  - arm_id: "h-main"
+    conditions:
+      - name: "h-main-run"
+        cmd: |
+          cd /testbed/.nous-experiments/iter-2-f9acca7f && \
+          git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-2/patches/h-main.patch && \
+          python -m pytest -q sympy/ntheory/tests/test_partitions.py && \
+          PYTHONPATH=$PWD python /tmp/workload.py
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-2/results/h-main/run.txt"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-2/patches/h-main.patch"
+        description: "Apply h-main patch, verify tests, run workload 10 reps"
+      - name: "h-main-reset"
+        cmd: "cd /testbed/.nous-experiments/iter-2-f9acca7f && git checkout -- sympy/ntheory/partitions_.py"
+        description: "Reset code to original after h-main run"
+
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "h-ablation-run"
+        cmd: |
+          cd /testbed/.nous-experiments/iter-2-f9acca7f && \
+          git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-2/patches/h-ablation.patch && \
+          python -m pytest -q sympy/ntheory/tests/test_partitions.py && \
+          PYTHONPATH=$PWD python /tmp/workload.py
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-2/results/h-ablation/run.txt"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-2/patches/h-ablation.patch"
+        description: "Apply h-ablation patch, verify tests, run workload 10 reps"
+      - name: "h-ablation-reset"
+        cmd: "cd /testbed/.nous-experiments/iter-2-f9acca7f && git checkout -- sympy/ntheory/partitions_.py"
+        description: "Reset code to original after h-ablation run"

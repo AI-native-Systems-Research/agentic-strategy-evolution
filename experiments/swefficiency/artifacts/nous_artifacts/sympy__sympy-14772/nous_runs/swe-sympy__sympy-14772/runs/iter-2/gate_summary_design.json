@@ -1,0 +1,17 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether replacing Python's two-argument pow with three-argument modular pow in the `_legendre` function yields a ~3,900x runtime speedup (from ~74ms to ~19\u03bcs), and whether the `a%p` pre-reduction step contributes any measurable overhead. This is iteration 2, building on iteration 1 which confirmed the core mechanism.",
+  "key_points": [
+    "h-main: Change `pow(a%p, (p-1)//2) % p` \u2192 `pow(a%p, (p-1)//2, p)` on line 2075 of sympy/crypto/crypto.py. Predicted speedup ~3,900x (mean ~0.000019s vs baseline 0.0743s). The mechanism is that two-arg pow computes a ~1.1M-bit intermediate integer, while three-arg pow keeps intermediates bounded by p (~17 bits) using C-level modular exponentiation.",
+    "h-ablation: Change the same line to `pow(a, (p-1)//2, p)` (removing the `a%p` pre-reduction). Predicted to be indistinguishable from h-main because Python's three-arg pow internally reduces the base, and since a < p in the workload, the pre-reduction is a no-op costing ~0.1\u03bcs \u2014 well below measurement noise.",
+    "Confirmation criteria: h-main passes all 38 tests and achieves speedup >1000x; h-ablation matches h-main within noise (<5% difference). Refutation: if speedup is <100x, the hot path assumption is wrong; if h-ablation differs meaningfully from h-main, the pre-reduction matters and should be retained."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

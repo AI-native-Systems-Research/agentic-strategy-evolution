@@ -1,0 +1,35 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+
+setup:
+  - cmd: "pip install mpmath pytest 2>/dev/null || true"
+    description: "Install dependencies"
+  - cmd: "cd /testbed && sed -i 's/from collections import Mapping/from collections.abc import Mapping/' sympy/core/basic.py"
+    description: "Python 3.11 compat fix: basic.py"
+  - cmd: "cd /testbed && sed -i \"s/isinstance(googol, collections.Callable)/isinstance(googol, collections.abc.Callable)/\" sympy/plotting/plot.py"
+    description: "Python 3.11 compat fix: plot.py"
+  - cmd: "cd /testbed && sed -i 's/collections.Callable/collections.abc.Callable/' sympy/matrices/matrices.py"
+    description: "Python 3.11 compat fix: matrices.py"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline-seed1"
+        cmd: "cd /testbed && git checkout -- sympy/solvers/diophantine.py && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-3/results/h-main/baseline-s1.txt"
+      - name: "treatment-seed1"
+        cmd: "cd /testbed && git checkout -- sympy/solvers/diophantine.py && git apply /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-3/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-3/results/h-main/treatment-s1.txt"
+      - name: "baseline-seed2"
+        cmd: "cd /testbed && git checkout -- sympy/solvers/diophantine.py && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-3/results/h-main/baseline-s2.txt"
+      - name: "treatment-seed2"
+        cmd: "cd /testbed && git checkout -- sympy/solvers/diophantine.py && git apply /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-3/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-3/results/h-main/treatment-s2.txt"
+      - name: "baseline-seed3"
+        cmd: "cd /testbed && git checkout -- sympy/solvers/diophantine.py && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-3/results/h-main/baseline-s3.txt"
+      - name: "treatment-seed3"
+        cmd: "cd /testbed && git checkout -- sympy/solvers/diophantine.py && git apply /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-3/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-3/results/h-main/treatment-s3.txt"

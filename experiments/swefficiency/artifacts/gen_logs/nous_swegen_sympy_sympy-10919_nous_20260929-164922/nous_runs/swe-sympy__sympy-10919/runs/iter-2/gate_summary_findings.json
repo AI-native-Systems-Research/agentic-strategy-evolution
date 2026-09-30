@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed. The combined optimization (coprime precomputation + gmpy2 MPFR for Dedekind sum computation) achieved a 1.62x speedup over the previous iteration's code (24.1ms \u2192 14.8ms), closely matching the predicted ~1.7x. The ablation cleanly separated the two contributions. All correctness tests pass. Cumulative speedup from the original unoptimized baseline is approximately 87x (1.29s \u2192 14.8ms).",
+  "key_points": [
+    "h-main CONFIRMED: Mean runtime dropped from 24.1ms to 14.8ms (38.3% reduction, predicted ~40%). Consistent across all 3 runs \u2014 every treatment run was faster than every baseline run.",
+    "h-ablation CONFIRMED: Coprime precomputation alone yields 24.1ms \u2192 18.5ms (23% reduction), while gmpy2 _d adds another 18.5ms \u2192 14.8ms (20% reduction). Coprime precomp accounts for ~60% of the gain, gmpy2 _d for ~40%.",
+    "Cumulative optimization across iterations: original 1.29s \u2192 14.8ms (~87x total speedup). All covering tests in sympy/ntheory/tests/test_partitions.py pass (1/1).",
+    "No surprises: predictions matched observations within measurement noise. The 50 guard bits in the gmpy2 implementation proved sufficient for numerical correctness."
+  ]
+}

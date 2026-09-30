@@ -1,0 +1,64 @@
+metadata:
+  iteration: 4
+  family: "c-full-loop-result-cache"
+  research_question: "Can implementing the full HRR loop in C (eliminating Python overhead and cold-start) combined with result-level caching further reduce workload_mean_runtime beyond the iter-3 micro-optimized Python implementation?"
+  complexity_tier: 2
+  tier_justification: "iter 4, tier 2 — single mechanism (cold-start elimination via C + result caching) with ablation to isolate caching contribution"
+
+arms:
+  - type: h-main
+    prediction: "The C MPFR full loop + result cache will decrease workload_mean_runtime from ~12.5ms to ~1.0ms, consistently across seeds. The C loop eliminates cold-start overhead (27ms → 10ms for first call), and the result cache eliminates 9/10 redundant computations (subsequent calls ~0ms). Combined effect: (10 + 9*0)/10 ≈ 1ms."
+    mechanism: "Two mechanisms combine: (1) The C implementation performs coprime precomputation, Dedekind sums, cos/cosh/sinh via MPFR, and accumulation entirely in C, bypassing CPython function dispatch, lru_cache lookups, gmpy2 wrapper overhead, and mpf format conversions. This makes the first-call cost ~10ms vs ~27ms for Python. (2) A dict-based result cache at the npartitions level stores computed p(n) values, making repeated calls with the same n return in O(1). Since the workload calls npartitions(10^6) ten times, 9 of 10 calls are cache hits."
+    diagnostic: "If prediction is wrong: (a) If mean > 2ms, check whether the C .so failed to load and Python fallback was used (the ctypes loading may fail). (b) If mean ≈ 3ms, the C loop isn't helping (caching alone gives ~3ms) — check C first-call time independently. (c) If tests fail, check n=25 (j=2 edge case) and n=0,1,5 (base cases) for correctness."
+    code_changes:
+      - file: "sympy/ntheory/_npartitions_c.c"
+        intent: "Create a complete C implementation of the HRR algorithm for npartitions(n). The function npartitions_c(n, out_str, out_str_size) computes p(n) using MPFR for arbitrary-precision arithmetic. It implements: (1) Dedekind sum via reciprocity O(log k), (2) coprime precomputation with paired/unpaired handling, (3) hardware double cos for prec ≤ 53, MPFR cos for prec > 53, (4) MPFR cosh/sinh for the _d term, (5) dynamic precision reduction via bitcount, (6) accumulation at full precision, (7) final rounding to nearest integer. Returns result as decimal string."
+        rationale: "Eliminates ALL Python interpreter overhead (function calls, attribute lookups, type checking, garbage collection), reducing first-call cost from ~27ms to ~10ms. The MPFR computation cost is identical since both Python and C call the same MPFR C library, but C avoids the CPython↔MPFR bridging overhead and Python-level cold-start cache building."
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "Add module-level code to: (1) load _npartitions_c.so via ctypes with proper argtypes/restype, (2) create a _npartitions_result_cache dict. Rewrite the npartitions function to: check cache first → if miss, call C npartitions_c via ctypes → cache the integer result → return. Preserve verbose=True path using the existing Python implementation as fallback."
+        rationale: "The ctypes wrapper adds <0.01ms per call. The dict cache makes repeated calls O(1). The verbose fallback ensures backward compatibility."
+
+  - type: h-ablation
+    prediction: "Adding result caching to the existing iter-3 Python implementation (without the C loop) will decrease workload_mean_runtime from ~12.5ms to ~3.0ms. This is less than h-main's ~1.0ms because the first call still incurs Python cold-start overhead (~27ms vs C's ~10ms)."
+    mechanism: "A dict-based result cache stores the return value of npartitions(n) after the first computation. The workload calls npartitions(10^6) ten times: the first call computes normally (~27ms with cold-start), and the subsequent 9 calls return the cached result in O(1). Mean = (27 + 9*0)/10 ≈ 2.7ms. The only difference from h-main is the first-call cost: Python ~27ms vs C ~10ms."
+    diagnostic: "If prediction is wrong: (a) If mean ≈ 12ms, the cache isn't working — check that the cache dict is module-level and persists between calls. (b) If mean < 1ms, there's unexpected warm-up benefit — check if Python's first call is faster than expected."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "Add a _npartitions_result_cache dict at module level. Modify npartitions to check the cache before computing. After computing, store the result in the cache. Do not modify the computation logic itself."
+        rationale: "Isolates the caching mechanism from the C loop mechanism. If h-ablation and h-main show similar improvement, caching dominates; if h-main is significantly faster, the C loop's cold-start elimination matters."
+
+arm_selection_rationale: >
+  h-main tests the full optimization (C loop + cache). h-ablation isolates
+  the caching contribution by keeping the Python computation but adding
+  the same result cache. The comparison reveals whether the C full loop
+  provides additional benefit beyond caching. A negative control is not
+  needed because the iter-3 baseline (no cache, Python loop) is the
+  established control from the previous iteration.
+
+experiment_spec:
+  preflight_commands:
+    - "apt-get update -qq && apt-get install -y -qq libmpfr-dev libgmp-dev"
+    - "pip install pytest -q"
+  verified_parameters:
+    M_formula: "max(6, int(0.24*sqrt(n)+4))"
+    n: 1000000
+    prec_initial: 4148
+    guard_bits: 50
+    float_path_threshold: 53
+    gmpy2_d_threshold: 1000
+  unlocked_parameters_audit:
+    - name: "HRR_constant_0.24"
+      default_value: 0.24
+      justification: "Standard convergence bound for HRR series. Cannot be reduced without risking incorrect results (RP-2)."
+    - name: "guard_bits_50"
+      default_value: 50
+      justification: "Guard bits for precision. Reducing below 50 risks accumulated rounding errors in 243 term accumulation."
+    - name: "cos_guard_bits_10"
+      default_value: 10
+      justification: "Guard bits for gmpy2 cos computation. Standard from iter-1, verified correct for all test values."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 15
+      h-ablation: 15
+      baseline: 15
+    observation_method: "timeit.repeat with number=1, repeat=10; plus pytest run. Total ~15s per arm."

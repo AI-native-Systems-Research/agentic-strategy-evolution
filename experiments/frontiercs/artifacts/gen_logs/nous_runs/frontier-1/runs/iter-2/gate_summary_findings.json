@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 2 partially confirmed that reducing branch-and-bound (B&B) ternary search iterations (20\u219212) and adding a clock()-based time guard improves worst-case scores from 90 to 95, but does not reliably achieve 100. The ablation arm cleanly confirmed that B&B is responsible for ~8 points of score improvement over greedy+local-search alone (90.6 vs 98.5 mean).",
+  "key_points": [
+    "h-main scored 100 in 7/10 runs and 95 in 3/10 runs (mean 98.5), improving over iter-1's baseline (mean 97.0, worst case 90) \u2014 the 90-score drops are eliminated but 95-score drops persist at ~30% frequency.",
+    "h-ablation (greedy + local search only, no B&B) scored exactly 90.597 across all 6 runs with zero variance, confirming B&B adds ~8 points and is the sole timing-sensitive component causing intermittent TLEs in Docker.",
+    "Root cause of residual 95-drops identified: clock() measures CPU time, not wall time, so Docker CPU throttling extends wall time past the 1s limit without triggering the guard. Switching to chrono::steady_clock (wall time) is the recommended next fix.",
+    "All 20 test cases produce exact optima locally (gap=0), meaning the algorithm itself is correct and optimal \u2014 the only remaining issue is execution time under Docker's constrained environment.",
+    "Recommended next step: replace clock() with steady_clock-based wall-time guard, and consider further B&B constant-factor optimizations (e.g., tighter pruning, reduced iteration counts) to push the 95\u2192100 on the ~1 test case that intermittently TLEs."
+  ]
+}

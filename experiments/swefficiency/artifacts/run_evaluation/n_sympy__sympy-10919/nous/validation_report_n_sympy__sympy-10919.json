@@ -1,0 +1,19 @@
+{
+    "sympy__sympy-10919": {
+        "perf_report": {
+            "before_mean": 1.345325184102694,
+            "before_sd": 0.022991105150574363,
+            "after_mean": 1.3047198942032991,
+            "after_sd": 0.012873506934639038,
+            "improvement": 1.0311218446808383
+        },
+        "correctness_report": {
+            "test_results": {
+                "test_partitions": "PASSED"
+            },
+            "PASS_TO_PASS": [
+                "test_partitions"
+            ]
+        }
+    }
+}

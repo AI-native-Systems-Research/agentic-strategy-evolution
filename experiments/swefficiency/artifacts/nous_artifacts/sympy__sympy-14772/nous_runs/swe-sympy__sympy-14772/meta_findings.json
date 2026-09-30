@@ -1,0 +1,23 @@
+{
+  "schema_version": "1",
+  "generated_at": "2026-09-30T01:29:30.080563+00:00",
+  "run_id": "swe-sympy__sympy-14772",
+  "iterations_completed": 5,
+  "campaign_design_lessons": [],
+  "target_system_asks": [],
+  "nous_asks": [],
+  "deployment_recommendation": {
+    "verdict": "deploy",
+    "top_candidate_id": "iter-3/h-robustness/1",
+    "score": 4155.0,
+    "citations": [
+      {
+        "iteration": 3,
+        "arm_id": "h-robustness",
+        "evidence_snippet": "iter-3 arm_id=h-robustness speedup=4155.000"
+      }
+    ],
+    "caveats": []
+  },
+  "notes": "No surprises detected from artifacts. This is rare \u2014 typically indicates a very short campaign (single iteration, no retries, no token-budget anomalies)."
+}

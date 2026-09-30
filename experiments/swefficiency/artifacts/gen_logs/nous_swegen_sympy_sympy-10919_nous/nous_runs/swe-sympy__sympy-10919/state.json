@@ -1,0 +1,19 @@
+{
+  "last_entered_phase": "DESIGN",
+  "iteration": 1,
+  "run_id": "swe-sympy__sympy-10919",
+  "family": null,
+  "timestamp": "2026-09-29T16:44:28.502742+00:00",
+  "config_ref": null,
+  "work_dir": "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/nous_runs/swe-sympy__sympy-10919",
+  "repo_path": "/home/ubuntu/nous_swe/gen_logs/nous_swegen_sympy_sympy-10919_nous/workspace",
+  "reproducibility_metadata": {
+    "captured_at": "2026-09-29T16:44:27Z",
+    "repo_dirty": false,
+    "language_versions": {
+      "python": "Python 3.12.3",
+      "node": "v20.20.2"
+    }
+  },
+  "max_iterations": 2
+}

@@ -1,0 +1,58 @@
+metadata:
+  iteration: 2
+  family: "treasure-packing-bnb-robustified"
+  research_question: "Can optimizing the B&B constant factor (reduced ternary iterations) and adding a time guard eliminate Docker-timing-induced score drops while maintaining optimality?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (B&B) + ablation to isolate greedy+LS contribution"
+
+arms:
+  - type: h-main
+    prediction: "Reducing ternary search iterations from 20 to 12 and adding a clock()-based time guard will produce a reliable judge score of 100, eliminating the intermittent 85-95 drops observed with the iter-1 solution under Docker timing variability."
+    mechanism: "The ternary search convergence at 12 iterations gives precision (1/3)^12 ≈ 2e-6, far beyond what integer LP bounds require. This reduces per-node computation by ~40% in the tight-bound path (20→12 eval_lagrangian_vol calls per ternary). Combined with a time guard (stop B&B after ~800ms), the solver either finishes with exact optimum (as it does in <25ms locally for all 20 cases) or falls back to the greedy+LS result, which itself scores ~85 average. The net effect: no TLE is possible."
+    diagnostic: "If score < 100 despite the time guard: (a) check if the time guard triggers — if so, the B&B is slower than expected in Docker, and the greedy+LS fallback isn't good enough; (b) check if 12 ternary iterations causes a loose bound that increases B&B nodes enough to trigger the time guard; (c) verify clock() works correctly in the Docker environment."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Modify the existing B&B solver with two changes: (1) reduce the ternary search loop from 20 to 12 iterations in the tight_ub function, (2) add a clock()-based time guard that records the start time in main() and checks elapsed time at the beginning of the solve() function — if elapsed time exceeds ~800ms, return immediately without further recursion."
+        rationale: "The 30%+ speedup from fewer ternary iterations makes Docker TLE less likely. The time guard provides an absolute safety net — greedy+LS already ran, so best_value always holds a valid solution."
+
+  - type: h-ablation
+    prediction: "Removing the B&B solver (keeping only multi-greedy heuristics + local search) will score strictly lower than h-main — approximately 85 average across test cases — confirming that B&B is necessary for consistent optimality on this problem."
+    mechanism: "The greedy heuristics (23 alpha-parameterized density variants) + local search (add/swap/remove-refill) cannot guarantee optimality because: (1) greedy commits capacity irreversibly to the first items in the density ordering, (2) local search only explores 1-neighborhood moves and cannot escape local optima requiring multi-item swaps. Validated: 11/20 test cases are suboptimal under greedy+LS alone."
+    diagnostic: "If greedy+LS scores >= 95: the test cases may have unusually small optimality gaps, or the local search is stronger than expected. Check per-case gaps."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Comment out the B&B call (the line `solve(0, MAX_MASS, MAX_VOL, 0);`) and the second local_search() call after B&B, keeping all greedy heuristics and the first local_search() call intact."
+        rationale: "Ablates the B&B component to measure its isolated contribution. The multi-greedy + local search is the strongest non-exact approach available."
+
+# Arms chosen:
+# - h-main: Tests whether constant-factor optimization + time guard eliminates Docker TLE drops
+# - h-ablation: Measures isolated B&B contribution by removing it entirely
+# These are the two most informative arms given iter-1 established the B&B mechanism works.
+# A control-negative is not needed because iter-1 already established greedy-only scores 0.
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -pipe -static -s -std=gnu++17 -o solution solution.cpp"
+  verified_parameters:
+    max_mass_mg: 20000000
+    max_volume_ul: 25000000
+    n_item_types: 12
+    n_test_cases: 20
+    time_limit_seconds: 1
+    ternary_iterations_h_main: 12
+    time_guard_ms: 800
+  unlocked_parameters_audit:
+    - name: "greedy_alpha_step"
+      default_value: 0.05
+      justification: "21 greedy variants (alpha from 0 to 1 in steps of 0.05) provides good coverage of the density metric space without significant runtime cost."
+    - name: "tight_ub_depth_cutoff"
+      default_value: 8
+      justification: "Using tight Lagrangian bounds for the first 8 of 12 tree levels captures the most impactful pruning; verified: all-tight-levels gives identical timing."
+    - name: "local_search_remove_depth"
+      default_value: 10
+      justification: "Removing up to 10 of each item in remove-refill local search covers useful swap neighborhoods without excessive computation."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+      h-ablation: 45
+    observation_method: "Prior iter-1 judge runs took ~4 seconds each (Docker overhead + 20 test cases). Judge measurement script takes ~30-60s total."

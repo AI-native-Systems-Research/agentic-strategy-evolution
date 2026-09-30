@@ -1,0 +1,65 @@
+metadata:
+  iteration: 5
+  bundle_ref: "runs/iter-5/bundle.yaml"
+
+setup:
+  - cmd: "pip install mpmath pytest 2>/dev/null || true"
+  - cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && git checkout -- ."
+
+arms:
+  - arm_id: "iter4-baseline"
+    conditions:
+      - name: "iter4-baseline-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py 42 /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/iter4-baseline/seed42.json $PWD"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/iter4-baseline/seed42.json"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-4/patches/h-main.patch"
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py"
+      - name: "iter4-baseline-seed43"
+        cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && PYTHONPATH=$PWD python /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py 43 /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/iter4-baseline/seed43.json $PWD"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/iter4-baseline/seed43.json"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py"
+      - name: "iter4-baseline-seed44"
+        cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && PYTHONPATH=$PWD python /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py 44 /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/iter4-baseline/seed44.json $PWD"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/iter4-baseline/seed44.json"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py"
+
+  - arm_id: "h-main"
+    conditions:
+      - name: "h-main-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py 42 /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-main/seed42.json $PWD"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-main/seed42.json"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/patches/h-main.patch"
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py"
+      - name: "h-main-seed43"
+        cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && PYTHONPATH=$PWD python /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py 43 /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-main/seed43.json $PWD"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-main/seed43.json"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py"
+      - name: "h-main-seed44"
+        cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && PYTHONPATH=$PWD python /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py 44 /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-main/seed44.json $PWD"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-main/seed44.json"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py"
+
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "h-ablation-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/patches/h-ablation.patch && PYTHONPATH=$PWD python /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py 42 /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-ablation/seed42.json $PWD"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-ablation/seed42.json"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/patches/h-ablation.patch"
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py"
+      - name: "h-ablation-seed43"
+        cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && PYTHONPATH=$PWD python /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py 43 /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-ablation/seed43.json $PWD"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-ablation/seed43.json"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py"
+      - name: "h-ablation-seed44"
+        cmd: "cd /testbed/.nous-experiments/iter-5-a26e370c && PYTHONPATH=$PWD python /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py 44 /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-ablation/seed44.json $PWD"
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/results/h-ablation/seed44.json"
+        inputs:
+          - "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-5/inputs/measure.py"

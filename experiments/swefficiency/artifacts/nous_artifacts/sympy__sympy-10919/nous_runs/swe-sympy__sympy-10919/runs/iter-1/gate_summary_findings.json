@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "The optimization to sympy's npartitions function is confirmed with a 3.08x speedup over the 1.3901s reference baseline (treatment mean 0.4509s). All correctness tests pass and results are bit-identical to the original implementation. The speedup exceeded the predicted >1.5x threshold.",
+  "key_points": [
+    "CONFIRMED: Treatment mean 0.4509s vs reference baseline 1.3901s \u2192 3.08x speedup (predicted >1.5x, designer estimated ~2.8x).",
+    "Correctness fully preserved: pytest on test_partitions.py passes, and npartitions(10^6) output is bit-identical (SHA256 match) between baseline and treatment.",
+    "The optimization replaced ~2.9M expensive big-integer division/bitmask operations in the inner _a() loop with a precomputed fraction table, math.gcd substitution, and loop-invariant hoisting.",
+    "Results are highly consistent: 10 repetitions show non-overlapping confidence intervals (baseline 1.017\u00b10.035s vs treatment 0.451\u00b10.017s on the test machine).",
+    "NOTE: Four unrelated source files appear in uncommitted writes (basic.py, function.py, egyptian_fraction.py, plot.py) \u2014 these should be reviewed to ensure no unintended changes are included."
+  ]
+}

@@ -1,0 +1,35 @@
+diff --git a/sympy/crypto/crypto.py b/sympy/crypto/crypto.py
+index b00918489..3844e0481 100644
+--- a/sympy/crypto/crypto.py
++++ b/sympy/crypto/crypto.py
+@@ -2072,13 +2072,24 @@ def _legendre(a, p):
+     legendre symbol (a / p) (int)
+ 
+     """
+-    sig = pow(a%p, (p - 1)//2) % p
+-    if sig == 1:
+-        return 1
+-    elif sig == 0:
++    a = a % p
++    if a == 0:
+         return 0
+-    else:
+-        return -1
++    result = 1
++    n = p
++    while a != 0:
++        while a & 1 == 0:
++            a >>= 1
++            r = n & 7
++            if r == 3 or r == 5:
++                result = -result
++        a, n = n, a
++        if a & 3 == 3 and n & 3 == 3:
++            result = -result
++        a = a % n
++    if n == 1:
++        return result
++    return 0
+ 
+ 
+ def _random_coprime_stream(n, seed=None):

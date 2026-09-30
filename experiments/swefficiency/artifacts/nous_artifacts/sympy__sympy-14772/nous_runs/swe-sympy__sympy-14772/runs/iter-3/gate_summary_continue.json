@@ -1,0 +1,10 @@
+{
+  "gate_type": "continue",
+  "summary": "After 3 iterations, the single-line fix replacing `pow(a%p, (p-1)//2) % p` with `pow(a, (p-1)//2, p)` in `_legendre()` delivers a confirmed ~3,924x speedup (0.0743s \u2192 ~19\u03bcs) with all 38 tests passing across 5 seeds. An alternative Jacobi-symbol algorithm was also tested and delivers statistically indistinguishable performance (~4,155x), confirming we've hit the measurement floor imposed by workload harness overhead (~16\u03bcs).",
+  "key_points": [
+    "The core fix is a one-line change on line 2075 of sympy/crypto/crypto.py: using Python's built-in three-argument pow() instead of computing a massive intermediate result. This changes complexity from O(2^n \u00b7 n) to O(n\u00b2) where n = log\u2082(p), yielding ~3,300\u20134,200x speedup consistently across all 10 seed-runs (5 in iter-3, 5 cumulative prior).",
+    "A Jacobi/quadratic-reciprocity algorithm (h-robustness) is ~1.7x faster per call in microbenchmarks but shows no measurable improvement in the full workload (18.07\u03bcs vs 19.07\u03bcs, p >> 0.05) because ~16\u03bcs of harness overhead dominates both variants. This confirms the optimization space for _legendre() is exhausted within this workload.",
+    "All ablations are complete: pre-reduction (a%p) is redundant (iter-2), no other pow() calls in the workload path lack three-arg form, and no other functions are on the hot path. The campaign objective is fully achieved \u2014 recommend applying the h-main patch and concluding.",
+    "Recommendation: STOP. No further iterations will produce measurable improvement. The one-line fix should be committed. If future workloads include `encipher_gm`, line 2221's `pow(a, b) % N` pattern could be optimized similarly."
+  ]
+}

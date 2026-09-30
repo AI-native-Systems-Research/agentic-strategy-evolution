@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether replacing Python's two-argument pow with three-argument pow in the _legendre function delivers a consistent ~3,300\u20134,100x speedup (from ~0.074s to ~0.00002s), and whether an alternative Jacobi-symbol algorithm can improve further. This is iteration 3, confirming prior findings at full statistical scope (5 seeds) and probing whether the measurement noise floor has been reached.",
+  "key_points": [
+    "h-main: Single-line change on crypto.py:2075 \u2014 `pow(a, (p-1)//2, p)` instead of `pow(a%p, (p-1)//2) % p`. The two-arg pow creates a ~1.1M-bit intermediate integer; three-arg pow keeps intermediates bounded by p (~17 bits). Prior iterations measured ~3,300\u20134,100x speedup across 2 seeds; this iteration runs 5 seeds for robust confirmation.",
+    "h-robustness: Replace the Euler-criterion computation entirely with a Jacobi/quadratic-reciprocity GCD-like algorithm (no modular exponentiation at all). Microbenchmarks show ~1.7x faster per-call (~3.9\u03bcs vs ~6.6\u03bcs), but the ~16\u03bcs workload harness overhead swamps the difference. Expected outcome: comparable speedup to h-main, confirming three-arg pow is effectively optimal for this workload.",
+    "Confirmation criteria: h-main confirmed if mean < 0.0001s (speedup > 700x) consistently across 5 seeds with all 38 tests green. h-robustness confirmed if its speedup is within \u00b120% of h-main. Refutation: if either arm breaks tests or shows speedup < 100x, the mechanism model is wrong.",
+    "Risk is very low \u2014 both arms are well-understood from iterations 1\u20132. The main value of this iteration is statistical confidence (5 seeds) and establishing that further algorithmic optimization yields no practical benefit given measurement overhead."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

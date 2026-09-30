@@ -1,0 +1,90 @@
+{
+  "iteration": 5,
+  "bundle_ref": "runs/iter-5/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Combining set elimination (counter-based period bound), first-iteration unrolling, Q_prev recurrence (replacing P\u00b2/Q division), and early Q_i check will reduce direct warm-call time from ~0.116ms to ~0.078ms (~1.49x incremental speedup), yielding a campaign speedup of ~734,000x over the 57.3288s baseline. The harness mean will decrease from ~0.291ms to ~0.230ms (~1.27x) due to fixed fork+IPC overhead.",
+      "observed": "h-main direct timing across 3 seeds (500 warm calls each): seed42=79.3\u03bcs, seed43=80.4\u03bcs, seed44=79.6\u03bcs, mean=79.8\u03bcs. Iter-4 baseline (same session, 3 seeds): mean=122.9\u03bcs. Incremental speedup (direct): 1.54x (predicted 1.49x). Harness timing: seed42=0.256ms, seed43=0.231ms, seed44=0.229ms, mean=0.239ms. Iter-4 baseline harness: mean=0.314ms. Incremental speedup (harness): 1.32x (predicted 1.27x). Campaign speedup (direct): 718,826x. Campaign speedup (harness): 240,106x. Directional ordering h-main < h-ablation < iter-4 confirmed on all 3 seeds. All solutions correct (3 tuples, x\u00b2-D\u00b7y\u00b2=N verified). 41 covering tests pass (1 XFAIL: test_fail_holzer).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The prediction is CONFIRMED. Direct warm-call time of 79.8\u03bcs closely matches predicted ~78\u03bcs (within 2.3% measurement noise). The incremental speedup of 1.54x slightly exceeds the predicted 1.49x, indicating the combined optimizations are slightly more effective than the design-time estimate. All three sub-optimizations contribute measurably: (1) set elimination saves ~37\u03bcs (iter-4 122.9\u03bcs vs h-ablation 86.0\u03bcs = 1.43x), (2) Q_prev recurrence saves ~6.2\u03bcs (h-ablation 86.0\u03bcs vs h-main 79.8\u03bcs = 1.08x). The harness speedup (1.32x) exceeds the predicted 1.27x, likely because the fixed fork overhead is a smaller fraction of the reduced total time.",
+      "metadata": {
+        "speedup": 240106,
+        "treatment_harness_mean": 0.000239,
+        "treatment_harness_runs": [
+          0.000256,
+          0.000231,
+          0.000229
+        ],
+        "treatment_direct_mean_us": 79.8,
+        "treatment_direct_runs_us": [
+          79.3,
+          80.4,
+          79.6
+        ],
+        "iter4_baseline_direct_us": 122.9,
+        "iter4_baseline_direct_runs_us": [
+          129.5,
+          117.8,
+          121.4
+        ],
+        "iter4_baseline_harness_ms": 0.314,
+        "iter4_baseline_harness_runs_ms": [
+          0.336,
+          0.317,
+          0.289
+        ],
+        "incremental_speedup_direct": 1.54,
+        "incremental_speedup_harness": 1.32,
+        "campaign_speedup_direct": 718826,
+        "campaign_speedup_harness": 240106,
+        "campaign_baseline_mean": 57.3288,
+        "tests_passed": 41,
+        "tests_xfail": 1,
+        "solutions_count": 3,
+        "solutions_correct": true
+      }
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Set elimination + first-iteration unrolling alone (without Q_prev recurrence) will reduce direct warm-call time from ~0.116ms to ~0.088ms (~1.32x incremental speedup), which is measurably slower than h-main's ~0.078ms. This isolates the Q_prev contribution as ~10\u03bcs (0.088ms - 0.078ms), confirming the Q_prev recurrence provides ~1.13x additional speedup on top of set elimination.",
+      "observed": "h-ablation direct timing across 3 seeds (500 warm calls each): seed42=82.9\u03bcs, seed43=86.3\u03bcs, seed44=88.8\u03bcs, mean=86.0\u03bcs. Incremental speedup over iter-4 baseline (122.9\u03bcs): 1.43x (predicted 1.32x \u2014 better than predicted). Consistently slower than h-main (79.8\u03bcs) on all 3 seeds: ablation-to-main ratio = 1.08x. Q_prev savings = 6.2\u03bcs (predicted ~10\u03bcs \u2014 smaller than predicted). Harness: seed42=0.258ms, seed43=0.279ms, seed44=0.237ms, mean=0.258ms. Campaign speedup (direct): 666,640x. All 41 tests pass (1 XFAIL).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The ablation prediction is CONFIRMED. The directional ordering h-main < h-ablation < iter-4 baseline holds consistently across all 3 seeds, confirming the Q_prev recurrence provides genuine additional speedup. The h-ablation direct mean (86.0\u03bcs) is close to predicted ~88\u03bcs. The Q_prev contribution (1.08x, 6.2\u03bcs saved) is smaller than predicted (1.13x, 10\u03bcs), suggesting the P\u00b2/Q division overhead is partially mitigated by CPython's integer division being faster for machine-word-sized intermediates than anticipated. However, the directional claim \u2014 that Q_prev provides measurable additional speedup beyond set elimination \u2014 is confirmed on every seed.",
+      "metadata": {
+        "speedup": 222265,
+        "treatment_direct_mean_us": 86.0,
+        "treatment_direct_runs_us": [
+          82.9,
+          86.3,
+          88.8
+        ],
+        "treatment_harness_mean": 0.000258,
+        "treatment_harness_runs": [
+          0.000258,
+          0.000279,
+          0.000237
+        ],
+        "incremental_speedup_direct": 1.43,
+        "campaign_speedup_direct": 666640,
+        "campaign_speedup_harness": 222265,
+        "q_prev_contribution_ratio": 1.08,
+        "q_prev_savings_us": 6.2,
+        "tests_passed": 41,
+        "tests_xfail": 1,
+        "solutions_count": 3,
+        "solutions_correct": true
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both h-main and h-ablation predictions are CONFIRMED. The directional ordering (h-main < h-ablation < iter-4 baseline) holds consistently across all 3 seeds. The measured incremental speedups are: h-main 1.54x vs predicted 1.49x (slightly better), h-ablation 1.43x vs predicted 1.32x (noticeably better than predicted). The Q_prev recurrence contributes 1.08x (predicted 1.13x) \u2014 the direction is right but the magnitude is smaller, suggesting the P\u00b2/Q integer division overhead is lower than estimated. The combined iter-5 campaign speedup is ~240,000x (harness) or ~719,000x (direct warm) over the 57.3288s baseline. All solutions are identical and correct across all runs.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "sympy/core/basic.py",
+    "sympy/matrices/matrices.py",
+    "sympy/plotting/plot.py"
+  ]
+}

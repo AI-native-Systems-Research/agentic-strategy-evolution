@@ -1,0 +1,22 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "Adding isinstance(x, np.ndarray) guards before NumPy utility functions that frequently receive scalar Python inputs yields 50-63x speedup on the scalar path by avoiding NumPy ufunc dispatch overhead, with no regression on the array path.",
+      "confidence": "high",
+      "regime": "Python functions that use np.any/np.abs/np.sign on inputs that are frequently plain Python int/float/np.generic scalars, particularly in parsing and validation hot paths.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "NumPy ufunc dispatch (np.abs, np.any) involves C-level type resolution, temporary array creation, and iterator setup that costs ~6.4us even for scalar inputs. Python builtins (abs(), comparison operators) cost ~0.08us for the same scalar operation. An isinstance guard adds ~0.15us overhead, negligible compared to the 6.3us savings.",
+      "applicability_bounds": "Applies when: (1) the function receives scalar inputs in a hot path, (2) the NumPy operations have direct Python builtin equivalents (abs, comparisons, min/max), (3) the function's semantics for scalars are identical between NumPy and Python paths. Does NOT apply when the input is always an array, or when NumPy operations have no Python equivalent (e.g., broadcasting, fancy indexing).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

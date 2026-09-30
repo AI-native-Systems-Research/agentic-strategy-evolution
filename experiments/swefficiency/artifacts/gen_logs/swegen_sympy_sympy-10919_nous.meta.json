@@ -1,0 +1,11 @@
+{
+  "instance_id": "sympy__sympy-10919",
+  "agent": "nous",
+  "label": "nous",
+  "model": "claude-opus-4-6",
+  "baseline_out": "Mean: 1.2944949593002093\nStd Dev: 0.0322208397873973\n",
+  "nous_best_speedup": 2.177,
+  "agent_seconds": 7205.5,
+  "agent_rc": 0,
+  "patch_bytes": 14142
+}

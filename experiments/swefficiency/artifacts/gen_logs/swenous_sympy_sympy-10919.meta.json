@@ -1,0 +1,14 @@
+{
+  "instance_id": "sympy__sympy-10919",
+  "label": "nous_iso",
+  "model": "claude-opus-4-6",
+  "pkg": "sympy",
+  "mode": "native",
+  "cpuset": "0-1",
+  "base_mean": 1.3900730426990777,
+  "base_commit": "5c91be2fb9b064579b1459eeb3813f2ea83f5aa2",
+  "nous_seconds": 8674.7,
+  "nous_rc": 0,
+  "nous_best_speedup": 28.8282,
+  "patch_bytes": 9294
+}

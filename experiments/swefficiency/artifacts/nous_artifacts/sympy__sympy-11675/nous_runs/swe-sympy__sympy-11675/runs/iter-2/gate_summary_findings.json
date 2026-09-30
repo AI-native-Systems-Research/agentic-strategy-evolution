@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "The hypothesis that replacing symbolic sqrt operations with pure integer arithmetic in PQa() and length() would dramatically speed up the diophantine solver is overwhelmingly confirmed. The workload mean dropped from the campaign baseline of 57.33s to 0.0012s \u2014 a 49,519\u00d7 speedup \u2014 while all 41 covering tests pass.",
+  "key_points": [
+    "CONFIRMED: Treatment mean 0.00116s vs campaign baseline 57.33s = 49,519\u00d7 speedup, far exceeding the predicted >5,000\u00d7 improvement.",
+    "Two-stage optimization compound: iter-1 hoisting (57.3s \u2192 0.96s, ~60\u00d7) + iter-2 integer arithmetic (0.96s \u2192 0.0012s, ~830\u00d7) together yield the massive total speedup.",
+    "Mechanism validated: PQa() used symbolic floor((P+sqrt(D))/Q) and length() delegated to continued_fraction_periodic \u2014 both replaced with integer_nthroot-based integer operations, eliminating ~3.5M sympy function calls per invocation.",
+    "All correctness gates green: 41 tests pass (1 expected XFAIL), and the 3 solution tuples are mathematically verified to satisfy x\u00b2 - D\u00b7y\u00b2 = -20.",
+    "CAUTION: Three files outside the diophantine module are listed as uncommitted writes (basic.py, matrices.py, plot.py) \u2014 these should be reviewed to ensure they are intentional and not accidental artifacts before merging."
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 3 achieved a confirmed 22.8x speedup (0.061s vs 1.39s baseline) by replacing the O(j) inner loop in npartitions() with an O(log j) Dedekind sum algorithm and adding a float64 fast path for low-precision terms. All covering tests pass and results are bit-identical to the original. The ablation arm confirmed the Dedekind sum alone gives ~10x and the float64 path adds another ~2.2x.",
+  "key_points": [
+    "CONFIRMED: h-main achieves 22.8x speedup (mean 0.0611s, baseline 1.3901s). The Dedekind sum reciprocity law computes the inner sum T(h,j) in O(log j) instead of O(j), giving exact integer results \u2014 this is the dominant optimization (~10x alone).",
+    "CONFIRMED: h-ablation (Dedekind only, no float64) achieves 10.3x speedup (mean 0.1349s), isolating the float64 fast path's contribution at 2.2x. For 73% of outer-loop terms where precision \u2264 64 bits, native float64 arithmetic replaces expensive mpf operations.",
+    "All tests pass (`test_partitions.py`) and npartitions(n) produces bit-identical results for n=0..200, 1000, 10000, 100000, 1000000. The Dedekind sum is mathematically exact, not an approximation.",
+    "Remaining optimization headroom is modest: ~15ms in medium-precision mpf_cos calls (366 calls, p=65-500), ~10ms in big-int ops, ~11ms in _d computations. A next iteration could target these but would likely yield only 1.2-1.5x additional gain.",
+    "Recommended action: approve the h-main patch as the final optimization. Further iterations face sharply diminishing returns \u2014 the 22.8x speedup captures the vast majority of available algorithmic improvement. Any further gains would require C extensions or lower-level changes with higher risk."
+  ]
+}

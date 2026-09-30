@@ -1,0 +1,13 @@
+diff --git a/sympy/crypto/crypto.py b/sympy/crypto/crypto.py
+index b00918489..21e3c0c49 100644
+--- a/sympy/crypto/crypto.py
++++ b/sympy/crypto/crypto.py
+@@ -2218,7 +2218,7 @@ def encipher_gm(i, key, seed=None):
+ 
+     gen = _random_coprime_stream(N, seed)
+     rev = reversed(bits)
+-    encode = lambda b: next(gen)**2*pow(a, b) % N
++    encode = lambda b: next(gen)**2*pow(a, b, N) % N
+     return [ encode(b) for b in rev ]
+ 
+ 

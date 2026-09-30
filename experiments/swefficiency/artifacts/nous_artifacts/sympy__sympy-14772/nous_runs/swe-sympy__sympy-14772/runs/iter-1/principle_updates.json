@@ -1,0 +1,20 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Replacing two-argument pow(base, exp) % mod with three-argument pow(base, exp, mod) in Python eliminates construction of exponentially-large intermediate integers and yields multiple-orders-of-magnitude speedup for large exponents.",
+    "confidence": "high",
+    "regime": "Any Python code computing modular exponentiation where the exponent is large enough that the intermediate base^exp exceeds ~10,000 bits. The effect is proportional to the size of the intermediate: for a 1.1M-bit intermediate (exp~65535, base~17 bits), speedup is ~3,900x.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Python's two-argument pow(base, exp) computes the full integer base^exp using arbitrary-precision arithmetic, creating an intermediate proportional to exp * log2(base) bits. The subsequent mod operation on this huge integer is cheap relative to its construction. Three-argument pow(base, exp, mod) uses CPython's C-level modular exponentiation (square-and-multiply with mod reduction at each step), keeping all intermediates bounded by mod. This changes the arithmetic from operating on million-bit integers to operating on ~17-bit integers at each step.",
+    "applicability_bounds": "Applies when: (1) the exponent is large (hundreds or more), (2) the base is non-trivial, (3) the modulus is much smaller than base^exp. Does NOT apply when the exponent is small (e.g., pow(x, 2) % m vs pow(x, 2, m) \u2014 the intermediate is tiny either way) or when the full integer result is needed downstream.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

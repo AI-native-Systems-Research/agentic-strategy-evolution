@@ -1,0 +1,26 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The skyline-based greedy packer with multi-width sweep will score substantially higher than the naive strip packer (~76 vs ~34), because the skyline approach exploits 2D spatial structure \u2014 fitting pieces into gaps between previously placed pieces.",
+      "observed": "SCORE: 71.76 (vs h-control-negative 34.59). The skyline packer achieves 2.07x the packing efficiency of strip packing. The 71.76 score is slightly below the designer's probe (76.21), likely due to time management sensitivity \u2014 fewer candidate widths evaluated on a slower machine. All 70 test cases produced valid output (score > 0).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The ~4.5 point gap from the designer probe (76.21 vs 71.76) warrants investigation in iter-2. The time-managed width sweep is sensitive to machine speed \u2014 on slower hardware, fewer widths are tried, potentially missing better packing rectangles. The reference solution (78.7) uses additional optimizations: lookahead, roughness tiebreaker, column compaction, multiple orderings."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The naive strip packer will score approximately 30-35, because placing pieces in a 1D horizontal strip wastes vertical space \u2014 only the tallest piece determines height, leaving most columns with empty cells above.",
+      "observed": "SCORE: 34.59. The strip packer achieves exactly the predicted packing efficiency. All 70 test cases produced valid output.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed directional predictions. h-main scored 71.76 (predicted ~76), h-control-negative scored 34.59 (predicted ~34). The 2.07x improvement from skyline packing confirms that 2D spatial awareness is the dominant mechanism for packing density. The magnitude gap between the probe (76.21) and experiment (71.76) for h-main is attributed to time management sensitivity \u2014 the width sweep explores fewer candidates on slower hardware. The control-negative scored within 1 point of prediction, validating the measurement pipeline.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

@@ -1,0 +1,81 @@
+metadata:
+  iteration: 3
+  family: "hrr-dedekind-float64"
+  research_question: "How can we further reduce npartitions(10^6) runtime beyond iter-2's small-int + symmetry + numpy optimizations, while preserving correctness?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism (algorithmic replacement of inner sum + precision-based fast path), with ablation to isolate the float64 contribution"
+
+arms:
+  - type: h-main
+    prediction: "Replacing the O(j) inner loop with Dedekind sum O(log j), combined with h/j-h cosine symmetry and a float64 fast path for low-precision outer-loop terms, will yield > 15x end-to-end speedup over the 1.3901s reference baseline, producing bit-identical results."
+    mechanism: >
+      Three synergistic optimizations eliminate the dominant costs in _a():
+      (1) The inner sum T(h,j) = sum_{k=1}^{j-1} k*((h*k) mod j) equals
+      j^2 * s(h,j) + j^2*(j-1)/4 where s(h,j) is the Dedekind sum, computable
+      in O(log j) via the reciprocity law s(h,j) + s(j,h) = (h^2+j^2+1)/(12hj) - 1/4.
+      This replaces 2.9M Python loop iterations with ~9000 O(log j) recursive calls.
+      (2) cos(angle(h)) = cos(angle(j-h)) halves mpf_cos calls from 18055 to ~9028.
+      (3) For q where dynamic precision p <= 64 bits (q >= ~94), both _a and _d are
+      computed in hardware float64, eliminating 6612 mpf_cos calls and 150 _d mpf
+      computations. The accumulated float error is bounded by ~2e-9, negligible
+      relative to the 0.5 rounding tolerance of the final integer.
+    diagnostic: "If speedup is lower than predicted, profile to identify whether Dedekind recursion overhead, float64 accumulation error, or mpf_cos at medium precision (p=65-500) is the bottleneck."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: >
+          Add _dedekind_sum(h, j) and _T(h, j) helper functions implementing
+          the O(log j) Dedekind sum computation. Rewrite _a() to use _T() for
+          the inner sum with h/j-h symmetry halving. Add _a_float() for float64
+          computation. Modify npartitions() to use float64 fast path for both
+          _a and _d when p <= 64, accumulating in a float and converting to mpf
+          once at the end. Replace igcd with math.gcd.
+        rationale: >
+          Profiling shows _a() self-time is 70% of total (0.706s/1.0s). Within _a,
+          the inner k-loop (260ms), mpf_cos (326ms), and mpf_add (33ms) dominate.
+          Dedekind sum eliminates the k-loop cost (260ms -> 35ms). Symmetry halves
+          cos+add costs. Float64 path eliminates mpf overhead for 73% of remaining
+          cos calls.
+
+  - type: h-ablation
+    prediction: "Dedekind sum + symmetry alone (without float64 path) will yield > 8x speedup over the reference baseline, less than h-main's > 15x."
+    mechanism: >
+      Without the float64 fast path, ~6612 cos evaluations at low precision
+      (p <= 64 bits) still go through mpf_cos, which has ~5x overhead vs math.cos
+      at these precisions. The Dedekind sum and symmetry optimizations still
+      eliminate the inner loop bottleneck and halve cos evaluations, but the
+      low-precision mpf overhead remains.
+    diagnostic: "If speedup matches h-main, the float64 path provides no benefit and the Dedekind sum alone is sufficient."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: >
+          Same _dedekind_sum, _T, and symmetry changes as h-main, but without
+          _a_float() and without the float64 fast path in npartitions(). The outer
+          loop always uses the mpf path regardless of precision level.
+        rationale: >
+          Isolates the contribution of the float64 fast path by keeping only the
+          algorithmic improvements (Dedekind sum, symmetry).
+
+# Arm selection rationale:
+# h-main tests the full optimization package (3 combined techniques).
+# h-ablation removes the float64 fast path to isolate its 2x contribution.
+# No h-control-negative because the mechanism (Dedekind sum identity) is
+# mathematically proven correct — a negative control would need to test
+# a different mathematical identity, which doesn't add scientific value.
+
+experiment_spec:
+  preflight_commands:
+    - "git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/patches/py311-compat.patch || true"
+  verified_parameters:
+    n: 1000000
+    baseline_mean_reference: 1.3901
+    workload_repetitions: 10
+  unlocked_parameters_audit:
+    - name: M
+      default_value: "max(6, int(0.24*n**0.5 + 4)) = 244"
+      justification: "Standard HRR convergence criterion; not a tunable for performance optimization."
+    - name: initial_prec
+      default_value: "int(pbits*1.1 + 100) = 4148"
+      justification: "Determined by n; provides sufficient precision for exact integer result."
+    - name: float_prec_threshold
+      default_value: 64
+      justification: "Float64 has 53-bit mantissa; threshold of 64 gives ~48 accurate bits, well above the 50-bit working precision at these q values."

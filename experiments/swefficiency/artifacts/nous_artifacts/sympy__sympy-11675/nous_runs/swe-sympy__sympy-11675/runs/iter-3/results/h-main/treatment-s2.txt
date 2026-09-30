@@ -1,0 +1,4 @@
+/testbed/sympy/solvers/diophantine.py:3047: SyntaxWarning: "is" with a literal. Did you mean "=="?
+  if feasible is 1:  # it's prime and k == 2
+Mean: 0.0008627575996797531
+Std Dev: 2.0784173559573078e-05

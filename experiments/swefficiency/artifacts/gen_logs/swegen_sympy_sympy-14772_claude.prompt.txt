@@ -1,0 +1,16 @@
+You are optimizing the runtime performance of a Python library in a Docker container.
+
+CONTAINER: swegen_sympy_sympy-14772_claude  (target repo at /testbed, conda env 'testbed').
+Run every command INSIDE the container, e.g.:
+  docker exec swegen_sympy_sympy-14772_claude bash -lc "cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && <CMD>"
+
+GOAL: make the workload script run faster WITHOUT changing its observable behavior.
+- Measure runtime:  python /tmp/workload.py   (prints "Mean:" / "Std Dev:")
+- Do NOT edit /tmp/workload.py or any test files. Edit only library SOURCE under /testbed.
+- Correctness gate: these covering tests MUST still pass:
+    sympy/crypto/tests/test_crypto.py
+  Run: python -m pytest -q sympy/crypto/tests/test_crypto.py
+
+METHOD: measure baseline -> find what the workload exercises -> hypothesize an optimization ->
+edit source -> re-measure -> confirm the covering tests still pass. Iterate a few times.
+Aim for a genuine speedup with green tests. When finished, stop; your /testbed edits are the patch.

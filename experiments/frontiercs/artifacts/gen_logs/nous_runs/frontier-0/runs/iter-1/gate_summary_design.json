@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a skyline-based greedy 2D packer dramatically outperforms naive 1D strip packing for the polyomino rectangle-minimization problem. Two arms will run: the main arm (skyline packer with multi-width sweep) predicted to score ~76, and a negative control (strip packer) predicted to score ~34, with scores measured via the judge's continuous 0-100 metric (score = 1e5\u00b7\u03a3k\u1d62 / A).",
+  "key_points": [
+    "Main arm: Skyline greedy packer generates all orientations (reflect+rotate) per piece, sorts pieces by decreasing size, and for ~160 candidate widths places each piece at the skyline position minimizing max height. Predicted score ~76 based on probe runs.",
+    "Negative control: Naive strip packer places pieces left-to-right in a single row with no vertical compaction, yielding predicted score ~34. This validates the measurement pipeline and quantifies how much the 2D skyline mechanism contributes.",
+    "Confirmation criterion: If the skyline arm scores \u226570 and the strip arm scores \u226440, the hypothesis is confirmed \u2014 the ~2\u00d7 score gap demonstrates that exploiting 2D spatial gaps (skyline) is the dominant mechanism for packing quality. Refutation: if both arms score similarly (<10 point gap), the skyline mechanism provides negligible benefit at this problem scale.",
+    "Key risks: (1) Transform parameter bugs (X,Y,R,F) could cause checker rejection \u2192 score 0, (2) time budget pressure on large n=10000 cases with 160-width sweep, (3) piece ordering sensitivity not yet characterized. Diagnostics are specified for each failure mode."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

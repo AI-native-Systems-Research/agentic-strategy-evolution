@@ -1,0 +1,61 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #5?'
+run_id: frontier-5
+max_iterations: 5
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::5
+  description: "You are solving Frontier-CS algorithmic problem #5. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /home/ubuntu/frontier/gen_logs/fmeasure_5.sh $PWD/solution.cpp\nIt prints\
+    \ a single line 'SCORE: <n>' where n is the judge score (0-100). Record that number\
+    \ in the finding metadata under key 'score'. Each experiment arm should try a\
+    \ distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nPROBLEM STATEMENT:\nProblem: Hamiltonian Path Challenge\n\nYou are given\
+    \ a directed graph with n vertices and m edges.  \nYour task is to find a path\
+    \ that visits each vertex exactly once.  \n\nIf it is not possible to find a Hamiltonian\
+    \ path, you should instead output a path that is as long as possible and does\
+    \ not repeat vertices.  \n\n----------------------------------------\nInput\n\
+    The first line contains two integers n, m.  \nThe second line contains 10 integers,\
+    \ where the i-th number is a_i, the scoring parameter.  \nEach of the next m lines\
+    \ contains two integers u, v, representing a directed edge from u to v.\n\n----------------------------------------\n\
+    Output\nOutput two lines:\n\n- The first line contains an integer k, the number\
+    \ of vertices in your path.  \n- The second line contains k integers, the sequence\
+    \ of vertices in the path.\n\n----------------------------------------\nSample\
+    \ 1\nInput:\n3 3\n3 3 3 3 3 3 3 3 3 3\n1 2\n1 3\n2 3\n\nOutput:\n3\n1 2 3\n\n\
+    Explanation:\nEdges are directed.  \nIn this case, the contestant\u2019s submission\
+    \ scores 10 points.\n\n----------------------------------------\nSample 2\nInput:\n\
+    4 4\n1 1 2 2 3 3 4 4 4 4\n1 2\n2 1\n1 3\n4 2\n\nOutput:\n2\n2 1\n\nExplanation:\n\
+    In this case, the submission scores 4 points.  \nNote: you do not need to output\
+    \ the optimal solution.\n\n----------------------------------------\nScoring\n\
+    - If your output is invalid, your score is 0.  \n- Otherwise, let k be the number\
+    \ of vertices in your path.  \n  Your score is equal to:  \n\n  sum_{i=1}^{10}\
+    \ [k \u2265 a_i]  \n\nThat is, the number of a_i values that are less than or\
+    \ equal to your k.\n\n----------------------------------------\nConstraints\n\
+    - 1 \u2264 n, m \u2264 500000  \n- No multiple edges, no self-loops  \n- At least\
+    \ one Hamiltonian path exists in the graph\n\n----------------------------------------\n\
+    Time Limit: 4 second  \nMemory Limit: 512 MB"
+  repo_path: /home/ubuntu/frontier/gen_logs/frontier_5_nous_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /home/ubuntu/nous_repo/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: a35252fa3730dd427d6e9bb70bc261992ba6a08f
+  nous_version: 0.5.0
+  started_at: '2026-09-30T12:23:54.172208+00:00'

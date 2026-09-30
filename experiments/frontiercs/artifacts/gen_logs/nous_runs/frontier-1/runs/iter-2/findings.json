@@ -1,0 +1,72 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Reducing ternary search iterations from 20 to 12 and adding a clock()-based time guard will produce a reliable judge score of 100, eliminating the intermittent 85-95 drops observed with the iter-1 solution under Docker timing variability.",
+      "observed": "Judge scores across 10 total runs (5 from this execution + 5 prior): [100, 95, 100, 95, 100, 100, 100, 95, 100, 100]. Mean = 98.5, range [95, 100]. 7/10 runs scored 100, 3/10 scored 95. Compared to iter-1 baseline reference [100, 95, 100, 90, 100] (mean 97.0): the 90-score drops are eliminated, but 95-score drops persist (~30% of runs). The reduced ternary iterations (20\u219212) and time guard improved worst-case from 90 to 95 but did not achieve reliable 100. All 20 test cases produce exact optima locally (gap=0 for every case).",
+      "status": "PARTIALLY_CONFIRMED",
+      "error_type": "magnitude",
+      "diagnostic_note": "Directional improvement confirmed: no more 90-score drops (present in iter-1 baseline). However, 95-score drops persist at ~30% frequency, meaning 1 of 20 test cases still TLEs intermittently under Docker. The clock()-based time guard may not trigger because clock() measures CPU time, not wall time \u2014 Docker CPU throttling extends wall time beyond 1s even when CPU time is <800ms. The B&B computation itself is fast (<25ms locally); the TLE is from Docker container overhead (startup, I/O, scheduling). A wall-time guard (chrono::steady_clock) would be more appropriate than clock().",
+      "metadata": {
+        "score": 100,
+        "scores_all_runs": [
+          100,
+          95,
+          100,
+          95,
+          100,
+          100,
+          100,
+          95,
+          100,
+          100
+        ],
+        "mean_score": 98.5,
+        "runs_at_100": "7/10",
+        "runs_at_95": "3/10",
+        "iter1_baseline_comparison": {
+          "scores": [
+            100,
+            95,
+            100,
+            90,
+            100
+          ],
+          "mean": 97.0,
+          "runs_at_100": "3/5"
+        },
+        "exact_optima_all_20_cases": true
+      }
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Removing the B&B solver (keeping only multi-greedy heuristics + local search) will score strictly lower than h-main \u2014 approximately 85 average across test cases \u2014 confirming that B&B is necessary for consistent optimality on this problem.",
+      "observed": "Judge score: 90.597 across 6 total runs (3 from this execution + 3 prior), perfectly consistent with zero variance. Greedy+LS alone scores 90.597 vs h-main's 98.5 mean, confirming B&B adds ~8-10 points. The score is higher than the predicted ~85 because the judge's scoring formula (per-case clamping to [0,1] then averaging) produces higher aggregate scores than a simple per-case-value average. Zero variance confirms greedy+LS never TLEs \u2014 it runs entirely within Docker's time budget.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The ablation cleanly isolates the B&B contribution: 7.9 points on the judge (98.5 - 90.6). The ablation score is strictly lower than every single h-main run (lowest h-main was 95 > 90.6), confirming B&B is necessary for consistent optimality. The zero variance across 6 ablation runs vs the ~5-point variance in h-main runs conclusively identifies B&B as the timing-sensitive component.",
+      "metadata": {
+        "score": 90.597,
+        "scores_all_runs": [
+          90.597,
+          90.597,
+          90.597,
+          90.597,
+          90.597,
+          90.597
+        ],
+        "mean_score": 90.597,
+        "variance": 0.0,
+        "bnb_contribution_points": 7.9
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "h-main PARTIALLY_CONFIRMED: The optimization (reduced ternary 20\u219212 + clock() time guard) improved the worst-case from 90 to 95 but did not achieve reliable 100. The residual 95-drops (~30% of runs) indicate 1/20 test cases still intermittently TLEs in Docker. The mechanism is directionally correct (constant-factor speedup reduces TLE probability) but the time guard is insufficient because clock() measures CPU time, not wall time \u2014 Docker CPU throttling causes wall-time TLEs that clock() cannot detect. h-ablation CONFIRMED: greedy+LS scores 90.597 with zero variance, strictly below all h-main scores, confirming B&B adds ~8 points and is necessary for optimality.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}

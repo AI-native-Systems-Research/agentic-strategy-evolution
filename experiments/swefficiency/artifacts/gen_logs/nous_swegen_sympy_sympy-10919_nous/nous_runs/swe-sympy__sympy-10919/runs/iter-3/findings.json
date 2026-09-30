@@ -1,0 +1,25 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The full optimization (Kloosterman symmetry + math.cos for prec<=53 + fixed-point cos bypass + memoized Dedekind) will decrease workload_mean_runtime significantly, to consistently below 0.035s. Compared to h-ablation, the addition of math.cos provides a further ~1.8x improvement.",
+      "observed": "Baseline mean: 0.2362s (5 runs, each 10 repeats). h-main mean: 0.0260s (5 runs: 0.0264, 0.0257, 0.0256, 0.0257, 0.0265). Speedup: 9.1x over baseline. Between-run std: 0.0004s. All runs consistently below 0.035s. Tests passed. Compared to h-ablation (0.0471s), h-main is 1.81x faster, confirming math.cos contribution.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Note: Designer assumed baseline was 0.082s (iter-2 ablation state), but container had original code (0.236s). Both patches include all optimizations from scratch. Absolute h-main time (0.026s) closely matches designer prototype (0.025s)."
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Kloosterman symmetry alone (without math.cos, all precisions using fixed-point cos_sin_basecase) will decrease workload_mean_runtime to ~0.045s, measurably slower than h-main.",
+      "observed": "h-ablation mean: 0.0471s (5 runs: 0.0471, 0.0465, 0.0485, 0.0472, 0.0463). Speedup: 5.0x over baseline. Between-run std: 0.0009s. Measurably slower than h-main: 0.0471/0.0260 = 1.81x ratio. Tests passed. Predicted ~0.045s, observed 0.047s (within noise).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The ablation isolates the symmetry contribution: 5.0x from Dedekind memoization + Kloosterman symmetry + fixed-point cos bypass. The remaining 1.8x gap to h-main is the math.cos contribution for prec<=53 terms."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms CONFIRMED. h-main achieves 9.1x speedup (0.236s -> 0.026s) with all optimizations. h-ablation achieves 5.0x (0.236s -> 0.047s) without math.cos. The 1.81x gap between h-main and h-ablation isolates the math.cos hardware float contribution, matching the predicted ~1.8x.",
+  "dominant_component_pct": null
+}

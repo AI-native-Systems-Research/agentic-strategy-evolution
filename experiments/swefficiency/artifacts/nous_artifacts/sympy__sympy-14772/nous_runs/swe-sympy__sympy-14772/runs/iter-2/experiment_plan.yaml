@@ -1,0 +1,68 @@
+metadata:
+  iteration: 2
+  bundle_ref: "runs/iter-2/bundle.yaml"
+  mode: real
+
+setup:
+  - cmd: "echo 'No build step needed — pure Python library'"
+    description: "No build required"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && git checkout -- . && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/baseline/seed42.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/baseline/seed42.txt"
+        description: "Baseline measurement seed 42 (10 repetitions via workload.py)"
+
+      - name: "baseline-seed123"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && git checkout -- . && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/baseline/seed123.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/baseline/seed123.txt"
+        description: "Baseline measurement seed 123 (10 repetitions via workload.py)"
+
+      - name: "baseline-seed456"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && git checkout -- . && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/baseline/seed456.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/baseline/seed456.txt"
+        description: "Baseline measurement seed 456 (10 repetitions via workload.py)"
+
+      - name: "treatment-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/patches/h-main.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-main/treatment-seed42.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-main/treatment-seed42.txt"
+        description: "h-main treatment measurement seed 42 (3-arg pow with a%p)"
+
+      - name: "treatment-seed123"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/patches/h-main.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-main/treatment-seed123.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-main/treatment-seed123.txt"
+        description: "h-main treatment measurement seed 123 (3-arg pow with a%p)"
+
+      - name: "treatment-seed456"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/patches/h-main.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-main/treatment-seed456.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-main/treatment-seed456.txt"
+        description: "h-main treatment measurement seed 456 (3-arg pow with a%p)"
+
+      - name: "treatment-tests"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && /opt/miniconda3/envs/testbed/bin/python -m pytest -q sympy/crypto/tests/test_crypto.py --noconftest 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-main/tests.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-main/tests.txt"
+        description: "Run 38 covering tests with h-main patch applied"
+
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "treatment-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/patches/h-ablation.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-ablation/treatment-seed42.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-ablation/treatment-seed42.txt"
+        description: "h-ablation treatment measurement seed 42 (3-arg pow without a%p)"
+
+      - name: "treatment-seed123"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/patches/h-ablation.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-ablation/treatment-seed123.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-ablation/treatment-seed123.txt"
+        description: "h-ablation treatment measurement seed 123 (3-arg pow without a%p)"
+
+      - name: "treatment-seed456"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/patches/h-ablation.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-ablation/treatment-seed456.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-ablation/treatment-seed456.txt"
+        description: "h-ablation treatment measurement seed 456 (3-arg pow without a%p)"
+
+      - name: "treatment-tests"
+        cmd: "cd /testbed/.nous-experiments/iter-2-77f63f30 && /opt/miniconda3/envs/testbed/bin/python -m pytest -q sympy/crypto/tests/test_crypto.py --noconftest 2>&1 | tee /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-ablation/tests.txt"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-2/results/h-ablation/tests.txt"
+        description: "Run 38 covering tests with h-ablation patch applied"

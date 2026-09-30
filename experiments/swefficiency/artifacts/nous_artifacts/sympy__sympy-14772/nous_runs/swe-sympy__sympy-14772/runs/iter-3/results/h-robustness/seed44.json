@@ -1,0 +1,9 @@
+{
+  "seed": 44,
+  "arm": "h-robustness",
+  "exit_code": 0,
+  "mean_seconds": 1.6123702516779302e-05,
+  "std_dev_seconds": 8.99895834098778e-07,
+  "speedup": 4608.122726320392,
+  "raw_stdout": "Mean: 1.6123702516779302e-05\nStd Dev: 8.99895834098778e-07"
+}

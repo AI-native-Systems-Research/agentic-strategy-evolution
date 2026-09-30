@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "In the HRR partition formula's inner sum, replacing per-iteration big-integer division with a precomputed fractional-part lookup table yields 2-3x end-to-end speedup on npartitions(10^6), because the fractional part of h*k*one//j depends only on the residue (h*k) mod j, and there are only j distinct residues shared across all euler_totient(j) coprime h-values.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 10^5, where the inner k-loop's ~2.9M iterations of big-integer arithmetic dominate runtime. Effect scales with precision (number of bits in fixed-point representation), so it's strongest for the early outer-loop terms where precision is highest (~4148 bits).",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The original _a() function computes h*k*one//j (a big-int division of ~4148-bit numbers by a small integer) for every (h,k) pair in the inner loop. Since the fractional part depends only on (h*k) mod j, precomputing frac_table[r] = (r*one)//j for r=0..j-1 converts ~2.9M big-int divisions to O(sum_of_j) precomputed divisions (~50k) plus ~2.9M table lookups. Additionally, factoring out the per-iteration half-subtraction into a single post-loop operation eliminates ~2.9M big-int subtractions. Combined with replacing sympy's igcd (Python-level with type checking) with C-level math.gcd, the net effect is a 3.08x speedup.",
+    "applicability_bounds": "Applies when _a() dominates runtime, which requires n large enough that the inner loop iterates many times (n >= ~10^5). For small n, the overhead of precomputing frac_table may not be amortized. The identity (h*k*one//j) & onemask == ((h*k%j)*one)//j requires h,k > 0, which holds given the range(1,j) loops.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Python's math.gcd (C builtin) is approximately 9x faster than sympy's igcd for integer coprimality checks in tight loops, due to igcd's Python-level as_int() type checking and dictionary-based cache overhead.",
+    "confidence": "high",
+    "regime": "Any hot path calling igcd repeatedly with plain integer arguments. The overhead is per-call, so it matters most in loops with >10k iterations.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "igcd (sympy/core/numbers.py:142) wraps each call with as_int() type conversion and uses a Python-level cache. math.gcd is implemented in C (cpython/Modules/mathmodule.c) and operates directly on Python int objects without wrapper overhead.",
+    "applicability_bounds": "Applies when inputs are already Python ints (no mpz or symbolic). If inputs require sympification, igcd's type handling is necessary.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  }
+]

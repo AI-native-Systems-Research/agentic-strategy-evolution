@@ -1,0 +1,17 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Replacing the O(j) Dedekind sum with O(log j) memoized reciprocity, adding Kloosterman symmetry to halve iterations, using hardware floats at low precision, and using gmpy2 MPFR cos at high precision will decrease workload_mean_runtime by more than an order of magnitude (from ~1.29s to <0.05s) consistently across repeated runs, while maintaining exact numerical correctness.",
+      "observed": "Baseline (original code): Mean=1.2774s, Std=0.0198s (10 repeats). Treatment (optimized code): Mean=0.0234s, Std=0.0034s (10 repeats). Speedup: 54.5x. All covering tests pass (1/1). All correctness checks pass for n=0,1,2,3,4,5,25,100,200.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The predicted >10x speedup was achieved (actual 54.5x). The four synergistic optimizations (Dedekind caching O(log j), Kloosterman symmetry 2x, float path for prec<=53, gmpy2 MPFR cos 1.5-2.2x) combined to eliminate the O(j^2) bottleneck in the _a function. Exact integer correctness preserved for all tested partition values."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The prediction of >10x (order of magnitude) speedup was confirmed with 54.5x actual speedup. Baseline: 1.2774s mean. Treatment: 0.0234s mean. The dominant contributor is the Dedekind sum reciprocity + caching (O(j) -> O(log j) per coprime, eliminating the O(j^2) nested loop). Secondary contributors: Kloosterman symmetry (2x fewer iterations), float path (hardware cos for ~48% of outer iterations), gmpy2 MPFR cos (1.5-2.2x for remaining high-precision iterations). All correctness assertions passed.",
+  "dominant_component_pct": null
+}

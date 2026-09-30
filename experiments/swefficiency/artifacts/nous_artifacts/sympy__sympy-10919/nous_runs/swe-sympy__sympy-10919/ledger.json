@@ -1,0 +1,147 @@
+{
+  "iterations": [
+    {
+      "iteration": 0,
+      "family": "baseline",
+      "timestamp": "1970-01-01T00:00:00Z",
+      "candidate_id": "baseline",
+      "h_main_result": null,
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": null,
+      "principles_extracted": [],
+      "frontier_update": null
+    },
+    {
+      "iteration": 1,
+      "family": "hrr-inner-sum-optimization",
+      "timestamp": "2026-09-30T00:30:40.284898+00:00",
+      "candidate_id": "iter-1",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 1,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-1",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-2",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 2,
+      "family": "hrr-inner-sum-advanced",
+      "timestamp": "2026-09-30T00:59:17.124577+00:00",
+      "candidate_id": "iter-2",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {
+        "ablation-0": "CONFIRMED"
+      },
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-3",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-4",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 3,
+      "family": "hrr-dedekind-float64",
+      "timestamp": "2026-09-30T01:21:55.441252+00:00",
+      "candidate_id": "iter-3",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {
+        "ablation-0": "CONFIRMED"
+      },
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 4,
+      "family": "hrr-memoize-inline",
+      "timestamp": "2026-09-30T02:10:10.276554+00:00",
+      "candidate_id": "iter-4",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {
+        "ablation-0": "CONFIRMED"
+      },
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-6",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 5,
+      "family": "hrr-mpf-cos-optimization",
+      "timestamp": "2026-09-30T02:37:57.884765+00:00",
+      "candidate_id": "iter-5",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {
+        "ablation-0": "CONFIRMED"
+      },
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-7",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-8",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    }
+  ]
+}

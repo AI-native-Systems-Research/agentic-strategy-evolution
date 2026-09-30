@@ -1,0 +1,57 @@
+metadata:
+  iteration: 5
+  bundle_ref: "runs/iter-5/bundle.yaml"
+  mode: real
+
+setup:
+  - cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && git checkout -- ."
+    description: "Reset worktree to clean state"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "h-main-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-main/seed42.txt"
+      - name: "h-main-seed43"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-main/seed43.txt"
+      - name: "h-main-seed44"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-main/seed44.txt"
+      - name: "h-main-correctness"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && python -m pytest -q sympy/ntheory/tests/test_partitions.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-main/tests.txt"
+      - name: "h-main-bitidentical"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && PYTHONPATH=$PWD python -c \"from sympy.ntheory.partitions_ import npartitions; r = npartitions(10**6); assert str(r).endswith('15630003467104673818'), f'FAIL: {str(r)[-20:]}'; print('BIT-IDENTICAL: PASS')\""
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-main/bitcheck.txt"
+
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "h-ablation-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/patches/h-ablation.patch && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-ablation/seed42.txt"
+      - name: "h-ablation-seed43"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-ablation/seed43.txt"
+      - name: "h-ablation-seed44"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-ablation/seed44.txt"
+      - name: "h-ablation-correctness"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && python -m pytest -q sympy/ntheory/tests/test_partitions.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-ablation/tests.txt"
+      - name: "h-ablation-bitidentical"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && PYTHONPATH=$PWD python -c \"from sympy.ntheory.partitions_ import npartitions; r = npartitions(10**6); assert str(r).endswith('15630003467104673818'), f'FAIL: {str(r)[-20:]}'; print('BIT-IDENTICAL: PASS')\""
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/h-ablation/bitcheck.txt"
+
+  - arm_id: "baseline-iter4"
+    conditions:
+      - name: "baseline-iter4-seed42"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/patches/py311-compat.patch && git apply --include='sympy/ntheory/partitions_.py' /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-4/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/baseline-iter4/seed42.txt"
+      - name: "baseline-iter4-seed43"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/baseline-iter4/seed43.txt"
+      - name: "baseline-iter4-seed44"
+        cmd: "cd /testbed/.nous-experiments/iter-5-110b2e17 && PYTHONPATH=$PWD python /tmp/workload.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-5/results/baseline-iter4/seed44.txt"

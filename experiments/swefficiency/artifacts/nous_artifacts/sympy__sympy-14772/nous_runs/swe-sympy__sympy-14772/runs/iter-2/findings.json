@@ -1,0 +1,58 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Replacing pow(a%p, (p-1)//2) % p with pow(a%p, (p-1)//2, p) in _legendre will decrease the workload mean runtime from ~0.070s to ~0.000019s, yielding a speedup of ~3,900x consistently across all seeds. All 38 covering tests will pass.",
+      "observed": "Baseline means across 3 seeds (each 10 reps): 0.06957s, 0.06913s, 0.06961s (avg 0.06944s). Treatment means across 3 seeds (each 10 reps): 1.9666e-05s, 1.7333e-05s, 1.7792e-05s (avg 1.8264e-05s). Speedup vs campaign baseline (0.0743s): 0.0743 / 1.8264e-05 = 4,068x. Speedup vs measured baseline: 0.06944 / 1.8264e-05 = 3,802x. All 38 covering tests pass with treatment applied.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The effect is decisive and consistent across all 3 seeds. The mechanism is exactly as predicted: three-argument pow avoids constructing a ~1.1M-bit intermediate integer. The measured speedup of ~4,068x (vs campaign baseline) is consistent with iter-1's finding of ~3,906x \u2014 the slight variation is normal system noise.",
+      "metadata": {
+        "speedup": 4068,
+        "baseline_mean_measured": 0.06944,
+        "treatment_mean_measured": 1.8264e-05,
+        "campaign_baseline_mean": 0.0743,
+        "baseline_runs": [
+          0.06957,
+          0.06913,
+          0.06961
+        ],
+        "treatment_runs": [
+          1.9666e-05,
+          1.7333e-05,
+          1.7792e-05
+        ],
+        "tests_passed": 38,
+        "tests_failed": 0
+      }
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Removing the a%p pre-reduction (using pow(a, (p-1)//2, p) instead of pow(a%p, (p-1)//2, p)) will produce speedup indistinguishable from h-main within measurement noise. The pre-reduction contributes ~0.1\u03bcs overhead, which is negligible relative to the ~19\u03bcs total and the workload harness variance.",
+      "observed": "h-ablation treatment means across 3 seeds (each 10 reps): 2.0277e-05s, 1.5963e-05s, 1.9940e-05s (avg 1.8727e-05s). Speedup vs campaign baseline: 0.0743 / 1.8727e-05 = 3,968x. h-main average was 1.8264e-05s (4,068x). Difference: 0.46\u03bcs (2.5%), well within measurement noise (individual std devs range 0.9-3.9\u03bcs). All 38 covering tests pass.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "As predicted, the a%p pre-reduction contributes no measurable overhead. The 0.46\u03bcs average difference between h-main and h-ablation (2.5%) is well within the per-seed standard deviation of 1-4\u03bcs. Since a=87389 < p=131071, the a%p operation is a no-op at the integer level (just a comparison), and Python's three-arg pow handles unreduced inputs internally anyway. The simpler form (without a%p) is preferable for code clarity with no performance penalty.",
+      "metadata": {
+        "speedup": 3968,
+        "treatment_mean_measured": 1.8727e-05,
+        "campaign_baseline_mean": 0.0743,
+        "treatment_runs": [
+          2.0277e-05,
+          1.5963e-05,
+          1.994e-05
+        ],
+        "tests_passed": 38,
+        "tests_failed": 0,
+        "h_main_vs_ablation_diff_us": 0.46,
+        "h_main_vs_ablation_diff_pct": 2.5
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main reproduces the iter-1 result (speedup ~4,068x vs campaign baseline, consistent with iter-1's 3,906x within normal noise). h-ablation confirms the a%p pre-reduction contributes no measurable overhead \u2014 the 2.5% difference is within measurement noise. Both variants pass all 38 covering tests. The dominant component is the three-arg pow transformation; the a%p pre-reduction is irrelevant.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

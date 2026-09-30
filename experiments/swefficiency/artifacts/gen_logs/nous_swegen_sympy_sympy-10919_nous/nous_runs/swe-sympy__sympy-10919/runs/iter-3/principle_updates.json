@@ -1,0 +1,44 @@
+[
+  {
+    "id": "RP-5",
+    "statement": "The Kloosterman sum symmetry D(j-h,j) = -D(h,j) combined with memoized Dedekind sums and math.cos for low precision yields 9.1x speedup for npartitions(10^6) over the original implementation, reducing mean runtime from 0.236s to 0.026s.",
+    "confidence": "high",
+    "regime": "HRR formula for npartitions(n) where n >= 10^4 (enough terms M for the optimization to dominate). The symmetry is exact for all j.",
+    "evidence": ["iteration-3-h-main"],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "Three independent optimizations compose multiplicatively: (1) Dedekind sum reciprocity replaces O(j) inner loop with O(log j) cached computation. (2) Kloosterman symmetry cos(arg_h) = cos(arg_{j-h}) halves cos evaluations from ~18000 to ~9000. (3) math.cos for prec<=53 diverts ~6500 of those to hardware float. (4) Direct cos_sin_basecase with integer range reduction bypasses mpf_cos dispatch overhead for high-precision terms.",
+    "applicability_bounds": "Applies to the HRR partition formula specifically. The symmetry is a mathematical identity; the math.cos shortcut requires dynamic precision reduction to bring prec below 53 for later HRR terms.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-6",
+    "statement": "The math.cos hardware float shortcut contributes a 1.8x speedup factor when combined with Kloosterman symmetry, measured as the ratio h-ablation/h-main = 0.047/0.026 = 1.81.",
+    "confidence": "high",
+    "regime": "npartitions(10^6) where dynamic precision reduction brings prec below 53 for approximately 70% of HRR terms (terms j >= ~10 of M=243).",
+    "evidence": ["iteration-3-h-main", "iteration-3-h-ablation"],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "The HRR series uses dynamic precision reduction (p = bitcount(abs(to_int(d))) + 50). For later terms where p drops below 53 bits, hardware math.cos (IEEE 754 double precision, ~1ns per call) replaces arbitrary-precision cos_sin_basecase Taylor series (~10us per call at p=50). With Kloosterman symmetry halving the total cos evaluations, the diverted fraction (prec<=53) constitutes about 70% of all cos calls, explaining the 1.8x factor.",
+    "applicability_bounds": "The 1.8x factor depends on the fraction of HRR terms with prec<=53, which grows with n. For much smaller n, fewer terms drop below 53 bits, so the math.cos contribution would be smaller.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-7",
+    "statement": "Integer-domain range reduction for cos (reduce (D-24hn) mod 24j, then quarter-period via divmod by 6j) avoids the overhead of mpf_cos mod_pi2 and mpf round-trip, enabling accumulation in fixed-point integers without intermediate mpf allocations.",
+    "confidence": "high",
+    "regime": "Any fixed-point trigonometric computation where the argument can be expressed as pi*r/(12*j) for integer r and j.",
+    "evidence": ["iteration-3-h-main", "iteration-3-h-ablation"],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "The HRR cos argument is pi*(D-24hn)/(12j). Since cos has period 2pi, reducing (D-24hn) mod (24j) in integer arithmetic gives r in [0, 24j). Divmod by 6j gives quadrant q in {0,1,2,3} and remainder r' in [0, 6j). The fixed-point angle pi_fp*r'/(12j) is in [0, pi/2) as required by cos_sin_basecase. This avoids: (1) from_man_exp to create an mpf, (2) mpf_cos_sin preamble, (3) mod_pi2 iterative loop for large arguments, (4) from_man_exp for the result.",
+    "applicability_bounds": "Requires the cos argument to be expressible as a rational multiple of pi with known denominator. General-purpose range reduction (mod_pi2) is still needed when the argument structure is not known algebraically.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "arm": "baseline",
+  "description": "iter-1 optimized code (no changes)",
+  "runs": [
+    {"run": 1, "mean": 0.02417, "std": 0.00354},
+    {"run": 2, "mean": 0.02444, "std": 0.00379},
+    {"run": 3, "mean": 0.02357, "std": 0.00331}
+  ],
+  "aggregate_mean": 0.0241,
+  "tests_pass": true
+}

@@ -1,0 +1,17 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Adding a scalar fast-path (isinstance guard against np.ndarray) to _check_hour_range will decrease workload_mean_runtime consistently across repeated measurements, because the workload calls the function with a plain int (15) and the current implementation pays ~50x unnecessary NumPy overhead per call.",
+      "observed": "Baseline means across 3 independent runs: 0.000161s, 0.000151s, 0.000152s (avg 0.000155s). Treatment means across 3 independent runs: 2.55e-06s, 2.41e-06s, 2.36e-06s (avg 2.44e-06s). Speedup ratio: ~63x, consistent across all runs. Official workload.py confirmed: baseline Mean=0.000139s -> treatment Mean=2.51e-06s (~55x speedup). Test suite: 764 passed, 45 skipped, 5 xfailed. 1 pre-existing failure (test_helioecliptic_induced_velocity — IERSStaleWarning from expired leap-second file; identical in baseline and treatment).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The scalar fast-path optimization delivered a larger speedup (~55-63x) than the predicted ~50x. The isinstance check + Python builtins are even cheaper relative to NumPy ufunc dispatch than the initial profiling suggested, likely because the timeit overhead is smaller at this scale. All test suites pass (the 1 failure is a pre-existing infrastructure issue unrelated to the change)."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The h-main prediction is confirmed with magnitude exceeding expectations (55-63x vs predicted ~50x). The direction (decrease in runtime) is consistent across all 3 independent baseline and treatment measurement runs, and confirmed by the official workload.py script. The mechanism is validated: NumPy ufunc dispatch overhead on scalar inputs is the dominant cost, and bypassing it with Python builtins eliminates that overhead completely.",
+  "dominant_component_pct": null
+}

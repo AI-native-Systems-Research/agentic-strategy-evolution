@@ -1,0 +1,9 @@
+{
+  "condition": "baseline",
+  "workload_mean_runtime": 1.277387605700642,
+  "workload_std_dev": 0.01980388958538676,
+  "test_pass_count": 1,
+  "test_total_count": 1,
+  "correctness_verified": true,
+  "notes": "Original unmodified partitions_.py with O(j^2) Dedekind sum and pure-Python mpf_cos"
+}

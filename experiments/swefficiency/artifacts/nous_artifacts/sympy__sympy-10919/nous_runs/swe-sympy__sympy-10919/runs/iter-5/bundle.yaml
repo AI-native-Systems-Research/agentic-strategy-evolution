@@ -1,0 +1,93 @@
+metadata:
+  iteration: 5
+  family: "hrr-mpf-cos-optimization"
+  research_question: "How can we further reduce npartitions(10^6) runtime beyond iter-4's 25.7x speedup, by optimizing the mpf_cos bottleneck in the high-precision path?"
+  complexity_tier: 2
+  tier_justification: "iter 5, single mechanism (mpf_cos overhead reduction) with ablation to isolate the largest component"
+
+arms:
+  - type: h-main
+    prediction: "Combining analytical q=2, angle pre-reduction mod 2*pi, and mpf_shift doubling will yield a speedup consistently above 29x over the 1.3901s reference baseline, improving on iter-4's 25.7x, because these three optimizations target the 1328 mpf_cos calls that dominate the remaining runtime."
+    mechanism: >
+      Profiling of iter-4 code shows mpf_cos consumes ~40% of hot-path time
+      (18ms out of ~45ms single-run). Three independent inefficiencies:
+      (1) The q=2 term computes cos(-n*pi) at 3728-bit precision via mpf_cos
+      (~3.4ms), when the result is exactly (-1)^n. Using the analytical value
+      eliminates this entirely. (2) All 1327 remaining mpf_cos calls pass
+      angles of magnitude ~10^6 radians. mpf_cos internally calls mod_pi2
+      (libelefun.py:1288) which performs expensive high-precision division to
+      reduce the angle mod pi/2. Pre-reducing g mod 2*pi in integer arithmetic
+      (g % (pi_fixed(p) << 1)) produces an angle in [0, 2*pi), making mod_pi2
+      trivial. Measured: 17.6ms -> 10.8ms (38% reduction). (3) The h/j-h
+      symmetry doubling uses two mpf_add calls per coprime h. mpf_shift(cos_val, 1)
+      replaces the first add with a tuple exponent increment (essentially free),
+      halving accumulation cost.
+    diagnostic: "If speedup is less than predicted: (a) check whether angle pre-reduction introduces rounding error that changes the final integer — verify bit-identical results; (b) profile to check if local variable caching alone accounts for most of the gain; (c) check whether fork overhead in the workload harness masks the cold-cache improvement."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: >
+          (1) Add mpf_shift, mpf_neg to the mpmath.libmp import line.
+          (2) Replace q=2 mpf path (lines 140-146) with analytical:
+              a = fone if n % 2 == 0 else mpf_neg(fone).
+          (3) In the q>=3 inner loop, add angle pre-reduction:
+              two_pi = pi << 1; g = g % two_pi before mpf_cos call.
+          (4) Replace the two mpf_add(a, cos_val, p) calls with
+              a = mpf_add(a, mpf_shift(cos_val, 1), p).
+          (5) Cache mpf_cos, mpf_add, mpf_mul, mpf_shift, from_man_exp,
+              pi_fixed, bitcount, to_int as local variables.
+          (6) Hoist q_sq = q*q and q_sq_qm1 = q_sq*(q-1) before h-loop.
+        rationale: >
+          Targets the dominant remaining bottleneck (mpf_cos at ~40% of time).
+          Analytical q=2 eliminates the single most expensive call. Angle
+          pre-reduction amortizes across all 1327 remaining calls. mpf_shift
+          is a minor but clean improvement. All three are orthogonal and stack.
+
+  - type: h-ablation
+    prediction: "Applying only the analytical q=2 fix (without angle pre-reduction or mpf_shift) will yield a speedup consistently above 27x but below h-main's speedup, confirming that the analytical q=2 is the largest single contributor but that angle pre-reduction provides substantial additional benefit."
+    mechanism: >
+      The q=2 term at p=3728 is the single most expensive mpf_cos call
+      (~3.4ms). Replacing it with the exact analytical value (-1)^n
+      eliminates this cost. However, the remaining 1327 mpf_cos calls
+      still pass large angles, so their mod_pi2 overhead (~7ms) remains.
+      This isolates the q=2 contribution (~3.4ms) from the angle
+      pre-reduction contribution (~7ms).
+    diagnostic: "If ablation speedup matches h-main, the angle pre-reduction and mpf_shift contribute negligible improvement."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: >
+          (1) Add mpf_neg to the mpmath.libmp import line.
+          (2) Replace the q=2 mpf path with a = fone if n % 2 == 0
+              else mpf_neg(fone). No other changes.
+        rationale: >
+          Isolates the analytical q=2 contribution from all other optimizations.
+
+# Arm selection rationale:
+# h-main tests the full optimization package (analytical q=2 + angle pre-reduction + mpf_shift + local caching).
+# h-ablation isolates the largest single optimization (analytical q=2) to quantify
+# the contribution of each component. Since the mechanisms are independent and
+# well-understood (no regime dependence), a negative control is unnecessary.
+# No dose-response: the optimizations are binary (on/off), not continuous.
+
+experiment_spec:
+  preflight_commands:
+    - "git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/patches/py311-compat.patch || true"
+  verified_parameters:
+    n: 1000000
+    baseline_mean_reference: 1.3901
+    workload_repetitions: 10
+  unlocked_parameters_audit:
+    - name: M
+      default_value: "max(6, int(0.24*n**0.5 + 4)) = 244"
+      justification: "Standard HRR convergence criterion; not a performance tunable."
+    - name: initial_prec
+      default_value: "int(pbits*1.1 + 100) = 4148"
+      justification: "Determined by n; provides sufficient precision for exact integer result."
+    - name: float_prec_threshold
+      default_value: 64
+      justification: "Float64 has 53-bit mantissa; threshold of 64 gives sufficient accuracy. Unchanged from iter-3."
+    - name: lru_cache_maxsize
+      default_value: "None (unbounded)"
+      justification: "For n=10^6, cache holds ~10230 entries. Memory overhead negligible (<1MB)."
+    - name: precision_margin
+      default_value: "bitcount(|d|) + 50"
+      justification: "The +50 margin provides 50 bits of guard precision. Sufficient for exact integer rounding; reducing it was considered but deemed risky without formal error analysis."

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "In diop_DN's general-case branch (D>0, non-square, |N|>1), the length(z, abs(m), D) call at line 1181 is loop-invariant and dominates runtime when called inside the inner PQa iteration loop. Hoisting it before the loop reduces calls from O(sum_of_period_lengths) to O(num_z_values), yielding a 44x measured speedup (42.7s to 0.97s) for the tested workload (D=15591784605, N=-20), or 59x vs campaign baseline.",
+    "confidence": "high",
+    "regime": "diop_DN with large D (not a perfect square), |N| > 1, and moderate number of divisor-square factors. The speedup magnitude scales with the sum of continued-fraction period lengths across (z, m) pairs.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "length() delegates to continued_fraction_periodic() which uses symbolic sqrt(D), making each call ~0.335s for large D. Inside the inner loop it is called on every iteration j, but its arguments (z, abs(m), D) are outer-loop variables. Hoisting moves the computation from O(sum_periods) to O(num_z_values). For D=15591784605, there are 3 (z,m) pairs with period lengths summing to ~231, so 228 redundant calls are eliminated.",
+    "applicability_bounds": "Applies whenever diop_DN reaches the general case (line 1135). The absolute time saved depends on period lengths and D magnitude. For small D or |N|=1, a different code path is taken and this optimization is irrelevant.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

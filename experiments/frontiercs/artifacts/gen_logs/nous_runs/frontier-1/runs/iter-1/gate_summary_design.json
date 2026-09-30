@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a branch-and-bound solver with Lagrangian LP relaxation can achieve near-optimal solutions (score \u2265 95/100) for a 2D bounded knapsack problem with only 12 item types, compared to a simple greedy baseline. The problem has mass (20 kg) and volume (25 L) constraints with 12 item categories of varying quantities, and scoring is based on how much better we do than an NSA baseline heuristic relative to a computed optimum.",
+  "key_points": [
+    "h-main: Full solver combining multiple greedy heuristics (21 density metrics), hill-climbing local search (add/swap/remove-refill), and depth-12 branch-and-bound with Lagrangian relaxation (relax volume constraint, ternary search over dual variable). Predicted score \u2265 95/100.",
+    "h-control-negative: Simple greedy by value/(mass+volume) density with no backtracking or local search. Expected to score measurably lower than h-main, confirming that optimization beyond greedy matters for the 2D constraint structure.",
+    "Confirmation criteria: h-main scores \u2265 95 AND h-main scores meaningfully higher than h-control-negative. Refutation: if both score similarly (greedy is already near-optimal) or if h-main scores < 95 (B&B bounds too loose or TLE). Diagnostic checks include verifying JSON format correctness, per-case timing under 1 second, and Lagrangian convergence.",
+    "Key design choices: 12-type depth makes exhaustive B&B feasible; Lagrangian relaxation converts 2D knapsack to 1D at each node; tight bounds used for first 8 of 12 tree levels with cheaper min-of-two-1D bounds deeper; 20 ternary search iterations for dual variable precision.",
+    "Risk factors: Docker environment overhead could cause TLE on some cases; JSON parsing edge cases; the NSA baseline might already be quite strong, compressing the scoring range. The 1-second time limit is tight but should be adequate given only 12 branching levels."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

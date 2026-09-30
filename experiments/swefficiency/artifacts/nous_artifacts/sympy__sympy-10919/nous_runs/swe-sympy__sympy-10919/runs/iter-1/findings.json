@@ -1,0 +1,35 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The optimized _a function will reduce npartitions(10^6) wall-clock time consistently across all 10 workload repetitions, yielding speedup > 1.5x relative to the 1.3901s reference baseline, because the inner k-loop performs fewer and cheaper big-integer operations per iteration.",
+      "observed": "Baseline mean: 1.0167s (std 0.0351), Treatment mean: 0.4509s (std 0.0170). Machine speedup: 2.25x. Reference speedup (1.3901/0.4509): 3.08x. All 10 repetitions showed consistent improvement. Tests: 1 passed for both baseline and treatment. Results are bit-identical (SHA256 of npartitions(10^6): 0221606b29163a15371e08e5df2ded103e5fad0379234ef8394b7ca8dcd7bc83).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Speedup exceeds the predicted >1.5x threshold at 3.08x vs reference. The frac_table precomputation, math.gcd replacement, and loop-invariant hoisting all contribute. The optimization eliminates ~2.9M big-int division+bitmask operations and replaces them with table lookups, as theorized.",
+      "metadata": {
+        "baseline_mean": 1.0166732404963112,
+        "baseline_std": 0.035100676079411704,
+        "treatment_mean": 0.4509243443972082,
+        "treatment_std": 0.017010906743249364,
+        "reference_baseline": 1.3901,
+        "speedup": 3.08,
+        "machine_speedup": 2.25,
+        "tests_passed_baseline": true,
+        "tests_passed_treatment": true,
+        "results_identical": true
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The h-main prediction of speedup > 1.5x is confirmed at 3.08x (vs reference baseline). The magnitude exceeded prediction \u2014 the designer estimated ~2.8x but we observed 3.08x, likely due to run-to-run variance and machine load differences. The directional effect is unambiguous: treatment is consistently and substantially faster across all 10 repetitions, with non-overlapping confidence intervals (baseline 1.017 +/- 0.035 vs treatment 0.451 +/- 0.017).",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "sympy/core/basic.py",
+    "sympy/core/function.py",
+    "sympy/ntheory/egyptian_fraction.py",
+    "sympy/plotting/plot.py"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "The single-line fix replacing two-argument pow with three-argument pow in `_legendre()` is decisively confirmed across two iterations, delivering a ~4,068x speedup (from 69.4ms to 18.3\u03bcs) with all 38 tests passing. An ablation removing the `a%p` pre-reduction shows identical performance within noise, confirming the three-arg pow is the sole meaningful optimization. The problem is fully characterized with no remaining unknowns.",
+  "key_points": [
+    "CONFIRMED (iter-1 + iter-2): Changing `pow(a%p, (p-1)//2) % p` to `pow(a%p, (p-1)//2, p)` at crypto.py:2075 yields ~4,068x speedup (campaign baseline 0.0743s / treatment 18.3\u03bcs). The mechanism is avoiding construction of a ~1.1M-bit intermediate integer.",
+    "CONFIRMED ablation: Removing the `a%p` pre-reduction (using just `pow(a, (p-1)//2, p)`) produces statistically indistinguishable performance (18.7\u03bcs vs 18.3\u03bcs, 2.5% difference within noise). Either form is correct and fast.",
+    "All 38 covering tests pass for both variants. No other pow() calls in the workload path use the two-arg anti-pattern \u2014 all others already use three-arg form.",
+    "The optimization is fully characterized. The remaining ~18\u03bcs is dominated by workload harness overhead (~16\u03bcs) plus the optimized pow call (~3\u03bcs). No further code-level improvements are possible for this workload.",
+    "RECOMMENDATION: This campaign is complete. Apply the one-line fix (either variant) and close. No further iterations are needed \u2014 there is nothing left to investigate."
+  ]
+}

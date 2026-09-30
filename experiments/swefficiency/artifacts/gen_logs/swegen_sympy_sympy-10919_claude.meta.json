@@ -1,0 +1,10 @@
+{
+  "instance_id": "sympy__sympy-10919",
+  "agent": "claude",
+  "label": "claude",
+  "model": "claude-opus-4-6",
+  "baseline_out": "Mean: 1.2412594612018437\nStd Dev: 0.022618574320368092\n",
+  "agent_seconds": 1123.1,
+  "agent_rc": 0,
+  "patch_bytes": 2029
+}

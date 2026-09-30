@@ -1,0 +1,12 @@
+{
+  "instance_id": "sympy__sympy-14772",
+  "label": "claude",
+  "model": "claude-opus-4-6",
+  "pkg": "sympy",
+  "mode": "native",
+  "cpuset": "4-5",
+  "base_mean": 0.07041186219867086,
+  "claude_seconds": 58.9,
+  "claude_rc": 0,
+  "patch_bytes": 373
+}

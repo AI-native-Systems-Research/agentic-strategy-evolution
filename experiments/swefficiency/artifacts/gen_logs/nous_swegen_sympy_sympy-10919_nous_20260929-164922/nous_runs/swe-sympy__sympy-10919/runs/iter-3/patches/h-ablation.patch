@@ -1,0 +1,214 @@
+diff --git a/sympy/ntheory/partitions_.py b/sympy/ntheory/partitions_.py
+index 3e029014b..32bc7da61 100644
+--- a/sympy/ntheory/partitions_.py
++++ b/sympy/ntheory/partitions_.py
+@@ -1,39 +1,56 @@
+ from __future__ import print_function, division
+ 
++import math
++from functools import lru_cache
++import gmpy2
+ from mpmath.libmp import (fzero,
+     from_man_exp, from_int, from_rational,
+     fone, fhalf, bitcount, to_int, to_str, mpf_mul, mpf_div, mpf_sub,
+     mpf_add, mpf_sqrt, mpf_pi, mpf_cosh_sinh, pi_fixed, mpf_cos)
+-from sympy.core.numbers import igcd
+-import math
++from mpmath.libmp.libmpf import round_fast as rnd
+ from sympy.core.compatibility import range
+ 
+ 
+-def _a(n, j, prec):
+-    """Compute the inner sum in the HRR formula."""
+-    if j == 1:
+-        return fone
+-    s = fzero
+-    pi = pi_fixed(prec)
+-    for h in range(1, j):
+-        if igcd(h, j) != 1:
+-            continue
+-        # & with mask to compute fractional part of fixed-point number
+-        one = 1 << prec
+-        onemask = one - 1
+-        half = one >> 1
+-        g = 0
+-        if j >= 3:
+-            for k in range(1, j):
+-                t = h*k*one//j
+-                if t > 0:
+-                    frac = t & onemask
+-                else:
+-                    frac = -((-t) & onemask)
+-                g += k*(frac - half)
+-        g = ((g - 2*h*n*one)*pi//j) >> prec
+-        s = mpf_add(s, mpf_cos(from_man_exp(g, -prec), prec), prec)
+-    return s
++@lru_cache(maxsize=None)
++def _d_dedekind(h, k):
++    """Compute D(h,k) = 12*k*s(h,k) where s is the Dedekind sum.
++    Uses reciprocity for O(log k) instead of O(k)."""
++    if k <= 2:
++        return 0
++    h = h % k
++    if h == 0:
++        return 0
++    if h == 1:
++        return (k - 1) * (k - 2)
++    return (h*h + k*k + 1 - 3*h*k - k*_d_dedekind(k % h, h)) // h
++
++
++_coprime_cache = {}
++
++def _precompute_coprimes(M):
++    """Precompute coprime h values and their Dedekind sums for j=2..M-1.
++    
++    Returns dict: j -> (paired_items, unpaired_item_or_None)
++    paired_items: [(h, D), ...] for h=1..(j-1)//2 — these get doubled
++    unpaired: (h, D) or None for the self-pairing term (j=2 only)
++    """
++    key = M
++    if key in _coprime_cache:
++        return _coprime_cache[key]
++    data = {}
++    for j in range(2, M):
++        half_j = (j - 1) // 2
++        paired = []
++        for h in range(1, half_j + 1):
++            if math.gcd(h, j) != 1:
++                continue
++            paired.append((h, _d_dedekind(h, j)))
++        if j == 2:
++            data[j] = ([], (1, _d_dedekind(1, 2)))
++        else:
++            data[j] = (paired, None)
++    _coprime_cache[key] = data
++    return data
+ 
+ 
+ def _d(n, j, prec, sq23pi, sqrt8):
+@@ -76,22 +93,115 @@ def npartitions(n, verbose=False):
+     if n <= 5:
+         return [1, 1, 2, 3, 5, 7][n]
+     # Estimate number of bits in p(n). This formula could be tidied
+-    pbits = int((math.pi*(2*n/3.)**0.5 - math.log(4*n))/math.log(10) + 1) * \
+-        math.log(10, 2)
++    pbits = int((math.pi*(2*n/3.)**0.5 - math.log(4*n))/math.log(10) + 1) *         math.log(10, 2)
+     prec = p = int(pbits*1.1 + 100)
+     s = fzero
+     M = max(6, int(0.24*n**0.5 + 4))
++
++    # mpmath constants for high-precision _d (prec > 1000)
+     sq23pi = mpf_mul(mpf_sqrt(from_rational(2, 3, p), p), mpf_pi(p), p)
+     sqrt8 = mpf_sqrt(from_int(8), p)
++
++    # gmpy2 constants for low-precision _d (prec <= 1000)
++    _guard = 50
++    gmpy2.get_context().precision = p + _guard
++    _gpi = gmpy2.const_pi()
++    _gsq23pi = gmpy2.sqrt(gmpy2.mpfr(2) / gmpy2.mpfr(3)) * _gpi
++    _gsqrt8 = gmpy2.sqrt(gmpy2.mpfr(8))
++    _gb = gmpy2.mpfr(n) - gmpy2.mpfr(1) / gmpy2.mpfr(24)
++
++    # Precompute coprime data
++    coprime_data = _precompute_coprimes(M)
++
++    # --- h-ablation optimizations: local refs, inlined _a/_d, precomputed constants ---
++    # Local attribute caching (avoid module-level dict lookups in hot loop)
++    _math_cos = math.cos
++    _math_pi = math.pi
++    _gmpy2_cos = gmpy2.cos
++    _gmpy2_cosh = gmpy2.cosh
++    _gmpy2_sinh = gmpy2.sinh
++    _gmpy2_sqrt = gmpy2.sqrt
++    _gmpy2_mpfr = gmpy2.mpfr
++    _mpf_add = mpf_add
++    _mpf_mul = mpf_mul
++    _from_man_exp = from_man_exp
++    _to_int = to_int
++    _bitcount = bitcount
++
++    # Precompute _d constant: sqrt(_gb) (avoids recomputation per iteration)
++    _gc = _gmpy2_sqrt(_gb)
++    # Precompute _d denominator base: _gsqrt8 * _gb * _gpi
++    _d_base_denom = _gsqrt8 * _gb * _gpi
++
+     for q in range(1, M):
+-        a = _a(n, q, p)
+-        d = _d(n, q, p, sq23pi, sqrt8)
+-        s = mpf_add(s, mpf_mul(a, d), prec)
++        # === Inlined _a(n, q, p, coprime_data) ===
++        if q == 1:
++            a = fone
++        else:
++            paired, unpaired = coprime_data[q]
++
++            if p <= 53:
++                # Float path: hardware cos with precomputed coprime data
++                cos_sum = 0.0
++                # Precomputed factor: pi / (12*q) instead of dividing each time
++                factor = _math_pi / (12.0 * q)
++                neg24n = -24.0 * n
++                for h, D in paired:
++                    cos_sum += _math_cos(factor * (D + neg24n * h))
++                cos_sum *= 2
++                if unpaired is not None:
++                    h, D = unpaired
++                    cos_sum += _math_cos(factor * (D + neg24n * h))
++                if cos_sum == 0.0:
++                    a = fzero
++                else:
++                    a = _from_man_exp(int(cos_sum * (1 << p)), -p, p, rnd)
++            else:
++                # gmpy2 MPFR path with precomputed coprime data
++                wp = p + 10
++                ctx = gmpy2.get_context()
++                ctx.precision = wp
++                pi_val = gmpy2.const_pi()
++                cos_sum = _gmpy2_mpfr(0)
++                # Precomputed factor: pi / (12*q) instead of dividing each time
++                factor = pi_val / (12 * q)
++                neg24n = -24 * n
++                for h, D in paired:
++                    cos_sum += _gmpy2_cos(factor * (D + neg24n * h))
++                cos_sum *= 2
++                if unpaired is not None:
++                    h, D = unpaired
++                    cos_sum += _gmpy2_cos(factor * (D + neg24n * h))
++                # as_mantissa_exp conversion (avoids temporary mpfr(1 << wp))
++                m, e = cos_sum.as_mantissa_exp()
++                a = _from_man_exp(int(m), int(e), p, rnd)
++
++        # === Inlined _d(n, q, p) ===
++        if p <= 1000:
++            # gmpy2 _d: C-level MPFR is ~2x faster than mpmath at low precision
++            wp = p + _guard
++            ctx = gmpy2.get_context()
++            ctx.precision = wp
++            j_mpfr = _gmpy2_mpfr(q)
++            a_d = _gsq23pi / j_mpfr
++            ac = a_d * _gc
++            ch_d = _gmpy2_cosh(ac)
++            sh_d = _gmpy2_sinh(ac)
++            D_d = _gmpy2_sqrt(j_mpfr) / _d_base_denom
++            E_d = a_d * ch_d - sh_d / _gc
++            result_d = D_d * E_d
++            # as_mantissa_exp conversion
++            m, e = result_d.as_mantissa_exp()
++            d = _from_man_exp(int(m), int(e), p, rnd)
++        else:
++            # High precision: mpmath is faster at >1000 bits
++            d = _d(n, q, p, sq23pi, sqrt8)
++
++        s = _mpf_add(s, _mpf_mul(a, d), prec)
+         if verbose:
+             print("step", q, "of", M, to_str(a, 10), to_str(d, 10))
+-        # On average, the terms decrease rapidly in magnitude. Dynamically
+-        # reducing the precision greatly improves performance.
+-        p = bitcount(abs(to_int(d))) + 50
+-    return int(to_int(mpf_add(s, fhalf, prec)))
++        # Dynamically reducing the precision greatly improves performance.
++        p = _bitcount(abs(_to_int(d))) + 50
++    return int(_to_int(_mpf_add(s, fhalf, prec)))
+ 
+-__all__ = ['npartitions']
++__all__ = [npartitions]

@@ -1,0 +1,60 @@
+{
+  "iteration": 4,
+  "bundle_ref": "runs/iter-4/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Replacing sympy's divisors(), sqrt_mod(), and divisible() with pure-integer implementations, converting to Python int at branch entry, and caching diop_DN(D,-1) will reduce the workload harness mean from iter-3's ~0.82ms to ~0.31ms (a ~2.65x incremental speedup), yielding a total campaign speedup of ~185,000x over the 57.3288s baseline.",
+      "observed": "Treatment harness mean: 0.000301s (3 seeds: 0.000311, 0.000305, 0.000288). Iter-3 harness mean (same session): 0.000808s. Incremental speedup (harness): 2.68x (predicted 2.65x). Campaign speedup (harness): 190,335x (predicted ~185,000x). Direct timing mean: 0.1198ms (3 seeds \u00d7 500 calls: 0.1233, 0.1173, 0.1189ms). Iter-3 direct mean (same session): 0.1719ms. Incremental speedup (direct): 1.43x. Campaign speedup (direct): 478,538x. Baseline harness mean (same session): 42.577s (3 seeds: 43.043, 42.921, 41.767). All 41 covering tests pass (1 XFAIL: test_fail_holzer). Solutions identical: 3 tuples, all satisfy x\u00b2 - D\u00b7y\u00b2 = -20.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The prediction is CONFIRMED on both harness and direct timing. Harness mean (0.301ms) closely matches predicted ~0.31ms. Campaign speedup (190,335x harness, 478,538x direct) exceeds predicted ~185,000x. Incremental speedup over iter-3 is 2.68x (harness) vs predicted 2.65x. The harness speedup (2.68x) exceeds the direct warm speedup (1.43x) because: (1) the harness forks each measurement, so cold-start sympy module import costs for divisors/factorint/sqrt_mod are eliminated per-fork; (2) the int() conversion at branch entry eliminates sympy Integer dispatch on all 234 PQa iterations. The mechanism is validated: pure-integer divisors (trial division), pure-integer sqrt_mod (brute-force for small moduli), and Python int conversion collectively remove sympy's number-theory utilities from the hot path. Function call count reduced from 387 to 249 per invocation (36% reduction). Correctness fully verified: all 41 tests pass, all 3 solution tuples are mathematically correct (x\u00b2 - D\u00b7y\u00b2 = N).",
+      "metadata": {
+        "speedup": 190335,
+        "treatment_harness_mean": 0.000301,
+        "treatment_harness_std": 1.2e-05,
+        "treatment_harness_runs": [
+          0.000311,
+          0.000305,
+          0.000288
+        ],
+        "treatment_direct_mean_ms": 0.1198,
+        "treatment_direct_std_ms": 0.0031,
+        "treatment_direct_runs_ms": [
+          0.1233,
+          0.1173,
+          0.1189
+        ],
+        "iter3_harness_mean": 0.000808,
+        "iter3_direct_mean_ms": 0.1719,
+        "iter3_direct_runs_ms": [
+          0.1684,
+          0.1747,
+          0.1728
+        ],
+        "incremental_speedup_harness": 2.68,
+        "incremental_speedup_direct": 1.43,
+        "campaign_speedup_harness": 190335,
+        "campaign_speedup_direct": 478538,
+        "campaign_baseline_mean": 57.3288,
+        "measured_baseline_mean": 42.577,
+        "measured_baseline_std": 0.704,
+        "baseline_harness_runs": [
+          43.043,
+          42.921,
+          41.767
+        ],
+        "tests_passed": 41,
+        "tests_xfail": 1,
+        "solutions_count": 3,
+        "results_identical": true,
+        "function_calls_before": 387,
+        "function_calls_after": 249
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The h-main prediction is CONFIRMED. The predicted direction (additional ~2.65x harness speedup from pure-integer utilities) matches the observed 2.68x harness speedup. The predicted harness mean (~0.31ms) matches the observed 0.301ms. The predicted campaign speedup (~185,000x) is exceeded at 190,335x (harness). The direct warm-call improvement (1.43x over iter-3) is smaller than the harness improvement (2.68x) because the workload harness forks processes for each measurement, amplifying cold-start savings from eliminating sympy utility imports. This is consistent with the designer's handoff observation that first-call cold-start overhead for sympy functions amplifies the benefit. All three sub-mechanisms are validated: (1) pure-integer divisors eliminates factorint/divisors call chain, (2) pure-integer sqrt_mod eliminates CRT-based modular arithmetic, (3) int() conversion at branch entry eliminates sympy Integer dispatch on 234 inner-loop iterations. Correctness is fully verified: 41 tests pass (1 XFAIL), solutions identical and mathematically verified.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

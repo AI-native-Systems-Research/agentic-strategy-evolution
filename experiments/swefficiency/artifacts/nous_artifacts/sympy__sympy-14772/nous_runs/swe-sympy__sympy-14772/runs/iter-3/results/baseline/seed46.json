@@ -1,0 +1,8 @@
+{
+  "seed": 46,
+  "arm": "baseline",
+  "exit_code": 0,
+  "mean_seconds": 0.06785789780260529,
+  "std_dev_seconds": 0.0015392072039853639,
+  "raw_stdout": "Mean: 0.06785789780260529\nStd Dev: 0.0015392072039853639"
+}

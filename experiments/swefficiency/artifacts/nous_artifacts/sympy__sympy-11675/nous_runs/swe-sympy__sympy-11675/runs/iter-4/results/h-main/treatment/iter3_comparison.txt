@@ -1,0 +1,7 @@
+/testbed/sympy/solvers/diophantine.py:3047: SyntaxWarning: "is" with a literal. Did you mean "=="?
+  if feasible is 1:  # it's prime and k == 2
+Seed 0: 0.1684ms per call
+Seed 1: 0.1747ms per call
+Seed 2: 0.1728ms per call
+Iter-3 mean: 0.1719ms
+Campaign speedup (direct): 333409x
