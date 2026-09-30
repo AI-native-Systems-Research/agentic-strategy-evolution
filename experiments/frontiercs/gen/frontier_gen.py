@@ -42,12 +42,14 @@ STRUGGLE_PROTOCOL = (
 # Motivated by observing a correct algorithm score ~0 purely because it printed one value per line
 # where a single space-separated line was required.
 OUTPUT_FORMAT_NOTE = (
-    "CRITICAL - OUTPUT FORMAT: Match the statement's Output section EXACTLY: the number of lines, the "
-    "separators (spaces vs newlines), and the token order. A correct algorithm scores near zero if the "
-    "format is even slightly off (for example printing one value per line when a single space-separated "
-    "line is required, or emitting extra or blank lines). Re-read the Output section and conform to it "
-    "precisely. If a solution scores far below what its logic should earn, suspect the output format "
-    "before changing the algorithm.\n"
+    "OUTPUT FORMAT: Match the statement's Output section EXACTLY: the number of lines, the separators "
+    "(spaces vs newlines), and the token order. A correct algorithm can score near zero purely from a "
+    "format mismatch (for example printing one value per line when a single space-separated line is "
+    "required, or emitting extra or blank lines). Re-read the Output section and conform to it precisely.\n"
+    "TIME BUDGET: Respect the per-test time limit stated in the problem. A solution that exceeds the "
+    "limit on a test case scores 0 for that case even if its answer is correct, so choose an algorithm "
+    "and parameters (iteration counts, restarts) that comfortably finish within the limit on the largest "
+    "inputs.\n"
 )
 
 
