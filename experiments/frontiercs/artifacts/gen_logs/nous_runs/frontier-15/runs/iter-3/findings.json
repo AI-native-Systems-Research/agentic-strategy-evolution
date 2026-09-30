@@ -1,0 +1,45 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The k=4 BFS-optimal endgame algorithm will achieve score 100 on all 10 test cases. Worst-case operations will be at most 2n-4 = 1996. Average operations will be approximately 1984.",
+      "observed": "SCORE: 100 on all 10 judge test cases. Per-case operation counts: 1984, 1985, 1985, 1986, 1987, 1987, 1987, 1989, 1990, 1993. Average: 1987.3. Maximum: 1993 (well under 2n-4=1996). All 10 cases produce correctly sorted output. Additionally validated on 200 random n=1000 permutations: min=1971, max=1993, avg=1983.5, 0 failures.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The k=4 endgame optimization works exactly as predicted. All 23 non-trivial endgame configurations are resolved in 2-4 operations. Score remains 100 (the clamped maximum). Average ops (1987.3) is slightly higher than iter-2's 1984.0 on the judge test cases but within expected variance; the 200-trial random average of 1983.5 closely matches iter-2's 1984.0. The worst-case guarantee improved from 2n-2 to 2n-4 (1998 to 1996 for n=1000), with observed max 1993 on judge test cases.",
+      "metadata": {
+        "score": 100,
+        "per_case_ops": [
+          1987,
+          1989,
+          1985,
+          1987,
+          1990,
+          1986,
+          1984,
+          1993,
+          1987,
+          1985
+        ],
+        "avg_ops": 1987.3,
+        "max_ops": 1993,
+        "min_ops": 1984,
+        "worst_case_bound": 1996,
+        "random_test_count": 200,
+        "random_test_failures": 0,
+        "random_test_avg_ops": 1983.5,
+        "random_test_max_ops": 1993,
+        "endgame_type": "k=4 BFS-optimal",
+        "algorithm": "circular_buffer_rotation_k4_endgame"
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Prediction confirmed. The k=4 endgame achieves score 100 with a tighter worst-case bound (2n-4 vs iter-2's 2n-2). The average ops (1987.3 on judge cases) is marginally higher than iter-2's 1984.0, likely due to test-case-specific variance rather than algorithmic regression \u2014 the 200-trial random average (1983.5) is comparable. The key contribution is the theoretical worst-case reduction, not the average-case improvement.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}

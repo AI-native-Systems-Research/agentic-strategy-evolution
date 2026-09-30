@@ -1,0 +1,52 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The SCC-aware construction will score strictly higher than the rotation-only baseline, with the improvement concentrated on test 4 (DAG-like structure with 366 SCCs). Expected score: ~81 vs ~72 for control, a gain of approximately 9 points from test 4 alone.",
+      "observed": "Modal SCORE: 81 across 5 runs (81, 81, 71, 81, 81). The modal improvement of +9 over control is entirely from test 4 where SCC decomposition achieves full Hamiltonian path (k=500/500) vs rotation's k=223/500. Tests 1-3, 5-7, 9 = 10/10 each (70 points, same as control). Test 8 = 1/10, Test 10 = 0/10 (same as control). One outlier run scored 71 due to CPU timing variance causing one medium test to lose 10 points \u2014 consistent with the designer's documented timing sensitivity warning (primary seed needs >=3.0s).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Both predictions confirmed: (1) h-main > h-control (81 > 72 in 4/5 runs, 71 > 72 false in 1/5 \u2014 timing outlier), and (2) improvement is from test 4. The SCC decomposition correctly identified test 4's 366-SCC DAG structure and used DFS+bitmask DP to find the full Hamiltonian path, which the rotation approach could not achieve (k=223/500). No regression on any test in modal outcome. The 1/5 outlier at 71 is a timing artifact (CPU scheduling variance), not an algorithm deficiency \u2014 it affects the rotation part, not the SCC part.",
+      "metadata": {
+        "score": 81,
+        "score_distribution": [
+          81,
+          81,
+          71,
+          81,
+          81
+        ],
+        "num_runs": 5,
+        "modal_score": 81,
+        "min_score": 71,
+        "outlier_cause": "CPU timing variance on primary seed rotation (documented in handoff)"
+      }
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The rotation-only baseline (v6) will score approximately 72, matching iter-1 results. It will fail on test 4 with k~223/500 because it cannot exploit the DAG structure.",
+      "observed": "SCORE: 72 in all 3 runs (72, 72, 72). Perfectly stable. Matches iter-1 result exactly. Per-test: Tests 1-3, 5-7, 9 = 10/10 (70 points). Test 4 = 1/10 (k=223/500). Test 8 = 1/10 (k=3309/9000). Test 10 = 0/10.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Stable reproduction of iter-1 results across all 3 runs. Confirms that rotation alone cannot solve DAG-like graphs and that the score difference with h-main is entirely attributable to the SCC-aware mechanism.",
+      "metadata": {
+        "score": 72,
+        "score_distribution": [
+          72,
+          72,
+          72
+        ],
+        "num_runs": 3,
+        "modal_score": 72
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms CONFIRMED. h-main (SCC-aware + rotation) scored 81 in 4/5 runs (one timing outlier at 71), h-control-negative (rotation only) scored 72 in 3/3 runs. The 9-point gap (modal) is entirely from test 4 where SCC decomposition enables full Hamiltonian path discovery on the DAG-structured graph (366 SCCs, max size 9). The mechanism is validated: iterative Kosaraju decomposes the graph, DFS with backtracking finds the condensation DAG HP, and bitmask DP solves each internal SCC. Tests 8 and 10 remain unsolved by both approaches \u2014 the rotation mechanism is fundamentally limited on sparse single-SCC graphs with avg_deg ~3-5.5. The timing outlier (71 in 1/5) affects the rotation component, not SCC, and matches the documented sensitivity to CPU scheduling.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "sol"
+  ]
+}

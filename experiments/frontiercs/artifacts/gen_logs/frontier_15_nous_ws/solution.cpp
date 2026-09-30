@@ -15,101 +15,119 @@ int main() {
     // Apply operation: [prefix x | middle | suffix y] -> [suffix | middle | prefix]
     auto apply = [&](int x, int y) {
         vector<int> q(n);
-        // suffix -> front
         for (int i = 0; i < y; i++) q[i] = p[n - y + i];
-        // middle stays
         int m = n - x - y;
         for (int i = 0; i < m; i++) q[y + i] = p[x + i];
-        // prefix -> end
         for (int i = 0; i < x; i++) q[n - x + i] = p[i];
         p = q;
         ops.emplace_back(x, y);
     };
 
-    auto is_sorted = [&]() {
+    auto is_sorted_fn = [&]() {
         for (int i = 0; i < n; i++) if (p[i] != i + 1) return false;
         return true;
     };
 
-    if (is_sorted()) {
+    if (is_sorted_fn()) {
         cout << 0 << "\n";
         return 0;
     }
 
     if (n == 3) {
-        // Only operation is (1,1): [a,b,c] -> [c,b,a]
         if (p[2] < p[0]) apply(1, 1);
         cout << ops.size() << "\n";
         for (auto& op : ops) cout << op.first << " " << op.second << "\n";
         return 0;
     }
 
-    // n >= 4
-
-    // Step 1: Place element 1 at position 0
+    // n >= 4: Place element 1 at position 0
     {
         int pos = -1;
         for (int i = 0; i < n; i++) if (p[i] == 1) { pos = i; break; }
-
         if (pos == 1) {
-            // Special: can't do apply(1, n-1) since x+y=n
-            // Two ops: move 1 to position n-1 then to position 0
-            apply(2, 1);  // [p[n-1], p[2..n-2], p[0], p[1]=1]
-            apply(1, 1);  // [1, p[2..n-2], p[0], p[n-1]]
+            apply(2, 1);
+            apply(1, 1);
         } else if (pos >= 2) {
-            // Single op: suffix starting at pos brings 1 to front
-            apply(1, n - pos);  // x=1, y=n-pos, x+y=n-pos+1 < n since pos >= 2
+            apply(1, n - pos);
         }
-        // pos == 0: already in place, do nothing
     }
 
-    // Step 2: For each element k+1 (targ), place it at position k (=cf)
-    // Invariant: p[0..cf-1] = [1, 2, ..., cf]
     int cf = 1;
 
-    for (int targ = 2; targ <= n - 2; targ++) {
-        // Find position of element targ
-        int j = -1;
-        for (int i = cf; i < n; i++) {
-            if (p[i] == targ) { j = i; break; }
-        }
+    if (n <= 5) {
+        // For small n, use iter-1 algorithm (main loop to n-2, 5-op endgame)
+        for (int targ = 2; targ <= n - 2; targ++) {
+            int j = -1;
+            for (int i = cf; i < n; i++) {
+                if (p[i] == targ) { j = i; break; }
+            }
+            if (j == cf) { cf++; continue; }
 
-        if (j == cf) {
-            // Already at the correct position
+            int l = n - cf;
+            int d = j - cf;
+            int d1, d2;
+            if (d >= 2) { d1 = 1; d2 = d - 1; }
+            else { d1 = 2; d2 = l - 1; }
+            apply(cf, l - d1);
+            apply(d2, cf);
             cf++;
-            continue;
         }
 
-        int l = n - cf;  // length of unfixed buffer
-        int d = j - cf;  // rotation amount needed (1 <= d <= l-1)
+        // 5-op endgame for last 2 elements
+        if (!is_sorted_fn()) {
+            apply(1, 1); apply(1, 2); apply(1, 1); apply(2, 1); apply(1, 1);
+        }
+    } else {
+        // n >= 6: main loop to n-4, then k=4 endgame
+        for (int targ = 2; targ <= n - 4; targ++) {
+            int j = -1;
+            for (int i = cf; i < n; i++) {
+                if (p[i] == targ) { j = i; break; }
+            }
+            if (j == cf) { cf++; continue; }
 
-        // Find d1, d2 with d1 + d2 ≡ d (mod l), both in [1, l-1]
-        int d1, d2;
-        if (d >= 2) {
-            d1 = 1;
-            d2 = d - 1;
-        } else {
-            // d == 1, l >= 3 (since targ <= n-2 means l >= 3)
-            d1 = 2;
-            d2 = l - 1;  // d1 + d2 = l + 1 ≡ 1 mod l
+            int l = n - cf;
+            int d = j - cf;
+            int d1, d2;
+            if (d >= 2) { d1 = 1; d2 = d - 1; }
+            else { d1 = 2; d2 = l - 1; }
+            apply(cf, l - d1);
+            apply(d2, cf);
+            cf++;
         }
 
-        // Op1: rotate buffer left by d1, sorted prefix goes to end
-        apply(cf, l - d1);
-        // Op2: rotate buffer left by d2, sorted prefix comes back to front
-        apply(d2, cf);
+        // k=4 endgame: handle last 4 elements with precomputed BFS-optimal sequences
+        if (!is_sorted_fn()) {
+            int a = p[n-4], b = p[n-3], c = p[n-2], d = p[n-1];
 
-        cf++;
-    }
-
-    // Step 3: Handle last 2 elements (positions n-2 and n-1)
-    if (!is_sorted()) {
-        // Must be [1, ..., n-2, n, n-1] — apply 5-op sequence to fix
-        apply(1, 1);
-        apply(1, 2);
-        apply(1, 1);
-        apply(2, 1);
-        apply(1, 1);
+            // 5 cases where a = n-3 (reduces to k=3 endgame patterns)
+            if      (a==n-3 && b==n-2 && c==n   && d==n-1) { apply(1,2); apply(1,n-2); apply(1,2); apply(2,2); }
+            else if (a==n-3 && b==n-1 && c==n-2 && d==n)   { apply(1,1); apply(1,2); apply(2,2); apply(2,1); }
+            else if (a==n-3 && b==n-1 && c==n   && d==n-2) { apply(n-3,2); apply(1,n-3); }
+            else if (a==n-3 && b==n   && c==n-2 && d==n-1) { apply(n-3,1); apply(2,n-3); }
+            else if (a==n-3 && b==n   && c==n-1 && d==n-2) { apply(1,1); apply(1,3); apply(1,n-2); }
+            // 6 cases where a = n-2
+            else if (a==n-2 && b==n-3 && c==n-1 && d==n)   { apply(1,2); apply(1,2); apply(2,2); apply(3,1); }
+            else if (a==n-2 && b==n-3 && c==n   && d==n-1) { apply(1,3); apply(3,2); apply(1,2); apply(1,n-2); }
+            else if (a==n-2 && b==n-1 && c==n-3 && d==n)   { apply(1,1); apply(1,2); apply(2,3); apply(3,1); }
+            else if (a==n-2 && b==n-1 && c==n   && d==n-3) { apply(n-4,2); apply(1,n-4); }
+            else if (a==n-2 && b==n   && c==n-3 && d==n-1) { apply(1,3); apply(3,2); apply(n-3,1); apply(2,n-4); }
+            else if (a==n-2 && b==n   && c==n-1 && d==n-3) { apply(1,1); apply(1,2); apply(n-3,2); apply(1,n-4); }
+            // 6 cases where a = n-1
+            else if (a==n-1 && b==n-3 && c==n-2 && d==n)   { apply(1,1); apply(1,3); apply(1,2); apply(2,n-3); }
+            else if (a==n-1 && b==n-3 && c==n   && d==n-2) { apply(1,2); apply(2,2); apply(1,3); apply(2,n-3); }
+            else if (a==n-1 && b==n-2 && c==n-3 && d==n)   { apply(n-4,3); apply(1,n-2); apply(1,n-2); }
+            else if (a==n-1 && b==n-2 && c==n   && d==n-3) { apply(1,3); apply(3,2); apply(n-3,2); apply(1,n-4); }
+            else if (a==n-1 && b==n   && c==n-3 && d==n-2) { apply(n-4,1); apply(3,n-4); }
+            else if (a==n-1 && b==n   && c==n-2 && d==n-3) { apply(n-3,1); apply(1,1); apply(2,n-3); }
+            // 6 cases where a = n
+            else if (a==n   && b==n-3 && c==n-2 && d==n-1) { apply(n-4,1); apply(2,n-4); }
+            else if (a==n   && b==n-3 && c==n-1 && d==n-2) { apply(1,1); apply(1,3); apply(1,2); apply(1,n-3); }
+            else if (a==n   && b==n-2 && c==n-3 && d==n-1) { apply(1,1); apply(1,2); apply(1,3); apply(1,n-3); }
+            else if (a==n   && b==n-2 && c==n-1 && d==n-3) { apply(n-3,1); apply(1,1); apply(1,n-3); }
+            else if (a==n   && b==n-1 && c==n-3 && d==n-2) { apply(1,2); apply(2,3); apply(1,n-2); }
+            else if (a==n   && b==n-1 && c==n-2 && d==n-3) { apply(n-4,2); apply(1,n-2); apply(1,n-2); }
+        }
     }
 
     cout << ops.size() << "\n";

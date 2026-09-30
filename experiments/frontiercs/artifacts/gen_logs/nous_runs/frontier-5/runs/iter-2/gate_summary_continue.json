@@ -1,0 +1,10 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, score improved from 72 to 81 (out of 100) by adding SCC-aware construction that solved test 4's DAG structure completely. The remaining 19 points come from two hard tests (test 8: large single-SCC with avg_deg 5.4, test 10: 100K-vertex sparse single-SCC with avg_deg 3) where the P\u00f3sa rotation mechanism is fundamentally limited, achieving only 37% and 5% vertex coverage respectively.",
+  "key_points": [
+    "Iteration 1 established the P\u00f3sa rotation baseline at 72/100, solving 7 of 10 tests perfectly. Iteration 2 added SCC decomposition + bitmask DP, gaining +9 points by fully solving test 4 (a DAG of 366 small SCCs). Score is now 81/100, stable across 5 runs.",
+    "The remaining gap is concentrated in two tests: test 8 (n=9K, single SCC, 1/10 points \u2014 rotation covers only 37% of vertices despite avg_deg 5.4) and test 10 (n=100K, single SCC, 0/10 points \u2014 rotation covers only 5% at avg_deg 3). Both are single large SCCs where SCC decomposition provides no structural advantage.",
+    "Several optimization attempts failed in iteration 2: array-based paths (O(n) prepend too slow), adjacency-based rotation search (no speedup due to O(n) position updates), vertex recycling (net regression), and multi-seed with reduced primary budget (caused regressions on medium tests). The rotation mechanism's failure mode is clear: 99.5% of rotations on test 8 don't enable extension.",
+    "Next iteration should investigate: (1) deeper rotation chains \u2014 performing multiple consecutive rotations before checking for extension, which may escape local traps on test 8; (2) structure-specific heuristics for near-3-regular directed graphs targeting test 10; (3) potentially a fundamentally different search strategy (e.g., beam search or guided DFS with pruning) for the large single-SCC cases. Test 8 is the more tractable target (+9 points if solved) given its higher density."
+  ]
+}

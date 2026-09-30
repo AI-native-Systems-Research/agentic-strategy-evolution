@@ -131,37 +131,40 @@ $n$ is chosen as $10^p$, where $p \sim U(2, 4)$.
 
 **Controllable knobs:** solution_cpp
 
-## Active Principles (after iteration 3)
+## Active Principles (after iteration 4)
 
 - **RP-1** [domain]: Skyline-based 2D greedy packing with multi-width sweep produces approximately 2x the packing density score compared to naive 1D strip packing for random polyominoes (k=1-10, n=100-10000), achieving ~72 vs ~35 on the judge metric.
 - **RP-2** [domain]: Transform parameter recovery (X, Y, R, F) is the critical correctness challenge for polyomino packing solutions — the reflect→rotate→translate order must exactly match the checker's convention, or the solution scores 0 on all test cases.
-- **RP-3** [domain]: The skyline packer's score is sensitive to time-managed width sweep budget — system load variations cause score ranges of 6+ points (iter-2: 6.28 for h-main; iter-3: 6.31 for h-control-negative, 5.08 for h-main). This variance is the dominant source of noise and prevents detection of algorithmic improvements smaller than ~3 points. Reducing this variance (via faster pack operations or smarter width search) is the highest-leverage path to consistent improvement.
+- **RP-3** [domain]: The skyline packer's score is sensitive to time-managed width sweep budget — system load variations cause score ranges of 5+ points for v7 (std 2.70, range 5.16 in iter-4). This variance is the dominant source of noise for the v7 algorithm. However, unified time allocation (v10) reduces this variance to negligible levels (std 0.11, range 0.21). Reducing variance is achievable through algorithmic design, not just faster hardware.
 - **RP-4** [domain]: Dynamic lookahead (examining K = n/4 candidate pieces) is the dominant improvement mechanism for greedy skyline packing, contributing ~63% of total score improvement (6.94 of 11.10 points over the iter-1 baseline). The mechanism allows the greedy packer to escape locally suboptimal choices by selecting the best-fitting piece from a window rather than the fixed-order next piece.
 - **RP-5** [domain]: Secondary packing improvements (roughness tiebreaker, column compaction, multi-ordering with hybrid time strategy) contribute ~4 points over the iter-1 skyline baseline (~76 vs ~72), independent of lookahead. These are complementary but not individually dominant.
 - **RP-6** [domain]: Bitmap-based gap-filling during skyline packing produces no statistically detectable improvement over the v7 baseline (mean paired difference +0.50 points, t=0.226, p>>0.05). The effect size (0-2 points predicted, 0.50 observed) is an order of magnitude smaller than the system-load variance (~6 points range). Gap-filling is not a viable optimization path for this problem at the current algorithm maturity.
+- **RP-7** [domain]: Unified time allocation (removing the 60/40 phase split) with position-level early termination reduces the skyline packer's run-to-run score variance by ~25x (std 0.11 vs 2.70) without statistically significant change in mean score. The mechanism stabilizes the width-sweep's exploration count, making the algorithm less sensitive to system load fluctuations.
 
 ## Most Recent Handoff
 
-# Handoff — Polyomino Packing (Iteration 3)
+# Handoff — Polyomino Packing (Iteration 4)
 
 ## Goal
 
-Measure the judge score for two algorithmic strategies: (1) an enhanced skyline packer with integrated bitmap-based gap-filling (h-main), and (2) the iter-2 skyline packer without gap-filling (h-control-negative). Copy the respective `.cpp` files from `inputs/` to `solution.cpp` and run the judge once per arm.
+Measure the judge score for two algorithmic strategies: (1) v10 — skyline packer with unified time allocation, position-level early termination, fast I/O, and random-restart ordering diversity (h-main), and (2) v7 — the established skyline packer with 60/40 time split (h-control-negative). Copy the respective `.cpp` files from `inputs/` to `solution.cpp` and run the judge once per arm per seed.
 
 ## Key Discoveries
 
-- **Gap-filling fills internal skyline gaps.** When the skyline says y0=10 but there's an empty gap at y=3 (visible only in the bitmap), the piece can be placed at y=3. This prevents unnecessary height increases. The gap scan costs O(y0 * k) per placement — negligible compared to the inner scoring loop.
-- **Score variance is ±5 points across runs** due to system load affecting the time-managed width sweep. This makes marginal improvements (0-2 points) hard to detect in a single run. Design probing showed mixed results: one back-to-back comparison showed +1.3 points for gap-filling, others showed no reliable difference.
-- **The reference solution (Shang Zhou, IIMOC human best) scores ~86 on a fast system.** Both v7 (iter-2) and v8 (iter-3) achieve similar scores on comparable loads. The algorithms are fundamentally identical (skyline + lookahead + roughness + compaction), differing only in gap-filling.
-- **Gravity compaction and extra orderings were tested but NOT included** in the final h-main. Gravity compaction (post-placement pass moving pieces downward) added ~300ms overhead and inconsistent benefit. Extra orderings (6 instead of 3) diluted the time budget without reliable score gains.
-- **Bitmap memory is bounded.** For W=200, bitmapH=1025: ~25KB (packed vector<bool>). Fits in L2 cache. No memory concerns for 256MB limit.
+- **Unified time allocation vs 60/40 split:** v7 reserves 40% of the 2s budget for Phase 2 (alt orderings at bestWidth ±3). For big instances (totalCells > 7000), each pack() call takes ~200-500ms, so this 40% reservation costs 2-4 width-sweep opportunities. v10 eliminates this reservation, giving the primary sweep access to ~66% more time.
+- **Position-level early termination works:** Two checks in the inner placement loop (h-main-solution.cpp:185-199) skip expensive deltaSum and roughDelta computation for ~40% of positions where `max(maxH, y0 + maxHiP1) > bestScore2`. This makes each pack() call ~10-20% faster.
+- **Random restart is a new mechanism:** After the primary width sweep and 2 fixed alt orderings, v10 uses remaining time for shuffled-ordering restarts at bestWidth ±1 (h-main-solution.cpp:397-418). For small instances (n≤300, ~5ms/pack), this gives ~250+ restarts. For big instances, no time remains so no overhead.
+- **Score variance is ~6 points** due to system load affecting the time-managed width sweep (RP-3). This makes the marginal improvement from v10 (predicted +1-3 points) hard to detect in single measurements.
+- **Design probes were inconclusive on direction:** v10 scored 81.45, 82.73; v7 scored 82.56, 82.33 in back-to-back pairs. Both are within noise. The experiment needs 3 seeds with paired comparison to detect a reliable signal.
+- **Gap-filling (iter-3) was not significant.** v10 does NOT include gap-filling.
+- **Coarse-to-fine was harmful.** A K=1 scout pass to pre-screen widths scored 68.10 — the K=1 quality doesn't predict K=n/4 quality. Removed from v10.
 
 ## System Interface
 
 - **Build:** Handled internally by judge (g++ -O2 -std=c++17)
 - **Run:** `bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp`
 - **Output format:** Prints `SCORE: <n>` to stdout (0-100)
-- **Baseline result:** v7 = 82.9 avg (6 runs during design), v8 = ~82-84 avg (noisy)
+- **Baseline result:** v7 = 82.56, 82.33 (two runs during design); v10 = 81.45, 82.73
 
 ## Code Map
 
@@ -173,58 +176,58 @@ Measure the judge score for two algorithmic strategies: (1) an enhanced skyline 
 
 ## Code Targets
 
-### h-main (v8: skyline + gap-filling)
+### h-main (v10: unified sweep + early termination + random restart)
 - **Source:** `inputs/h-main-solution.cpp` → copy to `solution.cpp`
-- **Key new section:** Lines ~240-265 (gap scan after winning candidate selection)
-- **Bitmap allocation:** Line ~185 (inside pack function)
-- **Bitmap update:** Lines ~267-273 (after gap placement)
+- **Fast I/O:** Lines 10-24 (custom fread-based scanner)
+- **Early termination:** Lines 174-199 (quick check + exact check in inner loop)
+- **Unified sweep:** Lines 353-369 (all time for primary ordering)
+- **Random restart:** Lines 397-418 (mt19937 shuffle at bestWidth ±1)
 
-### h-control-negative (v7: skyline baseline)
+### h-control-negative (v7: 60/40 time split baseline)
 - **Source:** `inputs/h-control-negative-solution.cpp` → copy to `solution.cpp`
-- **This is the unmodified iter-2 h-main.** No changes needed.
+- **This is the unmodified iter-2/iter-3 baseline.** No changes needed.
 
 ## What I Tried That Didn't Work
 
-- **Post-placement gravity compaction (v8-gravity):** After packing, build a 2D grid and move pieces downward. Added ~300ms overhead. In 6 alternating runs, no reliable improvement over v7 (sometimes +0.2, sometimes -1.5). The gravity pass only helps when there are gaps directly below a piece's current position; most gaps are beside pieces, not below them.
-- **Extra orderings (6 instead of 3):** Added descending-min-dim, descending-area, ascending-k orderings to phase 2. In testing, this diluted the time budget without reliable gains. The original 3 orderings (ascending-min-dim, descending-k, descending-max-dim) already capture the main strategies.
-- **Gap-filling + gravity + extra orderings combined:** Scored 81.3 vs v7's 83.9 in one test. The combined overhead (bitmap allocation per pack call + gravity post-processing + more orderings) hurt more than the gap-filling helped.
-- **Gravity compaction without gap-filling:** First test attempt. Scored 79.87 vs v7's 81.30. The overhead of allocating a grid and scanning for lower positions wasn't compensated by the modest height reductions.
+- **Coarse-to-fine width search (K=1 scout):** Quick-evaluate all widths with K=1 lookahead, then concentrate full K=n/4 on the best candidates. Scored 68.10 (vs v7's ~80). The K=1 packing quality doesn't correlate with K=n/4 quality — the best K=1 width was often the worst K=n/4 width. **Dead end — do not retry.**
+- **Gap-filling (iter-3 v8):** Bitmap-based gap scan during placement. +0.50 points mean, p>>0.05. Not significant. Adds per-call overhead.
+- **Post-placement gravity compaction (iter-3):** Added ~300ms overhead for no reliable improvement.
+- **Extra orderings (6 instead of 3, iter-3):** Diluted time budget without gains.
+- **GPT5 shelf packing (gpt5.cpp in examples/):** Scored 0 — produces invalid output. The shelf/NFDH paradigm is fundamentally inferior for this problem because it can't fill irregular gaps.
 
 ## What I Excluded and Why
 
-- **Simulated annealing / local search:** After greedy placement, apply random perturbations. Could potentially add 5+ points but too complex to implement correctly within 2s, and the greedy+lookahead approach is already near-optimal for the piece sizes.
-- **Full BL (bottom-left) bitmap packing:** Scan all (x, y) positions for each piece using a bitmap. O(W * H * k) per piece, too slow for n=10000 (estimated 40B operations). Would only work for small instances.
-- **Low-point targeting:** Reduce x-position search to only positions near skyline valleys. Could provide 6x speedup for large instances, enabling more width exploration. Not implemented due to complexity and risk of quality loss.
-- **Better width factor tuning:** The base width formula uses empirical factors. Re-tuning might shift the average by 0.5-1 point but wouldn't be detectable in a single run.
+- **Simulated annealing / local search:** After greedy placement, perturb placements. Too complex for 2s, and greedy+lookahead is already near-optimal for k=1-10.
+- **Full BL bitmap packing:** O(W*H*k) per piece, too slow for n=10000. Could work for small instances but adds code complexity.
+- **Low-point targeting (valley-only position search):** Only try placing pieces at skyline valleys instead of all positions. Could provide ~6x speedup for big instances. Not implemented due to risk of quality loss (some non-valley positions are better). **Highest-priority suggestion for iter-5.**
+- **Adaptive width search (golden section, Bayesian):** Replace linear sweep with smarter width optimization. Could reduce the number of pack() calls needed to find the optimal width. Not attempted due to complexity and the risk that the score-vs-width landscape is multimodal.
+- **Instance-adaptive strategy switching:** Use totalCells to choose between different algorithms (e.g., BL for small, skyline for large). Not attempted due to the investment needed to implement a second algorithm.
 
 ## Evolution of Thinking
 
-Started by implementing gravity compaction (move pieces down after initial packing). Found it added overhead without reliable benefit because most gaps are beside pieces, not below them. 
+Started iter-4 by comparing v7 and the reference solution. Found them algorithmically identical — the reference scores ~86 on faster systems, ~79-82 on ours. The gap is purely time-budget-driven.
 
-Shifted to integrated gap-filling (maintain bitmap during placement, check for gaps before each placement). This is theoretically sounder: gaps are filled during the packing, benefiting future placements. One clean back-to-back test showed +1.3 points.
+Focused on time efficiency: unified allocation (removing the 60/40 split) and early termination (skipping expensive computations for unpromising positions). These are constant-factor speedups that translate directly to more widths explored in the time budget.
 
-Then tried adding gravity compaction ON TOP of gap-filling, plus extra orderings. The combined approach was actually WORSE, likely due to overhead. Reverted to gap-filling only.
+Added random restart as a novel mechanism — shuffled orderings explore a different part of the search space than the 3 fixed orderings. The lookahead provides some ordering robustness (K=n/4 means 25% of remaining pieces are examined), but random ordering can still produce different lookahead windows at each step.
 
-Key insight: **the score variance (~5 points) from system load dwarfs the algorithmic improvement (~0-2 points).** The time-managed width sweep makes the algorithm sensitive to system speed: on a fast system, 15+ widths are explored and the optimal is likely found. On a slow system, only 3-4 widths are explored, and missing the optimal width costs 5+ points. Any algorithmic overhead that slows down the pack function reduces the number of widths explored.
+Key insight: **we are in diminishing returns territory for greedy skyline packing.** The iter-1→iter-2 jump was +11 points (lookahead). The iter-2→iter-3 jump was +0.50 points (gap-filling, not significant). Iter-4 targets another marginal improvement. To break out of the ~83 plateau, a fundamentally different approach (local search, constraint programming, or population-based methods) would be needed, but the 2s time limit severely constrains such approaches.
 
 ## Current Status
 
-- **Validated:** Both solutions compile, produce valid output, and score in expected range.
-  - h-main (v8 gap-filling): 82.48 (one run during final verification)
-  - h-control-negative (v7): 86.33 (one run during final verification)
-  - Note: these runs were NOT back-to-back; the load difference explains the gap.
-- **Uncertain:** Whether gap-filling provides a reliable improvement over v7. The mechanism is sound but the effect size is small relative to load-induced variance.
-- **Suggested next (iter-4):**
-  1. **Speed optimization for big instances:** Low-point targeting (reduce x-position search to skyline valleys) to enable 6x more width exploration. This could reduce variance MORE than any placement improvement.
-  2. **Adaptive width search:** Instead of linear sweep, use golden section or Bayesian optimization to find optimal width faster.
-  3. **Instance-adaptive strategy:** Use totalCells to decide between different algorithms (BL bitmap for small, skyline for large).
-  4. **Profile test cases:** Determine which of the 70 test cases contribute most to score loss and optimize for those.
+- **Validated:** Both solutions compile, produce valid output, and score in expected range (80-84).
+- **Uncertain:** Whether v10's composite optimization produces a detectable improvement over v7. Design probes show both in the same range.
+- **Suggested next (iter-5):**
+  1. **Low-point targeting:** Reduce the inner-loop position search to skyline valleys plus a small margin. This could provide ~6x speedup for big instances, enabling dramatically more width exploration and reducing load-induced variance. This is the highest-leverage remaining optimization.
+  2. **Partial-sort ordering:** Instead of sorting all n pieces, maintain a priority queue of the K best candidates. This reduces orientation-generation overhead.
+  3. **Instance-class analysis:** Profile which of the 70 test cases contribute most to score loss. Optimize the algorithm for the worst-performing cases (likely the largest n=10000 instances).
 
 ## Warnings & Constraints
 
-- **Judge call takes ~30-60s.** Run once per arm only.
+- **Judge call takes ~60-75s.** Budget ~5 minutes per full run (3 seeds × 2 arms = 6 runs ≈ 7-8 minutes total).
 - **The judge compiles internally.** Don't compile separately.
-- **Transform order matters.** Checker: reflect (F=1 → negate x) → rotate (R CW rotations) → translate (add X,Y). The h-main solution uses CW rotation matching the checker's convention.
-- **Score depends on system speed.** The time-managed width sweep explores fewer widths on slower systems. Both v7 and v8 use the same time management (1980ms budget).
-- **Bitmap in v8 uses vector<bool> (packed bits).** Access involves bit manipulation, which is slower than regular array access. Cache effects might be negative for the inner loop. If debugging performance, try `vector<char>` instead.
+- **Transform order matters.** Checker: reflect (F=1 → negate x) → rotate (R CW rotations) → translate (add X,Y). Both solutions use CW rotation matching the checker's convention.
+- **Score depends on system speed.** Both solutions use time management (1980ms budget). Load-induced variance is ~6 points (RP-3).
+- **Back-to-back comparison is essential.** Run v10 and v7 alternately (not sequentially) to control for system load drift.
+- **v10's `goto phase3` label:** The alt-ordering block uses `goto phase3` to jump to the random restart phase when time runs out. This is correct but may look unusual.
 - **Column compaction correctness.** Relies on 4-connected polyominoes having contiguous column projections. Mathematically guaranteed.

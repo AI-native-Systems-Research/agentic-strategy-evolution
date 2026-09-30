@@ -1,0 +1,73 @@
+metadata:
+  iteration: 4
+  bundle_ref: "runs/iter-4/bundle.yaml"
+  mode: real
+  design: "Paired comparison: 3 seeds, alternating v10/v7 to control for system load"
+
+setup:
+  - cmd: "# No build step needed — judge compiles solutions internally"
+    description: "No-op: judge handles compilation"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      # Seed 1 — run paired: v10 first, then v7, then v10, then v7, then v10, then v7
+      # Alternating within each seed pair to control for load drift
+      - name: "seed1-run1"
+        cmd: >
+          cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-main-solution.cpp solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp |
+          tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-main/seed1.txt &&
+          git checkout -- solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-main/seed1.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-main-solution.cpp"
+      - name: "seed2-run1"
+        cmd: >
+          cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-main-solution.cpp solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp |
+          tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-main/seed2.txt &&
+          git checkout -- solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-main/seed2.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-main-solution.cpp"
+      - name: "seed3-run1"
+        cmd: >
+          cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-main-solution.cpp solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp |
+          tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-main/seed3.txt &&
+          git checkout -- solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-main/seed3.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-main-solution.cpp"
+
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "seed1-run1"
+        cmd: >
+          cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-control-negative-solution.cpp solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp |
+          tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-control-negative/seed1.txt &&
+          git checkout -- solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-control-negative/seed1.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-control-negative-solution.cpp"
+      - name: "seed2-run1"
+        cmd: >
+          cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-control-negative-solution.cpp solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp |
+          tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-control-negative/seed2.txt &&
+          git checkout -- solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-control-negative/seed2.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-control-negative-solution.cpp"
+      - name: "seed3-run1"
+        cmd: >
+          cp /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-control-negative-solution.cpp solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp |
+          tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-control-negative/seed3.txt &&
+          git checkout -- solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/results/h-control-negative/seed3.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-4/inputs/h-control-negative-solution.cpp"
+

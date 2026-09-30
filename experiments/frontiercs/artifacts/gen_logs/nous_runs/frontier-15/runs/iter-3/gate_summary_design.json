@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether expanding the BFS-optimal endgame from 3 to 4 elements reduces worst-case operation count (from 2n-2 to 2n-4) while maintaining the perfect score of 100. This is iteration 3, building on two prior iterations that both achieved score 100 on all 10 test cases (n=1000).",
+  "key_points": [
+    "Single arm (h-main): Replace the k=3 endgame with a k=4 endgame that handles all 23 non-trivial permutations of the last 4 elements via a BFS-derived dispatch table, each resolved in \u22644 operations.",
+    "Prediction: Score 100 on all 10 test cases (same as iter-1 and iter-2), with worst-case operations reduced from 1998 to 1996 \u2014 a marginal improvement since the score metric clamps at 100.",
+    "Confirmation criteria: Score = 100 AND total operations \u2264 1996 on worst case. Refutation: any score < 100 or operations > 1996 would indicate a bug in the 23-case dispatch table.",
+    "Risk assessment: This iteration is low-risk optimization at the score ceiling. Both prior iterations already scored 100. The primary value is validating the BFS endgame extension technique and slightly tightening the operation bound.",
+    "Skipped arms (ablation, control, dose-response, robustness) are justified: prior iterations already proved the core mechanism essential, score is already at ceiling, and all test cases use n=1000 with no regime variation."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

@@ -1,0 +1,83 @@
+metadata:
+  iteration: 3
+  family: "prefix-suffix-sort"
+  research_question: "Can extending the BFS-optimal endgame from 3 to 4 elements reduce worst-case operations while maintaining score 100?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism (circular buffer rotation) + extended endgame optimization (k=4 vs k=3)"
+
+# Arms chosen:
+# - h-main: k=4 endgame extends iter-2's k=3 optimization. All 23 non-trivial
+#   configurations of the last 4 elements solved in ≤4 ops (same as k=3!),
+#   reducing worst-case from 2n-2 to 2n-4. Verified for n=6..1000.
+#
+# Skipped arms:
+# - h-ablation: iter-2 already confirmed Op2 is essential (score 0 without it).
+#   Re-testing would not produce new knowledge per RP-3.
+# - h-control-negative: Both iter-1 and iter-2 achieved score 100. A control
+#   scoring <100 would need a deliberately worse algorithm, which is redundant
+#   given the score ceiling analysis.
+# - h-dose-response: The natural dose variable (endgame size k) produces identical
+#   scores (100 for all k≥2), making dose-response uninformative for the objective.
+#   Operation count varies but isn't the scored metric.
+# - h-robustness: All 10 test cases have n=1000; no regime variation exists.
+
+arms:
+  - type: h-main
+    prediction: >
+      The k=4 BFS-optimal endgame algorithm will achieve score 100 on all 10 test
+      cases. Worst-case operations will be at most 2n-4 = 1996 (reduced from iter-2's
+      2n-2 = 1998). Average operations will be approximately 1984, a small improvement
+      over iter-2's 1984.0 due to cases where the 4th-to-last element is not in position.
+      The score ceiling (100) is confirmed unbreakable since the checker clamps the
+      ratio to [0,1].
+    mechanism: >
+      BFS exploration over the 24 permutations of the last 4 elements (using n-dependent
+      operation parameters) reveals that ALL 23 non-trivial configurations can be resolved
+      in at most 4 operations — the same maximum as the k=3 endgame. This means each
+      additional element included in the endgame "pays for itself": the 2 main-loop ops
+      saved by excluding one more element from the loop are always recovered by the
+      endgame staying within 4 ops. Key new patterns found: [n-2,n-1,n,n-3]→2ops via
+      (n-4,2),(1,n-4); [n-1,n,n-3,n-2]→2ops via (n-4,1),(3,n-4); [n,n-3,n-2,n-1]→2ops
+      via (n-4,1),(2,n-4). These use large-prefix swaps (x=n-4) that move the entire
+      sorted prefix to the end and back in 2 moves.
+    diagnostic: >
+      If score < 100: verify the 23-case dispatch covers all permutations of (n-3,n-2,
+      n-1,n). Check that the main loop terminates at targ=n-4 (not n-3 or n-2). Ensure
+      operations like (3,2) are valid for the test n (need n≥6; all test cases have n=1000).
+      If operations > 1996: identify the failing endgame configuration — the BFS analysis
+      proves max 4 ops, so the bug is in the dispatch table.
+    code_changes:
+      - file: "solution.cpp"
+        intent: >
+          Replace the entire solution with the k=4 endgame algorithm. Main loop processes
+          elements 2 through n-4 using the standard 2-op circular buffer rotation. Then a
+          23-case dispatch on the configuration (p[n-4], p[n-3], p[n-2], p[n-1]) applies
+          BFS-optimal operation sequences. Small n (≤5) falls back to iter-1 algorithm.
+          The complete implementation is pre-validated at
+          inputs/solution_k4endgame.cpp.
+        rationale: >
+          BFS analysis proves ≤4 ops for all k=4 endgame configurations (verified for
+          n=6..1000 with 0 errors). The optimization reduces worst case from 2n-2 to 2n-4,
+          further tightening the operation bound while maintaining score 100.
+
+experiment_spec:
+  preflight_commands:
+    - "cp inputs/solution_k4endgame.cpp solution.cpp"
+    - "g++ -O2 -std=c++17 -o solution solution.cpp"
+  verified_parameters:
+    n: 1000
+    num_test_cases: 10
+    time_limit_seconds: 1
+    max_operations: 4000
+    best_operations_benchmark: 2001
+    worst_case_k4_endgame: 1996
+  unlocked_parameters_audit:
+    - name: "compiler_optimization_level"
+      default_value: "-O2"
+      justification: "O2 is standard for competitive programming; O3 unlikely to change algorithmic op count"
+    - name: "cpp_standard"
+      default_value: "c++17"
+      justification: "Solution uses only basic STL; any C++11+ standard suffices"
+    - name: "endgame_size_k"
+      default_value: 4
+      justification: "k=4 proven optimal for this iteration; k=5 computation was intractable but k=4 already achieves the score ceiling"

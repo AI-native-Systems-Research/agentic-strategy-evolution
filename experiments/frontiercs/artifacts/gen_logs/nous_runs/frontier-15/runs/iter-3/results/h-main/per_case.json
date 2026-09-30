@@ -1,0 +1,22 @@
+{"test_cases": [
+  {"case": 1, "ops": 1987, "sorted": true}
+,
+  {"case": 2, "ops": 1989, "sorted": true}
+,
+  {"case": 3, "ops": 1985, "sorted": true}
+,
+  {"case": 4, "ops": 1987, "sorted": true}
+,
+  {"case": 5, "ops": 1990, "sorted": true}
+,
+  {"case": 6, "ops": 1986, "sorted": true}
+,
+  {"case": 7, "ops": 1984, "sorted": true}
+,
+  {"case": 8, "ops": 1993, "sorted": true}
+,
+  {"case": 9, "ops": 1987, "sorted": true}
+,
+  {"case": 10, "ops": 1985, "sorted": true}
+]
+}

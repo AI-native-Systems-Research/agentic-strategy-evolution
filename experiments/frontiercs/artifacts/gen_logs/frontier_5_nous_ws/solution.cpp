@@ -20,7 +20,8 @@ vector<int> globalBestPath;
 
 // ==================== v6-style rotation solver ====================
 // Returns path length achieved. Uses the given rng.
-int solveRotation(mt19937& rng, int startVertex, double tl){
+// greedyMode: 0=Warnsdorff (min remaining deg), 2=max remaining deg
+int solveRotation(mt19937& rng, int startVertex, double tl, int greedyMode=0){
     static vector<int> nxt, prv, dout;
     static vector<char> used;
     static bool inited=false;
@@ -42,9 +43,9 @@ int solveRotation(mt19937& rng, int startVertex, double tl){
     auto extF=[&]() -> bool {
         bool ext=false;
         while(true){
-            int bd=INT_MAX,cnt=0; int picks[16];
+            int bd=(greedyMode==2?-1:INT_MAX),cnt=0; int picks[16];
             for(int v:adj_g[tail]) if(!used[v]){
-                if(dout[v]<bd){bd=dout[v];cnt=0;picks[0]=v;cnt=1;}
+                if(greedyMode==2?(dout[v]>bd):(dout[v]<bd)){bd=dout[v];cnt=0;picks[0]=v;cnt=1;}
                 else if(dout[v]==bd&&cnt<16){picks[cnt++]=v;}
             }
             if(!cnt)break;
@@ -56,9 +57,9 @@ int solveRotation(mt19937& rng, int startVertex, double tl){
     auto extB=[&]() -> bool {
         bool ext=false;
         while(true){
-            int bd=INT_MAX,cnt=0; int picks[16];
+            int bd=(greedyMode==2?-1:INT_MAX),cnt=0; int picks[16];
             for(int u:radj_g[head]) if(!used[u]){
-                if(dout[u]<bd){bd=dout[u];cnt=0;picks[0]=u;cnt=1;}
+                if(greedyMode==2?(dout[u]>bd):(dout[u]<bd)){bd=dout[u];cnt=0;picks[0]=u;cnt=1;}
                 else if(dout[u]==bd&&cnt<16){picks[cnt++]=u;}
             }
             if(!cnt)break;
@@ -516,11 +517,12 @@ int main(){
         }
     }
 
-    // Run rotation solver with multi-phase strategy:
-    // Phase 1: Primary seed (42) gets v6-style budget to preserve known-good results
-    // Phase 2: Additional seeds share remaining time
+    // Run rotation solver with multi-phase strategy
+    // Phase 1: Primary seed (42) Warnsdorff — proven good for tests 1-7,9
+    // Phase 2: Additional Warnsdorff seeds
+    // Phase 3: Max-degree multi-restart — good for sparse graphs (test 8, 10)
     {
-        // Phase 1: Primary seed (same as v6)
+        // Phase 1: Primary seed (same as iter-2 — DO NOT CHANGE)
         mt19937 rng0(42);
         for(int s:starts){
             if(globalBest==N||elapsed()>1.5) break;
@@ -531,19 +533,12 @@ int main(){
             solveRotation(rng0, s, 3.0);
         }
 
-        // Phase 2: Additional seeds - each gets a fair time slice
-        for(int seedIdx=1; seedIdx<100 && globalBest<N && elapsed()<3.6; seedIdx++){
-            mt19937 rng_extra(seedIdx*137+17);
-            double tl = 3.6;
-            // For each seed, try a smart start and a random start
-            if(!starts.empty()){
-                int s = starts[rng_extra()%starts.size()];
-                solveRotation(rng_extra, s, tl);
-            }
-            if(globalBest<N && elapsed()<tl){
-                int s = (rng_extra()%N)+1;
-                solveRotation(rng_extra, s, tl);
-            }
+        // Phase 2: Max-degree multi-restart (uses all remaining time)
+        for(int attempt=0; globalBest<N && elapsed()<3.5; attempt++){
+            mt19937 rng_md(attempt * 137 + 7919);
+            double tl2 = min(elapsed() + 0.1, 3.5);
+            int s = (rng_md()%N)+1;
+            solveRotation(rng_md, s, tl2, 2);
         }
     }
 

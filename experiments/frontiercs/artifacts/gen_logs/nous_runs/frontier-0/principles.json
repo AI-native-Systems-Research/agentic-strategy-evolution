@@ -40,24 +40,25 @@
     },
     {
       "id": "RP-3",
-      "statement": "The skyline packer's score is sensitive to time-managed width sweep budget \u2014 system load variations cause score ranges of 6+ points (iter-2: 6.28 for h-main; iter-3: 6.31 for h-control-negative, 5.08 for h-main). This variance is the dominant source of noise and prevents detection of algorithmic improvements smaller than ~3 points. Reducing this variance (via faster pack operations or smarter width search) is the highest-leverage path to consistent improvement.",
+      "statement": "The skyline packer's score is sensitive to time-managed width sweep budget \u2014 system load variations cause score ranges of 5+ points for v7 (std 2.70, range 5.16 in iter-4). This variance is the dominant source of noise for the v7 algorithm. However, unified time allocation (v10) reduces this variance to negligible levels (std 0.11, range 0.21). Reducing variance is achievable through algorithmic design, not just faster hardware.",
       "confidence": "high",
-      "regime": "Skyline greedy packing with time-managed width sweep, 2s time limit, random polyominoes k=1-10, n=100-10000.",
+      "regime": "Skyline packing with lookahead (K=n/4), time-managed width sweep, 2s time limit, n=100-10000",
       "evidence": [
         "iteration-2-h-main",
-        "iteration-2-h-ablation",
         "iteration-3-h-main",
-        "iteration-3-h-control-negative"
+        "iteration-3-h-control-negative",
+        "iteration-4-h-main",
+        "iteration-4-h-control-negative"
       ],
       "contradicts": [],
-      "extraction_iteration": 3,
-      "mechanism": "The time-managed width sweep explores different numbers of widths depending on system speed. On a fast system, 15+ widths are explored and the optimal is likely found. On a slow system, only 3-4 widths are explored, and missing the optimal width costs 5+ points. Any algorithmic overhead that slows down the pack function reduces the number of widths explored, potentially hurting rather than helping.",
-      "applicability_bounds": "Applies under the 2s time limit with the current time management strategy. If the time budget were larger or the width search were adaptive (golden section, Bayesian), the variance would decrease.",
+      "extraction_iteration": 4,
+      "mechanism": "v7's 60/40 time split makes the width-sweep count a function of system load. v10's unified allocation with early termination makes pack() call duration more predictable, stabilizing the number of widths explored within the fixed time budget.",
+      "applicability_bounds": "The 5+ point variance applies specifically to v7's 60/40 split. The 0.21 point variance applies to v10's unified allocation. Other time-split ratios or non-time-managed algorithms may show different variance profiles.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
       "superseded_by": null,
       "category": "domain",
-      "status": "active",
-      "empirical_content": true,
-      "derivation_type": "empirical"
+      "status": "active"
     },
     {
       "id": "RP-4",
@@ -115,6 +116,25 @@
       "status": "active",
       "empirical_content": true,
       "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "Unified time allocation (removing the 60/40 phase split) with position-level early termination reduces the skyline packer's run-to-run score variance by ~25x (std 0.11 vs 2.70) without statistically significant change in mean score. The mechanism stabilizes the width-sweep's exploration count, making the algorithm less sensitive to system load fluctuations.",
+      "confidence": "high",
+      "regime": "Skyline packing with lookahead (K=n/4), time-managed width sweep, 2s time limit, n=100-10000",
+      "evidence": [
+        "iteration-4-h-main",
+        "iteration-4-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "v7's 60/40 split reserves 40% of the time budget for Phase 2 (alt orderings at bestWidth \u00b13). Under variable system load, Phase 1's width-sweep count fluctuates: fewer widths explored when load is high, more when low. This creates ~5 point score swings. v10 eliminates Phase 2's time reservation, giving the primary sweep a deterministic number of width evaluations (since early termination makes each pack() call more predictable in duration). The result is highly stable scores (82.6-82.8 range vs 79.9-85.1 for v7).",
+      "applicability_bounds": "Applies when time management is the primary source of variance. Does not apply to algorithms without time-managed width sweeps. The variance reduction trades potential upside (v7 can score 85+ on favorable runs) for reliability (v10 never drops below 82.6).",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
     }
   ]
 }

@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a composite optimization (unified time allocation removing the 60/40 phase split, position-level early termination, fast I/O, and random-restart ordering diversity) improves polyomino packing scores over the well-established v7 baseline. The v7 baseline has been measured at ~83 across three prior iterations, and the prediction is a marginal +1-3 point improvement from v10.",
+  "key_points": [
+    "Two arms: h-main (v10 with unified sweep + early termination + fast I/O + random restart) vs h-control-negative (v7 baseline, expected score 79-86, mean ~83).",
+    "The core mechanism: v7 reserves 40% of its 2s time budget for alternative orderings at fixed widths; v10 eliminates this reservation, giving the primary width sweep ~66% more time, while early termination makes each pack() call ~10-20% faster, enabling exploration of 1-3 additional widths.",
+    "Confirmation: v10 scores measurably higher than v7 in a paired comparison (predicted +1-3 points average). Refutation: v10 scores equal or lower, suggesting the 60/40 phase split's ordering diversity was more valuable than extra width-sweep coverage.",
+    "Known risk: the ~6-point noise floor (from system load variance, observed in iter-3) may mask a small improvement. Single-seed measurements per arm limit statistical power, but this is a cost-conscious tier-2 experiment.",
+    "Diagnostic plan if v10 underperforms: check whether the removed alt-ordering phase was critical for medium instances (n=300-1000), whether random restart adds overhead on small instances, or whether early termination has a correctness bug skipping valid positions."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

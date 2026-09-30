@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether decomposing the directed graph into Strongly Connected Components (SCCs) and solving each independently improves Hamiltonian path length versus a monolithic P\u00f3sa rotation approach. Iteration 1 scored ~72/100, and analysis suggests test 4 (a DAG-like graph with ~366 small SCCs) accounts for most lost points because rotation cannot respect topological ordering constraints. This experiment ablates the SCC-aware mechanism against the proven rotation baseline.",
+  "key_points": [
+    "Main arm (h-main): SCC-aware algorithm using iterative Kosaraju decomposition, DFS backtracking on the condensation DAG, bitmask DP for small SCCs (\u22649 nodes), with rotation fallback for large single-SCC graphs. Predicted score: ~81 (gain of ~9 points over baseline, primarily from test 4).",
+    "Control arm (h-control-negative): The validated v6 rotation-only algorithm (Warnsdorff greedy + directed P\u00f3sa rotation, seed 42). Predicted score: ~72, matching iteration 1 results, confirming that test 4 remains the failure mode.",
+    "Confirmation criteria: If h-main scores \u226578 and h-control scores \u226474, the SCC mechanism is validated. If both score similarly (~72), the SCC approach either fails to detect/exploit the DAG structure or the condensation DAG backtracking times out. Key diagnostic: check whether test 4 specifically improves (k=500 vs k\u2248223).",
+    "Risk factors: The condensation DAG for test 4 has 366 nodes \u2014 DFS with backtracking could time out if the DAG has high branching factor. Bitmask DP is safe (max 2^9 = 512 states per SCC). Memory usage is well within 512MB for n\u2264500K.",
+    "Design is clean for ablation: both arms share the same rotation parameters (seed 42, budget formula min(n*50, 2M), 30 smart starts) so any score difference isolates the SCC mechanism's contribution."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

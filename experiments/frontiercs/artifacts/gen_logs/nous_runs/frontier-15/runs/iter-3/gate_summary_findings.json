@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "The k=4 BFS-optimal endgame algorithm achieves a perfect score of 100 on all 10 judge test cases, confirmed across 200 additional random trials with zero failures. The approach sorts any permutation of length 1000 using at most 1993 operations (well within the 4n=4000 budget), with an average of ~1987 operations.",
+  "key_points": [
+    "CONFIRMED: Score is 100/100 on all 10 judge test cases, matching the prediction exactly.",
+    "Average operations: 1987.3 on judge cases, 1983.5 on 200 random n=1000 trials \u2014 both well under the 4n=4000 limit and close to the theoretical ~2n bound.",
+    "Worst-case observed: 1993 operations (judge cases), within the 2n-4=1996 guaranteed bound, improved from iter-2's 2n-2=1998 bound.",
+    "The marginal difference from iter-2's average (1984.0 vs 1987.3 on judge cases) is within normal variance \u2014 the 200-trial random average (1983.5) confirms no regression.",
+    "The algorithm is robust: 0 failures across 210 total test permutations, producing correctly sorted output every time. Score of 100 means we are at or tied with the best known solution for every test case."
+  ]
+}

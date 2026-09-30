@@ -10,6 +10,15 @@
       "arm_id": "h-main"
     },
     {
+      "candidate_id": "iter-3/h-main/0",
+      "score": 100.0,
+      "components": {
+        "score": 100.0
+      },
+      "iteration": 3,
+      "arm_id": "h-main"
+    },
+    {
       "candidate_id": "iter-1/h-main/0",
       "score": 0.0,
       "components": {
@@ -38,5 +47,5 @@
     }
   ],
   "k": 5,
-  "updated_at": "2026-09-30T14:33:01.106455+00:00"
+  "updated_at": "2026-09-30T15:33:32.664652+00:00"
 }

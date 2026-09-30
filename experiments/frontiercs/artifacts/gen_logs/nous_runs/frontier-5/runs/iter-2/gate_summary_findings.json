@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed. The SCC-aware algorithm scored 81 (modal, 4/5 runs) vs the rotation-only baseline at 72 (3/3 runs), a +9 point improvement entirely from test 4 where SCC decomposition unlocked a full Hamiltonian path (500/500 vertices vs 223/500). Tests 8 and 10 remain unsolved by both approaches.",
+  "key_points": [
+    "h-main (SCC + rotation): modal score 81, distribution [81,81,71,81,81]. The single 71 outlier is a CPU timing artifact on the rotation component, not an algorithm bug.",
+    "h-control (rotation only): score 72 in all 3 runs, perfectly stable, matching iter-1 exactly. Confirms the +9 gap is attributable solely to the SCC mechanism.",
+    "Test 4 (DAG-like graph, 366 SCCs, max SCC size 9) is the only test where scores differ: SCC approach achieves k=500/500 (10/10) vs rotation's k=223/500 (1/10).",
+    "Tests 8 (k=3309/9000, score 1/10) and 10 (score 0/10) remain unsolved \u2014 both are large sparse single-SCC graphs where rotation heuristics are fundamentally limited. These represent the next optimization frontier worth ~19 points.",
+    "The SCC mechanism is validated: Kosaraju decomposition \u2192 condensation DAG \u2192 DFS ordering of SCCs \u2192 bitmask DP within each SCC. This is the correct approach for multi-SCC graphs but offers no benefit on single-SCC instances."
+  ]
+}

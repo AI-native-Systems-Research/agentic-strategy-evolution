@@ -1,0 +1,59 @@
+[
+  {
+    "id": "RP-4",
+    "statement": "SCC-aware construction resolves the DAG-like graph failure mode: graphs with many small SCCs (>10 SCCs, max size <=20) require topological ordering of the condensation DAG + bitmask DP within each SCC, not Posa rotation. This yields full Hamiltonian paths where rotation achieves only 44% coverage (k=223/500 on test 4).",
+    "confidence": "high",
+    "regime": "Directed graphs with >10 SCCs and max SCC size <=20 (e.g., test 4: n=500, 366 SCCs, max size 9). Guard: n<=2000 to avoid overhead on large single-SCC graphs.",
+    "evidence": [
+      "iteration-2-h-main-5runs",
+      "iteration-2-h-control-negative-3runs"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Test 4 has 366 SCCs forming a condensation DAG. Rotation treats this as monolithic, wasting time on cross-SCC shortcuts that don't exist. DFS with backtracking on the 366-node DAG finds the Hamiltonian path in <1ms, and bitmask DP (O(sz*2^sz), sz<=9) solves each internal SCC with entry/exit constraints. Result: k=500/500 vs k=223/500 for rotation. The total score improvement is +9 (81 vs 72), entirely from test 4 going from 1/10 to 10/10.",
+    "applicability_bounds": "Applies when num_sccs > 10 AND max SCC size <= 20. For graphs with few large SCCs or single SCC, rotation is the better approach. The n<=2000 guard avoids wasting time on SCC computation for large single-SCC graphs (e.g., test 10 at n=100K has 1 SCC).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "The Posa rotation mechanism has a fundamental efficiency limit on single-SCC directed graphs with avg_deg ~5: approximately 99.5% of rotation attempts fail to produce any path extension, limiting coverage to 30-40% within the 4-second time budget. Neither SCC decomposition nor multi-seed restarts overcome this barrier.",
+    "confidence": "high",
+    "regime": "Single-SCC directed graphs with avg_deg 5-6 and n >= 5000 (test 8: n=9K, test 10: n=100K)",
+    "evidence": [
+      "iteration-2-h-main-5runs",
+      "iteration-2-h-control-negative-3runs",
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "On test 8 (n=9K, single SCC, avg_deg=5.44), ~186K rotation attempts over 3.6 seconds add only ~1007 vertices (1 extension per 185 rotations). The rotation shuffles the tail without finding vertices with unvisited out-neighbors because the path creates 'dead zones' where all nearby tails are in the same depleted region. SCC decomposition returns 1 SCC (no help). Multi-seed restarts produce similar coverage. Both h-main and h-control score identically on tests 8 and 10.",
+    "applicability_bounds": "Does not apply to graphs with higher avg_deg (>=6) where rotation converges to full HP, nor to DAG-like graphs where SCC-aware construction is used instead. The limit is specific to the avg_deg 3-6 range on large single-SCC graphs.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-6",
+    "statement": "The SCC-aware + rotation algorithm exhibits timing sensitivity: the primary random seed (42) requires >=3.0s of CPU budget to reliably solve medium-sized tests (n=4000-8000). CPU scheduling variance can cause a 10-point regression (81->71) in approximately 1 out of 5 runs.",
+    "confidence": "medium",
+    "regime": "Competitive programming judge environment with 4-second time limits and shared CPU",
+    "evidence": [
+      "iteration-2-h-main-5runs"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The algorithm allocates 3.0s to the primary seed's rotation phase and uses remaining time for additional seeds. When CPU scheduling delays reduce effective computation time, the primary seed doesn't complete rotation on test 7 (n=4000), causing it to output a partial path (k~3998 instead of 4000), losing 10 points. This affects 1/5 runs in our measurements.",
+    "applicability_bounds": "Only relevant when running under tight time limits (4s) with non-isolated CPU. Does not affect the SCC mechanism itself (test 4 is fast). The control arm (v6) doesn't exhibit this variance because its single-seed approach has less overhead.",
+    "superseded_by": null,
+    "category": "operational",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]
