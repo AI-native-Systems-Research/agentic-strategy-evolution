@@ -1,0 +1,63 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Adding break-and-extend for very sparse graphs (avg_deg < 4) will increase the total score from 82 to 83, with the improvement coming exclusively from test 10 (k increasing from ~21000 to ~25000, crossing the 23333 threshold for 1 point). Tests 1-9 scores remain identical because the standard path code is unchanged.",
+      "observed": "SCORE: 83 in all 3/3 runs (perfectly stable). Per-test: Tests 1-7,9 = 10/10 (full HP, same as control). Test 8 = 2/10 (k=5638, improved from control's k=3309). Test 10 = 1/10 (k=23713, crosses threshold a_1=23333). Total = 83. The improvement over control (81) is +2 points: +1 from test 10 (break-and-extend, k=23713 vs 5088) and +1 from test 8 (improved Phase 2 with max-degree rapid restarts, k=5638 vs 3309).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The directional prediction (h-main > h-control-negative) is confirmed: 83 > 81 in all runs. The break-and-extend mechanism works as predicted for test 10 (k=23713 vs 5088 without it). However, the prediction of 'improvement exclusively from test 10' is incorrect — the iter-3 standard path also differs from iter-2: Phase 2 uses max-degree greedy (greedyMode=2) with 0.1s rapid restarts instead of Warnsdorff with full-budget attempts. This gives test 8 k=5638 (2/10) vs the control's k=3309 (1/10), contributing an additional +1 point. The predicted baseline of 82 was incorrect (actual is 81, matching iter-2 modal). Test 10 k=23713 is slightly below the designer's validated k=25777 but still crosses the a_1=23333 threshold.",
+      "metadata": {
+        "score": 83,
+        "score_distribution": [83, 83, 83],
+        "num_runs": 3,
+        "per_test_k": {
+          "test_1": {"n": 5, "k": 5, "score": 10},
+          "test_2": {"n": 20, "k": 20, "score": 10},
+          "test_3": {"n": 60, "k": 60, "score": 10},
+          "test_4": {"n": 500, "k": 500, "score": 10},
+          "test_5": {"n": 1000, "k": 1000, "score": 10},
+          "test_6": {"n": 2000, "k": 2000, "score": 10},
+          "test_7": {"n": 4000, "k": 4000, "score": 10},
+          "test_8": {"n": 9000, "k": 5638, "score": 2},
+          "test_9": {"n": 8000, "k": 8000, "score": 10},
+          "test_10": {"n": 100000, "k": 23713, "score": 1}
+        },
+        "improvement_sources": {
+          "test_10": "+1 point (break-and-extend: k=23713 vs 5088)",
+          "test_8": "+1 point (max-degree Phase 2: k=5638 vs 3309)"
+        }
+      }
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The iter-2 solution (SCC + rotation only, no break-and-extend) will score 82. Test 10 will remain at k~21000, below the 23333 threshold.",
+      "observed": "SCORE: 81 in all 3/3 runs (perfectly stable). Per-test: Tests 1-7,9 = 10/10 (full HP). Test 4 = 10/10 (SCC solver). Test 8 = 1/10 (k=3309). Test 10 = 0/10 (k=5088, well below 23333). Total = 81. Matches iter-2 h-main modal score exactly.",
+      "status": "CONFIRMED",
+      "error_type": "magnitude",
+      "diagnostic_note": "The control's purpose (demonstrating the score is lower without break-and-extend) is confirmed: 81 < 83. The predicted score of 82 was incorrect — actual is 81, matching iter-2 findings (modal 81). The predicted test 10 k of ~21000 was far off (actual k=5088). The iter-2 findings never reported test 10 k precisely; the designer appears to have assumed the iter-2 solution reached ~21000 on test 10 but the actual iter-2 solution (Warnsdorff Phase 2, no max-degree restarts) reaches only 5088. The Phase 2 difference (Warnsdorff vs max-degree) accounts for the large k gap on both test 8 and test 10.",
+      "metadata": {
+        "score": 81,
+        "score_distribution": [81, 81, 81],
+        "num_runs": 3,
+        "per_test_k": {
+          "test_1": {"n": 5, "k": 5, "score": 10},
+          "test_2": {"n": 20, "k": 20, "score": 10},
+          "test_3": {"n": 60, "k": 60, "score": 10},
+          "test_4": {"n": 500, "k": 500, "score": 10},
+          "test_5": {"n": 1000, "k": 1000, "score": 10},
+          "test_6": {"n": 2000, "k": 2000, "score": 10},
+          "test_7": {"n": 4000, "k": 4000, "score": 10},
+          "test_8": {"n": 9000, "k": 3309, "score": 1},
+          "test_9": {"n": 8000, "k": 8000, "score": 10},
+          "test_10": {"n": 100000, "k": 5088, "score": 0}
+        }
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms CONFIRMED directionally. h-main scored 83 (3/3 runs), h-control-negative scored 81 (3/3 runs). The +2 point gap consists of: (1) test 10 +1 point from break-and-extend (k=23713 vs 5088, crossing threshold 23333), and (2) test 8 +1 point from Phase 2 improvement (max-degree rapid restarts vs Warnsdorff slow restarts, k=5638 vs 3309, crossing threshold 4720). The designer predicted the improvement would come 'exclusively from test 10' but the iter-3 standard path's Phase 2 was also changed from the iter-2 solution, producing an undeclared test 8 improvement. The designer's predicted baseline of 82 was wrong (actual 81). The break-and-extend mechanism is clearly validated: test 10 k improved from 5088 to 23713 (4.7x). Both solutions are perfectly deterministic — zero variance across runs.",
+  "dominant_component_pct": null
+}

@@ -1,0 +1,18 @@
+=== h-control-negative per-test results ===
+Test 1:  n=5      k=5      score=10/10  (full HP)
+Test 2:  n=20     k=20     score=10/10  (full HP)
+Test 3:  n=60     k=60     score=10/10  (full HP)
+Test 4:  n=500    k=500    score=10/10  (full HP, SCC solver)
+Test 5:  n=1000   k=1000   score=10/10  (full HP)
+Test 6:  n=2000   k=2000   score=10/10  (full HP)
+Test 7:  n=4000   k=4000   score=10/10  (full HP)
+Test 8:  n=9000   k=3309   score=1/10   (Warnsdorff Phase 2, iter-2 style)
+Test 9:  n=8000   k=8000   score=10/10  (full HP)
+Test 10: n=100000 k=5088   score=0/10   (no break-and-extend)
+
+Total: 81
+
+Phase 2 details:
+- Uses Warnsdorff heuristic (greedyMode=0) with full-budget per attempt
+- Seed formula: seedIdx*137+17, vs iter-3's attempt*137+7919
+- Time budget: Phase 1 to 3.0s, Phase 2 to 3.6s

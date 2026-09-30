@@ -1,0 +1,122 @@
+{
+  "iteration": 4,
+  "bundle_ref": "runs/iter-4/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The k=5 BFS-optimal endgame algorithm will achieve score 100 on all 10 test cases. Worst-case operations will be at most 2n-5 = 1995. Average operations will decrease slightly from iter-3's 1987.3 to approximately 1986.",
+      "observed": "SCORE: 100 on all 10 judge test cases. Per-case operation counts: 1987, 1987, 1983, 1987, 1990, 1984, 1982, 1990, 1987, 1983. Average: 1986.0. Maximum: 1990 (well under 2n-5=1995). Minimum: 1982. All 10 cases produce correctly sorted output. Improvement over iter-3 k=4: average 1986.0 vs 1987.3 (-1.3 ops), max 1990 vs 1993 (-3 ops), worst-case bound 1995 vs 1996 (-1 op).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The k=5 endgame optimization works exactly as predicted. Score remains at the ceiling of 100. The BFS at n=11 with cross-n verification (n=20,50,100,500,1000) produced generalizable endgame sequences. Average ops (1986.0) matches the prediction precisely. The 119-case dispatch handles all non-identity permutations of the last 5 elements in 2-5 operations, with the 4 hardest cases (needing 5 ops) being: [n-3,n-4,n-2,n,n-1], [n-3,n-4,n,n-1,n-2], [n-2,n-3,n-4,n,n-1], [n-1,n-2,n-3,n-4,n]. The improvement over k=4 is marginal but confirms the optimization pattern: each step up in endgame size k saves 2 main-loop ops at the cost of at most 1 endgame op.",
+      "metadata": {
+        "score": 100,
+        "per_case_ops": [
+          1987,
+          1987,
+          1983,
+          1987,
+          1990,
+          1984,
+          1982,
+          1990,
+          1987,
+          1983
+        ],
+        "avg_ops": 1986.0,
+        "max_ops": 1990,
+        "min_ops": 1982,
+        "worst_case_bound": 1995,
+        "endgame_type": "k=5 BFS-optimal",
+        "algorithm": "circular_buffer_rotation_k5_endgame",
+        "endgame_distribution": {
+          "2_ops": 9,
+          "3_ops": 33,
+          "4_ops": 73,
+          "5_ops": 4
+        },
+        "comparison_to_k4": {
+          "avg_ops_k4": 1987.3,
+          "avg_ops_k5": 1986.0,
+          "max_ops_k4": 1993,
+          "max_ops_k5": 1990,
+          "worst_case_k4": 1996,
+          "worst_case_k5": 1995
+        },
+        "bfs_params": {
+          "reference_n": 11,
+          "states_explored": 39767455,
+          "total_states": 39916800,
+          "interesting_ops": 36,
+          "bfs_time_seconds": 140
+        },
+        "per_case_comparison_k4_to_k5": {
+          "case_1": {
+            "k4": 1987,
+            "k5": 1987,
+            "delta": 0
+          },
+          "case_2": {
+            "k4": 1989,
+            "k5": 1987,
+            "delta": 2
+          },
+          "case_3": {
+            "k4": 1985,
+            "k5": 1983,
+            "delta": 2
+          },
+          "case_4": {
+            "k4": 1987,
+            "k5": 1987,
+            "delta": 0
+          },
+          "case_5": {
+            "k4": 1990,
+            "k5": 1990,
+            "delta": 0
+          },
+          "case_6": {
+            "k4": 1986,
+            "k5": 1984,
+            "delta": 2
+          },
+          "case_7": {
+            "k4": 1984,
+            "k5": 1982,
+            "delta": 2
+          },
+          "case_8": {
+            "k4": 1993,
+            "k5": 1990,
+            "delta": 3
+          },
+          "case_9": {
+            "k4": 1987,
+            "k5": 1987,
+            "delta": 0
+          },
+          "case_10": {
+            "k4": 1985,
+            "k5": 1983,
+            "delta": 2
+          },
+          "cases_improved": 6,
+          "cases_same": 4,
+          "cases_worse": 0
+        },
+        "executor_verification": {
+          "build_exit_code": 0,
+          "judge_score": 100,
+          "independent_per_case_ops_match": true
+        }
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Prediction confirmed precisely. Score 100 (ceiling, unchanged). Average ops 1986.0 matches prediction of ~1986. Max observed 1990 is well under the 1995 worst-case bound. The k=5 endgame provides a marginal but provable improvement over k=4 in operation count, while the score remains at the mathematical ceiling due to the checker's clamping formula.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}

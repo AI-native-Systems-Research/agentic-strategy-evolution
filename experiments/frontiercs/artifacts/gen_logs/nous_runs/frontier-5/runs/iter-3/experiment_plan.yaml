@@ -1,0 +1,58 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+  mode: real
+  description: "Tests break-and-extend for sparse graphs (h-main) vs iter-2 baseline (h-control-negative)"
+
+setup:
+  - cmd: "g++ -O2 -o solution solution.cpp"
+    description: "Build the solution binary"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "run-1"
+        cmd: |
+          git checkout -- solution.cpp &&
+          git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/patches/h-main.patch &&
+          g++ -O2 -o solution solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_5.sh $PWD/solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/results/h-main/run-1.txt"
+      - name: "run-2"
+        cmd: |
+          git checkout -- solution.cpp &&
+          git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/patches/h-main.patch &&
+          g++ -O2 -o solution solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_5.sh $PWD/solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/results/h-main/run-2.txt"
+      - name: "run-3"
+        cmd: |
+          git checkout -- solution.cpp &&
+          git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/patches/h-main.patch &&
+          g++ -O2 -o solution solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_5.sh $PWD/solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/results/h-main/run-3.txt"
+
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "run-1"
+        cmd: |
+          git checkout -- solution.cpp &&
+          git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/patches/h-control-negative.patch &&
+          g++ -O2 -o solution solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_5.sh $PWD/solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/results/h-control-negative/run-1.txt"
+      - name: "run-2"
+        cmd: |
+          git checkout -- solution.cpp &&
+          git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/patches/h-control-negative.patch &&
+          g++ -O2 -o solution solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_5.sh $PWD/solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/results/h-control-negative/run-2.txt"
+      - name: "run-3"
+        cmd: |
+          git checkout -- solution.cpp &&
+          git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/patches/h-control-negative.patch &&
+          g++ -O2 -o solution solution.cpp &&
+          bash /home/ubuntu/frontier/gen_logs/fmeasure_5.sh $PWD/solution.cpp
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-5/runs/iter-3/results/h-control-negative/run-3.txt"

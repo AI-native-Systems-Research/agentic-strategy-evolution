@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "This is a confirmation run (iteration 5) to verify that the established k=5 BFS-optimal endgame algorithm achieves score 100/100 on the judge, matching results from iterations 3 and 4. The problem is considered solved \u2014 this arm exists only to produce a final reproducibility check before closing the campaign.",
+  "key_points": [
+    "Single arm (h-main): Re-run the k=5 circular-buffer rotation sort that places elements 1 through n\u22125 using \u22642 operations each, then solves the last 5 elements via a 119-case BFS lookup table. Expected operation counts per case: 1982\u20131990 (avg 1986), well below the 2001 threshold needed for score 100.",
+    "Confirmation criterion: Score = 100 and per-case operation counts identical to iteration 4's values [1987, 1987, 1983, 1987, 1990, 1984, 1982, 1990, 1987, 1983]. Any deviation would indicate a test-data change or code regression, not an algorithmic issue.",
+    "No additional arms are included because the score ceiling (100) is algebraically guaranteed for any algorithm using \u22642001 ops per n=1000 case, ablation and dose-response dimensions are exhausted (confirmed in iters 2\u20134), and all 10 test cases share n=1000 so no regime variation exists to probe.",
+    "Refutation condition: If score < 100 or operation counts differ from prediction, diagnose by checking compiler flags, solution.cpp version (should contain 119 endgame branches), and whether test data has changed. This would trigger a new investigation iteration rather than invalidating the algorithm.",
+    "Recommendation: Approve if the goal is a clean final confirmation; alternatively, skip this iteration and close the campaign, since iterations 3 and 4 already achieved score 100 with identical code."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

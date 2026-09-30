@@ -1,0 +1,50 @@
+[
+  {
+    "id": "RP-7",
+    "statement": "Break-and-extend with multi-restart (0.2s per attempt) achieves 4.7x improvement on very sparse directed graphs (avg_deg=3, N=100K): k=23713 vs k=5088 with rotation-only. The mechanism truncates the tail to the nearest escape vertex (one with unvisited out-neighbors), redirects through that neighbor, then greedily re-extends. 15+ restarts in 3.1s outperform fewer long attempts.",
+    "confidence": "high",
+    "regime": "Very sparse directed graphs (avg_deg < 4, N > 2000) where standard Posa rotation stalls",
+    "evidence": ["iteration-3-h-main"],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "On avg_deg=3 graphs, ~99% of path vertices have unvisited out-neighbors but rotation can't access them (they're not at the tail). Break-and-extend truncates to the nearest escape vertex and redirects through its unvisited neighbor, opening access to large unvisited regions. Implemented in solveBreakExtend() at solution_iter3.cpp:201-309.",
+    "applicability_bounds": "Applies to avg_deg < 4, N > 2000. Not beneficial for avg_deg >= 4 where max-degree restarts are more effective (test 8 at avg_deg=5.44 uses standard path).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-8",
+    "statement": "Max-degree greedy (greedyMode=2) with rapid 0.1s restarts in Phase 2 produces significantly longer paths than Warnsdorff (greedyMode=0) with full-budget attempts on moderate-sparse graphs: k=5638 vs k=3309 on test 8 (avg_deg=5.44, n=9000), a 70% improvement crossing the 4720 threshold for +1 point.",
+    "confidence": "high",
+    "regime": "Moderate-sparse directed graphs (avg_deg ~5-6, N >= 4000) where Phase 1 Warnsdorff fails to find full HP",
+    "evidence": ["iteration-3-h-main", "iteration-3-h-control-negative"],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "Max-degree greedy prioritizes vertices with many remaining out-neighbors, maintaining path extensibility. Rapid restarts (0.1s each) provide more diverse starting points than fewer long attempts. On avg_deg=5.44, the combination of greedy heuristic and restart diversity is more effective than Warnsdorff with rotation.",
+    "applicability_bounds": "Applies to graphs where Phase 1 (seed 42 Warnsdorff) does not achieve full HP. For tests 1-7 and 9 where Phase 1 succeeds, Phase 2 is irrelevant.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "The Posa rotation mechanism has a fundamental efficiency limit on single-SCC directed graphs: on avg_deg ~5.44 (test 8, n=9000) rotation-only with Warnsdorff reaches k=3309 (37%); on avg_deg ~3 (test 10, n=100K) rotation-only with Warnsdorff reaches only k=5088 (5%). Max-degree greedy restarts raise the ceiling to k=5638 (63%) on test 8 but break-and-extend is required for test 10 (k=23713, 24%).",
+    "confidence": "high",
+    "regime": "Single-SCC directed graphs with avg_deg <= 6",
+    "evidence": ["iteration-2-h-main", "iteration-3-h-main", "iteration-3-h-control-negative"],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "~99.5% of rotation attempts fail on sparse graphs because rotation candidates (vertices adjacent to tail) rarely have unvisited out-neighbors. The ceiling depends on both graph density and greedy heuristic: max-degree greedy improves the ceiling vs Warnsdorff by maintaining extensibility.",
+    "applicability_bounds": "Revision of iter-2 RP-5. The previous estimate of ~21000 on test 10 was from a max-degree restart variant, not the Warnsdorff-only iter-2 solution (which reaches only 5088).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

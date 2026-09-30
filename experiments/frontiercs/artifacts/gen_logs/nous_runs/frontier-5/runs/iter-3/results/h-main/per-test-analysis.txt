@@ -1,0 +1,21 @@
+=== h-main per-test results ===
+Test 1:  n=5      k=5      score=10/10  (full HP)
+Test 2:  n=20     k=20     score=10/10  (full HP)
+Test 3:  n=60     k=60     score=10/10  (full HP)
+Test 4:  n=500    k=500    score=10/10  (full HP, SCC solver)
+Test 5:  n=1000   k=1000   score=10/10  (full HP)
+Test 6:  n=2000   k=2000   score=10/10  (full HP)
+Test 7:  n=4000   k=4000   score=10/10  (full HP)
+Test 8:  n=9000   k=5638   score=2/10   (standard path, max-degree Phase 2)
+Test 9:  n=8000   k=8000   score=10/10  (full HP)
+Test 10: n=100000 k=23713  score=1/10   (sparse path, break-and-extend)
+
+Total: 83
+
+Path type classification:
+- Tests 1-9: standard path (avgDeg >= 4 or N <= 2000)
+- Test 10: sparse path (avgDeg=2.99, N=100000) → break-and-extend
+
+Phase 2 details for standard path:
+- Uses max-degree greedy (greedyMode=2) with 0.1s per-attempt budget
+- Time budget: Phase 1 to 3.0s, Phase 2 to 3.5s

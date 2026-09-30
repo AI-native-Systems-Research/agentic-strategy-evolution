@@ -1,0 +1,62 @@
+metadata:
+  iteration: 3
+  family: "break-and-extend-sparse"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #5 (Directed Hamiltonian Path)?"
+  complexity_tier: 2
+  tier_justification: "iter 3 — tier 1 confirmed SCC mechanism (iter-2), now adding a second mechanism (break-and-extend) for a different graph regime (very sparse). Single new mechanism on a single graph class."
+
+arms:
+  - type: h-main
+    prediction: "Adding break-and-extend for very sparse graphs (avg_deg < 4) will increase the total score from 82 to 83, with the improvement coming exclusively from test 10 (k increasing from ~21000 to ~25000, crossing the 23333 threshold for 1 point). Tests 1-9 scores remain identical because the standard path code is unchanged."
+    mechanism: "On very sparse directed graphs (avg_deg ~3), standard Pósa rotation stalls because rotation candidates (used vertices adjacent to tail) rarely have unvisited out-neighbors. However, ~99% of path vertices DO have unvisited out-neighbors — they're just not at the tail position. Break-and-extend exploits this: truncate the tail back to the nearest 'escape vertex' (one with an unvisited out-neighbor), redirect through that neighbor, then greedily re-extend. This sacrifices a few vertices from the path tail but opens access to large unvisited regions. Multi-restart (0.2s per attempt, ~15 attempts in 3.1s) provides diversity, since each random starting vertex produces different escape patterns. The 0.2s budget per attempt was empirically determined: shorter attempts with more restarts outperform fewer long attempts because construction+break each take ~0.1s, and additional time per attempt yields diminishing returns. Implemented in solveBreakExtend() at solution_iter3.cpp:201-303."
+    diagnostic: "If score is not 83: (1) check test 10 k value — if < 23333, the break-and-extend is not reaching enough vertices; try increasing per-attempt budget or scanning more escape vertices. (2) If tests 1-9 regress, the branching condition (avg_deg < 4) may be triggering on a test it shouldn't — check avg_deg values. (3) If test 10 k varies between runs, there may be timing sensitivity in the sparse path."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Add solveBreakExtend() function (greedy construction + limited rotation + iterative truncate-redirect-extend loop) and modify main() to branch on avg_deg < 4: sparse graphs skip Phase 1/2 and use multi-restart break-and-extend; dense graphs use unchanged Phase 1/2 pipeline."
+        rationale: "Break-and-extend targets the specific structural limitation identified in iter-2 (RP-5, RP-6): rotation stalls on very sparse graphs because escape vertices aren't at the tail. This is the lowest-cost mechanism that addresses the remaining scoring opportunity (test 10, worth up to 10 points)."
+
+  - type: h-control-negative
+    prediction: "The iter-2 solution (SCC + rotation only, no break-and-extend) will score 82. Test 10 will remain at k~21000, below the 23333 threshold. This confirms the score difference is attributable to the break-and-extend mechanism, not to incidental changes."
+    mechanism: "Without break-and-extend, test 10 relies on standard Pósa rotation which hits a structural ceiling at ~21000 vertices (RP-5). The rotation mechanism cannot access unvisited vertices that are neighbors of non-tail path vertices."
+    diagnostic: "If score is not 82: check for timing variance on test 7 (known sensitivity per RP-4). If score is higher than 82, the iter-2 solution may have improved due to system-level changes — investigate."
+
+# Arm selection rationale:
+# - h-main: Tests the core hypothesis (break-and-extend improves sparse graph coverage)
+# - h-control-negative: Validates the improvement is from break-and-extend, not incidental.
+#   Uses the iter-2 solution as-is, which provides the proven 82-point baseline.
+# - Omitted h-ablation: The break-and-extend is a single integrated mechanism (not decomposable
+#   into independently-testable components). An ablation removing the break loop but keeping
+#   multi-restart greedy would test restart diversity vs break-extend, but this is a secondary
+#   question not needed for iter-3's primary claim.
+# - Omitted h-dose-response: The per-attempt budget (0.2s) was already optimized empirically.
+#   A formal dose-response on this knob is a potential iter-4 refinement.
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -o solution solution.cpp"
+  verified_parameters:
+    time_limit_seconds: 4
+    phase1_time_limit: 3.0
+    phase2_time_limit: 3.5
+    sparse_threshold_avg_deg: 4.0
+    break_extend_per_attempt_budget: 0.2
+    break_extend_total_budget: 3.6
+    rng_seed_base: 42
+  unlocked_parameters_audit:
+    - name: "rotation_limit"
+      default_value: "min(N*10, 500000)"
+      justification: "Standard rotation budget from iter-1; proven sufficient for tests 1-9 and doesn't affect sparse path."
+    - name: "max_escape_distance"
+      default_value: "min(100, pathLen/2)"
+      justification: "Searching up to 100 vertices from tail for escape is sufficient — probes show escape vertices are typically within 5-10 positions on avg_deg=3 graphs."
+    - name: "greedy_mode_sparse"
+      default_value: "max-degree (highest remaining out-degree)"
+      justification: "Max-degree greedy is used in break-and-extend; matches the proven approach from Phase 2. Warnsdorff was tested but offers no advantage on avg_deg=3."
+    - name: "insert_passes"
+      default_value: 5
+      justification: "5 insert passes after each break-extend step balances path improvement vs time cost."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+      h-control-negative: 45
+    observation_method: "Measured: 10 tests × ~4s each ≈ 40s, plus compile time ~2s"

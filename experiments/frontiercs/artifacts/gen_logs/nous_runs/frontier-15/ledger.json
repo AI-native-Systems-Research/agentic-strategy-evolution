@@ -92,6 +92,58 @@
         }
       ],
       "frontier_update": null
+    },
+    {
+      "iteration": 4,
+      "family": "prefix-suffix-sort",
+      "timestamp": "2026-09-30T16:06:04.547853+00:00",
+      "candidate_id": "iter-4",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 1,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-1",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 5,
+      "family": "prefix-suffix-sort",
+      "timestamp": "2026-09-30T16:25:10.497671+00:00",
+      "candidate_id": "iter-5",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 1,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-4",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-6",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
     }
   ]
 }

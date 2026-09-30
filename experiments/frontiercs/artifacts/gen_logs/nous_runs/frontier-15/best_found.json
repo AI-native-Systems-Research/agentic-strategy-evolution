@@ -19,6 +19,24 @@
       "arm_id": "h-main"
     },
     {
+      "candidate_id": "iter-4/h-main/0",
+      "score": 100.0,
+      "components": {
+        "score": 100.0
+      },
+      "iteration": 4,
+      "arm_id": "h-main"
+    },
+    {
+      "candidate_id": "iter-5/h-main/0",
+      "score": 100.0,
+      "components": {
+        "score": 100.0
+      },
+      "iteration": 5,
+      "arm_id": "h-main"
+    },
+    {
       "candidate_id": "iter-1/h-main/0",
       "score": 0.0,
       "components": {
@@ -26,26 +44,8 @@
       },
       "iteration": 1,
       "arm_id": "h-main"
-    },
-    {
-      "candidate_id": "iter-1/h-control-negative/1",
-      "score": 0.0,
-      "components": {
-        "score": 0.0
-      },
-      "iteration": 1,
-      "arm_id": "h-control-negative"
-    },
-    {
-      "candidate_id": "iter-2/h-ablation/1",
-      "score": 0.0,
-      "components": {
-        "score": 0.0
-      },
-      "iteration": 2,
-      "arm_id": "h-ablation"
     }
   ],
   "k": 5,
-  "updated_at": "2026-09-30T15:33:32.664652+00:00"
+  "updated_at": "2026-09-30T16:25:10.482076+00:00"
 }

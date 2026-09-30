@@ -18,8 +18,7 @@ auto hasEdge=[](int u, int v)->bool{
 int globalBest=0;
 vector<int> globalBestPath;
 
-// ==================== v6-style rotation solver ====================
-// Returns path length achieved. Uses the given rng.
+// ==================== Rotation solver ====================
 // greedyMode: 0=Warnsdorff (min remaining deg), 2=max remaining deg
 int solveRotation(mt19937& rng, int startVertex, double tl, int greedyMode=0){
     static vector<int> nxt, prv, dout;
@@ -89,7 +88,7 @@ int solveRotation(mt19937& rng, int startVertex, double tl, int greedyMode=0){
         else break;
     }
 
-    // Directed Pósa Rotation (O(1) per rotation using linked list)
+    // Directed Pósa Rotation
     int maxRot = min(N * 50, 2000000);
     int rotCount = 0;
 
@@ -199,9 +198,118 @@ int solveRotation(mt19937& rng, int startVertex, double tl, int greedyMode=0){
     return pathLen;
 }
 
+// ==================== Break-and-extend solver for very sparse graphs ====================
+// Builds path with greedy+rotation, then iteratively breaks near tail and re-extends
+void solveBreakExtend(mt19937& rng, int startVertex, double tl){
+    vector<int> nxt(N+1,0), prv(N+1,0), dout(N+1);
+    vector<char> used(N+1,0);
+    for(int u=1;u<=N;u++) dout[u]=outdeg_g[u];
+    used[startVertex]=1;
+    for(int u:radj_g[startVertex]) if(!used[u]) dout[u]--;
+    int head=startVertex, tail=startVertex, pathLen=1;
+
+    auto mark=[&](int v){ used[v]=1; for(int u:radj_g[v]) if(!used[u]) dout[u]--; };
+    auto unmark=[&](int v){ used[v]=0; for(int u:radj_g[v]) if(!used[u]) dout[u]++; };
+
+    auto extF=[&]()->bool{
+        bool ext=false;
+        while(true){
+            int bd=-1,cnt=0;int picks[16];
+            for(int v:adj_g[tail])if(!used[v]){if(dout[v]>bd){bd=dout[v];cnt=1;picks[0]=v;}else if(dout[v]==bd&&cnt<16)picks[cnt++]=v;}
+            if(!cnt)break;
+            int p=picks[rng()%cnt];nxt[tail]=p;prv[p]=tail;nxt[p]=0;mark(p);tail=p;pathLen++;ext=true;
+        }
+        return ext;
+    };
+    auto extB=[&]()->bool{
+        bool ext=false;
+        while(true){
+            int bd=-1,cnt=0;int picks[16];
+            for(int u:radj_g[head])if(!used[u]){if(dout[u]>bd){bd=dout[u];cnt=1;picks[0]=u;}else if(dout[u]==bd&&cnt<16)picks[cnt++]=u;}
+            if(!cnt)break;
+            int p=picks[rng()%cnt];prv[head]=p;nxt[p]=head;prv[p]=0;mark(p);head=p;pathLen++;ext=true;
+        }
+        return ext;
+    };
+    auto ins=[&]()->bool{
+        bool ch=false;int u=head;
+        while(u){int w=nxt[u];if(!w)break;
+            for(int v:adj_g[u])if(!used[v]&&hasEdge(v,w)){nxt[u]=v;prv[v]=u;nxt[v]=w;prv[w]=v;mark(v);w=v;pathLen++;ch=true;}
+            u=w;
+        }
+        return ch;
+    };
+
+    // Initial construction: greedy + limited rotation
+    extF(); extB();
+    for(int p2=0;p2<15;p2++){if(!ins())break;extF();extB();}
+
+    // Short rotation phase
+    int rotLimit = min(N*10, 500000);
+    for(int rc=0;rc<rotLimit&&pathLen<N&&elapsed()<min(tl,elapsed()+0.3);rc++){
+        if(extF())continue;
+        vector<int> sc;for(int v:adj_g[tail])if(used[v]&&v!=tail)sc.push_back(v);if(sc.empty())break;
+        for(int i=sc.size()-1;i>0;i--){int j2=rng()%(i+1);swap(sc[i],sc[j2]);}
+        bool rotated=false;
+        for(int vi:sc){if(rotated)break;
+            if(vi==head){vector<int>cd;int u2=head;while(u2&&u2!=tail){bool h=false;for(int w:adj_g[u2])if(!used[w]){h=true;break;}if(h)cd.push_back(u2);u2=nxt[u2];}if(cd.empty())continue;int vj=cd[rng()%cd.size()];int nH=nxt[vj];nxt[tail]=head;prv[head]=tail;nxt[vj]=0;prv[nH]=0;head=nH;tail=vj;rotated=true;}
+            else{int e=prv[vi];if(!e)continue;vector<int>gB,aB;int vj2=vi;while(vj2&&nxt[vj2]){int c=nxt[vj2];if(c&&hasEdge(e,c)){bool h=false;for(int w:adj_g[vj2])if(!used[w]){h=true;break;}if(h)gB.push_back(vj2);else aB.push_back(vj2);}if(vj2==tail)break;vj2=nxt[vj2];}int vj=0;if(!gB.empty())vj=gB[rng()%gB.size()];else if(!aB.empty())vj=aB[rng()%aB.size()];if(!vj)continue;int c=nxt[vj];nxt[e]=c;prv[c]=e;nxt[tail]=vi;prv[vi]=tail;nxt[vj]=0;tail=vj;rotated=true;}
+        }
+        if(!rotated)break;extF();
+    }
+    extB();for(int p3=0;p3<5;p3++){if(!ins())break;extF();extB();}
+    for(int i2=0;i2<3;i2++){
+        bool ch=false;
+        for(int v=1;v<=N;v++){if(used[v])continue;if(hasEdge(v,head)){prv[head]=v;nxt[v]=head;prv[v]=0;head=v;mark(v);pathLen++;ch=true;}else if(hasEdge(tail,v)){nxt[tail]=v;prv[v]=tail;nxt[v]=0;tail=v;mark(v);pathLen++;ch=true;}}
+        if(!ch)break;ins();extF();extB();
+    }
+
+    if(pathLen>globalBest){globalBest=pathLen;globalBestPath.clear();for(int u=head;u;u=nxt[u])globalBestPath.push_back(u);}
+
+    // Break-and-extend loop
+    for(int brk=0; pathLen<N && elapsed()<tl; brk++){
+        // Find nearest escape vertex from tail
+        int escV=-1, unvisV=-1, dist=-1;
+        int u2=tail;
+        for(int d=0;d<min(100, pathLen/2)&&u2;d++){
+            for(int v:adj_g[u2]) if(!used[v]){escV=u2;unvisV=v;dist=d;goto found_escape;}
+            u2=prv[u2];
+        }
+        break; // No escape found
+        found_escape:
+
+        int beforeLen = pathLen;
+
+        // Truncate tail by dist vertices, track removed
+        vector<int> removed;
+        for(int i=0;i<dist&&tail!=head;i++){
+            int p=prv[tail];
+            removed.push_back(tail);
+            unmark(tail);nxt[p]=0;prv[tail]=0;tail=p;pathLen--;
+        }
+
+        // Extend through unvisV
+        if((tail==escV || hasEdge(tail,unvisV)) && !used[unvisV]){
+            nxt[tail]=unvisV;prv[unvisV]=tail;nxt[unvisV]=0;mark(unvisV);tail=unvisV;pathLen++;
+            extF(); extB();
+            for(int p2=0;p2<5;p2++){if(!ins())break;extF();extB();}
+            // Try to re-attach removed vertices
+            for(int rv:removed){
+                if(used[rv])continue;
+                if(hasEdge(rv,head)){prv[head]=rv;nxt[rv]=head;prv[rv]=0;head=rv;mark(rv);pathLen++;}
+                else if(hasEdge(tail,rv)){nxt[tail]=rv;prv[rv]=tail;nxt[rv]=0;tail=rv;mark(rv);pathLen++;}
+            }
+            ins();extF();extB();
+        }
+
+        if(pathLen>globalBest){globalBest=pathLen;globalBestPath.clear();for(int u3=head;u3;u3=nxt[u3])globalBestPath.push_back(u3);}
+
+        if(pathLen <= beforeLen - dist) break; // Not improving
+    }
+}
+
 // ==================== SCC-based solver for DAG-like graphs ====================
 void solveDAG(){
-    // Compute SCCs (iterative Kosaraju)
     vector<int> scc_id(N+1, -1);
     int num_sccs = 0;
     vector<vector<int>> scc_members;
@@ -245,13 +353,12 @@ void solveDAG(){
         }
     }
 
-    if(num_sccs <= 10) return; // Not DAG-like, skip
+    if(num_sccs <= 10) return;
 
-    // Build condensation DAG
     vector<vector<int>> dag(num_sccs);
     vector<set<int>> dag_set(num_sccs);
     vector<int> dag_indeg(num_sccs, 0);
-    vector<vector<pair<int,int>>> cross_edges(num_sccs); // cross_edges[su] = {(u,v)} where scc_id[u]=su, scc_id[v]!=su
+    vector<vector<pair<int,int>>> cross_edges(num_sccs);
     for(int u=1;u<=N;u++){
         for(int v : adj_g[u]){
             int su=scc_id[u], sv=scc_id[v];
@@ -266,25 +373,22 @@ void solveDAG(){
         }
     }
 
-    // Bitmask DP for HP within small SCC
-    // Returns Hamiltonian path from 'start' to 'end' within SCC
-    // start=-1 means any start, end=-1 means any end
     auto findInternalHP = [&](int scc_idx, int mustStart, int mustEnd) -> vector<int> {
         auto &mem = scc_members[scc_idx];
         int sz = mem.size();
         if(sz == 1) return mem;
-        if(sz > 20) return {}; // too large
+        if(sz > 20) return {};
 
         map<int,int> toL;
         for(int i=0;i<sz;i++) toL[mem[i]]=i;
         int sL = (mustStart>=0 && toL.count(mustStart)) ? toL[mustStart] : -1;
         int eL = (mustEnd>=0 && toL.count(mustEnd)) ? toL[mustEnd] : -1;
 
-        if(mustStart>=0 && sL<0) return {}; // mustStart not in this SCC
+        if(mustStart>=0 && sL<0) return {};
         if(mustEnd>=0 && eL<0) return {};
 
         int full=(1<<sz)-1;
-        vector<vector<int>> dp(1<<sz, vector<int>(sz, -2)); // -2=unvisited, -1=start
+        vector<vector<int>> dp(1<<sz, vector<int>(sz, -2));
 
         for(int i=0;i<sz;i++){
             if(sL>=0 && i!=sL) continue;
@@ -327,8 +431,6 @@ void solveDAG(){
         return res;
     };
 
-    // DFS with backtracking to find HP in condensation DAG
-    // Use topological constraint: only visit vertices with current in-degree 0
     vector<int> dagPath;
     vector<bool> dagVisited(num_sccs, false);
     vector<int> curDagIndeg(dag_indeg.begin(), dag_indeg.end());
@@ -336,41 +438,29 @@ void solveDAG(){
     function<bool(int)> dfsDAG = [&](int cur) -> bool {
         dagPath.push_back(cur);
         dagVisited[cur] = true;
-        // Update in-degrees
-        for(int nxt : dag[cur]){
-            curDagIndeg[nxt]--;
-        }
+        for(int nxt : dag[cur]) curDagIndeg[nxt]--;
 
         if((int)dagPath.size() == num_sccs) return true;
 
-        // Collect candidates: unvisited neighbors with in-degree 0
         vector<int> cands;
         for(int nxt : dag[cur]){
-            if(!dagVisited[nxt] && curDagIndeg[nxt]==0){
-                cands.push_back(nxt);
-            }
+            if(!dagVisited[nxt] && curDagIndeg[nxt]==0) cands.push_back(nxt);
         }
-
-        // Sort by some heuristic (e.g., fewer outgoing edges first — less branching)
         sort(cands.begin(), cands.end(), [&](int a, int b){
             return dag[a].size() < dag[b].size();
         });
 
         for(int nxt : cands){
-            if(elapsed() > 1.0) break; // time limit for DAG search
+            if(elapsed() > 1.0) break;
             if(dfsDAG(nxt)) return true;
         }
 
-        // Backtrack
         dagPath.pop_back();
         dagVisited[cur] = false;
-        for(int nxt : dag[cur]){
-            curDagIndeg[nxt]++;
-        }
+        for(int nxt : dag[cur]) curDagIndeg[nxt]++;
         return false;
     };
 
-    // Try all sources
     vector<int> sources;
     for(int i=0;i<num_sccs;i++) if(dag_indeg[i]==0) sources.push_back(i);
 
@@ -388,32 +478,18 @@ void solveDAG(){
 
     if(!foundDagHP || (int)dagPath.size() < num_sccs) return;
 
-    // Now build vertex-level path
-    // For each consecutive pair of SCCs in dagPath, find connection edges
-    // and internal HPs
-
-    // For each SCC on the dagPath, find which vertex should be entry (from prev)
-    // and exit (to next)
-    // Try all combinations of (exit_from_cur, entry_to_next)
-
-    // Greedy assembly with backtracking
     vector<int> vertexPath;
-
     for(int di=0; di<(int)dagPath.size(); di++){
         int si = dagPath[di];
         auto &mem = scc_members[si];
 
         if(mem.size() == 1){
             int v = mem[0];
-            if(!vertexPath.empty() && !hasEdge(vertexPath.back(), v)){
-                // Can't connect, skip this SCC
-                continue;
-            }
+            if(!vertexPath.empty() && !hasEdge(vertexPath.back(), v)) continue;
             vertexPath.push_back(v);
             continue;
         }
 
-        // Determine entry vertex
         int mustStart = -1;
         if(!vertexPath.empty()){
             for(int v : mem){
@@ -422,32 +498,23 @@ void solveDAG(){
                     break;
                 }
             }
-            if(mustStart < 0) continue; // can't connect
+            if(mustStart < 0) continue;
         }
 
-        // Determine exit vertex (for connecting to next SCC)
         int mustEnd = -1;
         if(di < (int)dagPath.size()-1){
             int sj = dagPath[di+1];
-            auto &nextMem = scc_members[sj];
-
-            // Try each possible exit
             vector<int> possibleExits;
             for(auto &[u,v] : cross_edges[si]){
-                if(scc_id[v] == sj){
-                    possibleExits.push_back(u);
-                }
+                if(scc_id[v] == sj) possibleExits.push_back(u);
             }
-            // Remove duplicates
             sort(possibleExits.begin(), possibleExits.end());
             possibleExits.erase(unique(possibleExits.begin(), possibleExits.end()), possibleExits.end());
 
             for(int exitV : possibleExits){
                 auto hp = findInternalHP(si, mustStart, exitV);
                 if((int)hp.size() == (int)mem.size()){
-                    if(!vertexPath.empty() && !hasEdge(vertexPath.back(), hp[0])){
-                        continue;
-                    }
+                    if(!vertexPath.empty() && !hasEdge(vertexPath.back(), hp[0])) continue;
                     for(int x : hp) vertexPath.push_back(x);
                     mustEnd = exitV;
                     break;
@@ -458,15 +525,12 @@ void solveDAG(){
         if(mustEnd < 0){
             auto hp = findInternalHP(si, mustStart, -1);
             if(!hp.empty()){
-                if(!vertexPath.empty() && !hp.empty() && !hasEdge(vertexPath.back(), hp[0])){
-                    continue;
-                }
+                if(!vertexPath.empty() && !hp.empty() && !hasEdge(vertexPath.back(), hp[0])) continue;
                 for(int x : hp) vertexPath.push_back(x);
             }
         }
     }
 
-    // Validate
     bool valid=true;
     set<int> seen;
     for(int i=0;i<(int)vertexPath.size();i++){
@@ -497,10 +561,12 @@ int main(){
         sort(sadj_g[u].begin(),sadj_g[u].end());
     }
 
-    // Try SCC-based solver first (only for small graphs where DAG structure matters)
+    double avgDeg = (double)M / N;
+
+    // SCC-based solver for DAG-like graphs (test 4)
     if(N <= 2000) solveDAG();
 
-    // Start candidates for rotation solver
+    // Start candidates
     vector<int> starts;
     for(int u=1;u<=N;u++) if(indeg_g[u]==0) starts.push_back(u);
     {
@@ -517,23 +583,43 @@ int main(){
         }
     }
 
-    // Run rotation solver with multi-phase strategy
-    // Phase 1: Primary seed (42) Warnsdorff — proven good for tests 1-7,9
-    // Phase 2: Additional Warnsdorff seeds
-    // Phase 3: Max-degree multi-restart — good for sparse graphs (test 8, 10)
-    {
-        // Phase 1: Primary seed (same as iter-2 — DO NOT CHANGE)
-        mt19937 rng0(42);
-        for(int s:starts){
-            if(globalBest==N||elapsed()>1.5) break;
-            solveRotation(rng0, s, 1.5);
-        }
-        while(globalBest<N && elapsed()<3.0){
-            int s=(rng0()%N)+1;
-            solveRotation(rng0, s, 3.0);
+    if(avgDeg < 4.0 && N > 2000){
+        // ===== SPARSE PATH: Skip Phase 1, use break-and-extend for full budget =====
+        // Phase 1 (seed 42 Warnsdorff) is ineffective on very sparse graphs.
+        // Break-and-extend needs the full time budget to achieve good coverage.
+
+        // Quick Warnsdorff pass (just the starters, ~0.2s)
+        {
+            mt19937 rng0(42);
+            for(int s:starts){
+                if(globalBest==N||elapsed()>0.5) break;
+                solveRotation(rng0, s, 0.5);
+            }
         }
 
-        // Phase 2: Max-degree multi-restart (uses all remaining time)
+        // Break-and-extend for remaining time (0.2s per attempt — more restarts is better on sparse)
+        for(int attempt=0; globalBest<N && elapsed()<3.6; attempt++){
+            mt19937 rng_be(attempt*137+7919);
+            int s = (rng_be()%N)+1;
+            solveBreakExtend(rng_be, s, min(elapsed()+0.2, 3.6));
+        }
+    } else {
+        // ===== STANDARD PATH: Phase 1 + Phase 2 (proven for tests 1-9) =====
+
+        // Phase 1: Primary seed 42 Warnsdorff — same structure as v12 (DO NOT CHANGE)
+        {
+            mt19937 rng0(42);
+            for(int s:starts){
+                if(globalBest==N||elapsed()>1.5) break;
+                solveRotation(rng0, s, 1.5);
+            }
+            while(globalBest<N && elapsed()<3.0){
+                int s=(rng0()%N)+1;
+                solveRotation(rng0, s, 3.0);
+            }
+        }
+
+        // Phase 2: Max-degree multi-restart — same structure as v12
         for(int attempt=0; globalBest<N && elapsed()<3.5; attempt++){
             mt19937 rng_md(attempt * 137 + 7919);
             double tl2 = min(elapsed() + 0.1, 3.5);

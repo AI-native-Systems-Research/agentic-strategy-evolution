@@ -1,0 +1,6 @@
+Table: 119 entries
+Final verification: 0 errors, max ops per config: 5
+
+Full algorithm test at n=1000 (200 random perms)...
+Random tests: 200/200 pass
+Ops: min=1967, max=1993, avg=1981.9

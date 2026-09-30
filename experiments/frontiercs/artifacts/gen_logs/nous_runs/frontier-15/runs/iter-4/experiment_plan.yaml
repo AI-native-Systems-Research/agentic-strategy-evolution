@@ -1,0 +1,19 @@
+metadata:
+  iteration: 4
+  bundle_ref: "runs/iter-4/bundle.yaml"
+setup:
+  - cmd: "cp inputs/solution_k5endgame.cpp solution.cpp"
+    description: "Copy k=5 endgame solution to worktree"
+  - cmd: "g++ -O2 -std=c++17 -o solution solution.cpp"
+    description: "Build the solution"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "k5-endgame-judge"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_15.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-4/results/h-main/judge_output.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-4/results/h-main/judge_output.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-4/inputs/solution_k5endgame.cpp"
+      - name: "k5-per-case-ops"
+        cmd: "for i in $(seq 1 10); do echo -n \"case $i: \"; ./solution < /home/ubuntu/frontier/Frontier-CS/algorithmic/problems/15/testdata/${i}.in | head -1; done > /home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-4/results/h-main/per_case_ops.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-4/results/h-main/per_case_ops.txt"

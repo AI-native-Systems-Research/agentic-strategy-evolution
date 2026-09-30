@@ -1,0 +1,15 @@
+Endgame table: 119 entries
+
+Verifying at n=1000 with random permutations...
+FAIL on test 26
+FAIL on test 29
+FAIL on test 119
+Random tests: 195/200 pass
+Ops: min=1967, max=1993, avg=1981.9
+Theoretical worst case: 2n-5 = 1995
+
+Verifying all 119 endgame configs at n=1000...
+FAIL: offsets=[3,2,5,4,1]
+FAIL: offsets=[3,4,5,2,1]
+FAIL: offsets=[4,5,2,3,1]
+Endgame direct test: 115/119 pass (4 errors)
