@@ -16,11 +16,26 @@ Usage (on the VM):
 import argparse, json, os, re, shlex, subprocess, tempfile, time
 from pathlib import Path
 
-FRONTIER = os.path.expanduser("~/frontier/Frontier-CS")
-FEVAL = f"{FRONTIER}/.venv/bin/frontier"
-NOUS_BIN = os.path.expanduser("~/nous_repo/.venv/bin/nous")
-NOUS_REPO = os.path.expanduser("~/nous_repo")
+FRONTIER = os.environ.get("FRONTIER_DIR", os.path.expanduser("~/frontier/Frontier-CS"))
+FEVAL = os.environ.get("FEVAL_BIN", f"{FRONTIER}/.venv/bin/frontier")
+NOUS_BIN = os.environ.get("NOUS_BIN", os.path.expanduser("~/nous_repo/.venv/bin/nous"))
+NOUS_REPO = os.environ.get("NOUS_REPO", os.path.expanduser("~/nous_repo"))
 SEED = "#include <bits/stdc++.h>\nusing namespace std;\nint main(){return 0;}\n"
+
+# Engram-style reimplementation: the "Struggle Protocol" prompt block is Engram's key behavioral
+# lever (mit-nms/Engram, arXiv 2603.21321) — it stops the agent abandoning a principled method
+# after one bad score, which is what lets it reach solver-based solutions instead of plateauing on
+# shallow heuristics.
+STRUGGLE_PROTOCOL = (
+    "STRUGGLE PROTOCOL (follow strictly):\n"
+    "- If a promising approach fails or plateaus, do NOT abandon it on the first failure. First "
+    "diagnose WHY it underperformed (bug? too slow so it times out? weak on a specific case class?), "
+    "then fix that specific cause.\n"
+    "- Do NOT downgrade from a principled/exact method (exact solver, ILP, DP, flow) to a trivial "
+    "heuristic just because the first attempt scored low. A low score usually means a bug or a "
+    "too-slow implementation, not a wrong idea. A timeout means 'too slow', not 'wrong'.\n"
+    "- Prefer deepening one strong idea over sampling many shallow ones.\n"
+)
 
 
 def sh(cmd, timeout=None, cwd=None, env=None):
@@ -150,6 +165,122 @@ def run_claude(pid, stmt, sol_path, model, logdir, label, rounds=6):
     return best_score, {"history": history, "input_tokens": tok_in, "output_tokens": tok_out, "cost_usd_est": cost}
 
 
+def _extract_plan(text):
+    m = re.search(r"MY PLAN:\s*(.+)", text or "")
+    return m.group(1).strip()[:300] if m else None
+
+
+def _engram_init_prompt(pid, stmt, journal_text, best_code, best_score, agent_idx, total_agents):
+    """First prompt for a FRESH Engram agent. Prior work reaches it ONLY through the on-disk journal
+    (structured reasoning digest) + the best artifact so far — the agent's own context starts empty,
+    which is Engram's mechanism for dodging the single-agent 'coherence ceiling'."""
+    role = (f"You are Research Specialist #{agent_idx + 1} of {total_agents} in an ongoing effort to "
+            f"MAXIMIZE the judge score on Frontier-CS algorithmic problem #{pid}. You have a FRESH "
+            f"context: everything earlier agents learned is in the research journal below.\n\n")
+    task = (f"Scoring is CONTINUOUS partial credit 0..100 (higher is better); MAXIMIZE it with the best "
+            f"algorithm/heuristic you can. Output a single self-contained C++17 program.\n\n"
+            f"PROBLEM STATEMENT:\n{stmt}\n")
+    mem = ""
+    if journal_text.strip():
+        mem += ("\nRESEARCH JOURNAL (accumulated insights from PRIOR agents — read this FIRST, build on "
+                "what worked, and do NOT repeat approaches already shown to fail):\n"
+                f"{journal_text}\n")
+    if best_code:
+        mem += (f"\nBEST SOLUTION SO FAR (score {best_score}/100). Build on it or beat it:\n"
+                f"```cpp\n{best_code}\n```\n")
+    plan = ("\nBefore writing code, state exactly one line beginning 'MY PLAN:' describing the approach "
+            "you will try and why. Then output the C++17 solution in a single ```cpp code block.")
+    return role + task + mem + "\n" + STRUGGLE_PROTOCOL + plan
+
+
+def _engram_refine_prompt(pid, prev_code, prev_score, best_score):
+    return (f"Your last solution scored {prev_score}/100 (best this run so far {best_score}). "
+            f"Diagnose what limited the score (correctness? hard-case coverage? time limit? heuristic "
+            f"quality?), then output an IMPROVED full C++17 solution.\n\n" + STRUGGLE_PROTOCOL +
+            f"\nPrevious solution:\n```cpp\n{prev_code}\n```\n"
+            f"Output ONLY the improved C++17 code in a single ```cpp code block.")
+
+
+def _engram_summary_prompt(pid, tried):
+    lines = "\n".join(f"- plan: {t['plan']} | score: {t['score']} | status: {t['status']}" for t in tried) or "(no successful attempts)"
+    return ("Write a handoff summary for the NEXT research agent, who starts fresh and will see ONLY "
+            "this summary (plus the archive). Use EXACTLY these sections and be concrete:\n"
+            "## Summary for Next Agent\n"
+            "**Best Result** — score and a one-line description of the approach that got it.\n"
+            "**What I Tried** — per approach: the idea, why, and the measured result.\n"
+            "**Key Insights** — what actually moves the score on this problem.\n"
+            "**Approaches That Didn't Work (and Why)** — so the next agent won't repeat them.\n"
+            "**Recommended Next Steps** — the most promising unexplored direction.\n\n"
+            f"Your attempts this run (problem #{pid}):\n{lines}\n")
+
+
+def run_engram(pid, stmt, sol_path, model, logdir, label, agents=3, rounds_per_agent=3):
+    """Engram-style (faithful reimplementation of mit-nms/Engram, arXiv 2603.21321), adapted to the
+    driver-controlled loop + our judge as the simulator.
+
+    Faithful to Engram's two ablation-verified mechanisms:
+      1. Sequential identical agents, each with a FRESH context (decouples context from memory to
+         beat the single-agent coherence ceiling).
+      2. On-disk memory persisted across handoffs: a Research Journal (accumulating structured
+         reasoning digest, injected into the next agent) + a Knowledgebase archive (raw per-experiment
+         records). We persist *reasoning*, not just scores, which is Engram's lever against the
+         evolutionary-neighborhood bias of score-only methods.
+    Plus the Struggle Protocol prompt. The driver runs the judge and feeds the score back within an
+    agent (same seam as run_claude), so the model only emits code + plan + summary."""
+    sol_path = Path(sol_path)
+    workdir = Path(logdir) / f"frontier_{pid}_{label}_engram"
+    kb = workdir / "knowledgebase"
+    kb.mkdir(parents=True, exist_ok=True)
+    journal_path = workdir / "research_journal.md"
+    journal_path.write_text(f"# Research Journal — Frontier-CS #{pid}\n")
+    best_code, best_score = None, None
+    tok_in = tok_out = 0
+    history, agent_summaries = [], []
+    for ai in range(agents):
+        journal_text = journal_path.read_text()
+        agent_dir = kb / f"agent_{ai}"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        prev_code, prev_score, tried = None, None, []
+        for r in range(rounds_per_agent):
+            if r == 0:
+                prompt = _engram_init_prompt(pid, stmt, journal_text, best_code, best_score, ai, agents)
+            else:
+                prompt = _engram_refine_prompt(pid, prev_code, prev_score, best_score)
+            reply, usage = claude_text(prompt, model)
+            tok_in += usage.get("prompt_tokens", 0) or 0
+            tok_out += usage.get("completion_tokens", 0) or 0
+            plan = _extract_plan(reply)
+            code = _extract_cpp(reply)
+            if not code:
+                history.append({"agent": ai, "round": r, "score": None, "status": "no_code", "plan": plan})
+                continue
+            sol_path.write_text(code)
+            score, status, _ = evaluate(pid, sol_path)
+            history.append({"agent": ai, "round": r, "score": score, "status": status, "plan": plan})
+            tried.append({"plan": plan or "(none stated)", "score": score, "status": status})
+            (agent_dir / f"exp_{r}.json").write_text(json.dumps(
+                {"round": r, "plan": plan, "score": score, "status": status, "code": code}, indent=2))
+            print(f"  [engram a{ai} r{r}] score={score} status={status} plan={plan}")
+            prev_code, prev_score = code, score
+            if score is not None and (best_score is None or score > best_score):
+                best_code, best_score = code, score
+        # Handoff: dedicated summary call -> append to journal (methodology overhead, like Nous's
+        # design/report calls; counted in cost but not in the code-generation budget).
+        summ, usage = claude_text(_engram_summary_prompt(pid, tried), model)
+        tok_in += usage.get("prompt_tokens", 0) or 0
+        tok_out += usage.get("completion_tokens", 0) or 0
+        agent_summaries.append(summ)
+        with open(journal_path, "a") as jf:
+            jf.write(f"\n## Agent {ai} handoff (global best so far: {best_score})\n{summ}\n\n---\n")
+    if best_code is not None:
+        sol_path.write_text(best_code)
+    (Path(logdir) / f"frontier_{pid}_{label}.history.json").write_text(json.dumps(history, indent=2))
+    cost = round(tok_in / 1e6 * 15 + tok_out / 1e6 * 75, 4)
+    return best_score, {"history": history, "input_tokens": tok_in, "output_tokens": tok_out,
+                        "cost_usd_est": cost, "agents": agents, "rounds_per_agent": rounds_per_agent,
+                        "code_generations": agents * rounds_per_agent, "journal": str(journal_path)}
+
+
 def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
     import yaml
     ws = Path(ws); ws.mkdir(parents=True, exist_ok=True)
@@ -231,13 +362,15 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("problem_id")
-    ap.add_argument("--agent", choices=["claude", "nous"], default="claude")
+    ap.add_argument("--agent", choices=["claude", "nous", "engram"], default="claude")
     ap.add_argument("--model", default="claude-opus-4-6")
     ap.add_argument("--out", required=True)
     ap.add_argument("--label", default=None)
     ap.add_argument("--logdir", default=os.path.expanduser("~/frontier/gen_logs"))
     ap.add_argument("--nous-iters", type=int, default=5)
     ap.add_argument("--rounds", type=int, default=6, help="claude iterative-refinement rounds")
+    ap.add_argument("--agents", type=int, default=3, help="engram: number of sequential fresh-context agents")
+    ap.add_argument("--rounds-per-agent", type=int, default=3, help="engram: code-generation rounds per agent")
     args = ap.parse_args()
     pid = args.problem_id
     label = args.label or args.agent
@@ -255,6 +388,18 @@ def main():
                     best_score=best_score, rounds=len(info["history"]), history=info["history"],
                     input_tokens=info["input_tokens"], output_tokens=info["output_tokens"],
                     cost_usd_est=info["cost_usd_est"])
+    elif args.agent == "engram":
+        sol = Path(args.logdir) / f"frontier_{pid}_{label}.solution.cpp"
+        sol.write_text(SEED)
+        best_score, info = run_engram(pid, stmt, sol, args.model, args.logdir, label,
+                                      agents=args.agents, rounds_per_agent=args.rounds_per_agent)
+        final_score, status, _ = evaluate(pid, sol)
+        meta.update(final_score=final_score, status=status, solution=str(sol), best_score=best_score,
+                    method="Engram-style (reimplementation)", agents=args.agents,
+                    rounds_per_agent=args.rounds_per_agent, code_generations=info["code_generations"],
+                    history=info["history"], input_tokens=info["input_tokens"],
+                    output_tokens=info["output_tokens"], cost_usd_est=info["cost_usd_est"],
+                    journal=info["journal"])
     else:
         ws = Path(args.logdir) / f"frontier_{pid}_{label}_ws"
         cands = run_nous(pid, stmt, ws, args.model, args.logdir, args.nous_iters, label)
