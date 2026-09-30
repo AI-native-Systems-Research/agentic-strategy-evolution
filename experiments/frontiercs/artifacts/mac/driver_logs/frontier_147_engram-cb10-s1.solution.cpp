@@ -14,11 +14,19 @@ double scoreOf(int i) {
     return 1.0 - (1.0 - ratio) * (1.0 - ratio);
 }
 
+bool overlaps(int i, int j) {
+    return ra[i]<rc[j] && ra[j]<rc[i] && rb[i]<rd[j] && rb[j]<rd[i];
+}
+
 void bspSolve(vector<int>& ids, int lx, int ly, int ux, int uy, int depth, mt19937& rng, bool randomize) {
     if(ids.empty()) return;
     if(ids.size() == 1) {
         int i = ids[0];
-        ra[i] = lx; rb[i] = ly; rc[i] = ux; rd[i] = uy;
+        // Try to give ideal area centered on point
+        long long area = (long long)(ux-lx)*(uy-ly);
+        double ratio = min(1.0, (double)rr[i]/area);
+        // Assign full region
+        ra[i]=lx; rb[i]=ly; rc[i]=ux; rd[i]=uy;
         return;
     }
     
@@ -40,25 +48,26 @@ void bspSolve(vector<int>& ids, int lx, int ly, int ux, int uy, int depth, mt199
             cumR += rr[ids[k-1]];
             double frac = (double)cumR / totalR;
             
-            int lo, hi, maxL, minR;
+            int lo, hi, maxL, minR_;
             if(splitX) {
                 lo = lx; hi = ux;
                 maxL = px[ids[k-1]];
-                minR = px[ids[k]];
+                minR_ = px[ids[k]];
             } else {
                 lo = ly; hi = uy;
                 maxL = py[ids[k-1]];
-                minR = py[ids[k]];
+                minR_ = py[ids[k]];
             }
+            
+            if(maxL >= minR_) continue;
             
             int splitPos = lo + (int)round(frac * (hi - lo));
             splitPos = max(splitPos, maxL + 1);
-            splitPos = min(splitPos, minR + 1);
+            splitPos = min(splitPos, minR_ + 1);
             if(splitPos <= lo || splitPos >= hi) continue;
             
             double actualFrac = (double)(splitPos - lo) / (hi - lo);
             double cost = (frac - actualFrac) * (frac - actualFrac);
-            
             if(randomize) cost += (double)(rng() % 1000) * 1e-9;
             
             if(cost < bestCost) {
@@ -112,7 +121,7 @@ int main(){
     mt19937 rng(42);
     
     int trials = 0;
-    while(elapsed() < 1.0) {
+    while(elapsed() < 1.5) {
         vector<int> ids(n); iota(ids.begin(), ids.end(), 0);
         bspSolve(ids, 0, 0, 10000, 10000, 0, rng, trials >= 2);
         double sc = 0; for(int i=0;i<n;i++) sc += scoreOf(i);
@@ -123,7 +132,6 @@ int main(){
     
     vector<double> sc(n);
     for(int i=0;i<n;i++) sc[i]=scoreOf(i);
-    double curScore = bestScore;
     
     while(elapsed() < 4.7) {
         double progress = min(1.0, elapsed() / 4.7);
@@ -147,7 +155,7 @@ int main(){
         
         for(int j=0;j<n&&ok;j++){
             if(j==i)continue;
-            if(ra[i]<rc[j]&&ra[j]<rc[i]&&rb[i]<rd[j]&&rb[j]<rd[i]){
+            if(overlaps(i,j)){
                 int oja=ra[j],ojb=rb[j],ojc=rc[j],ojd=rd[j];
                 int dxl=rc[j]-ra[i],dxr=rc[i]-ra[j],dyl=rd[j]-rb[i],dyr=rd[i]-rb[j];
                 int mn=min({dxl,dxr,dyl,dyr});
@@ -167,7 +175,6 @@ int main(){
         } else {
             sc[i]=scoreOf(i);
             for(auto&[j,v]:changed) sc[j]=scoreOf(j);
-            curScore+=delta;
         }
     }
     
