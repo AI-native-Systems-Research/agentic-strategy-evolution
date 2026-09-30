@@ -35,8 +35,17 @@
       },
       "iteration": 2,
       "arm_id": "h-ablation"
+    },
+    {
+      "candidate_id": "iter-3/h-main/0",
+      "score": 0.0,
+      "components": {
+        "score": 0.0
+      },
+      "iteration": 3,
+      "arm_id": "h-main"
     }
   ],
   "k": 5,
-  "updated_at": "2026-09-30T21:48:20.623316+00:00"
+  "updated_at": "2026-09-30T23:15:42.878768+00:00"
 }

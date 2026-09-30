@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "The multi-restart simulated annealing (h-main, 3 restarts) scored marginally higher than single-run SA (h-ablation) \u2014 mean 86.07 vs 85.46 \u2014 but the +0.61 point difference is far below the predicted +2.1 points and is not statistically significant (p\u22480.13, n=3 per arm). The directional hypothesis is partially confirmed but the practical benefit of multi-restart is negligible relative to judge noise.",
+  "key_points": [
+    "h-main (multi-restart SA): mean score 86.07 (std 0.47) vs h-ablation (single-run SA): mean 85.46 (std 0.66). Direction correct but gap is 0.61 points, not the predicted 2.1 points.",
+    "Judge run-to-run variance is ~0.5\u20130.7 points per evaluation, much larger than the previously claimed ~0.02 \u2014 this means design probes that showed a 2.1-point gap were dominated by test-case sampling noise, not a real algorithmic effect.",
+    "The ablation baseline score (~85.5) matched its prediction well, confirming single-run SA performance is stable and well-characterized.",
+    "With p\u22480.13 (one-tailed t-test), we cannot reject the null hypothesis that multi-restart and single-run SA perform equally. The restart mechanism provides at best a marginal ~0.7% improvement.",
+    "To meaningfully improve beyond ~86, a fundamentally different approach is likely needed (e.g., better initial placement via Voronoi partitioning, constraint-aware area allocation, or different neighborhood operators) rather than tuning restart parameters."
+  ]
+}
