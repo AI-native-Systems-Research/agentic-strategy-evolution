@@ -37,6 +37,19 @@ STRUGGLE_PROTOCOL = (
     "- Prefer deepening one strong idea over sampling many shallow ones.\n"
 )
 
+# Shared, task-agnostic output-format reminder injected IDENTICALLY into every agent's prompt
+# (claude, engram, nous) so the comparison isolates methodology rather than format-guessing luck.
+# Motivated by observing a correct algorithm score ~0 purely because it printed one value per line
+# where a single space-separated line was required.
+OUTPUT_FORMAT_NOTE = (
+    "CRITICAL - OUTPUT FORMAT: Match the statement's Output section EXACTLY: the number of lines, the "
+    "separators (spaces vs newlines), and the token order. A correct algorithm scores near zero if the "
+    "format is even slightly off (for example printing one value per line when a single space-separated "
+    "line is required, or emitting extra or blank lines). Re-read the Output section and conform to it "
+    "precisely. If a solution scores far below what its logic should earn, suspect the output format "
+    "before changing the algorithm.\n"
+)
+
 
 def sh(cmd, timeout=None, cwd=None, env=None):
     return subprocess.run(cmd, shell=True, text=True, capture_output=True, timeout=timeout, cwd=cwd, env=env)
@@ -119,14 +132,15 @@ def claude_text(prompt, model, timeout=600):
     return d["choices"][0]["message"]["content"] or "", (d.get("usage") or {})
 
 
-def gen_prompt(pid, stmt, prev_code, prev_score, best_score):
+def gen_prompt(pid, stmt, prev_code, prev_score, best_score, prev_status=None):
     base = (f"You are solving competitive-programming optimization problem Frontier-CS algorithmic #{pid}. "
             f"Scoring is CONTINUOUS partial credit 0..100 (higher is better); MAXIMIZE it with the best "
             f"algorithm/heuristic you can. Output a single self-contained C++17 program.\n\n"
-            f"PROBLEM STATEMENT:\n{stmt}\n\n")
+            + OUTPUT_FORMAT_NOTE +
+            f"\nPROBLEM STATEMENT:\n{stmt}\n\n")
     if prev_code is None:
         return base + "Output ONLY the C++17 code in a single ```cpp code block."
-    return (base + f"Your previous solution scored {prev_score}/100 (best so far {best_score}). "
+    return (base + f"Your previous solution scored {prev_score}/100 (judge status: {prev_status}; best so far {best_score}). "
             f"Previous solution:\n```cpp\n{prev_code}\n```\n"
             f"Diagnose what limited the score and output an IMPROVED full C++17 solution. "
             f"Output ONLY the C++17 code in a single ```cpp code block.")
@@ -140,9 +154,9 @@ def run_claude(pid, stmt, sol_path, model, logdir, label, rounds=6):
     best_code, best_score = None, None
     history = []
     tok_in = tok_out = 0
-    prev_code, prev_score = None, None
+    prev_code, prev_score, prev_status = None, None, None
     for r in range(rounds):
-        prompt = gen_prompt(pid, stmt, prev_code, prev_score, best_score)
+        prompt = gen_prompt(pid, stmt, prev_code, prev_score, best_score, prev_status)
         reply, usage = claude_text(prompt, model)
         tok_in += usage.get("prompt_tokens", 0) or 0
         tok_out += usage.get("completion_tokens", 0) or 0
@@ -154,6 +168,7 @@ def run_claude(pid, stmt, sol_path, model, logdir, label, rounds=6):
         score, status, _ = evaluate(pid, sol_path)
         history.append({"round": r, "score": score, "status": status})
         print(f"  [claude round {r}] score={score} status={status}")
+        prev_status = status
         prev_code, prev_score = code, score
         if score is not None and (best_score is None or score > best_score):
             best_code, best_score = code, score
@@ -179,7 +194,8 @@ def _engram_init_prompt(pid, stmt, journal_text, best_code, best_score, agent_id
             f"context: everything earlier agents learned is in the research journal below.\n\n")
     task = (f"Scoring is CONTINUOUS partial credit 0..100 (higher is better); MAXIMIZE it with the best "
             f"algorithm/heuristic you can. Output a single self-contained C++17 program.\n\n"
-            f"PROBLEM STATEMENT:\n{stmt}\n")
+            + OUTPUT_FORMAT_NOTE +
+            f"\nPROBLEM STATEMENT:\n{stmt}\n")
     mem = ""
     if journal_text.strip():
         mem += ("\nRESEARCH JOURNAL (accumulated insights from PRIOR agents — read this FIRST, build on "
@@ -193,10 +209,11 @@ def _engram_init_prompt(pid, stmt, journal_text, best_code, best_score, agent_id
     return role + task + mem + "\n" + STRUGGLE_PROTOCOL + plan
 
 
-def _engram_refine_prompt(pid, prev_code, prev_score, best_score):
-    return (f"Your last solution scored {prev_score}/100 (best this run so far {best_score}). "
-            f"Diagnose what limited the score (correctness? hard-case coverage? time limit? heuristic "
-            f"quality?), then output an IMPROVED full C++17 solution.\n\n" + STRUGGLE_PROTOCOL +
+def _engram_refine_prompt(pid, prev_code, prev_score, best_score, prev_status=None):
+    return (f"Your last solution scored {prev_score}/100 (judge status: {prev_status}; best this run so far {best_score}). "
+            f"Diagnose what limited the score (output format? correctness? hard-case coverage? time limit? "
+            f"heuristic quality?), then output an IMPROVED full C++17 solution.\n\n"
+            + OUTPUT_FORMAT_NOTE + "\n" + STRUGGLE_PROTOCOL +
             f"\nPrevious solution:\n```cpp\n{prev_code}\n```\n"
             f"Output ONLY the improved C++17 code in a single ```cpp code block.")
 
@@ -240,12 +257,12 @@ def run_engram(pid, stmt, sol_path, model, logdir, label, agents=3, rounds_per_a
         journal_text = journal_path.read_text()
         agent_dir = kb / f"agent_{ai}"
         agent_dir.mkdir(parents=True, exist_ok=True)
-        prev_code, prev_score, tried = None, None, []
+        prev_code, prev_score, prev_status, tried = None, None, None, []
         for r in range(rounds_per_agent):
             if r == 0:
                 prompt = _engram_init_prompt(pid, stmt, journal_text, best_code, best_score, ai, agents)
             else:
-                prompt = _engram_refine_prompt(pid, prev_code, prev_score, best_score)
+                prompt = _engram_refine_prompt(pid, prev_code, prev_score, best_score, prev_status)
             reply, usage = claude_text(prompt, model)
             tok_in += usage.get("prompt_tokens", 0) or 0
             tok_out += usage.get("completion_tokens", 0) or 0
@@ -261,7 +278,7 @@ def run_engram(pid, stmt, sol_path, model, logdir, label, agents=3, rounds_per_a
             (agent_dir / f"exp_{r}.json").write_text(json.dumps(
                 {"round": r, "plan": plan, "score": score, "status": status, "code": code}, indent=2))
             print(f"  [engram a{ai} r{r}] score={score} status={status} plan={plan}")
-            prev_code, prev_score = code, score
+            prev_code, prev_score, prev_status = code, score, status
             if score is not None and (best_score is None or score > best_score):
                 best_code, best_score = code, score
         # Handoff: dedicated summary call -> append to journal (methodology overhead, like Nous's
@@ -310,11 +327,13 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
         f"number in the finding metadata under key 'score'. Each experiment arm should try a "
         f"distinct algorithmic strategy (different heuristic, exact method, or optimization) and "
         f"report its measured score. The judge call takes ~30-60s; call it once per arm.\n\n"
-        f"PROBLEM STATEMENT:\n{stmt}"
+        + OUTPUT_FORMAT_NOTE +
+        f"\nPROBLEM STATEMENT:\n{stmt}"
     )
+    run_slug = re.sub(r"[^A-Za-z0-9]+", "-", f"frontier-{pid}-{label}").strip("-")
     spec = {
         "research_question": f"What algorithm maximizes the Frontier-CS judge score for algorithmic problem #{pid}?",
-        "run_id": f"frontier-{pid}",
+        "run_id": run_slug,
         "max_iterations": nous_iters,
         "sandbox": "bypass",
         "target_system": {
@@ -342,7 +361,7 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
     #  - the campaign's per-arm saved inputs (runs/iter-*/inputs/<arm>-solution.cpp) — robust even
     #    if the worktrees are cleaned or the run is interrupted before completion
     #  - the final workspace copy
-    camp_dir = ws.parent / "nous_runs" / f"frontier-{pid}"
+    camp_dir = ws.parent / "nous_runs" / run_slug
     seen, cands = set(), []
     globbed = (list((ws / ".nous-experiments").glob("**/solution.cpp"))
                + list(camp_dir.glob("runs/iter-*/inputs/*solution.cpp"))
@@ -356,7 +375,28 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
             continue
         seen.add(key)
         cands.append(sc)
-    return cands
+    # Harvest Nous's own token/cost accounting from the campaign metrics ledger so the comparison
+    # table reports cost for every agent (fields: cost_usd, input_tokens, output_tokens, duration_ms).
+    tok_in = tok_out = ncalls = dur_ms = 0
+    cost = 0.0
+    metrics_path = camp_dir / "llm_metrics.jsonl"
+    if metrics_path.exists():
+        for line in metrics_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            cost += e.get("cost_usd", 0) or 0
+            tok_in += e.get("input_tokens", 0) or 0
+            tok_out += e.get("output_tokens", 0) or 0
+            dur_ms += e.get("duration_ms", 0) or 0
+            ncalls += 1
+    info = {"input_tokens": tok_in, "output_tokens": tok_out, "cost_usd_est": round(cost, 4),
+            "llm_calls": ncalls, "llm_duration_ms": dur_ms, "campaign_dir": str(camp_dir)}
+    return cands, info
 
 
 def main():
@@ -402,7 +442,7 @@ def main():
                     journal=info["journal"])
     else:
         ws = Path(args.logdir) / f"frontier_{pid}_{label}_ws"
-        cands = run_nous(pid, stmt, ws, args.model, args.logdir, args.nous_iters, label)
+        cands, ninfo = run_nous(pid, stmt, ws, args.model, args.logdir, args.nous_iters, label)
         scored = []
         for c in cands:
             s, st, _ = evaluate(pid, c)
@@ -413,6 +453,9 @@ def main():
         meta["candidates"] = scored
         meta["final_score"] = best["score"] if best else None
         meta["solution"] = best["path"] if best else None
+        meta.update(input_tokens=ninfo["input_tokens"], output_tokens=ninfo["output_tokens"],
+                    cost_usd_est=ninfo["cost_usd_est"], llm_calls=ninfo["llm_calls"],
+                    campaign_dir=ninfo["campaign_dir"])
 
     meta["seconds"] = round(time.time() - t0, 1)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
