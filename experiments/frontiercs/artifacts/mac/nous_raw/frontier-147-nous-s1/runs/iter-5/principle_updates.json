@@ -1,0 +1,34 @@
+[
+  {
+    "id": "RP-7",
+    "statement": "For AHC001 rectangle packing SA at 4.8s budget, two-phase cooling (linear T0→T_mid=0.01 over 60%, exponential T_mid→T1=0.0005 over 40%) shows a directional score improvement of +1.30 points (mean 91.01 vs 89.71, Cohen's d=1.10) over pure exponential cooling, with p=0.060 (one-sided). The two-phase schedule also reduces score variance by ~4.7x (stdev 0.70 vs 1.52).",
+    "confidence": "medium",
+    "regime": "AHC001 rectangle packing, N~50-200 rectangles, 10000x10000 grid, SA with valid-by-construction proposals, 4.8s time budget, T0=0.08, T1=0.0005",
+    "evidence": ["iteration-5-h-main"],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "Two-phase cooling maintains higher temperature longer during exploration (T≈0.022 at midpoint vs ≈0.006 for exponential), enabling the SA to accept moderately worse moves and escape local optima before converging. The linear first phase redistributes exploration budget more evenly over time rather than front-loading it. This appears to produce more robust convergence (lower variance) and slightly higher scores.",
+    "applicability_bounds": "Tested at 4.8s budget with phase1_frac=0.6, T_mid=0.01. The p-value of 0.060 is borderline — the directional effect is consistent but not yet statistically significant at alpha=0.05. Concurrent CPU load during the experiment may have inflated control variance. Replication with isolated execution would strengthen confidence.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-5",
+    "statement": "Single-run probes during the design phase are unreliable for estimating effect sizes in AHC001 because judge variance (~5 points stdev from random test set selection) overwhelms treatment effects. However, the variance is asymmetric: interventions that increase SA iteration count (e.g., extended time budget) also reduce judge variance, making them easier to detect statistically. Additionally, concurrent CPU load from parallel judge runs can significantly increase score variance (observed 1.52 stdev vs 0.53 under isolated execution at the same 4.8s budget).",
+    "confidence": "high",
+    "regime": "AHC001 rectangle packing with SA, any time budget",
+    "evidence": ["iteration-3-h-main", "iteration-4-h-main", "iteration-5-h-control-negative"],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "Judge draws random test cases each run, creating ~5pt variance. SA is timing-sensitive — CPU contention from parallel processes reduces effective iteration count, amplifying variance and potentially lowering scores.",
+    "applicability_bounds": "Applies to all AHC001 experiments. Experiments should ideally run with exclusive CPU access for clean timing.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  }
+]
