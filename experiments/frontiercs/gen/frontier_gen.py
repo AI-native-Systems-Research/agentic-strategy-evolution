@@ -101,7 +101,7 @@ def claude_text(prompt, model, timeout=600):
         "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         d = json.load(r)
-    return d["choices"][0]["message"]["content"] or ""
+    return d["choices"][0]["message"]["content"] or "", (d.get("usage") or {})
 
 
 def gen_prompt(pid, stmt, prev_code, prev_score, best_score):
@@ -124,10 +124,13 @@ def run_claude(pid, stmt, sol_path, model, logdir, label, rounds=6):
     sol_path = Path(sol_path)
     best_code, best_score = None, None
     history = []
+    tok_in = tok_out = 0
     prev_code, prev_score = None, None
     for r in range(rounds):
         prompt = gen_prompt(pid, stmt, prev_code, prev_score, best_score)
-        reply = claude_text(prompt, model)
+        reply, usage = claude_text(prompt, model)
+        tok_in += usage.get("prompt_tokens", 0) or 0
+        tok_out += usage.get("completion_tokens", 0) or 0
         code = _extract_cpp(reply)
         if not code:
             history.append({"round": r, "score": None, "status": "no_code"})
@@ -142,7 +145,9 @@ def run_claude(pid, stmt, sol_path, model, logdir, label, rounds=6):
     if best_code is not None:
         sol_path.write_text(best_code)
     (Path(logdir) / f"frontier_{pid}_{label}.history.json").write_text(json.dumps(history, indent=2))
-    return best_score, history
+    # Opus 4.6 approx pricing ($/1M tok): input 15, output 75 (adjust if gateway differs)
+    cost = round(tok_in / 1e6 * 15 + tok_out / 1e6 * 75, 4)
+    return best_score, {"history": history, "input_tokens": tok_in, "output_tokens": tok_out, "cost_usd_est": cost}
 
 
 def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
@@ -244,10 +249,12 @@ def main():
     if args.agent == "claude":
         sol = Path(args.logdir) / f"frontier_{pid}_{label}.solution.cpp"
         sol.write_text(SEED)
-        best_score, history = run_claude(pid, stmt, sol, args.model, args.logdir, label, rounds=args.rounds)
+        best_score, info = run_claude(pid, stmt, sol, args.model, args.logdir, label, rounds=args.rounds)
         final_score, status, _ = evaluate(pid, sol)
         meta.update(final_score=final_score, status=status, solution=str(sol),
-                    best_score=best_score, rounds=len(history), history=history)
+                    best_score=best_score, rounds=len(info["history"]), history=info["history"],
+                    input_tokens=info["input_tokens"], output_tokens=info["output_tokens"],
+                    cost_usd_est=info["cost_usd_est"])
     else:
         ws = Path(args.logdir) / f"frontier_{pid}_{label}_ws"
         cands = run_nous(pid, stmt, ws, args.model, args.logdir, args.nous_iters, label)
