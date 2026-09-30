@@ -18,75 +18,70 @@ void solve(vector<int>& ids, int lx, int ly, int ux, int uy) {
     for (int i : ids) totalR += rr[i];
 
     double bestCost = 1e18;
-    int bestK = -1, bestSplit = -1;
+    int bestSplit = -1;
     bool bestUseX = true;
-    vector<int> bestOrder;
+    vector<int> bestL, bestR;
 
     for (int useX = 0; useX < 2; useX++) {
         vector<int> sidx = ids;
-        if (useX) sort(sidx.begin(), sidx.end(), [](int a, int b) { return px_[a] < px_[b]; });
-        else sort(sidx.begin(), sidx.end(), [](int a, int b) { return py_[a] < py_[b]; });
+        if (useX) sort(sidx.begin(), sidx.end(), [](int a, int b){ return px_[a] < px_[b] || (px_[a]==px_[b] && py_[a]<py_[b]); });
+        else sort(sidx.begin(), sidx.end(), [](int a, int b){ return py_[a] < py_[b] || (py_[a]==py_[b] && px_[a]<px_[b]); });
 
         long long cumR = 0;
         for (int k = 1; k < sz; k++) {
-            cumR += rr[sidx[k - 1]];
+            cumR += rr[sidx[k-1]];
+            int prev_coord = useX ? px_[sidx[k-1]] : py_[sidx[k-1]];
+            int next_coord = useX ? px_[sidx[k]] : py_[sidx[k]];
+            if (prev_coord == next_coord) continue;
+            
+            int sp = prev_coord + 1; // split so that prev_coord < sp <= next_coord
+            int lo = useX ? lx : ly;
+            int hi = useX ? ux : uy;
+            if (sp <= lo || sp >= hi) continue;
+            
             double frac = (double)cumR / totalR;
-            int lo, hi;
-            if (useX) {
-                lo = px_[sidx[k - 1]] + 1;
-                hi = px_[sidx[k]] + 1;
-                if (lo > hi) swap(lo, hi);
-                // split must be in [lx+1, ux-1] and [lo, hi]
-                int slo = max(lx + 1, lo);
-                int shi = min(ux - 1, hi);
-                if (slo > shi) continue;
-                int sp = lx + (int)round(frac * (ux - lx));
-                sp = max(sp, slo);
-                sp = min(sp, shi);
-                double af = (double)(sp - lx) / (ux - lx);
-                double c = (frac - af) * (frac - af);
-                if (c < bestCost) { bestCost = c; bestK = k; bestSplit = sp; bestUseX = true; bestOrder = sidx; }
-            } else {
-                lo = py_[sidx[k - 1]] + 1;
-                hi = py_[sidx[k]] + 1;
-                if (lo > hi) swap(lo, hi);
-                int slo = max(ly + 1, lo);
-                int shi = min(uy - 1, hi);
-                if (slo > shi) continue;
-                int sp = ly + (int)round(frac * (uy - ly));
-                sp = max(sp, slo);
-                sp = min(sp, shi);
-                double af = (double)(sp - ly) / (uy - ly);
-                double c = (frac - af) * (frac - af);
-                if (c < bestCost) { bestCost = c; bestK = k; bestSplit = sp; bestUseX = false; bestOrder = sidx; }
+            double afrac = (double)(sp - lo) / (hi - lo);
+            
+            // Try the proportional split
+            int ideal = lo + (int)round(frac * (hi - lo));
+            ideal = max(ideal, prev_coord + 1);
+            ideal = min(ideal, next_coord);
+            ideal = max(ideal, lo + 1);
+            ideal = min(ideal, hi - 1);
+            
+            double af2 = (double)(ideal - lo) / (hi - lo);
+            double cost = (frac - af2) * (frac - af2);
+            if (cost < bestCost) {
+                bestCost = cost;
+                bestSplit = ideal;
+                bestUseX = (useX == 1);
+                bestL.assign(sidx.begin(), sidx.begin() + k);
+                bestR.assign(sidx.begin() + k, sidx.end());
             }
         }
     }
 
-    if (bestK < 0) {
-        // fallback: assign minimal rectangles
-        for (int i : ids) { ra[i] = px_[i]; rb[i] = py_[i]; rc[i] = px_[i] + 1; rd[i] = py_[i] + 1; }
+    if (bestSplit < 0) {
+        for (int i : ids) { ra[i]=lx; rb[i]=ly; rc[i]=lx+1; rd[i]=ly+1; }
         return;
     }
 
-    vector<int> L(bestOrder.begin(), bestOrder.begin() + bestK);
-    vector<int> R(bestOrder.begin() + bestK, bestOrder.end());
     if (bestUseX) {
-        solve(L, lx, ly, bestSplit, uy);
-        solve(R, bestSplit, ly, ux, uy);
+        solve(bestL, lx, ly, bestSplit, uy);
+        solve(bestR, bestSplit, ly, ux, uy);
     } else {
-        solve(L, lx, ly, ux, bestSplit);
-        solve(R, lx, bestSplit, ux, uy);
+        solve(bestL, lx, ly, ux, bestSplit);
+        solve(bestR, lx, bestSplit, ux, uy);
     }
 }
 
-int main() {
+int main(){
     ios::sync_with_stdio(false); cin.tie(nullptr);
     cin >> n;
-    for (int i = 0; i < n; i++) cin >> px_[i] >> py_[i] >> rr[i];
+    for(int i=0;i<n;i++) cin >> px_[i] >> py_[i] >> rr[i];
     vector<int> ids(n);
     iota(ids.begin(), ids.end(), 0);
     solve(ids, 0, 0, 10000, 10000);
-    for (int i = 0; i < n; i++)
+    for(int i=0;i<n;i++)
         cout << ra[i] << " " << rb[i] << " " << rc[i] << " " << rd[i] << "\n";
 }
