@@ -165,38 +165,53 @@ def gen_prompt(pid, stmt, prev_code, prev_score, best_score, prev_status=None):
             f"Output ONLY the C++17 code in a single ```cpp code block.")
 
 
-def run_claude(pid, stmt, sol_path, model, logdir, label, rounds=6):
+def _uniform_cost(tin, tout):
+    """Uniform token-based cost (opus-4-6: $15/M in, $75/M out) so all agents are compared on the
+    same price, independent of any per-agent price table."""
+    return tin / 1e6 * 15 + tout / 1e6 * 75
+
+
+def run_claude(pid, stmt, sol_path, model, logdir, label, rounds=6, cost_budget=0.0, max_cap=80):
     """Driver-controlled iterative refinement: the driver evaluates each solution and feeds the
     score + judge detail back to the model for the next round, keeping the best. Mirrors the
-    submit.sh iterative-feedback protocol, but the harness (not the agent) drives the judge."""
+    submit.sh iterative-feedback protocol, but the harness (not the agent) drives the judge.
+
+    Cost-matched mode: if cost_budget>0, keep iterating until cumulative uniform cost reaches the
+    budget (capped at max_cap rounds), recording a (round, score, best_score, cum_cost) trajectory so
+    the agent can be compared against others at ANY equal cost point."""
     sol_path = Path(sol_path)
     best_code, best_score = None, None
     history = []
     tok_in = tok_out = 0
     prev_code, prev_score, prev_status = None, None, None
-    for r in range(rounds):
+    limit = max_cap if cost_budget > 0 else rounds
+    for r in range(limit):
         prompt = gen_prompt(pid, stmt, prev_code, prev_score, best_score, prev_status)
         reply, usage = claude_text(prompt, model)
         tok_in += usage.get("prompt_tokens", 0) or 0
         tok_out += usage.get("completion_tokens", 0) or 0
+        cum_cost = round(_uniform_cost(tok_in, tok_out), 4)
         code = _extract_cpp(reply)
         if not code:
-            history.append({"round": r, "score": None, "status": "no_code"})
-            continue
-        sol_path.write_text(code)
-        score, status, _ = evaluate(pid, sol_path)
-        history.append({"round": r, "score": score, "status": status})
-        print(f"  [claude round {r}] score={score} status={status}")
-        prev_status = status
-        prev_code, prev_score = code, score
-        if score is not None and (best_score is None or score > best_score):
-            best_code, best_score = code, score
+            history.append({"round": r, "score": None, "status": "no_code", "cum_cost": cum_cost, "best_score": best_score})
+        else:
+            sol_path.write_text(code)
+            score, status, _ = evaluate(pid, sol_path)
+            prev_status = status
+            prev_code, prev_score = code, score
+            if score is not None and (best_score is None or score > best_score):
+                best_code, best_score = code, score
+            history.append({"round": r, "score": score, "status": status, "cum_cost": cum_cost, "best_score": best_score})
+            print(f"  [claude round {r}] score={score} best={best_score} cum_cost=${cum_cost} status={status}")
+        if cost_budget > 0 and cum_cost >= cost_budget:
+            print(f"  [claude] cost budget ${cost_budget} reached at round {r} (cum ${cum_cost})")
+            break
     if best_code is not None:
         sol_path.write_text(best_code)
     (Path(logdir) / f"frontier_{pid}_{label}.history.json").write_text(json.dumps(history, indent=2))
-    # Opus 4.6 approx pricing ($/1M tok): input 15, output 75 (adjust if gateway differs)
-    cost = round(tok_in / 1e6 * 15 + tok_out / 1e6 * 75, 4)
-    return best_score, {"history": history, "input_tokens": tok_in, "output_tokens": tok_out, "cost_usd_est": cost}
+    cost = round(_uniform_cost(tok_in, tok_out), 4)
+    return best_score, {"history": history, "input_tokens": tok_in, "output_tokens": tok_out,
+                        "cost_usd_est": cost, "trajectory": [{"cum_cost": h["cum_cost"], "best_score": h["best_score"]} for h in history if "cum_cost" in h]}
 
 
 def _extract_plan(text):
@@ -250,7 +265,8 @@ def _engram_summary_prompt(pid, tried):
             f"Your attempts this run (problem #{pid}):\n{lines}\n")
 
 
-def run_engram(pid, stmt, sol_path, model, logdir, label, agents=3, rounds_per_agent=3):
+def run_engram(pid, stmt, sol_path, model, logdir, label, agents=3, rounds_per_agent=3,
+               cost_budget=0.0, max_agents_cap=40):
     """Engram-style (faithful reimplementation of mit-nms/Engram, arXiv 2603.21321), adapted to the
     driver-controlled loop + our judge as the simulator.
 
@@ -272,34 +288,45 @@ def run_engram(pid, stmt, sol_path, model, logdir, label, agents=3, rounds_per_a
     best_code, best_score = None, None
     tok_in = tok_out = 0
     history, agent_summaries = [], []
-    for ai in range(agents):
+    n_agents = max_agents_cap if cost_budget > 0 else agents
+    stop = False
+    for ai in range(n_agents):
+        if stop:
+            break
         journal_text = journal_path.read_text()
         agent_dir = kb / f"agent_{ai}"
         agent_dir.mkdir(parents=True, exist_ok=True)
         prev_code, prev_score, prev_status, tried = None, None, None, []
         for r in range(rounds_per_agent):
             if r == 0:
-                prompt = _engram_init_prompt(pid, stmt, journal_text, best_code, best_score, ai, agents)
+                prompt = _engram_init_prompt(pid, stmt, journal_text, best_code, best_score, ai, n_agents)
             else:
                 prompt = _engram_refine_prompt(pid, prev_code, prev_score, best_score, prev_status)
             reply, usage = claude_text(prompt, model)
             tok_in += usage.get("prompt_tokens", 0) or 0
             tok_out += usage.get("completion_tokens", 0) or 0
+            cum_cost = round(_uniform_cost(tok_in, tok_out), 4)
             plan = _extract_plan(reply)
             code = _extract_cpp(reply)
             if not code:
-                history.append({"agent": ai, "round": r, "score": None, "status": "no_code", "plan": plan})
-                continue
-            sol_path.write_text(code)
-            score, status, _ = evaluate(pid, sol_path)
-            history.append({"agent": ai, "round": r, "score": score, "status": status, "plan": plan})
-            tried.append({"plan": plan or "(none stated)", "score": score, "status": status})
-            (agent_dir / f"exp_{r}.json").write_text(json.dumps(
-                {"round": r, "plan": plan, "score": score, "status": status, "code": code}, indent=2))
-            print(f"  [engram a{ai} r{r}] score={score} status={status} plan={plan}")
-            prev_code, prev_score, prev_status = code, score, status
-            if score is not None and (best_score is None or score > best_score):
-                best_code, best_score = code, score
+                history.append({"agent": ai, "round": r, "score": None, "status": "no_code", "plan": plan,
+                                "cum_cost": cum_cost, "best_score": best_score})
+            else:
+                sol_path.write_text(code)
+                score, status, _ = evaluate(pid, sol_path)
+                tried.append({"plan": plan or "(none stated)", "score": score, "status": status})
+                (agent_dir / f"exp_{r}.json").write_text(json.dumps(
+                    {"round": r, "plan": plan, "score": score, "status": status, "code": code}, indent=2))
+                prev_code, prev_score, prev_status = code, score, status
+                if score is not None and (best_score is None or score > best_score):
+                    best_code, best_score = code, score
+                history.append({"agent": ai, "round": r, "score": score, "status": status, "plan": plan,
+                                "cum_cost": cum_cost, "best_score": best_score})
+                print(f"  [engram a{ai} r{r}] score={score} best={best_score} cum_cost=${cum_cost} plan={plan}")
+            if cost_budget > 0 and cum_cost >= cost_budget:
+                print(f"  [engram] cost budget ${cost_budget} reached (a{ai} r{r}, cum ${cum_cost})")
+                stop = True
+                break
         # Handoff: dedicated summary call -> append to journal (methodology overhead, like Nous's
         # design/report calls; counted in cost but not in the code-generation budget).
         summ, usage = claude_text(_engram_summary_prompt(pid, tried), model)
@@ -311,10 +338,12 @@ def run_engram(pid, stmt, sol_path, model, logdir, label, agents=3, rounds_per_a
     if best_code is not None:
         sol_path.write_text(best_code)
     (Path(logdir) / f"frontier_{pid}_{label}.history.json").write_text(json.dumps(history, indent=2))
-    cost = round(tok_in / 1e6 * 15 + tok_out / 1e6 * 75, 4)
+    cost = round(_uniform_cost(tok_in, tok_out), 4)
     return best_score, {"history": history, "input_tokens": tok_in, "output_tokens": tok_out,
-                        "cost_usd_est": cost, "agents": agents, "rounds_per_agent": rounds_per_agent,
-                        "code_generations": agents * rounds_per_agent, "journal": str(journal_path)}
+                        "cost_usd_est": cost, "agents": ai + 1, "rounds_per_agent": rounds_per_agent,
+                        "code_generations": len([h for h in history if h.get("score") is not None]),
+                        "journal": str(journal_path),
+                        "trajectory": [{"cum_cost": h["cum_cost"], "best_score": h["best_score"]} for h in history if "cum_cost" in h]}
 
 
 def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
@@ -430,6 +459,9 @@ def main():
     ap.add_argument("--rounds", type=int, default=6, help="claude iterative-refinement rounds")
     ap.add_argument("--agents", type=int, default=3, help="engram: number of sequential fresh-context agents")
     ap.add_argument("--rounds-per-agent", type=int, default=3, help="engram: code-generation rounds per agent")
+    ap.add_argument("--cost-budget-usd", type=float, default=0.0,
+                    help="claude/engram: iterate until cumulative uniform cost reaches this budget "
+                         "(cost-matched trajectory mode); 0 = use fixed --rounds/--agents")
     args = ap.parse_args()
     pid = args.problem_id
     label = args.label or args.agent
@@ -441,24 +473,28 @@ def main():
     if args.agent == "claude":
         sol = Path(args.logdir) / f"frontier_{pid}_{label}.solution.cpp"
         sol.write_text(SEED)
-        best_score, info = run_claude(pid, stmt, sol, args.model, args.logdir, label, rounds=args.rounds)
+        best_score, info = run_claude(pid, stmt, sol, args.model, args.logdir, label,
+                                      rounds=args.rounds, cost_budget=args.cost_budget_usd)
         final_score, status, _ = evaluate(pid, sol)
         meta.update(final_score=final_score, status=status, solution=str(sol),
                     best_score=best_score, rounds=len(info["history"]), history=info["history"],
                     input_tokens=info["input_tokens"], output_tokens=info["output_tokens"],
-                    cost_usd_est=info["cost_usd_est"])
+                    cost_usd_est=info["cost_usd_est"], trajectory=info.get("trajectory"),
+                    cost_budget_usd=args.cost_budget_usd)
     elif args.agent == "engram":
         sol = Path(args.logdir) / f"frontier_{pid}_{label}.solution.cpp"
         sol.write_text(SEED)
         best_score, info = run_engram(pid, stmt, sol, args.model, args.logdir, label,
-                                      agents=args.agents, rounds_per_agent=args.rounds_per_agent)
+                                      agents=args.agents, rounds_per_agent=args.rounds_per_agent,
+                                      cost_budget=args.cost_budget_usd)
         final_score, status, _ = evaluate(pid, sol)
         meta.update(final_score=final_score, status=status, solution=str(sol), best_score=best_score,
-                    method="Engram-style (reimplementation)", agents=args.agents,
+                    method="Engram-style (reimplementation)", agents=info["agents"],
                     rounds_per_agent=args.rounds_per_agent, code_generations=info["code_generations"],
                     history=info["history"], input_tokens=info["input_tokens"],
                     output_tokens=info["output_tokens"], cost_usd_est=info["cost_usd_est"],
-                    journal=info["journal"])
+                    journal=info["journal"], trajectory=info.get("trajectory"),
+                    cost_budget_usd=args.cost_budget_usd)
     else:
         ws = Path(args.logdir) / f"frontier_{pid}_{label}_ws"
         cands, ninfo = run_nous(pid, stmt, ws, args.model, args.logdir, args.nous_iters, label)
