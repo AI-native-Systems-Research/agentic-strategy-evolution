@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, the algorithm achieves the maximum possible judge score of 100/100 on all test cases. The core approach is a circular-buffer rotation sort that places elements left-to-right using 2 operations each, with an optimized endgame handling the last 3 elements via BFS-optimal sequences. Operation count has been reduced from worst-case 2n+1 (iter-1) to 2n-2 (iter-2), though this doesn't affect the score since the judge clamps at 100.",
+  "key_points": [
+    "Score is 100/100 \u2014 the maximum achievable. The scoring formula clamps at 100 when operations \u2264 2n+1 (=2001 for n=1000), and our algorithm's worst case is 1998 (=2n-2).",
+    "The algorithm's mechanism is fully understood: place element k into position k using two operations (Op1 rotates it to front, Op2 restores the sorted prefix), then handle the last 3 elements with BFS-proven optimal sequences of 2-4 operations. Ablation confirmed Op2 is essential (score drops to 0 without it).",
+    "Average operations on random n=1000 permutations: 1983.8 (iter-2 optimized) vs 1985.4 (iter-1 baseline). Worst case: 1995 vs 2000. The improvement is real but invisible to the judge since both are well below the 2001 threshold.",
+    "There is nothing left to optimize for score \u2014 we are at the ceiling. Potential next-iteration work would be purely academic: proving tighter lower bounds, testing larger endgame units (last 4-5 elements), or exploring fundamentally different algorithms. None of these can increase the score beyond 100.",
+    "Recommendation: APPROVE continuation only if exploring operation-count minimization for scientific interest. If the goal is purely score maximization, this campaign can be concluded \u2014 score 100 is the best possible outcome."
+  ]
+}

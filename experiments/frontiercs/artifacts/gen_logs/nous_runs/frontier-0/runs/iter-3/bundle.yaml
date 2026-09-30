@@ -1,0 +1,58 @@
+metadata:
+  iteration: 3
+  family: "gap-filling-packing"
+  research_question: "Does integrated bitmap-based gap-filling during skyline packing improve the judge score for polyomino packing?"
+  complexity_tier: 1
+  tier_justification: "Single mechanism (gap-filling), treatment vs control."
+
+arms:
+  - type: h-main
+    prediction: "The gap-filling variant (v8) will score equal to or marginally higher (0-2 points) than the v7 baseline on average. The mechanism fills internal gaps below the skyline that pure skyline tracking misses, reducing the packing height. The improvement is expected to be small relative to the ~5-point inter-run variance, so a single run may show either direction."
+    mechanism: "During skyline packing, a 2D bitmap tracks all occupied cells. After the scoring loop selects the best placement candidate, the bitmap is scanned from y=0 upward to find a gap below the skyline-based y0. If the piece fits in a gap, it is placed there instead of on top of the skyline, preventing unnecessary height increases. This fills internal gaps created by non-rectangular piece shapes that the skyline profile masks."
+    diagnostic: "If refuted (v8 scores lower than v7 by >3 points): the bitmap allocation and gap scan overhead may slow down the inner loop through cache pollution, causing fewer widths to be explored in the time budget. Check whether v8 explores fewer pack calls than v7 (timing analysis). If confirmed: quantify how many placements actually used gap positions vs skyline positions."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Copy inputs/h-main-solution.cpp to solution.cpp — the v8 variant with integrated bitmap-based gap-filling in the pack function."
+        rationale: "Tests whether gap-filling during placement improves packing density."
+
+  - type: h-control-negative
+    prediction: "The v7 baseline (no gap-filling) will score in the range 79-86, matching prior iteration results. The mechanism of interest (gap-filling) is absent, so no improvement from gap-filling is expected."
+    mechanism: "Standard skyline greedy packing with dynamic lookahead, roughness tiebreaker, column compaction, 3 orderings, and hybrid time strategy. All gaps below the skyline are ignored during placement."
+    diagnostic: "If scores outside 79-86 range: system load or test case distribution may have changed. If v7 scores above v8: confirms that gap-filling overhead outweighs gap-filling benefit under current system conditions."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Copy inputs/h-control-negative-solution.cpp to solution.cpp — the unmodified v7 from iter-2."
+        rationale: "Establishes the baseline against which gap-filling is measured."
+
+arm_selection_rationale: |
+  Two arms: h-main tests the new mechanism (gap-filling), h-control-negative is the unchanged baseline.
+  No ablation arm because the mechanism is a single addition (bitmap + gap scan); there is no meaningful sub-component to ablate.
+  No dose-response because gap-filling is binary (on/off), not a continuous knob.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters: {}
+  unlocked_parameters_audit:
+    - name: "time_limit"
+      default_value: "2s"
+      justification: "Set by the problem config, not tunable."
+    - name: "memory_limit"
+      default_value: "256MB"
+      justification: "Set by the problem config, not tunable."
+    - name: "lookahead_fraction"
+      default_value: "n/4"
+      justification: "Inherited from iter-2; dynamic adjustment handles big instances."
+    - name: "width_sweep_factor"
+      default_value: "0.01-0.5 depending on totalCells"
+      justification: "Inherited from iter-2; tested in iter-1 and iter-2."
+    - name: "phase1_time_fraction"
+      default_value: "0.6"
+      justification: "Inherited from iter-2; balances width exploration vs ordering exploration."
+    - name: "orderings_count"
+      default_value: "3"
+      justification: "Inherited from iter-2; adding more orderings was tested and showed no reliable improvement."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+      h-control-negative: 45
+    observation_method: "Measured during design probing: judge calls take 30-60 seconds."

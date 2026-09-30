@@ -1,0 +1,362 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..a0bc769 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,356 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++static const long long MAX_MASS = 20000000LL;
++static const long long MAX_VOL  = 25000000LL;
++
++// Wall-time tracking (chrono::steady_clock instead of clock())
++chrono::steady_clock::time_point start_time;
++bool bnb_timed_out = false;
++long long bnb_nodes = 0;
++
++struct Item {
++    char name[128];
++    long long q, v, m, l;
++};
++
++int n;
++Item items[12];
++long long best_value;
++int best_counts[12];
++int cur_counts[12];
++
++// Precomputed sorted indices for cheap 1D bounds
++int sorted_by_vm[12]; // sorted by v/m descending
++int sorted_by_vl[12]; // sorted by v/l descending
++
++// Cheap 1D fractional knapsack bound (mass constraint only)
++double ub_mass_only(int idx, long long rm) {
++    double val = 0, rem = (double)rm;
++    for (int ii = 0; ii < n; ii++) {
++        int i = sorted_by_vm[ii];
++        if (i < idx) continue;
++        if (rem <= 0.5) break;
++        double k = min((double)items[i].q, rem / (double)items[i].m);
++        val += k * items[i].v;
++        rem -= k * items[i].m;
++    }
++    return val;
++}
++
++// Cheap 1D fractional knapsack bound (volume constraint only)
++double ub_vol_only(int idx, long long rv) {
++    double val = 0, rem = (double)rv;
++    for (int ii = 0; ii < n; ii++) {
++        int i = sorted_by_vl[ii];
++        if (i < idx) continue;
++        if (rem <= 0.5) break;
++        double k = min((double)items[i].q, rem / (double)items[i].l);
++        val += k * items[i].v;
++        rem -= k * items[i].l;
++    }
++    return val;
++}
++
++// Cheap upper bound: min of two 1D relaxations
++inline double cheap_ub(int idx, long long rm, long long rv) {
++    if (rm <= 0 || rv <= 0 || idx >= n) return 0;
++    return min(ub_mass_only(idx, rm), ub_vol_only(idx, rv));
++}
++
++// Evaluate Lagrangian: relax volume with multiplier lambda
++double eval_lagrangian_vol(int idx, long long rm, long long rv, double lambda) {
++    struct MI { double v_mod; double m_i; double q_i; double dens; };
++    MI mods[12];
++    int cnt = 0;
++    for (int i = idx; i < n; i++) {
++        double vm = (double)items[i].v - lambda * (double)items[i].l;
++        if (vm > 1e-9) {
++            mods[cnt] = {vm, (double)items[i].m, (double)items[i].q, vm / (double)items[i].m};
++            cnt++;
++        }
++    }
++    for (int i = 1; i < cnt; i++) {
++        MI tmp = mods[i]; int j = i - 1;
++        while (j >= 0 && mods[j].dens < tmp.dens) { mods[j+1] = mods[j]; j--; }
++        mods[j+1] = tmp;
++    }
++    double value = lambda * (double)rv, rem = (double)rm;
++    for (int i = 0; i < cnt && rem > 0.5; i++) {
++        double k = min(mods[i].q_i, rem / mods[i].m_i);
++        value += k * mods[i].v_mod;
++        rem -= k * mods[i].m_i;
++    }
++    return value;
++}
++
++// Tight LP bound using Lagrangian relaxation (relax volume) + ternary search
++double tight_ub(int idx, long long rm, long long rv) {
++    if (rm <= 0 || rv <= 0 || idx >= n) return 0;
++
++    double lo = 0.0, hi = 0.0;
++    for (int i = idx; i < n; i++)
++        hi = max(hi, (double)items[i].v / (double)items[i].l);
++    hi *= 1.05;
++
++    for (int iter = 0; iter < 12; iter++) {
++        double m1 = lo + (hi - lo) / 3.0;
++        double m2 = hi - (hi - lo) / 3.0;
++        if (eval_lagrangian_vol(idx, rm, rv, m1) < eval_lagrangian_vol(idx, rm, rv, m2))
++            hi = m2;
++        else
++            lo = m1;
++    }
++    return eval_lagrangian_vol(idx, rm, rv, (lo + hi) / 2.0);
++}
++
++void solve(int idx, long long rm, long long rv, long long cv) {
++    bnb_nodes++;
++    // Amortized wall-time guard: check chrono every 512 nodes
++    if ((bnb_nodes & 511) == 0) {
++        auto now = chrono::steady_clock::now();
++        if (chrono::duration_cast<chrono::milliseconds>(now - start_time).count() > 700) {
++            bnb_timed_out = true;
++            return;
++        }
++    }
++    // Fast recursion unwinding when timed out
++    if (bnb_timed_out) return;
++
++    if (idx == n) {
++        if (cv > best_value) {
++            best_value = cv;
++            memcpy(best_counts, cur_counts, sizeof(cur_counts));
++        }
++        return;
++    }
++
++    // Use tight bound for first 8 levels, cheap bound for deeper levels
++    double ub;
++    if (idx < 8)
++        ub = (double)cv + tight_ub(idx, rm, rv);
++    else
++        ub = (double)cv + cheap_ub(idx, rm, rv);
++    if (ub <= (double)best_value + 0.5) return;
++
++    long long max_k = min(items[idx].q, min(rm / items[idx].m, rv / items[idx].l));
++
++    for (long long k = max_k; k >= 0; k--) {
++        long long nrm = rm - k * items[idx].m;
++        long long nrv = rv - k * items[idx].l;
++        long long ncv = cv + k * items[idx].v;
++
++        // Cheap per-k bound
++        double kub = (double)ncv + cheap_ub(idx + 1, nrm, nrv);
++        if (kub <= (double)best_value + 0.5) continue;
++
++        cur_counts[idx] = (int)k;
++        solve(idx + 1, nrm, nrv, ncv);
++    }
++}
++
++void local_search() {
++    bool improved = true;
++    while (improved) {
++        improved = false;
++        long long mass = 0, vol = 0;
++        for (int j = 0; j < n; j++) {
++            mass += (long long)best_counts[j] * items[j].m;
++            vol += (long long)best_counts[j] * items[j].l;
++        }
++
++        // Try increasing each item
++        for (int i = 0; i < n; i++) {
++            if (best_counts[i] >= items[i].q) continue;
++            if (mass + items[i].m <= MAX_MASS && vol + items[i].l <= MAX_VOL) {
++                best_counts[i]++;
++                best_value += items[i].v;
++                mass += items[i].m;
++                vol += items[i].l;
++                improved = true;
++            }
++        }
++
++        // Swap: decrease i by 1, increase j
++        for (int i = 0; i < n && !improved; i++) {
++            if (best_counts[i] <= 0) continue;
++            for (int j = 0; j < n; j++) {
++                if (i == j) continue;
++                long long avail_m = MAX_MASS - mass + items[i].m;
++                long long avail_v = MAX_VOL - vol + items[i].l;
++                long long add = min((long long)(items[j].q - best_counts[j]),
++                                    min(avail_m / items[j].m, avail_v / items[j].l));
++                long long delta = add * items[j].v - items[i].v;
++                if (delta > 0) {
++                    mass = mass - items[i].m + add * items[j].m;
++                    vol = vol - items[i].l + add * items[j].l;
++                    best_counts[i]--;
++                    best_counts[j] += (int)add;
++                    best_value += delta;
++                    improved = true;
++                    break;
++                }
++            }
++        }
++
++        // Remove d of item i, greedily refill
++        if (!improved) {
++            for (int i = 0; i < n && !improved; i++) {
++                for (int d = 1; d <= min(10, best_counts[i]) && !improved; d++) {
++                    int sav[12]; long long sv = best_value;
++                    memcpy(sav, best_counts, sizeof(best_counts));
++                    best_counts[i] -= d;
++                    long long tm = 0, tv = 0, tval = 0;
++                    for (int k = 0; k < n; k++) {
++                        tm += (long long)best_counts[k] * items[k].m;
++                        tv += (long long)best_counts[k] * items[k].l;
++                        tval += (long long)best_counts[k] * items[k].v;
++                    }
++                    int ord[12]; for (int k = 0; k < n; k++) ord[k] = k;
++                    sort(ord, ord + n, [](int a, int b) {
++                        return items[a].v * (items[b].m + items[b].l) > items[b].v * (items[a].m + items[a].l);
++                    });
++                    for (int oi = 0; oi < n; oi++) {
++                        int k = ord[oi];
++                        long long add = min((long long)(items[k].q - best_counts[k]),
++                                            min((MAX_MASS - tm) / items[k].m, (MAX_VOL - tv) / items[k].l));
++                        if (add > 0) {
++                            best_counts[k] += (int)add;
++                            tm += add * items[k].m;
++                            tv += add * items[k].l;
++                            tval += add * items[k].v;
++                        }
++                    }
++                    if (tval > sv) { best_value = tval; improved = true; }
++                    else { memcpy(best_counts, sav, sizeof(best_counts)); best_value = sv; }
++                }
++            }
++        }
++    }
++}
++
++// Fast I/O: fread entire stdin into static buffer
++static char inbuf[65536];
++
++int main() {
++    // Start wall-time clock as first action
++    start_time = chrono::steady_clock::now();
++
++    // Read entire stdin via fread (zero heap allocations)
++    int inlen = (int)fread(inbuf, 1, sizeof(inbuf) - 1, stdin);
++    inbuf[inlen] = '\0';
++
++    // Parse JSON manually from inbuf
++    n = 0;
++    char* p = inbuf;
++    while (n < 12) {
++        // Find next quoted key
++        while (*p && *p != '"') p++;
++        if (!*p) break;
++        p++; // skip opening quote
++        char* kstart = p;
++        while (*p && *p != '"') p++;
++        if (!*p) break;
++        int klen = (int)(p - kstart);
++        memcpy(items[n].name, kstart, klen);
++        items[n].name[klen] = '\0';
++        p++; // skip closing quote
++
++        // Find '['
++        while (*p && *p != '[') p++;
++        if (!*p) break;
++        p++; // skip '['
++
++        // Parse 4 integers
++        long long vals[4];
++        for (int vi = 0; vi < 4; vi++) {
++            while (*p && !(*p >= '0' && *p <= '9')) p++;
++            if (!*p) break;
++            long long val = 0;
++            while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); p++; }
++            vals[vi] = val;
++        }
++
++        // Find ']'
++        while (*p && *p != ']') p++;
++        if (*p) p++;
++
++        items[n].q = vals[0];
++        items[n].v = vals[1];
++        items[n].m = vals[2];
++        items[n].l = vals[3];
++        n++;
++    }
++
++    // Compute effective max quantities
++    for (int i = 0; i < n; i++)
++        items[i].q = min(items[i].q, min(MAX_MASS / items[i].m, MAX_VOL / items[i].l));
++
++    // Sort by combined density descending (for B&B ordering)
++    sort(items, items + n, [](const Item& a, const Item& b) {
++        return (double)a.v / (a.m + a.l) > (double)b.v / (b.m + b.l);
++    });
++
++    // Build sorted index arrays for cheap bounds
++    for (int i = 0; i < n; i++) sorted_by_vm[i] = sorted_by_vl[i] = i;
++    sort(sorted_by_vm, sorted_by_vm + n, [](int a, int b) {
++        return items[a].v * items[b].m > items[b].v * items[a].m;
++    });
++    sort(sorted_by_vl, sorted_by_vl + n, [](int a, int b) {
++        return items[a].v * items[b].l > items[b].v * items[a].l;
++    });
++
++    // Multiple greedy heuristics
++    best_value = 0;
++    memset(best_counts, 0, sizeof(best_counts));
++
++    auto run_greedy = [&](auto cmp) {
++        int order[12]; for (int i = 0; i < n; i++) order[i] = i;
++        sort(order, order + n, cmp);
++        int gc[12] = {};
++        long long gv = 0, rm = MAX_MASS, rv = MAX_VOL;
++        for (int pass = 0; pass < 2; pass++) {
++            for (int ii = 0; ii < n; ii++) {
++                int i = order[ii];
++                long long k = min(items[i].q - gc[i], min(rm / items[i].m, rv / items[i].l));
++                if (k > 0) { gc[i] += (int)k; gv += k * items[i].v; rm -= k * items[i].m; rv -= k * items[i].l; }
++            }
++        }
++        if (gv > best_value) { best_value = gv; memcpy(best_counts, gc, sizeof(gc)); }
++    };
++
++    run_greedy([](int a, int b) { return items[a].v * items[b].m > items[b].v * items[a].m; });
++    run_greedy([](int a, int b) { return items[a].v * items[b].l > items[b].v * items[a].l; });
++    for (int ap = 0; ap <= 100; ap += 5) {
++        double alpha = ap / 100.0;
++        run_greedy([alpha](int a, int b) {
++            double da = alpha * items[a].m + (1.0 - alpha) * items[a].l;
++            double db = alpha * items[b].m + (1.0 - alpha) * items[b].l;
++            return items[a].v * db > items[b].v * da;
++        });
++    }
++
++    // First local search (on greedy solution)
++    local_search();
++
++    // Branch and bound
++    memset(cur_counts, 0, sizeof(cur_counts));
++    solve(0, MAX_MASS, MAX_VOL, 0);
++
++    // Conditional LS2: only run if B&B timed out and we have time budget remaining
++    if (bnb_timed_out) {
++        auto now = chrono::steady_clock::now();
++        if (chrono::duration_cast<chrono::milliseconds>(now - start_time).count() < 800) {
++            local_search();
++        }
++    }
++
++    // Output via printf (fast, no streams)
++    printf("{\n");
++    for (int i = 0; i < n; i++) {
++        printf("\"%s\": %d", items[i].name, best_counts[i]);
++        if (i < n - 1) printf(",");
++        printf("\n");
++    }
++    printf("}\n");
++}

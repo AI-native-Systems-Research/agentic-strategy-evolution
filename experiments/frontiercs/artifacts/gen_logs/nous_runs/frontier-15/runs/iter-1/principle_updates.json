@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "The prefix-suffix swap operation [A|B|C] \u2192 [C|B|A] can sort any permutation of length n \u2265 4 in at most 2n+1 operations by treating the unsorted region as a circular buffer and composing two operations that rotate the buffer while round-tripping the sorted prefix.",
+    "confidence": "high",
+    "regime": "n \u2265 4, any valid permutation",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "For each unsorted element k+1 at buffer distance d from its target, decompose d into d1+d2 (mod buffer_length) with both in [1, l-1]. Op1 (x=sorted_prefix_len, y=buffer_len-d1) rotates the buffer left by d1 while moving the sorted prefix to the end. Op2 (x=d2, y=sorted_prefix_len) completes the rotation and restores the prefix. Special cases: element 1 at position 1 uses 2 ops, last 2 elements use a 5-op endgame sequence.",
+    "applicability_bounds": "Applicable to problem 15 and any prefix-suffix swap sorting problem. The 2n+1 bound matches the hardcoded best_operations benchmark in the checker.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "For d=1 (element one position from target) in a buffer of length l \u2265 3, the decomposition d1=2, d2=l-1 achieves d1+d2 = l+1 \u2261 1 (mod l), resolving the edge case where no direct (d1, d-d1) split has both values in [1, l-1].",
+    "confidence": "high",
+    "regime": "buffer length l \u2265 3, rotation distance d=1",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "When d=1, the natural split d1=1, d2=0 fails because d2=0 is invalid. The modular arithmetic decomposition d1=2, d2=l-1 sums to l+1 \u2261 1 (mod l), keeping both in the valid range [1, l-1] for l \u2265 3.",
+    "applicability_bounds": "Only needed when d=1 and l \u2265 3. For l=2 (impossible in the main loop since it processes up to n-2), a different endgame is required.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": false,
+    "derivation_type": "algebraic"
+  }
+]

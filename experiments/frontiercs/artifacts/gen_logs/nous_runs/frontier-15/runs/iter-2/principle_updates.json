@@ -1,0 +1,41 @@
+[
+  {
+    "id": "RP-1",
+    "action": "revise",
+    "statement": "The prefix-suffix swap operation [A|B|C] \u2192 [C|B|A] can sort any permutation of length n \u2265 5 in at most 2n-2 operations by treating the unsorted region as a circular buffer and composing two operations per element, with a BFS-optimal endgame for the last 3 elements. For n=4, the 2n+1 bound applies (special case).",
+    "confidence": "high",
+    "regime": "n \u2265 5, any valid permutation",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The core 2-op-per-element mechanism places elements 2 through n-3 using Op1 (buffer rotation) + Op2 (prefix restoration). The last 3 elements are handled by a 6-way case dispatch based on their permutation: [n-2,n,n-1]\u21924ops, [n-1,n-2,n]\u21924ops, [n-1,n,n-2]\u21922ops, [n,n-2,n-1]\u21922ops, [n,n-1,n-2]\u21923ops, [n-2,n-1,n]\u21920ops. This replaces the previous 1-element + 5-op endgame (worst case 2+5=7) with a 3-element unit (worst case 4), saving up to 3 operations.",
+    "applicability_bounds": "Applicable to problem 15 and any prefix-suffix swap sorting problem with n \u2265 5. The 2n-2 bound is tight (observed max 1995 < 1998 in 100 random trials for n=1000). For n=4, the algorithm uses a direct 2n+1 approach.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "action": "add",
+    "statement": "The prefix-restoration step (Op2) is essential to the circular buffer rotation algorithm. Removing it destroys the sorted-prefix invariant, causing the algorithm to produce unsorted output (score 0) even though the buffer rotation step (Op1) correctly positions each target element temporarily.",
+    "confidence": "high",
+    "regime": "n \u2265 5, any permutation requiring at least one Op1 application",
+    "evidence": [
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Op1 (apply(cf, l-d1)) rotates the buffer to bring the target element to position cf, but simultaneously moves the sorted prefix [1..cf] from positions [0..cf-1] to [n-cf..n-1]. Without Op2 (apply(d2, cf)) to restore the prefix, the loop variable cf becomes inconsistent with the array state: cf increments (assuming the prefix grew) but the prefix is actually at the array's end. Subsequent searches for element cf+1 starting at position cf find wrong elements.",
+    "applicability_bounds": "This principle is about mechanism necessity, not optimality. The 2-op scheme (Op1+Op2) cannot be reduced to 1-op-per-element.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

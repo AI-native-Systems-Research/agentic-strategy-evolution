@@ -1,0 +1,53 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+setup:
+  - cmd: "git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-2/patches/h-main.patch"
+    description: "Apply iter-2 base B&B solver as starting point"
+  - cmd: "# Apply iter-3 code changes to solution.cpp (chrono amortized guard, fast I/O, conditional LS2)"
+    description: "Modify solution.cpp with iter-3 changes: (1) replace clock() with chrono::steady_clock globals, (2) amortized 512-node time guard at 700ms, (3) fread/printf I/O with char[] names, (4) conditional LS2"
+  - cmd: "g++ -O2 -pipe -static -s -std=gnu++17 -o solution solution.cpp"
+    description: "Build the modified solution"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "h-main-run1"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run1.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run1.txt"
+        inputs: []
+      - name: "h-main-run2"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run2.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run2.txt"
+        inputs: []
+      - name: "h-main-run3"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run3.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run3.txt"
+        inputs: []
+      - name: "h-main-run4"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run4.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run4.txt"
+        inputs: []
+      - name: "h-main-run5"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run5.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run5.txt"
+        inputs: []
+      - name: "h-main-run6"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run6.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run6.txt"
+        inputs: []
+      - name: "h-main-run7"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run7.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run7.txt"
+        inputs: []
+      - name: "h-main-run8"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run8.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run8.txt"
+        inputs: []
+      - name: "h-main-run9"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run9.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run9.txt"
+        inputs: []
+      - name: "h-main-run10"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp 2>&1 | tee /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run10.txt"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-3/results/h-main/run10.txt"
+        inputs: []

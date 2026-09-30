@@ -1,0 +1,58 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Directed P\u00f3sa rotations with O(1) linked-list pointer surgery improve Hamiltonian path scores by 76% over Warnsdorff greedy alone (72 vs 41 points) on the Frontier-CS problem 5 test suite (10 directed graphs, n=5 to 100K).",
+    "confidence": "high",
+    "regime": "Directed graphs with guaranteed Hamiltonian path, n up to 100K, avg_degree 3-14, 4-second time limit per test case",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-1-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "When the greedy path gets stuck (tail has no unvisited out-neighbor), shortcut edges from tail to interior path vertices allow O(1) path restructuring via linked-list pointer surgery. The rotation creates a new tail endpoint that may have unvisited out-neighbors, enabling further extension without discarding the path. On medium-density graphs (avg_deg>=5.4, n=1K-8K), this enables 100% vertex coverage on 7/10 tests where greedy alone covers only 56-84%.",
+    "applicability_bounds": "The rotation mechanism is most effective on graphs with sufficient average degree (>=5.4) where shortcut edges exist frequently. On graphs with high proportions of low-degree vertices (16%+ with out-degree<=2), the rotation fails to find effective shortcuts and the algorithm gets stuck at 37-50% coverage regardless of seed. Forward-only rotation outperforms bidirectional rotation (72 vs 64-65 in designer exploration).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "The P\u00f3sa rotation mechanism has a sharp effectiveness boundary: it achieves 100% coverage on 7/10 tests (medium-density graphs) but only 5-50% coverage on 3 structurally hard tests (tests 4, 8, 10) that have high proportions of low-degree vertices.",
+    "confidence": "high",
+    "regime": "Same test suite as RP-1",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Rotation requires shortcut edges (tail\u2192interior_vertex) and break points (prerequisite edges for pointer surgery). In graphs with many low-degree vertices, the tail's out-neighbors are consumed quickly by the greedy, leaving few shortcuts. Test 4 (16% low-deg), test 8 (6.4% low-deg), and test 10 (41% low-deg) all resist rotation. The algorithm exhausts all rotation options and breaks, unable to extend further.",
+    "applicability_bounds": "The threshold appears to be around 5-6% low-degree vertices. Test 8 (6.4% low-deg, n=9000) and test 9 (0% low-deg, n=8000, avg_deg=13.5) have similar n but very different outcomes (37% vs 100% coverage), suggesting average degree and low-degree proportion are the key structural predictors.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "On structurally hard graphs (high low-degree proportion), the greedy-only approach sometimes outperforms rotation on raw path length (258 vs 223 on test 4, 3450 vs 3309 on test 8) because rotation consumes time budget that could be spent on more diverse restarts.",
+    "confidence": "medium",
+    "regime": "Directed graphs with >= 6% low-degree (out-deg<=2) vertices",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-1-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The rotation loop walks the path for each shortcut attempt (O(pathLen) per walk), consuming wall-clock time. On hard graphs where rotations are mostly unsuccessful, this time is wasted. The greedy-only approach uses that time for additional random restarts, each of which independently builds a fresh path with different random tie-breaking. More restarts = more diversity in the search space.",
+    "applicability_bounds": "This trade-off only matters when rotation is ineffective (hard graph structure). On medium-density graphs where rotation succeeds in finding the Hamiltonian path, the rotation approach is clearly superior. The raw path length advantage of greedy-only on hard tests (258 vs 223) doesn't translate to a score advantage since both are far below the scoring thresholds.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

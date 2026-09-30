@@ -17,8 +17,35 @@
       },
       "iteration": 1,
       "arm_id": "h-control-negative"
+    },
+    {
+      "candidate_id": "iter-2/h-main/0",
+      "score": 0.0,
+      "components": {
+        "score": 0.0
+      },
+      "iteration": 2,
+      "arm_id": "h-main"
+    },
+    {
+      "candidate_id": "iter-2/h-ablation/1",
+      "score": 0.0,
+      "components": {
+        "score": 0.0
+      },
+      "iteration": 2,
+      "arm_id": "h-ablation"
+    },
+    {
+      "candidate_id": "iter-3/h-main/0",
+      "score": 0.0,
+      "components": {
+        "score": 0.0
+      },
+      "iteration": 3,
+      "arm_id": "h-main"
     }
   ],
   "k": 5,
-  "updated_at": "2026-09-30T12:34:07.425333+00:00"
+  "updated_at": "2026-09-30T14:29:38.471619+00:00"
 }

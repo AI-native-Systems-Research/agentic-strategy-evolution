@@ -1,0 +1,32 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The Warnsdorff greedy with directed P\u00f3sa rotations (O(1) linked-list pointer surgery) will achieve a score strictly higher than the greedy-only control, and will score >= 50.",
+      "observed": "Score: 72. The P\u00f3sa rotation algorithm found the full Hamiltonian path on 7/10 tests (tests 1-3, 5-7, 9, all scoring 10/10 = 70 points) and partially covered 2 tests (test 4: k=223/500 = 1/10, test 8: k=3309/9000 = 1/10) with 0/10 on test 10 (k=4966/100000). Per-test analysis: rotation enables full coverage on medium graphs (n=1K-8K, avg_deg>=5.4) by escaping dead ends through O(1) path restructuring. It fails on graphs with high proportions of low-degree vertices (test 4: 16% low-deg, test 10: 41% low-deg).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Both predictions confirmed: (1) h-main > h-control-negative (72 > 41), and (2) h-main >= 50 (72 >= 50). The 31-point gap is entirely explained by tests 5-7 and 9, where rotation enables full Hamiltonian path discovery (10/10 each) while greedy-only achieves 2-3/10. Interestingly, on the 3 hardest tests (4, 8, 10), the control slightly outperforms on path length (258 vs 223 on test 4, 3450 vs 3309 on test 8) because rotation consumes time that could be spent on more restarts, but neither approach crosses the scoring thresholds.",
+      "metadata": {
+        "score": 72
+      }
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The Warnsdorff greedy without P\u00f3sa rotations will score significantly lower than h-main \u2014 expected around 35-45.",
+      "observed": "Score: 41. The greedy-only approach scored 41/100. Per-test: 10/10 on tests 1-3 (small graphs), 3/10 on test 5 (k=830/1000), 2/10 on tests 6-7 and 9 (k=1363/2000, 2236/4000, 6726/8000), 1/10 on tests 4 and 8, 0/10 on test 10. Without rotation, the greedy covers 56-84% of vertices on medium tests before getting permanently stuck, falling short of the higher scoring thresholds.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Score falls in predicted 35-45 range. The 31-point gap validates that P\u00f3sa rotations are the dominant algorithmic improvement: on tests 5-7 and 9, rotation transforms 2-3/10 partial scores into 10/10 perfect scores by enabling the algorithm to escape dead ends. The greedy alone gets trapped at 56-84% vertex coverage on medium-density graphs.",
+      "metadata": {
+        "score": 41
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms CONFIRMED. h-main (P\u00f3sa rotations) scored 72, h-control-negative (greedy only) scored 41, a 31-point gap. The rotation mechanism is decisive for medium-sized graphs (n=1K-8K, avg_deg>=5.4) where it enables full Hamiltonian path discovery. The mechanism fails on graphs with high proportions of low-degree vertices (tests 4, 8, 10) where shortcut edges are too rare for effective rotation. Key finding: the algorithm achieves 100% vertex coverage on 7/10 tests with rotation vs 3/10 without, demonstrating that P\u00f3sa rotation transforms the greedy from 'gets stuck at 60-80% coverage' to 'finds the full Hamiltonian path' on most graph structures in the test suite.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

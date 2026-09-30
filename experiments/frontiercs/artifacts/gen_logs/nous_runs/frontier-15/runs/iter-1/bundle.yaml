@@ -1,0 +1,68 @@
+metadata:
+  iteration: 1
+  family: "prefix-suffix-sort"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #15?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (circular buffer rotation sort) vs naive control"
+
+# Arms chosen:
+# - h-main: The circular buffer rotation algorithm that achieves ≤ 2n+1 ops (proven and validated)
+# - h-control-negative: No-algorithm baseline (0 operations, score 0),
+#   validating that the mechanism (structured rotation) produces the score, not a trivial property
+
+arms:
+  - type: h-main
+    prediction: "The circular buffer rotation algorithm will achieve score 100 on all test cases by sorting every n=1000 permutation in ≤ 2001 operations (2n+1). Probe data shows mean 1985 ops across 50 random trials."
+    mechanism: >
+      The algorithm exploits the prefix-suffix swap operation's structure: by choosing
+      x = sorted_prefix_length and y = buffer_length - d1, the sorted prefix moves to
+      the end while the unsorted buffer rotates left by d1. A second operation with
+      x = d2 and y = sorted_prefix_length restores the sorted prefix to the front while
+      completing the rotation by d2. The total rotation d = d1 + d2 (mod buffer_length)
+      places the next target element at the boundary of the sorted prefix. This achieves
+      exactly 2 operations per element placement, with a 5-operation endgame for the
+      last 2 elements, totaling at most 2n+1 operations.
+    diagnostic: "If score < 100, check edge cases: element 1 at position 1 (2-op special case), last 2 elements swap (5-op endgame), or d=1 with small buffer (d1=2, d2=l-1 decomposition)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: >
+          Replace the empty stub with a 3-phase sorting algorithm:
+          (1) Place element 1 at position 0 using 1-2 ops (special case for position 1).
+          (2) For elements 2..n-2, find each element in the unsorted buffer, compute
+          rotation amount d, decompose into d1+d2, execute two operations that rotate
+          the buffer while preserving the sorted prefix.
+          (3) If last 2 elements are swapped, apply fixed 5-operation sequence
+          [(1,1),(1,2),(1,1),(2,1),(1,1)].
+        rationale: "This is the core algorithmic strategy — achieves the theoretical minimum of 2n+1 operations in worst case."
+
+  - type: h-control-negative
+    prediction: "The no-algorithm baseline (output 0 operations, leave permutation unchanged) will score 0 because the checker requires a fully sorted final permutation."
+    mechanism: >
+      Without any sorting algorithm, the permutation remains in its original unsorted
+      state. The checker verifies check_sorted() at chk.cc:57 which requires p[i] < p[i+1]
+      for all i. An unsorted permutation fails this check, yielding WA and score 0.
+      This validates that the h-main score of 100 is due to the algorithm, not a trivial property of the problem.
+    diagnostic: "If this scores > 0, the checker may have a bug or the test permutations are pre-sorted."
+    code_changes:
+      - file: "solution.cpp"
+        intent: >
+          Replace the empty stub with a program that reads the input, outputs m=0 (no operations),
+          and exits. The permutation is not modified.
+        rationale: "Establishes the zero-effort baseline to demonstrate that sorting requires genuine algorithmic work."
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -std=c++17 -o solution solution.cpp"
+  verified_parameters:
+    n: 1000
+    num_test_cases: 10
+    time_limit_seconds: 1
+    max_operations: 4000
+    best_operations_benchmark: 2001
+  unlocked_parameters_audit:
+    - name: "compiler_optimization_level"
+      default_value: "-O2"
+      justification: "O2 is standard for competitive programming; O3 unlikely to change algorithmic op count"
+    - name: "cpp_standard"
+      default_value: "c++17"
+      justification: "Solution uses only basic STL; any C++11+ standard suffices"

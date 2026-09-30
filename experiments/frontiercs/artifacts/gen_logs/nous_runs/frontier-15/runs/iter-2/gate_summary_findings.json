@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both arms confirmed their predictions. The optimized algorithm scores 100/100 on all judge test cases, and the ablation proves the prefix-restoration step (Op2) is essential. The algorithm is performing at or near optimal with no remaining easy gains.",
+  "key_points": [
+    "h-main CONFIRMED: Score = 100 on all 10 judge cases. Mean operations on random n=1000 permutations: 1983.8 (max 1995), well under the 2n-2=1998 worst-case bound. This is a ~1.6 ops/case improvement over iter-1's mean of 1985.4 and a 5-op improvement in worst case (1995 vs 2000).",
+    "h-ablation CONFIRMED: Removing the prefix-restoration step (Op2) yields score 0, proving it is essential to the algorithm's sorted-prefix invariant. Without it, the output is scrambled.",
+    "The core algorithm places elements 1 through n into sorted prefix position using a two-operation cycle (rotate element into place, then restore prefix order), with a BFS-optimal 6-case endgame for the last 3 elements. Score is already at the maximum of 100, so further iteration would only reduce operation counts without improving the judge score.",
+    "No surprises: all predictions matched observations within normal variance. The algorithm appears to be at or near the scoring ceiling for this problem."
+  ]
+}

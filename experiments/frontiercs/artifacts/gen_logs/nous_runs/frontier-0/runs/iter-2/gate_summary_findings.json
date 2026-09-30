@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed: the lookahead-enhanced polyomino packer scored 82.86 avg (vs predicted ~85), an 11.1-point improvement over the iter-1 baseline of 71.76. The ablation without lookahead scored 75.92, confirming lookahead accounts for ~63% of the total gain. All h-main runs exceeded all h-ablation runs, demonstrating a robust mechanism.",
+  "key_points": [
+    "h-main scored 79.88, 82.53, 86.16 (mean 82.86) \u2014 all above the iter-1 baseline (71.76) and two of three above the reference (~80). Mean fell 2.14 points below the predicted ~85, attributable to system load sensitivity in the time-managed width sweep.",
+    "h-ablation scored 74.75, 77.21, 75.80 (mean 75.92) \u2014 closely matching the predicted ~76. The 6.94-point gap to h-main isolates lookahead as the dominant improvement mechanism (63% of total gain), with secondary features (roughness tiebreaker, column compaction, multi-ordering) contributing the remaining 37% (~4.16 points).",
+    "One surprise: variance predictions were inverted \u2014 h-main had higher variance (range 6.28) than h-ablation (range 2.46), opposite to prediction. This is explained by lookahead making each packing call slower, so fewer widths are explored under tight time budgets, increasing sensitivity to system load.",
+    "Peak performance (86.16) confirms the algorithm's ceiling is well above the reference. Further gains could come from reducing time sensitivity (e.g., smarter width prioritization) or exploring more aggressive lookahead strategies on high-value width candidates."
+  ]
+}

@@ -1,0 +1,56 @@
+metadata:
+  iteration: 4
+  family: "treasure-packing-optimized-bnb-v4"
+  research_question: "Can early-exit detection, raw write() output, and compiler pragmas reduce TLE frequency in go-judge Docker sandbox and reliably achieve 100/100?"
+  complexity_tier: 2
+  tier_justification: "iter 4, single mechanism refinement (execution time + output robustness) building on 3 prior iterations of confirmed findings. Tier 2 because multiple micro-optimizations are combined (early-exit + write() + pragma + guard tuning), though all target the same root cause (Docker TLE)."
+
+arms:
+  - type: h-main
+    prediction: "The combined optimizations (early-exit on 8/20 cases, write() output, #pragma O3, 256-node guard interval, no LS2) will produce a judge score of 100 on the official measurement, achieving exact optima on all 20 test cases. The early-exit path eliminates B&B overhead on 40% of test cases, reducing total CPU time and TLE risk. The write() syscall prevents output loss from stdio buffering if the process is killed near the time limit. Expected reliability across repeated runs: ≥80% at score 100 (matching or improving iter-3's 80%)."
+    mechanism: "Five synergistic optimizations address Docker TLE: (1) Early-exit detection computes tight_ub at root after greedy+LS — if floor(ub) ≤ best_value, greedy+LS IS the optimum (holds on 8/20 test cases per answer file verification), so B&B is skipped entirely, saving 2-21ms per case. (2) write() syscall bypasses stdio's fully-buffered mode for pipes — output goes directly to kernel pipe buffer in one atomic call (<4KB, guaranteed by POSIX PIPE_BUF). (3) #pragma GCC optimize('O3,unroll-loops') instructs the go-judge's GCC to use aggressive optimization, potentially speeding up bound computation and B&B traversal. (4) 256-node chrono check interval (vs 512) halves the maximum overshoot beyond the 700ms guard, reducing the window where TLE can occur. (5) Removing LS2 eliminates unnecessary post-B&B computation — B&B already found the exact optimum."
+    diagnostic: "If score < 100: (a) check if the failure is on a case where early-exit triggered — if so, the tight_ub check has a precision bug (verify with tight_ub values); (b) if failure is on a B&B case, Docker overhead exceeded 300ms for that case — irreducible; (c) if score is 0, the #pragma may cause compilation failure in go-judge's GCC version — remove pragma and retry; (d) if output is corrupted, write() may have been interrupted by SIGKILL mid-syscall — add fflush as fallback."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Apply five optimizations to the existing B&B solver: (1) Add '#pragma GCC optimize(\"O3,unroll-loops\")' as the first line. (2) Add a format_and_write_output() function that formats JSON to a static char buffer and writes it with write(1, ...) syscall instead of printf. (3) After greedy+LS and before B&B, compute tight_ub(0, MAX_MASS, MAX_VOL); if floor(ub+0.5) <= best_value, call format_and_write_output() and return 0 (skip B&B). (4) Change chrono check from every 512 nodes (bnb_nodes & 511) to every 256 nodes (bnb_nodes & 255). (5) Remove the conditional LS2 block after B&B (lines 314-318). Replace the printf output block (lines 320-327) with format_and_write_output()."
+        rationale: "Each optimization targets a distinct source of TLE risk: pragma accelerates computation, early-exit eliminates B&B on 40% of cases, write() prevents output buffering loss, finer guard prevents time overshoot, removing LS2 simplifies the critical path."
+
+# Arms chosen:
+# - h-main only. This is a targeted optimization addressing a well-characterized issue
+#   (Docker TLE on ~15-20% of judge runs). Four prior iterations have confirmed the B&B
+#   algorithm is correct and fast; the remaining challenge is Docker overhead. A control
+#   arm would re-run the iter-3 solution, but iter-3 findings already provide the baseline
+#   (80% at 100, mean 99.0). The 15 runs during this exploration session establish current
+#   reliability (93% at 100, mean 99.3).
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -pipe -static -s -std=gnu++17 -o solution solution.cpp"
+  verified_parameters:
+    max_mass_mg: 20000000
+    max_volume_ul: 25000000
+    n_item_types: 12
+    n_test_cases: 20
+    time_limit_seconds: 1
+    ternary_iterations: 12
+    time_guard_ms: 700
+    time_guard_type: "chrono::steady_clock (wall time, amortized every 256 nodes)"
+    time_guard_amortization: 256
+    io_method: "fread + manual parsing + write() syscall output (zero stdio buffering)"
+    early_exit: true
+    pragma_optimization: "O3,unroll-loops"
+    ls2_removed: true
+  unlocked_parameters_audit:
+    - name: "greedy_alpha_step"
+      default_value: 0.05
+      justification: "21 alpha-parameterized greedy variants provide good coverage — validated across 4 iterations with 8/20 cases achieving optimal."
+    - name: "tight_ub_depth_cutoff"
+      default_value: 8
+      justification: "Tight Lagrangian bounds at first 8 tree levels enables aggressive pruning — reducing to 4 causes all cases to hit time guard (iter-3 exploration)."
+    - name: "local_search_remove_depth"
+      default_value: 10
+      justification: "Removing up to 10 items in remove-refill covers useful swap neighborhoods — no improvement observed at 20 (iter-1)."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+    observation_method: "Design-phase testing: 26 judge runs completed in ~30-60s each. Scores: 22/26 at 100, 3/26 at 95, 1/26 at 90."

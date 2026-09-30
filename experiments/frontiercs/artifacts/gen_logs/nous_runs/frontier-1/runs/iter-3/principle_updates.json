@@ -1,0 +1,39 @@
+[
+  {
+    "id": "RP-6",
+    "statement": "Amortized chrono::steady_clock wall-time guard (every 512 B&B nodes at 700ms) with fast I/O (fread/printf) improves Docker judge reliability from 70% to 80% at score 100 (mean 98.5 -> 99.0) compared to clock()-based CPU-time guard, but cannot eliminate the ~20% residual failure rate caused by irreducible Docker container overhead.",
+    "confidence": "high",
+    "regime": "B&B solver running in Docker with 1s time limit; algorithm completes in <25ms locally; Docker overhead 3-5x",
+    "evidence": [
+      "iteration-3-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "chrono::steady_clock measures wall time (not CPU time like clock()), directly matching Docker's 1s wall-time limit. Amortizing checks to every 512 nodes (bnb_nodes & 511 == 0) eliminates the ~100% overhead of per-node chrono calls. Fast I/O (fread/printf/char[]) avoids string/stream heap allocations. Together these keep total wall time under 100ms locally. However, Docker container startup + CPU scheduling overhead occasionally exceeds 300ms (out of 1s budget), causing TLEs regardless of algorithm speed.",
+    "applicability_bounds": "Applies when the bottleneck is Docker wall-time overhead rather than algorithm computation time. When algorithm time dominates (>500ms locally), the guard threshold and amortization period need adjustment.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "Docker timing variability causes 5% score drops (95 instead of 100) in the B&B solver on ~20% of judge runs. Wall-time guards (chrono::steady_clock) are necessary but not sufficient \u2014 the ~20% failure rate from Docker container overhead is likely irreducible by algorithmic optimization alone.",
+    "confidence": "high",
+    "regime": "B&B solver with 1s Docker time limit, algorithm <25ms locally",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-3-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "Docker container startup, CPU scheduling, and I/O overhead occasionally consume 300-500ms of the 1s budget. A clock()-based guard (CPU time) missed this because Docker overhead is wall-time-only. A chrono::steady_clock guard reduces but cannot eliminate the issue.",
+    "applicability_bounds": "Docker containers with 1s time limits and sub-100ms algorithms",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

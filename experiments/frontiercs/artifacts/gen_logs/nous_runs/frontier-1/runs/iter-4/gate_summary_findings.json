@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 4 confirmed the prediction: official score = 100, reliability at 100 = 80% (16/20 runs), mean = 99.0. However, all five optimizations (early-exit, write() output, pragma O3, 256-node guard, LS2 removal) produced zero measurable improvement over the iter-3 baseline, which also achieved 80% reliability and mean 99.0. The algorithm is solved; remaining score variance is infrastructure noise.",
+  "key_points": [
+    "Official measurement scored 100 (confirmed). Across 20 repeated runs: 16 scored 100, 4 scored 95, mean = 99.0, std = 2.05.",
+    "Iter-4 vs iter-3 comparison: identical 80% reliability at score 100, identical mean of 99.0 \u2014 the five new optimizations had no effect despite saving 2-21ms of algorithmic runtime.",
+    "The ~20% failure rate (score 95 instead of 100) is caused by Docker/container overhead (startup, cgroup CPU throttling), not by algorithmic execution time. The program finishes in <25ms locally; TLE occurs when infrastructure overhead consumes most of the 1-second budget.",
+    "The algorithm computes exact optima on all 20 test cases (verified against answer files). The problem is algorithmically fully solved \u2014 no further algorithmic improvement is possible.",
+    "Recommendation: APPROVE. Score 100 is achieved on official measurement. Further iterations cannot improve the 80\u2192100% reliability because the bottleneck is container infrastructure, not the solution code."
+  ]
+}
