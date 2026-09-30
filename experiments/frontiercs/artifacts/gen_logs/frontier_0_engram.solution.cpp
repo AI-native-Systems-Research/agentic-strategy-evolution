@@ -5,106 +5,182 @@ int main(){
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
     
-    int n; cin>>n;
-    vector<int> ksz(n);
-    vector<vector<pair<int,int>>> raw(n);
-    int totalCells=0;
+    int n;
+    cin >> n;
+    
+    struct PieceData {
+        int k;
+        vector<pair<int,int>> cells;
+    };
+    vector<PieceData> pieces(n);
+    int totalCells = 0;
     for(int i=0;i<n;i++){
-        cin>>ksz[i]; raw[i].resize(ksz[i]);
-        for(int j=0;j<ksz[i];j++) cin>>raw[i][j].first>>raw[i][j].second;
-        totalCells+=ksz[i];
+        cin >> pieces[i].k;
+        pieces[i].cells.resize(pieces[i].k);
+        for(int j=0;j<pieces[i].k;j++){
+            cin >> pieces[i].cells[j].first >> pieces[i].cells[j].second;
+        }
+        totalCells += pieces[i].k;
     }
     
-    // Generate all distinct orientations for piece i
-    // Convention: flip f=1 means negate x, then rotate r times 90° CCW
-    // Rotate CCW: (x,y) -> (-y, x)
-    auto getOrients=[&](int i)->vector<tuple<vector<pair<int,int>>,int,int,int,int>>{
-        vector<tuple<vector<pair<int,int>>,int,int,int,int>> res;
-        set<vector<pair<int,int>>> seen;
-        for(int f=0;f<2;f++) for(int r=0;r<4;r++){
-            vector<pair<int,int>> cells;
-            for(auto [x,y]:raw[i]){
-                int tx=x,ty=y;
-                if(f) tx=-tx;
-                for(int rr=0;rr<r;rr++){int nx=-ty,ny=tx;tx=nx;ty=ny;}
-                cells.push_back({tx,ty});
-            }
-            int mx=INT_MAX,my=INT_MAX;
-            for(auto&[x,y]:cells){mx=min(mx,x);my=min(my,y);}
-            for(auto&[x,y]:cells){x-=mx;y-=my;}
-            sort(cells.begin(),cells.end());
-            if(seen.insert(cells).second){
-                int w=0,h=0;
-                for(auto[x,y]:cells){w=max(w,x+1);h=max(h,y+1);}
-                res.push_back({cells,w,h,r,f});
-            }
-        }
-        return res;
+    // Precompute orientations for each piece
+    struct OriInfo {
+        vector<pair<int,int>> cells; // normalized, sorted
+        int w, h;
+        int f, r;
     };
     
-    vector<vector<tuple<vector<pair<int,int>>,int,int,int,int>>> orients(n);
-    for(int i=0;i<n;i++) orients[i]=getOrients(i);
+    vector<vector<OriInfo>> allOris(n);
+    for(int i=0;i<n;i++){
+        set<vector<pair<int,int>>> seen;
+        for(int f=0;f<2;f++){
+            for(int r=0;r<4;r++){
+                vector<pair<int,int>> tc;
+                for(auto [x,y]:pieces[i].cells){
+                    int nx=x, ny=y;
+                    if(f) nx=-nx;
+                    for(int q=0;q<r;q++){
+                        int tmp=nx; nx=ny; ny=-tmp;
+                    }
+                    tc.push_back({nx,ny});
+                }
+                int minx=INT_MAX, miny=INT_MAX;
+                for(auto [x,y]:tc){minx=min(minx,x);miny=min(miny,y);}
+                for(auto&[x,y]:tc){x-=minx;y-=miny;}
+                sort(tc.begin(),tc.end());
+                if(seen.insert(tc).second){
+                    int w=0,h=0;
+                    for(auto[x,y]:tc){w=max(w,x+1);h=max(h,y+1);}
+                    allOris[i].push_back({tc,w,h,f,r});
+                }
+            }
+        }
+    }
     
-    vector<int> order(n); iota(order.begin(),order.end(),0);
-    sort(order.begin(),order.end(),[&](int a,int b){return ksz[a]>ksz[b];});
+    // Sort pieces largest first
+    vector<int> order(n);
+    iota(order.begin(),order.end(),0);
+    sort(order.begin(),order.end(),[&](int a,int b){
+        return pieces[a].k > pieces[b].k;
+    });
     
-    int bestArea=INT_MAX;
-    vector<int> bx(n),by(n),br(n),bf(n);
-    int bW=0,bH=0;
-    int sq=max(1,(int)ceil(sqrt((double)totalCells)));
+    auto startTime = chrono::steady_clock::now();
+    auto elapsed = [&]()->double{
+        return chrono::duration<double>(chrono::steady_clock::now()-startTime).count();
+    };
     
-    auto t0=chrono::steady_clock::now();
-    for(int W=max(1,sq/2);W<=min(totalCells,sq*4);W++){
-        if(chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now()-t0).count()>8000) break;
-        int MH=totalCells/max(1,W)+n*12+20;
-        if((long long)W*MH>20000000LL) continue;
-        vector<int16_t> grid(W*MH,0);
-        vector<int> colH(W,0);
-        int curH=0; bool ok=true;
-        vector<int> px(n),py(n),pr(n),pf(n);
-        for(int idx=0;idx<n;idx++){
-            int i=order[idx]; int bs=INT_MAX,bxx=-1,byy=-1,boi=-1;
-            for(int oi=0;oi<(int)orients[i].size();oi++){
-                auto&[cells,w,h,rot,flip]=orients[i][oi];
-                if(w>W) continue;
-                for(int x=0;x<=W-w;x++){
-                    int miny=0;
-                    for(auto[cx,cy]:cells) miny=max(miny,colH[x+cx]-cy);
-                    if(miny+h>MH) continue;
-                    for(int y=miny;;y++){
-                        if(y+h>MH) break;
-                        bool fit=true;
-                        for(auto[cx,cy]:cells) if(grid[(x+cx)*MH+(y+cy)]){fit=false;break;}
-                        if(fit){
-                            int nH=max(curH,y+h);
-                            int sc=nH*100000+y*100+x;
-                            if(sc<bs){bs=sc;bxx=x;byy=y;boi=oi;}
-                            break;
+    double sqrtArea = sqrt((double)totalCells*1.2);
+    
+    // Generate candidate widths
+    vector<int> candidateW;
+    for(double mult=0.6;mult<=2.5;mult+=0.15){
+        int w=max(10,(int)(sqrtArea*mult));
+        candidateW.push_back(w);
+    }
+    sort(candidateW.begin(),candidateW.end());
+    candidateW.erase(unique(candidateW.begin(),candidateW.end()),candidateW.end());
+    
+    long long bestArea = (long long)4e18;
+    int bestH=0, bestW=0;
+    struct PR { int x,y,r,f; };
+    vector<PR> bestPl(n);
+    
+    for(int W : candidateW){
+        if(elapsed()>8.0 && bestArea<(long long)4e18) break;
+        
+        int maxH = (totalCells+W-1)/W + 20;
+        // cap maxH to avoid memory issues
+        maxH = min(maxH, totalCells+100);
+        
+        vector<vector<bool>> grid(W, vector<bool>(maxH, false));
+        vector<int> hmap(W, 0);
+        vector<PR> placements(n);
+        int curMaxY=0;
+        bool failed=false;
+        
+        for(int idx=0;idx<n&&!failed;idx++){
+            int pi=order[idx];
+            int bestScore=INT_MAX;
+            int bx=-1,by=-1,boi=-1;
+            
+            for(int oi=0;oi<(int)allOris[pi].size();oi++){
+                auto&ori=allOris[pi][oi];
+                if(ori.w>W) continue;
+                
+                for(int x=0;x<=W-ori.w;x++){
+                    int minY=0;
+                    for(auto[cx,cy]:ori.cells){
+                        minY=max(minY, hmap[x+cx]-cy);
+                    }
+                    
+                    int topY=0;
+                    for(auto[cx,cy]:ori.cells) topY=max(topY,minY+cy+1);
+                    if(topY>maxH){continue;}
+                    
+                    bool ok=true;
+                    for(auto[cx,cy]:ori.cells){
+                        int py=minY+cy;
+                        if(py<0||py>=maxH){ok=false;break;}
+                        if(grid[x+cx][py]){ok=false;break;}
+                    }
+                    
+                    if(ok){
+                        int score=topY*10000+x;
+                        if(score<bestScore){
+                            bestScore=score;
+                            bx=x;by=minY;boi=oi;
                         }
+                        break; // take first valid x for this orientation (bottom-left)
                     }
                 }
             }
-            if(boi<0){ok=false;break;}
-            auto&[cells,w,h,rot,flip]=orients[i][boi];
-            px[i]=bxx;py[i]=byy;pr[i]=rot;pf[i]=flip;
-            for(auto[cx,cy]:cells){
-                grid[(bxx+cx)*MH+(byy+cy)]=1;
-                colH[bxx+cx]=max(colH[bxx+cx],byy+cy+1);
-                curH=max(curH,byy+cy+1);
+            
+            if(bx==-1){failed=true;break;}
+            
+            auto&ori=allOris[pi][boi];
+            for(auto[cx,cy]:ori.cells){
+                grid[bx+cx][by+cy]=true;
+                hmap[bx+cx]=max(hmap[bx+cx],by+cy+1);
+                curMaxY=max(curMaxY,by+cy+1);
             }
+            placements[pi]={bx,by,ori.r,ori.f};
         }
-        if(!ok) continue;
-        int area=W*curH;
-        if(area<bestArea){bestArea=area;bW=W;bH=curH;bx=px;by=py;br=pr;bf=pf;}
+        
+        if(failed) continue;
+        
+        long long area=(long long)W*curMaxY;
+        if(area<bestArea||(area==bestArea&&(curMaxY<bestH||(curMaxY==bestH&&W<bestW)))){
+            bestArea=area;
+            bestH=curMaxY;
+            bestW=W;
+            bestPl=placements;
+        }
     }
     
-    if(bestArea==INT_MAX){
-        bW=totalCells;bH=1;
-        int x=0;
-        for(int i=0;i<n;i++){bx[i]=x;by[i]=0;br[i]=0;bf[i]=0;x+=ksz[i];}
-        bH=1;bW=totalCells;
+    // Fallback: wide strip
+    if(bestArea>=(long long)4e18){
+        int W=totalCells;
+        bestW=W; bestH=10;
+        // Place each piece in a single row
+        int cx=0;
+        for(int i=0;i<n;i++){
+            auto&ori=allOris[i][0];
+            bestPl[i]={cx,0,ori.r,ori.f};
+            cx+=ori.w;
+        }
+        bestW=cx;
+        bestH=10; // max piece height
+        int mh=0;
+        for(int i=0;i<n;i++){
+            auto&ori=allOris[i][0];
+            mh=max(mh,ori.h);
+        }
+        bestH=mh;
     }
     
-    cout<<bW<<" "<<bH<<"\n";
-    for(int i=0;i<n;i++) cout<<bx[i]<<" "<<by[i]<<" "<<br[i]<<" "<<bf[i]<<"\n";
+    cout<<bestW<<" "<<bestH<<"\n";
+    for(int i=0;i<n;i++){
+        cout<<bestPl[i].x<<" "<<bestPl[i].y<<" "<<bestPl[i].r<<" "<<bestPl[i].f<<"\n";
+    }
+    return 0;
 }

@@ -32,16 +32,21 @@ for both baselines). On the saturated easy problem (1) all three are near the ce
 We re-ran Claude and Engram with a **cost budget equal to Nous's per-task spend** (~$27-46) and the
 same early-stop rule Nous uses (stop at ceiling, on plateau, or at budget). Result:
 
-| Problem | Claude fixed → cost-matched | Engram fixed → cost-matched | Nous |
-|---|---|---|---|
-| p5 | 28 → **41** (plateau $1.4) | 36 → **39** (plateau $5.3) | **83** |
-| p0 | 1.5 → stuck 0¹ | 55 → stuck 0¹ | **86** |
-| p15 | 0 → 0 (gate, $5) | 0 → 0 (gate, $5.4) | **100** |
+We ran two matched conditions: a light "converge" pass and a **full Nous-equal-budget** pass
+(spend up to Nous's per-task $, early-stop on ceiling/plateau).
 
-¹ Cost-matched p0 runs stalled at 0 (invalid packings) and were capped at ~$5. Root causes are
-themselves findings: **score-only feedback** can't tell an agent *why* a packing is invalid, and
-**Engram's journal can anchor later agents on a failing approach** (a memory-propagation weakness).
-The fixed-budget numbers (Engram 55, Claude 1.5) are their real p0 capability.
+| Problem | Nous ($) | Engram (best; full-budget behavior) | Claude (best; full-budget behavior) |
+|---|---|---|---|
+| p5  | **83** ($46) | **39** — plateaued $5.3 (spending more didn't help) | **41** — plateaued $1.4 |
+| p0  | **86** ($27) | **55** (fixed $2); full-budget run *plateaued at 22.5*, $5 | **1.5**; full-budget run *plateaued at 1.4*, $11 |
+| p15 | **100** ($32) | **0 at the FULL $32 budget** (ran to cost_budget, gate never cracked) | **0** (fixed/cost-matched; Engram already proved 0 at full $32) |
+
+Both baselines **plateau far below Nous** on p0/p5 — once they stop improving, extra budget just
+regenerates the same solution (verified: p5 plateaued at $1.4-5.3, not $46). And on the p15 gate,
+**Engram spent Nous's entire $32 and still scored 0.** Two failure modes surfaced as findings:
+score-only feedback can't tell an agent *why* an output is invalid (p0 packing), and Engram's
+journal can anchor later agents on a failing approach (p0 memory-propagation; high run-to-run
+variance, e.g. p0 fixed 55 vs full-budget 22.5).
 
 **Conclusion:** extra budget bought the baselines *marginal* gains on p5 (both land ~40, still half
 of Nous's 83) and **nothing** on p0 or p15. The gap to Nous is **structural — it comes from
