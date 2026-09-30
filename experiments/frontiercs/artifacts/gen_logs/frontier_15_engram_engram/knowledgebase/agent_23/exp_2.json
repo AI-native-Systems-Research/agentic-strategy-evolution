@@ -1,0 +1,7 @@
+{
+  "round": 2,
+  "plan": null,
+  "score": 0,
+  "status": "success",
+  "code": "#include <bits/stdc++.h>\nusing namespace std;\nint main(){\n    int n;\n    scanf(\"%d\",&n);\n    vector<int> p(n);\n    for(int i=0;i<n;i++) scanf(\"%d\",&p[i]);\n    \n    vector<pair<int,int>> ops;\n    \n    auto doOp = [&](int x, int y){\n        ops.push_back({x,y});\n        vector<int> np(n);\n        for(int i=0;i<y;i++) np[i]=p[n-y+i];\n        for(int i=0;i<n-x-y;i++) np[y+i]=p[x+i];\n        for(int i=0;i<x;i++) np[n-x+i]=p[i];\n        p=np;\n    };\n    \n    for(int placed=0;placed<n;placed++){\n        int pos=-1;\n        for(int i=placed;i<n;i++) if(p[i]==placed+1){pos=i;break;}\n        if(pos==placed) continue;\n        // Move element from pos to placed\n        // Step 1: rotate so element goes to position 0\n        if(pos>0 && pos<n){\n            doOp(pos, n-pos);\n            pos=0;\n        }\n        // Now element is at position 0, move to 'placed'\n        if(placed>0 && placed<n){\n            doOp(n-placed, placed);\n        }\n    }\n    \n    printf(\"%d\\n\",(int)ops.size());\n    for(auto&[x,y]:ops) printf(\"%d %d\\n\",x,y);\n}\n"
+}

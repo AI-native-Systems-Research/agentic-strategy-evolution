@@ -1,0 +1,7 @@
+{
+  "round": 2,
+  "plan": null,
+  "score": 0,
+  "status": "success",
+  "code": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main(){\n    int n;\n    scanf(\"%d\",&n);\n    vector<int> p(n);\n    for(int i=0;i<n;i++) scanf(\"%d\",&p[i]);\n    \n    vector<pair<int,int>> ops;\n    \n    auto doOp = [&](int x, int y){\n        ops.push_back({x,y});\n        vector<int> res(n);\n        // [last y] + [middle n-x-y] + [first x]\n        for(int i=0;i<y;i++) res[i]=p[n-y+i];\n        int mid=n-x-y;\n        for(int i=0;i<mid;i++) res[y+i]=p[x+i];\n        for(int i=0;i<x;i++) res[y+mid+i]=p[i];\n        p=res;\n    };\n    \n    auto findPos = [&](int val) -> int {\n        for(int i=0;i<n;i++) if(p[i]==val) return i;\n        return -1;\n    };\n    \n    auto newPos = [&](int pos, int x, int y) -> int {\n        if(pos < x) return n-x+pos;\n        if(pos >= n-y) return pos-(n-y);\n        return pos-x+y;\n    };\n    \n    for(int t=0;t<n;t++){\n        int pos=findPos(t+1);\n        if(pos==t) continue;\n        // Try single operation\n        bool found=false;\n        for(int x=1;x<n && !found;x++){\n            for(int y=1;x+y<n && !found;y++){\n                if(newPos(pos,x,y)==t){\n                    doOp(x,y);\n                    found=true;\n                }\n            }\n        }\n        if(found) continue;\n    }\n    \n    printf(\"%d\\n\",(int)ops.size());\n    for(auto&[x,y]:ops) printf(\"%d %d\\n\",x,y);\n}\n"
+}

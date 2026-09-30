@@ -26,7 +26,227 @@
   },
   {
     "round": 5,
-    "score": 1.7875251200000002,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 6,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 7,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 8,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 9,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 10,
+    "score": null,
+    "status": "parse_error"
+  },
+  {
+    "round": 11,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 12,
+    "score": null,
+    "status": "parse_error"
+  },
+  {
+    "round": 13,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 14,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 15,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 16,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 17,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 18,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 19,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 20,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 21,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 22,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 23,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 24,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 25,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 26,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 27,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 28,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 29,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 30,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 31,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 32,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 33,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 34,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 35,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 36,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 37,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 38,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 39,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 40,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 41,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 42,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 43,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 44,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 45,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 46,
+    "score": 1.4285714300000003,
+    "status": "success"
+  },
+  {
+    "round": 47,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 48,
+    "score": 0,
+    "status": "success"
+  },
+  {
+    "round": 49,
+    "score": 0,
     "status": "success"
   }
 ]

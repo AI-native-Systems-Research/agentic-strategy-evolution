@@ -1,0 +1,7 @@
+{
+  "round": 2,
+  "plan": null,
+  "score": 0,
+  "status": "success",
+  "code": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main(){\n    int n;\n    scanf(\"%d\",&n);\n    vector<int> p(n);\n    for(int i=0;i<n;i++) scanf(\"%d\",&p[i]);\n    \n    vector<pair<int,int>> ops;\n    \n    // Operation (x,y): split into prefix[0..x-1], middle[x..n-y-1], suffix[n-y..n-1]\n    // Result: suffix + middle + prefix\n    auto apply_op = [&](int x, int y){\n        vector<int> np;\n        for(int i=n-y;i<n;i++) np.push_back(p[i]);\n        for(int i=x;i<n-y;i++) np.push_back(p[i]);\n        for(int i=0;i<x;i++) np.push_back(p[i]);\n        p = np;\n        ops.push_back({x,y});\n    };\n    \n    for(int target = 0; target < n-1; target++){\n        int pos = -1;\n        for(int i = target; i < n; i++){\n            if(p[i] == target+1){ pos = i; break; }\n        }\n        if(pos == target) continue;\n        \n        // Move element from pos to n-1\n        if(pos != n-1){\n            int x = pos + 1, y = 1;\n            // need x+y <= n: pos+2 <= n, guaranteed since pos <= n-2\n            apply_op(x, y);\n        }\n        \n        // Now element is at position n-1. Move to target.\n        if(target != n-1){\n            int y = target + 1, x = 1;\n            // need x+y <= n: target+2 <= n, guaranteed since target <= n-2\n            apply_op(x, y);\n        }\n    }\n    \n    printf(\"%d\\n\",(int)ops.size());\n    for(auto&[x,y]:ops) printf(\"%d %d\\n\",x,y);\n}\n"
+}

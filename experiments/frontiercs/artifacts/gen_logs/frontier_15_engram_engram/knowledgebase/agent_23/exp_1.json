@@ -1,0 +1,7 @@
+{
+  "round": 1,
+  "plan": null,
+  "score": 0,
+  "status": "success",
+  "code": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main(){\n    int n;\n    scanf(\"%d\",&n);\n    vector<int> p(n);\n    for(int i=0;i<n;i++) scanf(\"%d\",&p[i]);\n    \n    vector<pair<int,int>> ops;\n    \n    auto doOp = [&](int x, int y){\n        ops.push_back({x,y});\n        vector<int> np;\n        for(int i=n-y;i<n;i++) np.push_back(p[i]);\n        for(int i=x;i<n-y;i++) np.push_back(p[i]);\n        for(int i=0;i<x;i++) np.push_back(p[i]);\n        p=np;\n    };\n    \n    for(int placed=0; placed<n; placed++){\n        int pos=-1;\n        for(int i=placed;i<n;i++) if(p[i]==placed+1){pos=i;break;}\n        if(pos==placed) continue;\n        \n        // Try single operation: element at pos goes to position placed\n        // In new array, p[pos] goes to: if pos>=n-y (in suffix): pos-(n-y)\n        // if x<=pos<n-y (in middle): y + (pos - x)\n        // if pos<x (in prefix): (n-x) + pos\n        bool done=false;\n        for(int x=1;x<n&&!done;x++) for(int y=1;x+y<n&&!done;y++){\n            int newpos;\n            if(pos>=n-y) newpos=pos-(n-y);\n            else if(pos>=x) newpos=y+(pos-x);\n            else newpos=(n-x)+pos;\n            if(newpos==placed){doOp(x,y);done=true;}\n        }\n        if(done) continue;\n    }\n    \n    printf(\"%d\\n\",(int)ops.size());\n    for(auto&[x,y]:ops) printf(\"%d %d\\n\",x,y);\n}\n"
+}

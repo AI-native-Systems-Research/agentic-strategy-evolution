@@ -1,0 +1,7 @@
+{
+  "round": 2,
+  "plan": null,
+  "score": 0,
+  "status": "success",
+  "code": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main(){\n    int n;\n    scanf(\"%d\", &n);\n    vector<int> p(n);\n    for(int i = 0; i < n; i++) scanf(\"%d\", &p[i]);\n    \n    auto apply_op = [&](int x, int y){\n        vector<int> np;\n        for(int i = n-y; i < n; i++) np.push_back(p[i]);\n        for(int i = x; i < n-y; i++) np.push_back(p[i]);\n        for(int i = 0; i < x; i++) np.push_back(p[i]);\n        p = np;\n    };\n    \n    vector<pair<int,int>> ops;\n    \n    for(int t = 0; t < n-2; t++){\n        int pos = -1;\n        for(int i = 0; i < n; i++) if(p[i] == t+1){ pos = i; break; }\n        if(pos == t) continue;\n        \n        // Move element at pos to position n-1\n        if(pos != n-1){\n            // Use x = pos+1, y = 1: element at pos (in prefix) goes to n - (pos+1) + pos = n-1\n            // Need pos+1+1 < n => pos < n-2\n            int x = pos+1, y = 1;\n            if(x + y < n && x >= 1 && y >= 1){\n                ops.push_back({x, y});\n                apply_op(x, y);\n            }\n        }\n        // Now element should be at n-1, move to t\n        // y = t+1, x = 1, need 1+t+1 < n => t < n-2 (always true in loop)\n        if(p[n-1] == t+1 && t+2 < n){\n            int x = 1, y = t+1;\n            ops.push_back({x, y});\n            apply_op(x, y);\n        }\n    }\n    \n    printf(\"%d\\n\", (int)ops.size());\n    for(auto&[x,y]:ops) printf(\"%d %d\\n\", x, y);\n}\n"
+}
