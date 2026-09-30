@@ -114,6 +114,32 @@
         }
       ],
       "frontier_update": null
+    },
+    {
+      "iteration": 5,
+      "family": "cooling-schedule-shape",
+      "timestamp": "2026-09-30T22:54:33.412161+00:00",
+      "candidate_id": "iter-5",
+      "h_main_result": "PARTIALLY_CONFIRMED",
+      "ablation_results": {},
+      "control_result": "PARTIALLY_CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 0,
+        "arms_total": 2,
+        "accuracy_pct": 0.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-7",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
     }
   ]
 }
