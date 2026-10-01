@@ -39,17 +39,20 @@
     },
     {
       "id": "RP-3",
-      "statement": "On the problem-185 test distribution with N<=1000, BnB with greedy coloring bound completes within 1900ms under normal system load, achieving score 100 without needing local search. The iter-1 observed variance (90-100) was caused by system load, not algorithmic timeout.",
+      "statement": "On the problem-185 test distribution with N<=1000, BnB with greedy coloring bound completes well within 1700ms under normal system load, achieving score 100 regardless of whether the BnB cutoff is set to 1700ms or 1800ms. The solution is robust to time allocation changes within a 300ms window.",
       "confidence": "high",
-      "regime": "problem-185 test distribution, N<=1000, M<=500000, normal system load (no heavy background processes)",
+      "regime": "N <= 1000, M <= 500000, 2s time limit, normal system load",
       "evidence": [
-        "iteration-2-h-control-negative: 5/5 runs scored 100 with BnB-only",
-        "iteration-2-h-main: 7/7 post-warmup runs scored 100"
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-2-h-control-negative",
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
       ],
       "contradicts": [],
-      "extraction_iteration": 2,
-      "mechanism": "The BnB with greedy coloring bound (solution.cpp:18-80 in iter-2 v4, or expand() in iter-1) explores the search tree efficiently enough to find the optimal clique on all test cases within 1900ms when the system is not under contention. The 1800ms timeout leaves sufficient margin.",
-      "applicability_bounds": "May not hold under heavy system load \u2014 iter-1 showed a score of 90 in one run, likely from load-induced timeout. The local search provides insurance against this failure mode.",
+      "extraction_iteration": 3,
+      "mechanism": "BnB with degeneracy ordering and greedy coloring bound prunes the search tree efficiently enough that instances in this distribution are solved in well under 1700ms. The 1700-1800ms cutoff range is deep in the safe zone, not near the boundary.",
+      "applicability_bounds": "Holds for N<=1000 graphs in the problem-185 test distribution. May not hold for denser or larger graphs, or under heavy system load (iter-1 showed score drops under load).",
       "superseded_by": null,
       "category": "domain",
       "status": "active",

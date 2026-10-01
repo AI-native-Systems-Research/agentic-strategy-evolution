@@ -64,6 +64,28 @@
         }
       ],
       "frontier_update": null
+    },
+    {
+      "iteration": 3,
+      "family": "max-clique-robustness",
+      "timestamp": "2026-10-01T07:51:10.534370+00:00",
+      "candidate_id": "iter-3",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": "CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-3",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
     }
   ]
 }
