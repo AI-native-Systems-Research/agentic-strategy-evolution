@@ -10,55 +10,110 @@ vector<int> cur_clique;
 chrono::steady_clock::time_point start_time;
 bool timeout_flag = false;
 
-inline long long elapsed_ms() {
-    return chrono::duration_cast<chrono::milliseconds>(
-        chrono::steady_clock::now() - start_time).count();
-}
-
-int color_bound(const bitset<MAXN>& cand, vector<pair<int,int>>& colored) {
-    colored.clear();
-    static bitset<MAXN> color_sets[MAXN];
-    int max_color = 0;
+// Bitset-parallel greedy coloring for upper bound + ordering
+void color_sort_bitset(const vector<int>& P, vector<int>& order, vector<int>& color_num) {
+    int n = P.size();
+    order.clear();
+    color_num.clear();
+    order.reserve(n);
+    color_num.reserve(n);
     
-    for (int v = cand._Find_first(); v < MAXN; v = cand._Find_next(v)) {
-        int c = 1;
-        while (c <= max_color && (color_sets[c] & adj[v]).any()) c++;
-        if (c > max_color) { max_color = c; color_sets[c].reset(); }
-        color_sets[c].set(v);
-        colored.push_back({c, v});
+    // Build a bitset of vertices in P
+    bitset<MAXN> inP;
+    for (int v : P) inP.set(v);
+    
+    // color_class[k] is the bitset of vertices in color class k
+    vector<bitset<MAXN>> color_class;
+    vector<vector<int>> color_verts; // vertices in each color class for output
+    
+    for (int v : P) {
+        // Find the first color class where v has no neighbors
+        int k = -1;
+        for (int c = 0; c < (int)color_class.size(); c++) {
+            if ((adj[v] & color_class[c]).none()) {
+                k = c;
+                break;
+            }
+        }
+        if (k == -1) {
+            k = color_class.size();
+            color_class.push_back(bitset<MAXN>());
+            color_verts.push_back(vector<int>());
+        }
+        color_class[k].set(v);
+        color_verts[k].push_back(v);
     }
-    for (int c = 1; c <= max_color; c++) color_sets[c].reset();
-    sort(colored.begin(), colored.end());
-    return max_color;
+    
+    for (int k = 0; k < (int)color_verts.size(); k++) {
+        for (int v : color_verts[k]) {
+            order.push_back(v);
+            color_num.push_back(k + 1);
+        }
+    }
 }
 
-void expand(bitset<MAXN>& cand) {
+void expand(const vector<int>& P, const bitset<MAXN>& Pbits) {
     if (timeout_flag) return;
     
-    vector<pair<int,int>> colored;
-    int ub = color_bound(cand, colored);
-    if ((int)cur_clique.size() + ub <= best_size) return;
+    vector<int> order, color_num;
+    color_sort_bitset(P, order, color_num);
     
-    for (int i = (int)colored.size() - 1; i >= 0; i--) {
+    for (int i = (int)order.size() - 1; i >= 0; i--) {
         if (timeout_flag) return;
-        if ((int)cur_clique.size() + colored[i].first <= best_size) return;
+        if ((int)cur_clique.size() + color_num[i] <= best_size) return;
         
-        int v = colored[i].second;
+        int v = order[i];
         cur_clique.push_back(v);
-        bitset<MAXN> newCand = cand & adj[v];
         
-        if (newCand.none()) {
+        // New candidates: vertices in order[0..i-1] that are adjacent to v
+        bitset<MAXN> newPbits;
+        vector<int> newP;
+        if (i > 0) {
+            // Build bitset of order[0..i-1]
+            bitset<MAXN> cand;
+            for (int j = 0; j < i; j++) cand.set(order[j]);
+            newPbits = adj[v] & cand;
+            // Extract vertices in original order
+            for (int j = 0; j < i; j++) {
+                if (newPbits.test(order[j])) {
+                    newP.push_back(order[j]);
+                }
+            }
+        }
+        
+        if (newP.empty()) {
             if ((int)cur_clique.size() > best_size) {
                 best_size = cur_clique.size();
                 best_clique = cur_clique;
             }
         } else {
-            expand(newCand);
+            expand(newP, newPbits);
         }
         cur_clique.pop_back();
-        cand.reset(v);
-        if (elapsed_ms() > 1900) { timeout_flag = true; return; }
+        
+        // Check time every few iterations
+        if ((i & 63) == 0) {
+            auto now = chrono::steady_clock::now();
+            if (chrono::duration_cast<chrono::milliseconds>(now - start_time).count() > 1850) {
+                timeout_flag = true;
+                return;
+            }
+        }
     }
+}
+
+// Greedy clique construction from a given vertex ordering
+vector<int> greedy_clique(const vector<int>& order) {
+    vector<int> clique;
+    bitset<MAXN> clique_bits;
+    for (int v : order) {
+        if ((adj[v] & clique_bits) == clique_bits) {
+            // v is adjacent to all current clique members
+            clique.push_back(v);
+            clique_bits.set(v);
+        }
+    }
+    return clique;
 }
 
 int main(){
@@ -74,37 +129,70 @@ int main(){
     
     // Degeneracy ordering
     vector<int> deg(N+1);
-    for (int i = 1; i <= N; i++) deg[i] = (int)adj[i].count();
-    vector<set<int>> buckets(N+1);
-    for (int i = 1; i <= N; i++) buckets[deg[i]].insert(i);
     vector<bool> removed(N+1, false);
-    vector<int> order;
+    for (int i = 1; i <= N; i++) deg[i] = (int)(adj[i].count());
+    
+    vector<int> degen_order;
+    degen_order.reserve(N);
     for (int iter = 0; iter < N; iter++) {
-        int d = 0;
-        while (d <= N && buckets[d].empty()) d++;
-        int v = *buckets[d].begin();
-        buckets[d].erase(buckets[d].begin());
-        removed[v] = true; order.push_back(v);
-        for (int u = adj[v]._Find_first(); u < MAXN; u = adj[v]._Find_next(u))
-            if (!removed[u]) { buckets[deg[u]].erase(u); deg[u]--; buckets[deg[u]].insert(u); }
+        int best = -1;
+        for (int i = 1; i <= N; i++) {
+            if (!removed[i] && (best == -1 || deg[i] < deg[best])) best = i;
+        }
+        removed[best] = true;
+        degen_order.push_back(best);
+        for (int j = 1; j <= N; j++) {
+            if (!removed[j] && adj[best][j]) deg[j]--;
+        }
     }
     
-    vector<int> rev(order.rbegin(), order.rend());
-    bitset<MAXN> ca; ca.set();
-    for (int v : rev) if (ca[v]) { best_clique.push_back(v); ca &= adj[v]; }
-    best_size = (int)best_clique.size();
+    // Try greedy clique from degeneracy order (reversed - high core first)
+    vector<int> rev_order(degen_order.rbegin(), degen_order.rend());
+    best_clique = greedy_clique(rev_order);
+    best_size = best_clique.size();
     
-    // BnB using degeneracy ordering: for each vertex in order, search among later neighbors
-    bitset<MAXN> later;
-    for (int i = (int)order.size()-1; i >= 0 && !timeout_flag; i--) {
-        int v = order[i];
-        bitset<MAXN> cand = adj[v] & later;
-        cur_clique.clear();
-        cur_clique.push_back(v);
-        if ((int)cand.count() + 1 > best_size) expand(cand);
-        later.set(v);
+    // Also try greedy from several random orderings
+    {
+        mt19937 rng(42);
+        for (int t = 0; t < 20; t++) {
+            vector<int> rorder(rev_order);
+            shuffle(rorder.begin(), rorder.end(), rng);
+            auto c = greedy_clique(rorder);
+            if ((int)c.size() > best_size) {
+                best_size = c.size();
+                best_clique = c;
+            }
+        }
+    }
+    
+    // Exact B&B using degeneracy order
+    vector<int> P = degen_order; // process in degeneracy order
+    bitset<MAXN> Pbits;
+    for (int v : P) Pbits.set(v);
+    
+    cur_clique.clear();
+    expand(P, Pbits);
+    
+    // If we timed out, try local search to improve
+    if (timeout_flag) {
+        bitset<MAXN> clique_bits;
+        for (int v : best_clique) clique_bits.set(v);
+        // Try adding vertices
+        for (int v = 1; v <= N; v++) {
+            if (!clique_bits.test(v)) {
+                if ((adj[v] & clique_bits) == clique_bits) {
+                    best_clique.push_back(v);
+                    clique_bits.set(v);
+                    best_size++;
+                }
+            }
+        }
+        // Try swap: remove one, add two
+        // (simple perturbation)
     }
     
     set<int> in_clique(best_clique.begin(), best_clique.end());
-    for (int i = 1; i <= N; i++) cout << (in_clique.count(i) ? 1 : 0) << "\n";
+    for (int i = 1; i <= N; i++) {
+        cout << (in_clique.count(i) ? 1 : 0) << "\n";
+    }
 }
