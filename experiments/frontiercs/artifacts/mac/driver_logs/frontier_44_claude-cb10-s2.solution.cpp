@@ -4,78 +4,90 @@ using namespace std;
 int main(){
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
+    
     int N; cin>>N;
-    vector<double> cx(N),cy(N);
+    vector<double> cx(N), cy(N);
     for(int i=0;i<N;i++) cin>>cx[i]>>cy[i];
     
     vector<bool> isp(max(N,3),false);
-    {vector<bool> sv(max(N,3),true);sv[0]=sv[1]=false;
-    for(int i=2;i<(int)sv.size();i++)if(sv[i]){isp[i]=true;for(long long j=(long long)i*i;j<(int)sv.size();j+=i)sv[j]=false;}}
+    {
+        vector<bool> sv(max(N,3),true); sv[0]=sv[1]=false;
+        for(int i=2;i<(int)sv.size();i++)
+            if(sv[i]){isp[i]=true;for(long long j=(long long)i*i;j<(int)sv.size();j+=i)sv[j]=false;}
+    }
     
-    auto Dist=[&](int a,int b)->double{double dx=cx[a]-cx[b],dy=cy[a]-cy[b];return sqrt(dx*dx+dy*dy);};
+    auto ddist=[&](int a,int b)->double{
+        double dx=cx[a]-cx[b], dy=cy[a]-cy[b];
+        return sqrt(dx*dx+dy*dy);
+    };
     
-    // pos[k] = position in tour (1..N-1) of city k (for k!=0)
+    // pos2tour: tour[0..N], tour[0]=tour[N]=0
     vector<int> tour(N+1);
-    // Start with input order
-    for(int i=0;i<N;i++) tour[i]=i;
-    tour[N]=0;
     
-    auto costOf=[&](const vector<int>&t)->double{
+    auto mult=[&](int step, int city)->double{
+        return (step%10==0 && !isp[city]) ? 1.1 : 1.0;
+    };
+    
+    auto getCost=[&](const vector<int>& t)->double{
         double s=0;
-        for(int i=1;i<=N;i++){
-            double m=(i%10==0&&!isp[t[i-1]])?1.1:1.0;
-            s+=m*Dist(t[i-1],t[i]);
-        }
+        for(int i=1;i<=N;i++)
+            s += mult(i, t[i-1]) * ddist(t[i-1], t[i]);
         return s;
     };
     
-    double curCost=costOf(tour);
-    vector<int> bestTour=tour;
-    double bestCost=curCost;
+    // Start with input order
+    for(int i=0;i<N;i++) tour[i]=i; tour[N]=0;
+    double cur=getCost(tour);
     
-    if(N<=2){cout<<N+1<<"\n";for(int i=0;i<=N;i++)cout<<bestTour[i]<<"\n";return 0;}
-    
+    vector<int> best=tour; double bc=cur;
     mt19937 rng(42);
     auto st=chrono::steady_clock::now();
-    double tl=1.85;
-    double T0=curCost/N*0.5,Tf=curCost/N*1e-8;
-    long long iter=0;double frac=0;
-    int maxSeg=min(N-1,N<=1000?N-1:N<=5000?400:N<=20000?150:80);
+    double timeLimit=1.85;
     
+    auto edgeCost=[&](int p)->double{return mult(p,tour[p-1])*ddist(tour[p-1],tour[p]);};
+    
+    long long it=0;
     while(true){
-        iter++;
-        if((iter&0xFFF)==0){
-            double el=chrono::duration<double>(chrono::steady_clock::now()-st).count();
-            if(el>=tl)break;
-            frac=el/tl;
+        it++;
+        if((it&0x3FF)==0){
+            double e=chrono::duration<double>(chrono::steady_clock::now()-st).count();
+            if(e>=timeLimit) break;
         }
-        double temp=T0*pow(Tf/T0,frac);
+        double e=chrono::duration<double>(chrono::steady_clock::now()-st).count();
+        double fr=e/timeLimit;
+        double T=cur/N*0.15*(1.0-fr);
+        if(fr>=1.0) break;
         
-        int i=1+rng()%(N-1);
-        int len=2+rng()%min(maxSeg,N-1);
-        int j=i+len-1;
-        if(j>=N)continue;
+        // Random swap of two positions in [1, N-1]
+        int i=1+(rng()%(N-1));
+        int j=1+(rng()%(N-1));
+        if(i==j) continue;
         
-        int lo=i,hi=min(j+1,N);
-        double oC=0,nC=0;
-        for(int t=lo;t<=hi;t++){
-            double m=(t%10==0&&!isp[tour[t-1]])?1.1:1.0;
-            oC+=m*Dist(tour[t-1],tour[t]);
+        // Compute affected edges
+        int lo=min(i,j), hi=max(i,j);
+        double oC=0, nC=0;
+        // Affected positions: i-1->i, i->i+1, j-1->j, j->j+1 (if distinct)
+        vector<int> aff;
+        for(int k:{i,j}){
+            if(k>=1&&k<=N) aff.push_back(k);
+            if(k+1>=1&&k+1<=N) aff.push_back(k+1);
         }
-        reverse(tour.data()+i,tour.data()+j+1);
-        for(int t=lo;t<=hi;t++){
-            double m=(t%10==0&&!isp[tour[t-1]])?1.1:1.0;
-            nC+=m*Dist(tour[t-1],tour[t]);
-        }
-        double d=nC-oC;
-        if(d<0||(temp>1e-30&&d/temp<20&&exp(-d/temp)>(rng()%10000)/10000.0)){
-            curCost+=d;
-            if(curCost<bestCost){bestCost=curCost;bestTour=tour;}
-        }else{
-            reverse(tour.data()+i,tour.data()+j+1);
+        sort(aff.begin(),aff.end());
+        aff.erase(unique(aff.begin(),aff.end()),aff.end());
+        
+        for(int p:aff) oC+=edgeCost(p);
+        swap(tour[i],tour[j]);
+        for(int p:aff) nC+=edgeCost(p);
+        
+        double d2=nC-oC;
+        if(d2<0||(T>1e-30&&d2/T<15&&exp(-d2/T)>(rng()%1000000)*1e-6)){
+            cur+=d2;
+            if(cur<bc){bc=cur;best=tour;}
+        } else {
+            swap(tour[i],tour[j]);
         }
     }
     
     cout<<N+1<<"\n";
-    for(int i=0;i<=N;i++)cout<<bestTour[i]<<"\n";
+    for(int i=0;i<=N;i++) cout<<best[i]<<"\n";
 }
