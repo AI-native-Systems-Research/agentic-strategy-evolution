@@ -5,86 +5,106 @@ static const int MAXN = 1001;
 static const int WORDS = (MAXN + 63) / 64;
 typedef unsigned long long u64;
 
-struct Bitset {
-    u64 w[WORDS];
-    void reset() { memset(w, 0, sizeof(w)); }
-    void set(int i) { w[i >> 6] |= 1ULL << (i & 63); }
-    bool test(int i) const { return (w[i >> 6] >> (i & 63)) & 1; }
-    int count() const { int c = 0; for (int i = 0; i < WORDS; i++) c += __builtin_popcountll(w[i]); return c; }
-    void andWith(const Bitset& o) { for (int i = 0; i < WORDS; i++) w[i] &= o.w[i]; }
-    Bitset operator&(const Bitset& o) const { Bitset r; for (int i = 0; i < WORDS; i++) r.w[i] = w[i] & o.w[i]; return r; }
-};
-
-Bitset adj[MAXN];
+u64 adj[MAXN][WORDS];
 int N, M;
-int bestSize, bestClique[MAXN], bestCliqueSize;
+int bestClique[MAXN], bestLen;
+int curClique[MAXN], curLen;
 chrono::steady_clock::time_point startT;
 bool timeout_;
-inline long long ems() { return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - startT).count(); }
+int nw;
 
-void expand(int* P, int np, int* clique, int cs) {
-    if (timeout_) return;
-    if (np == 0) { if (cs > bestSize) { bestSize = cs; memcpy(bestClique, clique, cs * sizeof(int)); bestCliqueSize = cs; } return; }
-    // Greedy coloring to get upper bound
-    int col[MAXN];
-    bool usedColor[MAXN + 1];
-    int maxCol = 0;
-    for (int i = 0; i < np; i++) {
-        memset(usedColor, 0, (maxCol + 2) * sizeof(bool));
-        int v = P[i];
-        for (int j = 0; j < i; j++) {
-            if (adj[v].test(P[j])) usedColor[col[j]] = true;
-        }
-        int c = 1;
-        while (usedColor[c]) c++;
-        col[i] = c;
-        if (c > maxCol) maxCol = c;
+inline long long ems(){return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now()-startT).count();}
+inline void bset(u64*bs,int i){bs[i>>6]|=1ULL<<(i&63);}
+inline bool btest(u64*bs,int i){return(bs[i>>6]>>(i&63))&1;}
+inline void bclear(u64*bs,int i){bs[i>>6]&=~(1ULL<<(i&63));}
+inline void bzero(u64*bs,int w){memset(bs,0,w*8);}
+inline int bcount(u64*bs,int w){int c=0;for(int i=0;i<w;i++)c+=__builtin_popcountll(bs[i]);return c;}
+inline void band(u64*r,u64*a,u64*b,int w){for(int i=0;i<w;i++)r[i]=a[i]&b[i];}
+
+struct CV{int color;int vertex;};
+CV cvbuf[MAXN];
+int cvlen;
+
+int colorBound(u64*P){
+    static int verts[MAXN];
+    int nv=0;
+    for(int w=0;w<nw;w++){u64 bits=P[w];while(bits){int b=__builtin_ctzll(bits);verts[nv++]=(w<<6)+b;bits&=bits-1;}}
+    if(!nv){cvlen=0;return 0;}
+    static int subdeg[MAXN];
+    for(int i=0;i<nv;i++){static u64 tmp[WORDS];band(tmp,adj[verts[i]],P,nw);subdeg[i]=bcount(tmp,nw);}
+    static int idx[MAXN];
+    for(int i=0;i<nv;i++)idx[i]=i;
+    sort(idx,idx+nv,[](int a,int b){return subdeg[a]>subdeg[b];});
+    static u64 colorSets[MAXN][WORDS];
+    int nc=0;
+    static int vcol[MAXN];
+    for(int ii=0;ii<nv;ii++){
+        int v=verts[idx[ii]];
+        int c=-1;
+        for(int cc=0;cc<nc;cc++){bool h=false;for(int w=0;w<nw;w++)if(adj[v][w]&colorSets[cc][w]){h=true;break;}if(!h){c=cc;break;}}
+        if(c==-1){c=nc;bzero(colorSets[nc],nw);nc++;}
+        vcol[ii]=c;bset(colorSets[c],v);
     }
-    if (cs + maxCol <= bestSize) return;
-    int localP[MAXN];
-    for (int i = np - 1; i >= 0; i--) {
-        if (timeout_) return;
-        if ((i & 31) == 0 && ems() > 1900) { timeout_ = true; return; }
-        if (cs + col[i] <= bestSize) return;
-        int v = P[i], nnp = 0;
-        for (int j = 0; j < i; j++) if (adj[v].test(P[j])) localP[nnp++] = P[j];
-        clique[cs] = v;
-        expand(localP, nnp, clique, cs + 1);
+    cvlen=nv;
+    for(int ii=0;ii<nv;ii++){cvbuf[ii].color=vcol[ii]+1;cvbuf[ii].vertex=verts[idx[ii]];}
+    sort(cvbuf,cvbuf+cvlen,[](const CV&a,const CV&b){return a.color<b.color;});
+    return nc;
+}
+
+void expand(u64*P){
+    if(timeout_)return;
+    if(!bcount(P,nw)){if(curLen>bestLen){bestLen=curLen;memcpy(bestClique,curClique,curLen*sizeof(int));}return;}
+    int nc=colorBound(P);
+    if(curLen+nc<=bestLen)return;
+    for(int i=cvlen-1;i>=0;i--){
+        if(timeout_)return;
+        if(ems()>1900){timeout_=true;return;}
+        if(curLen+cvbuf[i].color<=bestLen)return;
+        int v=cvbuf[i].vertex;
+        static u64 mask[WORDS];bzero(mask,nw);
+        for(int j=0;j<i;j++)bset(mask,cvbuf[j].vertex);
+        static u64 newP[WORDS];
+        for(int w=0;w<nw;w++)newP[w]=mask[w]&adj[v][w];
+        curClique[curLen++]=v;expand(newP);curLen--;
     }
 }
 
-int main() {
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-    startT = chrono::steady_clock::now(); timeout_ = false;
-    cin >> N >> M;
-    for (int i = 0; i <= N; i++) adj[i].reset();
-    for (int i = 0; i < M; i++) { int u, v; cin >> u >> v; adj[u].set(v); adj[v].set(u); }
-    vector<int> deg(N + 1); for (int i = 1; i <= N; i++) deg[i] = adj[i].count();
-    vector<bool> rem(N + 1, false); vector<int> order; order.reserve(N);
-    for (int it = 0; it < N; it++) {
-        int best = -1, bd = N + 1;
-        for (int i = 1; i <= N; i++) if (!rem[i] && deg[i] < bd) { bd = deg[i]; best = i; }
-        rem[best] = true; order.push_back(best);
-        for (int j = 1; j <= N; j++) if (!rem[j] && adj[best].test(j)) deg[j]--;
+int main(){
+    ios::sync_with_stdio(false);cin.tie(nullptr);
+    startT=chrono::steady_clock::now();timeout_=false;
+    cin>>N>>M;nw=(N+64)/64;
+    memset(adj,0,sizeof(adj));
+    for(int i=0;i<M;i++){int u,v;cin>>u>>v;bset(adj[u],v);bset(adj[v],u);}
+    vector<int>deg(N+1);for(int i=1;i<=N;i++)deg[i]=bcount(adj[i],nw);
+    vector<bool>rem(N+1,false);vector<int>order;order.reserve(N);
+    // Bucket-based degeneracy
+    int maxd=*max_element(deg.begin()+1,deg.end());
+    vector<vector<int>>bucket(maxd+2);
+    for(int i=1;i<=N;i++)bucket[deg[i]].push_back(i);
+    vector<int>pos(N+1);
+    for(int it=0;it<N;it++){
+        int d=0;while(d<=maxd&&bucket[d].empty())d++;
+        int best=bucket[d].back();bucket[d].pop_back();
+        rem[best]=true;order.push_back(best);
+        for(int w=0;w<nw;w++){u64 bits=adj[best][w];while(bits){int b=(w<<6)+__builtin_ctzll(bits);bits&=bits-1;if(b>=1&&b<=N&&!rem[b]){bucket[deg[b]].erase(find(bucket[deg[b]].begin(),bucket[deg[b]].end(),b));deg[b]--;bucket[deg[b]].push_back(b);}}}
     }
-    bestSize = 0; bestCliqueSize = 0;
-    for (int start = N - 1; start >= max(0, N - 200); start--) {
-        Bitset ca; for (int i = 0; i < WORDS; i++) ca.w[i] = ~0ULL;
-        int cl[MAXN], cs = 0;
-        cl[cs++] = order[start]; ca.andWith(adj[order[start]]); ca.set(order[start]);
-        for (int i = N - 1; i >= 0; i--) { int v = order[i]; if (v == order[start]) continue; if (ca.test(v)) { cl[cs++] = v; ca.andWith(adj[v]); ca.set(v); } }
-        if (cs > bestSize) { bestSize = cs; memcpy(bestClique, cl, cs * sizeof(int)); bestCliqueSize = cs; }
+    bestLen=0;
+    for(int start=N-1;start>=max(0,N-80);start--){
+        static u64 ca[WORDS];for(int w=0;w<nw;w++)ca[w]=~0ULL;
+        int cl[MAXN],clen=0,sv=order[start];
+        cl[clen++]=sv;band(ca,ca,adj[sv],nw);bset(ca,sv);
+        for(int i=N-1;i>=0;i--){int v=order[i];if(v==sv)continue;if(btest(ca,v)){cl[clen++]=v;band(ca,ca,adj[v],nw);bset(ca,v);}}
+        if(clen>bestLen){bestLen=clen;memcpy(bestClique,cl,clen*sizeof(int));}
     }
-    int P[MAXN], clique[MAXN];
-    for (int idx = N - 1; idx >= 0; idx--) {
-        if (timeout_) break;
-        int v = order[idx]; int np = 0;
-        for (int j = idx + 1; j < N; j++) if (adj[v].test(order[j])) P[np++] = order[j];
-        if (np + 1 <= bestSize) continue;
-        clique[0] = v;
-        expand(P, np, clique, 1);
+    curLen=0;
+    for(int idx=N-1;idx>=0;idx--){
+        if(timeout_)break;
+        int v=order[idx];
+        static u64 P[WORDS];bzero(P,nw);
+        for(int j=idx+1;j<N;j++)if(btest(adj[v],order[j]))bset(P,order[j]);
+        if(bcount(P,nw)+1<=bestLen)continue;
+        curLen=0;curClique[curLen++]=v;expand(P);
     }
-    vector<int> inc(N + 1, 0);
-    for (int i = 0; i < bestCliqueSize; i++) inc[bestClique[i]] = 1;
-    for (int i = 1; i <= N; i++) cout << inc[i] << "\n";
+    vector<int>inc(N+1,0);for(int i=0;i<bestLen;i++)inc[bestClique[i]]=1;
+    for(int i=1;i<=N;i++)cout<<inc[i]<<"\n";
 }

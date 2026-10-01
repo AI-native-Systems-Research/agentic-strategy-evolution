@@ -1,0 +1,622 @@
+{
+  "problem_id": "185",
+  "agent": "engram",
+  "label": "engram-cb10-s2",
+  "model": "claude-opus-4-6",
+  "final_score": 100,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_185_engram-cb10-s2.solution.cpp",
+  "best_score": 100,
+  "method": "Engram-style (reimplementation)",
+  "agents": 13,
+  "rounds_per_agent": 4,
+  "code_generations": 45,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 29.873999999999995,
+      "status": "success",
+      "plan": "Implement a Bron-Kerbosch style branch-and-bound maximum clique algorithm using bitsets for efficient set operations, with vertex ordering by degree (color-based upper bounding), combined with a greedy initial solution and time-limited search, falling back to the best clique found if time runs out.",
+      "cum_cost": 0.1348,
+      "best_score": 29.873999999999995
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 93.08399999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.2753,
+      "best_score": 93.08399999999999
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 33.757999999999996,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.4589,
+      "best_score": 93.08399999999999
+    },
+    {
+      "agent": 0,
+      "round": 3,
+      "score": 40,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.6136,
+      "best_score": 93.08399999999999
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 89.93299999999999,
+      "status": "success",
+      "plan": "Implement an optimized Tomita-style branch-and-bound maximum clique solver using bitsets for adjacency, with greedy coloring bounds, degeneracy ordering, and proper time management (1.8s cutoff), plus an initial greedy clique to seed the best bound.",
+      "cum_cost": 0.9119,
+      "best_score": 93.08399999999999
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 89.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.0675,
+      "best_score": 93.08399999999999
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.2309,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 1,
+      "round": 3,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.4043,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Rewrite the BnB to use bitset-based candidate sets throughout (avoiding vector<int> conversions), implement a faster greedy coloring bound using bitset operations, and add Tomita-style pivot maximizing connections to candidates to reduce branching, all while keeping the degeneracy ordering and greed",
+      "cum_cost": 1.6752,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 69.18499999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.8187,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 69.435,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.9579,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 2,
+      "round": 3,
+      "score": 89.505,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.1104,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": 60,
+      "status": "success",
+      "plan": "Optimize the existing BnB approach with bitset-based candidate management throughout (avoiding vector<int> conversions), a tighter greedy coloring using bitset operations for color assignment, and better vertex ordering within branches to improve pruning \u2014 targeting the few hard instances that curre",
+      "cum_cost": 2.4011,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": null,
+      "status": "error",
+      "plan": null,
+      "cum_cost": 2.5503,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": 32.871,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.679,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 3,
+      "round": 3,
+      "score": 67.767,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.8193,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": 90,
+      "status": "success",
+      "plan": "Optimize the existing BnB with bitset-based candidate sets (no vector allocations in recursion), faster coloring using bitset color classes, and Russian Doll Search to cache per-vertex clique bounds for tighter pruning.",
+      "cum_cost": 3.158,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": 79.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.336,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 4,
+      "round": 2,
+      "score": 79.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.5238,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 4,
+      "round": 3,
+      "score": 80,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.7026,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 5,
+      "round": 0,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": "Optimize the existing BnB approach by using bitset-based candidate sets throughout recursion (eliminating vector allocations), implementing a faster color-class-based greedy coloring bound using bitsets for each color class, and improving vertex ordering within branches to reduce search tree size \u2014 ",
+      "cum_cost": 4.0693,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 5,
+      "round": 1,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.2775,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 5,
+      "round": 2,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.4645,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 5,
+      "round": 3,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.6522,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 6,
+      "round": 0,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": "Optimize the existing BnB approach by (1) using array-of-uint64_t bitsets instead of std::bitset for candidate sets to enable faster operations, (2) improving the coloring bound with a more efficient implementation that avoids redundant work, (3) adding better initial bounds via multiple greedy rest",
+      "cum_cost": 5.0296,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 6,
+      "round": 1,
+      "score": 79.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.2253,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 6,
+      "round": 2,
+      "score": 73.83500000000001,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.3783,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 6,
+      "round": 3,
+      "score": 88.403,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.5365,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 7,
+      "round": 0,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": "Optimize the existing BnB solver by (1) using faster coloring with bitset-based color assignment instead of per-vertex loops, (2) implementing MCQ-style branching where vertices are processed by color class in reverse order, (3) adding a tighter time budget and better initial bounds, and (4) using m",
+      "cum_cost": 5.9338,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 7,
+      "round": 1,
+      "score": 89.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.1364,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 7,
+      "round": 2,
+      "score": 80.24900000000001,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.2971,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 7,
+      "round": 3,
+      "score": 81.77800000000002,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.462,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 8,
+      "round": 0,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": "Optimize the existing BnB approach by (1) using faster bitset-based coloring with bitset operations instead of per-element loops, (2) implementing Russian Doll Search to cache upper bounds per vertex, (3) using bitset intersection for candidate set construction, and (4) tightening the overall consta",
+      "cum_cost": 6.8759,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 8,
+      "round": 1,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.0916,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 8,
+      "round": 2,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.3014,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 8,
+      "round": 3,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.5186,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 9,
+      "round": 0,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": "Improve the existing 99.933 solution by implementing a more efficient MCQ-style solver with better coloring bounds, using array-based bitsets (uint64_t words) instead of std::bitset for faster operations, and adding DSATUR-style coloring for tighter upper bounds within the BnB search.",
+      "cum_cost": 7.925,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 9,
+      "round": 1,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.106,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 9,
+      "round": 2,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.2772,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 9,
+      "round": 3,
+      "score": 89.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.4461,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 10,
+      "round": 0,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": "Optimize the existing BnB solver by (1) using bitset-based coloring for faster bound computation, (2) implementing MCQ-style branching where vertices are ordered by color class and we branch in reverse order, (3) adding a tighter initial bound via multiple greedy restarts with randomization, and (4)",
+      "cum_cost": 8.8457,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 10,
+      "round": 1,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.042,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 10,
+      "round": 2,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.2537,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 10,
+      "round": 3,
+      "score": 80,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.4851,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 11,
+      "round": 0,
+      "score": 99.93299999999999,
+      "status": "success",
+      "plan": "Optimize the BnB solver by using bitset-based coloring (track used colors per vertex via bitset intersection), process vertices in degeneracy order, use bitset-based candidate sets throughout expand() to avoid vector allocations, and implement a tighter coloring bound with DSATUR-like tie-breaking w",
+      "cum_cost": 9.9295,
+      "best_score": 99.93299999999999
+    },
+    {
+      "agent": 11,
+      "round": 1,
+      "score": 100,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 10.1616,
+      "best_score": 100
+    }
+  ],
+  "input_tokens": 163358,
+  "output_tokens": 103437,
+  "cost_usd_est": 10.2081,
+  "journal": "/Users/toslali/frontier/gen_logs/frontier_185_engram-cb10-s2_engram/research_journal.md",
+  "trajectory": [
+    {
+      "cum_cost": 0.1348,
+      "best_score": 29.873999999999995
+    },
+    {
+      "cum_cost": 0.2753,
+      "best_score": 93.08399999999999
+    },
+    {
+      "cum_cost": 0.4589,
+      "best_score": 93.08399999999999
+    },
+    {
+      "cum_cost": 0.6136,
+      "best_score": 93.08399999999999
+    },
+    {
+      "cum_cost": 0.9119,
+      "best_score": 93.08399999999999
+    },
+    {
+      "cum_cost": 1.0675,
+      "best_score": 93.08399999999999
+    },
+    {
+      "cum_cost": 1.2309,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 1.4043,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 1.6752,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 1.8187,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 1.9579,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 2.1104,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 2.4011,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 2.5503,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 2.679,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 2.8193,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 3.158,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 3.336,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 3.5238,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 3.7026,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 4.0693,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 4.2775,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 4.4645,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 4.6522,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 5.0296,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 5.2253,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 5.3783,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 5.5365,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 5.9338,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 6.1364,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 6.2971,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 6.462,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 6.8759,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 7.0916,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 7.3014,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 7.5186,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 7.925,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 8.106,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 8.2772,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 8.4461,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 8.8457,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 9.042,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 9.2537,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 9.4851,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 9.9295,
+      "best_score": 99.93299999999999
+    },
+    {
+      "cum_cost": 10.1616,
+      "best_score": 100
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 1548.9
+}
