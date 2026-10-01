@@ -1,119 +1,186 @@
 #include <bits/stdc++.h>
 using namespace std;
 
-int n;
-int px[1001], py[1001];
-long long r[1001];
-int xa[1001], ya[1001], xb[1001], yb[1001]; // [xa,xb) x [ya,yb)
+static int N;
+static int X[5001], Y[5001];
+static long long R[5001];
+static int A[5001], B[5001], C[5001], D[5001];
 
-bool overlaps(int i, int j) {
-    return xa[i] < xb[j] && xb[i] > xa[j] && ya[i] < yb[j] && yb[i] > ya[j];
+// Grid-based overlap detection
+static const int G = 100; // grid cells per axis, each cell = 100x100
+static vector<int> grid[G][G];
+
+void gridClear(){
+    for(int i=0;i<G;i++) for(int j=0;j<G;j++) grid[i][j].clear();
 }
 
-long long area(int i) { return (long long)(xb[i]-xa[i])*(yb[i]-ya[i]); }
-
-double score(int i) {
-    long long s = area(i);
-    if (s <= 0) return 0;
-    double mn = min((double)r[i], (double)s);
-    double mx = max((double)r[i], (double)s);
-    double rat = 1.0 - mn/mx;
-    return 1.0 - rat*rat;
+void gridAdd(int id){
+    int gx1=A[id]/100, gy1=B[id]/100, gx2=(C[id]-1)/100, gy2=(D[id]-1)/100;
+    gx1=max(0,min(G-1,gx1)); gy1=max(0,min(G-1,gy1));
+    gx2=max(0,min(G-1,gx2)); gy2=max(0,min(G-1,gy2));
+    for(int i=gx1;i<=gx2;i++) for(int j=gy1;j<=gy2;j++) grid[i][j].push_back(id);
 }
 
-// Max expand in direction dir (0=left,1=up,2=right,3=down) without overlap
-int maxExpand(int i, int dir) {
-    int lim;
-    if (dir == 0) lim = xa[i];
-    else if (dir == 1) lim = ya[i];
-    else if (dir == 2) lim = 10000 - xb[i];
-    else lim = 10000 - yb[i];
+void gridRemove(int id){
+    int gx1=A[id]/100, gy1=B[id]/100, gx2=(C[id]-1)/100, gy2=(D[id]-1)/100;
+    gx1=max(0,min(G-1,gx1)); gy1=max(0,min(G-1,gy1));
+    gx2=max(0,min(G-1,gx2)); gy2=max(0,min(G-1,gy2));
+    for(int i=gx1;i<=gx2;i++) for(int j=gy1;j<=gy2;j++){
+        auto &v=grid[i][j];
+        v.erase(remove(v.begin(),v.end(),id),v.end());
+    }
+}
+
+bool overlaps(int i, int j){
+    return A[i]<C[j]&&C[i]>A[j]&&B[i]<D[j]&&D[i]>B[j];
+}
+
+bool checkOverlap(int id){
+    int gx1=A[id]/100, gy1=B[id]/100, gx2=(C[id]-1)/100, gy2=(D[id]-1)/100;
+    gx1=max(0,min(G-1,gx1)); gy1=max(0,min(G-1,gy1));
+    gx2=max(0,min(G-1,gx2)); gy2=max(0,min(G-1,gy2));
+    for(int i=gx1;i<=gx2;i++) for(int j=gy1;j<=gy2;j++){
+        for(int o:grid[i][j]) if(o!=id && overlaps(id,o)) return true;
+    }
+    return false;
+}
+
+long long area_i(int i){ return (long long)(C[i]-A[i])*(D[i]-B[i]); }
+
+double score_i(int i){
+    long long si=area_i(i);
+    if(si<=0) return 0;
+    double mn=min((double)R[i],(double)si);
+    double mx=max((double)R[i],(double)si);
+    double ratio=1.0-mn/mx;
+    return 1.0-ratio*ratio;
+}
+
+struct Rect{int x1,y1,x2,y2;};
+
+void partition(vector<int>&ids, Rect bound){
+    if(ids.size()==1){
+        int i=ids[0];
+        A[i]=bound.x1;B[i]=bound.y1;C[i]=bound.x2;D[i]=bound.y2;
+        return;
+    }
+    if(ids.empty()) return;
     
-    for (int j = 0; j < n; j++) {
-        if (j == i) continue;
-        if (dir == 0 || dir == 2) {
-            // horizontal expansion - need vertical overlap
-            if (ya[i] >= yb[j] || yb[i] <= ya[j]) continue;
-            if (dir == 0) { // expand left
-                if (xb[j] <= xa[i]) lim = min(lim, xa[i] - xb[j]);
-                else if (xa[j] < xb[i] && xb[j] > xa[i]) lim = 0; // already overlapping or blocking
-            } else { // expand right
-                if (xa[j] >= xb[i]) lim = min(lim, xa[j] - xb[i]);
-                else if (xb[j] > xa[i] && xa[j] < xb[i]) lim = 0;
-            }
-        } else {
-            if (xa[i] >= xb[j] || xb[i] <= xa[j]) continue;
-            if (dir == 1) {
-                if (yb[j] <= ya[i]) lim = min(lim, ya[i] - yb[j]);
-                else if (ya[j] < yb[i] && yb[j] > ya[i]) lim = 0;
+    int W=bound.x2-bound.x1, H=bound.y2-bound.y1;
+    long long totalR=0;
+    for(int i:ids) totalR+=R[i];
+    
+    double bestCost=1e18;
+    int bestSplit=-1; bool bestHoriz=false;
+    vector<int> bestLeft, bestRight;
+    
+    for(int horiz=0;horiz<2;horiz++){
+        vector<int> si=ids;
+        if(horiz) sort(si.begin(),si.end(),[](int a,int b){return Y[a]<Y[b];});
+        else sort(si.begin(),si.end(),[](int a,int b){return X[a]<X[b];});
+        
+        long long cumR=0;
+        for(int k=0;k<(int)si.size()-1;k++){
+            cumR+=R[si[k]];
+            double frac=(double)cumR/totalR;
+            int lo,hi,splitPos;
+            if(horiz){
+                lo=Y[si[k]]+1; hi=Y[si[k+1]];
+                if(lo>hi) continue;
+                splitPos=bound.y1+(int)round(frac*H);
+                splitPos=max(splitPos,lo); splitPos=min(splitPos,hi);
+                if(splitPos<=bound.y1||splitPos>=bound.y2) continue;
             } else {
-                if (ya[j] >= yb[i]) lim = min(lim, ya[j] - yb[i]);
-                else if (yb[j] > ya[i] && ya[j] < yb[i]) lim = 0;
+                lo=X[si[k]]+1; hi=X[si[k+1]];
+                if(lo>hi) continue;
+                splitPos=bound.x1+(int)round(frac*W);
+                splitPos=max(splitPos,lo); splitPos=min(splitPos,hi);
+                if(splitPos<=bound.x1||splitPos>=bound.x2) continue;
+            }
+            double actualFrac=horiz?(double)(splitPos-bound.y1)/H:(double)(splitPos-bound.x1)/W;
+            double cost=(actualFrac-frac)*(actualFrac-frac);
+            if(cost<bestCost){
+                bestCost=cost; bestSplit=splitPos; bestHoriz=horiz;
+                bestLeft.assign(si.begin(),si.begin()+k+1);
+                bestRight.assign(si.begin()+k+1,si.end());
             }
         }
     }
-    return max(lim, 0);
+    
+    if(bestSplit<0){
+        for(int i:ids){A[i]=X[i];B[i]=Y[i];C[i]=X[i]+1;D[i]=Y[i]+1;}
+        return;
+    }
+    
+    if(bestHoriz){
+        partition(bestLeft,{bound.x1,bound.y1,bound.x2,bestSplit});
+        partition(bestRight,{bound.x1,bestSplit,bound.x2,bound.y2});
+    } else {
+        partition(bestLeft,{bound.x1,bound.y1,bestSplit,bound.y2});
+        partition(bestRight,{bestSplit,bound.y1,bound.x2,bound.y2});
+    }
 }
 
 int main(){
-    scanf("%d", &n);
-    for (int i = 0; i < n; i++) {
-        scanf("%d%d%lld", &px[i], &py[i], &r[i]);
-        xa[i] = px[i]; ya[i] = py[i]; xb[i] = px[i]+1; yb[i] = py[i]+1;
-    }
+    scanf("%d",&N);
+    for(int i=0;i<N;i++) scanf("%d%d%lld",&X[i],&Y[i],&R[i]);
     
-    auto T0 = chrono::steady_clock::now();
-    auto elapsed = [&]() { return chrono::duration<double>(chrono::steady_clock::now()-T0).count(); };
+    vector<int> all(N); iota(all.begin(),all.end(),0);
+    partition(all,{0,0,10000,10000});
+    for(int i=0;i<N;i++) if(X[i]<A[i]||X[i]>=C[i]||Y[i]<B[i]||Y[i]>=D[i]){A[i]=X[i];B[i]=Y[i];C[i]=X[i]+1;D[i]=Y[i]+1;}
     
-    // Greedy expansion passes
-    for (int pass = 0; pass < 50000 && elapsed() < 4.5; pass++) {
-        bool any = false;
-        for (int i = 0; i < n; i++) {
-            long long s = area(i), t = r[i];
-            if (s >= t) continue;
-            for (int dir = 0; dir < 4; dir++) {
-                int mx = maxExpand(i, dir);
-                if (mx <= 0) continue;
-                int perp = (dir <= 1) ? (xb[i]-xa[i]) : (yb[i]-ya[i]);
-                if (dir == 0 || dir == 2) perp = yb[i]-ya[i]; else perp = xb[i]-xa[i];
-                long long need = t - area(i);
-                if (need <= 0) break;
-                int want = (int)min((long long)mx, max(1LL, (need + perp - 1) / perp));
-                double os = score(i);
-                int oa=xa[i],ob=ya[i],oc=xb[i],od=yb[i];
-                if (dir==0) xa[i]-=want; else if(dir==1) ya[i]-=want;
-                else if(dir==2) xb[i]+=want; else yb[i]+=want;
-                if (score(i) <= os) { xa[i]=oa; ya[i]=ob; xb[i]=oc; yb[i]=od; }
-                else any = true;
-            }
-        }
-        if (!any) break;
-    }
+    gridClear();
+    for(int i=0;i<N;i++) gridAdd(i);
+    
+    auto start=chrono::steady_clock::now();
+    auto el=[&](){return chrono::duration<double>(chrono::steady_clock::now()-start).count();};
     
     mt19937 rng(42);
-    while (elapsed() < 4.8) {
-        int i = rng() % n;
-        int dir = rng() % 4;
-        bool expand = (rng() % 3 > 0);
-        double os = score(i);
-        int oa=xa[i],ob=ya[i],oc=xb[i],od=yb[i];
-        if (expand) {
-            int mx = maxExpand(i, dir); if (mx <= 0) continue;
-            int delta = 1 + rng() % mx;
-            if (dir==0) xa[i]-=delta; else if(dir==1) ya[i]-=delta;
-            else if(dir==2) xb[i]+=delta; else yb[i]+=delta;
+    double T0=0.05,Tend=0.0001,tl=4.7;
+    
+    while(el()<tl){
+        double f=el()/tl;
+        double T=T0*pow(Tend/T0,f);
+        int i=rng()%N;
+        int dir=rng()%4;
+        int oa=A[i],ob=B[i],oc=C[i],od=D[i];
+        double oldS=score_i(i);
+        
+        bool expand=(rng()%2==0);
+        if(expand){
+            int maxD=max(1,(int)(200*(1.0-f*0.95)));
+            int delta=1+rng()%maxD;
+            if(dir==0) A[i]-=delta; else if(dir==1) B[i]-=delta;
+            else if(dir==2) C[i]+=delta; else D[i]+=delta;
         } else {
-            int ms2;
-            if(dir==0) ms2=px[i]-xa[i]; else if(dir==1) ms2=py[i]-ya[i];
-            else if(dir==2) ms2=xb[i]-px[i]-1; else ms2=yb[i]-py[i]-1;
-            if(ms2<=0) continue;
-            int delta = 1 + rng() % ms2;
-            if(dir==0) xa[i]+=delta; else if(dir==1) ya[i]+=delta;
-            else if(dir==2) xb[i]-=delta; else yb[i]-=delta;
+            int maxShrink;
+            if(dir==0) maxShrink=X[i]-A[i]; else if(dir==1) maxShrink=Y[i]-B[i];
+            else if(dir==2) maxShrink=C[i]-X[i]-1; else maxShrink=D[i]-Y[i]-1;
+            if(maxShrink<=0){A[i]=oa;B[i]=ob;C[i]=oc;D[i]=od;continue;}
+            int maxD=max(1,(int)(maxShrink*(1.0-f*0.9)));
+            int delta=1+rng()%maxD;
+            if(dir==0) A[i]+=delta; else if(dir==1) B[i]+=delta;
+            else if(dir==2) C[i]-=delta; else D[i]-=delta;
         }
-        if(score(i) <= os) { xa[i]=oa; ya[i]=ob; xb[i]=oc; yb[i]=od; }
+        
+        if(A[i]<0||B[i]<0||C[i]>10000||D[i]>10000||A[i]>=C[i]||B[i]>=D[i]||
+           X[i]<A[i]||X[i]>=C[i]||Y[i]<B[i]||Y[i]>=D[i]){
+            A[i]=oa;B[i]=ob;C[i]=oc;D[i]=od;continue;
+        }
+        
+        if(expand && checkOverlap(i)){
+            A[i]=oa;B[i]=ob;C[i]=oc;D[i]=od;continue;
+        }
+        
+        double newS=score_i(i);
+        double diff=newS-oldS;
+        if(diff>=0||(double)(rng()%10000)/10000.0<exp(diff/T)){
+            if(expand){gridRemove(i);gridAdd(i);}
+            else{gridRemove(i);gridAdd(i);}
+        } else {
+            A[i]=oa;B[i]=ob;C[i]=oc;D[i]=od;
+        }
     }
     
-    for (int i = 0; i < n; i++)
-        printf("%d %d %d %d\n", xa[i], ya[i], xb[i], yb[i]);
+    for(int i=0;i<N;i++) printf("%d %d %d %d\n",A[i],B[i],C[i],D[i]);
 }
