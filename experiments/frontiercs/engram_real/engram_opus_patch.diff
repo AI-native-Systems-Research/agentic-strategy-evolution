@@ -52,3 +52,31 @@ index 0463e93..7116c0e 100644
          process.start()
  
          # Wait for the process to complete, with timeout
+diff --git a/SystemBench/FrontierCS/evaluator.py b/SystemBench/FrontierCS/evaluator.py
+new file mode 100644
+index 0000000..f0487c4
+--- /dev/null
++++ b/SystemBench/FrontierCS/evaluator.py
+@@ -0,0 +1,22 @@
++"""Auto-discovery shim for Architect/task.py.
++
++task.load_task_from_paths() looks for an ``evaluator.py``/``evaluate.py`` in the
++evaluator directory and instantiates the first Evaluator subclass it finds with
++NO constructor args. Frontier-CS ships ``frontier_cs_evaluator.py`` whose
++``FrontierCSEvaluator`` requires ``track`` and ``problem_id``. examples/_common.py
++exports those as the env vars ``FCS_TRACK`` / ``FCS_PROBLEM_ID`` for fcs_alg_* /
++fcs_res_* problems; this thin subclass reads them so the no-arg instantiation works.
++"""
++import os
++
++from SystemBench.FrontierCS.frontier_cs_evaluator import FrontierCSEvaluator
++
++
++class Evaluator(FrontierCSEvaluator):
++    # Sorts before "FrontierCSEvaluator" so task.py's getmembers scan picks this one.
++    def __init__(self, **kwargs):
++        super().__init__(
++            track=os.environ["FCS_TRACK"],
++            problem_id=os.environ["FCS_PROBLEM_ID"],
++            **kwargs,
++        )
