@@ -28,6 +28,10 @@ score-vs-cost view (quality per dollar), not a forced equal cost.
        with the same hints Engram's prompt gets (fairness).
 5. [ ] Add **AIDE** as a 4th baseline and run it on our tasks.
 6. [ ] Put everything in one branch, update the results table + repro doc, commit & push.
+7. [ ] **Variance check:** pick a small subset (1–3 tasks), rerun each variant **2 more times**
+       (3 total), and report run-to-run variance per variant.
+8. [ ] **Stronger-model check:** same 1–3 task subset, rerun ALL variants with a better model
+       (e.g. opus5) to see how the picture changes.
 
 Order note: Engram FIRST (expensive pacing item), then Claude-agent reuses the same harness.
 
@@ -75,6 +79,14 @@ other agents score ~0; cloudcast and the easy task (p1) are ties. We keep the lo
 - Needs: go-judge :8081 (algorithmic), colima docker up, python:3.11 sandbox image.
 - macOS: ADRS evaluator needs fork context (in patch); spawn can't pickle its timeout wrapper.
 - Branch: AIDE work is on frontier-mac; real-Engram + reruns on aiopslab. Unify.
+
+### Variance + stronger-model checks (todo 7, 8)
+- Subset: pick 1–3 tasks spanning regimes (e.g. a gate like p15/p22 + a headroom like p0 or cloudcast).
+- Variance: 3 runs/variant total (2 extra) on the subset; report mean ± spread (judge ±5 noise +
+  agent stochasticity). Nous ceilings (100) are deterministic; the discriminating/headroom ones vary.
+- Stronger model: rerun all variants on opus5 (`aws/claude-opus-5`). Needs the model added to the
+  Engram `--model` allowlist + pricing (extend engram_opus_patch.diff) and AIDE routing; Nous just
+  takes --model. Same $50/plateau rule; report how the gaps shift with a stronger base model.
 
 ### Persistence
 - preds → artifacts/preds/; Engram journals/kb + logs → engram_real/ ; Nous campaigns → artifacts/nous_runs/.
