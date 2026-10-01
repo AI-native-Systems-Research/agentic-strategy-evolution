@@ -19,24 +19,6 @@ int main(){
         edges[i] = {u, v};
     }
     
-    auto computeCut = [&](const vector<int>& side) -> int {
-        int c = 0;
-        for(auto& [u,v] : edges){
-            if(side[u] != side[v]) c++;
-        }
-        return c;
-    };
-    
-    auto computeGains = [&](const vector<int>& side, vector<int>& gain){
-        for(int v = 1; v <= n; v++){
-            int same = 0, diff = 0;
-            for(int u : adj[v]){
-                if(side[u] == side[v]) same++; else diff++;
-            }
-            gain[v] = same - diff;
-        }
-    };
-    
     int bestCut = -1;
     vector<int> bestSide(n+1, 0);
     
@@ -46,25 +28,32 @@ int main(){
         return chrono::duration<double>(chrono::steady_clock::now() - timeStart).count();
     };
     
-    while(elapsed() < 4.0){
-        vector<int> side(n+1);
-        for(int i = 1; i <= n; i++) side[i] = rng() & 1;
+    double timeLimit = 4.5;
+    
+    while(elapsed() < timeLimit){
+        vector<int> side(n+1, 0);
+        for(int v = 1; v <= n; v++) side[v] = rng() & 1;
         
-        vector<int> gain(n+1);
-        computeGains(side, gain);
-        int curCut = computeCut(side);
+        // gain[v] = increase in cut if we flip v
+        vector<int> gain(n+1, 0);
+        for(int v = 1; v <= n; v++){
+            for(int u : adj[v]){
+                if(side[u] == side[v]) gain[v]++; else gain[v]--;
+            }
+        }
         
-        // Greedy local search
+        int curCut = 0;
+        for(auto& [u,v] : edges) if(side[u] != side[v]) curCut++;
+        
         bool improved = true;
         while(improved){
             improved = false;
             for(int v = 1; v <= n; v++){
                 if(gain[v] > 0){
-                    curCut += gain[v];
                     side[v] ^= 1;
+                    curCut += gain[v];
                     for(int u : adj[v]){
-                        if(side[u] == side[v]) gain[u] += 2;
-                        else gain[u] -= 2;
+                        if(side[u] == side[v]) gain[u] -= 2; else gain[u] += 2;
                     }
                     gain[v] = -gain[v];
                     improved = true;
@@ -72,15 +61,15 @@ int main(){
             }
         }
         
-        if(curCut > bestCut){
-            bestCut = curCut;
-            bestSide = side;
-        }
+        if(curCut > bestCut){ bestCut = curCut; bestSide = side; }
     }
     
+    cout << bestCut << "\n";
     for(int i = 1; i <= n; i++){
-        cout << bestSide[i] << "\n";
+        if(i > 1) cout << " ";
+        cout << bestSide[i];
     }
+    cout << "\n";
     
     return 0;
 }
