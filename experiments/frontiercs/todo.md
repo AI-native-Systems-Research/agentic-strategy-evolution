@@ -27,11 +27,14 @@ score-vs-cost view (quality per dollar), not a forced equal cost.
 4. [ ] Re-run **Nous** only where it stopped early at a cap (p0, p211, p44) + a longer cloudcast run
        with the same hints Engram's prompt gets (fairness).
 5. [ ] Add **AIDE** as a 4th baseline and run it on our tasks.
-6. [ ] Put everything in one branch, update the results table + repro doc, commit & push.
-7. [ ] **Variance check:** pick a small subset (1–3 tasks), rerun each variant **2 more times**
+6. [ ] **Variance check:** pick a small subset (1–3 tasks), rerun each variant **2 more times**
        (3 total), and report run-to-run variance per variant.
-8. [ ] **Stronger-model check:** same 1–3 task subset, rerun ALL variants with a better model
+7. [ ] **Stronger-model check:** same 1–3 task subset, rerun ALL variants with a better model
        (e.g. opus5) to see how the picture changes.
+
+**Standing rule (every step):** when a step finishes, PERSIST before moving on — save artifacts
+(preds, logs, journals), update the results table + repro doc, and commit & push. Persistence is NOT
+a separate final step; it's part of completing each checkpoint. Keep everything on one branch.
 
 Order note: Engram FIRST (expensive pacing item), then Claude-agent reuses the same harness.
 
