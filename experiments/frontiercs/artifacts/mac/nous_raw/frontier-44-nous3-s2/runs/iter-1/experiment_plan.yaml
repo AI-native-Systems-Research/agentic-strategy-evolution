@@ -1,11 +1,14 @@
 metadata:
   iteration: 1
   bundle_ref: "runs/iter-1/bundle.yaml"
-setup: []
+setup:
+  - cmd: "# No build needed — judge compiles solution.cpp internally"
+    description: "No separate build step"
 arms:
   - arm_id: "h-main"
     conditions:
       - name: "treatment"
-        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh /Users/toslali/frontier/gen_logs/frontier_44_nous3-s2_ws/.nous-experiments/iter-1-ec2a67a3/solution.cpp"
-        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s2/runs/iter-1/results/h-main/score.json"
-        inputs: []
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh /Users/toslali/frontier/gen_logs/frontier_44_nous3-s2_ws/.nous-experiments/iter-1-20987f94/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s2/runs/iter-1/results/h-main/score.txt"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s2/runs/iter-1/patches/h-main.patch"

@@ -2,14 +2,14 @@
   "top_k": [
     {
       "candidate_id": "iter-1/h-main/0",
-      "score": 0.0,
+      "score": 69.4965,
       "components": {
-        "score": 0.0
+        "score": 69.4965
       },
       "iteration": 1,
       "arm_id": "h-main"
     }
   ],
   "k": 5,
-  "updated_at": "2026-10-01T05:37:15.799092+00:00"
+  "updated_at": "2026-10-01T05:45:08.118817+00:00"
 }

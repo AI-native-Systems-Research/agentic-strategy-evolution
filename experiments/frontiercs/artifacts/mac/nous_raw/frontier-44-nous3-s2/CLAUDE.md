@@ -102,67 +102,87 @@ Output
 
 ## Active Principles (after iteration 1)
 
-- **RP-1** [domain]: For penalty-aware TSP with carrot constraint, NN-guided 2-opt (choosing segment endpoints as spatially-close cities that are far apart in tour position) outperforms random 2-opt by a factor of ~2.3x in score (78.9 vs 33.5), because it focuses search on the most productive moves.
-- **RP-2** [domain]: For 2-opt on penalty-aware TSP, the cost delta can be computed in O(1 + segment_length/10) instead of O(segment_length): endpoint edge changes are O(1), and only penalty positions (every 10th step) inside the reversed segment need multiplier recomputation, because internal edge distances are conserved by reversal.
+- **RP-1** [domain]: For TSP variant problem #44 with N up to 200K and 2-second time limit, grid-based nearest-neighbor construction accounts for ~93% of the final score (64.5 out of 69.5). SA optimization with random swap + 2-opt adds only ~5 points.
+- **RP-2** [domain]: The penalty structure (10% surcharge on every 10th step when source is non-prime) contributes at most ~1% to total tour cost. Prime scheduling post-pass captures most available savings but adds <1 point to score.
+- **RP-3** [domain]: 2-opt with boundary-only delta approximation (ignoring internal penalty changes from segment reversal) provides comparable optimization to exact range recompute, while enabling ~10x more iterations per second.
 
 ## Most Recent Handoff
 
-# Handoff — Iter 1
+# Handoff — Iter 2
 
 ## Goal
 
-Implement a high-performance SA-based solution for problem #44 (TSP with 10%-step penalty for non-prime source cities) in `solution.cpp`, measure it with the judge, and record the score.
+Push judge score above 78.9 (iter-1) by implementing iterated local search with double-bridge perturbation, multi-city Or-opt (1-3), and larger KNN (20) in `solution.cpp`.
 
 ## Key Discoveries
 
-- **Sequential tour scores 0** — it IS the baseline the judge compares against. The cities are sorted by x-coordinate, so visiting in order is the trivial solution.
-- **NN + limited SA scored 33.5** — nearest-neighbor construction + SA with segment-capped 2-opt (max segment 500). Main bottleneck was O(N²) NN construction eating time budget.
-- **Primes < 200K: 17,984; penalty positions at max N: 20,000** — ratio 0.90, so ~10% of penalty positions can't be covered by primes.
-- **Penalty mechanics**: step t (1-indexed), if t % 10 == 0 AND source city P[t-1] is NOT prime, edge cost × 1.1. Positions in tour array that matter: indices 9, 19, 29, ... (0-indexed).
-- **Time budget is tight**: 2 seconds, N up to 200K. O(N²) algorithms (brute-force NN, full-recompute 2-opt) are too slow. Must use O(1) incremental evaluation.
-- **`bits/stdc++.h` works inside the judge** (it compiles with g++) but NOT on the local macOS clang. The judge handles compilation.
+- **Iter-1 scored 78.881** with grid-NN + SA (NN-guided 2-opt, single-city Or-opt, prime post-pass). This is the baseline to beat.
+- **Or-opt only relocates single cities in iter-1** — extending to 2-3 city segments is a proven TSP improvement that finds moves single-city misses.
+- **No perturbation mechanism in iter-1** — SA gets stuck in local optima. Double-bridge (non-sequential 4-opt) is the standard escape technique used by LKH.
+- **KNN=12 in iter-1** — increasing to 20 gives wider search neighborhood for NN-guided 2-opt.
+- **Primes < 200K: 17,984; penalty positions at max N: 20,000** — ~10% of penalty positions can't be covered by primes.
+- **Time budget**: 2s total, construction ~0.1s, SA+perturbation ~1.65s, prime post-pass ~0.05s.
+- **Cannot compile locally** — `bits/stdc++.h` only works on judge's g++. Submit directly.
 
 ## System Interface
 
-- **Build:** No separate build — `frontier eval` compiles solution.cpp internally.
+- **Build:** None — judge compiles internally.
 - **Run baseline:** `bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp`
-- **Output format:** Stdout: `SCORE: <n>` where n ∈ [0, 100].
-- **Baseline result:** Sequential = 0, NN+SA = 33.456.
+- **Output format:** `SCORE: <n>` on stdout.
+- **Baseline result:** Iter-1 h-main = 78.881.
 
 ## Code Map
 
-- `solution.cpp:1` — the only file to edit. Judge compiles this with g++ and runs it against multiple test cases.
-- `fmeasure_44.sh:5` — calls `frontier eval algorithmic 44 "$1" --json`, parses the JSON for the score field.
+- `solution.cpp:1` — the only file to edit. Start from the iter-1 patch.
+- `runs/iter-1/patches/h-main.patch` — the 78.9-scoring solution to build upon.
+- Iter-1 key functions:
+  - `constructNN()` — grid-based nearest-neighbor construction (~line 40 in patch).
+  - `buildNN()` — builds KNN list for NN-guided 2-opt (~line 72). **Change KNN from 12 to 20.**
+  - `twoOptDeltaFast()` — O(1+seg/10) delta for 2-opt (~line 108). Keep as-is.
+  - SA loop (~line 145) — main optimization. Modify to add Or-opt segments and double-bridge.
+  - Prime scheduling (~line 230) — post-pass. Keep as-is.
 
 ## Code Targets
 
-- **h-main → `solution.cpp`**: Complete rewrite. Implement grid-based NN construction, SA with Or-opt/2-opt mixed moves (incremental delta), prime-scheduling post-pass. The entire file is replaced.
+### h-main → `solution.cpp`
+Start from iter-1 patch, then:
+1. **`buildNN()`**: Change `KNN=min(12,N-1)` to `KNN=min(20,N-1)`.
+2. **SA loop (Or-opt section)**: Extend Or-opt to handle segments of 1, 2, and 3 cities. For a segment of size k starting at position i, remove the k cities and reinsert them at a random position j. Delta computation touches the 2k+2 edges at the cut/insert points plus any penalty positions in the affected range.
+3. **New: double-bridge function**: Implement `doubleBridge()` — randomly select 3 cut points in [1, N-1], creating 4 segments A, B, C, D. Reconnect as A-D-C-B. This is a non-sequential 4-opt move that 2-opt cannot reverse.
+4. **SA outer loop**: After SA stalls (no improvement for X iterations) or at regular time intervals, apply double-bridge and restart SA from the perturbed tour. Keep track of the best tour seen across all restarts.
+5. **Time management**: Construction 0.1s, SA+perturbation cycles until 1.75s, prime post-pass 0.05s.
 
-## What I Tried That Didn't Work
+### h-ablation → `solution.cpp`
+Same as h-main but remove the double-bridge perturbation. Run continuous SA for the full budget.
 
-- **Naive 2-opt with full tour recompute**: Only scored 17.6. Too slow — recomputing O(N) cost per move means few iterations.
-- **Large segment 2-opt in SA**: Segment length > 500 makes penalty recomputation too expensive. Capped at 500 in the probe.
-- **Compiling locally with `bits/stdc++.h`**: Fails on macOS clang. The judge uses g++ so it works there. Don't try to compile locally — just submit to the judge.
+## What I Tried That Didn't Work (accumulated from iter-1)
+
+- **Sequential tour**: Scores 0 — it IS the baseline.
+- **Naive 2-opt with full recompute**: Only 17.6. O(N) per move is too slow.
+- **Large segment 2-opt without fast delta**: Penalty recomputation kills throughput.
+- **Compiling locally with `bits/stdc++.h`**: Fails on macOS clang.
 
 ## What I Excluded and Why
 
-- **Exact TSP solvers** (Concorde, branch-and-bound): N=200K is far too large.
-- **Lin-Kernighan heuristic**: Complex to implement within the solution file, and the penalty structure complicates LK's gain computation. SA with simple moves is more robust.
-- **Genetic algorithms**: Crossover operators for TSP are complex and unlikely to outperform SA within 2 seconds.
+- **LK-style moves**: Complex to implement correctly with penalty structure. Double-bridge + 2-opt/Or-opt is simpler and often competitive.
+- **Genetic algorithms**: Crossover for TSP is complex; SA+perturbation is more robust within 2s.
+- **Exact solvers**: N=200K is far too large.
+- **3-opt**: Complex delta computation with penalties. Double-bridge achieves similar diversification with simpler implementation.
 
 ## Evolution of Thinking
 
-Started thinking standard 2-opt would be sufficient. Discovered that (a) full-recompute makes 2-opt too slow, (b) the penalty structure means reversing segments changes which cities sit at penalty positions, making delta computation more complex than standard TSP. Shifted to Or-opt (relocate) as the primary move because it only touches 3 edges and affects at most 1-2 penalty positions. Added prime scheduling as a separate post-pass because interleaving it with SA adds complexity without clear benefit.
+Iter-1 established that fast delta + NN-guided moves are the key to high scores. The 78.9 result suggests the SA is doing good local search but may be stuck in a suboptimal basin. The natural next step is perturbation (double-bridge) to escape, combined with incremental improvements to move quality (multi-city Or-opt, larger KNN). This follows the standard LKH/ILS pattern for TSP.
 
 ## Current Status
 
-- **Validated:** Judge scoring works, sequential=0, NN+limited-SA=33.5, output format confirmed.
-- **Uncertain:** Whether grid-based NN construction can run fast enough for N=200K to leave >1.5s for SA. Whether prime scheduling adds meaningful score improvement over plain SA.
-- **Suggested next:** If iter-1 scores plateau around 50, try: (1) LK-style moves, (2) segment-specific penalty optimization, (3) different construction heuristics (Christofides-like), (4) larger-segment 2-opt with lazy penalty recomputation.
+- **Validated:** Judge works, iter-1 scores 78.9, output format confirmed, fast delta correct.
+- **Uncertain:** Whether double-bridge will improve score given the 2s time limit (perturbation wastes some SA iterations). Whether Or-opt for 2-3 cities adds meaningfully over single-city.
+- **Suggested next:** If iter-2 plateaus around 82-85, consider: (1) LK-style moves (3-opt with backtracking), (2) population-based approaches (multiple tours evolved in parallel), (3) problem-specific construction heuristics that respect penalty structure.
 
 ## Warnings & Constraints
 
-- **Do NOT try to compile locally** — `bits/stdc++.h` is not available on macOS clang. The judge compiles with g++. Just write the code and submit to `fmeasure_44.sh`.
-- **Time limit is 2 seconds** — budget construction at ~0.2s max, leave 1.7s+ for SA.
-- **Output format is strict**: first line is N+1, then N+1 lines each with one city ID. No spaces, no extra lines.
-- **The judge runs multiple test cases** — the score is averaged. Optimizing for one size may hurt on others.
+- **Do NOT compile locally** — `bits/stdc++.h` not available on macOS. Submit directly to judge.
+- **Time limit 2 seconds** — double-bridge + restart must fit within budget. Leave 0.2s margin.
+- **Output format strict**: N+1 on first line, then N+1 city IDs, one per line.
+- **Judge runs multiple test cases** — score is averaged. Solution must work well across sizes.
+- **Or-opt delta for multi-city segments**: Must account for all penalty positions in the affected range, not just the endpoints. Verify by comparing incremental vs full recompute on a small test.

@@ -1,9 +1,9 @@
 {
   "gate_type": "continue",
-  "summary": "Iteration 1 achieved a score of 78.9/100, a major jump from the 33.5 baseline, by implementing SA with NN-guided 2-opt and an efficient penalty delta computation that only checks every-10th-step positions. The key insight was that penalty recomputation for a reversed segment is O(segment/10), not O(segment), enabling much larger 2-opt moves within the 2-second time budget.",
+  "summary": "Iteration 1 achieved a score of 69.5 (later refined to 78.9 with additional tuning), far exceeding the 33.5 baseline probe. The dominant factor is construction quality (grid-based nearest-neighbor accounts for ~93% of score), while simulated annealing with NN-guided 2-opt and single-city Or-opt adds ~5-8 points. The solution is now plateauing, likely stuck in local optima that simple SA moves cannot escape.",
   "key_points": [
-    "Score improved from 0 (sequential baseline) \u2192 33.5 (NN + limited SA) \u2192 78.9 (NN-guided 2-opt with efficient delta), confirming that move selection targeting spatially-close but tour-distant city pairs is highly productive.",
-    "Still ~21 points of headroom remain. Unknown whether this gap is from suboptimal construction, insufficient SA iterations, missing move types (Or-opt, 3-opt), or underexploited prime scheduling at penalty positions.",
-    "Next iteration should investigate: (1) Or-opt/relocate moves alongside 2-opt to escape local minima, (2) explicit prime-city scheduling to place primes at every-10th positions as a post-optimization pass, (3) tuning SA temperature schedule and iteration count to maximize improvement within the 2s budget, (4) potentially a better initial tour (e.g., greedy edge insertion instead of NN)."
+    "Iter-1 best score: 78.9 (vs 33.5 baseline probe and 64.5 NN-only). Grid-NN construction dominates; SA optimization contributes incrementally. The carrot/prime penalty structure accounts for ~1% of total cost, so prime scheduling is low-leverage.",
+    "Key unknown: Can double-bridge perturbation (non-sequential 4-opt) break the local optimum plateau? Standard TSP literature says yes, but the 2-second time limit constrains how many perturbation-restart cycles we can run on N=200K. Multi-city Or-opt (2-3 segments) and larger KNN (20 vs 12) may also help by finding moves single-city Or-opt misses.",
+    "Next iteration plan: Two arms \u2014 (1) h-main adds double-bridge perturbation + multi-city Or-opt + KNN=20 in an iterated local search loop, (2) h-ablation runs the same but without double-bridge to isolate its contribution. Target: score above 80. If both plateau at ~79-80, the next step would be LK-style moves or fundamentally different construction heuristics."
   ]
 }
