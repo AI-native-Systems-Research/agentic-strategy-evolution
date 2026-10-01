@@ -11,11 +11,12 @@ struct JsonVal {
     const JsonVal& operator[](int i) const { return arr[i]; }
     int size() const { return type==4?(int)arr.size():(int)obj.size(); }
 };
-const char* skipws(const char* p){ while(*p==' '||*p=='\n'||*p=='\r'||*p=='\t') p++; return p; }
+const char* skipws(const char* p){ while(*p&&(*p==' '||*p=='\n'||*p=='\r'||*p=='\t')) p++; return p; }
 const char* parseString(const char* p, string& s){
     p++; s.clear();
-    while(*p!='"'){ if(*p=='\\'){p++;s+=*p;p++;} else{s+=*p;p++;} }
-    return p+1;
+    while(*p&&*p!='"'){ if(*p=='\\'){p++;if(*p){s+=*p;p++;}} else{s+=*p;p++;} }
+    if(*p=='"') p++;
+    return p;
 }
 const char* parseVal(const char* p, JsonVal& v){
     p=skipws(p);
@@ -25,12 +26,12 @@ const char* parseVal(const char* p, JsonVal& v){
         if(*p!='}'){
             while(true){
                 p=skipws(p); string key; p=parseString(p,key);
-                p=skipws(p); p++; JsonVal child; p=parseVal(p,child);
+                p=skipws(p); if(*p==':') p++; JsonVal child; p=parseVal(p,child);
                 v.obj.push_back({key,child}); p=skipws(p);
                 if(*p==',') p++; else break;
             }
         }
-        p=skipws(p); p++;
+        p=skipws(p); if(*p=='}') p++;
     } else if(*p=='['){
         v.type=4; p=skipws(p+1);
         if(*p!=']'){
@@ -40,7 +41,7 @@ const char* parseVal(const char* p, JsonVal& v){
                 if(*p==',') p++; else break;
             }
         }
-        p=skipws(p); p++;
+        p=skipws(p); if(*p==']') p++;
     } else if(*p=='t'){ v.type=1; v.ival=1; p+=4; }
     else if(*p=='f'){ v.type=1; v.ival=0; p+=5; }
     else if(*p=='n'){ v.type=0; p+=4; }
@@ -54,15 +55,13 @@ const char* parseVal(const char* p, JsonVal& v){
 }
 
 struct ItemType { string type; int w,h,limit; long long v; double density; };
-struct Placement { string type; int x,y,rot; };
+struct Placement { string type; int x,y,rot; int idx; };
 struct Rect { int x,y,w,h; };
 
 struct MaxRectsBin {
     int W,H;
     vector<Rect> free_rects;
     void init(int w,int h){ W=w; H=h; free_rects.clear(); free_rects.push_back({0,0,w,h}); }
-
-    // Returns {score1, score2, px, py} or {INT_MAX,...} if can't fit
     tuple<int,int,int,int> scoreRect(int rw, int rh, int method) const {
         int bestS1=INT_MAX, bestS2=INT_MAX, bx=0, by=0;
         for(auto&f:free_rects){
@@ -72,7 +71,7 @@ struct MaxRectsBin {
                     case 0: s1=min(f.w-rw,f.h-rh); s2=max(f.w-rw,f.h-rh); break;
                     case 1: s1=max(f.w-rw,f.h-rh); s2=min(f.w-rw,f.h-rh); break;
                     case 2: s1=f.w*f.h-rw*rh; s2=min(f.w-rw,f.h-rh); break;
-                    case 3: s1=f.y; s2=f.x; break;
+                    case 3: s1=f.y+rh; s2=f.x+rw; break;
                     default: s1=f.y+rh; s2=f.x; break;
                 }
                 if(s1<bestS1||(s1==bestS1&&s2<bestS2)){
@@ -82,7 +81,6 @@ struct MaxRectsBin {
         }
         return {bestS1,bestS2,bx,by};
     }
-
     void doPlace(int px, int py, int rw, int rh){
         Rect placed={px,py,rw,rh};
         vector<Rect> nf;
@@ -113,8 +111,6 @@ struct MaxRectsBin {
         free_rects.clear();
         for(int i=0;i<sz;i++) if(!del[i]) free_rects.push_back(nf[i]);
     }
-
-    // Place with best orientation chosen automatically
     bool placeBest(int iw, int ih, bool allowRot, int method, int&px, int&py, int&rot){
         auto [s1a,s2a,xa,ya] = scoreRect(iw,ih,method);
         int s1b=INT_MAX,s2b=INT_MAX,xb=0,yb=0;
@@ -141,11 +137,9 @@ int main(){
     { ostringstream oss; oss<<cin.rdbuf(); input=oss.str(); }
     JsonVal root;
     parseVal(input.c_str(),root);
-
     int W=(int)root["bin"]["W"].ival;
     int H=(int)root["bin"]["H"].ival;
     bool allowRot=(root["bin"]["allow_rotate"].ival!=0);
-
     int M=root["items"].size();
     vector<ItemType> items(M);
     for(int i=0;i<M;i++){
@@ -157,20 +151,12 @@ int main(){
         items[i].limit=(int)it["limit"].ival;
         items[i].density=(double)items[i].v/((double)items[i].w*items[i].h);
     }
-
     auto startTime=chrono::steady_clock::now();
-    auto elapsed=[&]()->double{
-        return chrono::duration<double>(chrono::steady_clock::now()-startTime).count();
-    };
-
+    auto elapsed=[&]()->double{ return chrono::duration<double>(chrono::steady_clock::now()-startTime).count(); };
     long long bestProfit=0;
     vector<Placement> bestPlacements;
+    auto updateBest=[&](long long profit, vector<Placement>& pl){ if(profit>bestProfit){bestProfit=profit;bestPlacements=pl;} };
 
-    auto updateBest=[&](long long profit, vector<Placement>& pl){
-        if(profit>bestProfit){bestProfit=profit;bestPlacements=pl;}
-    };
-
-    // Sequential: place items type by type in given order
     auto trySeq=[&](vector<int>& ord, int method) -> pair<long long,vector<Placement>> {
         MaxRectsBin bin; bin.init(W,H);
         vector<int> used(M,0);
@@ -180,7 +166,7 @@ int main(){
             while(used[idx]<items[idx].limit){
                 int px,py,rot;
                 if(bin.placeBest(items[idx].w,items[idx].h,allowRot,method,px,py,rot)){
-                    pl.push_back({items[idx].type,px,py,rot});
+                    pl.push_back({items[idx].type,px,py,rot,idx});
                     profit+=items[idx].v;
                     used[idx]++;
                 } else break;
@@ -189,7 +175,6 @@ int main(){
         return {profit,pl};
     };
 
-    // Interleaved: at each step pick best scoring available item
     auto tryInterleaved=[&](int method, int scoreType) -> pair<long long,vector<Placement>> {
         MaxRectsBin bin; bin.init(W,H);
         vector<int> used(M,0);
@@ -206,14 +191,16 @@ int main(){
                     if(s1==INT_MAX) return;
                     double sc;
                     switch(scoreType){
-                        case 0: sc=items[i].density; break;
-                        case 1: sc=(double)items[i].v; break;
-                        case 2: sc=items[i].density*1e6-(double)s1; break;
-                        case 3: sc=(double)items[i].v/(double)(ow*oh)*1e6-(double)s1; break;
-                        case 4: sc=items[i].density*1e3-(double)py*0.01; break;
+                        case 0: sc=items[i].density*1e9-(double)s1; break;
+                        case 1: sc=(double)items[i].v*1e6-(double)s1; break;
+                        case 2: sc=items[i].density*1e9-(double)(ow*oh); break;
+                        case 3: sc=(double)items[i].v; break;
+                        case 4: sc=items[i].density; break;
                         case 5: sc=(double)items[i].v*1e3-((double)ow*oh); break;
-                        case 6: sc=items[i].density*1e6-(double)(ow*oh); break;
-                        default: sc=items[i].density*1e6-(double)s1*items[i].density; break;
+                        case 6: sc=items[i].density*1e6-(double)py; break;
+                        case 7: sc=(double)items[i].v/(1.0+s1*0.001); break;
+                        case 8: sc=items[i].density*1e6-(double)s1*0.5-(double)s2*0.5; break;
+                        default: sc=(double)items[i].v*1e6-(double)s1-(double)(ow*oh)*0.01; break;
                     }
                     if(sc>bestScore){bestScore=sc;bestIdx=i;bestRot=r;bestPx=px;bestPy=py;}
                 };
@@ -224,49 +211,49 @@ int main(){
             int ow=bestRot?items[bestIdx].h:items[bestIdx].w;
             int oh=bestRot?items[bestIdx].w:items[bestIdx].h;
             bin.doPlace(bestPx,bestPy,ow,oh);
-            pl.push_back({items[bestIdx].type,bestPx,bestPy,bestRot});
+            pl.push_back({items[bestIdx].type,bestPx,bestPy,bestRot,bestIdx});
             profit+=items[bestIdx].v;
             used[bestIdx]++;
         }
         return {profit,pl};
     };
 
-    // Various orderings
     auto makeOrd=[&](function<bool(int,int)> cmp)->vector<int>{
         vector<int> o(M); iota(o.begin(),o.end(),0);
         sort(o.begin(),o.end(),cmp); return o;
     };
-
     vector<vector<int>> orders;
     orders.push_back(makeOrd([&](int a,int b){return items[a].density>items[b].density;}));
     orders.push_back(makeOrd([&](int a,int b){return items[a].v>items[b].v;}));
     orders.push_back(makeOrd([&](int a,int b){return items[a].w*items[a].h>items[b].w*items[b].h;}));
     orders.push_back(makeOrd([&](int a,int b){return max(items[a].w,items[a].h)>max(items[b].w,items[b].h);}));
     orders.push_back(makeOrd([&](int a,int b){return items[a].density*items[a].v>items[b].density*items[b].v;}));
-    orders.push_back(makeOrd([&](int a,int b){return items[a].v*(long long)items[a].limit>items[b].v*(long long)items[b].limit;}));
-    orders.push_back(makeOrd([&](int a,int b){return items[a].density*items[a].limit>items[b].density*items[b].limit;}));
     orders.push_back(makeOrd([&](int a,int b){return min(items[a].w,items[a].h)<min(items[b].w,items[b].h);}));
 
     for(auto&ord:orders)
         for(int m=0;m<5;m++){
-            if(elapsed()>0.3) goto dseq;
+            if(elapsed()>0.3) break;
             auto [p,pl]=trySeq(ord,m);
             updateBest(p,pl);
         }
-    dseq:
-
-    for(int m=0;m<5&&elapsed()<0.5;m++)
-        for(int st=0;st<8&&elapsed()<0.5;st++){
+    for(int m=0;m<5;m++)
+        for(int st=0;st<10;st++){
+            if(elapsed()>0.6) break;
             auto [p,pl]=tryInterleaved(m,st);
             updateBest(p,pl);
         }
 
     mt19937 rng(42);
-    while(elapsed()<0.9){
-        vector<int> ord(M); iota(ord.begin(),ord.end(),0);
-        sort(ord.begin(),ord.end(),[&](int a,int b){return items[a].density>items[b].density;});
-        for(int i=0;i<M-1;i++){
-            if(rng()%3==0){ int j=i+rng()%(M-i); swap(ord[i],ord[j]); }
+    while(elapsed()<1.8){
+        int base=rng()%orders.size();
+        vector<int> ord=orders[base];
+        int intensity=1+rng()%5;
+        for(int i=0;i<(int)ord.size()-1;i++){
+            if((int)(rng()%6)<intensity){
+                int range=min((int)ord.size()-i-1, 2+intensity*2);
+                int j=i+1+rng()%range;
+                if(j<(int)ord.size()) swap(ord[i],ord[j]);
+            }
         }
         int m=rng()%5;
         auto [p,pl]=trySeq(ord,m);
@@ -277,7 +264,7 @@ int main(){
     for(int i=0;i<(int)bestPlacements.size();i++){
         if(i) cout<<",";
         auto&p=bestPlacements[i];
-        cout<<"{\"type\":\""<<p.type<<"\",\"x\":"<<p.x<<",\"y\":"<<p.y<<",\"rot\":"<<p.rot<<"}";
+        cout<<"{\"type\":\""<<p.type<<"\",\"x\":"<<p.x<<",\"y\":"<<p.y<<",\"rot\":"<<(p.rot?"true":"false")<<"}";
     }
     cout<<"]}"<<endl;
 }
