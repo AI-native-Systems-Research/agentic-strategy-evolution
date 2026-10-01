@@ -1,0 +1,3 @@
+That's a stub. Let me find the real solution.Good — the actual solution is in the iter-1 patch. Let me apply it and run the experiment.Now run the judge:Score 100 confirmed. Now write all artifacts.Now validate:Validation passes. 
+
+**Summary:** h-main CONFIRMED — `SCORE: 100`. The L/R leaf-tracking tree decomposition achieves maximum score for the third consecutive iteration. RP-1 updated with iter-3 evidence. Problem is solved.

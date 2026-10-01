@@ -91,3 +91,50 @@ memory) cannot**, when the compute is justified.
 
 Runners: `gen/frontier_gen.py` (`--agent claude|nous|engram`), `gen/frontier_gen_costbudget.py`
 (adds `--cost-budget` + early-stop + retry-backoff). Setup: `SETUP_NOTES.md`, `RUN_ON_MAC.md`.
+
+## New tasks (2026-10-01, local Mac): +1 algorithmic, +1 research-track
+
+Broadens task-type coverage: a hard algorithmic problem and the first research-track problem. Same
+model (`claude-opus-4-6`), same three agents, same protocol (Claude plateau-stop, Engram cost-matched
+to Nous's $ spend, Nous 3 iters). Run locally (direct litellm, no VM tunnel). Research runner:
+`gen/frontier_research_gen.py` (solution = `.py`, scored by the problem's own local evaluator).
+
+### p22 — algorithmic ("A+B Problem": Halin-graph tree reconstruction, treewidth-3; score 0-100)
+
+| Agent | score (re-eval 3x) | our $ spend | notes |
+|---|---|---|---|
+| **Nous** | **100** | $4.85 | solved it; 3 iters, 17.7 min |
+| Engram | 0 | $4.93 | 7 fresh agents, cost-matched, all Halin tree-decomposition attempts failed |
+| Claude | 0 | $0.84 | 6 rounds, never scores |
+
+**A gate task only Nous cracks (like p15).** Claude and Engram both score 0; Engram spent Nous's full
+matched budget across 7 journal-sharing agents and still got 0. Nous's deterministic 100 confirmed on
+3 re-evals. Cost-matching does not close the gap.
+
+### cloudcast — research track (multi-cloud broadcast routing; metric = total transfer-cost $, lower is better)
+
+Score reported by the judge is `100/(1+total_cost)`, so the discriminating metric is **total_cost ($),
+lower = better**. Deterministic local evaluator (no judge noise). Naive dijkstra baseline = $1046.
+
+| Agent | transfer-cost $ (lower=better) | judge score | our $ spend | notes |
+|---|---|---|---|---|
+| **Nous** | **$626** | 0.1595 | $9.89 | directed Steiner arborescence (iter-2); ~40% cheaper than all |
+| Engram | $1077 | 0.0927 | $4.92 | cost-matched; plateaued after 3 agents, worse than naive |
+| Claude | $1107 | 0.0902 | $2.0 | plateaued, worse than naive |
+| naive dijkstra | $1046 | 0.0955 | — | reference anchor |
+| (published LLM refs) | $1072-1263 | — | — | gpt5 $1093, gemini3pro $1072, deepseek $1263 |
+
+**Nous beats the naive baseline, plain Claude, Engram, and every published LLM reference by ~40% on
+cost**, by discovering a directed-Steiner-arborescence routing in its iter-2 hypothesis. Decisively,
+this is on cloudcast — **Engram's own benchmark** — where Engram plateaued after 3 agents at $1077
+(slightly worse than the naive dijkstra baseline, far from Nous's $626). Sequential-agent memory alone
+did not find the structural insight that Nous's controlled-experiment loop surfaced.
+
+Infra note: the Nous SDK design turn froze once per campaign (p22 iter-1 on first launch, cloudcast
+iter-3) — a shared-litellm connection stall. p22 was relaunched clean; cloudcast had already completed
+iters 1-2 so its best solution was harvested (deterministic re-eval, no loss) and the dead iter-3
+killed. Engram/Claude use the plain chat API (retry-backoff) and are immune.
+
+Artifacts: `artifacts/preds/{p22,cloudcast}.*.json`, `artifacts/nous_runs/{frontier-22,research-cloudcast-nous}/`
+(findings, patches, best solution, `llm_metrics.jsonl`), `artifacts/gen_logs/newtasks/` (agent logs +
+Engram journal/knowledgebase).

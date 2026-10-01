@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a specific tree decomposition algorithm (L/R leaf-tracking) can solve problem #22 \u2014 constructing a new tree with bags of size \u22644 and \u22644N vertices that covers all tree and ring edges while maintaining the running intersection (\"revolutionary set\") property. One experiment arm will implement this algorithm in C++ and measure the judge score (0\u2013100).",
+  "key_points": [
+    "Problem #22 asks us to build a tree decomposition of an 'outerplanar' graph (original tree + leaf ring road) with bag size \u22644 and at most 4N bags, satisfying a connectivity/running-intersection property for each original vertex.",
+    "The single arm (h-main) implements a DFS-based algorithm that computes leftmost/rightmost leaves L[u], R[u] for each node, then builds three types of bags per internal node (H, S, Lnk) connected in a spine structure, covering all tree edges and ring edges with bags of size exactly 4.",
+    "Confirmation criterion: judge score = 100 (valid decomposition on all test cases). Refutation: score < 100, which would indicate either a violated running-intersection property, an uncovered edge, a bag size exceeding 4, or K > 4N \u2014 diagnostics in the hypothesis point to specific failure modes to check.",
+    "This is iteration 1 with a single mechanism arm; no ablation is needed because the score is expected to be binary (fully correct or not). The judge call takes ~30\u201360 seconds and will be run once."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

@@ -1,0 +1,21 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For a tree augmented with a leaf cycle, tracking L[u] (leftmost leaf) and R[u] (rightmost leaf) per subtree enables a tree decomposition with bag size <= 4 and K <= 3N bags. The spine-link-head bag pattern (S/Lnk/H) covers all tree and ring edges while maintaining the running intersection property.",
+    "confidence": "high",
+    "regime": "Tree + leaf ring graphs with N <= 100,000",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "L[u]/R[u] tracking propagates leaf range info up the tree. Head bags {u, c, L[c], R[c]} cover tree edges; spine bags {u, R[u], L[c], R[c]} maintain running intersection along the spine; link bags {u, R[u], R[c_i], L[c_{i+1}]} cover consecutive ring edges between subtrees.",
+    "applicability_bounds": "Applies to rooted trees where leaves form a single cycle in DFS order. Bag size guarantee (<=4) holds for any tree shape.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Over two iterations, we improved the cloudcast broadcast score from 0.0955 (Dijkstra baseline) to 0.1594 (directed Steiner arborescence), a 67% improvement. The directed Steiner DP is provably optimal for tree-based routing, and we've mathematically shown that partition splitting cannot reduce egress cost below the single-tree optimum. Egress cost dominates at 99%+ of total cost (~$626 egress vs ~$10 instance), leaving very little room for further gains through transfer-time optimization.",
+  "key_points": [
+    "Score progression: 0.0955 (baseline) \u2192 0.1539 (undirected Steiner) \u2192 0.1594 (directed Steiner arborescence via Dreyfus-Wagner exact DP). Total cost reduced from ~$1036 to ~$626.",
+    "Edge cost asymmetry is the key insight: 75% of directed edges have different forward/reverse costs (up to 7.3x ratio). The directed Steiner captures this; undirected Steiner loses $22.73 on inter-cloud configs by picking edges cheap in the wrong direction.",
+    "Proven dead ends: partition splitting cannot reduce egress below single-tree optimum; instance cost is only 1.5% of total ($10/$650) so transfer-time optimization has negligible impact; multi-hub and relay-node routing don't beat exact Steiner.",
+    "The 0.1594 score appears near the theoretical optimum for this problem structure. Remaining unknowns: whether non-tree topologies or simulator-specific tricks (e.g., edge-sharing across destinations to reduce node count and instance cost) could squeeze out marginal gains.",
+    "Suggested next iteration: (1) Investigate whether reducing the number of unique nodes in the topology (fewer relay nodes = less instance cost) could help, (2) explore whether very-high-throughput edges exist that could collapse transfer time to near-zero, (3) check if the evaluator's bandwidth-splitting behavior creates opportunities where spreading partitions across paths actually helps despite the egress proof."
+  ]
+}

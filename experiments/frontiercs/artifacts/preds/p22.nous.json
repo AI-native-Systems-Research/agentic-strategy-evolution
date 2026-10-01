@@ -1,0 +1,16 @@
+{
+  "problem_id": "22",
+  "agent": "nous",
+  "label": "nous",
+  "model": "claude-opus-4-6",
+  "candidates": [
+    {
+      "path": "/Users/toslali/frontier/gen_logs/frontier_22_nous_ws/solution.cpp",
+      "score": 100,
+      "status": "success"
+    }
+  ],
+  "final_score": 100,
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_22_nous_ws/solution.cpp",
+  "seconds": 1078.3
+}

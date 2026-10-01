@@ -1,0 +1,28 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Directed Steiner arborescence will produce a higher score than both the Dijkstra baseline (0.0955) and the undirected Steiner approach (~0.154), because it accounts for asymmetric edge costs in the directed graph. The improvement will be most pronounced on inter-cloud configs (inter_agz, inter_gaz2) where cross-provider edge asymmetry is highest.",
+      "observed": "Directed Steiner scored 0.1594 vs undirected Steiner 0.1539 vs baseline 0.0955. The improvement over undirected is entirely from inter-cloud configs: inter_agz cost dropped from $173.30 to $161.94 (6.6% savings) and inter_gaz2 from $173.30 to $161.94 (6.6% savings). Intra-provider configs (intra_aws, intra_azure, intra_gcp) have identical costs in both approaches. Total cost: directed=$626.24 vs undirected=$648.97 (3.5% reduction).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "All predictions confirmed: (1) directed > undirected > baseline, (2) improvement concentrated in inter-cloud configs, (3) mechanism (asymmetric edge costs) validated \u2014 intra-provider configs show no improvement because within-provider edges have symmetric or near-symmetric costs."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "Undirected Steiner tree will score ~0.154 (probe: 0.1539), lower than directed Steiner (~0.159) but higher than Dijkstra baseline (0.0955). The gap between undirected and directed Steiner validates that asymmetry-aware optimization provides the improvement.",
+      "observed": "Undirected Steiner scored 0.1539 (exactly matching probe). Gap to directed Steiner: 0.0056 score points (3.6% relative). Gap to baseline: 0.0583 score points (61% relative). Per-config: undirected and directed are identical on intra-provider configs; the entire gap comes from inter_agz and inter_gaz2 where undirected costs $173.30 each vs directed $161.94 each ($22.73 total savings).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The control negative confirms the mechanism: undirected Steiner uses min(forward, reverse) edge costs, producing a cheaper-looking tree that becomes more expensive when traversed in the actual directed routing direction. The $11.36 per-config savings on inter-cloud configs comes from the directed DP selecting edges where the src\u2192dst direction is genuinely cheap."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "All predictions confirmed. The directed Steiner arborescence (Dreyfus-Wagner exact DP) scores 0.1594, beating undirected Steiner (0.1539) by 3.6% and baseline Dijkstra (0.0955) by 67%. The improvement is localized to inter-cloud configs (inter_agz, inter_gaz2) where cross-provider edge cost asymmetry is highest (up to 7.3x ratio). Intra-provider configs show no improvement because within-provider edges have near-symmetric costs. This confirms the causal mechanism: asymmetric edge costs in the directed graph create a gap between the undirected Steiner optimum and the directed Steiner optimum.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "__pycache__/"
+  ]
+}

@@ -1,0 +1,31 @@
+metadata:
+  iteration: 2
+  bundle_ref: "runs/iter-2/bundle.yaml"
+  mode: real
+
+setup:
+  - cmd: "# No build step needed — pure Python"
+    description: "No build required"
+
+arms:
+  - arm_id: "baseline"
+    conditions:
+      - name: "baseline-dijkstra"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_cloudcast.sh $PWD/solution.py"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-2/results/baseline/result.json"
+
+  - arm_id: "h-main"
+    conditions:
+      - name: "directed-steiner"
+        cmd: "git apply /Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-2/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_cloudcast.sh $PWD/solution.py && git checkout -- solution.py"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-2/results/h-main/result.json"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-2/patches/h-main.patch"
+
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "undirected-steiner"
+        cmd: "git apply /Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-2/patches/h-control-negative.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_cloudcast.sh $PWD/solution.py && git checkout -- solution.py"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-2/results/h-control-negative/result.json"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-2/patches/h-control-negative.patch"

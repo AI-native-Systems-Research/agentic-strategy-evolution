@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are confirming that the L/R leaf-tracking tree decomposition algorithm (developed in iteration 1) reliably scores 100/100 on the judge for problem #22 (building a tree decomposition of a cactus graph with bag size \u2264 4 and K \u2264 4N). This is a single-arm confirmation run since iteration 1 already achieved the maximum score.",
+  "key_points": [
+    "What we're testing: The existing solution.cpp implements an algorithm that, for each internal tree node u, tracks its leftmost leaf L[u] and rightmost leaf R[u], then constructs Head/Spine/Link bags covering all tree edges and outer ring edges. We need to verify this scores 100 on the full judge test suite.",
+    "Single experiment arm (h-main): Run `bash /Users/toslali/frontier/gen_logs/fmeasure_22.sh $PWD/solution.cpp` once and record the score. No ablations or alternatives are planned because the algorithm already achieved maximum score in iteration 1.",
+    "Confirmation criterion: Score = 100 confirms the hypothesis and closes the problem. Score < 100 would refute it and require inspecting checker output for which validation step fails (bag size > 4, missing edge coverage, or broken connectivity/revolutionary-set property).",
+    "Risk factor: The only identified risk is stack overflow from recursive DFS on N \u2264 100,000, but this is expected to fit within default limits. If it fails, an iterative DFS conversion would be the fix.",
+    "Resource cost is minimal: one judge call (~30-60s), no parameter sweeps needed."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

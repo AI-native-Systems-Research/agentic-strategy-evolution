@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "The Steiner tree routing strategy was confirmed to outperform the per-destination Dijkstra shortest-path baseline, achieving a score of 0.1341 vs 0.0955 (40.4% improvement). The core mechanism \u2014 sharing relay paths across destinations to reduce total unique edge cost \u2014 is validated, though the absolute score remains low (0.13 out of 100), indicating substantial room for further optimization.",
+  "key_points": [
+    "CONFIRMED: Steiner tree routing (score 0.1341) beats Dijkstra baseline (score 0.0955) by 40.4%, validating that shared relay paths reduce broadcast cost.",
+    "Observed treatment score (0.1341) was slightly below the designer's probe estimate (0.154), likely due to differences between probe and full 5-scenario evaluator \u2014 directional effect holds strongly.",
+    "Scores remain very low (~0.13/100), meaning total cost is still ~$645. Major cost drivers (egress cost, instance cost from transfer time) are not yet aggressively optimized \u2014 partition-level load balancing, multi-path splitting, and bandwidth-aware routing are untested strategies that could yield large further gains.",
+    "Next iterations should explore: (1) splitting partitions across diverse paths to reduce bandwidth bottlenecks and transfer time, (2) bandwidth-aware edge weighting to minimize the instance cost component, and (3) hybrid cost+time optimization rather than pure cost minimization."
+  ]
+}

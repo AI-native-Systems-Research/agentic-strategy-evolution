@@ -1,0 +1,25 @@
+metadata:
+  iteration: 3
+  family: "lr-leaf-decomposition-confirmation"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #22?"
+  complexity_tier: 1
+  tier_justification: "iter-3 — single mechanism confirmation; score already maximal at 100 from iter-1 and iter-2"
+
+arms:
+  - type: h-main
+    prediction: "The existing L/R leaf-tracking tree decomposition will score 100, the maximum possible score, confirming the algorithm is optimal."
+    mechanism: "For each internal node u, the algorithm tracks L[u] (leftmost leaf) and R[u] (rightmost leaf) in its subtree. It builds H/S/Lnk bags of size ≤ 4 that cover all tree edges and ring edges while maintaining the running intersection property. K ≤ 3(N−1) < 5N, so the checker awards full score."
+    diagnostic: "If score < 100, check whether the judge environment changed (new test cases, stricter checker) or if the solution has a latent bug on edge cases not covered by previous test sets."
+
+# Arms rationale: Only h-main is included. Score is already 100 (maximum) confirmed
+# across two prior iterations. No alternative algorithms, ablations, or robustness
+# tests can improve beyond maximum score. This is a final full-scope confirmation.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    solution_file: "solution.cpp"
+  unlocked_parameters_audit:
+    - name: "compiler_flags"
+      default_value: "C++17 standard flags set by judge"
+      justification: "Judge controls compilation; no user-tunable compiler flags affect correctness of this decomposition algorithm."

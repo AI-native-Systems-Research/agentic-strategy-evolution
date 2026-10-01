@@ -1,0 +1,47 @@
+{
+  "problem_id": "22",
+  "agent": "claude",
+  "label": "claude",
+  "model": "claude-opus-4-6",
+  "final_score": 0,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_22_claude.solution.cpp",
+  "best_score": 0,
+  "rounds": 6,
+  "history": [
+    {
+      "round": 0,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 1,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 2,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 3,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 4,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 5,
+      "score": 0,
+      "status": "success"
+    }
+  ],
+  "input_tokens": 13539,
+  "output_tokens": 8552,
+  "cost_usd_est": 0.8445,
+  "seconds": 187.4
+}

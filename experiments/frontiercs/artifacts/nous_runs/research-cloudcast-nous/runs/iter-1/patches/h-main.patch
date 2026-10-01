@@ -1,0 +1,73 @@
+diff --git a/solution.py b/solution.py
+index 16384ed..5170435 100644
+--- a/solution.py
++++ b/solution.py
+@@ -28,14 +28,61 @@ class BroadCastTopology:
+ 
+ 
+ def search_algorithm(src, dsts, G, num_partitions):
+-    h = G.copy()
+-    h.remove_edges_from(list(h.in_edges(src)) + list(nx.selfloop_edges(h)))
++    from networkx.algorithms.approximation import steiner_tree
++    from collections import deque
++
++    # Build undirected cost graph (min cost of forward/reverse edges)
++    H = nx.Graph()
++    for u, v, data in G.edges(data=True):
++        cost = data['cost']
++        if H.has_edge(u, v):
++            if cost < H[u][v]['cost']:
++                H[u][v]['cost'] = cost
++        else:
++            H.add_edge(u, v, cost=cost)
++
++    # Compute Steiner tree on terminals
++    terminals = list(set([src] + list(dsts)))
++    st = steiner_tree(H, terminals, weight='cost')
++
++    # BFS from src on the Steiner tree to find directed paths to each dst
++    tree_adj = {n: set() for n in st.nodes()}
++    for u, v in st.edges():
++        tree_adj[u].add(v)
++        tree_adj[v].add(u)
++
++    # BFS to build parent map
++    parent = {src: None}
++    visited = {src}
++    queue = deque([src])
++    while queue:
++        node = queue.popleft()
++        for neighbor in tree_adj[node]:
++            if neighbor not in visited:
++                visited.add(neighbor)
++                parent[neighbor] = node
++                queue.append(neighbor)
++
++    # Build paths from src to each dst
+     bc = BroadCastTopology(src, dsts, num_partitions)
+     for dst in dsts:
+-        path = nx.dijkstra_path(h, src, dst, weight="cost")
+-        for i in range(len(path) - 1):
+-            s, t = path[i], path[i + 1]
+-            for j in range(bc.num_partitions):
+-                bc.append_dst_partition_path(dst, j, [s, t, G[s][t]])
++        # Trace path from dst back to src
++        path = []
++        node = dst
++        while parent[node] is not None:
++            path.append((parent[node], node))
++            node = parent[node]
++        path.reverse()
++
++        # Add edges for all partitions
++        for u, v in path:
++            # Use directed edge data from G
++            if G.has_edge(u, v):
++                edge_data = G[u][v]
++            else:
++                edge_data = G[v][u]
++            for j in range(num_partitions):
++                bc.append_dst_partition_path(dst, j, [u, v, edge_data])
++
+     return bc
+ """}

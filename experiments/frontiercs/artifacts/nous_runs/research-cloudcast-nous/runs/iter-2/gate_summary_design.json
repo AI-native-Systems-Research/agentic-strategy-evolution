@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a directed Steiner arborescence (exact Dreyfus-Wagner DP) improves broadcast cost over the undirected Steiner tree approximation from iteration 1, by properly accounting for asymmetric edge costs in the directed graph. Iteration 1 established that undirected Steiner (~0.154 score) beats Dijkstra SPT (0.0955); this iteration asks whether the directed formulation can close the gap caused by 3,708 of 4,970 edges having different forward/reverse costs (up to 7.3\u00d7 asymmetry ratio).",
+  "key_points": [
+    "Two arms: (1) h-main \u2014 directed Steiner arborescence via Dreyfus-Wagner exact DP on the directed graph, predicted score ~0.159; (2) h-control-negative \u2014 clean undirected Steiner tree reimplementation, predicted score ~0.154, serving as the comparison baseline to isolate the effect of asymmetry-aware routing.",
+    "Confirmation criterion: directed Steiner scores measurably higher than 0.154 (undirected), with the largest gains on inter-cloud configs (inter_agz, inter_gaz2) where cross-provider edge asymmetry is greatest. Refutation: if directed and undirected scores are essentially equal, asymmetry doesn't matter for these topologies.",
+    "Feasibility note: Dreyfus-Wagner DP is exponential in the number of terminals but the problem has only ~5-10 destinations per config, making it tractable (expected ~30s wall time). The 71-node graph with precomputed all-pairs shortest paths keeps the state space manageable.",
+    "Key risk: the directed DP may reduce egress cost but not total cost if the optimal directed tree uses more intermediate nodes (increasing instance cost) or creates bandwidth bottlenecks (increasing transfer time and thus instance cost). The diagnostic plan checks for valid directed paths and evaluator edge data usage if results disappoint."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

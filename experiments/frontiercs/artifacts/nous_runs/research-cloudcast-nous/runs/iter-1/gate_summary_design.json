@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether Steiner tree routing (which minimizes total unique edge cost across all destinations) outperforms per-destination Dijkstra shortest-path routing for the cloudcast broadcast optimization problem. A probe already shows the Steiner approach scoring 0.154 vs the Dijkstra baseline's 0.0955, suggesting ~61% improvement driven by shared relay edges reducing egress cost.",
+  "key_points": [
+    "Core mechanism: When all 10 partitions use the same edges, egress cost = 300GB \u00d7 \u03a3(unique edge costs). The Steiner tree minimizes this sum by sharing cheap intermediate edges across destinations, whereas per-destination Dijkstra creates redundant unique edges (e.g., 6 direct $0.09 edges vs relaying through fewer shared hubs).",
+    "One experiment arm: replace per-destination Dijkstra with networkx steiner_tree approximation on an undirected cost graph, BFS from source to extract directed paths, and route all partitions along each destination's tree path. Measured via the canonical fmeasure_cloudcast.sh script across 5 config scenarios (intra-AWS, intra-Azure, intra-GCP, inter-AGZ, inter-GAZ2).",
+    "Confirmation criteria: score > 0.0955 (baseline). Probe predicts ~0.154. Refutation would occur if relay node congestion increases transfer time enough to offset egress savings, or if configs have uniform 1-hop costs making Steiner trees equivalent to SPTs.",
+    "Key risk: Steiner tree may concentrate traffic through relay nodes, hitting bandwidth caps (e.g., AWS 5 Gbps egress \u00d7 2 VMs = 10 Gbps shared across many edges), inflating transfer time and instance cost. The diagnostic plan is to check per-node fan-out in the resulting tree if score is unexpectedly low."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

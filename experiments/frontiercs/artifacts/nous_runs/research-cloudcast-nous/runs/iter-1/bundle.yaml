@@ -1,0 +1,38 @@
+metadata:
+  iteration: 1
+  family: "steiner-tree-routing"
+  research_question: "Does Steiner tree routing reduce total broadcast cost compared to per-destination Dijkstra shortest-cost-path routing?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (Steiner tree vs SPT), single knob (routing algorithm)"
+
+arms:
+  - type: h-main
+    prediction: "Steiner tree routing will produce a higher score than the Dijkstra baseline because it minimizes total unique edge cost. Since shared edges across destinations are free (partition set stays {0..9}), a Steiner tree with fewer total weighted edges yields lower egress cost, which dominates total cost. Probe confirms: score 0.154 vs baseline 0.0955."
+    mechanism: "In simulator.py:119, partition sets are Python sets of partition IDs. When multiple destinations share an edge, the set union stays {0..9} (10 partitions). Thus egress cost per edge = 10 × 30GB × edge_cost regardless of how many destinations use it. Total egress = 300 × Σ(unique_edge_costs). The Steiner tree minimizes this sum by finding the minimum-weight tree connecting src to all destinations, sharing cheap intermediate relay edges. The Dijkstra SPT minimizes per-destination path cost but uses redundant unique edges — e.g., for intra_aws, 6 direct edges at $0.09 each ($162 total) vs a Steiner tree that relays through cheap hubs ($36 total)."
+    diagnostic: "If the prediction is wrong, check: (1) whether the Steiner tree creates excessive congestion at relay nodes, increasing transfer time and instance cost beyond the egress savings; (2) whether the undirected-to-directed conversion loses edge cost accuracy; (3) whether some configs have no cheaper relay paths (all 1-hop at same cost)."
+    code_changes:
+      - file: "solution.py"
+        intent: "Replace the search_algorithm function body: instead of per-destination Dijkstra, build an undirected cost graph (min of forward/reverse edge costs), compute networkx steiner_tree approximation on [src]+dsts terminals, BFS from src to extract directed tree paths, and route all partitions along each destination's tree path. Use G's original edge data for the BroadCastTopology edges."
+        rationale: "The Steiner tree minimizes total unique edge weight, which directly minimizes the dominant egress cost component. This is the core mechanism being tested."
+
+experiment_spec:
+  preflight_commands: []
+  fanout_template: "bash /Users/toslali/frontier/gen_logs/fmeasure_cloudcast.sh {solution_path}"
+  verified_parameters:
+    num_vms: 2
+    data_vol: 300
+    num_partitions: 10
+    num_configs: 5
+  unlocked_parameters_audit:
+    - name: "instance_cost_rate"
+      default_value: 0.54
+      justification: "Hardcoded in simulator.py:12 at $0.54/hr (m5.8xlarge spot); not a tunable knob."
+    - name: "ingress_limit_aws"
+      default_value: 10
+      justification: "Set per config JSON; we use the 5 canonical configs unchanged."
+    - name: "egress_limit_aws"
+      default_value: 5
+      justification: "Set per config JSON; we use the 5 canonical configs unchanged."
+    - name: "steiner_tree_method"
+      default_value: "kou"
+      justification: "networkx default Steiner tree approximation method; alternatives (mehlhorn) gave identical score in probes."

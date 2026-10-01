@@ -1,0 +1,22 @@
+{
+  "last_entered_phase": "DONE",
+  "iteration": 3,
+  "run_id": "frontier-22",
+  "family": null,
+  "timestamp": "2026-10-01T15:40:20.322883+00:00",
+  "config_ref": null,
+  "work_dir": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-22",
+  "repo_path": "/Users/toslali/frontier/gen_logs/frontier_22_nous_ws",
+  "reproducibility_metadata": {
+    "captured_at": "2026-10-01T15:22:50Z",
+    "repo_commit": "18e1a668b9c9c7ffd4077ffb5eef68d7a7310ce1",
+    "repo_dirty": false,
+    "language_versions": {
+      "python": "Python 3.11.7",
+      "go": "go version go1.24.0 darwin/arm64",
+      "node": "v25.2.1",
+      "rust": "rustc 1.93.1 (01f6ddf75 2026-02-11) (Homebrew)"
+    }
+  },
+  "max_iterations": 3
+}

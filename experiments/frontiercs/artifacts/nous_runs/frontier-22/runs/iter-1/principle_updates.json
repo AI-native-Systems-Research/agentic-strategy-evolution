@@ -1,0 +1,20 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For a tree augmented with a leaf cycle, tracking L[u] (leftmost leaf) and R[u] (rightmost leaf) per subtree enables a tree decomposition with bag size <= 4 and K <= 3N bags. The spine-link-head bag pattern (S/Lnk/H) covers all tree and ring edges while maintaining the running intersection property.",
+    "confidence": "high",
+    "regime": "Trees with preorder-numbered vertices where leaves form a contiguous cycle; N up to 100000",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Preorder numbering guarantees leaves in each subtree are contiguous. S bags carry R[u] across the child chain for parent connectivity. H bags cover tree edges and serve as connection points to child subtrees. Lnk bags cover inter-subtree ring edges. The wraparound ring edge is covered by S_1 at the root.",
+    "applicability_bounds": "Applies to trees with the specific numbering property (preorder + counterclockwise ordering). Generalizes to any tree where leaves in subtrees are contiguous in the ring order.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

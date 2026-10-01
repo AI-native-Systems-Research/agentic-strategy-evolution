@@ -1,0 +1,25 @@
+metadata:
+  iteration: 2
+  family: "lr-leaf-decomposition-confirmation"
+  research_question: "Does the L/R leaf-tracking tree decomposition reliably achieve score 100 on all test cases?"
+  complexity_tier: 1
+  tier_justification: "iter-2 confirmation of iter-1 result; single mechanism, single arm"
+
+arms:
+  - type: h-main
+    prediction: "The existing solution.cpp will score 100, confirming the L/R leaf-tracking tree decomposition is correct and optimal."
+    mechanism: "The L/R tracking assigns each internal node u a leftmost leaf L[u] and rightmost leaf R[u]. Bags of type H (head), S (spine), and Lnk (link) cover all tree edges and ring edges. Running intersection holds because S bags carry {u, R[u]} along the spine. Bag size is at most 4. K <= 3(N-1) < 5N, so the checker awards full score."
+    diagnostic: "If score < 100, check checker.cpp output for which validation step fails (bag size, edge coverage, or connectivity). Inspect bags near failing edges."
+
+# Arm selection note: Only h-main is included because the algorithm already
+# achieves maximum score (100). There is no room for improvement, no ablation
+# to perform, and no alternative strategy worth comparing. The iter-1 result
+# was CONFIRMED; this real run validates it at full scope.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters: {}
+  unlocked_parameters_audit:
+    - name: "stack_size"
+      default_value: "system default (8MB typically)"
+      justification: "Recursive DFS on N<=100,000 fits within default stack; judge Docker environment handles this."

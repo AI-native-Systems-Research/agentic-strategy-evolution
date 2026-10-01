@@ -1,0 +1,24 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For a tree augmented with a leaf cycle, tracking L[u] (leftmost leaf) and R[u] (rightmost leaf) per subtree enables a tree decomposition with bag size <= 4 and K <= 3N bags. The spine-link-head bag pattern (S/Lnk/H) covers all tree and ring edges while maintaining the running intersection property.",
+      "confidence": "high",
+      "regime": "Rooted trees with N up to 100,000 nodes, augmented with a Hamiltonian cycle through leaves",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-3-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "For each internal node u with children c_1..c_m: spine bags S_i={u, R[u], L[c_i], R[c_i]} chain along u's children; head bags H_i={u, c_i, L[c_i], R[c_i]} cover tree edges u-c_i; link bags Lnk_i={u, R[u], R[c_i], L[c_{i+1}]} cover ring edges R[c_i]-L[c_{i+1}]. Running intersection holds because each vertex v appears in a connected subtree of the decomposition tree.",
+      "applicability_bounds": "Applies to problem #22 specifically. The decomposition structure relies on the leaf-cycle topology; does not generalize to arbitrary treewidth problems.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

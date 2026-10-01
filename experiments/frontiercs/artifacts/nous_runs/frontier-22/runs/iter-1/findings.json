@@ -1,0 +1,18 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The L/R leaf-tracking tree decomposition will produce a valid decomposition with bag size <= 4 and K <= 4N, achieving score 100.",
+      "observed": "SCORE: 100. The algorithm produces at most 3(N-1) bags, each with at most 4 distinct elements. All tree edges and ring edges are covered; the running intersection property holds by construction (spine S bags carry R[u] across the chain, H bags attach as leaves).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Prediction confirmed: score 100 achieved on all test cases.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

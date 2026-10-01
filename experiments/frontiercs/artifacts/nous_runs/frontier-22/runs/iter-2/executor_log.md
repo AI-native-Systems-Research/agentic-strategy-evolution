@@ -1,0 +1,3 @@
+Let me start by reading the key artifacts for this iteration.Let me check for prior amendments and verify the solution exists.That solution.cpp is a stub. Let me find the real solution from iter-1.Good — the main repo has the real solution. The worktree's copy is a stub. Let me copy the real solution and run the experiment.Now let me set up the experiment directories and run the judge.Score 100 confirmed. Now let me write all the required artifacts.Now validate:Validation passes. 
+
+**Summary:** h-main CONFIRMED — `solution.cpp` scored 100 on the judge, matching iter-1. The L/R leaf-tracking tree decomposition is correct and optimal. RP-1 updated with iter-2 evidence. No principle changes needed; problem is solved.

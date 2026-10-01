@@ -1,0 +1,15 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+setup:
+  - cmd: "# No build needed — pure Python solution"
+    description: "No build step required"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline"
+        cmd: "cd /Users/toslali/frontier/gen_logs/research_cloudcast_nous_ws/.nous-experiments/iter-1-3b00c7b4 && git checkout -- . && bash /Users/toslali/frontier/gen_logs/fmeasure_cloudcast.sh $PWD/solution.py"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-1/results/h-main/baseline.json"
+      - name: "treatment-steiner"
+        cmd: "cd /Users/toslali/frontier/gen_logs/research_cloudcast_nous_ws/.nous-experiments/iter-1-3b00c7b4 && git checkout -- . && git apply /Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-1/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_cloudcast.sh $PWD/solution.py"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/runs/iter-1/results/h-main/treatment.json"

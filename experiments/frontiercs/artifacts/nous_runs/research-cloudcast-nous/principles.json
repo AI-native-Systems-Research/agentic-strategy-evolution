@@ -1,0 +1,60 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "In the cloudcast broadcast problem, Steiner tree routing outperforms per-destination Dijkstra shortest-path routing because shared edges across destinations are free (partition sets are unions of IDs). Minimizing the total unique edge weight via Steiner tree reduces egress cost, the dominant cost component (~99% of total).",
+      "confidence": "high",
+      "regime": "Multi-destination broadcast with partition-set-based egress cost accounting (simulator.py:119). Holds when egress cost dominates instance cost.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "simulator.py:119 accumulates partition IDs as a Python set per edge. When all destinations use partitions {0..num_partitions-1}, sharing an edge across destinations doesn't increase its partition count. Total egress = num_partitions \u00d7 partition_size \u00d7 \u03a3(unique_edge_costs). Steiner tree minimizes this sum by finding the minimum-weight tree connecting source to all destinations through shared relay nodes.",
+      "applicability_bounds": "Applies when egress cost dominates. If instance cost becomes significant (many relay nodes increasing transfer time), a congestion-aware Steiner variant may be needed.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Instance cost from relay nodes in the Steiner tree partially offsets egress savings. The treatment score (0.1341) was lower than the probe estimate (0.154), suggesting transfer-time-induced instance cost is non-negligible when relay paths create bandwidth bottlenecks.",
+      "confidence": "low",
+      "regime": "Superseded \u2014 iter-2 showed instance cost is only ~1.5% of total ($10 out of $650), and the iter-1 score discrepancy was an implementation bug, not instance cost.",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-detailed-cost-breakdown"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Original mechanism was correct in direction but wrong in magnitude. Instance cost is negligible.",
+      "applicability_bounds": "No longer applicable \u2014 see RP-3 for current understanding.",
+      "superseded_by": "RP-3",
+      "category": "domain",
+      "status": "superseded",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "Directed Steiner arborescence (Dreyfus-Wagner DP) outperforms undirected Steiner tree approximation on inter-cloud broadcast configs by 6.6% per-config cost reduction, due to asymmetric edge costs (75% of edges differ by up to 7.3x between forward/reverse). Intra-provider configs show no improvement because within-provider edges have near-symmetric costs.",
+      "confidence": "high",
+      "regime": "Inter-cloud broadcast configurations with cross-provider edge cost asymmetry; graph size n=71, terminals k<=7 (tractable for exact DP)",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "The undirected Steiner tree minimizes cost on min(forward, reverse) edge weights, but actual routing from src must follow directed edges. For inter-cloud configs, cross-provider edges have high asymmetry (e.g., aws:af-south-1 to aws:us-east-2 = $0.147 vs reverse $0.02). The directed DP selects edges where the routing direction is genuinely cheap, saving $11.36 per inter-cloud config.",
+      "applicability_bounds": "Applies when edge cost asymmetry is significant (>5% of edges with >2x forward/reverse ratio) and graph + terminal count is tractable for Dreyfus-Wagner DP (O(3^k * n + 2^k * n^2)). Does not apply to intra-provider configs where edge costs are near-symmetric.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

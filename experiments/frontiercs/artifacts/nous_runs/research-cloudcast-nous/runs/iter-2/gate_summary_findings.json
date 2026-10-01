@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed: the directed Steiner arborescence scored 0.1594, beating the undirected Steiner control (0.1539) by 3.6% and the Dijkstra baseline (0.0955) by 67%. The improvement mechanism \u2014 exploiting asymmetric edge costs in inter-cloud routing \u2014 was validated, with all gains concentrated in the two inter-cloud configs (inter_agz and inter_gaz2) where cross-provider cost asymmetry reaches up to 7.3\u00d7.",
+  "key_points": [
+    "Directed Steiner (score 0.1594, total cost $626.24) outperforms undirected Steiner (0.1539, $648.97) and Dijkstra baseline (0.0955), confirming that direction-aware optimization matters for this problem.",
+    "The entire improvement over undirected Steiner comes from inter-cloud configs: inter_agz and inter_gaz2 each dropped from $173.30 to $161.94 (6.6% savings per config, $22.73 total). Intra-provider configs (intra_aws, intra_azure, intra_gcp) are identical between directed and undirected approaches.",
+    "Score is still only 0.1594 out of 100, meaning total cost (~$626) remains very high. The current approach sends all partitions on the same Steiner tree path and does not exploit partition-level load balancing or bandwidth-aware routing \u2014 these are the most promising directions for further improvement.",
+    "Next iterations should focus on bandwidth-aware strategies: splitting partitions across different paths to reduce transfer time (which drives instance cost), and optimizing the egress/ingress bottleneck distribution rather than purely minimizing per-GB egress cost."
+  ]
+}
