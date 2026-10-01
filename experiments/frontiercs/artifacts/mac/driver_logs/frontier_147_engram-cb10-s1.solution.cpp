@@ -1,182 +1,49 @@
 #include <bits/stdc++.h>
 using namespace std;
 
-int n;
-vector<int> px, py;
-vector<long long> rr;
-vector<int> ra, rb, rc, rd;
-
-double scoreOf(int i) {
-    long long s = (long long)(rc[i]-ra[i])*(long long)(rd[i]-rb[i]);
-    if(s <= 0) return 0.0;
-    if(!(ra[i] <= px[i] && px[i] < rc[i] && rb[i] <= py[i] && py[i] < rd[i])) return 0.0;
-    double ratio = (double)min(rr[i], s) / (double)max(rr[i], s);
-    return 1.0 - (1.0 - ratio) * (1.0 - ratio);
-}
-
-bool overlaps(int i, int j) {
-    return ra[i]<rc[j] && ra[j]<rc[i] && rb[i]<rd[j] && rb[j]<rd[i];
-}
-
-void bspSolve(vector<int>& ids, int lx, int ly, int ux, int uy, int depth, mt19937& rng, bool randomize) {
-    if(ids.empty()) return;
-    if(ids.size() == 1) {
-        int i = ids[0];
-        // Try to give ideal area centered on point
-        long long area = (long long)(ux-lx)*(uy-ly);
-        double ratio = min(1.0, (double)rr[i]/area);
-        // Assign full region
-        ra[i]=lx; rb[i]=ly; rc[i]=ux; rd[i]=uy;
-        return;
-    }
-    
-    int sz = ids.size();
-    double bestCost = 1e18;
-    int bestK = -1, bestSplit = -1;
-    bool bestDir = true;
-    
-    for(int trySplitX = 0; trySplitX < 2; trySplitX++) {
-        bool splitX = (trySplitX == 0);
-        if(splitX) sort(ids.begin(), ids.end(), [](int a, int b){ return px[a] < px[b]; });
-        else sort(ids.begin(), ids.end(), [](int a, int b){ return py[a] < py[b]; });
-        
-        long long totalR = 0;
-        for(int i : ids) totalR += rr[i];
-        
-        long long cumR = 0;
-        for(int k = 1; k < sz; k++) {
-            cumR += rr[ids[k-1]];
-            double frac = (double)cumR / totalR;
-            
-            int lo, hi, maxL, minR_;
-            if(splitX) {
-                lo = lx; hi = ux;
-                maxL = px[ids[k-1]];
-                minR_ = px[ids[k]];
-            } else {
-                lo = ly; hi = uy;
-                maxL = py[ids[k-1]];
-                minR_ = py[ids[k]];
-            }
-            
-            if(maxL >= minR_) continue;
-            
-            int splitPos = lo + (int)round(frac * (hi - lo));
-            splitPos = max(splitPos, maxL + 1);
-            splitPos = min(splitPos, minR_ + 1);
-            if(splitPos <= lo || splitPos >= hi) continue;
-            
-            double actualFrac = (double)(splitPos - lo) / (hi - lo);
-            double cost = (frac - actualFrac) * (frac - actualFrac);
-            if(randomize) cost += (double)(rng() % 1000) * 1e-9;
-            
-            if(cost < bestCost) {
-                bestCost = cost;
-                bestK = k;
-                bestSplit = splitPos;
-                bestDir = splitX;
-            }
-        }
-    }
-    
-    if(bestSplit < 0) {
-        for(int idx : ids) {
-            ra[idx]=px[idx]; rb[idx]=py[idx]; rc[idx]=px[idx]+1; rd[idx]=py[idx]+1;
-        }
-        return;
-    }
-    
-    if(bestDir) sort(ids.begin(), ids.end(), [](int a, int b){ return px[a] < px[b]; });
-    else sort(ids.begin(), ids.end(), [](int a, int b){ return py[a] < py[b]; });
-    
-    vector<int> left(ids.begin(), ids.begin()+bestK);
-    vector<int> right(ids.begin()+bestK, ids.end());
-    
-    if(bestDir) {
-        bspSolve(left, lx, ly, bestSplit, uy, depth+1, rng, randomize);
-        bspSolve(right, bestSplit, ly, ux, uy, depth+1, rng, randomize);
-    } else {
-        bspSolve(left, lx, ly, ux, bestSplit, depth+1, rng, randomize);
-        bspSolve(right, lx, bestSplit, ux, uy, depth+1, rng, randomize);
-    }
-}
-
 int main(){
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
+    ios_base::sync_with_stdio(false);
+    cin.tie(NULL);
+    int n; cin>>n;
+    vector<int> x(n),y(n); vector<long long> r(n);
+    for(int i=0;i<n;i++) cin>>x[i]>>y[i]>>r[i];
     
-    cin >> n;
-    px.resize(n); py.resize(n); rr.resize(n);
-    ra.resize(n); rb.resize(n); rc.resize(n); rd.resize(n);
+    const int W=10000, G=200;
+    double cellW=(double)W/G;
+    vector<int> a(n),b(n),c(n),d(n);
+    vector<vector<vector<int>>> grid(G+1,vector<vector<int>>(G+1));
     
-    for(int i=0;i<n;i++) cin >> px[i] >> py[i] >> rr[i];
+    auto gc=[&](int v)->int{int g=(int)(v/cellW);return max(0,min(G,g));};
+    auto addG=[&](int i){int x0=gc(a[i]),y0=gc(b[i]),x1=gc(c[i]-1),y1=gc(d[i]-1);for(int gx=x0;gx<=x1;gx++)for(int gy=y0;gy<=y1;gy++)grid[gx][gy].push_back(i);};
+    auto remG=[&](int i){int x0=gc(a[i]),y0=gc(b[i]),x1=gc(c[i]-1),y1=gc(d[i]-1);for(int gx=x0;gx<=x1;gx++)for(int gy=y0;gy<=y1;gy++){auto&v=grid[gx][gy];for(int k=0;k<(int)v.size();k++)if(v[k]==i){v[k]=v.back();v.pop_back();break;}}};
+    auto overlaps=[&](int i,int na,int nb,int nc,int nd)->bool{if(na<0||nb<0||nc>W||nd>W||na>=nc||nb>=nd)return true;int x0=gc(na),y0=gc(nb),x1=gc(nc-1),y1=gc(nd-1);for(int gx=x0;gx<=x1;gx++)for(int gy=y0;gy<=y1;gy++)for(int j:grid[gx][gy])if(j!=i&&na<c[j]&&a[j]<nc&&nb<d[j]&&b[j]<nd)return true;return false;};
+    auto maxE=[&](int i,int dir,int mx)->int{int lo=1,hi=mx,best=0;while(lo<=hi){int mid=(lo+hi)/2;int na=a[i],nb=b[i],nc=c[i],nd=d[i];if(dir==0)na-=mid;else if(dir==1)nc+=mid;else if(dir==2)nb-=mid;else nd+=mid;if(!overlaps(i,na,nb,nc,nd)){best=mid;lo=mid+1;}else hi=mid-1;}return best;};
+    auto sat=[&](int i)->double{double s=(double)(c[i]-a[i])*(d[i]-b[i]),ri=r[i];if(s<=0)return 0;double rat=min(ri,s)/max(ri,s);return 1-(1-rat)*(1-rat);};
     
-    auto startTime = chrono::steady_clock::now();
-    auto elapsed = [&]() -> double {
-        return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
-    };
-    
-    vector<int> best_ra(n), best_rb(n), best_rc(n), best_rd(n);
-    double bestScore = -1;
     mt19937 rng(42);
-    
-    int trials = 0;
-    while(elapsed() < 1.5) {
-        vector<int> ids(n); iota(ids.begin(), ids.end(), 0);
-        bspSolve(ids, 0, 0, 10000, 10000, 0, rng, trials >= 2);
-        double sc = 0; for(int i=0;i<n;i++) sc += scoreOf(i);
-        if(sc > bestScore) { bestScore = sc; best_ra=ra; best_rb=rb; best_rc=rc; best_rd=rd; }
-        trials++;
-    }
-    ra=best_ra; rb=best_rb; rc=best_rc; rd=best_rd;
-    
-    vector<double> sc(n);
-    for(int i=0;i<n;i++) sc[i]=scoreOf(i);
-    
-    while(elapsed() < 4.7) {
-        double progress = min(1.0, elapsed() / 4.7);
-        double T = 0.05 * pow(0.0001 / 0.05, progress);
-        
-        int i = rng() % n;
-        int dir = rng() % 4;
-        int maxAmt = max(1, (int)(300 * (1.0 - progress * 0.8)));
-        int amt = (int)(rng() % maxAmt) + 1;
-        if(rng()&1) amt = -amt;
-        
-        int oa=ra[i],ob=rb[i],oc=rc[i],od=rd[i];
-        if(dir==0) ra[i]+=amt; else if(dir==1) rb[i]+=amt; else if(dir==2) rc[i]+=amt; else rd[i]+=amt;
-        ra[i]=max(0,min(ra[i],px[i])); rb[i]=max(0,min(rb[i],py[i]));
-        rc[i]=min(10000,max(rc[i],px[i]+1)); rd[i]=min(10000,max(rd[i],py[i]+1));
-        if(ra[i]>=rc[i]||rb[i]>=rd[i]){ra[i]=oa;rb[i]=ob;rc[i]=oc;rd[i]=od;continue;}
-        
-        double newSi=scoreOf(i), delta=newSi-sc[i];
-        bool ok=true;
-        vector<pair<int,array<int,4>>> changed;
-        
-        for(int j=0;j<n&&ok;j++){
-            if(j==i)continue;
-            if(overlaps(i,j)){
-                int oja=ra[j],ojb=rb[j],ojc=rc[j],ojd=rd[j];
-                int dxl=rc[j]-ra[i],dxr=rc[i]-ra[j],dyl=rd[j]-rb[i],dyr=rd[i]-rb[j];
-                int mn=min({dxl,dxr,dyl,dyr});
-                if(mn==dxl)rc[j]=ra[i]; else if(mn==dxr)ra[j]=rc[i]; else if(mn==dyl)rd[j]=rb[i]; else rb[j]=rd[i];
-                if(ra[j]>px[j]||rc[j]<=px[j]||rb[j]>py[j]||rd[j]<=py[j]||ra[j]>=rc[j]||rb[j]>=rd[j]){
-                    ra[j]=oja;rb[j]=ojb;rc[j]=ojc;rd[j]=ojd;ok=false;
-                } else {
-                    double nj=scoreOf(j); delta+=nj-sc[j];
-                    changed.push_back({j,{oja,ojb,ojc,ojd}});
-                }
+    vector<int> ba(n),bb(n),bc(n),bd(n);double bs=-1;
+    auto t0=chrono::steady_clock::now();
+    auto el=[&]()->double{return chrono::duration<double>(chrono::steady_clock::now()-t0).count();};
+    for(int att=0;el()<4.5;att++){
+        for(int i=0;i<=G;i++)for(int j=0;j<=G;j++)grid[i][j].clear();
+        for(int i=0;i<n;i++){a[i]=x[i];b[i]=y[i];c[i]=x[i]+1;d[i]=y[i]+1;addG(i);}
+        for(int rnd=0;rnd<500&&el()<4.4;rnd++){
+            vector<int> ord(n);iota(ord.begin(),ord.end(),0);
+            sort(ord.begin(),ord.end(),[&](int u,int v){return sat(u)<sat(v);});
+            bool ch=false;
+            for(int i:ord){
+                long long area=(long long)(c[i]-a[i])*(d[i]-b[i]);
+                if(area>0){double rat=min((double)r[i],(double)area)/max((double)r[i],(double)area);if(rat>0.995)continue;}
+                remG(i);
+                if(area<r[i]){int dirs[]={0,1,2,3};shuffle(dirs,dirs+4,rng);for(int dir:dirs){area=(long long)(c[i]-a[i])*(d[i]-b[i]);if(area>=r[i])break;long long need=r[i]-area;int side=(dir<2)?(d[i]-b[i]):(c[i]-a[i]);if(!side)continue;int mx=min((long long)W,(need+side-1)/side);int e=maxE(i,dir,mx);if(e>0){if(dir==0)a[i]-=e;else if(dir==1)c[i]+=e;else if(dir==2)b[i]-=e;else d[i]+=e;ch=true;}}}
+                area=(long long)(c[i]-a[i])*(d[i]-b[i]);
+                if(area>r[i]){for(int dir=0;dir<4;dir++){area=(long long)(c[i]-a[i])*(d[i]-b[i]);if(area<=r[i])break;double rat=(double)area/r[i];int s=0;if(dir==0){s=min((int)((rat-1)*(c[i]-a[i])/2),x[i]-a[i]);if(s>0){a[i]+=s;ch=true;}}else if(dir==1){s=min((int)((rat-1)*(c[i]-a[i])/2),c[i]-x[i]-1);if(s>0){c[i]-=s;ch=true;}}else if(dir==2){s=min((int)((rat-1)*(d[i]-b[i])/2),y[i]-b[i]);if(s>0){b[i]+=s;ch=true;}}else{s=min((int)((rat-1)*(d[i]-b[i])/2),d[i]-y[i]-1);if(s>0){d[i]-=s;ch=true;}}}}
+                addG(i);
             }
+            if(!ch)break;
         }
-        
-        if(!ok||(delta<0&&(double)(rng()%1000000)/1000000.0>exp(delta/T))){
-            ra[i]=oa;rb[i]=ob;rc[i]=oc;rd[i]=od;
-            for(auto&[j,v]:changed){ra[j]=v[0];rb[j]=v[1];rc[j]=v[2];rd[j]=v[3];}
-        } else {
-            sc[i]=scoreOf(i);
-            for(auto&[j,v]:changed) sc[j]=scoreOf(j);
-        }
+        double sc=0;for(int i=0;i<n;i++)sc+=sat(i);
+        if(sc>bs){bs=sc;ba=a;bb=b;bc=c;bd=d;}
     }
-    
-    for(int i=0;i<n;i++) cout<<ra[i]<<" "<<rb[i]<<" "<<rc[i]<<" "<<rd[i]<<"\n";
+    for(int i=0;i<n;i++)cout<<ba[i]<<" "<<bb[i]<<" "<<bc[i]<<" "<<bd[i]<<"\n";
 }
