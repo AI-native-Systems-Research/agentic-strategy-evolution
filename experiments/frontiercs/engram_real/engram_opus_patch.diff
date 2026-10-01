@@ -1,0 +1,54 @@
+diff --git a/Architect/main.py b/Architect/main.py
+index df60d6d..995300a 100644
+--- a/Architect/main.py
++++ b/Architect/main.py
+@@ -141,7 +141,7 @@ def setup_directories(results_dir: str, task_name: str) -> tuple[str, str]:
+ @click.option(
+     "--model",
+     required=False,
+-    type=click.Choice(["gpt-4o", "o1", "o3-mini", "o4-mini", "gpt-4.1", "o3", "gpt-5.1", "gpt-5", "gpt-5.2", "gpt-5.2-high", "gpt-5.2-xhigh"], case_sensitive=False),
++    type=click.Choice(["gpt-4o", "o1", "o3-mini", "o4-mini", "gpt-4.1", "o3", "gpt-5.1", "gpt-5", "gpt-5.2", "gpt-5.2-high", "gpt-5.2-xhigh", "claude-opus-4-6"], case_sensitive=False),
+     help="Which LLM model to use (not required for openevolve)",
+ )
+ @click.option(
+diff --git a/Architect/pricing_table.py b/Architect/pricing_table.py
+index 0ba581d..4a24237 100644
+--- a/Architect/pricing_table.py
++++ b/Architect/pricing_table.py
+@@ -15,6 +15,7 @@ PRICING: Dict[str, Dict[str, float]] = {
+     "gpt-5.2": {"input": 1.75, "output": 14.00},
+     "o3": {"input": 2.00, "output": 8.00},
+     "o4-mini": {"input": 1.10, "output": 4.40},
++    "claude-opus-4-6": {"input": 15.00, "output": 75.00},
+ }
+ 
+ DEFAULT_PRICING = {"input": 2.00, "output": 10.00}  # fallback for unknown models
+diff --git a/SystemBench/ADRS/adrs_evaluator.py b/SystemBench/ADRS/adrs_evaluator.py
+index 0463e93..7116c0e 100644
+--- a/SystemBench/ADRS/adrs_evaluator.py
++++ b/SystemBench/ADRS/adrs_evaluator.py
+@@ -221,8 +221,12 @@ based on performance metrics and returns a combined score.
+         Raises:
+             TimeoutError: If evaluation exceeds the timeout threshold
+         """
++        # Use a 'fork' context so the nested _evaluate_wrapper need not be picklable.
++        # macOS defaults to 'spawn' (Python 3.8+), which can't pickle the local function;
++        # 'fork' inherits process memory and avoids the pickle entirely (Linux behavior).
++        _mp = multiprocessing.get_context("fork")
+         # Create a queue to receive results from the subprocess
+-        result_queue = multiprocessing.Queue()
++        result_queue = _mp.Queue()
+ 
+         # Pass adrs_env_path and evaluator_file as arguments since nested functions can't access self in multiprocessing
+         adrs_env_path = self.adrs_env_path
+@@ -271,8 +275,8 @@ based on performance metrics and returns a combined score.
+                 }
+                 queue.put(("error", error_data))
+ 
+-        # Start the evaluation in a separate process
+-        process = multiprocessing.Process(target=_evaluate_wrapper, args=(program_path, adrs_env_path, evaluator_file_name, result_queue))
++        # Start the evaluation in a separate process (fork context; see above)
++        process = _mp.Process(target=_evaluate_wrapper, args=(program_path, adrs_env_path, evaluator_file_name, result_queue))
+         process.start()
+ 
+         # Wait for the process to complete, with timeout
