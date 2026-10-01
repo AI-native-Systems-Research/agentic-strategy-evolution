@@ -1,29 +1,26 @@
 {
   "iteration": 2,
-  "mode": "real",
   "bundle_ref": "runs/iter-2/bundle.yaml",
   "arms": [
     {
       "arm_type": "h-main",
       "predicted": "SA + ILS perturbation with 12 restarts will consistently score ~87 (no TLE variance), improving over the iter-1 SA-only approach that scored 84.62 with high variance due to TLE.",
-      "observed": "SA+ILS scored 87.271 on both runs (perfectly consistent). However, this does NOT improve over the control — the iter-1 SA-only solution also scores consistently at 87.280. The h-main score is 0.009 points lower than h-control-negative. The consistency prediction is confirmed but the improvement prediction is refuted: the control is equally consistent and marginally better.",
+      "observed": "SA+ILS scored 87.271 on both runs (perfectly consistent). However, this does NOT improve over the control \u2014 the iter-1 SA-only solution also scores consistently at 87.280. The h-main score is 0.009 points lower than h-control-negative. The consistency prediction is confirmed but the improvement prediction is refuted: the control is equally consistent and marginally better.",
       "status": "REFUTED",
       "error_type": "regime",
-      "diagnostic_note": "The TLE hypothesis was wrong. The iter-1 SA-only solution (20 restarts) is NOT at the TLE boundary — it scores 87.280 consistently across 3 runs with zero variance. The iter-1 official score of 84.62 was likely a judge-side anomaly (different test cases, system load) rather than TLE. With no TLE problem to solve, replacing 8 restarts with 12 perturbation cycles is a net negative: 20 SA restarts explore more of the solution space than 12 restarts + 12 perturbation cycles per restart.",
-      "score": 87.27
+      "diagnostic_note": "The TLE hypothesis was wrong. The iter-1 SA-only solution (20 restarts) is NOT at the TLE boundary \u2014 it scores 87.280 consistently across 3 runs with zero variance. The iter-1 official score of 84.62 was likely a judge-side anomaly (different test cases, system load) rather than TLE. With no TLE problem to solve, replacing 8 restarts with 12 perturbation cycles is a net negative: 20 SA restarts explore more of the solution space than 12 restarts + 12 perturbation cycles per restart."
     },
     {
       "arm_type": "h-control-negative",
       "predicted": "The iter-1 SA-only solution (20 restarts, no perturbation) will score inconsistently in the 83-87 range due to TLE on large test cases.",
-      "observed": "SA-only scored 87.280 on all 3 runs — perfectly consistent, no TLE variance whatsoever. This directly refutes the TLE hypothesis.",
+      "observed": "SA-only scored 87.280 on all 3 runs \u2014 perfectly consistent, no TLE variance whatsoever. This directly refutes the TLE hypothesis.",
       "status": "REFUTED",
       "error_type": "regime",
-      "diagnostic_note": "The control was predicted to show TLE-induced variance but showed none. The 20-restart SA solution runs comfortably within time limits. The iter-1 score of 84.62 was anomalous for reasons other than TLE (possibly different judge test set or compilation flags).",
-      "score": 87.28
+      "diagnostic_note": "The control was predicted to show TLE-induced variance but showed none. The 20-restart SA solution runs comfortably within time limits. The iter-1 score of 84.62 was anomalous for reasons other than TLE (possibly different judge test set or compilation flags)."
     }
   ],
   "experiment_valid": true,
-  "discrepancy_analysis": "Both arms are perfectly deterministic with zero run-to-run variance. The TLE hypothesis that motivated this iteration is refuted — the iter-1 SA-only solution does not exhibit TLE. The h-control-negative (87.280) marginally outperforms h-main (87.271), meaning the additional ILS perturbation cycles do not compensate for 8 fewer restarts. The best known solution remains the iter-1 SA v8 (20 restarts) at 87.28. The iter-1 finding of 84.62 was a one-time anomaly, not a systematic TLE issue.",
+  "discrepancy_analysis": "Both arms are perfectly deterministic with zero run-to-run variance. The TLE hypothesis that motivated this iteration is refuted \u2014 the iter-1 SA-only solution does not exhibit TLE. The h-control-negative (87.280) marginally outperforms h-main (87.271), meaning the additional ILS perturbation cycles do not compensate for 8 fewer restarts. The best known solution remains the iter-1 SA v8 (20 restarts) at 87.28. The iter-1 finding of 84.62 was a one-time anomaly, not a systematic TLE issue.",
   "dominant_component_pct": null,
-  "worktree_uncommitted_writes": ["solution.cpp"]
+  "worktree_uncommitted_writes": []
 }
