@@ -21,8 +21,7 @@ int main(){
     auto ov=[&](int i,int j)->bool{
         return a[i]<c[j]&&c[i]>a[j]&&b[i]<d[j]&&d[i]>b[j];
     };
-    const int G=50;
-    const int CELL=200;
+    const int G=50,CELL=200;
     vector<vector<int>>grid(G*G);
     auto ci=[&](int gx,int gy)->int{return gy*G+gx;};
     auto addG=[&](int i){
@@ -31,18 +30,20 @@ int main(){
     };
     auto rmG=[&](int i){
         int gx0=max(0,a[i]/CELL),gy0=max(0,b[i]/CELL),gx1=min(G-1,(c[i]-1)/CELL),gy1=min(G-1,(d[i]-1)/CELL);
-        for(int gy=gy0;gy<=gy1;gy++)for(int gx=gx0;gx<=gx1;gx++){auto&v=grid[ci(gx,gy)];auto it=find(v.begin(),v.end(),i);if(it!=v.end())v.erase(it);}
+        for(int gy=gy0;gy<=gy1;gy++)for(int gx=gx0;gx<=gx1;gx++){auto&v=grid[ci(gx,gy)];v.erase(find(v.begin(),v.end(),i));}
     };
     auto ovAny=[&](int i)->bool{
         int gx0=max(0,a[i]/CELL),gy0=max(0,b[i]/CELL),gx1=min(G-1,(c[i]-1)/CELL),gy1=min(G-1,(d[i]-1)/CELL);
         for(int gy=gy0;gy<=gy1;gy++)for(int gx=gx0;gx<=gx1;gx++)for(int j:grid[ci(gx,gy)])if(j!=i&&ov(i,j))return true;
         return false;
     };
-    auto getNeighbors=[&](int i)->vector<int>{
-        set<int>ns;
-        int gx0=max(0,(a[i]-1)/CELL),gy0=max(0,(b[i]-1)/CELL),gx1=min(G-1,(c[i])/CELL),gy1=min(G-1,(d[i])/CELL);
-        for(int gy=gy0;gy<=gy1;gy++)for(int gx=gx0;gx<=gx1;gx++)for(int j:grid[ci(gx,gy)])if(j!=i)ns.insert(j);
-        return vector<int>(ns.begin(),ns.end());
+    // Find all overlapping rectangles with i
+    auto getOv=[&](int i)->vector<int>{
+        vector<int>res;
+        int gx0=max(0,a[i]/CELL),gy0=max(0,b[i]/CELL),gx1=min(G-1,(c[i]-1)/CELL),gy1=min(G-1,(d[i]-1)/CELL);
+        for(int gy=gy0;gy<=gy1;gy++)for(int gx=gx0;gx<=gx1;gx++)for(int j:grid[ci(gx,gy)])if(j!=i&&ov(i,j))res.push_back(j);
+        sort(res.begin(),res.end());res.erase(unique(res.begin(),res.end()),res.end());
+        return res;
     };
     auto tryExp=[&](int i,int dir,long long maxA=-1){
         int hi;
@@ -59,41 +60,42 @@ int main(){
     mt19937 rng(42);
     for(int i=0;i<n;i++)addG(i);
     vector<int>ord(n);iota(ord.begin(),ord.end(),0);
-    // Phase 1: greedy expansion with area cap
+    
+    // Phase 1: greedy expansion with cap
     sort(ord.begin(),ord.end(),[&](int a,int b){return R[a]<R[b];});
-    for(int pass=0;pass<300&&elapsed()<0.8;pass++){
+    for(int pass=0;pass<500&&elapsed()<1.2;pass++){
         if(pass>2)shuffle(ord.begin(),ord.end(),rng);
         for(int i:ord){int ds[]={0,1,2,3};for(int k=3;k>0;k--){int j=rng()%(k+1);swap(ds[k],ds[j]);}
             for(int s=0;s<4;s++)tryExp(i,ds[s],(long long)(R[i]*1.2)+1);}
     }
-    // Phase 2: expand under-area rectangles freely
-    for(int pass=0;pass<500&&elapsed()<2.0;pass++){
+    // Phase 2: expand undersized
+    for(int pass=0;pass<500&&elapsed()<2.5;pass++){
         shuffle(ord.begin(),ord.end(),rng);
         for(int i:ord){if(area(i)>=R[i])continue;int ds[]={0,1,2,3};for(int k=3;k>0;k--){int j=rng()%(k+1);swap(ds[k],ds[j]);}
             for(int s=0;s<4;s++)tryExp(i,ds[s]);}
     }
-    // Shrink oversized
+    // Phase 3: shrink oversized to optimal
     for(int i=0;i<n;i++){if(area(i)<=R[i])continue;
         for(int dir=0;dir<4;dir++){int hi;if(dir==0)hi=X[i]-a[i];else if(dir==1)hi=Y[i]-b[i];else if(dir==2)hi=c[i]-(X[i]+1);else hi=d[i]-(Y[i]+1);
             rmG(i);double bs=sat(i);int best=0;int oa=a[i],ob=b[i],oc=c[i],od=d[i];
-            for(int amt=1;amt<=hi;amt++){if(dir==0)a[i]=oa+amt;else if(dir==1)b[i]=ob+amt;else if(dir==2)c[i]=oc-amt;else d[i]=od-amt;double ns=sat(i);if(ns>bs){bs=ns;best=amt;}if(area(i)<=R[i])break;}
+            for(int amt=1;amt<=hi;amt++){if(dir==0)a[i]=oa+amt;else if(dir==1)b[i]=ob+amt;else if(dir==2)c[i]=oc-amt;else d[i]=od-amt;double ns2=sat(i);if(ns2>bs){bs=ns2;best=amt;}if(area(i)<=R[i])break;}
             a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;if(best>0){if(dir==0)a[i]+=best;else if(dir==1)b[i]+=best;else if(dir==2)c[i]-=best;else d[i]-=best;}addG(i);}}
-    // Expand again after shrinking
-    for(int pass=0;pass<200&&elapsed()<2.5;pass++){shuffle(ord.begin(),ord.end(),rng);for(int i:ord){if(area(i)>=R[i])continue;int ds[]={0,1,2,3};for(int k=3;k>0;k--){int j=rng()%(k+1);swap(ds[k],ds[j]);}for(int s=0;s<4;s++)tryExp(i,ds[s]);}}
+    // Phase 4: expand again after shrinking freed space
+    for(int pass=0;pass<500&&elapsed()<3.5;pass++){shuffle(ord.begin(),ord.end(),rng);for(int i:ord){if(area(i)>=R[i])continue;int ds[]={0,1,2,3};for(int k=3;k>0;k--){int j=rng()%(k+1);swap(ds[k],ds[j]);}for(int s=0;s<4;s++)tryExp(i,ds[s]);}}
+    
     double curScore=0;for(int i=0;i<n;i++)curScore+=sat(i);
     auto ba=a,bb=b,bc=c,bd=d;double bestScore=curScore;
     // SA phase
     while(elapsed()<4.7){
-        double frac=elapsed()/4.7;double T=0.05*(1.0-frac)+0.0001;
+        double frac=elapsed()/4.7;double T=0.03*(1.0-frac)+0.0001;
         int i=rng()%n;int oa=a[i],ob=b[i],oc=c[i],od=d[i];double os=sat(i);rmG(i);
         int maxd_=max(1,(int)(150*(1.0-frac))+1);int delta=((int)(rng()%(2*maxd_))+1)-maxd_;if(!delta)delta=1;
-        int op=rng()%8;
+        int op=rng()%6;
         if(op<4){if(op==0)a[i]+=delta;else if(op==1)b[i]+=delta;else if(op==2)c[i]+=delta;else d[i]+=delta;}
-        else if(op<6){if(op==4){a[i]+=delta;c[i]+=delta;}else{b[i]+=delta;d[i]+=delta;}}
-        else{long long cu=area(i);int dr=rng()%4;int sd=(dr%2==0)?(d[i]-b[i]):(c[i]-a[i]);if(sd>0){int adj=(int)((cu-(long long)R[i])/sd);if(adj==0)adj=(cu>R[i])?1:-1;if(dr==0)a[i]+=adj;else if(dr==1)b[i]+=adj;else if(dr==2)c[i]-=adj;else d[i]-=adj;}}
+        else{if(op==4){a[i]+=delta;c[i]+=delta;}else{b[i]+=delta;d[i]+=delta;}}
         if(!valid(i)||ovAny(i)){a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;addG(i);continue;}
         double ns=sat(i),diff=ns-os;
-        if(diff>=0||uniform_real_distribution<double>(0,1)(rng)<exp(diff/T)){addG(i);curScore+=diff;if(curScore>bestScore){bestScore=curScore;ba=a;bb=b;bc=c;bd=d;}}
+        if(diff>=0||(double)(rng()%1000000)/1000000.0<exp(diff/T)){addG(i);curScore+=diff;if(curScore>bestScore){bestScore=curScore;ba=a;bb=b;bc=c;bd=d;}}
         else{a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;addG(i);}
     }
     for(int i=0;i<n;i++)cout<<ba[i]<<" "<<bb[i]<<" "<<bc[i]<<" "<<bd[i]<<"\n";
