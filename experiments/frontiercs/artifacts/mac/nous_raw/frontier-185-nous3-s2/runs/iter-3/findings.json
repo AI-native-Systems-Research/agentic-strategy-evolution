@@ -1,0 +1,26 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "BnB-only with degeneracy ordering and 1950ms budget will score 100, confirming iter-2 ablation result at full real-mode scope.",
+      "observed": "SCORE: 100. BnB-only with degeneracy ordering achieves perfect score, confirming all prior measurements.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    },
+    {
+      "arm_type": "h-robustness",
+      "predicted": "BnB-only with a tighter 1000ms budget will still score 100, demonstrating comfortable timing margin on all test instances.",
+      "observed": "SCORE: 100. Even with 1000ms budget (half of 1950ms), BnB-only solves all test instances optimally. Timing margin is at least 2x.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. BnB-only with degeneracy ordering scores 100 at both 1950ms and 1000ms budgets, proving the solution has a comfortable 2x timing margin.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}
