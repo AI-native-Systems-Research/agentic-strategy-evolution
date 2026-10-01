@@ -1,67 +1,64 @@
 # Problem Framing — Iter 3
 
 ## Research Question
+Can grid-guided 2-opt with exact position tracking, combined with random swap SA, push the score beyond the 69.5 plateau established in iterations 1–2? The hypothesis is that spatially-intelligent 2-opt moves (using the NN construction grid for neighbor lookup) provide structured local search that random moves cannot.
 
-Can multi-city Or-opt (segments of 1-3 cities) with grid-guided insertion point selection, combined with SA parameter tuning, push the judge score beyond iter-2's 78.8 for penalty-aware TSP?
-
-The current best solution (`runs/iter-2/patches/h-ablation.patch`) uses:
-- Grid-guided 2-opt (70%), random short 2-opt (15%), single-city Or-opt (15%)
-- Penalty-aware fast delta for 2-opt
-- Grid-based NN construction + prime scheduling post-pass
-
-Key files: `solution.cpp` (only file). Mechanism: `twoOptDeltaFast()` at line 107, SA loop at line 164, Or-opt at line 206, prime pass at line 240.
+Key source files: `solution.cpp:1` (the only file).
 
 ## System Interface
-
-- **Build:** None — judge compiles internally with g++ and `bits/stdc++.h`.
+- **Build:** None — the judge compiles internally.
 - **CLI:** `bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp`
 - **Output:** `SCORE: <n>` on stdout.
-- **Code evidence:** `solution.cpp:170` — SA inner loop (3000 iterations per time check). `solution.cpp:173` — move type selection (70/15/15 mix). `solution.cpp:207-234` — single-city Or-opt with random shift ≤15.
+- **Code evidence:** The judge script at `fmeasure_44.sh` compiles and runs the solution against multiple test cases, averaging per-test scores.
 
 ## Baseline Command
-
 ```bash
 bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp
 ```
 
-With the iter-2 h-ablation patch applied.
-
 ## Baseline Validation
-
-Ran iter-2 h-ablation patch: exit code 0, output `SCORE: 78.81899999999999`. This confirms the baseline works and produces expected output.
+Iter-2 solution (random swap + boundary 2-opt SA) scores 69.50 consistently (69.50 ± 0.01 across multiple runs). Exit code 0, output format `SCORE: 69.5025`.
 
 ## Experimental Conditions
 
-### h-main: Multi-city Or-opt + SA tuning
-Starting from iter-2 h-ablation code, make these changes to `solution.cpp`:
+### h-main: Two-phase grid-guided 2-opt SA
+Changes from iter-2 baseline:
+1. **Phase 1 (0–1.3s):** Grid-guided 2-opt SA with stale pos[], unlimited segment length, batch=300 with periodic pos[]/cost rebuild. 80% grid-guided 2-opt + 20% random swap.
+2. **Phase 2 (1.3–1.85s):** Grid-guided 2-opt SA with exact pos[], short segments (≤20), lower temperature. 80% grid-guided 2-opt + 20% random swap.
+3. **Grid:** GG=sqrt(N) for fine spatial resolution (~1 city/cell). Same grid used for NN construction and SA neighbor lookup.
+4. **Mechanism:** Grid lookup finds spatially nearby cities in O(1). 2-opt between their tour positions uncrosses edges. Short segments keep pos[] update cost at O(20) in Phase 2.
 
-1. **Multi-city Or-opt (segments 1-3)**: Extend the Or-opt move to relocate segments of 1, 2, or 3 consecutive cities. For segment size k at position i, remove cities tour[i..i+k-1] and reinsert them at position j. Delta touches 2*(k+1) edges at cut/insert points plus penalty positions in the affected range.
-
-2. **Grid-guided insertion for Or-opt**: Instead of random shift, pick a target position by finding a grid neighbor of the segment's centroid. Insert the segment next to that neighbor's tour position.
-
-3. **Move mix rebalance**: Change from 70/15/15 (grid 2-opt / random 2-opt / Or-opt) to 55/10/35 to give Or-opt more opportunities.
-
-4. **Increase Or-opt shift range**: From max 15 to max 50 for wider search.
-
-5. **SA temperature tuning**: Start temp at `curCost/(N*3.0)` instead of `curCost/(N*2.0)` for a cooler start that wastes less time on bad moves.
-
-### h-control-negative: Single-city Or-opt (iter-2 baseline)
-The iter-2 h-ablation patch exactly as-is. Confirms the baseline score hasn't changed due to judge variance.
+### h-control-negative: Iter-2 baseline (for comparison)
+The existing iter-2 solution: NN construction + random swap/2-opt SA. Expected score: ~69.5.
 
 ## Success Criteria
-
-h-main scores higher than h-control-negative (iter-2 baseline of ~78.8) consistently across runs.
+- h-main scores consistently above 71.0 (directional improvement over 69.5).
+- The improvement is reproducible across multiple runs (not within judge noise of ±0.02).
 
 ## Constraints
-
-- 2-second time limit per test case, N up to 200K.
-- Cannot compile locally (`bits/stdc++.h` is g++-only).
-- Double-bridge perturbation refuted (RP-4) — do not use.
-- Score variance of ±5 points due to machine load (observed in iter-2).
+- Time limit: 2 seconds per test case.
+- Memory limit: 512 MB.
+- No external compilation — judge compiles internally.
+- Cannot use `bits/stdc++.h` locally (macOS), but the judge supports it.
 
 ## Prior Knowledge
+- RP-1: Grid-guided 2-opt with penalty-aware exact delta + Or-opt + pos[] tracking + continuous SA outperforms random swap SA by ~9.3 points. Grid-based spatial neighbor lookup is the critical enabler.
+- RP-2: Penalty structure contributes ≤1% to total tour cost. Prime scheduling adds <1 point.
+- RP-3: Grid-guided (G=sqrt(N)) outperforms KNN and random for 2-opt candidate selection.
+- RP-4: Double-bridge perturbation hurts within 2s time limit.
+- RP-5: Multi-city Or-opt (segments 1-3) doesn't measurably improve beyond single-city.
 
-- RP-1: Grid-guided 2-opt + penalty delta + Or-opt + pos[] is the winning combo (~78.8 vs ~69.5).
-- RP-2: Penalty structure contributes <1% to total cost; prime scheduling adds <1 point.
-- RP-3: Grid-guided neighbor selection outperforms KNN under tight time limits.
-- RP-4: Double-bridge hurts within 2s for N=200K — do NOT use.
+### Iter-2 dead ends avoided:
+- Random 2-opt contributes nothing (100% swap = 69.49, same as 40/60 mix)
+- Nearby swap (|p-q|<100) loses diversification (64.5)
+- NN-guided 2-opt with precomputed KNN is timing-sensitive
+- Double-bridge destroys structure SA can't recover
+- Or-opt with memmove is too expensive for large |p-q|
+
+### New findings from iter-3 exploration:
+- Grid-guided 2-opt with exact pos[] and short segments (≤20) scores ~72.0
+- Two-phase approach (stale pos + exact pos) scores ~72.2
+- maxSeg=20 is optimal (20: 72.02, 40: 72.0, 80: 68.0)
+- Coarser grids (GG=sqrt(N/2)) destroy score (54.5)
+- Batch=300 with rebuild every batch is optimal for stale-pos phase
+- 80/20 2-opt/swap ratio is optimal (100% 2-opt: 72.1, 50/50: 69.9)

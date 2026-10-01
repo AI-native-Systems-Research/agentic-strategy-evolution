@@ -1,91 +1,89 @@
-# Handoff — Iter 2
+# Handoff — Iter 3
 
 ## Goal
 
-Measure whether targeted post-SA optimization (reversed-tour direction check + greedy edge-fix) improves on iter-1's ~69.5. If not, document the SA plateau for future strategy changes.
+Implement and measure a two-phase grid-guided 2-opt SA solution that improves on iter-2's 69.5 score. The h-main arm targets ~72.2 via spatially-intelligent 2-opt candidate selection.
 
 ## Key Discoveries
 
-- **Iter-1 reliably scores ~69.5** (69.496 ± 0.01 across multiple runs). One outlier at 64.5 was likely a judge timeout.
-- **2-opt contributes NOTHING**: 100% swap gives 69.49, same as 40% swap + 60% 2-opt (69.50). All SA improvement comes from swap moves.
-- **Swap ratio is critical**: below ~30% swap, SA fails to improve NN at all (score stays at 64.5). Above 30%, diminishing returns.
-- **NN-guided 2-opt with pos[] is too slow** for N=200K: O(segment) pos[] updates eat the throughput gain. Every variant tested (full pos[] update, stale pos[], periodic rebuild) scored worse than random SA.
-- **Double-bridge perturbation hurts**: SA can't recover the destroyed structure within the time budget.
-- **Random Or-opt doesn't help**: for N=200K, random position pairs are too far apart; nearby limits (|p-q|<200) cause 99.8% of attempts to be skipped.
-- **Hilbert curve construction ≈ NN**: no significant improvement in starting tour quality.
-- **Reversed-tour direction helps marginally**: +0.01-0.015 points from exploiting penalty structure directionality.
-- **Greedy edge-fix post-pass helps marginally**: +0.005-0.01 points from targeting worst edges.
+- **Grid-guided 2-opt with exact pos[] breaks the 69.5 plateau**, reaching ~72.0-72.2 (confirmed across 6+ runs).
+- **Two-phase design is optimal**: Phase 1 (stale pos, unlimited seg, batch=300) + Phase 2 (exact pos, seg≤20, batch=1000) = 72.2. Phase 2 alone = 72.0.
+- **maxSeg=20 is the sweet spot** for exact-pos 2-opt. Shorter (10): same. Longer (80): 68.0 due to O(seg) pos update overhead.
+- **GG=sqrt(N) grid is critical**. Coarser grids (sqrt(N/2)=54.5, sqrt(N/6)=59.5) destroy performance. Each cell has ~1 city, enabling precise spatial targeting.
+- **80/20 2-opt/swap ratio optimal**. 100% 2-opt: 72.1 (slightly worse). 50/50: 69.9 (much worse). Swaps provide essential long-range diversification.
+- **Batch=300 optimal for stale-pos phase**. 150: 72.1. 500: 72.2. 1000: 67.2 (pos too stale). 2000: 72.2 (back up — moves random enough to cancel out).
+- **Or-opt does not help** beyond 2-opt: v3g (with Or-opt) = 72.0, v3i (without) = 72.0.
 
 ## System Interface
 
 - **Build:** None — judge compiles internally.
 - **Run baseline:** `bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp`
 - **Output format:** `SCORE: <n>` on stdout.
-- **Baseline result:** h-main (iter-1 + improvements) = 69.503-69.511.
+- **Baseline result:** h-main = 72.18 (mean of 3 runs: 72.21, 72.19, 72.16).
 
 ## Code Map
 
-- `solution.cpp:1` — the only file to edit.
-- `runs/iter-1/patches/h-main.patch` — the 69.5-scoring iter-1 solution.
-- `runs/iter-2/patches/h-main.patch` — the iter-2 solution with improvements.
+- `solution.cpp:1` — the only file to edit. Contains the full solution.
+- `runs/iter-2/patches/h-main.patch` — the iter-2 solution (69.5 baseline).
 
 ## Code Targets
 
 ### h-main → `solution.cpp`
-Start from iter-1 patch, add:
-1. After `nnConstruct()`: reverse `tour[1..N-1]`, compare `totalCost()` with forward, keep cheaper direction.
-2. After SA loop, before prime post-pass: greedy edge-fix (find top-50 longest penalized edges, try 200 random swaps per edge, accept best improvement, 5 passes max).
+The solution_v3m.cpp file has already been copied to solution.cpp. It implements:
+1. Grid construction with GG=sqrt(N) (line ~buildGrid function)
+2. NN construction reusing the grid (line ~nnConstruct function)
+3. Phase 1 SA: grid-guided 2-opt with stale pos[], batch=300, unlimited segment (lines ~Phase 1 comment)
+4. Phase 2 SA: grid-guided 2-opt with exact pos[], seg≤20, batch=1000 (lines ~Phase 2 comment)
+5. Prime scheduling post-pass (final section)
 
-### h-ablation → `solution.cpp`
-Pure iter-1 patch, no changes.
+## What I Tried That Didn't Work (accumulated from iter 1-3)
 
-## What I Tried That Didn't Work (accumulated)
-
+### From iter 1-2:
 - **Sequential tour**: Scores 0 (IS the baseline).
 - **Naive 2-opt with full recompute**: Only 17.6. O(N) per move too slow.
-- **NN-guided 2-opt with pos[]**: 60.5-65.5 (WORSE than random SA). O(segment) pos[] update kills throughput.
-- **NN-guided 2-opt with stale pos[]**: 65.5. Stale positions cause ineffective moves.
-- **NN-guided 2-opt with periodic pos[] rebuild**: 65.5. Same issue.
-- **Double-bridge perturbation**: 64.5. SA can't recover destroyed structure.
-- **Random Or-opt (|p-q| unlimited)**: 69.36. Memmove cost + random targeting = no improvement.
-- **Random Or-opt (|p-q| < 200)**: 64.5. 99.8% of moves skipped.
+- **NN-guided 2-opt with pos[]**: 60.5-65.5 (WORSE than random SA).
+- **Double-bridge perturbation**: 64.5. SA can't recover.
+- **Random Or-opt**: 69.36-64.5.
 - **100% 2-opt (no swap)**: 64.5. 2-opt alone can't improve NN tour.
-- **20% swap + 80% 2-opt**: 64.5. Not enough swaps for diversification.
-- **Nearby swap (|p-q| < 100)**: 64.5. Loses essential long-range diversification.
-- **Hilbert curve construction**: 65.5. Comparable to NN, no improvement after SA overhead.
-- **Bigger SA batches (5000-10000)**: 69.5. More moves of same type don't help at convergence.
-- **Less frequent totalCost() recompute**: 69.48. Negligible difference.
-- **Exact delta for short 2-opt segments**: 69.49. Penalty changes in short segments are too small to matter.
-- **Compiling locally with `bits/stdc++.h`**: Fails on macOS clang.
+- **Nearby swap (|p-q| < 100)**: 64.5. Loses diversification.
+- **Hilbert curve construction**: 65.5.
+
+### From iter 3:
+- **Grid-guided 2-opt with stale pos[] in SA** (v3b): 69.5. Stale positions make grid guidance useless.
+- **Spatially-guided swap** (v3c): 64.5. Same as nearby swap — too local.
+- **Strip-based construction** (v3d): 69.5. Doesn't help; SA dominates final quality.
+- **Best-of-3 swap** (v3e): 69.5. Throughput loss offsets quality gain.
+- **Spiral grid search** (v3j): 62.0. Ring counting overhead kills throughput.
+- **KNN precomputation (K=7)** (v3k): 72.0. Build time offsets lookup speed; same as simple grid cell lookup.
+- **Coarser grid** (sqrt(N/2), sqrt(N/6)): 54.5-59.5. Fewer cities per cell = less precise targeting.
+- **maxSeg=80**: 68.0. O(80) pos update per accepted move = low throughput.
+- **batch=1000 with stale pos**: 67.2. pos[] becomes completely wrong after 1000 moves.
+- **50/50 2-opt/swap**: 69.9. Not enough 2-opt moves for meaningful improvement.
 
 ## What I Excluded and Why
 
-- **LK-style moves**: Too complex to implement correctly within 2s for N=200K, especially with penalty structure.
-- **Genetic algorithms / EAX**: Population-based approaches are complex; single-tour SA is simpler and competitive for this time budget.
-- **Exact solvers (Concorde)**: N=200K is far too large.
-- **3-opt**: Triple the delta computation complexity of 2-opt, which already contributes nothing.
-- **Large Neighborhood Search**: Partial tour reconstruction is promising but implementation complexity exceeds the marginal gain.
-- **Held-Karp DP for segments**: O(2^K * K^2) per segment; even K=15 takes 0.04s per segment, too few segments can be processed.
+- **LK-style moves**: Implementation complexity too high for marginal gain over grid-guided 2-opt.
+- **Or-opt moves**: Tested, no improvement. memmove cost for array-based Or-opt is prohibitive for large distances. Linked-list representation loses O(1) step-index access needed for penalty computation.
+- **3-opt / LKH**: Too complex; each move has 8 reconnection patterns to evaluate.
+- **Genetic algorithms / EAX**: Population-based approaches need too much memory/time for N=200K.
+- **Penalty-aware exact 2-opt delta**: Internal penalty changes contribute ≤1% (RP-2), not worth the O(seg) computation per move.
 
 ## Evolution of Thinking
 
-Iter-1 assumed 2-opt was the primary optimizer. Iter-2 discovered that 2-opt contributes NOTHING — 100% swap SA gives identical scores. The SA improvement (64.5 → 69.5) comes entirely from random city swaps providing long-range diversification. This means the ~5-point SA improvement represents the limit of what random moves can achieve for N=200K in 2 seconds.
+Iter-1-2 established that random SA converges to 69.5 and concluded 2-opt "contributes nothing." Iter-3 discovered this was wrong: 2-opt DOES help when **grid-guided** (spatially intelligent candidate selection) and **exact pos[]** tracking is maintained. The critical insight is that random 2-opt fails not because 2-opt is bad, but because random candidate selection for 200K cities is astronomically unlikely to find improving pairs.
 
-Breaking past 69.5 requires either:
-1. A fundamentally better construction heuristic (better than grid-NN)
-2. A structured local search (LK-style moves with proper candidate lists)
-3. A completely different approach (e.g., divide and conquer)
+The two-phase design emerged from trying to balance throughput vs precision: stale pos[] allows larger moves (more exploration) but less accuracy, while exact pos[] is precise but limited to short segments. Combining both captures different improvement regimes.
 
 ## Current Status
 
-- **Validated:** Judge works (69.5 consistent), 2-opt is useless, swap ratio critical, post-SA fixes give marginal gain.
-- **Uncertain:** Whether greedy edge-fix + reversed-tour consistently beats iter-1 (margin is ~0.01-0.02 points, within noise).
-- **Suggested next:** If the goal is to push significantly past 69.5, iter-3 should try: (1) LK-style moves (sequential k-opt with candidate list), (2) divide-and-conquer construction (partition cities spatially, solve sub-problems, merge), (3) strip-based construction (serpentine sweep with y-sorting within strips).
+- **Validated:** Grid-guided 2-opt with exact pos[] (GG=sqrt(N), maxSeg=20) consistently scores ~72.0-72.2. Two-phase variant averages 72.18.
+- **Uncertain:** Whether the remaining gap to RP-1's 78.85 is achievable. RP-1's approach may use longer SA time, different test cases, or different grid parameters.
+- **Suggested next:** (1) Adaptive segment length — start with longer segments and decrease as SA cools. (2) Penalty-aware exact delta for 2-opt (might matter for larger test cases). (3) Explore LK-style moves with the grid for candidate generation. (4) Investigate whether the scoring function penalizes specific test case sizes where our approach is weak.
 
 ## Warnings & Constraints
 
 - **Do NOT compile locally** — `bits/stdc++.h` not available on macOS.
-- **Judge score varies ~0.01-0.02 between runs** — marginal improvements need multiple measurements to confirm.
-- **One outlier at 64.5 observed** — likely a judge timeout. Ignore if it occurs once.
-- **2-opt boundary delta is exact for unpenalized TSP** but approximate for penalized — doesn't matter since 2-opt contributes nothing regardless.
-- **SA temperature uses `curCost/N * pow(1e-4, progress)`** — this is the proven schedule, don't change without evidence.
+- **Judge score varies ~0.02-0.05 between runs** — confirm improvements with 3+ measurements.
+- **GG=sqrt(N) grid is critical** — do not change without testing. Coarser grids destroy performance.
+- **Phase split at 1.3s** — both phases need adequate time. Phase 2 should get at least 0.5s.
+- **One outlier at 64.5 occasionally observed** — likely a judge timeout. Ignore if it occurs once.

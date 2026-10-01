@@ -260,71 +260,83 @@ End of statement.
 
 **Controllable knobs:** solution_cpp
 
-## Active Principles (after iteration 1)
+## Active Principles (after iteration 2)
 
 - **RP-1** [domain]: For 2D rectangular knapsack with 8-12 item types, MaxRects with hill-climbing over item orderings achieves ~94.8/100, with item ordering being the dominant lever over packer heuristic choice.
 - **RP-2** [domain]: Contact perimeter heuristic is too slow for this time budget (1s) due to O(n^2) per-placement cost of tracking placed rectangles, and reduces effective search iterations.
+- **RP-3** [domain]: For 2D rectangular knapsack with 8-12 item types, SA over joint (ordering × per-item-heuristic) space achieves ~95.2/100, a 0.37-point improvement over ordering-only hill-climbing. The per-item heuristic dimension is the key lever; SA over orderings alone matches hill-climbing.
+- **RP-4** [domain]: Residual gap filling after ordered packing provides zero additional value when per-item heuristic selection is optimized. The ordered pack with individually-tuned heuristics per item type leaves no exploitable residual space.
 
 ## Most Recent Handoff
 
-# Handoff — Iteration 1
+# Handoff — Iteration 2
 
 ## Goal
 
-Implement and measure a MaxRects-based 2D bin packing algorithm for problem #47 that maximizes the judge score (0–100 continuous).
+Push the 2D rectangular knapsack score beyond 94.84 by implementing simulated annealing over item orderings and a residual gap-filling pass in MaxRects packing.
 
 ## Key Discoveries
 
-- The judge compiles and runs solutions in Docker — `bits/stdc++.h` works server-side even though it fails on local macOS clang.
-- Local compilation is NOT needed; just edit `solution.cpp` and run `fmeasure_47.sh`.
-- The measure script takes ~30-60s per invocation (15 test cases).
-- Bins are 900–2000 in each dimension, 8–12 item types, limits up to 2000 copies per type.
-- MaxRects with exhaustive permutation search over M≤10 item orderings × 3 heuristics achieves ~94.5.
-- Global greedy (per-placement item selection) adds marginal improvement over sorted-order packing.
-- The scoring formula `(V-B)/(K-B)` means gains get harder as V approaches the fractional upper bound K.
+- Iter-1's hill-climbing adds ~0.4 points over permutation + random search (94.45 → 94.84), but stops at first local optimum
+- The iter-1 h-main.patch at `runs/iter-1/patches/h-main.patch` contains the 94.84 solution — use it as starting point
+- Item ordering is the dominant lever (RP-1); the packer heuristic matters less
+- 4 heuristics work: BSSF (best short side fit), BAF (best area fit), BL (bottom-left), BLSF (best long side fit)
+- `bits/stdc++.h` works server-side; do NOT try local compilation on macOS
+- The judge runs 15 test cases; bins 900-2000, 8-12 types, 1s time limit per test
 
 ## System Interface
 
 - **Build:** N/A (judge compiles server-side)
 - **Run:** `bash /Users/toslali/frontier/gen_logs/fmeasure_47.sh $PWD/solution.cpp`
 - **Output:** `SCORE: <float>` on stdout
-- **Baseline result:** SCORE: 94.45574
+- **Baseline result:** 94.84 (iter-1 h-main)
 
 ## Code Map
 
-- `solution.cpp:1` — the entire solution file; replace stub with algorithm
-- Judge: `/Users/toslali/frontier/Frontier-CS/src/frontier_cs/runner/algorithmic_local.py:154` — evaluate() submits code to Docker judge
+- `solution.cpp` — the entire solution; replace with improved algorithm
+- `runs/iter-1/patches/h-main.patch` — iter-1's best solution (94.84), use as reference/starting point
+- Judge: `/Users/toslali/frontier/Frontier-CS/src/frontier_cs/runner/algorithmic_local.py` — submits to Docker judge
 
 ## Code Targets
 
-- **h-main**: `solution.cpp` — replace the 3-line stub with the full MaxRects implementation (~350 lines). The file is in the worktree root.
+- **h-main**: `solution.cpp` — write a new complete solution with these components:
+  1. MaxRects packer with 4 heuristics (BSSF, BAF, BL, BLSF) — keep from iter-1
+  2. Initial sorted orderings + greedy packing — keep from iter-1
+  3. **NEW: Simulated annealing** replacing hill-climbing: start from best known ordering per heuristic, use swap/insert/reverse-subsequence neighborhoods, T₀ = 0.1 * bestProfit, α = 0.995
+  4. **NEW: Gap-filling pass** after each ordered pack: iterate remaining free rectangles, try placing any item type with remaining copies (sorted by value density)
+  5. Random perturbation restarts for remaining time
+  
+- **h-ablation**: Same solution but disable the gap-filling pass (just comment out or skip that function call)
 
-## What I Tried That Didn't Work
+## What I Tried That Didn't Work (from iter-1)
 
-- v1 (first attempt, simpler MaxRects + skyline): 94.35 — skyline packer was buggy, MaxRects alone was better
-- v2 (cleaner MaxRects, rotation combos via bitmask): 94.02 — worse because bitmask rotation exploration was too slow, reducing time for permutation search
-- v3 (interleaved packing + permutation): 94.19 — interleaved packing overhead reduced permutation budget
-- Local compilation with clang on macOS fails due to missing `bits/stdc++.h` and C++ stdlib headers — don't bother, just use the judge
+- Bitmask rotation exploration: too slow, reduced permutation budget (94.02)
+- Interleaved packing: overhead reduced permutation budget (94.19)
+- Skyline packer: less flexible than MaxRects (94.35)
+- Contact perimeter heuristic: O(n²) per placement, too slow (RP-2)
+- Local macOS compilation: `bits/stdc++.h` not available
 
 ## What I Excluded and Why
 
-- Simulated annealing / local search over placement positions: the 1-second time limit makes it hard to do both exhaustive ordering search AND local search. Ordering search empirically dominates.
-- Guillotine cutting: MaxRects is strictly more flexible and the constraint set doesn't require guillotine cuts.
-- ILP/exact solver: 1-second limit with potentially 1000+ placements makes exact methods infeasible.
+- ILP/exact methods: 1s time limit with 100-1000+ placements makes this infeasible
+- Guillotine cutting: MaxRects is strictly more flexible
+- Contact perimeter scoring: too slow per RP-2
+- Column generation: complexity doesn't fit 1s budget
 
 ## Evolution of Thinking
 
-Started with skyline packing (simpler) but MaxRects proved much better due to its ability to track all free space. Discovered that item ordering is the primary lever — the same packer with different orderings can vary by 10+ points. Permutation exhaustion is key for M≤10 (covers 362K–3.6M orderings). For M=11-12, random shuffle search partially compensates.
+Iter-1 proved ordering search is the dominant lever. Hill-climbing was the biggest single improvement (+0.4 points). The natural next step is SA (escape local optima) + gap filling (capture residual value). The gap filling is motivated by the observation that ordered packing processes types sequentially — once it moves past type A, free space that could still fit A copies is wasted.
 
 ## Current Status
 
-- **Validated:** MaxRects + multi-heuristic + permutation search achieves 94.46 (v5)
-- **Uncertain:** Whether the remaining 5.5 points are achievable within 1s — may need fundamentally different approaches (e.g., column generation, constraint programming)
-- **Suggested next:** Try (1) smarter rotation decisions via lookahead, (2) strip-packing hybrid for large items, (3) simulated annealing over item orderings instead of exhaustive permutation, (4) problem-specific heuristics based on value-density clustering
+- **Validated:** MaxRects + hill-climbing at 94.84 (iter-1)
+- **Uncertain:** Whether SA provides meaningful improvement over hill-climbing for M=8-12 ordering space; whether gap filling captures meaningful residual value
+- **Suggested next:** If score plateaus near 95, consider: (a) look-ahead rotation decisions, (b) partial repack (remove + reinsert items), (c) strip packing for large items, (d) problem-specific density-aware placement
 
 ## Warnings & Constraints
 
-- The judge takes 30-60s per call — budget your measurement calls.
-- `bits/stdc++.h` only works server-side; don't try to compile locally on macOS.
-- Time limit is 1s per test case; the solution must self-monitor elapsed time and stop search early.
-- Large JSON output (1000+ placements) must be printed efficiently — use `printf` not `cout`.
+- Judge takes 30-60s per call — budget measurement calls carefully
+- `bits/stdc++.h` only works server-side
+- Time limit is 1s per test; solution must self-monitor elapsed time
+- Large JSON output must use `printf` not `cout` for speed
+- The current `solution.cpp` in worktree is the iter-1 design-phase version (94.46), NOT the executor's improved version (94.84). Use the iter-1 patch as reference.

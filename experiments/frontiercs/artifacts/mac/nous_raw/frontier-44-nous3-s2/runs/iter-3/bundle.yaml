@@ -1,43 +1,33 @@
 metadata:
   iteration: 3
-  family: "multi-city-oropt-tuning"
-  research_question: "Can multi-city Or-opt (segments 1-3) with grid-guided insertion and SA tuning push score beyond iter-2's 78.8 for penalty-aware TSP?"
-  complexity_tier: 2
-  tier_justification: "iter 3 — single mechanism (Or-opt segment extension) + multi-knob (move mix, SA temp, shift range). Tier 1 covered in iter-1, tier 2 natural extension."
+  family: "grid-guided-2opt-sa"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #44?"
+  complexity_tier: 1
+  tier_justification: "iter 3, single mechanism (grid-guided 2-opt replaces random 2-opt), treatment vs control"
 
 arms:
   - type: h-main
-    prediction: "Multi-city Or-opt with grid-guided insertion and SA tuning will score higher than iter-2's 78.8 baseline, because segments of 2-3 cities find relocation improvements that single-city Or-opt and 2-opt cannot reach, and grid-guided insertion focuses Or-opt moves on spatially productive targets."
-    mechanism: "Single-city Or-opt only tests relocating one city at a time. When two or three adjacent cities in the tour belong together as a group elsewhere, single-city Or-opt requires multiple lucky sequential moves to achieve the same effect. Multi-city Or-opt (k=2,3) directly tests these compound relocations. Grid-guided insertion finds good target positions by spatial proximity (reusing the existing grid structure), replacing the random shift which wastes moves on poor targets. The cooler SA start temperature (curCost/(N*3) vs N*2) reduces time spent accepting clearly-bad moves early on."
-    diagnostic: "If score does not improve: (1) Check that multi-city Or-opt actually executes (not all skipped due to bounds). (2) Check that grid-guided insertion selects targets at different positions than random shift. (3) The overhead of computing delta for 2-3 city segments may offset the improvement quality. (4) SA temperature may need further tuning."
+    prediction: "Two-phase grid-guided 2-opt SA will score consistently above 71.0, a directional improvement over iter-2's 69.5 baseline. The improvement comes from spatially-intelligent 2-opt candidate selection via grid lookup."
+    mechanism: "Grid-based spatial neighbor lookup (GG=sqrt(N), ~1 city/cell) finds nearby cities in O(1). Using these as 2-opt partners produces short segments that uncross edges efficiently. Phase 1 uses stale pos[] with periodic rebuild (batch=300) for unlimited segment lengths. Phase 2 uses exact pos[] with per-move O(seg) update for short segments (≤20). Random swaps (20%) provide diversification. The grid reuses the NN construction infrastructure."
+    diagnostic: "If score does not improve over 69.5: (1) check if grid-guided 2-opt moves are actually being accepted (most may fail the segment length filter), (2) verify pos[] accuracy after accepted moves, (3) check if the Phase 1→Phase 2 transition loses tour quality."
     code_changes:
       - file: "solution.cpp"
-        intent: "Starting from iter-2 h-ablation code: (1) Extend Or-opt from single-city to segments of 1-3 cities. For segment size k, remove tour[i..i+k-1] and reinsert at position j. Delta computation touches edges at both cut and insert points plus penalty positions in the affected range. (2) Add grid-guided insertion: compute centroid of removed segment, find a grid neighbor near that centroid, use its tour position as the insertion target. (3) Change move mix from 70/15/15 to 55/10/35 (grid 2-opt / random short 2-opt / Or-opt). (4) Increase Or-opt shift range from 15 to 50. (5) Change initial SA temperature from curCost/(N*2) to curCost/(N*3)."
-        rationale: "Multi-city Or-opt is a standard TSP improvement that finds moves unreachable by single-city Or-opt or 2-opt. Grid-guided insertion makes Or-opt moves more targeted. The rebalanced move mix gives more opportunities to the enriched Or-opt. These changes are orthogonal to the 2-opt improvements from iter-1/2 and build on the same grid infrastructure."
-
-  - type: h-control-negative
-    prediction: "The iter-2 h-ablation code (single-city Or-opt only) will score around 78.8, confirming the baseline is stable and any improvement from h-main is real."
-    mechanism: "This is the exact iter-2 h-ablation solution, unchanged. It serves as a concurrent control to account for judge variance."
-    diagnostic: "If score differs significantly from 78.8 (e.g., below 75), machine load or judge changes may invalidate the comparison."
-
-arm_selection_note: "Two arms: h-main tests the multi-city Or-opt improvement, h-control-negative provides a concurrent baseline. No ablation needed since h-control-negative IS the ablation (single-city Or-opt). No dose-response since the segment sizes (1-3) are a small discrete set, not a continuous knob."
+        intent: "Replace iter-2's random swap + boundary 2-opt SA with a two-phase grid-guided 2-opt SA. Phase 1 (0-1.3s): grid-guided 2-opt with stale pos[], unlimited segments, batch=300 rebuild. Phase 2 (1.3-1.85s): grid-guided 2-opt with exact pos[], segment≤20, lower temperature. Both phases use 80% 2-opt + 20% random swap."
+        rationale: "Grid-guided 2-opt finds spatially promising edge pairs that random selection misses. Short segments keep pos[] update O(20). Two-phase design: Phase 1 explores with larger moves (stale pos allows any segment), Phase 2 refines with precise short moves."
 
 experiment_spec:
-  preflight_commands:
-    - "git checkout -- solution.cpp"
-    - "git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s2/runs/iter-2/patches/h-ablation.patch"
+  preflight_commands: []
   verified_parameters:
-    time_limit_seconds: 1.78
-    grid_based_nn: true
-    penalty_aware_delta: true
-    prime_scheduling_passes: 2
-  unlocked_parameters_audit:
-    - name: "SA_inner_batch"
-      default_value: 3000
-      justification: "Determines how often wall-clock is checked; 3000 is a reasonable balance between overhead and responsiveness."
-    - name: "2opt_segment_limit"
-      default_value: 5000
-      justification: "Limits the maximum segment reversed in 2-opt. 5000 balances move quality vs O(segment) pos[] update cost. Not the focus of this iter."
-    - name: "rng_seed"
-      default_value: 42
-      justification: "Fixed seed for reproducibility within a single judge run. Judge averages over multiple test cases, so seed sensitivity is low."
+    grid_size: "sqrt(N)"
+    max_segment_phase2: 20
+    phase1_batch: 300
+    phase2_batch: 1000
+    twoopt_ratio: 0.8
+    swap_ratio: 0.2
+    phase1_end_seconds: 1.30
+    phase2_end_seconds: 1.85
+    sa_temp_schedule: "(initCost/N) * pow(1e-4, progress)"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+    observation_method: "fmeasure_44.sh judge call"

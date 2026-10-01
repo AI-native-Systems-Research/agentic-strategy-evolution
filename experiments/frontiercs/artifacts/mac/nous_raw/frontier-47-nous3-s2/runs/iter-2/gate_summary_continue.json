@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Across two iterations, we improved the 2D knapsack score from 94.46 \u2192 94.84 (hill-climbing over orderings) \u2192 95.21 (simulated annealing over joint ordering \u00d7 per-item heuristic space). The key discovery in iter-2 is that expanding the search space to include per-item heuristic assignments \u2014 not just item orderings \u2014 was the actual mechanism for improvement; gap filling contributed zero points.",
+  "key_points": [
+    "Score progression: baseline 94.46 \u2192 iter-1 hill-climbing 94.84 (+0.38) \u2192 iter-2 SA with per-item heuristics 95.21 (+0.37). Total gain: +0.75 points over two iterations.",
+    "The ordering space (M=8-12 types) is small enough that hill-climbing already finds near-optimal orderings. SA over orderings alone matched hill-climbing exactly (94.84). The gain came from jointly optimizing which MaxRects heuristic (BSSF/BAF/BL/BLSF) to use for each item type \u2014 a combinatorial dimension hill-climbing didn't explore.",
+    "Gap filling (post-hoc insertion into residual free rectangles) provides zero value \u2014 the per-item heuristic optimization already achieves space utilization tight enough that no remaining free rectangle can fit any available item. This refutes the hypothesis that sequential ordered packing leaves exploitable waste.",
+    "Next iteration should investigate: (a) partial repack / destroy-rebuild moves within SA (remove a placed item type and reinsert others into freed space), (b) look-ahead rotation decisions (currently rotation is decided greedily per placement), (c) multi-pass strip decomposition (split the bin into horizontal/vertical strips optimized independently), or (d) increasing the heuristic vocabulary (e.g., adding worst-fit or contact-perimeter-lite variants) to give SA more levers.",
+    "Risk assessment: We're at 95.21/100 with diminishing returns \u2014 each iteration gained ~0.37 points. The scoring formula normalizes against a fractional upper bound that ignores geometry, so the last ~5 points may require near-perfect geometric utilization. A next iteration targeting 95.5+ is plausible but gains will likely be smaller."
+  ]
+}

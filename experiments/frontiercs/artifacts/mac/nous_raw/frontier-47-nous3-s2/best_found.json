@@ -8,8 +8,26 @@
       },
       "iteration": 1,
       "arm_id": "h-main"
+    },
+    {
+      "candidate_id": "iter-2/h-main/0",
+      "score": 0.0,
+      "components": {
+        "score": 0.0
+      },
+      "iteration": 2,
+      "arm_id": "h-main"
+    },
+    {
+      "candidate_id": "iter-2/h-ablation/1",
+      "score": 0.0,
+      "components": {
+        "score": 0.0
+      },
+      "iteration": 2,
+      "arm_id": "h-ablation"
     }
   ],
   "k": 5,
-  "updated_at": "2026-10-01T06:32:55.913633+00:00"
+  "updated_at": "2026-10-01T06:43:44.696357+00:00"
 }
