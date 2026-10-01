@@ -1,0 +1,41 @@
+metadata:
+  iteration: 3
+  family: "expanded-heuristic-sa"
+  research_question: "Can expanding MaxRects heuristics from 4 to 8, adding per-item rotation mode to SA, and tuning SA cooling/restarts push the knapsack score beyond 95.21?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism (expanded search space dimensions) with ablation via control arm"
+
+arms:
+  - type: h-main
+    prediction: "Expanding the heuristic set from 4 to 8 and adding per-item rotation mode will increase the score from 95.21 to approximately 96.4, with the expanded heuristic space being the primary contributor."
+    mechanism: "Per-item heuristic selection is the dominant lever (RP-3). Doubling from 4 to 8 heuristics expands the per-item search space from 4^M to 8^M (~1024x for M=10). Adding rotation mode (3 choices per item) further expands to 24^M. Faster SA cooling (0.995 vs 0.9995) with more restarts (3 vs 1) exploits this larger space more effectively by doing more greedy exploitation between periodic reheats."
+    diagnostic: "If score does not improve: the new heuristics may be redundant (producing placements similar to existing ones). Check by comparing packing patterns across heuristics. If SA improvements alone explain the gain, the control arm will match h-main."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace entire solution with version that adds 4 new MaxRects heuristics (perimeter-sum fit, top-right, left-bottom x-primary, aspect-ratio fit), adds per-item rotation mode as SA dimension, tunes cooling to T*=0.995 with reheat every 500 iterations, uses 3 SA restarts, and removes useless gap-fill phase."
+        rationale: "Directly extends the per-item heuristic lever identified by RP-3 with a richer heuristic palette and a new rotation dimension."
+
+  - type: h-control-negative
+    prediction: "With only the original 4 heuristics but same SA improvements (cooling, restarts, rotation mode), the score will be lower than h-main, demonstrating that expanded heuristic space is a necessary component."
+    mechanism: "Restricting to 4 heuristics limits the per-item search space. If the score still improves significantly over iter-2's 95.21, the SA tuning (cooling, restarts) is the primary driver. If it stays near 95.21, the expanded heuristic space is the driver."
+    diagnostic: "If h-control-negative matches h-main: the new heuristics are not contributing, and SA tuning alone explains the improvement."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    num_heuristics_h_main: 8
+    num_heuristics_h_control: 4
+    sa_cooling_rate: 0.995
+    sa_reheat_interval: 500
+    sa_num_restarts: 3
+    rotation_modes: 3
+  unlocked_parameters_audit:
+    - name: sa_initial_temperature_factor
+      default_value: 0.05
+      justification: "T0 = 0.05 * bestProfit; inherited from iter-2, not the focus of this experiment."
+    - name: sa_move_distribution
+      default_value: "3/16 swap, 2/16 insert, 1/16 reverse, 5/16 heur-change, 2/16 multi-heur, 2/16 rot-change, 1/16 combined"
+      justification: "Move distribution tuned during iter-2; further tuning is orthogonal to heuristic expansion."
+    - name: hill_climbing_time_budget
+      default_value: 0.10
+      justification: "Hill climbing seeds the SA; minimal time needed since SA dominates exploration."

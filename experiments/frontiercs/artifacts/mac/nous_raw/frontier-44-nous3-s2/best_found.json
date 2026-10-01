@@ -35,17 +35,8 @@
       },
       "iteration": 3,
       "arm_id": "h-main"
-    },
-    {
-      "candidate_id": "iter-3/h-control-negative/1",
-      "score": 0.0,
-      "components": {
-        "score": 0.0
-      },
-      "iteration": 3,
-      "arm_id": "h-control-negative"
     }
   ],
   "k": 5,
-  "updated_at": "2026-10-01T06:19:01.401910+00:00"
+  "updated_at": "2026-10-01T06:55:32.258109+00:00"
 }

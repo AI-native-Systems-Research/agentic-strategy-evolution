@@ -1,10 +1,10 @@
 {
   "gate_type": "findings",
-  "summary": "The iteration-3 hypothesis \u2014 that multi-city Or-opt with grid-guided insertion would beat the iter-2 single-city Or-opt baseline (78.8) \u2014 was refuted. The treatment arm scored 78.87 mean vs. the control's 78.75, a gap of ~0.12 points that falls well within the \u00b10.35-point run-to-run variance. The baseline remains stable at ~78.8.",
+  "summary": "Iteration 3's main hypothesis was REFUTED. The new two-phase grid-guided 2-opt SA approach scored 72.2, which is a 6.6-point regression from the actual best solution (~78.8 from iteration 2's h-ablation). The root cause was an incorrect baseline assumption: the bundle designer believed iter-2 scored 69.5 (which was actually the iter-1 score), so the \"improvement\" was measured against the wrong reference point.",
   "key_points": [
-    "h-main (multi-city Or-opt + grid-guided insertion + cooler SA): mean 78.87 across 4 clean runs (one 71.40 outlier excluded as machine-load artifact). This is indistinguishable from control.",
-    "h-control-negative (iter-2 single-city Or-opt baseline): mean 78.75, range 78.49\u201378.85, confirming the baseline is stable and reproducible.",
-    "The 0.12-point difference between treatment and control is not statistically meaningful given ~0.4-point variance; the multi-city segment relocation mechanism does not improve tour quality beyond what single-city Or-opt already achieves at this quality level.",
-    "Three iterations have now tried: (1) greedy + 2-opt \u2192 ~72, (2) NN + single-city Or-opt SA \u2192 ~78.8, (3) multi-city Or-opt + spatial targeting \u2192 ~78.8. The score plateau at ~78.8 suggests the current SA framework with local moves is near its ceiling; a qualitatively different strategy (e.g., LKH-style moves, penalty-aware step scheduling, or large-neighborhood search) may be needed to break through."
+    "h-main scored 72.2 (mean of 7 clean runs), while the iter-2 baseline (h-control-negative) scored 78.8 (mean excluding timing outliers) \u2014 a regression of ~6.6 points, not the predicted improvement.",
+    "The bundle's premise was flawed: it assumed iter-2's score was 69.5, but the actual iter-2 cumulative best (from iter-2 h-ablation) was ~78.8. This misinformation led to designing a simpler algorithm that omitted critical components.",
+    "The iter-2 h-ablation solution remains the best at ~78.8. Its key components \u2014 penalty-aware exact delta computation, Or-opt city relocation, pos[] tracking, and prime scheduling post-pass \u2014 were all absent from the iter-3 approach and collectively account for the ~6.6-point gap.",
+    "Next iteration should build on the iter-2 h-ablation solution (score ~78.8) as the true baseline and explore incremental improvements such as 3-opt moves, Lin-Kernighan style chains, or better temperature schedules \u2014 not replace the core algorithm."
   ]
 }

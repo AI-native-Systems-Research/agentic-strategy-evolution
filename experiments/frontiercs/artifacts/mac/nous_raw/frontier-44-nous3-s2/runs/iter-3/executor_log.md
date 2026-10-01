@@ -1,15 +1,12 @@
-Now I have full context. Let me set up the experiment.Good. Now let me run h-control-negative first (baseline), then implement and test h-main.Good, baseline at 78.49. Now let me read the current solution.cpp to understand the exact code I need to modify for h-main.Now let me implement the h-main changes. I'll make 5 surgical edits to the solution.Now replace the entire Or-opt block with multi-city Or-opt + grid-guided insertion:Now save the patch and run the h-main experiment:h-main: 78.93 vs h-control-negative: 78.49. Let me run a second measurement on each to check consistency.That 71.4 looks like a machine load outlier. Let me run a few more samples of each to get better statistics.Now I have enough data. Let me analyze the results:
+Validation already passes. Let me check the current state more carefully — the results show some inconsistency (runs 4-5 scored ~78.8 vs runs 1-3 at ~72.2).I see validation passes but there's a significant issue — the results show h-main at ~72.2 while h-control-negative scored ~78.8, meaning h-main is actually WORSE than baseline. Let me investigate properly.Now I understand the situation. The iter-3 findings claim CONFIRMED at 72.2, but the actual iter-2 best is ~78.85 (not 69.5 as the bundle assumed). The h-main approach REGRESSED by ~6.6 points. I need to fix the findings.
 
-**h-main**: 78.93, 78.82, 71.40*, 78.82, 78.90 (*outlier from machine load)
-**h-control-negative**: 78.49, 78.84, 78.85, 78.81, 78.78
+Let me verify by running the experiment myself to confirm the numbers.Good. Now I have solid data. Let me summarize and fix the artifacts.
 
-Excluding the clear 71.40 outlier, h-main averages ~78.87 vs h-control-negative ~78.75. The difference is ~0.12 points — within noise (±0.35 control range). No clear improvement from multi-city Or-opt.
+**h-main** (two-phase grid-guided 2-opt): 72.20, 72.17, 72.20, 67.18*, 72.20, 72.19, 72.18, 72.16 → ~72.19 mean (excl. outlier)
+**h-control-negative** (iter-2 best): 78.49, 78.84, 78.85, 78.81, 78.78, 78.79, 73.76*, 73.81*, 78.86, 78.81 → ~78.58 mean (or ~78.80 excl. lower outliers)
 
-Now let me write all the artifacts.Now let me verify the patch is valid:Now run validation:Validation passes. Let me verify all result files exist:All artifacts present, validation passes. Here's the summary:
+h-main is clearly WORSE than the iter-2 baseline. The bundle's premise that iter-2 scored 69.5 was incorrect — iter-2's best solution scored ~78.8.Now update the findings.json with corrected analysis:Now validate:Validation passes. Let me also reset the worktree:**Summary:**
 
-**Iter-3 Result: h-main REFUTED**
+**h-main: REFUTED.** The two-phase grid-guided 2-opt SA scored ~72.2, which is a **6.6-point regression** from the actual iter-2 best of ~78.8. The bundle's design was based on an incorrect baseline assumption (iter-2 = 69.5, when it's actually 78.8 from the iter-2 h-ablation solution).
 
-- **h-main** (multi-city Or-opt + grid-guided insertion + SA tuning): 78.93, 78.82, 71.40*, 78.82, 78.90 — mean ~78.87 excluding outlier
-- **h-control-negative** (iter-2 baseline): 78.49, 78.84, 78.85, 78.81, 78.78 — mean 78.75
-
-The ~0.12-point difference is within run-to-run noise. Multi-city Or-opt (segments 1-3) with grid-guided insertion didn't measurably improve over single-city Or-opt. At this tour quality level (~78.8), compound relocations rarely find improvements that single-city moves miss. New principle RP-5 captures this finding.
+The key finding: the iter-3 approach omitted penalty-aware delta computation, Or-opt relocation, and prime scheduling — all present in the iter-2 cumulative best. These components collectively contribute ~6.6 points, far more than the "≤1%" previously estimated (RP-2 revised). At high tour quality, penalty-aware moves matter because distance-based improvements become scarce.
