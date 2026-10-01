@@ -70,6 +70,28 @@
         }
       ],
       "frontier_update": null
+    },
+    {
+      "iteration": 3,
+      "family": "multi-city-oropt-tuning",
+      "timestamp": "2026-10-01T06:09:26.748841+00:00",
+      "candidate_id": "iter-3",
+      "h_main_result": "REFUTED",
+      "ablation_results": {},
+      "control_result": "CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 2,
+        "accuracy_pct": 50.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
     }
   ]
 }

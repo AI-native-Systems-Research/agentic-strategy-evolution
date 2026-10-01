@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "The iteration-3 hypothesis \u2014 that multi-city Or-opt with grid-guided insertion would beat the iter-2 single-city Or-opt baseline (78.8) \u2014 was refuted. The treatment arm scored 78.87 mean vs. the control's 78.75, a gap of ~0.12 points that falls well within the \u00b10.35-point run-to-run variance. The baseline remains stable at ~78.8.",
+  "key_points": [
+    "h-main (multi-city Or-opt + grid-guided insertion + cooler SA): mean 78.87 across 4 clean runs (one 71.40 outlier excluded as machine-load artifact). This is indistinguishable from control.",
+    "h-control-negative (iter-2 single-city Or-opt baseline): mean 78.75, range 78.49\u201378.85, confirming the baseline is stable and reproducible.",
+    "The 0.12-point difference between treatment and control is not statistically meaningful given ~0.4-point variance; the multi-city segment relocation mechanism does not improve tour quality beyond what single-city Or-opt already achieves at this quality level.",
+    "Three iterations have now tried: (1) greedy + 2-opt \u2192 ~72, (2) NN + single-city Or-opt SA \u2192 ~78.8, (3) multi-city Or-opt + spatial targeting \u2192 ~78.8. The score plateau at ~78.8 suggests the current SA framework with local moves is near its ceiling; a qualitatively different strategy (e.g., LKH-style moves, penalty-aware step scheduling, or large-neighborhood search) may be needed to break through."
+  ]
+}

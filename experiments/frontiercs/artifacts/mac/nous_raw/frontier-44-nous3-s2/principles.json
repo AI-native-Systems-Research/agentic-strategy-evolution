@@ -73,6 +73,25 @@
       "status": "active",
       "empirical_content": true,
       "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "Multi-city Or-opt (segments 1-3) with grid-guided insertion does not measurably improve score beyond single-city Or-opt for penalty-aware TSP at N=200K within 2s. The effect, if present, is below 0.2 points (~0.25% of score).",
+      "confidence": "medium",
+      "regime": "penalty-aware TSP, N=200K, 2s time limit, grid-guided 2-opt + Or-opt SA baseline scoring ~78.8",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "At the tour quality level achieved by grid-guided 2-opt + single-city Or-opt (~78.8), compound relocations of 2-3 cities rarely find improvements that single-city relocations miss. Grid-guided insertion targeting does not consistently select better positions than random shift, possibly because spatially-nearby cities are already tour-adjacent in a well-optimized tour.",
+      "applicability_bounds": "Applies to the specific move mix (55/10/35), SA temp (curCost/N*3), and grid-guided insertion strategy tested. A different Or-opt targeting strategy (e.g., nearest-neighbor in tour order) or tighter segment size selection might yield different results.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
     }
   ]
 }
