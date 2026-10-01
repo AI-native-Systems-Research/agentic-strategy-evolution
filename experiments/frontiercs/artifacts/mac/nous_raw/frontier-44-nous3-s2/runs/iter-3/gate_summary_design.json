@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether extending Or-opt from single-city to multi-city segments (sizes 1-3) with grid-guided insertion targeting can improve the penalty-aware TSP score beyond the iter-2 baseline of 78.8/100. This builds on the existing grid-based 2-opt + SA framework by adding compound relocation moves that cannot be discovered by single-city Or-opt or 2-opt alone.",
+  "key_points": [
+    "h-main arm: Implements multi-city Or-opt (k=1,2,3), grid-guided insertion targeting, rebalanced move mix (55% grid 2-opt / 10% random 2-opt / 35% Or-opt), increased Or-opt shift range (15\u219250), and cooler SA start temperature (curCost/(N*3) vs N*2). Prediction: score > 78.8.",
+    "h-control-negative arm: Reruns the exact iter-2 h-ablation code unchanged to establish a concurrent baseline (~78.8) and account for any judge variance between iterations.",
+    "Confirmation: h-main scores meaningfully above 78.8 (e.g., \u226580) while h-control-negative stays near 78.8. Refutation: h-main scores \u226478.8, suggesting multi-city Or-opt overhead outweighs its improvement quality within the 1.78s time budget, or the grid-guided targeting doesn't find better insertion positions than random shifts.",
+    "Key risk: Multi-city Or-opt delta computation is more expensive (touches more edges + penalty recalculation for shifted positions), which could reduce total iterations within the time limit enough to negate the higher per-move quality. Diagnostic: check whether the move acceptance rate and iteration count remain reasonable.",
+    "Design is clean: h-control-negative directly serves as the ablation (single-city Or-opt only), so no separate ablation arm is needed. Two arms keep the experiment tractable within the ~60s per judge call budget."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

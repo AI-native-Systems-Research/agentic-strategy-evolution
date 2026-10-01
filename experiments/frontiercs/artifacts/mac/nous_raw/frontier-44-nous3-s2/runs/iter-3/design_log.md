@@ -1,0 +1,3 @@
+Now let me examine the best solution more carefully and think about improvements:Let me check current scores and the iter-2 patches:Good — iter-2 h-ablation scores 78.8. Now let me study the code and design improvements.Now I have a solid understanding. Let me write the design artifacts. The baseline is 78.8 (iter-2 h-ablation). Key improvement areas: multi-city Or-opt, better insertion selection, SA tuning.Validation passes. Design complete.
+
+**Summary:** Iter-3 targets multi-city Or-opt (1-3 city segments) with grid-guided insertion, rebalanced move mix (55/10/35), wider shift range (50), and cooler SA start. Baseline is iter-2's 78.8. Two arms: h-main (enhanced) and h-control-negative (unchanged iter-2 baseline). Double-bridge avoided per RP-4.
