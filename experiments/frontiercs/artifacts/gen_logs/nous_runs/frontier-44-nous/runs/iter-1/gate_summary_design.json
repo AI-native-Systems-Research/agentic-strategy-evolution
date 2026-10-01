@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a strip-based serpentine construction + 2-opt local search + carrot-aware prime placement can produce a significantly better tour than the x-sorted baseline for a penalized TSP problem. Two arms will run: the main algorithm (expected score 45-60) and a negative control outputting the identity tour (expected score 0).",
+  "key_points": [
+    "Problem #44 is a penalized TSP where every 10th step costs 10% extra unless it departs from a prime-numbered city. Cities are given sorted by x-coordinate, so the baseline (identity tour) is already a reasonable left-to-right sweep \u2014 improvements must beat this strengthened baseline.",
+    "The main arm (h-main) implements three mechanisms: (1) strip-based serpentine tour construction (groups cities into horizontal bands, alternating sweep direction) for a good initial tour, (2) 2-opt local search with adaptive window size to refine within the 2-second time limit, and (3) carrot-aware swaps that move prime-numbered cities to penalty positions (steps 10, 20, 30, ...) to avoid the 10% surcharge.",
+    "The negative control (h-control-negative) outputs the identity tour (0, 1, 2, ..., N-1, 0) and should score exactly 0, confirming the checker's baseline matches the identity order and that any h-main score reflects genuine algorithmic improvement.",
+    "Confirmation criteria: h-main scores meaningfully above 0 (prediction: 45-60 range) while h-control-negative scores exactly 0. If h-main scores near 0, diagnostics focus on compilation/validity errors or 2-opt timing out on large cases (N up to 200K).",
+    "Key risk: the 2-second time limit is tight for 2-opt on N=200K; the adaptive window (30-50 neighbors for large N) is designed to stay within budget but may limit improvement. Strip count tuning (sqrt(N\u00b7H/W)) assumes non-degenerate point distributions \u2014 pathological test cases (e.g., all points on a line) could reduce strip effectiveness."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

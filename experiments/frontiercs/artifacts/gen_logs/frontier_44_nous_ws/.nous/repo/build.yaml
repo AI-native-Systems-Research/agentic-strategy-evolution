@@ -1,0 +1,3 @@
+schema_version: '1'
+build_command: g++ -O2 -std=c++17 -o solution solution.cpp
+run_command: bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp

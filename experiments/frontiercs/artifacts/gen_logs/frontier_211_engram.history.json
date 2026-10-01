@@ -1,0 +1,86 @@
+[
+  {
+    "agent": 0,
+    "round": 0,
+    "score": 0,
+    "status": "success",
+    "plan": "Build a complete graph over all robots and relay stations (with appropriate edge weights, excluding C-C edges), run Kruskal's MST, then prune relay stations that are leaves (degree 1) since they don't help connectivity, and iteratively remove relays that don't reduce cost. This gives us the Steiner "
+  },
+  {
+    "agent": 0,
+    "round": 1,
+    "score": 0,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 0,
+    "round": 2,
+    "score": 0,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 1,
+    "round": 0,
+    "score": 55.36000000000001,
+    "status": "success",
+    "plan": "Implement a proper Steiner tree heuristic: start with MST over robots only (guaranteed valid), then iteratively try adding relay stations that reduce total cost by inserting them as degree-2+ nodes replacing expensive tree edges, using a careful path-based insertion strategy."
+  },
+  {
+    "agent": 1,
+    "round": 1,
+    "score": 0,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 1,
+    "round": 2,
+    "score": 0.575,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 2,
+    "round": 0,
+    "score": 54.55799999999999,
+    "status": "success",
+    "plan": "First compute robot-only MST correctly (guaranteed score 100), then try to improve by checking if any relay station can replace tree edges to reduce total cost \u2014 specifically checking if a relay can serve as a hub connecting 3+ tree neighbors more cheaply, or split an edge for savings. Only apply ch"
+  },
+  {
+    "agent": 2,
+    "round": 1,
+    "score": 51.85999999999999,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 2,
+    "round": 2,
+    "score": 0,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 3,
+    "round": 0,
+    "score": 8.462,
+    "status": "success",
+    "plan": "Implement iterative 1-Steiner heuristic - start with robot-only MST, then repeatedly find the relay whose addition most reduces the MST cost (recomputing MST with Prim's each time), until no relay helps. This correctly accounts for all edge cost rules including the 0.8\u00d7 discount for S-type robots."
+  },
+  {
+    "agent": 3,
+    "round": 1,
+    "score": 6.710000000000001,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 3,
+    "round": 2,
+    "score": 0.575,
+    "status": "success",
+    "plan": null
+  }
+]

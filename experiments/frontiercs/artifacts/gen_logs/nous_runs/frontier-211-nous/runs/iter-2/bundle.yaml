@@ -1,0 +1,61 @@
+metadata:
+  iteration: 2
+  family: "steiner-tree-relay-optimization"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #211?"
+  complexity_tier: 2
+  tier_justification: "Iter 2, single mechanism (metric closure MST) + multi-knob enhancement (perturbed restarts + relay reassignment + degree-3 hub insertion). Tier 1 established the base mechanism in iter-1; tier 2 adds ablation of the enhancement components."
+
+arms:
+  - type: h-main
+    prediction: "The enhanced metric closure MST algorithm (with perturbed restarts, relay reassignment, and degree-3 hub insertion) will achieve a higher judge score than the iter-1 baseline of 86.951. The improvement should be at least +0.1 points, driven primarily by perturbed MC MST restarts on tests 3 and 8 (which have the largest cost gaps). Probe measurement: 87.162."
+    mechanism: "Three independent improvement mechanisms stack on top of the iter-1 metric closure MST foundation:
+
+1. **Perturbed restarts** explore alternative MST topologies by adding noise to metric closure weights. Different topologies lead to different relay subsets and tree structures, some of which yield lower actual cost after the full pipeline (subgraph MST + prune + greedy insert). The MST problem has many near-optimal solutions with similar total weight but different edge sets; perturbation discovers these.
+
+2. **Relay reassignment** post-processes the tree to replace each used relay with a potentially better unused relay that serves the same neighbors. This captures cases where the greedy insertion step chose a relay that is locally optimal for one edge but suboptimal given the final tree structure after all insertions.
+
+3. **Degree-3 hub insertion** finds unused relays that can serve as hubs connecting 3 robots simultaneously. The savings formula (pm_max + pm_min - hub_cost, where pm values are pairwise path-max bottleneck costs on the tree) correctly accounts for the 2 tree edges removed and 3 new relay-robot edges added. This captures a strictly different opportunity than degree-2 greedy insertion: connecting 3 robots through a single hub instead of splitting a single edge."
+    diagnostic: "If the score improvement is less than expected: (1) check that perturbed restarts actually produce different MSTs by comparing tree edge sets across trials; (2) verify the degree-3 hub insertion correctly implements the Steiner subtree formula by checking that the 2 removed edges match the predicted bottleneck edges; (3) check if timing constraints limit the number of perturbation trials on the judge server (compared to local)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the iter-1 metric closure MST implementation with the enhanced version that adds: (1) a time-limited loop of perturbed MC MST restarts using Kruskal's with noise ε ∈ [0.002, 0.102], keeping the best solution across all trials; (2) relay reassignment after greedy insertion that checks each used relay against all unused alternatives; (3) degree-3 hub insertion using BFS tree structure, LCA path-max bottleneck computation, and the Steiner subtree savings formula; (4) unlimited greedy insertion rounds (instead of 3)."
+        rationale: "These three enhancements target the remaining cost gap on tests 3, 5, 8, and 10. Perturbed restarts help most on tests 3 and 8 (which have the largest gaps). Relay reassignment and degree-3 hub insertion help on all non-perfect tests. The changes are additive and don't interfere with the metric closure MST foundation (RP-1)."
+
+  - type: h-ablation
+    prediction: "The metric closure MST with ONLY perturbed restarts (no relay reassignment, no degree-3 hub insertion) will achieve a score higher than iter-1 baseline (86.951) but lower than h-main. This isolates the contribution of the perturbation mechanism, which probe measurements suggest is the largest single contributor."
+    mechanism: "Perturbed restarts alone explore alternative MST topologies without the additional post-processing steps. By comparing h-main (all three improvements) with h-ablation (restarts only), we can quantify the marginal contribution of relay reassignment + degree-3 hub insertion. Probe evidence: restarts alone yielded ~87.07 while all three combined yielded ~87.16, suggesting the post-processing adds ~0.09 points."
+    diagnostic: "If h-ablation equals h-main: the relay reassignment and degree-3 hub insertion are not contributing beyond what perturbation already discovers. This would mean the restarts are sufficient alone. If h-ablation is lower than iter-1: the perturbation noise range or trial count may be suboptimal."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement the metric closure MST with perturbed restarts loop (same as h-main) but without relay reassignment and without degree-3 hub insertion. Keep the unlimited greedy insertion rounds."
+        rationale: "Ablates the two post-processing steps to isolate the contribution of perturbed restarts alone."
+
+# Arms rationale: Two arms test whether the combined enhancements (h-main) improve
+# beyond the iter-1 baseline, and whether the post-processing steps (relay reassignment,
+# degree-3 hub insertion) provide additional value beyond perturbed restarts alone
+# (h-ablation). This is a tier-2 design: single mechanism + multi-knob with ablation.
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -o sol solution.cpp"
+  verified_parameters:
+    compiler_flags: "-O2"
+    language_standard: "C++17"
+    perturbation_epsilon_range: "0.002 to 0.102"
+    time_limit_per_test: 10
+    perturbation_time_budget: 9.0
+    perturbation_seed: 54321
+    hub_search_top_k: 8
+    hub_search_rounds: 5
+    reassignment_rounds: 20
+    greedy_insertion_rounds: 100
+  unlocked_parameters_audit:
+    - name: "perturbation_rng"
+      default_value: "LCG with seed 54321"
+      justification: "Deterministic LCG sufficient for perturbation diversity; quality of randomness not critical since we're only adding noise to near-equal weights."
+    - name: "hub_search_top_k"
+      default_value: 8
+      justification: "Top 8 nearest robots per relay candidate limits triplet search to C(8,3)=56 per relay. Probe testing showed diminishing returns beyond 6; 8 provides margin."
+    - name: "subgraph_mst_method"
+      default_value: "Prim's O(Sn^2)"
+      justification: "Prim's is optimal for the dense subgraph (Sn ~1500-2000 nodes); faster than Kruskal's O(E log E) for this edge density."

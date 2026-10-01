@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether three targeted improvements\u2014multi-start nearest-neighbor construction, 2-opt cycling detection, and or-opt local search\u2014can push the judge score above the current 76.3/100 baseline established in iteration 2. The main bottleneck is 6 out of 20 test cases that score poorly, particularly TC4 (N=1000) and TC6 (N=15000) where the algorithm either gets stuck in a suboptimal local minimum or wastes time in infinite 2-opt cycling loops.",
+  "key_points": [
+    "Two arms will run: (1) h-main implements multi-start NN + cycling detection + or-opt on top of the iter-2 2-opt engine; (2) h-control-negative re-runs the exact iter-2 solution to confirm the 76.3 baseline is stable (expected \u00b10.5 variance).",
+    "Success criterion: h-main scores above 77.0 (improvement on at least some of the 6 failing test cases) while maintaining 100% on the 14 already-perfect cases. A score below 76.0 would indicate the new code introduced regressions.",
+    "Key diagnostic: if h-main \u2248 h-control-negative, then multi-start/or-opt/cycling-fix provide no benefit and the next iteration should explore fundamentally different approaches (e.g., LKH-style moves, simulated annealing, or better handling of the carrot constraint). If h-control-negative deviates from 76.3 by >1.0, the judge environment may have changed.",
+    "Timing is critical: each test case has a 2-second limit across 20 cases. Multi-start is gated by N (\u22645000 allows 100+ starts; larger N gets fewer starts or single-start), and cycling detection saves ~1.5s on TC6 by breaking out of non-improving 2-opt passes.",
+    "The or-opt neighborhood (relocating 1\u20133 consecutive cities) is structurally different from 2-opt (edge swaps), so it can escape local optima that 2-opt cannot\u2014this is the primary mechanism expected to improve the stubborn test cases."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

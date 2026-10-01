@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed in iteration 3. The DP-based solution scores 100 (4/5 runs), while replacing tree DP matching with greedy matching degrades to 99.37 (4/5 runs) \u2014 exactly as predicted (~99.4). This completes a three-iteration ablation identifying all four critical algorithm components.",
+  "key_points": [
+    "h-main (greedy matching ablation): Predicted ~99.4, observed 99.37 consistently (4/5 runs). The 0.63-point loss is entirely from test 20 (bushy tree, max_degree ~124) where greedy uses 3.88n rounds vs DP's 2.02n, exceeding the 3n scoring threshold.",
+    "h-robustness (DP solution stability): Scored 100 on 4/5 runs across iter-3, consistent with iter-1 (4/5 at 100) and iter-2 (3/3 at 100) \u2014 total 11/13 runs at 100 across all iterations. The only score drops (90 or 95) come from system-load-induced TLEs, not algorithmic issues.",
+    "Three-iteration ablation complete: (1) Anti-oscillation via depth-parity is critical (100\u21925 without it, iter-1), (2) Array-based adjacency is critical for performance (100\u219296 without it, iter-2), (3) Tree DP max-weight matching is necessary for optimal round counts (100\u219299.37 without it, iter-3). DFS vs BFS timestamp routing is interchangeable (iter-2).",
+    "The best known solution (DFS + tree DP matching + anti-oscillation + array adjacency) reliably achieves score 100. No further algorithmic improvements appear necessary; the only remaining variance is system load affecting runtime on borderline test cases."
+  ]
+}

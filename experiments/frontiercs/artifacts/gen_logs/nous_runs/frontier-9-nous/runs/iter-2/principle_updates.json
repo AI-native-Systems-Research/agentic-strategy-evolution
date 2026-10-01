@@ -1,0 +1,59 @@
+[
+  {
+    "id": "RP-4",
+    "statement": "DFS-timestamp subtree membership queries are a strict replacement for all-pairs BFS distance comparisons in tree matching sort: they produce identical routing decisions (and identical round counts) while reducing precomputation from O(n\u00b2) to O(n) and eliminating the ~2MB distance matrix. The DFS approach scored 100 on 3/3 runs vs BFS 100 on 4/5 runs (iter-1), suggesting slightly better timing robustness.",
+    "confidence": "high",
+    "regime": "All tree structures tested: random trees (n~303), path graphs (n~493), bushy trees (n~492, max_degree~124). n up to 1000.",
+    "evidence": [
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "On a tree rooted at vertex r, for edge (u,v) where v is u's child, element a at u wants to cross to v iff a's target (vertex a) is in v's subtree. The check D[v][a] == D[u][a] - 1 is equivalent to tin[v] <= tin[a] <= tout[v] where tin/tout are DFS timestamps. This O(1) subtree membership test requires only O(n) DFS precomputation vs O(n\u00b2) all-pairs BFS, and uses O(2n) int storage vs O(n\u00b2) short storage for the distance matrix.",
+    "applicability_bounds": "Applies specifically to tree graphs where distances between any two vertices can be decomposed into subtree membership. Would not apply to general graphs where shortest paths don't follow a single rooted-tree structure.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3-refined",
+    "statement": "Array-based data structures are critical for competitive programming performance through two coupled effects: (1) contiguous-memory children storage eliminates cache misses in the per-round tree DP inner loop, and (2) array types are compatible with #pragma GCC target(\"avx2\") which vector types are not (compilation error in GCC 13). Without array adjacency, DFS+vector scored mean 96.03 (94.37, 94.37, 99.37) vs DFS+array at 100 (3/3). The degradation is larger than the 0.63% expected from cache effects alone because the avx2 incompatibility compounds the penalty.",
+    "confidence": "high",
+    "regime": "Competitive programming problems with 1-second time limits, n <= 1000, ~2000 rounds \u00d7 n nodes per test case. GCC 13+ where avx2 pragma + vector allocator triggers always_inline target mismatch.",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation",
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The tree DP iterates over children of each node ~2000n times total. With ch_arr[u][ci], children are contiguous; with vector<int>, each ch[u] is heap-allocated and non-contiguous. Additionally, #pragma GCC target(\"avx2\") enables AVX2 SIMD instructions which benefit the inner loops, but std::vector's allocator destructor fails to inline when the avx2 target is set (GCC 13 error: always_inline target mismatch). The array version gets both cache efficiency AND avx2 vectorization; the vector version gets neither.",
+    "applicability_bounds": "Specific to tight time limits where constant-factor and compiler optimizations matter. The avx2 incompatibility is compiler-version-dependent and may change in future GCC versions.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "Depth-parity edge coloring is the optimal 2-coloring scheme for anti-oscillation in tree matching sort: alternative coloring schemes (edge-index modulo 2) cause catastrophic convergence failure on bushy trees (6.0n rounds = hitting limit vs 2.0n with depth-parity).",
+    "confidence": "high",
+    "regime": "Trees with high-degree vertices (max_degree > 100, diameter ~6). Tested on n~492 bushy trees.",
+    "evidence": [
+      "iteration-2-exploration-edge-index-coloring",
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Depth-parity coloring assigns each edge color = depth(child) % 2, which is the unique proper 2-coloring of the tree's edge set when viewed as a bipartite graph. This ensures adjacent parent-child edges always have different colors, creating a coherent wave pattern. Edge-index coloring (idx%2) breaks this coherence \u2014 adjacent edges may share a color, creating dead rounds where a path has no active edges.",
+    "applicability_bounds": "Applies to any tree structure. For path graphs, the difference is negligible. For bushy trees with high-degree vertices, depth-parity is strictly required.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

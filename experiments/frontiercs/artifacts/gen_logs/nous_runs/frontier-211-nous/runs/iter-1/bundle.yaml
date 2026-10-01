@@ -1,0 +1,45 @@
+metadata:
+  iteration: 1
+  family: "steiner-tree-relay-optimization"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #211?"
+  complexity_tier: 1
+  tier_justification: "Iter 1, single mechanism (metric closure MST vs baseline MST), treatment vs control."
+
+arms:
+  - type: h-main
+    prediction: "The metric closure MST approach will achieve a higher judge score than the full MST + prune approach, because it first optimizes the robot connectivity structure using relay-augmented shortest paths, then resolves relay sharing via subgraph MST. Expected score > 80."
+    mechanism: "The metric closure precomputes, for each robot pair, the cheapest connection (direct or via the best single relay). Since C-C edges are forbidden, the shortest relay-mediated path is always exactly 2 hops (robot-relay-robot), so the metric closure is exact. Building MST on the metric closure finds the optimal robot spanning tree structure, then reconstruction + subgraph MST handles relay sharing. This avoids the suboptimality of the full MST approach, which wastes capacity connecting relays to the tree before pruning."
+    diagnostic: "If the score is lower than expected: (1) check if the metric closure computation is correct by comparing a few pairs' best relay with brute-force; (2) check if the subgraph MST reconstruction creates C-C edges; (3) profile timing to ensure no TLE on large test cases."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement the metric closure MST algorithm: precompute robot-to-relay squared distances, compute metric closure (best direct or single-relay cost for each robot pair), build MST of robots on metric closure weights, reconstruct actual edges via relays, build subgraph MST, prune relay leaves, and greedy-insert unused relays into remaining robot-robot edges."
+        rationale: "This is the primary algorithmic strategy that exploits the problem structure (fixed Steiner points with C-C forbidden constraint) to achieve near-optimal relay utilization."
+
+  - type: h-ablation
+    prediction: "The full MST + prune approach (without metric closure) will achieve a lower score than h-main, demonstrating that the metric closure step is essential for good performance."
+    mechanism: "The full MST connects all nodes (robots + relays), then prunes relay leaves. This is a standard Steiner tree heuristic, but it optimizes for connecting ALL nodes (including relays) rather than just robots. After pruning, the remaining tree structure may be suboptimal for robot connectivity because the MST wasted capacity on relay connections."
+    diagnostic: "If h-ablation outperforms h-main: the metric closure overhead or reconstruction step may be introducing errors. Check that the subgraph MST in h-main correctly handles relay sharing."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement the full MST + prune algorithm: build all valid edges (excluding C-C), run Kruskal's MST on all N+K nodes, prune relay leaf nodes iteratively, remove unprofitable degree-2 relays (when both neighbors are non-relay and direct cost is cheaper), then greedy-insert unused relays into robot-robot edges."
+        rationale: "This simpler approach serves as the ablation baseline to quantify the value of the metric closure step."
+
+# Arms rationale: Two arms (h-main + h-ablation) test whether the metric closure
+# step is the key mechanism for achieving high scores. The h-main arm uses the full
+# metric closure MST approach; h-ablation removes the metric closure and uses the
+# simpler full MST + prune heuristic. This cleanly isolates the contribution of the
+# metric closure to solution quality.
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -o sol solution.cpp"
+  verified_parameters:
+    compiler_flags: "-O2"
+    language_standard: "C++17"
+  unlocked_parameters_audit:
+    - name: "relay_insertion_rounds"
+      default_value: 3
+      justification: "3 rounds of greedy relay insertion is sufficient; empirically no improvement seen beyond round 1 on test data."
+    - name: "subgraph_mst_edge_set"
+      default_value: "all valid edges among subgraph nodes"
+      justification: "The subgraph MST considers all pairwise valid edges among subgraph nodes, which is optimal for the subgraph."

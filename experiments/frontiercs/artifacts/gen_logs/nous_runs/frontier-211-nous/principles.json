@@ -1,0 +1,133 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For constrained Steiner tree problems with fixed optional Steiner points and forbidden point-to-point edges (C-C), the metric closure MST approach dramatically outperforms full MST + prune (86.95 vs 62.15). The key insight is separating the connectivity decision from the relay assignment.",
+      "confidence": "high",
+      "regime": "Steiner tree with fixed optional Steiner points, forbidden C-C edges, and squared Euclidean distance. N,K up to 1500.",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-1-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The C-C edge prohibition limits relay-mediated paths to exactly 2 hops (robot-relay-robot). This makes the metric closure exact: for each robot pair, the optimal connection is either direct or via the single best relay. Building MST on metric closure weights finds the optimal robot spanning tree structure, then reconstruction + subgraph MST handles relay sharing. The full MST approach fails because it wastes spanning tree capacity on relay connections, treating relays as structural nodes rather than optional shortcuts.",
+      "applicability_bounds": "Applies when Steiner points are fixed (cannot be repositioned) and direct Steiner-Steiner edges are forbidden. May not apply if Steiner points can connect to each other (allowing relay chains).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Adding more relay candidates to the subgraph (top-K per MST edge) HURTS performance by degrading the subgraph MST tree structure. The metric closure MST's relay selection (best-1 per edge) is near-optimal: only the single best relay per edge should enter the subgraph.",
+      "confidence": "high",
+      "regime": "Same as RP-1. Tested with K=3 relays per MST edge vs K=1.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Adding more relays to the subgraph gives the subgraph MST more options, but the MST optimizes the full graph including relays as structural nodes. With more relay nodes, the MST increasingly resembles the full MST (h-ablation approach), which treats relays as structural nodes rather than shortcuts. Score dropped from 86.95 to 75.99 with top-3 reconstruction.",
+      "applicability_bounds": "Tested for N=K=1500. The effect may differ for very small K where relay sharing is more critical.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "The scoring formula uses linear interpolation between MST cost (zero score) and MST*8/9 (full score). Achieving the 11.1% cost reduction required for full marks demands extensive relay utilization. With K=10 relays for N=100 robots, structural relay scarcity limits the score to ~1.5/10.",
+      "confidence": "high",
+      "regime": "Problem #211 scoring formula, as implemented in chk.cc:313-337.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The checker computes base_cost = robot_MST * 8/9 and zero_cost = robot_MST. Score = (zero_cost - actual) / (zero_cost - base_cost), clamped to [0,1]. Full marks require actual <= base_cost, i.e., the solution must save at least MST/9 = 11.1% compared to the robot-only MST. With K=10 relays for N=100 robots, only ~4 relays can be profitably assigned, providing ~1.6% savings \u2014 far short of the 11.1% threshold.",
+      "applicability_bounds": "Specific to problem #211's scoring formula. The relay scarcity bottleneck is structural when K << N.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "The 0.8 cost discount for S-type robot edges reduces the effectiveness of relay stations. Relay paths cost 1.0*D per hop, so relays must save >20% of edge cost just to match the discounted direct edge. This limits relay utilization when many edges involve S-type robots.",
+      "confidence": "high",
+      "regime": "Problem #211 with mixed R/S type robots. Approximately 50% S-type in the test data.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "For an edge involving at least one S-type robot, the direct cost is 0.8*D (where D is squared distance). A relay path costs 1.0*D_1 + 1.0*D_2 with no discount. Even with a relay at the optimal midpoint position, the relay path saves only 50% of the undiscounted distance but must beat the 0.8-discounted direct cost. This means the relay must save more than 0.8*D - 0.5*D = 0.3*D worth of cost, which is a higher bar than for R-R edges where any positive saving suffices.",
+      "applicability_bounds": "Specific to the cost structure of problem #211. The effect scales with the discount factor: larger discounts make relays less useful.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": false,
+      "derivation_type": "algebraic"
+    },
+    {
+      "id": "RP-5",
+      "statement": "Perturbed MC MST restarts (random noise on metric closure weights + Kruskal rebuild) improve score by ~0.08 points over the unperturbed MC MST baseline. The time-limited loop explores alternative MST topologies that lead to different relay assignments. The improvement is modest because the original MST is already near-optimal for most test cases.",
+      "confidence": "high",
+      "regime": "Problem #211 with N=K=1500. Perturbation epsilon range [0.002, 0.102]. LCG seed 54321. Time budget 9 seconds within 10-second test limit.",
+      "evidence": [
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Adding random noise to MC weights before building Kruskal's MST explores alternative near-optimal tree topologies. Different topologies lead to different relay selections after subgraph MST + prune + greedy insert, some of which yield lower actual cost. The improvement is consistent but small (+0.082 points) because the unperturbed MST topology is already good for most test cases (6/10 tests at or near perfect score).",
+      "applicability_bounds": "Requires sufficient time budget for multiple perturbation trials. Under CPU contention, the time-limited loop may produce too few trials, reducing or eliminating the improvement. The improvement diminishes as the base algorithm approaches optimal.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "Relay reassignment + degree-3 hub insertion provides ~0.13 points of improvement beyond what perturbed restarts alone achieve. These post-processing steps capture opportunities that greedy degree-2 insertion misses: suboptimal relay positions (reassignment) and 3-robot hub connections (degree-3 insertion).",
+      "confidence": "high",
+      "regime": "Problem #211 with N=K=1500. Reassignment rounds: 20. Hub search top-K: 8, rounds: 5.",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "After greedy insertion places relays one-at-a-time (degree-2 splits), two independent post-processing steps capture remaining opportunities: (1) relay reassignment checks if moving a used relay to an unused position better serves its neighbors \u2014 this matters when greedy's sequential decisions left a relay in a position that is locally but not globally optimal; (2) degree-3 hub insertion finds unused relays that can connect 3 robots through a single hub, removing 2 tree edges and adding 3 hub edges \u2014 this captures savings that degree-2 insertion structurally cannot.",
+      "applicability_bounds": "The improvement is from two distinct mechanisms. Hub insertion requires the Steiner subtree savings formula (pm_max + pm_min - hub_cost) to correctly identify valid 3-robot connections. Reassignment requires iterating over all unused relays for each used relay.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "The three enhancement mechanisms (perturbed restarts, relay reassignment, degree-3 hub insertion) are additive: their combined improvement (+0.211) equals the sum of individual contributions (~0.082 from restarts + ~0.129 from post-processing = ~0.211). There are no significant interaction effects between the mechanisms.",
+      "confidence": "high",
+      "regime": "Problem #211 with N=K=1500. Full combined algorithm vs restarts-only ablation.",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "The three mechanisms operate on independent dimensions of the solution space: restarts change the MST topology (which edges are in the tree), reassignment changes which relay serves each edge (relay identity), and hub insertion changes the connectivity pattern (degree-2 vs degree-3). Because they modify orthogonal aspects of the solution, their improvements don't interfere and stack additively.",
+      "applicability_bounds": "Additivity holds when the mechanisms target different suboptimalities. If the solution becomes near-perfect (all tests scoring 10.0), the mechanisms would compete for the same diminishing margin and additivity would break.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

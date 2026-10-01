@@ -1,0 +1,12 @@
+{
+  "arm": "h-main",
+  "algorithm": "NN construction + spatial NN-list 2-opt (K=20) + window 2-opt + or-opt + carrot",
+  "runs": [
+    {"run": 1, "score": 76.319},
+    {"run": 2, "score": 76.319},
+    {"run": 3, "score": 76.319}
+  ],
+  "mean_score": 76.319,
+  "std_score": 0.0,
+  "notes": "Score is perfectly deterministic across 3 runs — NN 2-opt converges before time limit on all test cases"
+}

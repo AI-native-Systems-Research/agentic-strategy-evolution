@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed. The main algorithm (strip-based serpentine construction + 2-opt local search + carrot-aware prime placement) scored 55.45 out of 100, within the predicted 45\u201360 range. The negative control (identity tour matching the checker's baseline) scored exactly 0 as expected, validating the scoring mechanism.",
+  "key_points": [
+    "Main arm scored 55.4535 (predicted 45\u201360), confirming that strip construction + 2-opt + prime-city placement at every-10th step meaningfully beats the x-sorted baseline across all 20 test cases.",
+    "Negative control scored exactly 0, confirming the identity tour equals the checker's baseline \u2014 the scoring differential is real and attributable to the optimization.",
+    "Multiple alternative improvements were explored within this iteration (ILS/double-bridge perturbation, or-opt moves, edge caching, wider 2-opt windows) but none surpassed the 55.45 score, suggesting the current approach is near a local optimum for the ~2.5s time budget.",
+    "Significant room for improvement remains (score is 55/100). Next iteration should investigate fundamentally different strategies: nearest-neighbor or greedy edge-insertion construction, 3-opt or Lin-Kernighan moves, or simulated annealing to escape the 2-opt local optimum basin."
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "Iteration 3 ablates the tree DP max-weight matching component \u2014 the last untested piece of the score-100 algorithm \u2014 by replacing it with a simpler two-pass greedy matching, while also re-verifying the baseline solution in the current judging environment.",
+  "key_points": [
+    "h-main (greedy ablation): Replaces the tree DP matching with a two-pass greedy (type-2 edges first, then type-1), predicting score drops from 100 to ~99.4 because greedy cannot optimally resolve conflicts at high-degree nodes (probe showed 3.88n rounds on bushy trees vs DP's 2.02n).",
+    "h-robustness (baseline re-verification): Re-runs the proven DFS+DP+array solution unchanged, expecting score 100 again (matching 3/3 at 100 from iteration 2), to provide a reliable comparison point.",
+    "Prior iterations established: anti-oscillation is critical (ablation \u2192 score 5), array adjacency matters (ablation \u2192 score 96), all-pairs BFS is equivalent to DFS routing (no change). This iteration completes the component-level ablation series by testing the matching strategy itself.",
+    "Confirmation criteria: If greedy scores <100, the DP matching is a necessary component. If greedy also scores 100, the DP's optimality margin is unnecessary (greedy's ~3.88n rounds still fall under the scoring threshold on all test cases). The diagnostic plan includes checking round counts via stderr if the prediction is wrong.",
+    "Design is clean: two arms, one code change (matching function swap), all other components held constant. The greedy has the same O(n) per-round cost so any score difference isolates matching quality, not runtime."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

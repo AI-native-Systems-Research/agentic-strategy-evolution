@@ -1,0 +1,2 @@
+schema_version: '1'
+build_command: g++ -O2 -o solution solution.cpp

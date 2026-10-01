@@ -1,0 +1,65 @@
+[
+  {
+    "agent": 0,
+    "round": 0,
+    "score": 5,
+    "status": "success",
+    "plan": "Iteratively find beneficial matchings by computing edge swap benefits, greedily selecting maximum-benefit matchings (edges that reduce displacement), repeating until identity is reached, with a cap on iterations."
+  },
+  {
+    "agent": 0,
+    "round": 1,
+    "score": 5,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 0,
+    "round": 2,
+    "score": 5,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 1,
+    "round": 0,
+    "score": 5,
+    "status": "success",
+    "plan": "For each edge (u,v), determine if swapping moves both values closer to their targets (both values cross the edge in the \"right\" direction \u2014 each value's target is on the other side). Find a maximum matching of such happy edges each round, apply swaps, repeat until sorted."
+  },
+  {
+    "agent": 1,
+    "round": 1,
+    "score": 5,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 1,
+    "round": 2,
+    "score": 5,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 2,
+    "round": 0,
+    "score": 5,
+    "status": "success",
+    "plan": "For each round, compute for every edge whether swapping helps route values toward their targets (using tree path analysis), then find a maximum matching prioritizing edges where both values need to cross, repeating until sorted."
+  },
+  {
+    "agent": 2,
+    "round": 1,
+    "score": 5,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 2,
+    "round": 2,
+    "score": 5,
+    "status": "success",
+    "plan": null
+  }
+]

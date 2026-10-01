@@ -14,7 +14,30 @@ variance, so finals are re-evaluated 3×).
   arms → analysis → compounding principles), each arm scored by the judge.
 - Curie — attempted; spike hit a blocker (see the Mac-side notes). Not included yet.
 
-## Headline results (best score achieved per method, with cost)
+## Combined result — 7 tasks (4 seeded + 3 randomly drawn, seed=42)
+
+All three agents, same model/judge. Scores re-evaluated (judge ±5 noise). The 3 "random" tasks
+(211, 44, 9) were drawn with `random.seed(42)` from the 110 valid default-type problems, excluding
+the first 4 — a pre-committed, non-cherry-picked selection.
+
+| Task | Nous | Engram | Claude | note |
+|---|---|---|---|---|
+| p0  | **86**  | 55 | 1.5 | Nous |
+| p1  | **100** | ~90 | 97 | ~tie (ceiling) |
+| p5  | **83**  | 39 | 41 | Nous (2×) |
+| p15 | **100** | 0  | 0  | Nous only cracks the gate |
+| p211| **87**  | 61 | 62 | Nous |
+| p44 | 71      | **78** | 31 | **Engram > Nous** (honest loss) |
+| p9  | **100** | 5  | 5  | Nous (both baselines stuck at 5) |
+
+**Tally: Nous best on 5/7, tie at ceiling on p1, loses p44 to Engram.** Nous never loses to plain
+Claude. Engram beats Nous once (p44) — a problem where sequential-agent memory suffices and Nous's
+extra machinery doesn't pay off. This asymmetric, non-cherry-picked result (random draw, includes a
+Nous loss) is the honest controlled-comparison evidence: **the scientific loop helps most on hard,
+open-ended problems, and isn't universally dominant.** Nous iters capped at 3 here (early-stop);
+Engram cost-matched to Nous's per-task $; Claude run with plateau early-stop.
+
+## Headline results (first 4 tasks; best score achieved per method, with cost)
 
 | Problem | Type | Nous | Engram | Claude |
 |---|---|---|---|---|

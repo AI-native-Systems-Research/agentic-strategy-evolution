@@ -1,0 +1,57 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Anti-oscillation gating is essential for tree matching sort convergence: without it, type-1 swaps create period-2 oscillation that prevents the permutation from being sorted, reducing scores from 100 to 5.",
+    "confidence": "high",
+    "regime": "All tree structures tested: random trees (n~300, diameter~20), path graphs (diameter=n-1), and bushy trees (diameter=6, max_degree~124). n up to 1000.",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-1-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Type-1 swaps move one element closer to its target while displacing another. Without oscillation prevention, the displaced element's routing pressure recreates the same swap opportunity next round, causing infinite oscillation. Depth-parity alternating coloring assigns each parent-child edge a color based on the child's depth modulo 2, ensuring adjacent edges have different colors. Gating type-1 swaps by round parity matching edge color prevents any edge from having consecutive type-1 swaps, breaking the period-2 oscillation cycle. Measured: h-main (with gating) scores 100 vs h-control-negative (without gating) scores 5.",
+    "applicability_bounds": "Applies to any tree structure. The anti-oscillation mechanism is necessary regardless of tree shape.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Tree DP max-weight matching (O(n) per round) combined with next-step routing weights (type-2=2, type-1=1, type-0=0) achieves optimal or near-optimal sorting on trees, scoring 100/100 averaged across 20 diverse test cases when implemented with cache-efficient data structures.",
+    "confidence": "high",
+    "regime": "Trees with n up to 1000, including paths, random trees, and bushy trees. Round budget of 6n. 1-second time limit per test case.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The tree DP (dp0[u] = best without matching u to parent, dp1[u] = best with) computes optimal matching in O(n) by exploiting the tree's acyclic structure. Edge weights encode routing benefit: type-2 (both endpoints advance) gets priority weight 2; type-1 (one advances) gets weight 1 when allowed by anti-oscillation. This maximizes per-round progress toward the sorted permutation.",
+    "applicability_bounds": "The approach is general for any tree. Performance depends on implementation efficiency: the same algorithm scored 89-95 with vector/recursive implementation and 100 with array/iterative implementation.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "Implementation efficiency (cache-friendly data structures, iterative algorithms) is critical for competitive programming scoring: the same tree DP algorithm scored 89-95 with std::vector/recursive DP and 100 with array-based/iterative DP due to timing sensitivity.",
+    "confidence": "high",
+    "regime": "Competitive programming problems with tight time limits (1 second) and large inputs (n=1000, sum n^2 up to 10^6).",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Using short (2 bytes) instead of int (4 bytes) for the O(n^2) distance matrix halves memory footprint (~2MB vs ~4MB), improving cache hit rates during BFS. Array-based adjacency lists avoid pointer indirection overhead of std::vector<pair>. Iterative DP via reversed BFS order eliminates function call overhead. Output buffering (fwrite of accumulated buffer) avoids per-character printf overhead.",
+    "applicability_bounds": "Specific to systems with tight time limits where constant-factor optimizations affect correctness (timeout vs completion). Less relevant for problems with generous time limits.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

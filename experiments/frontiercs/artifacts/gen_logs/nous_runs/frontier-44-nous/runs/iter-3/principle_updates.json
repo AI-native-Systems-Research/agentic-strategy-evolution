@@ -1,0 +1,41 @@
+[
+  {
+    "id": "RP-6",
+    "statement": "Multi-start NN construction, or-opt (single-city relocation), and 2-opt cycling detection are all individually neutral for this problem at the 2-opt-converged tour quality level. Multi-start finds equivalent-quality local optima (different starts converge to same tour cost). Or-opt finds no improving moves after 2-opt convergence. Cycling detection saves time on grid test cases but does not improve tour quality. The combination has no synergy \u2014 all three are neutral, producing sum-of-zero improvement.",
+    "confidence": "high",
+    "regime": "NN construction + NN-list 2-opt (K=20) on Frontier-CS problem 44 test cases (N=10 to 200000)",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "Multi-start NN explores different starting cities but all 2-opt-converged tours reach the same local optimum quality (within \u00b10.3% per test case). Or-opt's single-city relocation neighborhood is subsumed by 2-opt \u2014 any or-opt-improving move would also be detected by 2-opt (removing a city and reinserting it is equivalent to two 2-opt moves). Cycling detection correctly identifies 2-opt cycles on grid data (exact same number of improvements per pass) and breaks them, saving ~1500ms on TC6 (N=15000 grid 2501\u00d76), but the freed time is insufficient for meaningful additional optimization.",
+    "applicability_bounds": "Applies to NN+2-opt framework with K=20 NN-list. Does NOT apply to fundamentally different neighborhoods (3-opt, LK moves, which can escape 2-opt local optima). Does NOT apply to different construction heuristics that might produce tours with different 2-opt basins.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-7",
+    "statement": "The 2-opt local optimum is a hard ceiling for score improvement on this problem. Multi-start, ILS (double-bridge perturbation), or-opt, and cycling detection all converge to the same ~76.3 score. Breaking through requires 3-opt, Lin-Kernighan moves, or problem-specific construction heuristics that exploit data structure (e.g., correlated coordinates in TC4/TC7).",
+    "confidence": "high",
+    "regime": "Frontier-CS problem 44, NN+2-opt framework, K=20",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-3-h-main",
+      "iteration-3-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "The 2-opt-optimal tour has uniform basin quality across different constructions (NN from city 0, NN from random cities, strip construction + 2-opt). Or-opt and ILS cannot escape these basins because their perturbation magnitudes are insufficient \u2014 or-opt relocates single cities (too fine-grained), and ILS double-bridge produces tours that 2-opt reconverges to the same quality. Only moves that simultaneously change 3+ edges (3-opt, LK) can escape 2-opt-local-optimal basins.",
+    "applicability_bounds": "Specific to Frontier-CS problem 44 data distributions. Different TSP instances with different spatial structure might have different 2-opt basin characteristics.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

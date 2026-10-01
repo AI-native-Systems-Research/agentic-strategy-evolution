@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a metric closure MST approach (precomputing best direct-or-relay cost for each robot pair, then building MST on robots only) outperforms a simpler full MST + prune heuristic for the Steiner tree relay optimization problem #211. The metric closure exploits the constraint that relay stations cannot connect to each other, making single-relay mediation the only option and the closure exact.",
+  "key_points": [
+    "Arm h-main (metric closure MST): For each robot pair, precompute the cheapest connection \u2014 either direct (with S-discount) or via the single best relay station. Build MST on this N\u00d7N metric closure, reconstruct actual edges (inserting relays), then run subgraph MST to handle shared relays, prune unnecessary relay leaves, and greedy-insert remaining relays into robot-robot edges. Predicted score: >80.",
+    "Arm h-ablation (full MST + prune): Build all valid edges (excluding C-C), run Kruskal's MST over all N+K nodes, iteratively prune relay leaves that don't help connectivity, remove unprofitable degree-2 relays, and greedy-insert unused relays. This isolates whether the metric closure step is the key mechanism. Predicted score: lower than h-main.",
+    "Confirmation criteria: h-main scoring significantly higher than h-ablation confirms that the metric closure precomputation is the essential mechanism. If h-ablation matches or beats h-main, the reconstruction/subgraph-MST step in h-main may be introducing errors (e.g., C-C edges, incorrect relay sharing) and needs debugging.",
+    "Risk factors to monitor: (1) O(N\u00b2\u00b7K) metric closure computation may TLE for N=K=1500 (~3.4B ops) \u2014 need to verify timing; (2) subgraph MST reconstruction must avoid creating forbidden C-C edges; (3) the greedy relay insertion post-processing should be checked for correctness on edge cases.",
+    "Scoring model: The judge computes min(1.0, base_MST_cost / your_cost), so any network cheaper than the robot-only MST baseline gets full marks. Both arms aim to beat the baseline by leveraging relays and S-node discounts."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

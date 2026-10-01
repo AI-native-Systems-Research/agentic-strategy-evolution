@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 3 tested multi-start nearest-neighbor construction, 2-opt cycling detection, and or-opt (single-city relocation) as combined improvements over the iter-2 baseline. The main hypothesis was REFUTED: the score remained flat at ~76.3, identical to the control baseline of 76.29. The 2-opt local optimum appears to be a hard ceiling that these neighborhood extensions cannot break through.",
+  "key_points": [
+    "h-main REFUTED: Score of 76.31 vs predicted improvement over 76.3 baseline \u2014 the three combined techniques (multi-start NN, cycling detection, or-opt) produced negligible change (+0.02 points, within measurement noise).",
+    "h-control-negative CONFIRMED: Baseline stable at 76.288 across deterministic runs, with 5-point drops only under system load causing TLE on large test cases.",
+    "Per-test-case breakdown: multi-start NN helped TC4 (N=1000) by +0.33%, but or-opt found zero improving moves after 2-opt convergence, and cycling detection only saved time without improving tour quality.",
+    "Root cause diagnosis: 2-opt converges to a local optimum that cannot be escaped by single-city relocation (or-opt) or different starting tours. Fundamentally stronger move types \u2014 3-opt, Lin-Kernighan moves, or problem-specific construction exploiting the sorted-x-coordinate structure \u2014 are needed to break the ceiling.",
+    "System load is a recurring risk factor: the algorithm's time-sensitive 2-opt phase on large N cases means even modest load fluctuations can cause TLE and ~5-point score drops. Future iterations should consider time budgeting or early termination safety margins."
+  ]
+}
