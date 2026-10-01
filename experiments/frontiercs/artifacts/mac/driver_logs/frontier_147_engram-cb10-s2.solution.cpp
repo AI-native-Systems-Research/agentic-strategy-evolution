@@ -6,118 +6,192 @@ int x_[200], y_[200];
 long long r_[200];
 int a_[200], b_[200], c_[200], d_[200];
 
-void solve_rec(vector<int>& ids, int ax, int ay, int cx, int cy, int depth) {
-    if (ids.empty()) return;
+// KD-tree initialization
+void initPartition(vector<int>& ids, int ax, int ay, int cx, int cy, bool horiz) {
     if (ids.size() == 1) {
         int i = ids[0];
         a_[i] = ax; b_[i] = ay; c_[i] = cx; d_[i] = cy;
         return;
     }
-    
-    bool horiz = (cx - ax) >= (cy - ay);
-    
-    if (horiz) sort(ids.begin(), ids.end(), [](int a, int b){ return x_[a] < x_[b] || (x_[a]==x_[b] && y_[a]<y_[b]); });
-    else sort(ids.begin(), ids.end(), [](int a, int b){ return y_[a] < y_[b] || (y_[a]==y_[b] && x_[a]<x_[b]); });
+    if (ids.empty()) return;
     
     long long totalR = 0;
     for (int i : ids) totalR += r_[i];
     
+    // Sort by coordinate
+    if (horiz) {
+        sort(ids.begin(), ids.end(), [](int a, int b){ return x_[a] < x_[b]; });
+    } else {
+        sort(ids.begin(), ids.end(), [](int a, int b){ return y_[a] < y_[b]; });
+    }
+    
+    // Find best split: try each split point, ensure all points are on correct side
     int bestSplit = -1;
     double bestCost = 1e18;
-    long long sumR = 0;
+    long long cumR = 0;
     
-    for (int k = 1; k < (int)ids.size(); k++) {
-        sumR += r_[ids[k-1]];
-        double frac = (double)sumR / totalR;
+    for (int k = 0; k < (int)ids.size() - 1; k++) {
+        cumR += r_[ids[k]];
+        double frac = (double)cumR / totalR;
         
-        int prevCoord = horiz ? x_[ids[k-1]] : y_[ids[k-1]];
-        int nextCoord = horiz ? x_[ids[k]] : y_[ids[k]];
+        int splitPos;
+        if (horiz) {
+            splitPos = ax + (int)round(frac * (cx - ax));
+            // Must be > x of ids[k] and <= x of ids[k+1]
+            splitPos = max(splitPos, x_[ids[k]] + 1);
+            splitPos = min(splitPos, x_[ids[k+1]] + 1);
+            if (splitPos <= ax || splitPos >= cx) continue;
+        } else {
+            splitPos = ay + (int)round(frac * (cy - ay));
+            splitPos = max(splitPos, y_[ids[k]] + 1);
+            splitPos = min(splitPos, y_[ids[k+1]] + 1);
+            if (splitPos <= ay || splitPos >= cy) continue;
+        }
         
-        if (prevCoord == nextCoord) continue;
+        double actualFrac;
+        if (horiz) actualFrac = (double)(splitPos - ax) / (cx - ax);
+        else actualFrac = (double)(splitPos - ay) / (cy - ay);
         
-        int range = horiz ? (cx - ax) : (cy - ay);
-        int base = horiz ? ax : ay;
-        int ideal = base + (int)round(frac * range);
-        int lo = prevCoord + 1;
-        int hi = nextCoord;
-        lo = max(lo, base + 1);
-        hi = min(hi, base + range - 1);
-        if (lo > hi) continue;
-        
-        int sp = max(lo, min(hi, ideal));
-        double actualFrac = (double)(sp - base) / range;
-        double cost = (actualFrac - frac)*(actualFrac - frac);
-        if (cost < bestCost) { bestCost = cost; bestSplit = k; }
+        double cost = abs(actualFrac - frac);
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestSplit = k;
+        }
     }
     
     if (bestSplit < 0) {
-        bestSplit = ids.size() / 2;
+        // Fallback: split in half by count
+        bestSplit = (int)ids.size() / 2 - 1;
+        if (bestSplit < 0) bestSplit = 0;
     }
     
-    vector<int> left(ids.begin(), ids.begin()+bestSplit);
-    vector<int> right(ids.begin()+bestSplit, ids.end());
+    vector<int> left(ids.begin(), ids.begin() + bestSplit + 1);
+    vector<int> right(ids.begin() + bestSplit + 1, ids.end());
     
     long long leftR = 0;
     for (int i : left) leftR += r_[i];
     double frac = (double)leftR / totalR;
     
     if (horiz) {
-        int range = cx - ax;
-        int sp = ax + max(1, min(range-1, (int)round(frac * range)));
-        int lo = ax + 1, hi = cx - 1;
-        for (int i : left) lo = max(lo, x_[i]+1);
-        for (int i : right) hi = min(hi, x_[i]);
-        sp = max(sp, lo); sp = min(sp, hi);
-        if (sp < lo) sp = lo;
-        if (sp > hi) sp = hi;
-        solve_rec(left, ax, ay, sp, cy, depth+1);
-        solve_rec(right, sp, ay, cx, cy, depth+1);
+        int splitPos = ax + max(1, min((int)(cx - ax) - 1, (int)round(frac * (cx - ax))));
+        // Ensure points are on correct side
+        int minRight = 10001, maxLeft = -1;
+        for (int i : left) maxLeft = max(maxLeft, x_[i]);
+        for (int i : right) minRight = min(minRight, x_[i]);
+        splitPos = max(splitPos, maxLeft + 1);
+        splitPos = min(splitPos, minRight + 1);
+        splitPos = max(splitPos, ax + 1);
+        splitPos = min(splitPos, cx - 1);
+        
+        initPartition(left, ax, ay, splitPos, cy, !horiz);
+        initPartition(right, splitPos, ay, cx, cy, !horiz);
     } else {
-        int range = cy - ay;
-        int sp = ay + max(1, min(range-1, (int)round(frac * range)));
-        int lo = ay + 1, hi = cy - 1;
-        for (int i : left) lo = max(lo, y_[i]+1);
-        for (int i : right) hi = min(hi, y_[i]);
-        sp = max(sp, lo); sp = min(sp, hi);
-        if (sp < lo) sp = lo;
-        if (sp > hi) sp = hi;
-        solve_rec(left, ax, ay, cx, sp, depth+1);
-        solve_rec(right, ax, sp, cx, cy, depth+1);
+        int splitPos = ay + max(1, min((int)(cy - ay) - 1, (int)round(frac * (cy - ay))));
+        int minRight = 10001, maxLeft = -1;
+        for (int i : left) maxLeft = max(maxLeft, y_[i]);
+        for (int i : right) minRight = min(minRight, y_[i]);
+        splitPos = max(splitPos, maxLeft + 1);
+        splitPos = min(splitPos, minRight + 1);
+        splitPos = max(splitPos, ay + 1);
+        splitPos = min(splitPos, cy - 1);
+        
+        initPartition(left, ax, ay, cx, splitPos, !horiz);
+        initPartition(right, ax, splitPos, cx, cy, !horiz);
     }
 }
 
 int main(){
     ios_base::sync_with_stdio(false);
     cin.tie(NULL);
+    
     cin >> n;
-    for(int i=0;i<n;i++) cin >> x_[i] >> y_[i] >> r_[i];
+    for(int i = 0; i < n; i++){
+        cin >> x_[i] >> y_[i] >> r_[i];
+    }
+    
+    // Initialize with KD-tree partition
     vector<int> ids(n);
-    iota(ids.begin(),ids.end(),0);
-    solve_rec(ids,0,0,10000,10000,0);
-    for(int i=0;i<n;i++){
-        if(a_[i]>=c_[i]||b_[i]>=d_[i]||x_[i]<a_[i]||x_[i]>=c_[i]||y_[i]<b_[i]||y_[i]>=d_[i])
-            {a_[i]=x_[i];b_[i]=y_[i];c_[i]=x_[i]+1;d_[i]=y_[i]+1;}
+    iota(ids.begin(), ids.end(), 0);
+    initPartition(ids, 0, 0, 10000, 10000, true);
+    
+    // Validate initialization - fallback to 1x1 if needed
+    for(int i = 0; i < n; i++){
+        if(a_[i] >= c_[i] || b_[i] >= d_[i] || 
+           x_[i] < a_[i] || x_[i] >= c_[i] || y_[i] < b_[i] || y_[i] >= d_[i]){
+            a_[i] = x_[i]; b_[i] = y_[i]; c_[i] = x_[i]+1; d_[i] = y_[i]+1;
+        }
     }
-    auto ov=[&](int i,int j)->bool{return a_[i]<c_[j]&&c_[i]>a_[j]&&b_[i]<d_[j]&&d_[i]>b_[j];};
-    auto sc=[&](int i)->double{long long s=(long long)(c_[i]-a_[i])*(d_[i]-b_[i]);if(s<=0)return 0.0;double mn=min((double)r_[i],(double)s),mx=max((double)r_[i],(double)s);double ra=1.0-mn/mx;return 1.0-ra*ra;};
+    
+    auto overlaps = [&](int i, int j) -> bool {
+        return a_[i] < c_[j] && c_[i] > a_[j] && b_[i] < d_[j] && d_[i] > b_[j];
+    };
+    
+    // Fix any overlaps by shrinking to 1x1
+    for(int i = 0; i < n; i++){
+        for(int j = i+1; j < n; j++){
+            if(overlaps(i,j)){
+                a_[j] = x_[j]; b_[j] = y_[j]; c_[j] = x_[j]+1; d_[j] = y_[j]+1;
+            }
+        }
+    }
+    
+    auto score_i = [&](int i) -> double {
+        long long si = (long long)(c_[i]-a_[i])*(d_[i]-b_[i]);
+        if(si <= 0) return 0;
+        if(x_[i] < a_[i] || x_[i] >= c_[i] || y_[i] < b_[i] || y_[i] >= d_[i]) return 0;
+        double mn = min((double)r_[i], (double)si);
+        double mx = max((double)r_[i], (double)si);
+        double ratio = 1.0 - mn/mx;
+        return 1.0 - ratio*ratio;
+    };
+    
     mt19937 rng(42);
-    auto t0=chrono::steady_clock::now();
-    for(int it=0;;it++){
-        if((it&4095)==0){double el=chrono::duration<double>(chrono::steady_clock::now()-t0).count();if(el>4.5)break;}
-        double el=chrono::duration<double>(chrono::steady_clock::now()-t0).count();
-        double T=5.0*pow(0.0001/5.0,el/4.5);
-        int i=rng()%n;
-        int dir=rng()%4;
-        double os=sc(i);
-        int oa=a_[i],ob=b_[i],oc=c_[i],od=d_[i];
-        int mag=1+rng()%max(1,(int)(T*10+1));
-        int delta=((rng()&1)?1:-1)*mag;
-        if(dir==0)a_[i]+=delta;else if(dir==1)b_[i]+=delta;else if(dir==2)c_[i]+=delta;else d_[i]+=delta;
-        bool ok=a_[i]>=0&&b_[i]>=0&&c_[i]<=10000&&d_[i]<=10000&&a_[i]<c_[i]&&b_[i]<d_[i]&&x_[i]>=a_[i]&&x_[i]<c_[i]&&y_[i]>=b_[i]&&y_[i]<d_[i];
-        if(ok)for(int j=0;j<n;j++)if(j!=i&&ov(i,j)){ok=false;break;}
-        if(!ok){a_[i]=oa;b_[i]=ob;c_[i]=oc;d_[i]=od;continue;}
-        double ns=sc(i),diff=ns-os;
-        if(diff<0&&(double)(rng()%10000)/10000.0>=exp(diff/max(T,1e-9))){a_[i]=oa;b_[i]=ob;c_[i]=oc;d_[i]=od;}
+    auto startTime = chrono::steady_clock::now();
+    double timeLimit = 4.7;
+    
+    double T = 0.05;
+    double Tend = 0.0001;
+    
+    for(int iter = 0; ; iter++){
+        if((iter & 511) == 0){
+            double elapsed = chrono::duration<double>(chrono::steady_clock::now()-startTime).count();
+            if(elapsed > timeLimit) break;
+            double frac = elapsed / timeLimit;
+            T = 0.05 * pow(Tend/0.05, frac);
+        }
+        
+        int i = rng() % n;
+        int dir = rng() % 4;
+        double oldS = score_i(i);
+        
+        int oa=a_[i], ob=b_[i], oc=c_[i], od=d_[i];
+        
+        int mag = 1 + rng()%100;
+        int delta = (rng()&1) ? mag : -mag;
+        
+        if(dir==0) a_[i]+=delta; else if(dir==1) b_[i]+=delta;
+        else if(dir==2) c_[i]+=delta; else d_[i]+=delta;
+        
+        bool ok = a_[i]>=0 && b_[i]>=0 && c_[i]<=10000 && d_[i]<=10000 &&
+                  a_[i]<c_[i] && b_[i]<d_[i] &&
+                  x_[i]>=a_[i] && x_[i]<c_[i] && y_[i]>=b_[i] && y_[i]<d_[i];
+        
+        if(ok){
+            for(int j=0;j<n&&ok;j++) if(j!=i) ok=!overlaps(i,j);
+        }
+        
+        if(ok){
+            double newS = score_i(i);
+            double diff = newS - oldS;
+            if(diff >= 0 || (double)(rng()%10000)/10000.0 < exp(diff/T)){
+                // accept
+            } else {
+                a_[i]=oa;b_[i]=ob;c_[i]=oc;d_[i]=od;
+            }
+        } else {
+            a_[i]=oa;b_[i]=ob;c_[i]=oc;d_[i]=od;
+        }
     }
+    
     for(int i=0;i<n;i++) printf("%d %d %d %d\n",a_[i],b_[i],c_[i],d_[i]);
 }

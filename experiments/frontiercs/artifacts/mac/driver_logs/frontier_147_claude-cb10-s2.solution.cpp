@@ -15,18 +15,45 @@ int main(){
         if(!(a[i]<=X[i]&&c[i]>X[i]&&b[i]<=Y[i]&&d[i]>Y[i]))return 0.0;
         long long s=area(i);double rat=(double)min(R[i],s)/(double)max(R[i],s);double t=1.0-rat;return 1.0-t*t;
     };
-    const int GS=50,GN=(10000+GS-1)/GS;
-    vector<vector<int>>grid(GN*GN);
-    auto gx1=[](int v){return v/GS;};
-    auto gx2=[](int v){return min(GN-1,(v-1)/GS);};
-    auto addG=[&](int i){int x1=gx1(a[i]),x2=gx2(c[i]),y1=gx1(b[i]),y2=gx2(d[i]);for(int gy=y1;gy<=y2;gy++)for(int gx=x1;gx<=x2;gx++)grid[gy*GN+gx].push_back(i);};
-    auto remG=[&](int i){int x1=gx1(a[i]),x2=gx2(c[i]),y1=gx1(b[i]),y2=gx2(d[i]);for(int gy=y1;gy<=y2;gy++)for(int gx=x1;gx<=x2;gx++){auto&v=grid[gy*GN+gx];for(int k=(int)v.size()-1;k>=0;k--)if(v[k]==i){v[k]=v.back();v.pop_back();break;}}};
-    auto overlaps=[&](int i)->bool{int x1=gx1(a[i]),x2=gx2(c[i]),y1=gx1(b[i]),y2=gx2(d[i]);for(int gy=y1;gy<=y2;gy++)for(int gx=x1;gx<=x2;gx++)for(int j:grid[gy*GN+gx])if(j!=i&&a[i]<c[j]&&c[i]>a[j]&&b[i]<d[j]&&d[i]>b[j])return true;return false;};
     auto valid=[&](int i)->bool{return a[i]>=0&&b[i]>=0&&c[i]<=10000&&d[i]<=10000&&a[i]<c[i]&&b[i]<d[i]&&a[i]<=X[i]&&c[i]>X[i]&&b[i]<=Y[i]&&d[i]>Y[i];};
-    for(int i=0;i<n;i++)addG(i);
+    // Use interval tree or just brute force for n<=200
+    auto overlapsAny=[&](int i)->bool{
+        for(int j=0;j<n;j++)if(j!=i&&a[i]<c[j]&&c[i]>a[j]&&b[i]<d[j]&&d[i]>b[j])return true;return false;
+    };
+    // Sort by area descending for greedy
+    vector<int>order(n);iota(order.begin(),order.end(),0);
     // Greedy expansion
-    for(int pass=0;pass<200&&elapsed()<1.0;pass++){for(int i=0;i<n;i++){remG(i);for(int s=0;s<4;s++){int oa=a[i],ob=b[i],oc=c[i],od=d[i];long long ca=area(i);if(ca>=R[i])continue;int w=c[i]-a[i],h=d[i]-b[i];int td=max(1,(int)((R[i]-ca)/(s<2?h:w)));if(s==0)a[i]=max(0,a[i]-td);else if(s==1)b[i]=max(0,b[i]-td);else if(s==2)c[i]=min(10000,c[i]+td);else d[i]=min(10000,d[i]+td);if(!valid(i)||overlaps(i)){a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;}}addG(i);}}
+    for(int pass=0;pass<800&&elapsed()<1.5;pass++){
+        for(int idx=0;idx<n;idx++){
+            int i=idx;
+            for(int s=0;s<4;s++){
+                int ss=(s+pass)%4;
+                if(area(i)>=R[i]*2)continue;
+                int oa=a[i],ob=b[i],oc=c[i],od=d[i];
+                int lo=0,hi;
+                if(ss==0)hi=a[i];else if(ss==1)hi=b[i];else if(ss==2)hi=10000-c[i];else hi=10000-d[i];
+                while(lo<hi){int mid=(lo+hi+1)/2;int ta=oa,tb=ob,tc=oc,td=od;if(ss==0)ta=oa-mid;else if(ss==1)tb=ob-mid;else if(ss==2)tc=oc+mid;else td=od+mid;a[i]=ta;b[i]=tb;c[i]=tc;d[i]=td;if(valid(i)&&!overlapsAny(i))lo=mid;else hi=mid-1;a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;}
+                if(lo>0){if(ss==0)a[i]-=lo;else if(ss==1)b[i]-=lo;else if(ss==2)c[i]+=lo;else d[i]+=lo;}
+            }
+        }
+    }
     mt19937 rng(42);
-    while(elapsed()<4.7){double frac=min(1.0,elapsed()/4.7);double T=0.05*pow(0.0001,frac);int i=rng()%n;int side=rng()%4;int maxd=max(1,(int)(300*(1.0-frac))+1);int delta=(int)(rng()%(2*maxd+1))-maxd;if(!delta)continue;int oa=a[i],ob=b[i],oc=c[i],od=d[i];double os=sat(i);remG(i);if(side==0)a[i]+=delta;else if(side==1)b[i]+=delta;else if(side==2)c[i]+=delta;else d[i]+=delta;if(!valid(i)||overlaps(i)){a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;addG(i);continue;}double ns=sat(i),diff=ns-os;if(diff>=0||(double)(rng()%1000000)/1e6<exp(diff/T)){addG(i);}else{a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;addG(i);}}
-    for(int i=0;i<n;i++)cout<<a[i]<<" "<<b[i]<<" "<<c[i]<<" "<<d[i]<<"\n";
+    double curScore=0;for(int i=0;i<n;i++)curScore+=sat(i);
+    vector<int>ba=a,bb=b,bc=c,bd=d;double bestScore=curScore;
+    while(elapsed()<4.7){
+        double frac=elapsed()/4.7;double T=0.05*pow(0.0005,frac);
+        int i=rng()%n;int op=rng()%6;
+        int oa=a[i],ob=b[i],oc=c[i],od=d[i];double os=sat(i);
+        int maxd=max(1,(int)(300*(1.0-frac))+1);int delta=(int)(rng()%(2*maxd+1))-maxd;
+        if(!delta)continue;
+        if(op<4){if(op==0)a[i]+=delta;else if(op==1)b[i]+=delta;else if(op==2)c[i]+=delta;else d[i]+=delta;}
+        else if(op==4){a[i]+=delta;c[i]+=delta;}else{b[i]+=delta;d[i]+=delta;}
+        if(!valid(i)||overlapsAny(i)){a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;continue;}
+        double ns=sat(i),diff=ns-os;
+        if(diff>=0||(double)(rng()%1000000)/1e6<exp(diff/T)){
+            curScore+=diff;
+            if(curScore>bestScore){bestScore=curScore;ba=a;bb=b;bc=c;bd=d;}
+        }else{a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;}
+    }
+    for(int i=0;i<n;i++)cout<<ba[i]<<" "<<bb[i]<<" "<<bc[i]<<" "<<bd[i]<<"\n";
 }
