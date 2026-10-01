@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 confirmed that a bitset-accelerated branch-and-bound (BnB) with degeneracy ordering and greedy coloring bounds achieves near-perfect scores (100 in best run, 99.345 consistently) on the Maximum Clique problem, substantially outperforming greedy-only (92.158). The remaining gap to a perfect 100 is likely due to one or two hard test cases where BnB either times out or narrowly misses the optimal clique.",
+  "key_points": [
+    "h-main (BnB + bitset + degeneracy ordering) scored 100 in 2/3 runs and 99.345 consistently across 6 focused runs \u2014 CONFIRMED that BnB with proper engineering achieves \u226595.",
+    "h-control-negative (greedy with 5000 restarts) scored 92.158 \u2014 higher than the predicted <85 but consistently 7-8 points below BnB, confirming BnB's value. The magnitude prediction was off; random-restart greedy is stronger than expected on these graphs.",
+    "The critical engineering insight: bitset<1001> adjacency with bitwise AND for candidate intersection was the single largest speedup (80\u219299.345), more impactful than any algorithmic change to the search strategy.",
+    "Score variance (90 vs 100 across runs) correlates with system load hitting the 2.0s time limit. The 1850ms internal cutoff mitigates this but doesn't eliminate it entirely.",
+    "Next iteration should investigate: (1) tighter time management per BnB subtree to avoid timeouts on hard cases, (2) complement-graph approach for very dense test instances, (3) local search (tabu or penalty-based) as a fallback when BnB is pruned by the time limit \u2014 targeting the last 0-1% improvement."
+  ]
+}

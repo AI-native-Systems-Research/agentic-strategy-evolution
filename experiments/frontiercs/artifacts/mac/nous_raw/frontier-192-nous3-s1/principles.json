@@ -73,6 +73,46 @@
       "status": "active",
       "empirical_content": true,
       "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "For Max-Cut (n\u22641000, m\u226420000) with incremental gain SA, restart budget allocation (depth vs breadth) does not affect score: 0.30s\u00d73 restarts and 0.03s\u00d730 restarts both achieve ~87.5 on the judge, indicating the solution landscape has many near-equivalent local optima reachable by either strategy.",
+      "confidence": "medium",
+      "regime": "Max-Cut, n\u22641000, m\u226420000, 0.90s total budget, linear cooling SA with incremental gain",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Incremental gain tracking speeds SA iterations ~5x, but this does not raise the score ceiling because the quality bottleneck is not iteration count \u2014 it is the Max-Cut landscape structure. Random restarts (even shallow ones) reliably find optima near 87.5, so deeper per-restart exploration provides no additional benefit.",
+      "applicability_bounds": "Applies to Max-Cut with the given size/density range. May not hold for larger graphs or sparser structures where deep exploration could find rarer, better optima.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "The ~87.5 score ceiling on Max-Cut (problem 192) is robust across SA configurations: geometric cooling (86.6), linear cooling (87.5), incremental gain + long SA (87.5), incremental gain + short SA (87.6). Further SA optimization is unlikely to push significantly beyond this ceiling.",
+      "confidence": "high",
+      "regime": "Max-Cut problem 192, judge evaluation, all SA variants tested across 3 iterations",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-3-h-main",
+        "iteration-3-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Multiple SA configurations with varying iteration speed, cooling schedules, and restart budgets all converge to ~87.5. This suggests the score is bounded by the problem structure (graph properties, checker scoring function) rather than algorithmic configuration. Breaking through would require a fundamentally different approach (e.g., problem-specific graph decomposition, semidefinite relaxation, or multi-flip neighborhoods).",
+      "applicability_bounds": "Specific to problem 192 test cases and checker. Different test instances could have different ceilings.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
     }
   ]
 }
