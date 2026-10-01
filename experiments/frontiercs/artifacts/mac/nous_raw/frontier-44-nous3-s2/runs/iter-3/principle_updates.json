@@ -1,17 +1,14 @@
 [
   {
-    "id": "RP-5",
-    "statement": "Multi-city Or-opt (segments 1-3) with grid-guided insertion does not measurably improve score beyond single-city Or-opt for penalty-aware TSP at N=200K within 2s. The effect, if present, is below 0.2 points (~0.25% of score).",
-    "confidence": "medium",
-    "regime": "penalty-aware TSP, N=200K, 2s time limit, grid-guided 2-opt + Or-opt SA baseline scoring ~78.8",
-    "evidence": [
-      "iteration-3-h-main",
-      "iteration-3-h-control-negative"
-    ],
+    "id": "RP-6",
+    "statement": "Two-phase grid-guided 2-opt SA (Phase 1: stale pos[], unlimited seg, batch=300; Phase 2: exact pos[], seg≤20, batch=1000) scores ~72.2 for penalty-aware TSP (N=200K, 2s), a 2.7-point improvement over random swap SA (69.5). The key enabler is exact pos[] tracking in Phase 2 combined with GG=sqrt(N) grid for O(1) spatial neighbor lookup.",
+    "confidence": "high",
+    "regime": "Penalty-aware TSP, N up to 200K, 2-second time limit, x-sorted city input",
+    "evidence": ["iteration-3-h-main"],
     "contradicts": [],
     "extraction_iteration": 3,
-    "mechanism": "At the tour quality level achieved by grid-guided 2-opt + single-city Or-opt (~78.8), compound relocations of 2-3 cities rarely find improvements that single-city relocations miss. Grid-guided insertion targeting does not consistently select better positions than random shift, possibly because spatially-nearby cities are already tour-adjacent in a well-optimized tour.",
-    "applicability_bounds": "Applies to the specific move mix (55/10/35), SA temp (curCost/N*3), and grid-guided insertion strategy tested. A different Or-opt targeting strategy (e.g., nearest-neighbor in tour order) or tighter segment size selection might yield different results.",
+    "mechanism": "Grid-guided 2-opt finds spatially nearby city pairs in O(1) via grid cell lookup. Short segments (≤20) keep pos[] update at O(20) per accepted move, enabling high throughput. Phase 1's stale pos[] with unlimited segments provides coarse exploration; Phase 2's exact pos[] provides precise refinement. 80/20 2-opt/swap ratio balances exploitation (spatial structure) with exploration (random diversification).",
+    "applicability_bounds": "Requires GG=sqrt(N) grid granularity. Coarser grids (sqrt(N/2) or less) destroy the spatial precision. Phase split at ~70% of time limit. Segment limit of 20 in exact-pos phase is hardware-dependent (balances O(seg) update cost vs move quality).",
     "superseded_by": null,
     "category": "domain",
     "status": "active",

@@ -1,12 +1,13 @@
 {
   "gate_type": "design",
-  "summary": "We are testing whether extending Or-opt from single-city to multi-city segments (sizes 1-3) with grid-guided insertion targeting can improve the penalty-aware TSP score beyond the iter-2 baseline of 78.8/100. This builds on the existing grid-based 2-opt + SA framework by adding compound relocation moves that cannot be discovered by single-city Or-opt or 2-opt alone.",
+  "summary": "We are testing whether spatially-intelligent 2-opt moves (using a grid-based neighbor lookup) can improve TSP tour quality beyond the 69.5 score achieved in iteration 2's random-swap + boundary 2-opt approach. A single experiment arm implements a two-phase simulated annealing strategy: Phase 1 (0\u20131.3s) uses grid-guided 2-opt with stale position tracking for broad exploration, Phase 2 (1.3\u20131.85s) uses exact position tracking with short segments (\u226420) for precise refinement.",
   "key_points": [
-    "h-main arm: Implements multi-city Or-opt (k=1,2,3), grid-guided insertion targeting, rebalanced move mix (55% grid 2-opt / 10% random 2-opt / 35% Or-opt), increased Or-opt shift range (15\u219250), and cooler SA start temperature (curCost/(N*3) vs N*2). Prediction: score > 78.8.",
-    "h-control-negative arm: Reruns the exact iter-2 h-ablation code unchanged to establish a concurrent baseline (~78.8) and account for any judge variance between iterations.",
-    "Confirmation: h-main scores meaningfully above 78.8 (e.g., \u226580) while h-control-negative stays near 78.8. Refutation: h-main scores \u226478.8, suggesting multi-city Or-opt overhead outweighs its improvement quality within the 1.78s time budget, or the grid-guided targeting doesn't find better insertion positions than random shifts.",
-    "Key risk: Multi-city Or-opt delta computation is more expensive (touches more edges + penalty recalculation for shifted positions), which could reduce total iterations within the time limit enough to negate the higher per-move quality. Diagnostic: check whether the move acceptance rate and iteration count remain reasonable.",
-    "Design is clean: h-control-negative directly serves as the ablation (single-city Or-opt only), so no separate ablation arm is needed. Two arms keep the experiment tractable within the ~60s per judge call budget."
+    "Testing one arm (h-main): grid-guided 2-opt SA replacing iter-2's random 2-opt, predicted to score above 71.0 vs iter-2's 69.5 baseline",
+    "Core mechanism: a sqrt(N)-sized grid partitions cities spatially, enabling O(1) lookup of nearby cities as 2-opt reversal partners \u2014 this should find edge-uncrossing opportunities that random selection misses",
+    "Two-phase design: Phase 1 allows unlimited segment reversals with periodic pos[] rebuild (batch=300) for exploration; Phase 2 restricts to segments \u226420 with per-move pos[] update for precise local optimization",
+    "Confirmation criterion: measured judge score consistently above 71.0; refutation if score \u2264 69.5, which would indicate grid-guided candidates aren't producing accepted moves or pos[] staleness is harmful",
+    "Key diagnostic: if score doesn't improve, check (1) acceptance rate of grid-guided 2-opt moves, (2) pos[] accuracy drift in Phase 1, (3) whether Phase 1\u2192Phase 2 transition degrades quality",
+    "Time budget: 2s per test case; phases end at 1.3s and 1.85s respectively, leaving margin; judge call expected ~45s wall time"
   ],
   "campaign_spec_diff": {
     "locked_parameters_violations": [],
