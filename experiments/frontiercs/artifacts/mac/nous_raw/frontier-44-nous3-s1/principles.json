@@ -90,6 +90,43 @@
       "status": "active",
       "empirical_content": true,
       "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "Or-opt1 (single-city relocation with KNN candidates) adds ~0.06 points to 2-opt + ILS for penalized TSP problem #44, yielding 78.97 vs 78.91. Or-opt2 (pair relocation) and or-opt3 (triple relocation) cause TLE on large N even with efficient memmove implementations. Only or-opt1 is safe within the 2s time budget.",
+      "confidence": "medium",
+      "regime": "N up to 200K, 2s time limit, K=15 KNN, G=sqrt(N/2.5) grid",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Or-opt1 explores the relocation neighborhood (remove city, reinsert elsewhere) which is disjoint from 2-opt's reversal neighborhood. After 2-opt convergence, ~5% of cities have positive removal gain and some of those have improving insertion points near KNN neighbors. The improvement is small because 2-opt already captures most local improvements.",
+      "applicability_bounds": "Applies to TSP-like problems with 2s time limit and N up to 200K. The ~0.06 point improvement is at the edge of measurement noise for single judge runs; confidence is medium. For problems with more generous time limits, or-opt2/3 might also be viable.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "dist\u00b2 early rejection before eucl() in candidate-list 2-opt provides a minor speedup by avoiding sqrt for most non-improving candidates. This may contribute to TLE avoidance: v32 (with dist\u00b2 rejection) showed 0 TLE in 5+ runs vs v25 (without) showing 2 TLE in 6 runs, though the evidence is circumstantial.",
+      "confidence": "low",
+      "regime": "N up to 200K, 2s time limit",
+      "evidence": [
+        "iteration-3-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "dist\u00b2(a,c) = (xa-xc)\u00b2+(ya-yc)\u00b2 is computed with 2 subtractions, 2 multiplications, and 1 addition (~5 cycles). eucl() adds sqrt (~20 cycles). For K=15 candidates per city where ~80% are rejected by dist\u00b2, the savings are ~270 cycles/city \u00d7 N cities per pass. For N=200K, this saves ~18ms per pass.",
+      "applicability_bounds": "The TLE-avoidance effect is circumstantial (small sample). The dist\u00b2 check is always safe to add and never hurts performance.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
     }
   ]
 }

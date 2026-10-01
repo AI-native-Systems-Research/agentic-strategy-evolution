@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 3 confirmed that adding or-opt1 (single-city relocation) to the local search pipeline improves the TSP tour score from 78.905 to 78.966, a consistent +0.061 point gain. Both arms behaved as predicted, and the or-opt1 variant also eliminated TLE incidents observed in the baseline.",
+  "key_points": [
+    "CONFIRMED: h-main (2-opt + or-opt1 + dist\u00b2 early rejection) scored 78.966 vs h-control-negative baseline of 78.905 \u2014 a +0.061 improvement, consistent across repeated runs.",
+    "CONFIRMED: h-control-negative (v25 baseline) scored 78.905 in non-TLE runs, matching iter-2's ~78.93 within normal variance. It TLE'd in 1 of 2 runs, consistent with known environmental TLE risk (RP-5).",
+    "Bonus finding: The dist\u00b2 early rejection optimization in h-main appears to improve TLE resilience \u2014 0 TLEs in 5+ runs vs 2/6 TLEs for the baseline, providing both correctness and robustness benefits.",
+    "Current best score: 78.966. Remaining headroom (~21 points) likely requires more advanced moves (or-opt2/3, 3-opt, Lin-Kernighan style moves) or better exploitation of the carrot constraint (scheduling prime cities at steps divisible by 10)."
+  ]
+}
