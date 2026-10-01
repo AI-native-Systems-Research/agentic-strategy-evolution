@@ -1,6 +1,3 @@
-MY PLAN: Improve the existing best solution by adding a more sophisticated local search phase that removes low-value-density items from the best solution found so far and attempts to repack the freed space with higher-value items, plus add column-generation style strip packing where we try all combinations of 2-3 top items filling horizontal/vertical strips with optimal row counts determined by value maximization.
-
-```cpp
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -50,11 +47,11 @@ struct State {
         nr.reserve(n);
         for (int i = 0; i < n; i++) if (!rem[i]) nr.push_back(freeRects[i]);
         freeRects = move(nr);
-        if ((int)freeRects.size() > 2000) {
+        if ((int)freeRects.size() > 1500) {
             sort(freeRects.begin(), freeRects.end(), [](const Rect& a, const Rect& b) {
                 return (long long)a.w * a.h > (long long)b.w * b.h;
             });
-            freeRects.resize(2000);
+            freeRects.resize(1500);
         }
     }
     
@@ -93,6 +90,8 @@ struct State {
         }
     }
     
+    // Contact perimeter score: how much of the item's perimeter touches container edges or is adjacent to placed items
+    // We approximate by checking container edges only (full adjacency tracking is expensive)
     int contactScore(int ox, int oy, int rw, int rh) {
         int score = 0;
         if (ox == 0) score += rh;
@@ -108,13 +107,21 @@ struct State {
             if (rw <= fr.w && rh <= fr.h) {
                 int score;
                 switch(strategy) {
-                    case 0: score = -min(fr.w - rw, fr.h - rh); break;
-                    case 1: score = -max(fr.w - rw, fr.h - rh); break;
-                    case 2: score = -(fr.w * fr.h - rw * rh); break;
-                    case 3: score = -(fr.y * 20000 + fr.x); break;
-                    case 4: score = contactScore(fr.x, fr.y, rw, rh) * 10000 - min(fr.w - rw, fr.h - rh); break;
-                    case 5: score = contactScore(fr.x, fr.y, rw, rh) * 100000 - (fr.w * fr.h - rw * rh); break;
+                    case 0: score = -min(fr.w - rw, fr.h - rh); break; // best short side fit
+                    case 1: score = -max(fr.w - rw, fr.h - rh); break; // best long side fit
+                    case 2: score = -(fr.w * fr.h - rw * rh); break; // best area fit
+                    case 3: score = -(fr.y * 20000 + fr.x); break; // bottom-left
+                    case 4: {
+                        score = contactScore(fr.x, fr.y, rw, rh) * 10000 - min(fr.w - rw, fr.h - rh);
+                        break;
+                    }
+                    case 5: {
+                        // touching + best area
+                        score = contactScore(fr.x, fr.y, rw, rh) * 100000 - (fr.w * fr.h - rw * rh);
+                        break;
+                    }
                     case 6: {
+                        // Prefer rects where item fits exactly in at least one dimension
                         int exact = 0;
                         if (fr.w == rw) exact++;
                         if (fr.h == rh) exact++;
@@ -214,36 +221,6 @@ void fillRemaining(State& state) {
     }
 }
 
-void fillRemainingMultiStrat(State& state) {
-    // Try multiple placement strategies for filling
-    vector<pair<double,int>> densOrder;
-    for (int j = 0; j < gM; j++) densOrder.push_back({density[j], j});
-    sort(densOrder.begin(), densOrder.end(), greater<>());
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        for (auto& [d, tj] : densOrder) {
-            if (state.used[tj] >= items[tj].limit) continue;
-            int nr2 = 1;
-            if (gAllowRotate && items[tj].w != items[tj].h) nr2 = 2;
-            for (int r2 = 0; r2 < nr2; r2++) {
-                int w2 = (r2 == 0) ? items[tj].w : items[tj].h;
-                int h2 = (r2 == 0) ? items[tj].h : items[tj].w;
-                if (w2 > gW || h2 > gH) continue;
-                bool found = true;
-                while (found && state.used[tj] < items[tj].limit) {
-                    found = false;
-                    // Try multiple strategies, pick best position
-                    for (int strat = 0; strat < 7; strat++) {
-                        auto [sc, bx, by] = state.findBestRect(w2, h2, strat);
-                        if (bx >= 0) { state.doPlace(tj, bx, by, r2); found = true; changed = true; break; }
-                    }
-                }
-            }
-        }
-    }
-}
-
 void runStrip() {
     for (int ti = 0; ti < gM; ti++) {
         int nrots = 1;
@@ -256,6 +233,7 @@ void runStrip() {
             int maxCount = min((long long)nx * ny, (long long)items[ti].limit);
             if (maxCount == 0) continue;
             
+            // Try full grid and partial grids
             vector<int> counts = {maxCount};
             if (nx * (ny-1) > 0 && nx*(ny-1) != maxCount) counts.push_back(min((long long)nx*(ny-1), (long long)items[ti].limit));
             if (nx > 0 && nx != maxCount) counts.push_back(min((long long)nx, (long long)items[ti].limit));
@@ -304,14 +282,18 @@ void runDualStrip() {
             if (maxRows > 0) rowSet.insert(maxRows - 1);
             rowSet.insert(maxRows / 2);
             rowSet.insert(1);
+            // Also try rows that leave space for another item type
             for (int b = 0; b < (int)topItems.size() && b < 4; b++) {
                 if (topItems[b] == ti) continue;
                 int tj = topItems[b];
                 for (int r2 = 0; r2 < (gAllowRotate && items[tj].w != items[tj].h ? 2 : 1); r2++) {
                     int h2 = (r2 == 0) ? items[tj].h : items[tj].w;
-                    int neededRows = maxRows;
-                    while (neededRows > 0 && gH - neededRows * rh < h2) neededRows--;
-                    if (neededRows > 0 && neededRows != maxRows) rowSet.insert(neededRows);
+                    int remainH = gH - maxRows * rh;
+                    if (remainH < h2 && maxRows > 0) {
+                        int neededRows = maxRows;
+                        while (neededRows > 0 && gH - neededRows * rh < h2) neededRows--;
+                        if (neededRows > 0) rowSet.insert(neededRows);
+                    }
                 }
             }
             
@@ -334,6 +316,7 @@ void runDualStrip() {
     }
 }
 
+// Horizontal strip approach: divide container into horizontal strips, each filled with one item type
 void runMultiStrip() {
     if (gM < 1) return;
     vector<int> topItems;
@@ -344,6 +327,7 @@ void runMultiStrip() {
         for(int i=0;i<min((int)di.size(),5);i++) topItems.push_back(di[i].second);
     }
     
+    // Try all pairs of top items as strip types
     for (int ai = 0; ai < (int)topItems.size(); ai++) {
         for (int bi = ai; bi < (int)topItems.size(); bi++) {
             int ta = topItems[ai], tb = topItems[bi];
@@ -363,9 +347,9 @@ void runMultiStrip() {
                     int nxb = gW / wb;
                     if (nxb == 0) continue;
                     
-                    int maxRowsA = min((int)(gH / ha), (int)((long long)items[ta].limit / nxa + 1));
-                    maxRowsA = min(maxRowsA, gH / ha);
-                    for (int rowsA = 0; rowsA <= maxRowsA; rowsA++) {
+                    // Try different splits
+                    int maxRowsA = gH / ha;
+                    for (int rowsA = 0; rowsA <= min(maxRowsA, (int)min((long long)items[ta].limit / max(nxa,1), (long long)maxRowsA)); rowsA++) {
                         int remainH = gH - rowsA * ha;
                         int rowsB = remainH / hb;
                         if (ta == tb) {
@@ -403,138 +387,137 @@ void runMultiStrip() {
     }
 }
 
-// Three-item strip packing
-void runTripleStrip(chrono::steady_clock::time_point t0, int timeLimit) {
-    if (gM < 3) return;
-    auto ms = [&](){return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now()-t0).count();};
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
     
-    vector<int> topItems;
-    {
-        vector<pair<double,int>> di;
-        for(int i=0;i<gM;i++) di.push_back({density[i],i});
-        sort(di.begin(),di.end(),greater<>());
-        for(int i=0;i<min((int)di.size(),4);i++) topItems.push_back(di[i].second);
+    string input((istreambuf_iterator<char>(cin)), istreambuf_iterator<char>());
+    
+    auto getInt = [&](const string& s, size_t p) -> pair<int,size_t> {
+        while (p < s.size() && !isdigit(s[p]) && s[p]!='-') p++;
+        bool neg = s[p]=='-'; if(neg) p++;
+        int v=0; while(p<s.size()&&isdigit(s[p])) v=v*10+(s[p++]-'0');
+        return {neg?-v:v, p};
+    };
+    auto getStr = [&](const string& s, size_t p) -> pair<string,size_t> {
+        while(p<s.size()&&s[p]!='"') p++; p++;
+        string r; while(p<s.size()&&s[p]!='"') r+=s[p++]; p++;
+        return {r,p};
+    };
+    
+    size_t p = input.find("\"W\""); auto [W,p1] = getInt(input, p+3); gW=W;
+    p = 0;
+    while(true) {
+        p = input.find("\"H\"", p);
+        if(p==string::npos) break;
+        auto [H,p2] = getInt(input, p+3); gH=H; break;
+    }
+    p = input.find("\"allow_rotate\"");
+    size_t tp = p+14; while(tp<input.size()&&input[tp]!='t'&&input[tp]!='f') tp++;
+    gAllowRotate = input[tp]=='t';
+    
+    p = input.find("\"items\"");
+    p = input.find('[', p);
+    size_t endArr = input.rfind(']');
+    
+    while(true) {
+        size_t ob = input.find('{', p);
+        if(ob==string::npos||ob>endArr) break;
+        size_t cb = input.find('}', ob);
+        string obj = input.substr(ob, cb-ob+1);
+        ItemType it;
+        
+        size_t q = obj.find("\"type\""); auto [ts,_1] = getStr(obj, q+6); it.type=ts;
+        q=0; while(true){q=obj.find("\"w\"",q); if(q==string::npos)break; break;} 
+        auto [wv,_2] = getInt(obj, q+3); it.w=wv;
+        q=0; while(true){q=obj.find("\"h\"",q); if(q==string::npos)break; break;}
+        auto [hv,_3] = getInt(obj, q+3); it.h=hv;
+        q=obj.find("\"v\""); auto [vv,_4] = getInt(obj, q+3); it.v=vv;
+        q=obj.find("\"limit\""); auto [lv,_5] = getInt(obj, q+7); it.limit=lv;
+        
+        items.push_back(it);
+        p = cb+1;
     }
     
-    for (int ai = 0; ai < (int)topItems.size() && ms() < timeLimit; ai++) {
-        for (int bi = ai; bi < (int)topItems.size() && ms() < timeLimit; bi++) {
-            for (int ci = bi; ci < (int)topItems.size() && ms() < timeLimit; ci++) {
-                int ta = topItems[ai], tb = topItems[bi], tc = topItems[ci];
-                
-                int nra = gAllowRotate && items[ta].w != items[ta].h ? 2 : 1;
-                for (int ra = 0; ra < nra && ms() < timeLimit; ra++) {
-                    int ha = (ra == 0) ? items[ta].h : items[ta].w;
-                    int wa = (ra == 0) ? items[ta].w : items[ta].h;
-                    if (wa > gW || ha > gH) continue;
-                    int nxa = gW / wa;
-                    if (nxa == 0) continue;
-                    
-                    int nrb = gAllowRotate && items[tb].w != items[tb].h ? 2 : 1;
-                    for (int rb = 0; rb < nrb && ms() < timeLimit; rb++) {
-                        int hb = (rb == 0) ? items[tb].h : items[tb].w;
-                        int wb = (rb == 0) ? items[tb].w : items[tb].h;
-                        if (wb > gW || hb > gH) continue;
-                        int nxb = gW / wb;
-                        if (nxb == 0) continue;
-                        
-                        int nrc = gAllowRotate && items[tc].w != items[tc].h ? 2 : 1;
-                        for (int rc = 0; rc < nrc && ms() < timeLimit; rc++) {
-                            int hc = (rc == 0) ? items[tc].h : items[tc].w;
-                            int wc = (rc == 0) ? items[tc].w : items[tc].h;
-                            if (wc > gW || hc > gH) continue;
-                            int nxc = gW / wc;
-                            if (nxc == 0) continue;
-                            
-                            int maxRowsA = min(gH / ha, items[ta].limit / nxa + 1);
-                            maxRowsA = min(maxRowsA, gH / ha);
-                            // Sample some row counts for A
-                            vector<int> rowsAList;
-                            for (int r = 0; r <= maxRowsA; r++) rowsAList.push_back(r);
-                            if ((int)rowsAList.size() > 10) {
-                                vector<int> sampled;
-                                sampled.push_back(0);
-                                for (int k = 1; k <= 8; k++) sampled.push_back(min(maxRowsA, maxRowsA * k / 8));
-                                sampled.push_back(maxRowsA);
-                                sort(sampled.begin(), sampled.end());
-                                sampled.erase(unique(sampled.begin(), sampled.end()), sampled.end());
-                                rowsAList = sampled;
-                            }
-                            
-                            for (int rowsA : rowsAList) {
-                                if (ms() >= timeLimit) break;
-                                int usedH_A = rowsA * ha;
-                                if (usedH_A > gH) continue;
-                                int countA = min(rowsA * nxa, items[ta].limit);
-                                
-                                int remainH1 = gH - usedH_A;
-                                int maxRowsB = remainH1 / hb;
-                                // Sample B rows
-                                vector<int> rowsBList;
-                                for (int r = 0; r <= maxRowsB; r++) rowsBList.push_back(r);
-                                if ((int)rowsBList.size() > 6) {
-                                    vector<int> sampled;
-                                    sampled.push_back(0);
-                                    for (int k = 1; k <= 4; k++) sampled.push_back(min(maxRowsB, maxRowsB * k / 4));
-                                    sampled.push_back(maxRowsB);
-                                    sort(sampled.begin(), sampled.end());
-                                    sampled.erase(unique(sampled.begin(), sampled.end()), sampled.end());
-                                    rowsBList = sampled;
-                                }
-                                
-                                for (int rowsB : rowsBList) {
-                                    if (ms() >= timeLimit) break;
-                                    int usedH_B = rowsB * hb;
-                                    int remainH2 = remainH1 - usedH_B;
-                                    if (remainH2 < 0) continue;
-                                    int rowsC = remainH2 / hc;
-                                    
-                                    int countB = min(rowsB * nxb, items[tb].limit);
-                                    int countC = min(rowsC * nxc, items[tc].limit);
-                                    
-                                    // Handle same-type overlaps
-                                    if (ta == tb) countB = min(countB, items[ta].limit - countA);
-                                    if (ta == tc) countC = min(countC, items[ta].limit - countA - (ta==tb?countB:0));
-                                    if (tb == tc && tb != ta) countC = min(countC, items[tb].limit - countB);
-                                    
-                                    if (countA + countB + countC == 0) continue;
-                                    
-                                    State state;
-                                    state.init();
-                                    int placed = 0;
-                                    for (int iy = 0; iy < rowsA && placed < countA; iy++)
-                                        for (int ix = 0; ix < nxa && placed < countA; ix++, placed++)
-                                            state.doPlace(ta, ix * wa, iy * ha, ra);
-                                    
-                                    int baseY = usedH_A;
-                                    placed = 0;
-                                    for (int iy = 0; iy < rowsB && placed < countB; iy++)
-                                        for (int ix = 0; ix < nxb && placed < countB; ix++, placed++)
-                                            state.doPlace(tb, ix * wb, baseY + iy * hb, rb);
-                                    
-                                    baseY += usedH_B;
-                                    placed = 0;
-                                    for (int iy = 0; iy < rowsC && placed < countC; iy++)
-                                        for (int ix = 0; ix < nxc && placed < countC; ix++, placed++)
-                                            state.doPlace(tc, ix * wc, baseY + iy * hc, rc);
-                                    
-                                    fillRemaining(state);
-                                    state.updateBest();
-                                }
-                            }
-                        }
-                    }
+    gM = items.size();
+    density.resize(gM);
+    for(int i=0;i<gM;i++) density[i]=(double)items[i].v/((double)items[i].w*items[i].h);
+    
+    auto t0 = chrono::steady_clock::now();
+    auto ms = [&](){return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now()-t0).count();};
+    
+    mt19937 rng(42);
+    
+    auto makeOrder = [&](int sm) -> vector<pair<int,int>> {
+        struct C{int ti,rot;double sc;};
+        vector<C> cs;
+        for(int i=0;i<gM;i++){
+            int nr=1; if(gAllowRotate&&items[i].w!=items[i].h) nr=2;
+            for(int r=0;r<nr;r++){
+                int rw=(r==0)?items[i].w:items[i].h, rh=(r==0)?items[i].h:items[i].w;
+                if(rw>gW||rh>gH) continue;
+                double sc;
+                switch(sm){
+                    case 0:sc=density[i];break;
+                    case 1:sc=items[i].v;break;
+                    case 2:sc=-(double)(items[i].w*items[i].h);break;
+                    case 3:sc=(double)(items[i].w*items[i].h);break;
+                    case 4:sc=-max(rw,rh);break;
+                    case 5:sc=max(rw,rh);break;
+                    case 6:sc=density[i]+uniform_real_distribution<>(-0.15*density[i],0.15*density[i])(rng);break;
+                    case 7:sc=items[i].v*(1.0+uniform_real_distribution<>(-0.15,0.15)(rng));break;
+                    default:sc=uniform_real_distribution<>(0,1)(rng);break;
                 }
+                for(int k=0;k<items[i].limit;k++) cs.push_back({i,r,sc});
             }
         }
-    }
-}
-
-// Vertical strip approach: divide bin into vertical strips
-void runVerticalStrip(chrono::steady_clock::time_point t0, int timeLimit) {
-    auto ms = [&](){return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now()-t0).count();};
+        if(sm>=8) shuffle(cs.begin(),cs.end(),rng);
+        else sort(cs.begin(),cs.end(),[](const C&a,const C&b){return a.sc>b.sc;});
+        vector<pair<int,int>> res; vector<int> uc(gM,0);
+        for(auto&c:cs) if(uc[c.ti]<items[c.ti].limit){res.push_back({c.ti,c.rot});uc[c.ti]++;}
+        return res;
+    };
     
-    vector<int> topItems;
-    {
-        vector<pair<double,int>> di;
-        for(int i=0;i<gM;i++) di.push_back({density[i],i});
-        sort(di.begin(),di.end(),greater<>());
+    // Run structured strategies
+    runStrip();
+    if (ms() < 200) runDualStrip();
+    if (ms() < 400) runMultiStrip();
+    
+    // Run greedy with different orderings and placement strategies
+    for(int sm=0;sm<8&&ms()<500;sm++) 
+        for(int ps=0;ps<7&&ms()<500;ps++){
+            auto o=makeOrder(sm);
+            runGreedy(o,ps);
+        }
+    
+    // Run smart placement
+    for(double a:{0.0,0.05,0.1,0.2,0.3,0.5,0.7,0.9,1.0}) 
+        for(int ps=0;ps<5&&ms()<700;ps++) 
+            runSmart(ps,a);
+    
+    // Randomized smart
+    for(int i=0;i<300&&ms()<850;i++){
+        int ps=rng()%5;
+        double a=uniform_real_distribution<>(0,1)(rng);
+        double n=uniform_real_distribution<>(0.001,0.15)(rng);
+        runSmart(ps,a,&rng,n);
+    }
+    
+    // Use remaining time for random search
+    while(ms()<950){
+        int c=rng()%4;
+        if(c==0){auto o=makeOrder(8);runGreedy(o,rng()%7);}
+        else if(c==1){auto o=makeOrder(6);runGreedy(o,rng()%7);}
+        else if(c==2){auto o=makeOrder(7);runGreedy(o,rng()%7);}
+        else{runSmart(rng()%5,uniform_real_distribution<>(0,1)(rng),&rng,uniform_real_distribution<>(0.001,0.08)(rng));}
+    }
+    
+    cout << "{\"placements\":[";
+    for(int i=0;i<(int)bestPlacements.size();i++){
+        if(i) cout<<",";
+        auto&pl=bestPlacements[i];
+        cout<<"{\"type\":\""<<pl.type<<"\",\"x\":"<<pl.x<<",\"y\":"<<pl.y<<",\"rot\":"<<pl.rot<<"}";
+    }
+    cout<<"]}"<<endl;
+    return 0;
+}
