@@ -1,0 +1,45 @@
+{
+  "baseline": {
+    "score": 0.09552371980292827,
+    "total_cost": 1045.8604,
+    "per_config": {
+      "intra_aws": {"cost": 165.0240, "transfer_time": 1440.0000},
+      "intra_azure": {"cost": 144.9450, "transfer_time": 450.0000},
+      "intra_gcp": {"cost": 161.4686, "transfer_time": 1028.5714},
+      "inter_agz": {"cost": 268.8514, "transfer_time": 685.7143},
+      "inter_gaz2": {"cost": 305.5714, "transfer_time": 857.1429}
+    }
+  },
+  "h_control_negative_undirected_steiner": {
+    "score": 0.1538526308052144,
+    "total_cost": 648.9726,
+    "per_config": {
+      "intra_aws": {"cost": 59.5200, "transfer_time": 1200.0000},
+      "intra_azure": {"cost": 99.7875, "transfer_time": 375.0000},
+      "intra_gcp": {"cost": 143.0571, "transfer_time": 857.1429},
+      "inter_agz": {"cost": 173.3040, "transfer_time": 960.0000},
+      "inter_gaz2": {"cost": 173.3040, "transfer_time": 960.0000}
+    }
+  },
+  "h_main_directed_steiner": {
+    "score": 0.15942742952368588,
+    "total_cost": 626.2446,
+    "per_config": {
+      "intra_aws": {"cost": 59.5200, "transfer_time": 1200.0000},
+      "intra_azure": {"cost": 99.7875, "transfer_time": 375.0000},
+      "intra_gcp": {"cost": 143.0571, "transfer_time": 857.1429},
+      "inter_agz": {"cost": 161.9400, "transfer_time": 480.0000},
+      "inter_gaz2": {"cost": 161.9400, "transfer_time": 480.0000}
+    }
+  },
+  "analysis": {
+    "directed_vs_undirected_total_cost_reduction": 22.728,
+    "directed_vs_undirected_score_improvement_pct": 3.61,
+    "improvement_configs": {
+      "inter_agz": {"undirected_cost": 173.304, "directed_cost": 161.940, "savings": 11.364, "pct": 6.56},
+      "inter_gaz2": {"undirected_cost": 173.304, "directed_cost": 161.940, "savings": 11.364, "pct": 6.56}
+    },
+    "no_improvement_configs": ["intra_aws", "intra_azure", "intra_gcp"],
+    "note": "Directed Steiner only improves on inter-cloud configs where cross-provider edge asymmetry is highest. Intra-provider configs have identical costs in both approaches."
+  }
+}

@@ -1,0 +1,3 @@
+Score is already 100 from iter-1. Let me verify it still holds and then write the iter-2 artifacts as a confirmation run.Score confirmed at 100. Now I'll write the three required artifacts for iter-2.Validation passes. 
+
+**Summary:** Score is already 100 (maximum) from iter-1. Iter-2 re-confirmed it — the L/R leaf-tracking tree decomposition in `solution.cpp` is correct and optimal. No further iterations needed. All three artifacts written and validated.

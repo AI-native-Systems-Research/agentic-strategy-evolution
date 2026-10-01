@@ -1,0 +1,3 @@
+Now I understand the setup. Let me implement the solution, run it, and record findings.Score 100. Now let me create all the required artifacts.Now write the experiment plan, findings, and principle updates:Validation passes. 
+
+**Summary:** Implemented the L/R leaf-tracking tree decomposition in `solution.cpp`. The algorithm builds S (spine), H (head), and Lnk (link) bags for each internal node, producing ≤ 3N bags with max bag size 4. Judge returned **SCORE: 100** — h-main CONFIRMED.

@@ -1,0 +1,86 @@
+diff --git a/solution.py b/solution.py
+index 16384ed..7249183 100644
+--- a/solution.py
++++ b/solution.py
+@@ -5,6 +5,7 @@ class Solution:
+     def solve(self, spec_path: str = None) -> dict:
+         return {"code": r"""
+ import networkx as nx
++from collections import deque
+ 
+ 
+ class BroadCastTopology:
+@@ -28,14 +29,66 @@ class BroadCastTopology:
+ 
+ 
+ def search_algorithm(src, dsts, G, num_partitions):
+-    h = G.copy()
+-    h.remove_edges_from(list(h.in_edges(src)) + list(nx.selfloop_edges(h)))
++    # Undirected Steiner tree: build undirected graph with min(fwd,rev) costs,
++    # compute Steiner tree, then route along directed edges from src.
++
++    # Build undirected graph H with min(forward, reverse) cost per edge pair
++    H = nx.Graph()
++    for u, v, data in G.edges(data=True):
++        cost_uv = data.get('cost')
++        if cost_uv is None:
++            continue
++        cost_vu = G[v][u]['cost'] if G.has_edge(v, u) and G[v][u].get('cost') is not None else cost_uv
++        min_cost = min(cost_uv, cost_vu)
++        if H.has_edge(u, v):
++            if min_cost < H[u][v]['cost']:
++                H[u][v]['cost'] = min_cost
++        else:
++            H.add_edge(u, v, cost=min_cost)
++
++    # Compute Steiner tree on undirected graph
++    terminals = [src] + list(dsts)
++    st = nx.algorithms.approximation.steiner_tree(H, terminals, weight='cost')
++
++    # BFS from src on the Steiner tree to get directed parent pointers
++    parent = {src: None}
++    visited = {src}
++    queue = deque([src])
++    while queue:
++        node = queue.popleft()
++        for neighbor in st.neighbors(node):
++            if neighbor not in visited:
++                visited.add(neighbor)
++                parent[neighbor] = node
++                queue.append(neighbor)
++
++    # Build topology: trace path from src to each dst
+     bc = BroadCastTopology(src, dsts, num_partitions)
++
+     for dst in dsts:
+-        path = nx.dijkstra_path(h, src, dst, weight="cost")
+-        for i in range(len(path) - 1):
+-            s, t = path[i], path[i + 1]
+-            for j in range(bc.num_partitions):
+-                bc.append_dst_partition_path(dst, j, [s, t, G[s][t]])
++        # Trace path from dst back to src using parent pointers
++        path_nodes = []
++        node = dst
++        while node is not None:
++            path_nodes.append(node)
++            node = parent.get(node)
++        path_nodes.reverse()  # now src -> ... -> dst
++
++        # Build edges with directed edge data from G
++        for i in range(len(path_nodes) - 1):
++            u, v = path_nodes[i], path_nodes[i + 1]
++            # Use directed edge data from G
++            if G.has_edge(u, v) and G[u][v].get('cost') is not None:
++                edge_data = G[u][v]
++            elif G.has_edge(v, u) and G[v][u].get('cost') is not None:
++                edge_data = G[v][u]
++                # Swap u, v for correct direction
++                u, v = v, u
++            else:
++                continue
++
++            for j in range(num_partitions):
++                bc.append_dst_partition_path(dst, j, [u, v, dict(edge_data)])
++
+     return bc
+ """}

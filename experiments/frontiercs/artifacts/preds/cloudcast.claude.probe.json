@@ -1,0 +1,44 @@
+{
+  "problem_id": "cloudcast",
+  "track": "research",
+  "agent": "claude",
+  "label": "claude",
+  "model": "claude-opus-4-6",
+  "final_score": 0.09022405785995208,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/research_cloudcast_claude.solution.py",
+  "total_cost": 1107.4,
+  "best_score": 0.09022405785995208,
+  "rounds": 4,
+  "history": [
+    {
+      "round": 0,
+      "score": 0.09022405785995208,
+      "status": "success",
+      "total_cost": 1107.4
+    },
+    {
+      "round": 1,
+      "score": 0.09022405785995208,
+      "status": "success",
+      "total_cost": 1107.4
+    },
+    {
+      "round": 2,
+      "score": 0.09022405785995208,
+      "status": "success",
+      "total_cost": 1107.4
+    },
+    {
+      "round": 3,
+      "score": 0.09022405785995208,
+      "status": "success",
+      "total_cost": 1107.4
+    }
+  ],
+  "input_tokens": 23631,
+  "output_tokens": 22075,
+  "cost_usd_est": 2.0101,
+  "stop_reason": "plateau",
+  "seconds": 269.7
+}

@@ -1,0 +1,33 @@
+metadata:
+  iteration: 1
+  family: "tree-decomposition-leaf-ring"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #22?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism — tree decomposition via L/R leaf tracking"
+
+arms:
+  - type: h-main
+    prediction: "The L/R leaf-tracking tree decomposition will produce a valid decomposition with bag size <= 4 and K <= 4N, achieving score 100."
+    mechanism: >
+      For each internal node u with children c_1..c_m, bags H_i={u,c_i,L[c_i],R[c_i]},
+      S_i={u,R[u],L[c_i],R[c_i]}, and Lnk_i={u,R[u],R[c_i],L[c_{i+1}]} cover all tree
+      edges and ring edges. The spine S_0--Lnk_0--S_1--...--S_{m-1} ensures the running
+      intersection property for u and R[u]. The wraparound ring edge is covered by S_0
+      at the root since L[c_1]=L[root]. Total bags <= 4N.
+    diagnostic: "If wrong, check: (1) running intersection property for some vertex j, (2) uncovered ring edge, (3) bag size > 4 from duplicate handling."
+    code_changes:
+      - file: "solution.cpp"
+        intent: >
+          Replace the empty stub with a full tree decomposition algorithm: read the tree,
+          compute L[u]/R[u] for each node via DFS, build H/S/Lnk bags per internal node,
+          connect them as a tree, and output K, bags, and edges.
+        rationale: "This is the primary algorithmic strategy being tested."
+
+# Arm selection note: Only h-main is included because this is iter-1 (tier 1),
+# and the problem is a correctness challenge (score is binary: valid decomposition = 100,
+# invalid = 0). There is no meaningful ablation or dose-response dimension.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters: {}
+  fanout_template: "bash /Users/toslali/frontier/gen_logs/fmeasure_22.sh $PWD/solution.cpp"

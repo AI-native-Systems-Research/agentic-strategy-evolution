@@ -1,0 +1,3 @@
+Score is already 100 (maximum). Let me run the judge once more to confirm, then write the artifacts.Score 100 confirmed. Now I'll write the three required artifacts.Now validate:Validation passes. 
+
+**Summary:** Iter-3 design is a final full-scope confirmation run. The solution already scores 100 (maximum) — confirmed again during this design phase. The bundle has a single h-main arm verifying the L/R leaf-tracking tree decomposition remains optimal. All three artifacts written and validated.

@@ -1,0 +1,33 @@
+{
+  "top_k": [
+    {
+      "candidate_id": "iter-1/h-main/0",
+      "score": 0.0,
+      "components": {
+        "score": 0.0
+      },
+      "iteration": 1,
+      "arm_id": "h-main"
+    },
+    {
+      "candidate_id": "iter-2/h-main/0",
+      "score": 0.0,
+      "components": {
+        "score": 0.0
+      },
+      "iteration": 2,
+      "arm_id": "h-main"
+    },
+    {
+      "candidate_id": "iter-3/h-main/0",
+      "score": 0.0,
+      "components": {
+        "score": 0.0
+      },
+      "iteration": 3,
+      "arm_id": "h-main"
+    }
+  ],
+  "k": 5,
+  "updated_at": "2026-10-01T15:40:20.321815+00:00"
+}

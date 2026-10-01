@@ -1,0 +1,20 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The existing solution.cpp will score 100, confirming the L/R leaf-tracking tree decomposition is correct and optimal.",
+      "observed": "SCORE: 100. The judge awarded full marks on all test cases. The L/R leaf-tracking decomposition produces bags of size <= 4 with K <= 3(N-1) < 5N, satisfying the checker's scoring formula.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Prediction confirmed exactly. Score 100 achieved, matching iter-1 result.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution.cpp"
+  ]
+}

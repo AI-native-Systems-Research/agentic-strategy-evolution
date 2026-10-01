@@ -1,0 +1,140 @@
+research_question: What routing algorithm minimizes total broadcast cost (maximizes
+  judge score) for research problem 'cloudcast'?
+run_id: research-cloudcast-nous
+max_iterations: 3
+sandbox: bypass
+target_system:
+  name: frontier-cs::research::cloudcast
+  description: "You are solving Frontier-CS research problem 'cloudcast'. The objective\
+    \ is to MINIMIZE the total multi-cloud broadcast transfer cost; the judge reports\
+    \ score = 100/(1+total_cost) (higher is better), so lower cost means higher score.\
+    \ MAXIMIZE the score.\n\nYour working directory is a git worktree containing 'solution.py'.\
+    \ It must define `class Solution` with `solve(self, spec_path=None)` returning\
+    \ {'code': '<algorithm source>'}, where the algorithm source defines a `BroadCastTopology`\
+    \ class and `search_algorithm(src, dsts, G, num_partitions)`. Edit solution.py\
+    \ with your algorithm, then measure.\n\nMEASURE the objective with this ONE command\
+    \ (do not run the evaluator any other way):\n    bash /Users/toslali/frontier/gen_logs/fmeasure_cloudcast.sh\
+    \ $PWD/solution.py\nIt prints a single line 'SCORE: <n>' (0-100, higher is better).\
+    \ Record that number in the finding metadata under key 'score'. Each experiment\
+    \ arm should try a distinct routing strategy (shortest-cost tree, multi-path partition\
+    \ splitting, Steiner/relay routing, load-balancing to avoid bandwidth bottlenecks)\
+    \ and report its measured score.\n\nPROBLEM README:\nCloudcast Broadcast Optimization\
+    \ Problem\n========================================\n\nProblem Setting\n---------------\n\
+    Design broadcast topology optimization for multi-cloud data distribution. Given\
+    \ a source node and multiple destination nodes across AWS, Azure, and GCP, find\
+    \ the optimal broadcast paths that minimize transfer cost while respecting bandwidth\
+    \ constraints.\n\nThe data is split into multiple partitions that can be transmitted\
+    \ independently. Different partitions can take different routes to the same destination,\
+    \ allowing for parallel transmission and load balancing across the network.\n\n\
+    **Optimization Goal**: Minimize total cost ($)\n\n$$\n\\text{Total Cost} = C_{\\\
+    text{egress}} + C_{\\text{instance}}\n$$\n\nWhere:\n\n$$\nC_{\\text{egress}} =\
+    \ \\sum_{e \\in E} \\left( |P_e| \\times s_{\\text{partition}} \\times c_e \\\
+    right)\n$$\n\n$$\nC_{\\text{instance}} = |V| \\times n_{\\text{vm}} \\times \\\
+    frac{r_{\\text{instance}}}{3600} \\times t_{\\text{transfer}}\n$$\n\n**Notation**:\n\
+    - $E$: Set of all edges used in the broadcast topology (union of all partition\
+    \ paths)\n- $P_e$: Set of partitions using edge $e$ (automatically computed by\
+    \ evaluator)\n- $s_{\\text{partition}}$: Size of each partition (GB) = $\\frac{\\\
+    text{data\\_vol}}{\\text{num\\_partitions}}$\n- $c_e$: Cost per GB for edge $e$\
+    \ (\\$/GB)\n- $V$: Set of all nodes appearing in any partition path (automatically\
+    \ computed by evaluator)\n- $n_{\\text{vm}}$: Number of VMs per region (default:\
+    \ 2)\n- $r_{\\text{instance}}$: Instance hourly rate (\\$/hour) = \\$0.54\n- $t_{\\\
+    text{transfer}}$: Total transfer time (seconds) = $\\max_{d \\in D} \\max_{p \\\
+    in [0, n_p)} \\max_{e \\in \\text{path}(d,p)} \\frac{|P_e| \\times s_{\\text{partition}}\
+    \ \\times 8}{f_e}$\n  - $D$: Set of destination nodes\n  - $n_p$: Number of partitions\n\
+    \  - $f_e$: Actual throughput (flow) on edge $e$ after bandwidth constraint enforcement\
+    \ (Gbps)\n\nAPI Specification\n-----------------\nImplement a `Solution` class\
+    \ that returns a search algorithm:\n\n```python\nclass Solution:\n    def solve(self,\
+    \ spec_path: str = None) -> dict:\n        \"\"\"\n        Returns a dict with\
+    \ either:\n        - {\"code\": \"python_code_string\"}\n        - {\"program_path\"\
+    : \"path/to/algorithm.py\"}\n        \"\"\"\n        # Your implementation\n \
+    \       pass\n```\n\nYour algorithm code must implement:\n\n```python\nimport\
+    \ networkx as nx\n\ndef search_algorithm(src: str, dsts: list[str], G: nx.DiGraph,\
+    \ num_partitions: int) -> BroadCastTopology:\n    \"\"\"\n    Design routing paths\
+    \ for broadcasting data partitions to multiple destinations.\n\n    Args:\n  \
+    \      src: Source node (e.g., \"aws:ap-northeast-1\")\n        dsts: List of\
+    \ destination nodes (e.g., [\"aws:us-east-1\", \"gcp:us-central1\"])\n       \
+    \ G: NetworkX DiGraph with edge attributes:\n           - \"cost\": float ($/GB)\
+    \ - egress cost for transferring data\n           - \"throughput\": float (Gbps)\
+    \ - maximum bandwidth capacity\n        num_partitions: Number of data partitions\
+    \ to broadcast\n\n    Returns:\n        BroadCastTopology object with routing\
+    \ paths for all (destination, partition) pairs\n    \"\"\"\n    pass\n\n\nclass\
+    \ BroadCastTopology:\n    def __init__(self, src: str, dsts: list[str], num_partitions:\
+    \ int):\n        self.src = src\n        self.dsts = dsts\n        self.num_partitions\
+    \ = int(num_partitions)\n        # Structure: {dst: {partition_id: [edges]}}\n\
+    \        # Each edge is [src_node, dst_node, edge_data_dict]\n        self.paths\
+    \ = {dst: {str(i): None for i in range(self.num_partitions)} for dst in dsts}\n\
+    \n    def append_dst_partition_path(self, dst: str, partition: int, path: list):\n\
+    \        \"\"\"\n        Append an edge to the path for a specific destination-partition\
+    \ pair.\n\n        Args:\n            dst: Destination node\n            partition:\
+    \ Partition ID (0 to num_partitions-1)\n            path: Edge represented as\
+    \ [src_node, dst_node, edge_data_dict]\n                  where edge_data_dict\
+    \ = G[src_node][dst_node]\n        \"\"\"\n        partition = str(partition)\n\
+    \        if self.paths[dst][partition] is None:\n            self.paths[dst][partition]\
+    \ = []\n        self.paths[dst][partition].append(path)\n\n    def set_dst_partition_paths(self,\
+    \ dst: str, partition: int, paths: list[list]):\n        \"\"\"\n        Set the\
+    \ complete path (list of edges) for a destination-partition pair.\n\n        Args:\n\
+    \            dst: Destination node\n            partition: Partition ID\n    \
+    \        paths: List of edges, each edge is [src_node, dst_node, edge_data_dict]\n\
+    \        \"\"\"\n        partition = str(partition)\n        self.paths[dst][partition]\
+    \ = paths\n\n    def set_num_partitions(self, num_partitions: int):\n        \"\
+    \"\"Update number of partitions\"\"\"\n        self.num_partitions = num_partitions\n\
+    ```\n\nBandwidth Constraints\n---------------------\nEach cloud provider has ingress/egress\
+    \ limits (Gbps) per region:\n- AWS: 10 Gbps ingress, 5 Gbps egress\n- GCP: 16\
+    \ Gbps ingress, 7 Gbps egress\n- Azure: 16 Gbps ingress, 16 Gbps egress\n\nThese\
+    \ limits are multiplied by the number of VMs per region.\n\nWhen multiple edges\
+    \ share a node and exceed its limits:\n- Flow is **equally distributed** among\
+    \ incoming/outgoing edges (each edge gets $\\frac{\\text{limit}}{n_{\\text{edges}}}$)\n\
+    - Transfer time increases as actual throughput decreases\n- Example: If a node\
+    \ has 3 outgoing edges and 5 Gbps egress limit, each edge gets min(original_flow,\
+    \ 5/3 Gbps)\n\n**Strategy tip**: Different partitions can use different paths\
+    \ to the same destination, potentially avoiding bottlenecks by distributing load\
+    \ across the network.\n\nScoring (0-100)\n---------------\n```python\nscore =\
+    \ 1.0 / (1.0 + total_cost) * 100\n```\n\nLower total cost \u2192 higher score\n\
+    \nExample: Basic Implementation\n------------------------------\n```python\ndef\
+    \ search_algorithm(src, dsts, G, num_partitions):\n    bc_topology = BroadCastTopology(src,\
+    \ dsts, num_partitions)\n\n    for dst in dsts:\n        path = nx.dijkstra_path(G,\
+    \ src, dst, weight=\"cost\")\n        for i in range(len(path) - 1):\n       \
+    \     for partition_id in range(num_partitions):\n                bc_topology.append_dst_partition_path(dst,\
+    \ partition_id,\n                    [path[i], path[i + 1], G[path[i]][path[i\
+    \ + 1]]])\n\n    return bc_topology\n```\n\nEvaluation Details\n------------------\n\
+    - **Test configurations**: 5 network scenarios\n  - intra-AWS: Broadcasting within\
+    \ AWS regions\n  - intra-Azure: Broadcasting within Azure regions\n  - intra-GCP:\
+    \ Broadcasting within GCP regions\n  - inter-AGZ: Broadcasting across AWS, GCP,\
+    \ Azure\n  - inter-GAZ2: Another multi-cloud scenario\n- **Network scale**: ~20-50\
+    \ regions per provider\n- **Default setup**: 2 VMs per region\n- **Data volume**:\
+    \ Varies by configuration (e.g., 300 GB)\n- **Partitions**: Varies by configuration\
+    \ (e.g., 10 partitions)\n- **Instance cost**: $0.54/hour (based on m5.8xlarge\
+    \ spot instances)\n\nInput Format\n------------\nThe `spec_path` parameter is\
+    \ a string containing the file path to the specification JSON file.\n\n**spec_path\
+    \ file format:**\n```json\n{\n    \"config_files\": [\"examples/config/intra_aws.json\"\
+    , ...],\n    \"num_vms\": 2\n}\n```\n\nEach config file contains:\n```json\n{\n\
+    \    \"source_node\": \"aws:ap-northeast-1\",\n    \"dest_nodes\": [\"aws:us-east-1\"\
+    , \"aws:eu-west-1\", ...],\n    \"data_vol\": 300,\n    \"num_partitions\": 10,\n\
+    \    \"ingress_limit\": {\"aws\": 10, \"gcp\": 16, \"azure\": 16},\n    \"egress_limit\"\
+    : {\"aws\": 5, \"gcp\": 7, \"azure\": 16}\n}\n```\n\nRequirements and Constraints\n\
+    -----------------------------\n- All partitions (0 to num_partitions-1) must have\
+    \ valid paths to each destination\n- Paths must start from the source node and\
+    \ end at the specified destination\n- Self-loops are not allowed\n- Different\
+    \ partitions can use different routes to the same destination\n- Multiple destinations\
+    \ can share intermediate nodes (tree topology)\n- The BroadCastTopology class\
+    \ is provided in the evaluation environment\n"
+  repo_path: /Users/toslali/frontier/gen_logs/research_cloudcast_nous_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_py
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /Users/toslali/nous_repo/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: 197027030a8419ce19920be02ab3d33624f0b9d8
+  nous_version: 0.5.0
+  started_at: '2026-10-01T14:48:28.678096+00:00'

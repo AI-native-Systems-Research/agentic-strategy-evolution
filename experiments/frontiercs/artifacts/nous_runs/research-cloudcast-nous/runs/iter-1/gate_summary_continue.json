@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 confirmed that Steiner tree routing (score 0.134) outperforms the Dijkstra shortest-path baseline (score 0.096) by ~40%, validating the core insight that egress cost dominates (~99% of total) and depends only on the set of unique edges used. The Steiner tree reduces total edge cost by sharing paths across destinations. However, the measured score (0.134) fell short of the designer's probe estimate (0.154), and instance cost from relay nodes (~$100 vs baseline ~$11) is a growing concern that could be addressed next.",
+  "key_points": [
+    "Steiner tree scored 0.134 vs baseline 0.096 \u2014 a 40% improvement confirmed directionally, though below the 0.154 probe estimate (likely due to full-evaluator conditions differing from probe)",
+    "Key insight validated: egress cost (~99% of total) depends on the SET of unique edges, not per-destination sums; edge reuse across destinations is free due to partition-set deduplication in the simulator",
+    "Instance cost increased ~9x under Steiner tree (more relay nodes = more VMs, longer transfer times through intermediate hops) \u2014 this is now the most promising optimization target",
+    "Next iteration should investigate: (1) weighted Steiner tree penalizing node count to reduce instance cost, (2) hybrid approach using Steiner tree structure but pruning unnecessary relay nodes, (3) bandwidth-aware tree construction that minimizes transfer time at relay bottlenecks",
+    "Multi-path partition splitting was tested and found harmful (adds unique edges \u2192 more egress), so future work should focus on single-tree optimization rather than path diversification"
+  ]
+}
