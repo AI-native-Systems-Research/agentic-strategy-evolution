@@ -1,37 +1,24 @@
-Looking at the previous solution, I can identify several key limitations:
+Looking at the previous attempt, it was truncated mid-code and had the code block nested incorrectly. I need to write a complete, working solution.
 
-1. **MaxRects pruning too aggressive** (capping at 500 free rects loses precision)
-2. **Strip packing is too rigid** - only packs uniform strips, missing mixed-type opportunities
-3. **No proper gap filling** - leftover spaces aren't well utilized
-4. **Two-type split is simplistic** - doesn't explore partial strip allocations well
-5. **No simulated annealing or local search** to refine solutions
-6. **Missing key heuristic**: for each type, computing optimal tiling of the full bin as strips in both orientations, then combining best types
-
-The main improvement strategy: implement a much better solver that uses:
-- Better MaxRects with proper containment pruning
-- Multiple placement heuristics (BSSF, BL, BAF, etc.)
-- A proper multi-restart search over type orderings and split ratios
-- Column-based strip optimization: for each combination of types allocated to horizontal strips, optimize strip counts via knapsack/DP
-- Recursive gap filling
+My approach:
+1. Parse JSON input
+2. Try multiple packing strategies: MaxRects with various heuristics, strip-based packing, greedy approaches, and a strip knapsack with branch-and-bound
+3. Fill gaps recursively
+4. Pick the best result within the time budget
 
 ```cpp
 #include <bits/stdc++.h>
 using namespace std;
 
-struct Item { string type; int w, h; long long v; int limit; };
-struct Placement { string type; int x, y, rot; };
-
 int W, H, M;
 bool allow_rot;
+
+struct Item { string type; int w, h; long long v; int limit; };
 vector<Item> items;
-long long bestVal = 0;
-vector<Placement> bestPl;
 
-void updateBest(long long v, vector<Placement>& pl) {
-    if (v > bestVal) { bestVal = v; bestPl = pl; }
-}
+struct Placement { string type; int x, y, rot; };
 
-struct Rect { int x,y,w,h; };
+struct Rect { int x, y, w, h; };
 
 struct MaxRects {
     int BW, BH;
@@ -56,7 +43,6 @@ struct MaxRects {
         vector<Rect> nfr;
         for (int i=0;i<n;i++) if(!del[i]) nfr.push_back(fr[i]);
         fr=nfr;
-        // Keep manageable size
         if ((int)fr.size() > 2000) {
             sort(fr.begin(), fr.end(), [](auto&a,auto&b){return (long long)a.w*a.h>(long long)b.w*b.h;});
             fr.resize(2000);
@@ -65,7 +51,6 @@ struct MaxRects {
     
     void insert(int px, int py, int pw, int ph) {
         int rx2=px+pw, ry2=py+ph;
-        vector<Rect> add;
         vector<Rect> nfr;
         for (auto& r : fr) {
             int rr=r.x+r.w, rt=r.y+r.h;
@@ -81,7 +66,6 @@ struct MaxRects {
         prune();
     }
     
-    // heuristics: 0=BSSF, 1=BL, 2=BAF, 3=BLSF, 4=contact point (approx)
     bool findPos(int pw, int ph, int& bx, int& by, int heur) {
         bx=by=-1;
         long long bs1=LLONG_MAX, bs2=LLONG_MAX;
@@ -94,7 +78,7 @@ struct MaxRects {
                 case 1: s1=r.y; s2=r.x; break;
                 case 2: s1=(long long)r.w*r.h; s2=min(sf1,sf2); break;
                 case 3: s1=max(sf1,sf2); s2=min(sf1,sf2); break;
-                default: s1=r.x+r.y; s2=min(sf1,sf2); break;
+                default: s1=min(sf1,sf2); s2=max(sf1,sf2); break;
             }
             if (s1<bs1||(s1==bs1&&s2<bs2)) { bs1=s1;bs2=s2;bx=r.x;by=r.y; }
         }
@@ -105,8 +89,32 @@ struct MaxRects {
 struct Cand { int ti, rot, pw, ph; double density; };
 vector<Cand> allCands;
 
-// Try packing candidates in order, each until exhausted
-pair<long long,vector<Placement>> packOrder(vector<Cand>& order, int heur) {
+long long bestVal = 0;
+vector<Placement> bestPl;
+
+void updateBest(long long v, const vector<Placement>& pl) {
+    if (v > bestVal) { bestVal = v; bestPl = pl; }
+}
+
+void fillRegion(int rx, int ry, int rw, int rh, vector<int>& used, vector<Placement>& pl, long long& val, int heur) {
+    if (rw<=0||rh<=0) return;
+    MaxRects mr; mr.init(rw,rh);
+    auto cands = allCands;
+    sort(cands.begin(),cands.end(),[](auto&a,auto&b){return a.density>b.density;});
+    for (auto& c : cands) {
+        if (c.pw>rw&&c.ph>rh) continue;
+        while (used[c.ti]<items[c.ti].limit) {
+            int bx,by;
+            if (!mr.findPos(c.pw,c.ph,bx,by,heur)) break;
+            if (bx+c.pw+rx>W || by+c.ph+ry>H) break;
+            mr.insert(bx,by,c.pw,c.ph);
+            pl.push_back({items[c.ti].type,bx+rx,by+ry,c.rot});
+            val+=items[c.ti].v; used[c.ti]++;
+        }
+    }
+}
+
+pair<long long,vector<Placement>> packSequential(vector<Cand>& order, int heur) {
     MaxRects mr; mr.init(W,H);
     vector<int> used(M,0);
     vector<Placement> pl;
@@ -123,12 +131,12 @@ pair<long long,vector<Placement>> packOrder(vector<Cand>& order, int heur) {
     return {val,pl};
 }
 
-// Greedy: pick best candidate at each step
-pair<long long,vector<Placement>> greedyPack(int heur, int scoreMode) {
+pair<long long,vector<Placement>> greedyBest(int heur, int scoreMode) {
     MaxRects mr; mr.init(W,H);
     vector<int> used(M,0);
     vector<Placement> pl;
     long long val=0;
+    
     while(true) {
         int bestCI=-1; int bbx=0,bby=0;
         double bestScore=-1e30;
@@ -141,9 +149,9 @@ pair<long long,vector<Placement>> greedyPack(int heur, int scoreMode) {
             switch(scoreMode) {
                 case 0: score=c.density; break;
                 case 1: score=(double)items[c.ti].v; break;
-                case 2: score=c.density*(c.pw*c.ph); break;
-                case 3: score=c.density-0.0001*(fx+fy); break;
-                default: score=c.density; break;
+                case 2: score=c.density*1e6 - (double)(fx+fy); break;
+                case 3: score=(double)items[c.ti].v / max(c.pw,c.ph); break;
+                default: score=c.density;
             }
             if (score>bestScore) { bestScore=score; bestCI=ci; bbx=fx; bby=fy; }
         }
@@ -156,314 +164,56 @@ pair<long long,vector<Placement>> greedyPack(int heur, int scoreMode) {
     return {val,pl};
 }
 
-// Strip-based DP: allocate horizontal strips for types, then fill gaps
-// For each type+rotation, compute (strip_height, items_per_strip, value_per_strip)
-struct StripConfig {
-    int ti, rot, pw, ph;
-    int stripThick; // thickness of one strip
-    int perStrip;   // items per strip row
-    long long valPerStrip;
-    int maxStrips;  // limited by item count
-};
-
-pair<long long,vector<Placement>> stripDP(bool horiz) {
+pair<long long,vector<Placement>> adaptiveStrip(bool horiz) {
     int mainDim = horiz ? H : W;
     int crossDim = horiz ? W : H;
     
-    vector<StripConfig> configs;
-    for (int i=0;i<M;i++) {
-        for (int r=0;r<(allow_rot?2:1);r++) {
-            int pw = r ? items[i].h : items[i].w;
-            int ph = r ? items[i].w : items[i].h;
-            if (pw>W||ph>H) continue;
-            int thick = horiz ? ph : pw;
-            int cross = horiz ? pw : ph;
-            int per = crossDim / cross;
-            if (per<=0||thick<=0) continue;
-            int maxS = items[i].limit / per;
-            if (maxS<=0) continue;
-            configs.push_back({i,r,pw,ph,thick,per,(long long)per*items[i].v,min(maxS,mainDim/thick)});
-        }
-    }
-    
-    if (configs.empty()) return {0,{}};
-    
-    // DP on mainDim with knapsack over strip configs
-    // State: remaining main dimension, used count per type
-    // Too expensive for full DP. Use greedy: pick best value-per-thickness strips
-    
-    // Sort by value density per unit of main dimension
-    sort(configs.begin(), configs.end(), [](auto&a,auto&b){
-        return (double)a.valPerStrip/a.stripThick > (double)b.valPerStrip/b.stripThick;
-    });
-    
-    // Greedy allocation
     vector<int> used(M,0);
     int pos=0;
     vector<Placement> pl;
     long long val=0;
     vector<array<int,4>> gaps;
     
-    for (auto& sc : configs) {
-        while (pos+sc.stripThick<=mainDim) {
-            int avail = items[sc.ti].limit - used[sc.ti];
-            if (avail < sc.perStrip) break; // need full strip (could do partial)
-            // Place a strip
-            int placed=0;
-            for (int j=0;j<sc.perStrip && used[sc.ti]<items[sc.ti].limit;j++) {
-                int x,y;
-                if (horiz) { x=j*sc.pw; y=pos; }
-                else { x=pos; y=j*sc.ph; }
-                pl.push_back({items[sc.ti].type,x,y,sc.rot});
-                val+=items[sc.ti].v; used[sc.ti]++; placed++;
-            }
-            int endCoord = horiz ? placed*sc.pw : placed*sc.ph;
-            int gapSize = crossDim - endCoord;
-            if (gapSize>0) {
-                if (horiz) gaps.push_back({endCoord,pos,gapSize,sc.stripThick});
-                else gaps.push_back({pos,endCoord,sc.stripThick,gapSize});
-            }
-            pos+=sc.stripThick;
-        }
-    }
-    
-    // Also allow partial strips
-    for (auto& sc : configs) {
-        while (pos+sc.stripThick<=mainDim && used[sc.ti]<items[sc.ti].limit) {
-            int placed=0;
-            int startPos=pos;
-            for (int j=0;j<sc.perStrip && used[sc.ti]<items[sc.ti].limit;j++) {
-                int x,y;
-                if (horiz) { x=j*sc.pw; y=pos; }
-                else { x=pos; y=j*sc.ph; }
-                pl.push_back({items[sc.ti].type,x,y,sc.rot});
-                val+=items[sc.ti].v; used[sc.ti]++; placed++;
-            }
-            if (placed==0) break;
-            int endCoord = horiz ? placed*sc.pw : placed*sc.ph;
-            int gapSize = crossDim - endCoord;
-            if (gapSize>0) {
-                if (horiz) gaps.push_back({endCoord,startPos,gapSize,sc.stripThick});
-                else gaps.push_back({startPos,endCoord,sc.stripThick,gapSize});
-            }
-            pos+=sc.stripThick;
-        }
-    }
-    
-    if (pos<mainDim) {
-        if (horiz) gaps.push_back({0,pos,crossDim,mainDim-pos});
-        else gaps.push_back({pos,0,mainDim-pos,crossDim});
-    }
-    
-    // Fill gaps with MaxRects
-    auto candOrder=allCands;
-    sort(candOrder.begin(),candOrder.end(),[](auto&a,auto&b){return a.density>b.density;});
-    
-    for (auto& g : gaps) {
-        if (g[2]<=0||g[3]<=0) continue;
-        MaxRects mr; mr.init(g[2],g[3]);
-        for (auto& c : candOrder) {
-            while (used[c.ti]<items[c.ti].limit) {
-                int bx,by;
-                if (!mr.findPos(c.pw,c.ph,bx,by,0)) break;
-                mr.insert(bx,by,c.pw,c.ph);
-                pl.push_back({items[c.ti].type,bx+g[0],by+g[1],c.rot});
-                val+=items[c.ti].v; used[c.ti]++;
-            }
-        }
-    }
-    return {val,pl};
-}
-
-// Advanced strip: enumerate allocations of top types to strips using bounded knapsack
-pair<long long,vector<Placement>> advancedStripKnapsack(bool horiz) {
-    int mainDim = horiz ? H : W;
-    int crossDim = horiz ? W : H;
-    
-    struct SC {
-        int ti, rot, pw, ph;
-        int thick, per;
-        long long valPer;
-        int maxCount; // max strips
-    };
-    
-    vector<SC> scs;
-    for (int i=0;i<M;i++) {
-        for (int r=0;r<(allow_rot?2:1);r++) {
-            int pw = r?items[i].h:items[i].w;
-            int ph = r?items[i].w:items[i].h;
-            if (pw>W||ph>H) continue;
-            int thick = horiz?ph:pw;
-            int cross = horiz?pw:ph;
-            int per = crossDim/cross;
-            if (per<=0||thick<=0) continue;
-            int maxS = min(items[i].limit/per, mainDim/thick);
-            if (maxS<=0) continue;
-            scs.push_back({i,r,pw,ph,thick,per,(long long)per*items[i].v,maxS});
-        }
-    }
-    
-    if (scs.empty()) return {0,{}};
-    
-    // Remove dominated: for same ti, keep best valPer/thick
-    // Actually keep all since different thick values can fill differently
-    
-    // Bounded knapsack on mainDim
-    // capacity = mainDim, items = strip configs with weight=thick, value=valPer, count=maxCount
-    // But types share limits! Two configs for same type consume the same item pool.
-    // This makes it a complex problem. Simplify: for each type, pick best config.
-    
-    // Per type, pick config with best valPer/thick
-    map<int, SC> bestConfig;
-    for (auto& sc : scs) {
-        auto it = bestConfig.find(sc.ti);
-        if (it==bestConfig.end() || (double)sc.valPer/sc.thick > (double)it->second.valPer/it->second.thick) {
-            bestConfig[sc.ti] = sc;
-        }
-    }
-    
-    vector<SC> typeConfigs;
-    for (auto& [k,v] : bestConfig) typeConfigs.push_back(v);
-    
-    int nTypes = typeConfigs.size();
-    
-    // Bounded knapsack DP
-    // dp[cap] = best value achievable with 'cap' main dimension
-    // But we need to track per-type usage for limit checking
-    // With M<=12 types and mainDim<=2000, we can do DP differently
-    
-    // Since nTypes<=12 (at most), and each has maxCount potentially up to ~200,
-    // we can binary-split the bounded knapsack
-    
-    vector<long long> dp(mainDim+1, 0);
-    vector<vector<pair<int,int>>> dpChoice(mainDim+1); // (type_config_idx, count) - track via backtracking
-    
-    // Actually, let's just do a simple DP with binary splitting
-    // dp[j] = max value using j units of mainDim
-    // For each type config, do bounded knapsack with binary decomposition
-    
-    struct KItem { int weight; long long value; int origType; };
-    vector<KItem> kitems;
-    for (int i=0;i<nTypes;i++) {
-        auto& tc = typeConfigs[i];
-        int cnt = tc.maxCount;
-        int k=1;
-        while (cnt>0) {
-            int take = min(k, cnt);
-            kitems.push_back({tc.thick*take, tc.valPer*take, i});
-            cnt -= take;
-            k *= 2;
-        }
-    }
-    
-    // 0-1 knapsack (each kitem used at most once)
-    // But we need to track which items are used for reconstruction
-    // Use parent tracking
-    
-    vector<long long> dpv(mainDim+1, 0);
-    vector<int> from(mainDim+1, -1); // which kitem was last added
-    vector<int> prev(mainDim+1, -1); // previous capacity
-    
-    // This is too memory-heavy for proper backtracking with many kitems
-    // Use simpler approach: enumerate combinations of strip counts for top types
-    
-    // Since nTypes<=12, and we want to fill mainDim, let's do recursive search with pruning
-    
-    long long bestV = 0;
-    vector<int> bestCounts(nTypes, 0);
-    
-    // Sort by value density descending
-    vector<int> order(nTypes);
-    iota(order.begin(),order.end(),0);
-    sort(order.begin(),order.end(),[&](int a,int b){
-        return (double)typeConfigs[a].valPer/typeConfigs[a].thick >
-               (double)typeConfigs[b].valPer/typeConfigs[b].thick;
-    });
-    
-    vector<int> curCounts(nTypes, 0);
-    long long curVal = 0;
-    int curUsed = 0;
-    
-    // Compute upper bound for remaining types
-    function<void(int)> solve = [&](int idx) {
-        if (curVal > bestV) { bestV = curVal; bestCounts = curCounts; }
-        if (idx >= nTypes) return;
-        
-        // Upper bound: fill remaining with best density
-        int rem = mainDim - curUsed;
-        if (rem <= 0) return;
-        
-        // Compute UB
-        long long ub = curVal;
-        int remCap = rem;
-        for (int i=idx;i<nTypes && remCap>0;i++) {
-            int oi = order[i];
-            int maxS = min(typeConfigs[oi].maxCount, remCap/typeConfigs[oi].thick);
-            ub += (long long)maxS * typeConfigs[oi].valPer;
-            remCap -= maxS * typeConfigs[oi].thick;
-        }
-        if (ub <= bestV) return;
-        
-        int oi = order[idx];
-        int maxS = min(typeConfigs[oi].maxCount, rem/typeConfigs[oi].thick);
-        
-        // Try from maxS down to 0
-        for (int s=maxS; s>=0; s--) {
-            curCounts[oi] = s;
-            curVal += (long long)s * typeConfigs[oi].valPer;
-            curUsed += s * typeConfigs[oi].thick;
-            solve(idx+1);
-            curVal -= (long long)s * typeConfigs[oi].valPer;
-            curUsed -= s * typeConfigs[oi].thick;
-            curCounts[oi] = 0;
-            
-            // Early termination check
-            if (s > 0) {
-                long long potVal = curVal + (long long)(s-1)*typeConfigs[oi].valPer;
-                int potRem = mainDim - curUsed - (s-1)*typeConfigs[oi].thick;
-                long long potUB = potVal;
-                int rc = potRem;
-                for (int i=idx+1;i<nTypes&&rc>0;i++) {
-                    int oj=order[i];
-                    int ms=min(typeConfigs[oj].maxCount,rc/typeConfigs[oj].thick);
-                    potUB+=(long long)ms*typeConfigs[oj].valPer;
-                    rc-=ms*typeConfigs[oj].thick;
+    while (pos < mainDim) {
+        int bestTi=-1,bestR=0,bestThick=0,bestCross=0,bestPer=0;
+        double bestDens=-1;
+        for (int i=0;i<M;i++) {
+            if (used[i]>=items[i].limit) continue;
+            for (int r=0;r<(allow_rot?2:1);r++) {
+                int pw=r?items[i].h:items[i].w;
+                int ph=r?items[i].w:items[i].h;
+                if (pw>W||ph>H) continue;
+                int thick=horiz?ph:pw;
+                int cross=horiz?pw:ph;
+                if (pos+thick>mainDim) continue;
+                int per=crossDim/cross;
+                if (per<=0) continue;
+                int avail=items[i].limit-used[i];
+                per=min(per,avail);
+                if (per<=0) continue;
+                double d=(double)per*items[i].v/thick;
+                if (d>bestDens) {
+                    bestDens=d; bestTi=i; bestR=r; bestThick=thick; bestCross=cross; bestPer=per;
                 }
-                if (potUB<=bestV) break;
             }
         }
-    };
-    
-    solve(0);
-    
-    // Reconstruct placement
-    vector<int> used(M,0);
-    int pos=0;
-    vector<Placement> pl;
-    long long val=0;
-    vector<array<int,4>> gaps;
-    
-    // Place strips in order of density
-    for (int i=0;i<nTypes;i++) {
-        int oi=order[i];
-        auto& tc=typeConfigs[oi];
-        for (int s=0;s<bestCounts[oi];s++) {
-            int placed=0;
-            for (int j=0;j<tc.per&&used[tc.ti]<items[tc.ti].limit;j++) {
-                int x,y;
-                if (horiz) {x=j*tc.pw;y=pos;}
-                else {x=pos;y=j*tc.ph;}
-                pl.push_back({items[tc.ti].type,x,y,tc.rot});
-                val+=items[tc.ti].v; used[tc.ti]++; placed++;
-            }
-            int endCoord = horiz?placed*tc.pw:placed*tc.ph;
-            int gapSize = crossDim - endCoord;
-            if (gapSize>0) {
-                if (horiz) gaps.push_back({endCoord,pos,gapSize,tc.thick});
-                else gaps.push_back({pos,endCoord,tc.thick,gapSize});
-            }
-            pos+=tc.thick;
+        if (bestTi<0) break;
+        
+        int placed=0;
+        for (int j=0;j<bestPer;j++) {
+            int x,y;
+            if (horiz) {x=j*bestCross;y=pos;}
+            else {x=pos;y=j*bestCross;}
+            pl.push_back({items[bestTi].type,x,y,bestR});
+            val+=items[bestTi].v; used[bestTi]++; placed++;
         }
+        int endCoord=placed*bestCross;
+        int gapSize=crossDim-endCoord;
+        if (gapSize>0) {
+            if (horiz) gaps.push_back({endCoord,pos,gapSize,bestThick});
+            else gaps.push_back({pos,endCoord,bestThick,gapSize});
+        }
+        pos+=bestThick;
     }
     
     if (pos<mainDim) {
@@ -471,78 +221,62 @@ pair<long long,vector<Placement>> advancedStripKnapsack(bool horiz) {
         else gaps.push_back({pos,0,mainDim-pos,crossDim});
     }
     
-    // Fill gaps
-    auto candOrder=allCands;
-    sort(candOrder.begin(),candOrder.end(),[](auto&a,auto&b){return a.density>b.density;});
-    
     for (auto& g : gaps) {
-        if (g[2]<=0||g[3]<=0) continue;
-        MaxRects mr; mr.init(g[2],g[3]);
-        for (auto& c : candOrder) {
-            while (used[c.ti]<items[c.ti].limit) {
-                int bx,by;
-                if (!mr.findPos(c.pw,c.ph,bx,by,0)) break;
-                mr.insert(bx,by,c.pw,c.ph);
-                pl.push_back({items[c.ti].type,bx+g[0],by+g[1],c.rot});
-                val+=items[c.ti].v; used[c.ti]++;
-            }
-        }
+        fillRegion(g[0],g[1],g[2],g[3],used,pl,val,0);
     }
     
     return {val,pl};
 }
 
-// Multi-config strip: for each type, also consider multiple rotations 
-// and try to allocate the best combo of strips along mainDim
-pair<long long,vector<Placement>> multiConfigStrip(vector<int>& typeOrder, bool horiz) {
+pair<long long,vector<Placement>> mixedStrip(bool horiz) {
     int mainDim = horiz ? H : W;
     int crossDim = horiz ? W : H;
     
-    vector<int> used(M,0);
-    int pos=0;
-    vector<Placement> pl;
-    long long val=0;
-    vector<array<int,4>> gaps;
+    struct SC { int ti, rot, thick, cross, per; long long valPer; double dens; };
+    vector<SC> allSC;
     
-    for (int ti : typeOrder) {
-        if (pos>=mainDim) break;
-        
-        struct SC { int rot,pw,ph,thick,per; double eff; };
-        vector<SC> cfgs;
+    for (int i=0;i<M;i++) {
         for (int r=0;r<(allow_rot?2:1);r++) {
-            int pw=r?items[ti].h:items[ti].w;
-            int ph=r?items[ti].w:items[ti].h;
+            int pw=r?items[i].h:items[i].w;
+            int ph=r?items[i].w:items[i].h;
             if (pw>W||ph>H) continue;
             int thick=horiz?ph:pw;
             int cross=horiz?pw:ph;
             int per=crossDim/cross;
             if (per<=0||thick<=0) continue;
-            cfgs.push_back({r,pw,ph,thick,per,(double)per*cross/crossDim});
+            allSC.push_back({i,r,thick,cross,per,(long long)per*items[i].v,
+                (double)per*items[i].v/thick});
         }
-        // Sort by efficiency
-        sort(cfgs.begin(),cfgs.end(),[](auto&a,auto&b){return a.eff>b.eff;});
-        
-        for (auto& cfg : cfgs) {
-            while (pos+cfg.thick<=mainDim && used[ti]<items[ti].limit) {
-                int avail = items[ti].limit-used[ti];
-                if (avail<=0) break;
-                int toPlace = min(cfg.per, avail);
-                int placed=0;
-                for (int j=0;j<toPlace;j++) {
-                    int x,y;
-                    if (horiz) {x=j*cfg.pw;y=pos;}
-                    else {x=pos;y=j*cfg.ph;}
-                    pl.push_back({items[ti].type,x,y,cfg.rot});
-                    val+=items[ti].v; used[ti]++; placed++;
-                }
-                int endCoord=horiz?placed*cfg.pw:placed*cfg.ph;
-                int gapSize=crossDim-endCoord;
-                if (gapSize>0) {
-                    if (horiz) gaps.push_back({endCoord,pos,gapSize,cfg.thick});
-                    else gaps.push_back({pos,endCoord,cfg.thick,gapSize});
-                }
-                pos+=cfg.thick;
+    }
+    
+    sort(allSC.begin(),allSC.end(),[](auto&a,auto&b){return a.dens>b.dens;});
+    
+    vector<int> used(M,0);
+    int pos=0;
+    vector<Placement> pl;
+    long long val=0;
+    vector<array<int,4>> gaps;
+    
+    for (auto& sc : allSC) {
+        while (pos+sc.thick<=mainDim && used[sc.ti]<items[sc.ti].limit) {
+            int avail=items[sc.ti].limit-used[sc.ti];
+            if (avail<=0) break;
+            int toPlace=min(sc.per,avail);
+            int placed=0;
+            for (int j=0;j<toPlace;j++) {
+                int x,y;
+                if (horiz) {x=j*sc.cross;y=pos;}
+                else {x=pos;y=j*sc.cross;}
+                pl.push_back({items[sc.ti].type,x,y,sc.rot});
+                val+=items[sc.ti].v; used[sc.ti]++; placed++;
             }
+            int endCoord=placed*sc.cross;
+            int gapSize=crossDim-endCoord;
+            if (gapSize>0) {
+                if (horiz) gaps.push_back({endCoord,pos,gapSize,sc.thick});
+                else gaps.push_back({pos,endCoord,sc.thick,gapSize});
+            }
+            pos+=sc.thick;
         }
     }
     
@@ -551,57 +285,319 @@ pair<long long,vector<Placement>> multiConfigStrip(vector<int>& typeOrder, bool 
         else gaps.push_back({pos,0,mainDim-pos,crossDim});
     }
     
-    // Fill gaps
-    auto candOrder=allCands;
-    sort(candOrder.begin(),candOrder.end(),[](auto&a,auto&b){return a.density>b.density;});
-    
     for (auto& g : gaps) {
-        if (g[2]<=0||g[3]<=0) continue;
-        MaxRects mr; mr.init(g[2],g[3]);
-        for (auto& c : candOrder) {
-            while (used[c.ti]<items[c.ti].limit) {
-                int bx,by;
-                if (!mr.findPos(c.pw,c.ph,bx,by,0)) break;
-                mr.insert(bx,by,c.pw,c.ph);
-                pl.push_back({items[c.ti].type,bx+g[0],by+g[1],c.rot});
-                val+=items[c.ti].v; used[c.ti]++;
-            }
-        }
+        fillRegion(g[0],g[1],g[2],g[3],used,pl,val,0);
     }
+    
     return {val,pl};
 }
 
-// Skyline bottom-left packer
-struct Skyline {
-    int BW, BH;
-    vector<pair<int,int>> segs; // (x_end, height) segments left to right
+// Strip knapsack with branch-and-bound
+pair<long long,vector<Placement>> stripKnapsack(bool horiz, chrono::steady_clock::time_point deadline) {
+    int mainDim = horiz ? H : W;
+    int crossDim = horiz ? W : H;
     
-    void init(int w, int h) {
-        BW=w; BH=h;
-        segs.clear();
-        segs.push_back({w,0});
+    struct SC { int ti, rot, thick, cross, per; long long valPer; double dens; };
+    vector<SC> configs;
+    
+    for (int i=0;i<M;i++) {
+        for (int r=0;r<(allow_rot?2:1);r++) {
+            int pw=r?items[i].h:items[i].w;
+            int ph=r?items[i].w:items[i].h;
+            if (pw>W||ph>H) continue;
+            int thick=horiz?ph:pw;
+            int cross=horiz?pw:ph;
+            int per=crossDim/cross;
+            if (per<=0||thick<=0) continue;
+            configs.push_back({i,r,thick,cross,per,(long long)per*items[i].v,
+                (double)per*items[i].v/thick});
+        }
     }
     
-    // Find the leftmost position where we can place pw x ph
-    bool findPos(int pw, int ph, int& rx, int& ry) {
-        rx=ry=-1;
-        int bestWaste = INT_MAX;
-        int cx=0;
-        for (int i=0;i<(int)segs.size();i++) {
-            int sh = segs[i].second;
-            if (sh+ph>BH) { cx=segs[i].first; continue; }
-            // Check if pw fits starting from cx
-            int endx = cx+pw;
-            if (endx>BW) { cx=segs[i].first; continue; }
-            // Find max height in [cx, cx+pw)
-            int maxH = 0;
-            int tx = cx;
-            bool fits = true;
-            for (int j=i;j<(int)segs.size()&&tx<endx;j++) {
-                maxH = max(maxH, segs[j].second);
-                if (maxH+ph>BH) { fits=false; break; }
-                tx = segs[j].first;
+    int nC=configs.size();
+    if (nC==0) return {0,{}};
+    
+    vector<int> order(nC);
+    iota(order.begin(),order.end(),0);
+    sort(order.begin(),order.end(),[&](int a,int b){return configs[a].dens>configs[b].dens;});
+    
+    long long bbBestV=0;
+    vector<int> bbBestCounts(nC,0);
+    vector<int> curCounts(nC,0);
+    vector<int> typeUsed(M,0);
+    long long curVal=0;
+    int curUsed=0;
+    int nodeCount=0;
+    bool timedOut=false;
+    
+    function<void(int)> solve = [&](int idx) {
+        if (timedOut) return;
+        nodeCount++;
+        if (nodeCount%5000==0) {
+            if (chrono::steady_clock::now()>deadline) { timedOut=true; return; }
+        }
+        
+        if (curVal>bbBestV) { bbBestV=curVal; bbBestCounts=curCounts; }
+        if (idx>=nC) return;
+        
+        int rem=mainDim-curUsed;
+        if (rem<=0) return;
+        
+        // Upper bound using fractional relaxation
+        long long ub=curVal;
+        double remD=rem;
+        vector<int> tmpUsed=typeUsed;
+        for (int i=idx;i<nC;i++) {
+            int oi=order[i];
+            auto& c=configs[oi];
+            int availItems=items[c.ti].limit-tmpUsed[c.ti];
+            if (availItems<=0) continue;
+            int maxSbySpace=(int)(remD/c.thick);
+            int maxSbyItems=(availItems+c.per-1)/c.per;
+            int maxS=min(maxSbySpace, maxSbyItems);
+            if (maxS>0) {
+                int actualItems=min(maxS*c.per,availItems);
+                ub+=(long long)actualItems*items[c.ti].v;
+                remD-=(double)maxS*c.thick;
+                tmpUsed[c.ti]+=actualItems;
             }
-            if (fits && maxH+ph<=BH) {
-                int waste = maxH - sh; // how much wasted space under the item
-                if (rx<0 || maxH <
+            if (remD>0 && tmpUsed[c.ti]<items[c.ti].limit) {
+                int remItems=items[c.ti].limit-tmpUsed[c.ti];
+                double fracStrips=min(remD/c.thick, (double)remItems/c.per);
+                ub+=(long long)(fracStrips*c.valPer);
+                remD-=fracStrips*c.thick;
+            }
+            if (remD<=0) break;
+        }
+        if (ub<=bbBestV) return;
+        
+        int oi=order[idx];
+        auto& c=configs[oi];
+        int availItems=items[c.ti].limit-typeUsed[c.ti];
+        int maxSbySpace=rem/c.thick;
+        int maxSbyItems=(availItems>0)?(availItems+c.per-1)/c.per:0;
+        int maxS=min(maxSbySpace, maxSbyItems);
+        
+        for (int s=maxS;s>=0;s--) {
+            if (timedOut) return;
+            int actualItems=min(s*c.per, availItems);
+            long long addVal=(long long)actualItems*items[c.ti].v;
+            curCounts[oi]=s;
+            curVal+=addVal;
+            curUsed+=s*c.thick;
+            typeUsed[c.ti]+=actualItems;
+            solve(idx+1);
+            curVal-=addVal;
+            curUsed-=s*c.thick;
+            typeUsed[c.ti]-=actualItems;
+            curCounts[oi]=0;
+        }
+    };
+    
+    solve(0);
+    
+    // Reconstruct
+    vector<int> used(M,0);
+    int pos=0;
+    vector<Placement> pl;
+    long long val=0;
+    vector<array<int,4>> gaps;
+    
+    for (int i=0;i<nC;i++) {
+        int oi=order[i];
+        auto& c=configs[oi];
+        for (int s=0;s<bbBestCounts[oi];s++) {
+            int placed=0;
+            for (int j=0;j<c.per&&used[c.ti]<items[c.ti].limit;j++) {
+                int x,y;
+                if (horiz) {x=j*c.cross;y=pos;}
+                else {x=pos;y=j*c.cross;}
+                pl.push_back({items[c.ti].type,x,y,c.rot});
+                val+=items[c.ti].v; used[c.ti]++; placed++;
+            }
+            int endCoord=placed*c.cross;
+            int gapSize=crossDim-endCoord;
+            if (gapSize>0) {
+                if (horiz) gaps.push_back({endCoord,pos,gapSize,c.thick});
+                else gaps.push_back({pos,endCoord,c.thick,gapSize});
+            }
+            pos+=c.thick;
+        }
+    }
+    
+    if (pos<mainDim) {
+        if (horiz) gaps.push_back({0,pos,crossDim,mainDim-pos});
+        else gaps.push_back({pos,0,mainDim-pos,crossDim});
+    }
+    
+    for (auto& g : gaps) {
+        fillRegion(g[0],g[1],g[2],g[3],used,pl,val,0);
+    }
+    
+    return {val,pl};
+}
+
+// JSON parsing helpers
+int skipWS(const string& s, int p) {
+    while(p<(int)s.size()&&(s[p]==' '||s[p]=='\n'||s[p]=='\r'||s[p]=='\t'))p++;
+    return p;
+}
+
+struct JVal {
+    int type; // 0=null,1=bool,2=int,3=str,4=arr,5=obj
+    long long ival;
+    bool bval;
+    string sval;
+    vector<JVal> arr;
+    vector<pair<string,JVal>> obj;
+    
+    JVal():type(0),ival(0),bval(false){}
+    
+    const JVal& operator[](const string& key) const {
+        for(auto&p:obj) if(p.first==key) return p.second;
+        static JVal nil; return nil;
+    }
+    const JVal& operator[](int i) const { return arr[i]; }
+    int asize() const { return (int)arr.size(); }
+};
+
+pair<string,int> parseStr(const string& s, int p) {
+    p++; // skip "
+    string r;
+    while(p<(int)s.size()&&s[p]!='"') {
+        if(s[p]=='\\'){p++;if(p<(int)s.size())r+=s[p];}
+        else r+=s[p];
+        p++;
+    }
+    p++; // skip closing "
+    return {r,p};
+}
+
+pair<JVal,int> parseVal(const string& s, int p) {
+    p=skipWS(s,p);
+    JVal v;
+    if(s[p]=='"') {
+        auto[str,np]=parseStr(s,p);
+        v.type=3; v.sval=str; return {v,np};
+    }
+    if(s[p]=='{') {
+        v.type=5; p++;
+        p=skipWS(s,p);
+        if(p<(int)s.size()&&s[p]!='}') {
+            while(true) {
+                p=skipWS(s,p);
+                auto[key,np1]=parseStr(s,p); p=np1;
+                p=skipWS(s,p); p++; // skip :
+                auto[val2,np2]=parseVal(s,p); p=np2;
+                v.obj.push_back({key,val2});
+                p=skipWS(s,p);
+                if(p<(int)s.size()&&s[p]==',')p++; else break;
+            }
+        }
+        p=skipWS(s,p); p++; // skip }
+        return {v,p};
+    }
+    if(s[p]=='[') {
+        v.type=4; p++;
+        p=skipWS(s,p);
+        if(p<(int)s.size()&&s[p]!=']') {
+            while(true) {
+                auto[val2,np]=parseVal(s,p); p=np;
+                v.arr.push_back(val2);
+                p=skipWS(s,p);
+                if(p<(int)s.size()&&s[p]==',')p++; else break;
+            }
+        }
+        p=skipWS(s,p); p++; // skip ]
+        return {v,p};
+    }
+    if(s[p]=='t') { v.type=1; v.bval=true; p+=4; return {v,p}; }
+    if(s[p]=='f') { v.type=1; v.bval=false; p+=5; return {v,p}; }
+    if(s[p]=='n') { v.type=0; p+=4; return {v,p}; }
+    // number
+    v.type=2;
+    bool neg=false;
+    if(s[p]=='-'){neg=true;p++;}
+    long long num=0;
+    while(p<(int)s.size()&&s[p]>='0'&&s[p]<='9'){num=num*10+(s[p]-'0');p++;}
+    // skip fractional/exponent if any
+    if(p<(int)s.size()&&s[p]=='.'){p++;while(p<(int)s.size()&&s[p]>='0'&&s[p]<='9')p++;}
+    if(p<(int)s.size()&&(s[p]=='e'||s[p]=='E')){p++;if(p<(int)s.size()&&(s[p]=='+'||s[p]=='-'))p++;while(p<(int)s.size()&&s[p]>='0'&&s[p]<='9')p++;}
+    v.ival=neg?-num:num;
+    return {v,p};
+}
+
+// Enhanced strip knapsack: try multiple strip thickness combos with DP
+pair<long long,vector<Placement>> dpStripPack(bool horiz, chrono::steady_clock::time_point deadline) {
+    int mainDim = horiz ? H : W;
+    int crossDim = horiz ? W : H;
+    
+    // Each "strip config" = (type, rot, thick, items_per_strip, value_per_strip)
+    struct SC { int ti, rot, thick, cross, per; long long valPer; };
+    vector<SC> configs;
+    
+    for (int i=0;i<M;i++) {
+        for (int r=0;r<(allow_rot?2:1);r++) {
+            int pw=r?items[i].h:items[i].w;
+            int ph=r?items[i].w:items[i].h;
+            if (pw>W||ph>H) continue;
+            int thick=horiz?ph:pw;
+            int cross=horiz?pw:ph;
+            int per=crossDim/cross;
+            if (per<=0||thick<=0) continue;
+            configs.push_back({i,r,thick,cross,per,(long long)per*items[i].v});
+        }
+    }
+    
+    if (configs.empty()) return {0,{}};
+    
+    // Group by (ti, rot) => already unique per config
+    // This is a bounded knapsack: capacity = mainDim, each config has weight=thick, 
+    // value=valPer, and bound = min(mainDim/thick, ceil(limit/per))
+    // But items share type limits, making it coupled.
+    
+    // Since M is small (8-12), configs might be ~24, we use the B&B approach
+    return stripKnapsack(horiz, deadline);
+}
+
+// Guillotine-style recursive packing
+void guillotinePack(int rx, int ry, int rw, int rh, vector<int>& used, 
+                     vector<Placement>& pl, long long& val, int depth) {
+    if (rw<=0||rh<=0||depth>20) return;
+    
+    // Find best single item to place at bottom-left
+    int bestTi=-1, bestR=0;
+    double bestDens=-1;
+    for (int i=0;i<M;i++) {
+        if (used[i]>=items[i].limit) continue;
+        for (int r=0;r<(allow_rot?2:1);r++) {
+            int pw=r?items[i].h:items[i].w;
+            int ph=r?items[i].w:items[i].h;
+            if (pw>rw||ph>rh) continue;
+            double d=(double)items[i].v/(pw*ph);
+            if (d>bestDens) { bestDens=d; bestTi=i; bestR=r; }
+        }
+    }
+    if (bestTi<0) return;
+    
+    int pw=bestR?items[bestTi].h:items[bestTi].w;
+    int ph=bestR?items[bestTi].w:items[bestTi].h;
+    
+    // Fill as many as possible in a strip
+    int numX=rw/pw;
+    int numY=rh/ph;
+    int avail=items[bestTi].limit-used[bestTi];
+    
+    // Try horizontal strip first
+    int stripCount=min(numX, avail);
+    if (stripCount>0) {
+        for (int j=0;j<stripCount;j++) {
+            pl.push_back({items[bestTi].type, rx+j*pw, ry, bestR});
+            val+=items[bestTi].v; used[bestTi]++;
+        }
+        // Right remainder
+        int rightX=rx+stripCount*pw;
+        int rightW=rw-stripCount*pw;
+        guillotinePack(rightX, ry, rightW, ph, used, pl, val, depth+1);
+        // Top remainder
+        guillot
