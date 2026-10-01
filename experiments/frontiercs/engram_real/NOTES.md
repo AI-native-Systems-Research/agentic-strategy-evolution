@@ -14,6 +14,22 @@ reimplementation, on Opus 4.6 via litellm, to compare against Nous on cloudcast 
   --model claude-opus-4-6 --max_agents N --agent_timeout M --num_runs 1`. Agent runs in a `python:3.11`
   Docker sandbox with shell + a `run_simulation` tool (so it gets rich evaluator feedback, not a scalar).
 
+## Patch contents (engram_opus_patch.diff, 4 files) + why
+1. `Architect/main.py` + `Architect/pricing_table.py`: add `claude-opus-4-6` to the model allowlist
+   and pricing (so we can run their agent on the same model as Nous via litellm's OpenAI-compat).
+2. `SystemBench/ADRS/adrs_evaluator.py`: run the timeout subprocess in a `fork` multiprocessing
+   context. macOS defaults to `spawn`, which can't pickle the evaluator's nested wrapper function
+   (`Can't pickle local object ...ADRSEvaluator._run_evaluation_with_timeout.<locals>._evaluate_wrapper`).
+   Needed to run on the Mac; harmless on Linux. This is a portability fix, not a methodology change.
+3. `SystemBench/FrontierCS/evaluator.py` (NEW shim): their `FrontierCSEvaluator` needs `track`+
+   `problem_id`, but `Architect/task.py`'s generic loader instantiates the discovered evaluator with
+   no args. `examples/_common.py` already exports `FCS_TRACK`/`FCS_PROBLEM_ID`; this thin subclass reads
+   them. Without it, fcs_alg_*/fcs_res_* fall back to the wrong (ADRS) evaluator and error.
+
+Extra setup (not a code patch): `git submodule update --init SystemBench/FrontierCS/frontier_cs_repo`
+and `pip install -e` that submodule (provides the `frontier_cs` package the evaluator imports).
+Algorithmic tasks also need the go-judge container on :8081. See `setup_engram.sh`.
+
 ## FAIRNESS NOTE (prompt asymmetry) — TODO revisit
 Engram's cloudcast task prompt is heavily guided: it **reveals the expert target** ("~0.0023, cost
 ~$419"), **pushes MILP**, and **tells the agent NOT to use Steiner-tree heuristics**. Our Nous and
