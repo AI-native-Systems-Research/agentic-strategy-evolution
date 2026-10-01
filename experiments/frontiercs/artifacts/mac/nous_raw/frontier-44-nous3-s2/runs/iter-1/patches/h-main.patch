@@ -1,0 +1,441 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..2448ab1 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,435 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++// Fast XorShift RNG
++struct RNG {
++    uint64_t s;
++    RNG(uint64_t seed = 42) : s(seed) {}
++    uint64_t next() {
++        s ^= s << 13;
++        s ^= s >> 7;
++        s ^= s << 17;
++        return s;
++    }
++    // Returns [0, n)
++    int nextInt(int n) {
++        return next() % n;
++    }
++    // Returns [0.0, 1.0)
++    double nextDouble() {
++        return (next() & 0xFFFFFFFFFFFFF) / (double)(1LL << 52);
++    }
++};
++
++static int N;
++static vector<double> cx, cy;
++static vector<bool> is_prime;
++static vector<int> tour; // tour[0..N], tour[0]=tour[N]=0
++
++inline double dist(int a, int b) {
++    double dx = cx[a] - cx[b];
++    double dy = cy[a] - cy[b];
++    return sqrt(dx*dx + dy*dy);
++}
++
++// Precompute prime sieve
++void sieve(int maxn) {
++    is_prime.assign(maxn + 1, true);
++    is_prime[0] = is_prime[1] = false;
++    for (int i = 2; i * i <= maxn; i++) {
++        if (is_prime[i]) {
++            for (int j = i*i; j <= maxn; j += i)
++                is_prime[j] = false;
++        }
++    }
++}
++
++// Get multiplier for step t (1-indexed): moving from tour[t-1] to tour[t]
++// Step t has penalty if t % 10 == 0 and tour[t-1] is not prime
++inline double multiplier(int t) {
++    if (t % 10 == 0 && !is_prime[tour[t-1]])
++        return 1.1;
++    return 1.0;
++}
++
++// Cost of edge at position t (step t, 1-indexed): tour[t-1] -> tour[t]
++inline double edgeCost(int t) {
++    return multiplier(t) * dist(tour[t-1], tour[t]);
++}
++
++// Compute total tour cost
++double totalCost() {
++    double c = 0;
++    for (int t = 1; t <= N; t++)
++        c += edgeCost(t);
++    return c;
++}
++
++// Nearest-neighbor construction using grid buckets
++void constructNN() {
++    // Grid-based NN
++    int gridSize = max(1, (int)sqrt(N));
++
++    double minx = *min_element(cx.begin(), cx.end());
++    double maxx = *max_element(cx.begin(), cx.end());
++    double miny = *min_element(cy.begin(), cy.end());
++    double maxy = *max_element(cy.begin(), cy.end());
++
++    double cellW = (maxx - minx + 1.0) / gridSize;
++    double cellH = (maxy - miny + 1.0) / gridSize;
++
++    // Assign cities to grid cells
++    vector<vector<int>> grid(gridSize * gridSize);
++    auto getCell = [&](int city) -> int {
++        int gx = min(gridSize - 1, (int)((cx[city] - minx) / cellW));
++        int gy = min(gridSize - 1, (int)((cy[city] - miny) / cellH));
++        return gy * gridSize + gx;
++    };
++
++    for (int i = 0; i < N; i++)
++        grid[getCell(i)].push_back(i);
++
++    vector<bool> visited(N, false);
++    tour.resize(N + 1);
++    tour[0] = 0;
++    visited[0] = true;
++
++    for (int step = 1; step < N; step++) {
++        int cur = tour[step - 1];
++        int gcx_i = min(gridSize - 1, (int)((cx[cur] - minx) / cellW));
++        int gcy_i = min(gridSize - 1, (int)((cy[cur] - miny) / cellH));
++
++        double bestDist = 1e18;
++        int bestCity = -1;
++
++        // Search expanding rings of grid cells
++        for (int ring = 0; ring < gridSize + 1; ring++) {
++            if (bestCity != -1 && ring > 1) {
++                // Check if any city in further rings could be closer
++                double minPossibleDist = max(0.0, (ring - 1.0)) * min(cellW, cellH);
++                if (minPossibleDist > bestDist) break;
++            }
++
++            int x0 = max(0, gcx_i - ring);
++            int x1 = min(gridSize - 1, gcx_i + ring);
++            int y0 = max(0, gcy_i - ring);
++            int y1 = min(gridSize - 1, gcy_i + ring);
++
++            for (int gy = y0; gy <= y1; gy++) {
++                for (int gx = x0; gx <= x1; gx++) {
++                    // Only cells on the ring boundary (or ring 0)
++                    if (ring > 0 && gx > x0 && gx < x1 && gy > y0 && gy < y1)
++                        continue;
++                    int cell = gy * gridSize + gx;
++                    for (int city : grid[cell]) {
++                        if (!visited[city]) {
++                            double d = dist(cur, city);
++                            if (d < bestDist) {
++                                bestDist = d;
++                                bestCity = city;
++                            }
++                        }
++                    }
++                }
++            }
++            if (bestCity != -1 && ring >= 1) break;
++        }
++
++        tour[step] = bestCity;
++        visited[bestCity] = true;
++    }
++    tour[N] = 0;
++}
++
++int main(){
++    ios::sync_with_stdio(false);
++    cin.tie(nullptr);
++
++    auto startTime = chrono::steady_clock::now();
++    auto elapsed = [&]() -> double {
++        return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
++    };
++
++    cin >> N;
++    cx.resize(N); cy.resize(N);
++    for (int i = 0; i < N; i++)
++        cin >> cx[i] >> cy[i];
++
++    sieve(N);
++
++    if (N <= 3) {
++        // Trivial case
++        cout << N + 1 << "\n";
++        cout << 0 << "\n";
++        for (int i = 1; i < N; i++) cout << i << "\n";
++        cout << 0 << "\n";
++        return 0;
++    }
++
++    // Construct initial tour using grid-based NN
++    constructNN();
++
++    double curCost = totalCost();
++    double bestCost = curCost;
++    vector<int> bestTour = tour;
++
++    RNG rng(42);
++
++    // SA parameters
++    double T = curCost / N;
++    double Tmin = 1e-6;
++    double timeLimit = 1.85; // seconds
++
++    // Precompute inverse position: pos[city] = index in tour (1..N-1 for non-zero cities)
++    // tour[pos[city]] = city
++    vector<int> pos(N);
++    for (int i = 0; i <= N; i++) {
++        if (i < N) pos[tour[i]] = i;
++    }
++
++    // SA loop with Or-opt (relocate single city) and 2-opt
++    long long iters = 0;
++    long long accepted = 0;
++
++    while (true) {
++        double t = elapsed();
++        if (t >= timeLimit) break;
++
++        // Adaptive temperature based on time remaining
++        double progress = t / timeLimit;
++        T = (curCost / N) * pow(0.001, progress);
++
++        // Batch of iterations between time checks
++        int batchSize = 1000;
++        for (int b = 0; b < batchSize; b++) {
++            iters++;
++
++            int moveType = rng.nextInt(100);
++
++            if (moveType < 60) {
++                // Or-opt: relocate a single city
++                // Pick a random position i in [1, N-1] (not 0 or N, which are city 0)
++                int i = 1 + rng.nextInt(N - 1);
++                // Pick insertion position j != i, j != i-1, j in [0, N-1]
++                // We'll remove tour[i] and insert it after tour[j]
++                int j = rng.nextInt(N - 1);
++                if (j >= i - 1) j++; // skip i-1 and i
++                if (j >= i) j++;
++                if (j >= N) continue;
++                if (j < 0) continue;
++
++                int city = tour[i];
++                int prevI = tour[i - 1];
++                int nextI = tour[i + 1];
++
++                // Cost of removing city from position i:
++                // Remove edges: (i-1)->city at step i, city->next at step i+1
++                // Add edge: (i-1)->next at step i (but step indices shift!)
++
++                // This is complex with penalties. Let's compute delta directly.
++                // When we remove city at position i and insert after position j:
++                // If j < i: positions j+1..i-1 shift right by 1, city goes to j+1
++                // If j > i: positions i+1..j shift left by 1, city goes to j
++
++                // For small N or to keep things fast, let's compute affected edges' cost change
++                // Actually, with penalty positions shifting, this is non-trivial.
++                // Let's use a simpler approach: just compute the cost difference for affected edges.
++
++                // Simpler: do an Or-opt by removing tour[i] and inserting after tour[j]
++                // Build new tour segment and compute cost difference
++
++                // For speed, let's just do the move and compute cost delta on a few edges
++                // But penalty positions make this tricky since all positions after the change shift.
++
++                // For very large N, we need O(1) delta. Let's approximate:
++                // The penalty only affects positions that are multiples of 10.
++                // Moving one city shifts at most the penalty status of O(|i-j|) positions.
++                // For large |i-j|, this is expensive. Let's cap |i-j|.
++
++                int maxDist = min(50, N / 2);
++                // Redefine j to be near i
++                j = i - maxDist + rng.nextInt(2 * maxDist);
++                if (j < 1) j = 1;
++                if (j >= N) j = N - 1;
++                if (j == i || j == i - 1) continue;
++
++                // Perform the move on tour, compute new total cost
++                // For efficiency with penalty, let's just do it and recompute affected region
++
++                int lo = min(i, j) - 1;
++                int hi = max(i, j) + 2;
++                if (lo < 1) lo = 1;
++                if (hi > N) hi = N;
++
++                // Cost of old edges in [lo, hi]
++                double oldRegionCost = 0;
++                for (int t = lo; t <= hi; t++)
++                    oldRegionCost += edgeCost(t);
++
++                // Do the move
++                vector<int> saved(tour.begin() + lo - 1, tour.begin() + hi + 1);
++
++                if (j < i) {
++                    // Remove from i, insert after j
++                    int c = tour[i];
++                    for (int k = i; k > j + 1; k--)
++                        tour[k] = tour[k-1];
++                    tour[j + 1] = c;
++                } else {
++                    // Remove from i, insert after j (j > i)
++                    int c = tour[i];
++                    for (int k = i; k < j; k++)
++                        tour[k] = tour[k+1];
++                    tour[j] = c;
++                }
++
++                // Cost of new edges in [lo, hi]
++                double newRegionCost = 0;
++                for (int t = lo; t <= hi; t++)
++                    newRegionCost += edgeCost(t);
++
++                double delta = newRegionCost - oldRegionCost;
++
++                if (delta < 0 || rng.nextDouble() < exp(-delta / T)) {
++                    curCost += delta;
++                    accepted++;
++                    if (curCost < bestCost) {
++                        bestCost = curCost;
++                        bestTour = tour;
++                    }
++                } else {
++                    // Undo
++                    for (int k = 0; k < (int)saved.size(); k++)
++                        tour[lo - 1 + k] = saved[k];
++                }
++
++            } else {
++                // 2-opt: reverse a segment
++                int i = 1 + rng.nextInt(N - 1);
++                int len = 2 + rng.nextInt(min(48, N - 2));
++                int j = i + len;
++                if (j >= N) continue;
++
++                // Edges affected: (i-1)->i and j->j+1 become (i-1)->j and i->j+1
++                // Plus all penalty positions in [i, j+1] change because cities shift
++
++                int lo = max(1, i - 1);
++                int hi = min(N, j + 1);
++
++                // Old cost in region
++                double oldRegionCost = 0;
++                for (int t = lo; t <= hi; t++)
++                    oldRegionCost += edgeCost(t);
++
++                // Reverse
++                reverse(tour.begin() + i, tour.begin() + j + 1);
++
++                // New cost in region
++                double newRegionCost = 0;
++                for (int t = lo; t <= hi; t++)
++                    newRegionCost += edgeCost(t);
++
++                double delta = newRegionCost - oldRegionCost;
++
++                if (delta < 0 || rng.nextDouble() < exp(-delta / T)) {
++                    curCost += delta;
++                    accepted++;
++                    if (curCost < bestCost) {
++                        bestCost = curCost;
++                        bestTour = tour;
++                    }
++                } else {
++                    // Undo
++                    reverse(tour.begin() + i, tour.begin() + j + 1);
++                }
++            }
++        }
++    }
++
++    // Prime scheduling post-pass: try to place primes at penalty positions
++    tour = bestTour;
++    curCost = bestCost;
++
++    // Penalty positions: tour indices 9, 19, 29, ... (step 10, 20, 30, ...)
++    // At step t, source city is tour[t-1]. So for step 10, source is tour[9].
++    vector<int> penaltyIndices; // indices in tour where source city matters
++    for (int t = 10; t <= N; t += 10) {
++        penaltyIndices.push_back(t - 1); // tour[t-1] is the source city
++    }
++
++    // For each penalty index, if current city is not prime, try swapping with a nearby prime
++    double postCost = totalCost();
++
++    for (int pi : penaltyIndices) {
++        if (is_prime[tour[pi]]) continue; // already prime
++
++        // Find nearby cities in tour that are prime and not at penalty positions
++        int bestSwap = -1;
++        double bestDelta = 0;
++
++        int searchRange = min(100, N/2);
++        for (int offset = 1; offset <= searchRange; offset++) {
++            for (int dir = -1; dir <= 1; dir += 2) {
++                int qi = pi + dir * offset;
++                if (qi < 1 || qi >= N) continue;
++                if (!is_prime[tour[qi]]) continue;
++
++                // Check if qi is also a penalty position — if so, swapping doesn't help
++                bool qiIsPenalty = false;
++                for (int t = 10; t <= N; t += 10) {
++                    if (t - 1 == qi) { qiIsPenalty = true; break; }
++                }
++                if (qiIsPenalty) continue;
++
++                // Compute cost of swapping tour[pi] and tour[qi]
++                // Affected edges: pi-1->pi, pi->pi+1, qi-1->qi, qi->qi+1
++                // Plus penalty status changes at pi and qi (and neighbors if they're penalty positions)
++
++                int lo = min(pi, qi) - 1;
++                int hi = max(pi, qi) + 1;
++                if (lo < 1) lo = 1;
++                if (hi > N) hi = N;
++
++                double oldCost = 0;
++                for (int t = lo; t <= hi; t++)
++                    oldCost += edgeCost(t);
++
++                swap(tour[pi], tour[qi]);
++
++                double newCost = 0;
++                for (int t = lo; t <= hi; t++)
++                    newCost += edgeCost(t);
++
++                double delta = newCost - oldCost;
++
++                swap(tour[pi], tour[qi]); // undo
++
++                if (delta < bestDelta) {
++                    bestDelta = delta;
++                    bestSwap = qi;
++                }
++            }
++            if (bestSwap != -1) break; // found an improving swap nearby
++        }
++
++        if (bestSwap != -1) {
++            swap(tour[pi], tour[bestSwap]);
++            postCost += bestDelta;
++        }
++    }
++
++    double finalCost = totalCost();
++    if (finalCost < bestCost) {
++        bestCost = finalCost;
++        bestTour = tour;
++    } else {
++        tour = bestTour;
++    }
++
++    // Output
++    cout << N + 1 << "\n";
++    for (int i = 0; i <= N; i++)
++        cout << bestTour[i] << "\n";
++
++    return 0;
++}
