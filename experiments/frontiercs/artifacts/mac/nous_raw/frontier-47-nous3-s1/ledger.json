@@ -38,6 +38,36 @@
         }
       ],
       "frontier_update": null
+    },
+    {
+      "iteration": 2,
+      "family": "enhanced-maxrects-cp-transpose",
+      "timestamp": "2026-10-01T05:54:26.419695+00:00",
+      "candidate_id": "iter-2",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 1,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-3",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-4",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
     }
   ]
 }

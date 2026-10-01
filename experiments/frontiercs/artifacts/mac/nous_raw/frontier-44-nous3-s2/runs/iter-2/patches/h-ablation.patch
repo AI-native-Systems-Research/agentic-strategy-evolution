@@ -1,8 +1,8 @@
 diff --git a/solution.cpp b/solution.cpp
-index 7072b24..b6fdd50 100644
+index 7072b24..bbdd256 100644
 --- a/solution.cpp
 +++ b/solution.cpp
-@@ -1,3 +1,313 @@
+@@ -1,3 +1,272 @@
  #include <bits/stdc++.h>
  using namespace std;
 -int main(){return 0;}
@@ -133,102 +133,6 @@ index 7072b24..b6fdd50 100644
 +    return delta;
 +}
 +
-+void doubleBridge(RNG &rng){
-+    if(N<8) return;
-+    int a = 1 + rng.nextInt(N/4);
-+    int b = a + 1 + rng.nextInt(N/4);
-+    int c = b + 1 + rng.nextInt(N/4);
-+    if(c >= N) c = N-1;
-+    if(b >= c) b = c-1;
-+    if(a >= b) a = b-1;
-+    if(a < 1) return;
-+    int *tmp = new int[N+1];
-+    int idx = 0;
-+    for(int i=0;i<a;i++) tmp[idx++]=tour[i];
-+    for(int i=c;i<N;i++) tmp[idx++]=tour[i];
-+    for(int i=b;i<c;i++) tmp[idx++]=tour[i];
-+    for(int i=a;i<b;i++) tmp[idx++]=tour[i];
-+    tmp[N]=tmp[0];
-+    memcpy(tour,tmp,(N+1)*sizeof(int));
-+    delete[] tmp;
-+    for(int i=0;i<N;i++) pos[tour[i]]=i;
-+}
-+
-+void runSA(RNG &rng, double startTime, double endTime, double initTemp,
-+           int *bestTour, double &bestCost, double &curCost,
-+           chrono::steady_clock::time_point T0){
-+    auto elapsed=[&]()->double{return chrono::duration<double>(chrono::steady_clock::now()-T0).count();};
-+    double duration = endTime - startTime;
-+    if(duration <= 0.01) return;
-+
-+    while(true){
-+        double t=elapsed();
-+        if(t>=endTime) break;
-+        double prog=(t - startTime)/duration;
-+        double Temp=initTemp*pow(1e-4,prog);
-+
-+        for(int b=0;b<3000;b++){
-+            int mv=rng.nextInt(100);
-+
-+            if(mv<70){
-+                int city=rng.nextInt(N);
-+                int nbr=gridNeighbor(city, rng);
-+                int pi2=pos[city],qi2=pos[nbr];
-+                if(pi2==qi2)continue;
-+                int i2,j2;
-+                if(pi2<qi2){i2=pi2+1;j2=qi2;} else {i2=qi2+1;j2=pi2;}
-+                if(i2<1||j2>=N||i2>=j2)continue;
-+                if(j2-i2+1>5000)continue;
-+                double delta=twoOptDeltaFast(i2,j2);
-+                if(delta<0||rng.nextDouble()<exp(-delta/Temp)){
-+                    reverse(tour+i2,tour+j2+1);
-+                    for(int s=i2;s<=j2;s++) pos[tour[s]]=s;
-+                    curCost+=delta;
-+                    if(curCost<bestCost){bestCost=curCost;memcpy(bestTour,tour,(N+1)*sizeof(int));}
-+                }
-+            } else if(mv<85){
-+                int i2=1+rng.nextInt(N-1);
-+                int len=2+rng.nextInt(min(20,N-2));
-+                int j2=i2+len-1;
-+                if(j2>=N)continue;
-+                double delta=twoOptDeltaFast(i2,j2);
-+                if(delta<0||rng.nextDouble()<exp(-delta/Temp)){
-+                    reverse(tour+i2,tour+j2+1);
-+                    for(int s=i2;s<=j2;s++) pos[tour[s]]=s;
-+                    curCost+=delta;
-+                    if(curCost<bestCost){bestCost=curCost;memcpy(bestTour,tour,(N+1)*sizeof(int));}
-+                }
-+            } else {
-+                int i2=1+rng.nextInt(N-1);
-+                int maxS=min(15,N/3);
-+                int shift=1+rng.nextInt(maxS);
-+                if(rng.nextInt(2))shift=-shift;
-+                int j;
-+                if(shift>0){j=i2+shift;if(j>=N)continue;}
-+                else{j=i2+shift;if(j<0)continue;}
-+                int lo=min(i2,j+1)-1,hi=max(i2,j)+1;
-+                if(lo<1)lo=1;if(hi>N)hi=N;
-+                double oldC=0;for(int s=lo;s<=hi;s++)oldC+=ec(s);
-+                int city=tour[i2];
-+                if(j>i2){memmove(tour+i2,tour+i2+1,(j-i2)*sizeof(int));tour[j]=city;}
-+                else{memmove(tour+j+2,tour+j+1,(i2-j-1)*sizeof(int));tour[j+1]=city;}
-+                int lo2=min(i2,j>i2?j:j+1),hi2=max(i2,j>i2?j:j+1);
-+                for(int s=lo2;s<=hi2;s++) pos[tour[s]]=s;
-+                double newC=0;for(int s=lo;s<=hi;s++)newC+=ec(s);
-+                double delta=newC-oldC;
-+                if(delta<0||rng.nextDouble()<exp(-delta/Temp)){
-+                    curCost+=delta;
-+                    if(curCost<bestCost){bestCost=curCost;memcpy(bestTour,tour,(N+1)*sizeof(int));}
-+                } else {
-+                    if(j>i2){int c=tour[j];memmove(tour+i2+1,tour+i2,(j-i2)*sizeof(int));tour[i2]=c;}
-+                    else{int c=tour[j+1];memmove(tour+j+1,tour+j+2,(i2-j-1)*sizeof(int));tour[i2]=c;}
-+                    for(int s=lo2;s<=hi2;s++) pos[tour[s]]=s;
-+                }
-+            }
-+        }
-+    }
-+}
-+
 +int main(){
 +    ios::sync_with_stdio(false);
 +    cin.tie(nullptr);
@@ -251,36 +155,91 @@ index 7072b24..b6fdd50 100644
 +
 +    buildGrid();
 +    constructNN();
-+    for(int i=0;i<N;i++) pos[tour[i]]=i;
 +
 +    double curCost=totalCost();
 +    double bestCost=curCost;
 +    int *bestTour=new int[N+1];
 +    memcpy(bestTour,tour,(N+1)*sizeof(int));
++    for(int i=0;i<N;i++) pos[tour[i]]=i;
 +
 +    RNG rng(42);
-+    double constructTime = elapsed();
-+    double saEnd = 1.75;
-+    double initTemp = curCost/(N*2.0);
++    double tl=1.78;
++    double initTemp=curCost/(N*2.0);
 +
-+    // ILS: SA phases with double-bridge between them
-+    double phaseDur = 0.4;
-+    double phaseStart = constructTime;
-+    double phaseEnd = min(phaseStart + phaseDur, saEnd);
++    // Continuous SA (no double-bridge perturbation)
++    while(true){
++        double t=elapsed();
++        if(t>=tl)break;
++        double prog=t/tl;
++        double Temp=initTemp*pow(1e-4,prog);
 +
-+    // First SA phase
-+    runSA(rng, phaseStart, phaseEnd, initTemp, bestTour, bestCost, curCost, T0);
++        for(int b=0;b<3000;b++){
++            int mv=rng.nextInt(100);
 +
-+    // Double-bridge + fresh SA phases
-+    while(elapsed() < saEnd - 0.15){
-+        memcpy(tour, bestTour, (N+1)*sizeof(int));
-+        for(int i=0;i<N;i++) pos[tour[i]]=i;
-+        doubleBridge(rng);
-+        curCost = totalCost();
-+        double perturbTemp = curCost / (N * 3.0);
-+        phaseStart = elapsed();
-+        phaseEnd = min(phaseStart + phaseDur, saEnd);
-+        runSA(rng, phaseStart, phaseEnd, perturbTemp, bestTour, bestCost, curCost, T0);
++            if(mv<70){
++                // Grid-guided 2-opt
++                int city=rng.nextInt(N);
++                int nbr=gridNeighbor(city, rng);
++                int pi2=pos[city],qi2=pos[nbr];
++                if(pi2==qi2)continue;
++                int i2,j2;
++                if(pi2<qi2){i2=pi2+1;j2=qi2;} else {i2=qi2+1;j2=pi2;}
++                if(i2<1||j2>=N||i2>=j2)continue;
++                if(j2-i2+1>5000)continue;
++
++                double delta=twoOptDeltaFast(i2,j2);
++                if(delta<0||rng.nextDouble()<exp(-delta/Temp)){
++                    reverse(tour+i2,tour+j2+1);
++                    for(int s=i2;s<=j2;s++) pos[tour[s]]=s;
++                    curCost+=delta;
++                    if(curCost<bestCost){bestCost=curCost;memcpy(bestTour,tour,(N+1)*sizeof(int));}
++                }
++            } else if(mv<85){
++                // Random short 2-opt
++                int i2=1+rng.nextInt(N-1);
++                int len=2+rng.nextInt(min(20,N-2));
++                int j2=i2+len-1;
++                if(j2>=N)continue;
++
++                double delta=twoOptDeltaFast(i2,j2);
++                if(delta<0||rng.nextDouble()<exp(-delta/Temp)){
++                    reverse(tour+i2,tour+j2+1);
++                    for(int s=i2;s<=j2;s++) pos[tour[s]]=s;
++                    curCost+=delta;
++                    if(curCost<bestCost){bestCost=curCost;memcpy(bestTour,tour,(N+1)*sizeof(int));}
++                }
++            } else {
++                // Or-opt: relocate single city
++                int i2=1+rng.nextInt(N-1);
++                int maxS=min(15,N/3);
++                int shift=1+rng.nextInt(maxS);
++                if(rng.nextInt(2))shift=-shift;
++                int j;
++                if(shift>0){j=i2+shift;if(j>=N)continue;}
++                else{j=i2+shift;if(j<0)continue;}
++
++                int lo=min(i2,j+1)-1,hi=max(i2,j)+1;
++                if(lo<1)lo=1;if(hi>N)hi=N;
++                double oldC=0;for(int s=lo;s<=hi;s++)oldC+=ec(s);
++
++                int city=tour[i2];
++                if(j>i2){memmove(tour+i2,tour+i2+1,(j-i2)*sizeof(int));tour[j]=city;}
++                else{memmove(tour+j+2,tour+j+1,(i2-j-1)*sizeof(int));tour[j+1]=city;}
++                int lo2=min(i2,j>i2?j:j+1),hi2=max(i2,j>i2?j:j+1);
++                for(int s=lo2;s<=hi2;s++) pos[tour[s]]=s;
++
++                double newC=0;for(int s=lo;s<=hi;s++)newC+=ec(s);
++                double delta=newC-oldC;
++                if(delta<0||rng.nextDouble()<exp(-delta/Temp)){
++                    curCost+=delta;
++                    if(curCost<bestCost){bestCost=curCost;memcpy(bestTour,tour,(N+1)*sizeof(int));}
++                } else {
++                    if(j>i2){int c=tour[j];memmove(tour+i2+1,tour+i2,(j-i2)*sizeof(int));tour[i2]=c;}
++                    else{int c=tour[j+1];memmove(tour+j+1,tour+j+2,(i2-j-1)*sizeof(int));tour[i2]=c;}
++                    for(int s=lo2;s<=hi2;s++) pos[tour[s]]=s;
++                }
++            }
++        }
 +    }
 +
 +    // Prime scheduling
