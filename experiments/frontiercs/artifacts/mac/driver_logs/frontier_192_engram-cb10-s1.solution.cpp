@@ -13,40 +13,52 @@ int main(){
         adj[v].push_back(u);
         edges[i]={u,v};
     }
-    int bestCut=-1;
     vector<int> bestSide(n+1,0);
     mt19937 rng(12345);
-    auto t0=chrono::steady_clock::now();
-    auto ms=[&](){return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now()-t0).count();};
-    while(ms()<4500){
-        vector<int> s(n+1);
-        for(int i=1;i<=n;i++) s[i]=rng()&1;
-        vector<int> g(n+1,0);
+    auto timeStart=chrono::steady_clock::now();
+    auto elapsed=[&]()->double{return chrono::duration<double>(chrono::steady_clock::now()-timeStart).count();};
+    int bestCut=-1;
+    while(elapsed()<4.0){
+        vector<int> side(n+1);
+        for(int i=1;i<=n;i++) side[i]=rng()&1;
+        vector<int> gain(n+1,0);
         for(int v=1;v<=n;v++)
             for(int u:adj[v])
-                g[v]+=(s[u]==s[v])?1:-1;
-        int cc=0;
-        for(auto&[u,v]:edges) cc+=(s[u]!=s[v]);
-        auto doFlip=[&](int v){
-            cc+=g[v]; s[v]^=1;
-            for(int u:adj[v]){
-                if(s[u]==s[v]) g[u]+=2;
-                else g[u]-=2;
+                gain[v]+=(side[u]==side[v])?1:-1;
+        int curCut=0;
+        for(auto&[u,v]:edges) if(side[u]!=side[v]) curCut++;
+        bool improved=true;
+        while(improved){
+            improved=false;
+            for(int v=1;v<=n;v++){
+                if(gain[v]>0){
+                    side[v]^=1; curCut+=gain[v];
+                    for(int u:adj[v]){
+                        if(side[u]==side[v]) gain[u]+=2; else gain[u]-=2;
+                    }
+                    gain[v]=-gain[v]; improved=true;
+                }
             }
-            g[v]=-g[v];
-        };
-        bool imp=true;
-        while(imp){
-            imp=false;
-            for(int v=1;v<=n;v++)
-                if(g[v]>0){doFlip(v);imp=true;}
         }
-        if(cc>bestCut){bestCut=cc;bestSide=s;}
+        if(curCut>bestCut){bestCut=curCut;bestSide=side;}
+        double T=2.0;
+        uniform_real_distribution<double> d01(0,1);
+        double phaseEnd=min(elapsed()+0.5,4.0);
+        while(elapsed()<phaseEnd){
+            for(int it=0;it<2000;it++){
+                int v=(rng()%n)+1;
+                int g=gain[v];
+                if(g>0||d01(rng)<exp((double)g/T)){
+                    side[v]^=1; curCut+=g;
+                    for(int u:adj[v]){if(side[u]==side[v])gain[u]+=2;else gain[u]-=2;}
+                    gain[v]=-g;
+                    if(curCut>bestCut){bestCut=curCut;bestSide=side;}
+                }
+                T*=0.99999; if(T<0.01)T=0.01;
+            }
+        }
     }
-    cout<<bestCut<<"\n";
-    for(int i=1;i<=n;i++){
-        if(i>1) cout<<' ';
-        cout<<(bestSide[i]+1);
-    }
-    cout<<"\n";
+    cout<<bestCut<<'\n';
+    for(int i=1;i<=n;i++){cout<<(bestSide[i]+1);if(i<n)cout<<' ';}
+    cout<<'\n';
 }

@@ -9,88 +9,98 @@ int main(){
     cin >> n >> m;
     
     vector<pair<int,int>> edges(m);
-    vector<vector<int>> adj(n);
+    vector<vector<int>> adj(n+1);
+    
     for(int i = 0; i < m; i++){
-        int u, v; cin >> u >> v; u--; v--;
+        int u, v;
+        cin >> u >> v;
         edges[i] = {u, v};
         adj[u].push_back(v);
         adj[v].push_back(u);
     }
     
-    vector<int> best(n, 0);
-    
     if(m == 0){
-        for(int i = 0; i < n; i++){ if(i) cout << ' '; cout << 0; }
+        for(int i = 1; i <= n; i++){
+            if(i > 1) cout << ' ';
+            cout << 0;
+        }
         cout << '\n';
         return 0;
     }
     
-    int bestCut = 0;
+    vector<int> s(n+1, 0), gain(n+1, 0), bestS(n+1, 0);
+    int bestCut = -1;
     mt19937 rng(42);
-    vector<int> s(n), gain(n);
     
-    auto calcGain = [&](){
-        for(int u = 0; u < n; u++){
-            int g = 0;
-            for(int v : adj[u]) g += (s[u] == s[v]) ? 1 : -1;
-            gain[u] = g;
+    auto computeGain = [&](){
+        for(int u = 1; u <= n; u++){
+            int same = 0, diff = 0;
+            for(int v : adj[u]){
+                if(s[u] == s[v]) same++; else diff++;
+            }
+            gain[u] = same - diff;
         }
     };
     
     auto flipNode = [&](int u){
+        for(int v : adj[u]){
+            if(s[v] == s[u]) gain[v] -= 2;
+            else gain[v] += 2;
+        }
         s[u] ^= 1;
         gain[u] = -gain[u];
-        for(int v : adj[u]){
-            if(s[u] == s[v]) gain[v] -= 2; else gain[v] += 2;
-        }
     };
     
     auto localSearch = [&](){
-        bool imp = true;
-        while(imp){ imp = false; for(int u = 0; u < n; u++) if(gain[u] > 0){ flipNode(u); imp = true; } }
-    };
-    
-    auto calcCut = [&](){ int c = 0; for(auto&[a,b] : edges) c += (s[a] != s[b]); return c; };
-    
-    auto t0 = chrono::steady_clock::now();
-    auto elapsed = [&](){ return chrono::duration<double>(chrono::steady_clock::now() - t0).count(); };
-    
-    double timeLimit = 1.8;
-    
-    while(elapsed() < timeLimit){
-        for(int i = 0; i < n; i++) s[i] = rng() & 1;
-        calcGain();
-        localSearch();
-        int c = calcCut();
-        if(c > bestCut){ bestCut = c; best = s; }
-        
-        // SA phase
-        double T0 = max(2.0, 0.3 * sqrt((double)m));
-        int curCut = c;
-        
-        for(int it = 0; ; it++){
-            if((it & 255) == 0 && elapsed() >= timeLimit) break;
-            int u = rng() % n;
-            int d = gain[u];
-            if(d >= 0){
-                flipNode(u); curCut += d;
-                if(curCut > bestCut){ bestCut = curCut; best = s; }
-            } else {
-                double frac = min(1.0, elapsed() / timeLimit);
-                double T = T0 * (1.0 - frac) + 0.01;
-                double r = (rng() % 100000) / 100000.0;
-                if(exp((double)d / T) > r){
-                    flipNode(u); curCut += d;
+        bool improved = true;
+        while(improved){
+            improved = false;
+            for(int u = 1; u <= n; u++){
+                if(gain[u] > 0){
+                    flipNode(u);
+                    improved = true;
                 }
             }
         }
+    };
+    
+    auto computeCut = [&](){
+        int c = 0;
+        for(auto&[u,v] : edges) c += (s[u] != s[v]);
+        return c;
+    };
+    
+    auto start = chrono::steady_clock::now();
+    
+    for(int restart = 0; ; restart++){
+        auto now = chrono::steady_clock::now();
+        if(chrono::duration<double>(now - start).count() > 1.7) break;
         
-        s = best; calcGain(); localSearch();
-        c = calcCut();
-        if(c > bestCut){ bestCut = c; best = s; }
+        for(int i = 1; i <= n; i++) s[i] = rng() & 1;
+        computeGain();
+        localSearch();
+        
+        int c = computeCut();
+        if(c > bestCut){ bestCut = c; for(int i=1;i<=n;i++) bestS[i]=s[i]; }
+        
+        // SA perturbation phase
+        double T = 2.0;
+        for(int iter = 0; iter < 50000 && T > 0.01; iter++){
+            if(iter % 5000 == 0 && chrono::duration<double>(chrono::steady_clock::now()-start).count() > 1.7) break;
+            int u = (int)(rng() % n) + 1;
+            int g = gain[u];
+            if(g > 0 || uniform_real_distribution<double>(0,1)(rng) < exp(g / T)){
+                flipNode(u);
+                c += g;
+                if(c > bestCut){ bestCut = c; for(int i=1;i<=n;i++) bestS[i]=s[i]; }
+            }
+            T *= 0.99995;
+        }
     }
     
-    for(int i = 0; i < n; i++){ if(i) cout << ' '; cout << best[i]; }
+    for(int i = 1; i <= n; i++){
+        if(i > 1) cout << ' ';
+        cout << bestS[i];
+    }
     cout << '\n';
-    return 0;
 }
