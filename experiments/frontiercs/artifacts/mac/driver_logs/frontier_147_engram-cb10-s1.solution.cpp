@@ -4,46 +4,135 @@ using namespace std;
 int main(){
     ios_base::sync_with_stdio(false);
     cin.tie(NULL);
+    
     int n; cin>>n;
     vector<int> x(n),y(n); vector<long long> r(n);
     for(int i=0;i<n;i++) cin>>x[i]>>y[i]>>r[i];
     
-    const int W=10000, G=200;
-    double cellW=(double)W/G;
-    vector<int> a(n),b(n),c(n),d(n);
-    vector<vector<vector<int>>> grid(G+1,vector<vector<int>>(G+1));
+    // Grid-based ownership: grid[gx][gy] = id of rectangle owning that cell, or -1
+    // We'll use a 2D array of shorts for the 10000x10000 grid - too large (100M).
+    // Instead, use interval-based approach with a sweep or just optimize the overlap check.
     
-    auto gc=[&](int v)->int{int g=(int)(v/cellW);return max(0,min(G,g));};
-    auto addG=[&](int i){int x0=gc(a[i]),y0=gc(b[i]),x1=gc(c[i]-1),y1=gc(d[i]-1);for(int gx=x0;gx<=x1;gx++)for(int gy=y0;gy<=y1;gy++)grid[gx][gy].push_back(i);};
-    auto remG=[&](int i){int x0=gc(a[i]),y0=gc(b[i]),x1=gc(c[i]-1),y1=gc(d[i]-1);for(int gx=x0;gx<=x1;gx++)for(int gy=y0;gy<=y1;gy++){auto&v=grid[gx][gy];for(int k=0;k<(int)v.size();k++)if(v[k]==i){v[k]=v.back();v.pop_back();break;}}};
-    auto overlaps=[&](int i,int na,int nb,int nc,int nd)->bool{if(na<0||nb<0||nc>W||nd>W||na>=nc||nb>=nd)return true;int x0=gc(na),y0=gc(nb),x1=gc(nc-1),y1=gc(nd-1);for(int gx=x0;gx<=x1;gx++)for(int gy=y0;gy<=y1;gy++)for(int j:grid[gx][gy])if(j!=i&&na<c[j]&&a[j]<nc&&nb<d[j]&&b[j]<nd)return true;return false;};
-    auto maxE=[&](int i,int dir,int mx)->int{int lo=1,hi=mx,best=0;while(lo<=hi){int mid=(lo+hi)/2;int na=a[i],nb=b[i],nc=c[i],nd=d[i];if(dir==0)na-=mid;else if(dir==1)nc+=mid;else if(dir==2)nb-=mid;else nd+=mid;if(!overlaps(i,na,nb,nc,nd)){best=mid;lo=mid+1;}else hi=mid-1;}return best;};
-    auto sat=[&](int i)->double{double s=(double)(c[i]-a[i])*(d[i]-b[i]),ri=r[i];if(s<=0)return 0;double rat=min(ri,s)/max(ri,s);return 1-(1-rat)*(1-rat);};
+    // Actually let's use a different spatial structure: for each rectangle, store its bounds.
+    // Use a 2D grid of coarse cells to accelerate overlap detection.
+    
+    const int G = 100; // grid cells of size 100x100
+    vector<vector<vector<int>>> grid(G, vector<vector<int>>(G));
+    
+    vector<int> a(n),b(n),c(n),d(n);
+    
+    auto addToGrid = [&](int i){
+        int gx0 = a[i]*G/10000, gy0 = b[i]*G/10000;
+        int gx1 = (c[i]-1)*G/10000, gy1 = (d[i]-1)*G/10000;
+        gx0=max(0,min(G-1,gx0)); gy0=max(0,min(G-1,gy0));
+        gx1=max(0,min(G-1,gx1)); gy1=max(0,min(G-1,gy1));
+        for(int gx=gx0;gx<=gx1;gx++)
+            for(int gy=gy0;gy<=gy1;gy++)
+                grid[gx][gy].push_back(i);
+    };
+    
+    auto removeFromGrid = [&](int i){
+        int gx0 = a[i]*G/10000, gy0 = b[i]*G/10000;
+        int gx1 = (c[i]-1)*G/10000, gy1 = (d[i]-1)*G/10000;
+        gx0=max(0,min(G-1,gx0)); gy0=max(0,min(G-1,gy0));
+        gx1=max(0,min(G-1,gx1)); gy1=max(0,min(G-1,gy1));
+        for(int gx=gx0;gx<=gx1;gx++)
+            for(int gy=gy0;gy<=gy1;gy++){
+                auto &v=grid[gx][gy];
+                v.erase(find(v.begin(),v.end(),i));
+            }
+    };
+    
+    auto overlaps = [&](int i, int na, int nb, int nc, int nd) -> bool {
+        int gx0 = na*G/10000, gy0 = nb*G/10000;
+        int gx1 = (nc-1)*G/10000, gy1 = (nd-1)*G/10000;
+        gx0=max(0,min(G-1,gx0)); gy0=max(0,min(G-1,gy0));
+        gx1=max(0,min(G-1,gx1)); gy1=max(0,min(G-1,gy1));
+        for(int gx=gx0;gx<=gx1;gx++)
+            for(int gy=gy0;gy<=gy1;gy++)
+                for(int j:grid[gx][gy]){
+                    if(j==i) continue;
+                    if(na<c[j]&&a[j]<nc&&nb<d[j]&&b[j]<nd) return true;
+                }
+        return false;
+    };
+    
+    // Find max expansion in a direction without overlap
+    auto maxExpand = [&](int i, int dir, int maxAmt) -> int {
+        int lo=1,hi=maxAmt,best=0;
+        while(lo<=hi){
+            int mid=(lo+hi)/2;
+            int na=a[i],nb=b[i],nc=c[i],nd=d[i];
+            if(dir==0) na=a[i]-mid;
+            else if(dir==1) nc=c[i]+mid;
+            else if(dir==2) nb=b[i]-mid;
+            else nd=d[i]+mid;
+            if(na<0||nb<0||nc>10000||nd>10000){hi=mid-1;continue;}
+            if(!overlaps(i,na,nb,nc,nd)){best=mid;lo=mid+1;}
+            else hi=mid-1;
+        }
+        return best;
+    };
     
     mt19937 rng(42);
-    vector<int> ba(n),bb(n),bc(n),bd(n);double bs=-1;
-    auto t0=chrono::steady_clock::now();
-    auto el=[&]()->double{return chrono::duration<double>(chrono::steady_clock::now()-t0).count();};
-    for(int att=0;el()<4.5;att++){
-        for(int i=0;i<=G;i++)for(int j=0;j<=G;j++)grid[i][j].clear();
-        for(int i=0;i<n;i++){a[i]=x[i];b[i]=y[i];c[i]=x[i]+1;d[i]=y[i]+1;addG(i);}
-        for(int rnd=0;rnd<500&&el()<4.4;rnd++){
-            vector<int> ord(n);iota(ord.begin(),ord.end(),0);
-            sort(ord.begin(),ord.end(),[&](int u,int v){return sat(u)<sat(v);});
-            bool ch=false;
+    
+    auto computeScore = [&]() -> double {
+        double score=0;
+        for(int i=0;i<n;i++){
+            double si=(double)(c[i]-a[i])*(double)(d[i]-b[i]);
+            double ri=(double)r[i];
+            double ratio=min(ri,si)/max(ri,si);
+            score += 1.0 - (1.0-ratio)*(1.0-ratio);
+        }
+        return score;
+    };
+    
+    vector<int> bestA(n),bestB(n),bestC(n),bestD(n);
+    double bestScore=-1;
+    
+    auto start=chrono::steady_clock::now();
+    
+    for(int attempt=0;;attempt++){
+        if(chrono::duration<double>(chrono::steady_clock::now()-start).count()>4.0) break;
+        
+        // Reset
+        for(int gx=0;gx<G;gx++) for(int gy=0;gy<G;gy++) grid[gx][gy].clear();
+        for(int i=0;i<n;i++){a[i]=x[i];b[i]=y[i];c[i]=x[i]+1;d[i]=y[i]+1;addToGrid(i);}
+        
+        vector<int> ord(n); iota(ord.begin(),ord.end(),0);
+        if(attempt%4==0) sort(ord.begin(),ord.end(),[&](int u,int v){return r[u]>r[v];});
+        else if(attempt%4==1) sort(ord.begin(),ord.end(),[&](int u,int v){return r[u]<r[v];});
+        else shuffle(ord.begin(),ord.end(),rng);
+        
+        for(int round=0;round<300;round++){
+            bool changed=false;
             for(int i:ord){
                 long long area=(long long)(c[i]-a[i])*(d[i]-b[i]);
-                if(area>0){double rat=min((double)r[i],(double)area)/max((double)r[i],(double)area);if(rat>0.995)continue;}
-                remG(i);
-                if(area<r[i]){int dirs[]={0,1,2,3};shuffle(dirs,dirs+4,rng);for(int dir:dirs){area=(long long)(c[i]-a[i])*(d[i]-b[i]);if(area>=r[i])break;long long need=r[i]-area;int side=(dir<2)?(d[i]-b[i]):(c[i]-a[i]);if(!side)continue;int mx=min((long long)W,(need+side-1)/side);int e=maxE(i,dir,mx);if(e>0){if(dir==0)a[i]-=e;else if(dir==1)c[i]+=e;else if(dir==2)b[i]-=e;else d[i]+=e;ch=true;}}}
-                area=(long long)(c[i]-a[i])*(d[i]-b[i]);
-                if(area>r[i]){for(int dir=0;dir<4;dir++){area=(long long)(c[i]-a[i])*(d[i]-b[i]);if(area<=r[i])break;double rat=(double)area/r[i];int s=0;if(dir==0){s=min((int)((rat-1)*(c[i]-a[i])/2),x[i]-a[i]);if(s>0){a[i]+=s;ch=true;}}else if(dir==1){s=min((int)((rat-1)*(c[i]-a[i])/2),c[i]-x[i]-1);if(s>0){c[i]-=s;ch=true;}}else if(dir==2){s=min((int)((rat-1)*(d[i]-b[i])/2),y[i]-b[i]);if(s>0){b[i]+=s;ch=true;}}else{s=min((int)((rat-1)*(d[i]-b[i])/2),d[i]-y[i]-1);if(s>0){d[i]-=s;ch=true;}}}}
-                addG(i);
+                if(area>=r[i]) continue;
+                int dirs[]={0,1,2,3};
+                shuffle(dirs,dirs+4,rng);
+                for(int dir:dirs){
+                    area=(long long)(c[i]-a[i])*(d[i]-b[i]);
+                    if(area>=r[i]) break;
+                    long long need=r[i]-area;
+                    int side=(dir<2)?(d[i]-b[i]):(c[i]-a[i]);
+                    if(side==0) continue;
+                    int maxExp=min(10000,(int)min((long long)10000,(need+side-1)/side));
+                    removeFromGrid(i);
+                    int best=maxExpand(i,dir,maxExp);
+                    if(best>0){
+                        if(dir==0)a[i]-=best;else if(dir==1)c[i]+=best;else if(dir==2)b[i]-=best;else d[i]+=best;
+                        changed=true;
+                    }
+                    addToGrid(i);
+                }
             }
-            if(!ch)break;
+            if(!changed) break;
         }
-        double sc=0;for(int i=0;i<n;i++)sc+=sat(i);
-        if(sc>bs){bs=sc;ba=a;bb=b;bc=c;bd=d;}
+        
+        double score=computeScore();
+        if(score>bestScore){bestScore=score;bestA=a;bestB=b;bestC=c;bestD=d;}
     }
-    for(int i=0;i<n;i++)cout<<ba[i]<<" "<<bb[i]<<" "<<bc[i]<<" "<<bd[i]<<"\n";
+    
+    for(int i=0;i<n;i++) cout<<bestA[i]<<" "<<bestB[i]<<" "<<bestC[i]<<" "<<bestD[i]<<"\n";
 }
