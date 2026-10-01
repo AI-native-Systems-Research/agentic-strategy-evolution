@@ -1,0 +1,50 @@
+[
+  {
+    "id": "RP-4",
+    "statement": "For the penalized TSP (problem #44), candidate-list 2-opt with K=15 KNN outperforms window-based 2-opt by ~0.20 points. The key advantage is enabling local search for ALL N values — window-based 2-opt is too slow for N>10K within 2 seconds. Combined with finer grid G=sqrt(N/2.5) and ILS double-bridge, total score reaches 78.93 (vs 78.43 for iter-1).",
+    "confidence": "high",
+    "regime": "N up to 200K, 2-second time limit, penalized TSP",
+    "evidence": ["iteration-2-h-main"],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Candidate-list 2-opt checks O(N*K) candidates per pass instead of O(N*window). With K=15 and DLB, each pass processes only active cities (10-20% after pass 1). KNN precomputed using squared distances avoids sqrt in build phase. Zero-sqrt edge updates (interior edges reverse order) eliminate O(segment) eucl calls per accepted move. This enables 3-10 full passes for N=200K within 1 second.",
+    "applicability_bounds": "Specific to grid-based KNN with expanding ring search. KNN build assumes relatively uniform city distribution. For highly clustered inputs, ring expansion might need more iterations.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "ILS with double-bridge perturbation adds ~0.10 points over 2-opt alone for penalized TSP, but requires careful time management. The ILS phase must not start unless >= 200ms remain after 2-opt convergence. The RNG seed affects consistency: some seeds cause TLE on large N test cases.",
+    "confidence": "medium",
+    "regime": "N up to 200K, 2-second time limit, after 2-opt convergence",
+    "evidence": ["iteration-2-h-main"],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Double-bridge perturbation (4-cut segment swap) creates moves not decomposable into 2-opt, enabling escape from local optima. But the perturbation disrupts O(N) cities, requiring significant re-optimization time. For N=200K, one ILS iteration needs ~200-500ms for recovery. With insufficient time, the perturbed tour is worse than the original and must be reverted.",
+    "applicability_bounds": "ILS benefit is marginal (~0.10 points) relative to risk of TLE. Only beneficial when sufficient time remains after 2-opt (>= 200ms). For very large N (>100K), ILS may have time for only 0-1 iterations.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-1",
+    "statement": "For the penalized TSP (problem #44), grid nearest-neighbor construction dominates tour quality. The spatial grid with G=sqrt(N/2.5) cells per dimension achieves ~78.2/100 score for construction alone, and combined with candidate-list 2-opt + ILS reaches 78.93. Local search adds ~0.7 points.",
+    "confidence": "high",
+    "regime": "N up to 200K, 2-second time limit, cities sorted by x-coordinate",
+    "evidence": ["iteration-1-h-main", "iteration-2-h-main"],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Grid NN groups cities by spatial proximity in 2D, dramatically reducing total tour distance vs x-sorted baseline. Finer grid (N/2.5 vs N/4) provides more precise neighbor lookup. Local search (2-opt + ILS) adds ~0.7 points by eliminating crossing edges and escaping local optima.",
+    "applicability_bounds": "Holds when cities are distributed in 2D with the baseline being x-sorted order. Finer grid (N/2.5) is optimal when KNN build time is budgeted; coarser grid (N/4) is safer if timing is tight.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]
