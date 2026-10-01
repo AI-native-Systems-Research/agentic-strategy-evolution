@@ -1,496 +1,133 @@
 #include <bits/stdc++.h>
 using namespace std;
 
+int n;
+int px[200],py[200];
+long long pr[200];
+int a[200],b[200],c[200],d[200];
+
+long long area(int i){return (long long)(c[i]-a[i])*(d[i]-b[i]);}
+
+double scorei(int i){
+    long long s=area(i);
+    if(s<=0)return 0;
+    if(px[i]<a[i]||px[i]>=c[i]||py[i]<b[i]||py[i]>=d[i])return 0;
+    double mn=min((double)pr[i],(double)s);
+    double mx=max((double)pr[i],(double)s);
+    double rat=1.0-mn/mx;
+    return 1.0-rat*rat;
+}
+
+bool overlaps(int i,int j){
+    return a[i]<c[j]&&c[i]>a[j]&&b[i]<d[j]&&d[i]>b[j];
+}
+
+bool anyOverlap(int i){
+    for(int j=0;j<n;j++) if(j!=i&&overlaps(i,j)) return true;
+    return false;
+}
+
+int maxExp(int i,int dir){
+    int hi;
+    if(dir==0)hi=a[i]; else if(dir==1)hi=b[i];
+    else if(dir==2)hi=10000-c[i]; else hi=10000-d[i];
+    if(hi<=0)return 0;
+    for(int j=0;j<n;j++){
+        if(j==i)continue;
+        if(dir==0||dir==2){
+            if(b[i]>=d[j]||d[i]<=b[j])continue;
+            if(dir==0){if(c[j]<=a[i])hi=min(hi,a[i]-c[j]);}
+            else{if(a[j]>=c[i])hi=min(hi,a[j]-c[i]);}
+        }else{
+            if(a[i]>=c[j]||c[i]<=a[j])continue;
+            if(dir==1){if(d[j]<=b[i])hi=min(hi,b[i]-d[j]);}
+            else{if(b[j]>=d[i])hi=min(hi,b[j]-d[i]);}
+        }
+    }
+    return max(hi,0);
+}
+
+void expand(int i,int dir,int delta){
+    if(dir==0)a[i]-=delta;else if(dir==1)b[i]-=delta;
+    else if(dir==2)c[i]+=delta;else d[i]+=delta;
+}
+
+void shrink(int i,int dir,int delta){
+    if(dir==0)a[i]+=delta;else if(dir==1)b[i]+=delta;
+    else if(dir==2)c[i]-=delta;else d[i]-=delta;
+}
+
+int maxShrink(int i,int dir){
+    if(dir==0)return px[i]-a[i];
+    if(dir==1)return py[i]-b[i];
+    if(dir==2)return c[i]-px[i]-1;
+    return d[i]-py[i]-1;
+}
+
 int main(){
     ios_base::sync_with_stdio(false);
     cin.tie(NULL);
-    
-    int n;
-    cin >> n;
-    
-    vector<int> x(n), y(n);
-    vector<long long> r(n);
-    vector<int> a(n), b(n), c(n), d(n);
-    
-    for(int i = 0; i < n; i++){
-        cin >> x[i] >> y[i] >> r[i];
-    }
-    
-    // Owner grid: which rectangle owns each cell
-    // We won't use a full 10000x10000 grid, but we'll use rectangle-based collision
-    
-    struct Rect { int x1,y1,x2,y2; };
-    
-    // Recursive guillotine-cut initialization
-    function<void(vector<int>&, Rect)> doPartition = [&](vector<int>& ids, Rect bound){
-        if(ids.size() == 1){
-            int i = ids[0];
-            a[i] = bound.x1; b[i] = bound.y1;
-            c[i] = bound.x2; d[i] = bound.y2;
-            return;
-        }
-        if(ids.empty()) return;
-        
-        int W = bound.x2 - bound.x1;
-        int H = bound.y2 - bound.y1;
-        
-        long long totalR = 0;
-        for(int i : ids) totalR += r[i];
-        
-        auto trySplit = [&](bool horiz) -> tuple<double, int, vector<int>, vector<int>> {
-            vector<int> sorted_ids = ids;
-            if(horiz){
-                sort(sorted_ids.begin(), sorted_ids.end(), [&](int aa, int bb){ return y[aa] < y[bb]; });
-            } else {
-                sort(sorted_ids.begin(), sorted_ids.end(), [&](int aa, int bb){ return x[aa] < x[bb]; });
-            }
-            
-            double bestCost = 1e18;
-            int bestK = -1;
-            int bestSplit = -1;
-            long long cumR = 0;
-            
-            for(int k = 0; k < (int)sorted_ids.size()-1; k++){
-                cumR += r[sorted_ids[k]];
-                double frac = (double)cumR / totalR;
-                int splitPos;
-                if(horiz){
-                    int lo = y[sorted_ids[k]] + 1;
-                    int hi = y[sorted_ids[k+1]];
-                    if(lo > hi) continue;
-                    splitPos = bound.y1 + max(1, min((int)round(frac * H), H-1));
-                    splitPos = max(splitPos, lo);
-                    splitPos = min(splitPos, hi);
-                    if(splitPos <= bound.y1 || splitPos >= bound.y2) continue;
-                } else {
-                    int lo = x[sorted_ids[k]] + 1;
-                    int hi = x[sorted_ids[k+1]];
-                    if(lo > hi) continue;
-                    splitPos = bound.x1 + max(1, min((int)round(frac * W), W-1));
-                    splitPos = max(splitPos, lo);
-                    splitPos = min(splitPos, hi);
-                    if(splitPos <= bound.x1 || splitPos >= bound.x2) continue;
-                }
-                
-                double actualFrac;
-                if(horiz){
-                    actualFrac = (double)(splitPos - bound.y1) / H;
-                } else {
-                    actualFrac = (double)(splitPos - bound.x1) / W;
-                }
-                double cost = (actualFrac - frac)*(actualFrac - frac);
-                if(horiz){
-                    double h1 = splitPos - bound.y1, h2 = bound.y2 - splitPos;
-                    if(h1 < 1 || h2 < 1) continue;
-                    double ar1 = (double)W / h1;
-                    double ar2 = (double)W / h2;
-                    cost += 0.001*(max(ar1,1.0/ar1) + max(ar2,1.0/ar2));
-                } else {
-                    double w1 = splitPos - bound.x1, w2 = bound.x2 - splitPos;
-                    if(w1 < 1 || w2 < 1) continue;
-                    double ar1 = w1 / (double)H;
-                    double ar2 = w2 / (double)H;
-                    cost += 0.001*(max(ar1,1.0/ar1) + max(ar2,1.0/ar2));
-                }
-                
-                if(cost < bestCost){
-                    bestCost = cost;
-                    bestK = k;
-                    bestSplit = splitPos;
-                }
-            }
-            
-            if(bestK < 0) return {1e18, 0, {}, {}};
-            
-            vector<int> left(sorted_ids.begin(), sorted_ids.begin()+bestK+1);
-            vector<int> right(sorted_ids.begin()+bestK+1, sorted_ids.end());
-            return {bestCost, bestSplit, left, right};
-        };
-        
-        auto [costH, splitH, leftH, rightH] = trySplit(true);
-        auto [costV, splitV, leftV, rightV] = trySplit(false);
-        
-        if(costH >= 1e17 && costV >= 1e17){
-            for(int i : ids){
-                a[i] = x[i]; b[i] = y[i]; c[i] = x[i]+1; d[i] = y[i]+1;
-            }
-            return;
-        }
-        
-        if(costH < costV && costH < 1e17){
-            Rect top = {bound.x1, bound.y1, bound.x2, splitH};
-            Rect bot = {bound.x1, splitH, bound.x2, bound.y2};
-            doPartition(leftH, top);
-            doPartition(rightH, bot);
-        } else {
-            Rect lft = {bound.x1, bound.y1, splitV, bound.y2};
-            Rect rgt = {splitV, bound.y1, bound.x2, bound.y2};
-            doPartition(leftV, lft);
-            doPartition(rightV, rgt);
-        }
-    };
-    
-    vector<int> allIds(n);
-    iota(allIds.begin(), allIds.end(), 0);
-    doPartition(allIds, {0, 0, 10000, 10000});
-    
-    for(int i = 0; i < n; i++){
-        if(x[i] < a[i] || x[i] >= c[i] || y[i] < b[i] || y[i] >= d[i]){
-            a[i] = x[i]; b[i] = y[i]; c[i] = x[i]+1; d[i] = y[i]+1;
-        }
-    }
-    
-    auto area_i = [&](int i) -> long long {
-        return (long long)(c[i]-a[i])*(long long)(d[i]-b[i]);
-    };
-    
-    auto score_i = [&](int i) -> double {
-        long long si = area_i(i);
-        if(si <= 0) return 0;
-        if(x[i] < a[i] || x[i] >= c[i] || y[i] < b[i] || y[i] >= d[i]) return 0;
-        double mn = min((double)r[i], (double)si);
-        double mx = max((double)r[i], (double)si);
-        double ratio = 1.0 - mn/mx;
-        return 1.0 - ratio*ratio;
-    };
-    
-    // Build neighbor structure: for each rectangle, find overlapping rectangles on each side
-    // We'll rebuild periodically
-    
-    // Interval overlap check
-    auto overlaps1D = [](int a1, int a2, int b1, int b2) -> bool {
-        return a1 < b2 && b1 < a2;
-    };
-    
-    // For direction: 0=left(a[i]), 1=bottom(b[i]), 2=right(c[i]), 3=top(d[i])
-    // Find max expand distance for rectangle i in direction dir
-    auto maxExpand = [&](int i, int dir) -> int {
-        int hi;
-        if(dir == 0) hi = a[i];
-        else if(dir == 1) hi = b[i];
-        else if(dir == 2) hi = 10000 - c[i];
-        else hi = 10000 - d[i];
-        
-        if(hi <= 0) return 0;
-        
-        for(int j = 0; j < n; j++){
-            if(j == i) continue;
-            if(dir == 0 || dir == 2){
-                if(!overlaps1D(b[i], d[i], b[j], d[j])) continue;
-                if(dir == 0){
-                    if(c[j] <= a[i]) hi = min(hi, a[i] - c[j]);
-                } else {
-                    if(a[j] >= c[i]) hi = min(hi, a[j] - c[i]);
-                }
-            } else {
-                if(!overlaps1D(a[i], c[i], a[j], c[j])) continue;
-                if(dir == 1){
-                    if(d[j] <= b[i]) hi = min(hi, b[i] - d[j]);
-                } else {
-                    if(b[j] >= d[i]) hi = min(hi, b[j] - d[i]);
-                }
-            }
-        }
-        return max(hi, 0);
-    };
-    
-    // Find the blocking neighbor for rectangle i in direction dir
-    // Returns (neighbor_id, max_expand_for_i)
-    auto findBlocker = [&](int i, int dir) -> pair<int, int> {
-        int hi;
-        if(dir == 0) hi = a[i];
-        else if(dir == 1) hi = b[i];
-        else if(dir == 2) hi = 10000 - c[i];
-        else hi = 10000 - d[i];
-        
-        int blocker = -1;
-        
-        for(int j = 0; j < n; j++){
-            if(j == i) continue;
-            if(dir == 0 || dir == 2){
-                if(!overlaps1D(b[i], d[i], b[j], d[j])) continue;
-                if(dir == 0){
-                    if(c[j] <= a[i]){
-                        int gap = a[i] - c[j];
-                        if(gap < hi){ hi = gap; blocker = j; }
-                    }
-                } else {
-                    if(a[j] >= c[i]){
-                        int gap = a[j] - c[i];
-                        if(gap < hi){ hi = gap; blocker = j; }
-                    }
-                }
-            } else {
-                if(!overlaps1D(a[i], c[i], a[j], c[j])) continue;
-                if(dir == 1){
-                    if(d[j] <= b[i]){
-                        int gap = b[i] - d[j];
-                        if(gap < hi){ hi = gap; blocker = j; }
-                    }
-                } else {
-                    if(b[j] >= d[i]){
-                        int gap = b[j] - d[i];
-                        if(gap < hi){ hi = gap; blocker = j; }
-                    }
-                }
-            }
-        }
-        return {blocker, max(hi, 0)};
-    };
-    
-    auto startTime = chrono::steady_clock::now();
-    auto elapsed = [&]() -> double {
-        return chrono::duration<double>(chrono::steady_clock::now()-startTime).count();
-    };
-    
-    // Phase 1: Greedy expansion - prioritize worst rectangles
-    for(int pass = 0; pass < 500 && elapsed() < 1.0; pass++){
-        vector<int> order(n);
-        iota(order.begin(), order.end(), 0);
-        sort(order.begin(), order.end(), [&](int i, int j){
-            return score_i(i) < score_i(j);
-        });
-        
-        for(int idx = 0; idx < n; idx++){
-            int i = order[idx];
-            long long target = r[i];
-            
-            // Try all 4 directions, pick the one that helps most
-            for(int rep = 0; rep < 4; rep++){
-                if(area_i(i) >= target) break;
-                
-                int bestDir = -1;
-                int bestDelta = 0;
-                double bestGain = -1;
-                
-                for(int dir = 0; dir < 4; dir++){
-                    int mx = maxExpand(i, dir);
-                    if(mx <= 0) continue;
-                    int perpLen = (dir == 0 || dir == 2) ? (d[i]-b[i]) : (c[i]-a[i]);
-                    long long need = target - area_i(i);
-                    int wantDelta = (int)min((long long)mx, max(1LL, (need + perpLen - 1) / perpLen));
-                    wantDelta = min(wantDelta, mx);
-                    
-                    // Compute score gain
-                    int oa=a[i],ob=b[i],oc=c[i],od=d[i];
-                    double oldS = score_i(i);
-                    if(dir==0) a[i]-=wantDelta;
-                    else if(dir==1) b[i]-=wantDelta;
-                    else if(dir==2) c[i]+=wantDelta;
-                    else d[i]+=wantDelta;
-                    double newS = score_i(i);
-                    a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;
-                    
-                    if(newS - oldS > bestGain){
-                        bestGain = newS - oldS;
-                        bestDir = dir;
-                        bestDelta = wantDelta;
-                    }
-                }
-                
-                if(bestDir >= 0 && bestGain > 0){
-                    if(bestDir==0) a[i]-=bestDelta;
-                    else if(bestDir==1) b[i]-=bestDelta;
-                    else if(bestDir==2) c[i]+=bestDelta;
-                    else d[i]+=bestDelta;
-                }
+    cin>>n;
+    for(int i=0;i<n;i++)cin>>px[i]>>py[i]>>pr[i];
+    for(int i=0;i<n;i++){a[i]=px[i];b[i]=py[i];c[i]=px[i]+1;d[i]=py[i]+1;}
+
+    auto clk=[]{return chrono::steady_clock::now();};
+    auto st=clk();
+    auto ela=[&]{return chrono::duration<double>(clk()-st).count();};
+
+    // Greedy expansion
+    for(int pass=0;pass<2000&&ela()<2.0;pass++){
+        vector<int>ord(n);iota(ord.begin(),ord.end(),0);
+        sort(ord.begin(),ord.end(),[](int i,int j){return scorei(i)<scorei(j);});
+        for(int i:ord){
+            int dirs[]={0,1,2,3};
+            for(int dir:dirs){
+                if(area(i)>=pr[i]*1.5)break;
+                int mx=maxExp(i,dir);if(mx<=0)continue;
+                int perp=(dir<2)?(d[i]-b[i]):(c[i]-a[i]);
+                if(dir>=2)perp=(dir==2)?(d[i]-b[i]):(c[i]-a[i]);
+                long long need=pr[i]-area(i);
+                int w;
+                if(need>0)w=min((long long)mx,(need+perp-1)/max(1LL,(long long)perp));
+                else w=0;
+                w=max(0,min(w,mx));
+                if(w>0)expand(i,dir,w);
             }
         }
     }
-    
-    // Phase 2: SA with coordinated moves
+
+    // SA
     mt19937 rng(42);
-    double timeLimit = 4.7;
-    double T0 = 0.05, Tend = 0.0002;
-    
-    double totalScore = 0;
-    vector<double> scores(n);
-    for(int i = 0; i < n; i++){
-        scores[i] = score_i(i);
-        totalScore += scores[i];
-    }
-    
-    long long iter = 0;
-    long long accepted = 0;
-    
-    while(elapsed() < timeLimit){
-        double t = elapsed();
-        double frac = max(0.0, min(1.0, (t - 1.0) / (timeLimit - 1.0)));
-        double T = T0 * pow(Tend/T0, frac);
-        
-        int moveType = rng() % 100;
-        
-        if(moveType < 50){
-            // Single rectangle expand/shrink
-            int i = rng() % n;
-            int dir = rng() % 4;
-            int oa=a[i],ob=b[i],oc=c[i],od=d[i];
-            double oldS = scores[i];
-            
-            bool expand;
-            long long si = area_i(i);
-            if(si > r[i]){
-                expand = (rng() % 10 < 2); // mostly shrink
-            } else {
-                expand = (rng() % 10 < 8); // mostly expand
-            }
-            
-            int delta;
-            if(expand){
-                int mx = maxExpand(i, dir);
-                if(mx <= 0){ continue; }
-                // Scale max move by temperature
-                int maxD = max(1, min(mx, (int)(50 * (1.0 - frac*0.8) + 1)));
-                delta = 1 + rng() % maxD;
-                delta = min(delta, mx);
-                if(dir==0) a[i]-=delta; else if(dir==1) b[i]-=delta;
-                else if(dir==2) c[i]+=delta; else d[i]+=delta;
-            } else {
-                int maxShrink;
-                if(dir==0) maxShrink=x[i]-a[i];
-                else if(dir==1) maxShrink=y[i]-b[i];
-                else if(dir==2) maxShrink=c[i]-x[i]-1;
-                else maxShrink=d[i]-y[i]-1;
-                if(maxShrink<=0){ continue; }
-                int maxD = max(1, min(maxShrink, (int)(50 * (1.0 - frac*0.8) + 1)));
-                delta = 1 + rng() % maxD;
-                delta = min(delta, maxShrink);
-                if(dir==0) a[i]+=delta; else if(dir==1) b[i]+=delta;
-                else if(dir==2) c[i]-=delta; else d[i]-=delta;
-            }
-            
-            if(a[i]<0||b[i]<0||c[i]>10000||d[i]>10000||a[i]>=c[i]||b[i]>=d[i]){
-                a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;
-                continue;
-            }
-            
-            double newS = score_i(i);
-            double diff = newS - oldS;
-            if(diff >= 0 || (double)(rng()%1000000)/1000000.0 < exp(diff/T)){
-                scores[i] = newS;
-                totalScore += diff;
-                accepted++;
-            } else {
-                a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;
-            }
-        } else {
-            // Coordinated move: expand i by shrinking neighbor j
-            int i = rng() % n;
-            int dir = rng() % 4;
-            
-            auto [blocker, gap] = findBlocker(i, dir);
-            if(blocker < 0) {
-                // No blocker, just try expand
-                int mx = maxExpand(i, dir);
-                if(mx <= 0) continue;
-                int oa=a[i],ob=b[i],oc=c[i],od=d[i];
-                int maxD = max(1, min(mx, (int)(50*(1.0-frac*0.8)+1)));
-                int delta = 1 + rng() % maxD;
-                delta = min(delta, mx);
-                if(dir==0) a[i]-=delta; else if(dir==1) b[i]-=delta;
-                else if(dir==2) c[i]+=delta; else d[i]+=delta;
-                
-                if(a[i]<0||b[i]<0||c[i]>10000||d[i]>10000||a[i]>=c[i]||b[i]>=d[i]){
-                    a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;
-                    continue;
-                }
-                double oldS = scores[i];
-                double newS = score_i(i);
-                double diff = newS - oldS;
-                if(diff >= 0 || (double)(rng()%1000000)/1000000.0 < exp(diff/T)){
-                    scores[i] = newS;
-                    totalScore += diff;
-                } else {
-                    a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;
-                }
-                continue;
-            }
-            
-            int j = blocker;
-            
-            // Determine max we can push the boundary between i and j
-            // dir=0: i wants to expand left, j is to the left. Shrink j's right edge (c[j])
-            // dir=1: i wants to expand down, j is below. Shrink j's top edge (d[j])
-            // dir=2: i wants to expand right, j is to the right. Shrink j's left edge (a[j])
-            // dir=3: i wants to expand up, j is above. Shrink j's bottom edge (b[j])
-            
-            int maxShrinkJ;
-            if(dir==0) maxShrinkJ = c[j] - max(x[j]+1, a[j]+1); // c[j] can decrease to x[j]+1
-            else if(dir==1) maxShrinkJ = d[j] - max(y[j]+1, b[j]+1);
-            else if(dir==2) maxShrinkJ = min(c[j]-1, x[j]) - a[j];
-            else maxShrinkJ = min(d[j]-1, y[j]) - b[j];
-            
-            if(maxShrinkJ <= 0) continue;
-            
-            // We can expand i by gap (free space) + shrinkJ (taking from j)
-            int totalAvail = gap + maxShrinkJ;
-            int maxD = max(1, min(totalAvail, (int)(40*(1.0-frac*0.8)+1)));
-            int delta = 1 + rng() % maxD;
-            delta = min(delta, totalAvail);
-            
-            int oa=a[i],ob=b[i],oc=c[i],od=d[i];
-            int oaj=a[j],obj=b[j],ocj=c[j],odj=d[j];
-            double oldSi = scores[i], oldSj = scores[j];
-            
-            // Apply move to i
-            if(dir==0) a[i]-=delta;
-            else if(dir==1) b[i]-=delta;
-            else if(dir==2) c[i]+=delta;
-            else d[i]+=delta;
-            
-            // Shrink j if needed
-            int shrinkNeeded = delta - gap;
-            if(shrinkNeeded > 0){
-                if(dir==0) c[j] -= shrinkNeeded; // j shrinks from right
-                else if(dir==1) d[j] -= shrinkNeeded; // j shrinks from top
-                else if(dir==2) a[j] += shrinkNeeded; // j shrinks from left
-                else b[j] += shrinkNeeded; // j shrinks from bottom
-            }
-            
-            // Validate
-            bool valid = true;
-            if(a[i]<0||b[i]<0||c[i]>10000||d[i]>10000||a[i]>=c[i]||b[i]>=d[i]) valid=false;
-            if(a[j]<0||b[j]<0||c[j]>10000||d[j]>10000||a[j]>=c[j]||b[j]>=d[j]) valid=false;
-            if(valid && (x[i]<a[i]||x[i]>=c[i]||y[i]<b[i]||y[i]>=d[i])) valid=false;
-            if(valid && (x[j]<a[j]||x[j]>=c[j]||y[j]<b[j]||y[j]>=d[j])) valid=false;
-            
-            // Check overlap between i and j
-            if(valid){
-                if(a[i]<c[j]&&c[i]>a[j]&&b[i]<d[j]&&d[i]>b[j]) valid=false;
-            }
-            
-            // Check i doesn't overlap others (skip j)
-            if(valid){
-                for(int k = 0; k < n && valid; k++){
-                    if(k==i||k==j) continue;
-                    if(a[i]<c[k]&&c[i]>a[k]&&b[i]<d[k]&&d[i]>b[k]) valid=false;
-                }
-            }
-            
-            if(!valid){
-                a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;
-                a[j]=oaj;b[j]=obj;c[j]=ocj;d[j]=odj;
-                continue;
-            }
-            
-            double newSi = score_i(i);
-            double newSj = score_i(j);
-            double diff = (newSi + newSj) - (oldSi + oldSj);
-            
-            if(diff >= 0 || (double)(rng()%1000000)/1000000.0 < exp(diff/T)){
-                scores[i] = newSi;
-                scores[j] = newSj;
-                totalScore += diff;
-                accepted++;
-            } else {
-                a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;
-                a[j]=oaj;b[j]=obj;c[j]=ocj;d[j]=odj;
-            }
+    double T0=0.02,Te=0.0001,tl=4.8;
+    while(ela()<tl){
+        double f=min(1.0,(ela()-2.0)/(tl-2.0));if(f<0)f=0;
+        double T=T0*pow(Te/T0,f);
+        int i=rng()%n;
+        int dir=rng()%4;
+        double os=scorei(i);
+        int oa=a[i],ob=b[i],oc=c[i],od=d[i];
+        bool exp=(rng()%3!=0);
+        if(exp){
+            int mx=maxExp(i,dir);if(mx<=0)continue;
+            int delta=1+rng()%max(1,min(mx,(int)(mx*(1.0-f*0.8))));
+            expand(i,dir,delta);
+        }else{
+            int ms=maxShrink(i,dir);if(ms<=0)continue;
+            int delta=1+rng()%max(1,min(ms,(int)(ms*(1.0-f*0.8))));
+            shrink(i,dir,delta);
         }
-        iter++;
+        if(a[i]<0||b[i]<0||c[i]>10000||d[i]>10000||a[i]>=c[i]||b[i]>=d[i]||
+           px[i]<a[i]||px[i]>=c[i]||py[i]<b[i]||py[i]>=d[i]){
+            a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;continue;
+        }
+        if(exp&&anyOverlap(i)){a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;continue;}
+        double ns=scorei(i);
+        double diff=ns-os;
+        if(diff<0){
+            double p=exp(diff/T);
+            if((rng()%10000)/10000.0>=p){a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;}
+        }
     }
-    
-    for(int i = 0; i < n; i++){
-        printf("%d %d %d %d\n", a[i], b[i], c[i], d[i]);
-    }
+
+    for(int i=0;i<n;i++)printf("%d %d %d %d\n",a[i],b[i],c[i],d[i]);
 }
