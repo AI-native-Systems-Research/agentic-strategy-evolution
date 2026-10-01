@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 confirmed that a grid-based nearest-neighbor construction with conservative 2-opt achieves a stable score of 78.4/100 on this penalized TSP problem. The 2-second time limit on N=200K inputs is the binding constraint \u2014 many theoretically better algorithms (SA, LKH, greedy edge construction) fail due to TLE. The carrot penalty mechanism contributes only ~1% of tour cost and is not the lever for improvement; construction quality is.",
+  "key_points": [
+    "CONFIRMED: Grid NN + candidate-list 2-opt scores 78.43 consistently (predicted \u226578). Pure NN alone scores 78.19; 2-opt adds ~0.2 points but only on smaller test cases due to time limits.",
+    "The penalty (10% surcharge every 10th step from non-prime cities) is a ~1% effect on total cost. Optimizing prime placement at penalty positions yields negligible gains (<0.1 points). The problem is fundamentally a fast TSP construction challenge under tight time constraints.",
+    "10+ alternative approaches were tested and all scored lower: Hilbert curve (40.4), strip ordering (40.4), greedy TSP (74.9), SA (73-78 unstable), set-based NN (68.2 \u2014 TLE). The grid NN with O(1) amortized lookup is the only construction fast enough for N=200K.",
+    "STILL UNKNOWN: Whether or-opt (segment relocation) with approximate penalty delta could push past 80. Whether farthest-insertion heuristic is viable within 2s. Whether the judge machine is faster than local, allowing more local search iterations.",
+    "NEXT ITERATION should investigate: (1) Or-opt moves which relocate segments of 1-3 cities \u2014 these are more effective than 2-opt for TSP and may handle penalty changes better. (2) A Lin-Kernighan style sequential search with 3-opt kicks. (3) Better time calibration \u2014 measure actual judge machine speed to know how much local search budget exists."
+  ]
+}

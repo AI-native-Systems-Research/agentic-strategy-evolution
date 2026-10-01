@@ -1,0 +1,47 @@
+metadata:
+  iteration: 3
+  family: "max-clique-robustness"
+  research_question: "Is the BnB + local-search solution robust at full scope, and does adaptive time management improve reliability?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism (time management) + control, testing robustness of confirmed solution"
+
+arms:
+  - type: h-main
+    prediction: "Shifting 100ms from BnB to local search (1700ms BnB + 200ms local search vs 1800ms + 100ms) will maintain score 100, confirming the solution is robust to time allocation changes within the 2s budget."
+    mechanism: "BnB with greedy coloring solves most instances well within 1700ms (RP-3 shows completion under normal load). The extra 100ms for local search provides a larger recovery window on hard instances where BnB times out, maintaining score 100. Since BnB already achieves 100 in most runs (RP-3), the reallocation should be neutral-to-positive."
+    diagnostic: "If score drops below 100, the BnB cutoff at 1700ms may be too tight for some test cases — the extra 100ms BnB time matters more than extra local search time. Check timed_out flag frequency."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Change BnB timeout threshold from 1800ms to 1700ms on lines 28, 81, and 287. This gives local search 200ms instead of 100ms."
+        rationale: "Tests whether time reallocation between BnB and local search affects robustness."
+
+  - type: h-control-negative
+    prediction: "The current production solution (BnB 1800ms + local search 100ms) will score 100, confirming iter-2 findings at full scope in iter-3."
+    mechanism: "BnB with greedy coloring bound and degeneracy ordering solves all test instances within 1800ms under normal system load (RP-3). Local search provides defensive recovery for timeout cases (RP-4)."
+    diagnostic: "If score drops below 100, system load variance is the likely cause (as observed in iter-1). Check if the run was under heavy load."
+
+# Arm selection rationale:
+# h-main tests a micro-optimization (time reallocation) to confirm the solution's robustness to parameter tuning.
+# h-control-negative confirms the production solution at full scope for iter-3, providing a reliability data point.
+# No ablation/dose-response needed — iter-2 already established that local search is defensive insurance (RP-4).
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    N_max: 1000
+    M_max: 500000
+    time_limit_seconds: 2.0
+    bnb_timeout_ms: 1800
+    local_search_cutoff_ms: 1900
+    greedy_restarts: 2000
+    greedy_time_budget_ms: 100
+  unlocked_parameters_audit:
+    - name: "greedy_restarts"
+      default_value: 2000
+      justification: "2000 restarts within 100ms provides sufficient greedy initialization; iter-1 showed 5000 restarts only marginally better."
+    - name: "greedy_time_budget_ms"
+      default_value: 100
+      justification: "100ms is enough for 2000 random greedy restarts at N<=1000, leaving 1900ms for BnB+local search."
+    - name: "local_search_rng_seed"
+      default_value: 12345
+      justification: "Fixed seed for reproducibility; local search quality is not sensitive to seed choice since it explores systematically."

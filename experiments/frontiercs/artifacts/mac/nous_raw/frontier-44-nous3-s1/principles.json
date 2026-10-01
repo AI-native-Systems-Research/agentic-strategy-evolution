@@ -1,3 +1,58 @@
 {
-  "principles": []
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For the penalized TSP (problem #44), grid nearest-neighbor construction dominates tour quality. The spatial grid with G=sqrt(N/4) cells per dimension achieves ~78.2/100 score. Local search (2-opt, or-opt, SA) adds at most 0.3 points.",
+      "confidence": "high",
+      "regime": "N up to 200K, 2-second time limit, cities sorted by x-coordinate",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The x-sorted baseline visits cities left-to-right ignoring y-coordinates. Grid NN groups cities by spatial proximity in 2D, dramatically reducing total tour distance. The 2-second time limit constrains local search to O(N*K) candidate-list 2-opt, which fixes ~0.2 points of local imperfections.",
+      "applicability_bounds": "Holds when cities are distributed in 2D with the baseline being x-sorted order. May not hold for clustered inputs or different baselines.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "The 10% step penalty (carrot constraint) affects only ~1% of total tour cost. Penalty-aware optimizations (prime placement, penalty-aware NN) yield negligible improvement (<0.1 points).",
+      "confidence": "high",
+      "regime": "N up to 200K, penalty at every 10th step, ~N/ln(N) prime city IDs",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Only 10% of steps (multiples of 10) are candidates for penalty. The penalty is 10% extra distance. Combined: 10% * 10% = 1% of total cost. By PNT, ~N/ln(N) primes exist among N cities, covering ~85% of penalty positions naturally. The remaining ~15% uncovered positions contribute ~0.15% of total cost.",
+      "applicability_bounds": "Specific to the carrot constraint definition in problem #44. Would differ with higher penalty rate or larger multiplier.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "Fast 2-opt delta for penalized TSP can be computed in O(1) Euclidean + O(segment/10) penalty, enabling candidate-list 2-opt for large N. Interior edge lengths are unchanged by segment reversal; only boundary edges and penalty positions (t%10==0) need evaluation.",
+      "confidence": "high",
+      "regime": "Any TSP variant with step-position-dependent penalties",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "When reversing tour segment [i+1..j], interior edges have identical Euclidean lengths (just reversed direction). Only the 2 boundary edges change distance. For penalties at step t%10==0, the source city and edge length change only at positions where the reversal remaps cities. These occur at O((j-i)/10) positions.",
+      "applicability_bounds": "Requires penalties to depend on step number modulo K (here K=10). For position-independent penalties, standard O(1) delta works.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": false,
+      "derivation_type": "algebraic"
+    }
+  ]
 }

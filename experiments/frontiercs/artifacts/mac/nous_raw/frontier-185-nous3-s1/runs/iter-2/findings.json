@@ -1,6 +1,5 @@
 {
   "iteration": 2,
-  "mode": "real",
   "bundle_ref": "runs/iter-2/bundle.yaml",
   "arms": [
     {
@@ -14,13 +13,14 @@
     {
       "arm_type": "h-control-negative",
       "predicted": "The iter-1 BnB-only solution (without local search) will score ~99.345, confirming the local search is responsible for the improvement to 100.",
-      "observed": "Scores across 5 runs: 100, 100, 100, 100, 100. The control achieves 100 consistently — same as h-main. The predicted degradation to 99.345 did not materialize.",
+      "observed": "Scores across 5 runs: 100, 100, 100, 100, 100. The control achieves 100 consistently \u2014 same as h-main. The predicted degradation to 99.345 did not materialize.",
       "status": "REFUTED",
       "error_type": "regime",
-      "diagnostic_note": "The assumed regime (BnB timing out on hard cases causing score < 100) did not manifest under current system load conditions. Iter-1's reported 99.345 was a measurement artifact from system load variance (iter-1 showed scores of 90, 100, 100 — high variance). Under normal load, the iter-1 BnB-only solution already achieves 100 consistently. The local search is defensive insurance against load-induced timeout, not a necessary algorithmic improvement."
+      "diagnostic_note": "The assumed regime (BnB timing out on hard cases causing score < 100) did not manifest under current system load conditions. Iter-1's reported 99.345 was a measurement artifact from system load variance (iter-1 showed scores of 90, 100, 100 \u2014 high variance). Under normal load, the iter-1 BnB-only solution already achieves 100 consistently. The local search is defensive insurance against load-induced timeout, not a necessary algorithmic improvement."
     }
   ],
   "experiment_valid": true,
   "discrepancy_analysis": "h-main CONFIRMED: achieves score 100 (7/7 post-warmup runs). h-control-negative REFUTED: BnB-only also achieves 100 (5/5 runs), contradicting the prediction of ~99.345. The iter-1 baseline of 99.345 was caused by system-load-induced timeout variance, not a fundamental algorithmic limitation. Both solutions are algorithmically sufficient for score 100 on this test distribution. The local search in h-main provides a robustness margin against system load spikes (the BnB has a tighter 1800ms timeout leaving 100ms for local search recovery), but is not the primary driver of the improvement from iter-1's observed 99.345.",
-  "dominant_component_pct": null
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
 }

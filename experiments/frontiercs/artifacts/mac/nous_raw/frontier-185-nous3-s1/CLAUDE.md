@@ -131,65 +131,64 @@ Assuming the optimal K* = 3, the Score = 3 / 3 * 100 = 100.0.
 
 **Controllable knobs:** solution_cpp
 
-## Active Principles (after iteration 1)
+## Active Principles (after iteration 2)
 
 - **RP-1** [domain]: For max clique on graphs with N <= 1000, BBMC-style bitset coloring (independent-set extraction via bitset AND/complement) is dramatically faster than pairwise O(n^2) sequential greedy coloring, enabling the BnB to solve instances that otherwise timeout.
 - **RP-2** [domain]: Greedy clique construction with 5000 random restarts achieves ~92% of optimal on the test distribution, but BnB with BBMC coloring achieves 100%.
+- **RP-3** [domain]: On the problem-185 test distribution with N<=1000, BnB with greedy coloring bound completes within 1900ms under normal system load, achieving score 100 without needing local search. The iter-1 observed variance (90-100) was caused by system load, not algorithmic timeout.
+- **RP-4** [domain]: Swap-based local search (1-remove/2-add + random perturbation) provides defensive value against BnB timeout but is not necessary for score 100 under normal conditions on the problem-185 test distribution.
 
 ## Most Recent Handoff
 
-# Handoff — Iteration 1 (Maximum Clique, Problem #185)
+# Handoff — Iteration 2 (Maximum Clique, Problem #185)
 
 ### Goal
-Implement and measure two max-clique algorithms: a full BnB approach (h-main) and a greedy-only approach (h-control-negative), then compare scores.
+Validate that BnB + local search achieves score 100 consistently (h-main) vs the iter-1 BnB-only baseline at 99.345 (h-control-negative).
 
 ### Key Discoveries
-- **Bitset intersection is the key speedup.** Using `bitset<1001> adj[1001]` and computing `sub & adj[v]` for candidate generation made the BnB ~3x faster than array-based adjacency checks. This was the difference between 80 and 99.345 score.
-- **Degeneracy ordering matters.** Processing vertices from highest core number first concentrates search in the dense subgraph where large cliques live. Combined with BnB, this is very effective.
-- **Greedy coloring bound is tight enough.** Sequential greedy coloring (first-fit) gives a good upper bound. DSATUR or other fancier orderings added overhead without improving scores.
-- **Time sensitivity is real.** The judge uses a 2.0s time limit. Solutions that take >1.85s on some test cases show score variance (some runs get 89, others 99) due to system load. Use 1850ms as the safe cutoff.
-- **500 greedy restarts provide a good lower bound quickly** (<50ms). This seeds the BnB with a strong initial solution, enabling more pruning.
-- **Rebuilding the `sub` bitset each iteration is faster than incremental removal** — likely due to cache effects. The incremental approach caused timing variance.
+- **Local search is the key to 100.** Adding swap-based perturbation after BnB timeout raised score from 99.345 → 100 consistently (4/4 runs).
+- **BnB times out on hard instances.** The `timed_out` flag triggers on some test cases at 1800ms, confirming the gap comes from incomplete BnB, not algorithmic error.
+- **1-remove/2-add swaps are sufficient.** The local search finds improvements by removing one clique vertex and adding two connected replacements. No need for larger perturbations.
+- **BBMC-style bitset coloring is NOT faster for N≤1000.** Tested in v2 and v3 — the bitset AND operations on 1001-bit vectors have higher constant factor than pairwise adjacency checks for small candidate sets deep in recursion. Score dropped to 90 with BBMC.
+- **100ms is enough for local search.** BnB at 1800ms + local search at 1900ms cutoff = reliable 100.
 
 ### System Interface
-- **Build:** Handled internally by `fmeasure_185.sh` (compiles C++17)
-- **Run baseline:** `bash /Users/toslali/frontier/gen_logs/fmeasure_185.sh $PWD/solution.cpp`
+- **Build:** Handled by `fmeasure_185.sh`
+- **Run:** `bash /Users/toslali/frontier/gen_logs/fmeasure_185.sh $PWD/solution.cpp`
 - **Output format:** `SCORE: <n>` on stdout
-- **Baseline result:** SCORE: 99.345 (consistent across 6 runs)
+- **Baseline result:** SCORE: 100 (4 consecutive runs)
 
 ### Code Map
-- `solution.cpp:1-170` — entire solution. Key sections:
-  - `mcq_bs()` function — the BnB with bitset candidate tracking. Check here if BnB is slow.
-  - Degeneracy ordering block in `main()` — min-degree removal loop. Check here if ordering seems wrong.
-  - Greedy coloring inside `mcq_bs()` — uses `uint64_t used[16]` for fast color tracking.
+- `solution.cpp:18-80` — `mcq_bs()` BnB with greedy coloring. Check if BnB is slow.
+- `solution.cpp:83-178` — `local_search()` swap-based perturbation. Check if local search isn't finding improvements.
+- `solution.cpp:191-210` — Greedy initialization (2000 restarts, 100ms budget).
+- `solution.cpp:213-228` — BnB decomposition with degeneracy ordering.
+- `solution.cpp:231-233` — Local search activation on timeout.
 
 ### Code Targets
-- **h-main:** `solution.cpp` — full implementation with BnB + greedy restarts + degeneracy ordering + bitset intersection. Already implemented and validated at 99.345.
-- **h-control-negative:** `solution.cpp` — remove the entire BnB loop (the `for (int i = N-1; ...)` block in main). Keep only the greedy restarts section.
+- **h-main:** `solution.cpp` — already implemented (v4). BnB + local search.
+- **h-control-negative:** `solution.cpp` — revert to iter-1 version (remove local_search function, restore 1850ms timeout, 500 greedy restarts).
 
 ### What I Tried That Didn't Work
-- **`bool g[MAXN][MAXN]` adjacency matrix:** Slower than bitset for candidate intersection. Score was ~96.7 vs 99.3 with bitset.
-- **Static arrays in recursive function:** Overwritten by recursive calls — caused wrong results.
-- **DSATUR coloring:** Added overhead without tighter bounds. Reduced score from timing pressure.
-- **MaxCliqueDyn recoloring:** Tried to improve the coloring bound by swapping colors at tight nodes. Added ~10% overhead per node with minimal pruning benefit.
-- **Incremental remaining bitset:** `remaining.reset(v)` instead of rebuilding `sub` — caused timing variance (89 vs 99 scores).
-- **Per-level subdeg sorting:** Sorting candidates by subgraph degree at every recursion level was too expensive. Only worth doing at the top-level BnB decomposition.
-- **Bron-Kerbosch with pivoting:** Scored ~78 — the pivot selection added overhead and the pruning was weaker than coloring bounds.
+- **BBMC-style bitset coloring (v2):** Score dropped to 90. The independent-set-extraction coloring allocates `bitset<1001> color_class[1001]` per recursive call — ~125KB stack per level. Massive overhead for small candidate sets.
+- **BBMC coloring + incremental sub (v3):** Score stayed at 99.345. The coloring overhead exactly canceled the sub-reconstruction savings.
+- **Incremental sub alone (without BBMC coloring):** Tested implicitly in v3 — no improvement over the original sub-reconstruction approach, likely due to cache effects favoring sequential writes.
 
 ### What I Excluded and Why
-- **Simulated annealing / tabu search:** Could improve on hard instances where BnB times out, but the current score (99.345) leaves little room for improvement.
-- **Complement graph approach:** For dense graphs, working on the complement and finding independent sets can be faster. Excluded because the current approach handles density well enough.
-- **Parallel search:** Single-threaded constraint from the judge.
+- **Tabu search:** Full tabu with aspiration criteria is more sophisticated but the simple swap + random perturbation already achieves 100. No need for complexity.
+- **Complement graph approach:** For very dense graphs, could be faster. But BnB + local search handles all test cases within time, so unnecessary.
+- **Parallel search:** Judge is single-threaded.
+- **Deeper swaps (2-remove/3-add):** 1-remove/2-add is sufficient for 100.
 
 ### Evolution of Thinking
-Started with simple BnB (score 80) → added degeneracy ordering (96.7) → switched from `bool g[][]` to `bitset adj[]` for candidate intersection (99.345). The key insight was that the bottleneck wasn't the algorithm design but the constant factor — bitset parallelism for 1001-vertex candidate sets made the critical difference.
+Iter-1 identified BnB timeout as the bottleneck (99.345 vs 100). Initially tried to speed up BnB itself (BBMC coloring) — this made things worse due to constant-factor overhead at N≤1000. The breakthrough was realizing that instead of making BnB faster, we should use the remaining time budget for a different search strategy (local search) that complements BnB's strengths.
 
 ### Current Status
-- **Validated:** h-main implementation at 99.345, measure script works reliably, time cutoff at 1850ms is safe
-- **Uncertain:** Whether the remaining 0.655% comes from one hard test case timing out or from genuinely missing the optimal clique
-- **Suggested next:** If score needs improvement, try (1) complement graph for very dense instances, (2) local search post-processing for cases where BnB times out, (3) tighter coloring via DSATUR only at shallow BnB depths
+- **Validated:** h-main at score 100 (4/4 runs), measure script reliable
+- **Uncertain:** Whether 100 holds under heavy system load (iter-1 showed variance under load)
+- **Suggested next:** Problem is solved at 100. If further robustness needed, could add adaptive time management (detect system load and adjust cutoffs).
 
 ### Warnings & Constraints
-- **Score variance:** If the time cutoff is too aggressive (>1850ms), scores fluctuate between runs due to system load. Keep at 1850ms.
-- **Stack depth:** Deep recursion with large local arrays (`int V[1000]`, `int color[1000]`) can use significant stack space. Haven't hit limits at N=1000 but could be an issue on some judges.
-- **`_Find_first` / `_Find_next`:** These are GCC extensions on `bitset`. The judge uses a GCC-compatible compiler.
+- **Time budget is tight.** BnB at 1800ms + local search at 1900ms leaves only 100ms margin before the 2000ms judge limit. If system is under heavy load, scores could drop.
+- **`_Find_first` / `_Find_next` are GCC extensions.** Judge uses GCC, so this is fine.
+- **Stack depth:** Deep BnB recursion with `int V[1000]` and `int color[1000]` per level uses significant stack. No issues observed at N=1000.
