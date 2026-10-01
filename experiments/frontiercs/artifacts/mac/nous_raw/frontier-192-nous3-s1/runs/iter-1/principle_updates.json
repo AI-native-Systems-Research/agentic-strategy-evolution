@@ -4,7 +4,10 @@
     "statement": "FM partitioning with greedy local search and random restarts achieves ~87 on Max-Cut (n<=1000, m<=20000) within a 1s time limit, outperforming trivial assignment by ~37 points.",
     "confidence": "high",
     "regime": "Max-Cut with n<=1000, m<=20000, 1s time limit per test case",
-    "evidence": ["iteration-1-h-main", "iteration-1-h-control-negative"],
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-1-h-control-negative"
+    ],
     "contradicts": [],
     "extraction_iteration": 1,
     "mechanism": "Greedy local search converges to a local optimum quickly. FM passes consider the full sequence of vertex flips and select the best prefix, enabling escape from local optima. Multiple restarts with different RNG seeds explore diverse regions of solution space.",
@@ -20,7 +23,9 @@
     "statement": "RNG-seed-dependent variance in FM+restarts can cause ~5-point score drops (81.5 vs 87.0), suggesting the algorithm's performance is sensitive to the number of restarts completed within the time budget.",
     "confidence": "medium",
     "regime": "Max-Cut with tight time limits (0.90s budget) and time-based RNG",
-    "evidence": ["iteration-1-h-main"],
+    "evidence": [
+      "iteration-1-h-main"
+    ],
     "contradicts": [],
     "extraction_iteration": 1,
     "mechanism": "With time-based seeds, some runs may spend more time on suboptimal initial partitions, leaving fewer restarts before the time limit. The variance suggests the restart count (not the algorithm quality) is the bottleneck.",

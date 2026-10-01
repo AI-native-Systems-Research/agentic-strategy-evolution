@@ -12,6 +12,32 @@
       "prediction_accuracy": null,
       "principles_extracted": [],
       "frontier_update": null
+    },
+    {
+      "iteration": 1,
+      "family": "fm-local-search-maxcut",
+      "timestamp": "2026-10-01T06:24:28.778024+00:00",
+      "candidate_id": "iter-1",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": "CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-1",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-2",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
     }
   ]
 }
