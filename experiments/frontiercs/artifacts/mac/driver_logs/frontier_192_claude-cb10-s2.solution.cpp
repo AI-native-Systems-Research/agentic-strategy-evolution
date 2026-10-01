@@ -1,126 +1,70 @@
 #include <bits/stdc++.h>
 using namespace std;
-
 int main(){
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
-    
-    int n, m;
-    cin >> n >> m;
-    
+    int n,m;
+    cin>>n>>m;
     vector<pair<int,int>> edges(m);
     vector<vector<int>> adj(n);
-    for(int i = 0; i < m; i++){
-        int u, v;
-        cin >> u >> v;
-        u--; v--;
-        edges[i] = {u, v};
+    for(int i=0;i<m;i++){
+        int u,v;cin>>u>>v;u--;v--;
+        edges[i]={u,v};
         adj[u].push_back(v);
         adj[v].push_back(u);
     }
-    
-    if(m == 0){
-        for(int i = 0; i < n; i++){
-            cout << 0;
-            if(i < n-1) cout << ' ';
-        }
-        cout << '\n';
+    if(m==0){
+        for(int i=0;i<n;i++){if(i)cout<<' ';cout<<0;}
+        cout<<'\n';
         return 0;
     }
-    
-    auto evaluate = [&](vector<int>& s) -> int {
-        int cut = 0;
-        for(auto& [u,v] : edges)
-            if(s[u] != s[v]) cut++;
-        return cut;
-    };
-    
-    // Compute gain array
-    auto computeGain = [&](vector<int>& s, vector<int>& gain){
-        fill(gain.begin(), gain.end(), 0);
-        for(int u = 0; u < n; u++){
-            for(int v : adj[u]){
-                if(s[u] == s[v]) gain[u]++;
-                else gain[u]--;
-            }
-        }
-    };
-    
-    auto flipVertex = [&](vector<int>& s, vector<int>& gain, int u){
-        s[u] ^= 1;
-        gain[u] = -gain[u];
-        for(int v : adj[u]){
-            if(s[u] == s[v]){
-                gain[v] -= 2;
-            } else {
-                gain[v] += 2;
-            }
-        }
-    };
-    
-    auto localSearch = [&](vector<int>& s, vector<int>& gain) -> int {
-        bool improved = true;
-        while(improved){
-            improved = false;
-            for(int u = 0; u < n; u++){
-                if(gain[u] > 0){
-                    flipVertex(s, gain, u);
-                    improved = true;
-                }
-            }
-        }
-        return evaluate(s);
-    };
-    
-    vector<int> bestS(n, 0);
-    int bestCut = 0;
-    
-    mt19937 rng(12345);
-    
-    auto startTime = chrono::steady_clock::now();
-    auto elapsed = [&]() -> double {
-        return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
-    };
-    
-    vector<int> gain(n);
-    
-    for(int restart = 0; elapsed() < 4.5; restart++){
+    vector<int> best(n,0);
+    int bestCut=0;
+    mt19937 rng(42);
+    auto start=chrono::steady_clock::now();
+    auto ms=[&]()->long long{return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now()-start).count();};
+    while(ms()<1900){
         vector<int> s(n);
-        for(int i = 0; i < n; i++) s[i] = rng() & 1;
-        
-        computeGain(s, gain);
-        localSearch(s, gain);
-        
-        // Simulated annealing
-        int curCut = evaluate(s);
-        double T = 2.0;
-        double cool = 0.9995;
-        int iters = max(100000, n * 200);
-        
-        for(int it = 0; it < iters && T > 0.001; it++){
-            int u = rng() % n;
-            int delta = gain[u]; // improvement if we flip
-            if(delta > 0 || (T > 0 && exp(delta / T) > (rng() % 10000) / 10000.0)){
-                flipVertex(s, gain, u);
-                curCut += delta;
+        for(int i=0;i<n;i++) s[i]=rng()&1;
+        // compute gain for each vertex: how much cut increases if we flip it
+        vector<int> gain(n,0);
+        for(int u=0;u<n;u++)
+            for(int v:adj[u])
+                gain[u]+=(s[u]==s[v])?1:-1;
+        auto doFlip=[&](int u){
+            for(int v:adj[u]){
+                if(s[u]==s[v]){gain[v]-=2;}
+                else{gain[v]+=2;}
             }
-            T *= cool;
+            s[u]^=1;
+            gain[u]=-gain[u];
+        };
+        // local search
+        bool imp=true;
+        while(imp){imp=false;for(int u=0;u<n;u++)if(gain[u]>0){doFlip(u);imp=true;}}
+        int cut=0;
+        for(auto&[u,v]:edges) cut+=(s[u]!=s[v]);
+        if(cut>bestCut){bestCut=cut;best=s;}
+        // SA
+        double T=2.0;
+        uniform_real_distribution<double> rd(0.0,1.0);
+        for(int it=0;it<4000000&&ms()<1900;it++){
+            int u=rng()%n;
+            int g=gain[u];
+            if(g>0||(g==0&&(rng()&1))||(T>1e-12&&rd(rng)<exp((double)g/T))){
+                doFlip(u);
+                cut+=g;
+                if(cut>bestCut){bestCut=cut;best=s;}
+            }
+            if((it&0xFFF)==0) T*=0.997;
         }
-        
-        // Final local search
-        curCut = localSearch(s, gain);
-        
-        if(curCut > bestCut){
-            bestCut = curCut;
-            bestS = s;
-        }
+        // final local search
+        imp=true;
+        while(imp){imp=false;for(int u=0;u<n;u++)if(gain[u]>0){doFlip(u);imp=true;}}
+        cut=0;
+        for(auto&[u,v]:edges) cut+=(s[u]!=s[v]);
+        if(cut>bestCut){bestCut=cut;best=s;}
     }
-    
-    for(int i = 0; i < n; i++){
-        cout << bestS[i];
-        if(i < n-1) cout << ' ';
-    }
-    cout << '\n';
-    
-    return 0;
+    for(int i=0;i<n;i++){if(i)cout<<' ';cout<<best[i];}
+    cout<<'\n';
 }
