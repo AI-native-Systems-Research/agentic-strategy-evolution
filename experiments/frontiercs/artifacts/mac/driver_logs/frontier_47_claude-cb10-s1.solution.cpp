@@ -1,12 +1,3 @@
-Looking at the previous submission, it was literally cut off mid-code (ends with `double time`) and had the C++ code nested inside a markdown explanation, causing a parse error. I need to write a complete, well-structured solution.
-
-My approach:
-1. Parse JSON input properly
-2. Implement multiple packing strategies: grid tiling, strip packing, MaxRects with various heuristics
-3. Try many orderings and combinations within the time budget
-4. Output the best result found
-
-```cpp
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -15,13 +6,11 @@ static double elapsed() {
     return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
 }
 
-int W, H, M;
-bool allowRotate;
-
 struct Item { string type; int w, h; long long v; int limit; };
 struct Placement { string type; int x, y, rot; };
-struct Rect { int x, y, w, h; };
 
+int W, H, M;
+bool allowRotate;
 vector<Item> items;
 long long bestProfit = 0;
 vector<Placement> bestPlacements;
@@ -33,44 +22,46 @@ void updateBest(long long profit, const vector<Placement>& pl) {
     }
 }
 
+struct Rect { int x, y, w, h; };
+
 struct MaxRects {
     vector<Rect> freeRects;
-    int maxFree;
     
-    void init(int bw, int bh, int mf = 500) {
+    void init(int bw, int bh) {
         freeRects.clear();
         freeRects.push_back({0, 0, bw, bh});
-        maxFree = mf;
     }
     
-    bool findBestPos(int rw, int rh, int &bx, int &by, int method) {
+    int findPos(int rw, int rh, int &bx, int &by, int method) {
         bx = by = -1;
         long long bestA = LLONG_MAX, bestB = LLONG_MAX;
-        for (auto &f : freeRects) {
+        int bestIdx = -1;
+        for (int i = 0; i < (int)freeRects.size(); i++) {
+            auto &f = freeRects[i];
             if (rw > f.w || rh > f.h) continue;
             long long a, b;
-            if (method == 0) { a = min(f.w - rw, f.h - rh); b = max(f.w - rw, f.h - rh); }
-            else if (method == 1) { a = (long long)f.w * f.h - (long long)rw * rh; b = min(f.w - rw, f.h - rh); }
+            if (method == 0) { a = min(f.w-rw, f.h-rh); b = max(f.w-rw, f.h-rh); }
+            else if (method == 1) { a = (long long)f.w*f.h - (long long)rw*rh; b = min(f.w-rw, f.h-rh); }
             else if (method == 2) { a = f.y; b = f.x; }
             else { a = f.x; b = f.y; }
             if (a < bestA || (a == bestA && b < bestB)) {
-                bestA = a; bestB = b; bx = f.x; by = f.y;
+                bestA = a; bestB = b; bx = f.x; by = f.y; bestIdx = i;
             }
         }
-        return bx >= 0;
+        return bestIdx;
     }
     
     void place(int px, int py, int rw, int rh) {
         vector<Rect> nf;
         nf.reserve(freeRects.size() + 4);
         for (auto &f : freeRects) {
-            if (px >= f.x + f.w || px + rw <= f.x || py >= f.y + f.h || py + rh <= f.y) {
+            if (px >= f.x+f.w || px+rw <= f.x || py >= f.y+f.h || py+rh <= f.y) {
                 nf.push_back(f); continue;
             }
-            if (px > f.x) nf.push_back({f.x, f.y, px - f.x, f.h});
-            if (px + rw < f.x + f.w) nf.push_back({px + rw, f.y, f.x + f.w - px - rw, f.h});
-            if (py > f.y) nf.push_back({f.x, f.y, f.w, py - f.y});
-            if (py + rh < f.y + f.h) nf.push_back({f.x, py + rh, f.w, f.y + f.h - py - rh});
+            if (px > f.x) nf.push_back({f.x, f.y, px-f.x, f.h});
+            if (px+rw < f.x+f.w) nf.push_back({px+rw, f.y, f.x+f.w-px-rw, f.h});
+            if (py > f.y) nf.push_back({f.x, f.y, f.w, py-f.y});
+            if (py+rh < f.y+f.h) nf.push_back({f.x, py+rh, f.w, f.y+f.h-py-rh});
         }
         freeRects = nf;
         prune();
@@ -78,401 +69,313 @@ struct MaxRects {
     
     void prune() {
         int n = freeRects.size();
+        if (n <= 1) return;
+        if (n > 600) {
+            sort(freeRects.begin(), freeRects.end(), [](const Rect&a, const Rect&b){
+                return (long long)a.w*a.h > (long long)b.w*b.h;
+            });
+            freeRects.resize(600);
+            n = 600;
+        }
         vector<bool> rem(n, false);
         for (int i = 0; i < n; i++) {
             if (rem[i]) continue;
-            for (int j = 0; j < n; j++) {
-                if (i == j || rem[j]) continue;
-                if (freeRects[j].x >= freeRects[i].x && freeRects[j].y >= freeRects[i].y &&
-                    freeRects[j].x + freeRects[j].w <= freeRects[i].x + freeRects[i].w &&
-                    freeRects[j].y + freeRects[j].h <= freeRects[i].y + freeRects[i].h) {
+            for (int j = i+1; j < n; j++) {
+                if (rem[j]) continue;
+                auto &a = freeRects[i], &b = freeRects[j];
+                if (b.x >= a.x && b.y >= a.y && b.x+b.w <= a.x+a.w && b.y+b.h <= a.y+a.h) {
                     rem[j] = true;
+                } else if (a.x >= b.x && a.y >= b.y && a.x+a.w <= b.x+b.w && a.y+a.h <= b.y+b.h) {
+                    rem[i] = true; break;
                 }
             }
         }
         int k = 0;
         for (int i = 0; i < n; i++) if (!rem[i]) freeRects[k++] = freeRects[i];
         freeRects.resize(k);
-        if ((int)freeRects.size() > maxFree) {
-            sort(freeRects.begin(), freeRects.end(), [](const Rect&a, const Rect&b){
-                return (long long)a.w * a.h > (long long)b.w * b.h;
-            });
-            freeRects.resize(maxFree);
-        }
     }
 };
 
-void fillWithMaxRects(MaxRects& mr, int ox, int oy, vector<int>& used,
-                      vector<Placement>& placements, long long& profit, int method, double tl) {
-    bool prog = true;
-    while (prog && elapsed() < tl) {
-        prog = false;
-        long long bestScore = -1;
-        int bestIdx = -1, bestRot = 0, bestPx = -1, bestPy = -1;
-        
-        for (int i = 0; i < M; i++) {
-            if (used[i] >= items[i].limit) continue;
-            int nrots = (allowRotate && items[i].w != items[i].h) ? 2 : 1;
-            for (int r = 0; r < nrots; r++) {
-                int rw = r ? items[i].h : items[i].w;
-                int rh = r ? items[i].w : items[i].h;
-                int px, py;
-                if (mr.findBestPos(rw, rh, px, py, method)) {
-                    long long sc = items[i].v;
-                    if (sc > bestScore) {
-                        bestScore = sc; bestIdx = i; bestRot = r; bestPx = px; bestPy = py;
-                    }
-                }
+bool tryPlaceInMR(MaxRects& mr, int idx, int method, vector<int>& used, 
+                   vector<Placement>& placements, long long& profit, int ox=0, int oy=0) {
+    if (used[idx] >= items[idx].limit) return false;
+    int nrots = (allowRotate && items[idx].w != items[idx].h) ? 2 : 1;
+    int bestPx = -1, bestPy = -1, bestRot2 = 0;
+    long long bestFitA = LLONG_MAX, bestFitB = LLONG_MAX;
+    for (int r = 0; r < nrots; r++) {
+        int rw = r ? items[idx].h : items[idx].w;
+        int rh = r ? items[idx].w : items[idx].h;
+        int px, py;
+        if (mr.findPos(rw, rh, px, py, method) >= 0) {
+            long long fa, fb;
+            if (method == 0) { fa = 0; fb = 0; } // use method's own ranking
+            fa = py; fb = px;
+            if (bestPx < 0 || fa < bestFitA || (fa == bestFitA && fb < bestFitB)) {
+                bestFitA = fa; bestFitB = fb;
+                bestPx = px; bestPy = py; bestRot2 = r;
             }
         }
-        if (bestIdx >= 0) {
-            int rw = bestRot ? items[bestIdx].h : items[bestIdx].w;
-            int rh = bestRot ? items[bestIdx].w : items[bestIdx].h;
-            mr.place(bestPx, bestPy, rw, rh);
-            placements.push_back({items[bestIdx].type, ox + bestPx, oy + bestPy, bestRot});
-            used[bestIdx]++;
-            profit += items[bestIdx].v;
-            prog = true;
-        }
     }
+    if (bestPx >= 0) {
+        int rw = bestRot2 ? items[idx].h : items[idx].w;
+        int rh = bestRot2 ? items[idx].w : items[idx].h;
+        mr.place(bestPx, bestPy, rw, rh);
+        placements.push_back({items[idx].type, ox+bestPx, oy+bestPy, bestRot2});
+        used[idx]++;
+        profit += items[idx].v;
+        return true;
+    }
+    return false;
 }
 
-void fillRegionSimple(int ox, int oy, int rw, int rh, vector<int>& used,
-                       vector<Placement>& pl, long long& profit, int method, double tl) {
-    if (rw <= 0 || rh <= 0 || elapsed() > tl) return;
+void greedyMaxRects(int method, const vector<int>& itemOrder, bool exhaustOne, double timeLimit) {
     MaxRects mr;
-    mr.init(rw, rh, 300);
-    fillWithMaxRects(mr, ox, oy, used, pl, profit, method, tl);
-}
-
-void greedyExhaust(const vector<int>& order, int method, double tl) {
-    MaxRects mr;
-    mr.init(W, H, 600);
+    mr.init(W, H);
     vector<int> used(M, 0);
-    vector<Placement> pl;
+    vector<Placement> placements;
     long long profit = 0;
     
-    for (int idx : order) {
-        if (elapsed() > tl) break;
-        int nrots = (allowRotate && items[idx].w != items[idx].h) ? 2 : 1;
-        while (used[idx] < items[idx].limit && elapsed() < tl) {
-            int bestPx = -1, bestPy = -1, bestRot = 0;
-            long long bA = LLONG_MAX, bB = LLONG_MAX;
-            for (int r = 0; r < nrots; r++) {
-                int rw = r ? items[idx].h : items[idx].w;
-                int rh = r ? items[idx].w : items[idx].h;
-                int px, py;
-                if (mr.findBestPos(rw, rh, px, py, method)) {
-                    long long a = py, b = px;
-                    if (a < bA || (a == bA && b < bB)) {
-                        bA = a; bB = b; bestPx = px; bestPy = py; bestRot = r;
-                    }
-                }
+    if (exhaustOne) {
+        for (int idx : itemOrder) {
+            if (elapsed() > timeLimit) break;
+            while (tryPlaceInMR(mr, idx, method, used, placements, profit)) {
+                if (elapsed() > timeLimit) break;
             }
-            if (bestPx < 0) break;
-            int rw = bestRot ? items[idx].h : items[idx].w;
-            int rh = bestRot ? items[idx].w : items[idx].h;
-            mr.place(bestPx, bestPy, rw, rh);
-            pl.push_back({items[idx].type, bestPx, bestPy, bestRot});
-            used[idx]++;
-            profit += items[idx].v;
+        }
+    } else {
+        bool progress = true;
+        while (progress) {
+            if (elapsed() > timeLimit) break;
+            progress = false;
+            for (int idx : itemOrder) {
+                if (tryPlaceInMR(mr, idx, method, used, placements, profit))
+                    progress = true;
+            }
         }
     }
     
-    fillWithMaxRects(mr, 0, 0, used, pl, profit, method, tl);
-    updateBest(profit, pl);
-}
-
-void greedyRoundRobin(const vector<int>& order, int method, double tl) {
-    MaxRects mr;
-    mr.init(W, H, 600);
-    vector<int> used(M, 0);
-    vector<Placement> pl;
-    long long profit = 0;
-    
+    // Fill pass with density order
+    vector<pair<double,int>> byDens;
+    for (int i = 0; i < M; i++) {
+        if (used[i] < items[i].limit)
+            byDens.push_back({(double)items[i].v / ((double)items[i].w * items[i].h), i});
+    }
+    sort(byDens.begin(), byDens.end(), greater<>());
     bool prog = true;
-    while (prog && elapsed() < tl) {
+    while (prog) {
+        if (elapsed() > timeLimit) break;
         prog = false;
-        for (int idx : order) {
-            if (used[idx] >= items[idx].limit) continue;
-            if (elapsed() > tl) break;
-            int nrots = (allowRotate && items[idx].w != items[idx].h) ? 2 : 1;
-            int bestPx = -1, bestPy = -1, bestRot = 0;
-            long long bA = LLONG_MAX, bB = LLONG_MAX;
-            for (int r = 0; r < nrots; r++) {
-                int rw = r ? items[idx].h : items[idx].w;
-                int rh = r ? items[idx].w : items[idx].h;
-                int px, py;
-                if (mr.findBestPos(rw, rh, px, py, method)) {
-                    long long a = py, b = px;
-                    if (a < bA || (a == bA && b < bB)) {
-                        bA = a; bB = b; bestPx = px; bestPy = py; bestRot = r;
-                    }
-                }
-            }
-            if (bestPx >= 0) {
-                int rw = bestRot ? items[idx].h : items[idx].w;
-                int rh = bestRot ? items[idx].w : items[idx].h;
-                mr.place(bestPx, bestPy, rw, rh);
-                pl.push_back({items[idx].type, bestPx, bestPy, bestRot});
-                used[idx]++;
-                profit += items[idx].v;
-                prog = true;
+        for (auto &[d, idx] : byDens) {
+            while (used[idx] < items[idx].limit) {
+                if (elapsed() > timeLimit) break;
+                if (!tryPlaceInMR(mr, idx, method, used, placements, profit)) break;
+                else prog = true;
             }
         }
     }
-    updateBest(profit, pl);
+    
+    updateBest(profit, placements);
 }
 
-void gridTiling(int pidx, int rot, int fillMethod, double tl) {
-    int iw = rot ? items[pidx].h : items[pidx].w;
-    int ih = rot ? items[pidx].w : items[pidx].h;
+void fillRegion(int ox, int oy, int rw, int rh, vector<int>& used, 
+                vector<Placement>& placements, long long& profit, double timeLimit) {
+    if (rw <= 0 || rh <= 0) return;
+    MaxRects mr;
+    mr.init(rw, rh);
+    vector<pair<double,int>> byDens;
+    for (int i = 0; i < M; i++) {
+        byDens.push_back({(double)items[i].v / ((double)items[i].w * items[i].h), i});
+    }
+    sort(byDens.begin(), byDens.end(), greater<>());
+    bool prog = true;
+    while (prog) {
+        if (elapsed() > timeLimit) return;
+        prog = false;
+        for (auto &[d, idx] : byDens) {
+            while (used[idx] < items[idx].limit) {
+                if (elapsed() > timeLimit) return;
+                if (!tryPlaceInMR(mr, idx, 0, used, placements, profit, ox, oy)) break;
+                else prog = true;
+            }
+        }
+    }
+}
+
+void gridTiling(int primaryIdx, int rot, double timeLimit) {
+    int iw = rot ? items[primaryIdx].h : items[primaryIdx].w;
+    int ih = rot ? items[primaryIdx].w : items[primaryIdx].h;
     if (iw > W || ih > H) return;
     
     int cols = W / iw;
     int rows = H / ih;
-    if (cols == 0 || rows == 0) return;
-    int maxPlace = (int)min((long long)cols * rows, (long long)items[pidx].limit);
+    long long maxPlace = min((long long)cols * rows, (long long)items[primaryIdx].limit);
     if (maxPlace == 0) return;
     
-    vector<Placement> pl;
+    vector<Placement> placements;
     long long profit = 0;
     vector<int> used(M, 0);
     
-    int actualRows = (maxPlace + cols - 1) / cols;
     int placed = 0;
-    for (int r = 0; r < actualRows && placed < maxPlace; r++)
+    for (int r = 0; r < rows && placed < maxPlace; r++) {
         for (int c = 0; c < cols && placed < maxPlace; c++) {
-            pl.push_back({items[pidx].type, c * iw, r * ih, rot});
+            placements.push_back({items[primaryIdx].type, c*iw, r*ih, rot});
             placed++;
         }
-    used[pidx] = placed;
-    profit = (long long)placed * items[pidx].v;
+    }
+    used[primaryIdx] = placed;
+    profit = (long long)placed * items[primaryIdx].v;
     
-    int usedH = actualRows * ih;
     int rightX = cols * iw;
+    int topY = rows * ih;
     
-    if (rightX < W && usedH > 0 && elapsed() < tl)
-        fillRegionSimple(rightX, 0, W - rightX, usedH, used, pl, profit, fillMethod, tl);
-    if (usedH < H && elapsed() < tl)
-        fillRegionSimple(0, usedH, W, H - usedH, used, pl, profit, fillMethod, tl);
+    fillRegion(rightX, 0, W - rightX, topY, used, placements, profit, timeLimit);
+    if (elapsed() < timeLimit)
+        fillRegion(0, topY, W, H - topY, used, placements, profit, timeLimit);
     
-    updateBest(profit, pl);
+    updateBest(profit, placements);
 }
 
-void twoTypeStrip(int p1, int rot1, int p2, int rot2, int fillMethod, double tl) {
+// Two-type grid: tile with primary, then fill remainder strips with secondary
+void twoTypeGrid(int p1, int rot1, int p2, int rot2, double timeLimit) {
     int iw1 = rot1 ? items[p1].h : items[p1].w;
     int ih1 = rot1 ? items[p1].w : items[p1].h;
-    int iw2 = rot2 ? items[p2].h : items[p2].w;
-    int ih2 = rot2 ? items[p2].w : items[p2].h;
-    if (iw1 > W || ih1 > H || iw2 > W || ih2 > H) return;
+    if (iw1 > W || ih1 > H) return;
     
     int cols1 = W / iw1;
-    int cols2 = W / iw2;
-    if (cols1 == 0 || cols2 == 0) return;
+    int rows1 = H / ih1;
+    long long maxPlace1 = min((long long)cols1 * rows1, (long long)items[p1].limit);
     
-    int maxRows1 = min(H / ih1, (items[p1].limit + cols1 - 1) / cols1);
+    // Try using fewer rows to leave more space for type 2
+    int iw2 = rot2 ? items[p2].h : items[p2].w;
+    int ih2 = rot2 ? items[p2].w : items[p2].h;
+    if (iw2 > W || ih2 > H) return;
+    
+    double d1 = (double)items[p1].v / ((double)iw1 * ih1);
+    double d2 = (double)items[p2].v / ((double)iw2 * ih2);
     
     long long bestLocal = 0;
-    int bestR1 = -1;
+    vector<Placement> bestLocalPl;
     
-    for (int r1 = 0; r1 <= maxRows1; r1++) {
-        int placed1 = (int)min((long long)r1 * cols1, (long long)items[p1].limit);
-        long long prof1 = (long long)placed1 * items[p1].v;
+    // Try different number of rows for type 1
+    int maxRows = min(rows1, (int)((items[p1].limit + cols1 - 1) / cols1));
+    
+    for (int r1 = 0; r1 <= maxRows && elapsed() < timeLimit; r1++) {
+        int placed1 = min((long long)r1 * cols1, (long long)items[p1].limit);
+        long long prof = (long long)placed1 * items[p1].v;
+        
         int usedH = r1 * ih1;
         int remH = H - usedH;
         if (remH < 0) break;
+        
+        // Fill remaining height with type 2
         int rows2 = remH / ih2;
-        int placed2 = (int)min((long long)rows2 * cols2, (long long)items[p2].limit);
-        long long prof = prof1 + (long long)placed2 * items[p2].v;
-        if (prof > bestLocal) { bestLocal = prof; bestR1 = r1; }
-    }
-    
-    if (bestR1 < 0 || bestLocal == 0) return;
-    
-    int r1 = bestR1;
-    int placed1 = (int)min((long long)r1 * cols1, (long long)items[p1].limit);
-    int usedH1 = r1 * ih1;
-    int rows2 = (H - usedH1) / ih2;
-    int placed2 = (int)min((long long)rows2 * cols2, (long long)items[p2].limit);
-    int actualRows2 = placed2 > 0 ? (placed2 + cols2 - 1) / cols2 : 0;
-    
-    vector<Placement> pl;
-    vector<int> used(M, 0);
-    long long profit = 0;
-    
-    int cnt = 0;
-    for (int r = 0; r < r1 && cnt < placed1; r++)
-        for (int c = 0; c < cols1 && cnt < placed1; c++) {
-            pl.push_back({items[p1].type, c * iw1, r * ih1, rot1});
-            cnt++;
-        }
-    used[p1] = cnt;
-    profit = (long long)cnt * items[p1].v;
-    
-    cnt = 0;
-    for (int r = 0; r < actualRows2 && cnt < placed2; r++)
-        for (int c = 0; c < cols2 && cnt < placed2; c++) {
-            pl.push_back({items[p2].type, c * iw2, usedH1 + r * ih2, rot2});
-            cnt++;
-        }
-    used[p2] += cnt;
-    profit += (long long)cnt * items[p2].v;
-    
-    int rightX1 = cols1 * iw1;
-    if (rightX1 < W && usedH1 > 0 && elapsed() < tl)
-        fillRegionSimple(rightX1, 0, W - rightX1, usedH1, used, pl, profit, fillMethod, tl);
-    
-    int rightX2 = cols2 * iw2;
-    int usedH2 = actualRows2 * ih2;
-    if (rightX2 < W && usedH2 > 0 && elapsed() < tl)
-        fillRegionSimple(rightX2, usedH1, W - rightX2, usedH2, used, pl, profit, fillMethod, tl);
-    
-    int topY = usedH1 + usedH2;
-    if (topY < H && elapsed() < tl)
-        fillRegionSimple(0, topY, W, H - topY, used, pl, profit, fillMethod, tl);
-    
-    updateBest(profit, pl);
-}
-
-void threeTypeStrip(int p1, int rot1, int p2, int rot2, int p3, int rot3, int fillMethod, double tl) {
-    int iw1 = rot1 ? items[p1].h : items[p1].w, ih1 = rot1 ? items[p1].w : items[p1].h;
-    int iw2 = rot2 ? items[p2].h : items[p2].w, ih2 = rot2 ? items[p2].w : items[p2].h;
-    int iw3 = rot3 ? items[p3].h : items[p3].w, ih3 = rot3 ? items[p3].w : items[p3].h;
-    if (iw1>W||ih1>H||iw2>W||ih2>H||iw3>W||ih3>H) return;
-    
-    int cols1=W/iw1, cols2=W/iw2, cols3=W/iw3;
-    if (!cols1||!cols2||!cols3) return;
-    
-    int maxR1 = min(H/ih1, (items[p1].limit+cols1-1)/cols1);
-    
-    long long bestVal = 0;
-    int brr1=-1, brr2=-1;
-    
-    for (int r1=0; r1<=maxR1 && elapsed()<tl; r1++) {
-        int pl1 = (int)min((long long)r1*cols1,(long long)items[p1].limit);
-        long long v1 = (long long)pl1*items[p1].v;
-        int y1 = r1*ih1;
-        int rem1 = H-y1;
-        if (rem1<0) break;
-        int maxR2 = min(rem1/ih2, (items[p2].limit+cols2-1)/cols2);
-        for (int r2=0; r2<=maxR2; r2++) {
-            int pl2 = (int)min((long long)r2*cols2,(long long)items[p2].limit);
-            long long v2 = (long long)pl2*items[p2].v;
-            int y2 = y1+r2*ih2;
-            int rem2 = H-y2;
-            int r3v = rem2/ih3;
-            int pl3 = (int)min((long long)r3v*cols3,(long long)items[p3].limit);
-            long long v3 = (long long)pl3*items[p3].v;
-            long long total = v1+v2+v3;
-            if (total>bestVal) { bestVal=total; brr1=r1; brr2=r2; }
-        }
-    }
-    if (brr1<0) return;
-    
-    int pl1c = (int)min((long long)brr1*cols1,(long long)items[p1].limit);
-    int y1e = brr1*ih1;
-    int pl2c = (int)min((long long)brr2*cols2,(long long)items[p2].limit);
-    int y2e = y1e+brr2*ih2;
-    int r3v = (H-y2e)/ih3;
-    int pl3c = (int)min((long long)r3v*cols3,(long long)items[p3].limit);
-    int ar3 = pl3c>0?(pl3c+cols3-1)/cols3:0;
-    
-    vector<Placement> pl;
-    vector<int> used(M,0);
-    long long profit=0;
-    
-    auto placeGrid=[&](int pidx,int rot,int iw,int ih,int cols,int numRows,int maxCnt,int ofy){
-        int cnt=0;
-        for(int r=0;r<numRows&&cnt<maxCnt;r++)
-            for(int c=0;c<cols&&cnt<maxCnt;c++){
-                pl.push_back({items[pidx].type,c*iw,ofy+r*ih,rot});
-                cnt++;
-            }
-        used[pidx]+=cnt;
-        profit+=(long long)cnt*items[pidx].v;
-        int rx=cols*iw;
-        int bh=numRows*ih;
-        if(rx<W&&bh>0&&elapsed()<tl)
-            fillRegionSimple(rx,ofy,W-rx,bh,used,pl,profit,fillMethod,tl);
-    };
-    
-    placeGrid(p1,rot1,iw1,ih1,cols1,brr1,pl1c,0);
-    placeGrid(p2,rot2,iw2,ih2,cols2,brr2,pl2c,y1e);
-    placeGrid(p3,rot3,iw3,ih3,cols3,ar3,pl3c,y2e);
-    
-    int topY=y2e+ar3*ih3;
-    if(topY<H&&elapsed()<tl)
-        fillRegionSimple(0,topY,W,H-topY,used,pl,profit,fillMethod,tl);
-    
-    updateBest(profit,pl);
-}
-
-// Vertical column-based packing
-void verticalStripPack(const vector<int>& order, double tl) {
-    vector<Placement> pl;
-    vector<int> used(M, 0);
-    long long profit = 0;
-    int curX = 0;
-    
-    for (int idx : order) {
-        if (elapsed() > tl || curX >= W) break;
-        if (used[idx] >= items[idx].limit) continue;
-        int nrots = (allowRotate && items[idx].w != items[idx].h) ? 2 : 1;
+        int cols2 = W / iw2;
+        int placed2 = min((long long)rows2 * cols2, (long long)items[p2].limit);
+        prof += (long long)placed2 * items[p2].v;
         
-        // Try both rotations, pick the one giving more profit in columns
-        int bestRotHere = -1;
-        long long bestProfHere = 0;
-        int bestColsHere = 0, bestRowsHere = 0, bestPlaceHere = 0;
-        int bestIW = 0, bestIH = 0;
+        // Rough estimate of right-strip fill for type 1 region
+        int rightW1 = W - cols1 * iw1;
+        int rightW2 = W - cols2 * iw2;
+        // Ignore for now, just use this as estimate
         
-        for (int r = 0; r < nrots; r++) {
-            int iw = r ? items[idx].h : items[idx].w;
-            int ih = r ? items[idx].w : items[idx].h;
-            if (iw > W - curX || ih > H) continue;
+        if (prof > bestLocal) {
+            bestLocal = prof;
+            // Build actual placements
+            vector<Placement> pl;
+            vector<int> used(M, 0);
+            long long actualProf = 0;
             
-            int cols = (W - curX) / iw;
-            int rows = H / ih;
-            int avail = items[idx].limit - used[idx];
-            int canPlace = (int)min((long long)cols * rows, (long long)avail);
-            long long pr = (long long)canPlace * items[idx].v;
-            if (pr > bestProfHere) {
-                bestProfHere = pr; bestRotHere = r;
-                bestColsHere = cols; bestRowsHere = rows;
-                bestPlaceHere = canPlace; bestIW = iw; bestIH = ih;
+            int p1count = 0;
+            for (int r = 0; r < r1 && p1count < placed1; r++) {
+                for (int c = 0; c < cols1 && p1count < placed1; c++) {
+                    pl.push_back({items[p1].type, c*iw1, r*ih1, rot1});
+                    p1count++;
+                }
             }
+            used[p1] = p1count;
+            actualProf = (long long)p1count * items[p1].v;
+            
+            int p2count = 0;
+            for (int r = 0; r < rows2 && p2count < placed2; r++) {
+                for (int c = 0; c < cols2 && p2count < placed2; c++) {
+                    pl.push_back({items[p2].type, c*iw2, usedH + r*ih2, rot2});
+                    p2count++;
+                }
+            }
+            used[p2] = p2count;
+            actualProf += (long long)p2count * items[p2].v;
+            
+            // Fill gaps
+            int rightX1 = cols1 * iw1;
+            if (rightX1 < W && usedH > 0 && elapsed() < timeLimit)
+                fillRegion(rightX1, 0, W - rightX1, usedH, used, pl, actualProf, timeLimit);
+            
+            int rightX2 = cols2 * iw2;
+            int usedH2 = rows2 * ih2;
+            if (rightX2 < W && usedH2 > 0 && elapsed() < timeLimit)
+                fillRegion(rightX2, usedH, W - rightX2, usedH2, used, pl, actualProf, timeLimit);
+            
+            int topY = usedH + usedH2;
+            if (topY < H && elapsed() < timeLimit)
+                fillRegion(0, topY, W, H - topY, used, pl, actualProf, timeLimit);
+            
+            bestLocalPl = pl;
+            bestLocal = actualProf;
         }
-        
-        if (bestRotHere < 0 || bestPlaceHere == 0) continue;
-        
-        int actualCols = min(bestColsHere, (bestPlaceHere + bestRowsHere - 1) / bestRowsHere);
-        int cnt = 0;
-        for (int c = 0; c < actualCols && cnt < bestPlaceHere; c++)
-            for (int row = 0; row < bestRowsHere && cnt < bestPlaceHere; row++) {
-                pl.push_back({items[idx].type, curX + c * bestIW, row * bestIH, bestRotHere});
-                cnt++;
-            }
-        used[idx] += cnt;
-        profit += (long long)cnt * items[idx].v;
-        
-        int usedH = bestRowsHere * bestIH;
-        int usedW = actualCols * bestIW;
-        if (usedH < H && usedW > 0 && elapsed() < tl)
-            fillRegionSimple(curX, usedH, usedW, H - usedH, used, pl, profit, 0, tl);
-        
-        curX += usedW;
     }
     
-    if (curX < W && elapsed() < tl)
-        fillRegionSimple(curX, 0, W - curX, H, used, pl, profit, 0, tl);
+    if (!bestLocalPl.empty())
+        updateBest(bestLocal, bestLocalPl);
+}
+
+void stripPack(const vector<pair<int,int>>& allocation, double timeLimit) {
+    vector<int> used(M, 0);
+    vector<Placement> placements;
+    long long profit = 0;
+    int pos = 0;
     
-    updateBest(profit, pl);
+    for (auto &[idx, rot] : allocation) {
+        if (pos >= H || elapsed() > timeLimit) break;
+        int iw = rot ? items[idx].h : items[idx].w;
+        int ih = rot ? items[idx].w : items[idx].h;
+        if (iw > W || ih > (H - pos)) continue;
+        
+        int cols = W / iw;
+        int avail = items[idx].limit - used[idx];
+        if (avail <= 0 || cols <= 0) continue;
+        int maxRows = (H - pos) / ih;
+        long long totalPlace = min((long long)cols * maxRows, (long long)avail);
+        
+        int actualRows = (int)((totalPlace + cols - 1) / cols);
+        int placed = 0;
+        for (int r = 0; r < actualRows && placed < totalPlace; r++) {
+            for (int c = 0; c < cols && placed < totalPlace; c++) {
+                placements.push_back({items[idx].type, c * iw, pos + r * ih, rot});
+                placed++;
+            }
+        }
+        used[idx] += placed;
+        profit += (long long)placed * items[idx].v;
+        
+        int rightX = cols * iw;
+        int stripH = actualRows * ih;
+        if (rightX < W && stripH > 0 && elapsed() < timeLimit) {
+            fillRegion(rightX, pos, W - rightX, stripH, used, placements, profit, timeLimit);
+        }
+        pos += actualRows * ih;
+    }
+    
+    if (pos < H && elapsed() < timeLimit) {
+        fillRegion(0, pos, W, H - pos, used, placements, profit, timeLimit);
+    }
+    
+    updateBest(profit, placements);
 }
 
 string readAll() {
-    string s, line;
-    while (getline(cin, line)) s += line + "\n";
-    return s;
+    ostringstream ss;
+    ss << cin.rdbuf();
+    return ss.str();
 }
 
 void skipWS(const string& s, int& p) {
@@ -483,28 +386,28 @@ string parseString(const string& s, int& p) {
     skipWS(s, p);
     if (p >= (int)s.size() || s[p] != '"') return "";
     p++;
-    string r;
+    string res;
     while (p < (int)s.size() && s[p] != '"') {
-        if (s[p] == '\\') { p++; if (p < (int)s.size()) r += s[p++]; }
-        else r += s[p++];
+        if (s[p] == '\\') { p++; if (p < (int)s.size()) res += s[p++]; }
+        else res += s[p++];
     }
     if (p < (int)s.size()) p++;
-    return r;
+    return res;
 }
 
-long long parseInt(const string& s, int& p) {
+long long parseInt2(const string& s, int& p) {
     skipWS(s, p);
     long long sign = 1;
     if (p < (int)s.size() && s[p] == '-') { sign = -1; p++; }
     long long v = 0;
-    while (p < (int)s.size() && isdigit((unsigned char)s[p])) v = v * 10 + (s[p++] - '0');
+    while (p < (int)s.size() && isdigit((unsigned char)s[p])) v = v*10 + (s[p++]-'0');
     return sign * v;
 }
 
 bool parseBool(const string& s, int& p) {
     skipWS(s, p);
-    if (p + 4 <= (int)s.size() && s.substr(p, 4) == "true") { p += 4; return true; }
-    if (p + 5 <= (int)s.size() && s.substr(p, 5) == "false") { p += 5; return false; }
+    if (p+4 <= (int)s.size() && s.substr(p, 4) == "true") { p += 4; return true; }
+    if (p+5 <= (int)s.size() && s.substr(p, 5) == "false") { p += 5; return false; }
     return false;
 }
 
@@ -515,38 +418,179 @@ void parseInput(const string& s) {
     while (p < (int)s.size()) {
         skipWS(s, p);
         if (s[p] == '}') break;
-        if (s[p] == ',') p++;
-        skipWS(s, p);
+        if (s[p] == ',') { p++; continue; }
         string key = parseString(s, p);
         skipWS(s, p); p++; // :
         
         if (key == "bin") {
             skipWS(s, p); p++; // {
-            while (true) {
+            while (p < (int)s.size() && s[p] != '}') {
                 skipWS(s, p);
-                if (s[p] == '}') { p++; break; }
-                if (s[p] == ',') p++;
-                string k = parseString(s, p);
+                if (s[p] == ',') { p++; continue; }
+                string bk = parseString(s, p);
                 skipWS(s, p); p++; // :
-                if (k == "W") W = (int)parseInt(s, p);
-                else if (k == "H") H = (int)parseInt(s, p);
-                else if (k == "allow_rotate") allowRotate = parseBool(s, p);
+                if (bk == "W") W = (int)parseInt2(s, p);
+                else if (bk == "H") H = (int)parseInt2(s, p);
+                else if (bk == "allow_rotate") allowRotate = parseBool(s, p);
+                skipWS(s, p);
             }
+            p++; // }
         } else if (key == "items") {
             skipWS(s, p); p++; // [
             while (true) {
                 skipWS(s, p);
-                if (s[p] == ']') { p++; break; }
-                if (s[p] == ',') p++;
-                skipWS(s, p); p++; // {
+                if (p >= (int)s.size() || s[p] == ']') { p++; break; }
+                if (s[p] == ',') { p++; continue; }
+                p++; // {
                 Item it;
-                while (true) {
+                while (p < (int)s.size() && s[p] != '}') {
                     skipWS(s, p);
-                    if (s[p] == '}') { p++; break; }
-                    if (s[p] == ',') p++;
-                    string k = parseString(s, p);
+                    if (s[p] == ',') { p++; continue; }
+                    string ik = parseString(s, p);
                     skipWS(s, p); p++; // :
-                    if (k == "type") it.type = parseString(s, p);
-                    else if (k == "w") it.w = (int)parseInt(s, p);
-                    else if (k == "h") it.h = (int)parseInt(s, p);
-                    else if (k == "v") it
+                    if (ik == "type") it.type = parseString(s, p);
+                    else if (ik == "w") it.w = (int)parseInt2(s, p);
+                    else if (ik == "h") it.h = (int)parseInt2(s, p);
+                    else if (ik == "v") it.v = parseInt2(s, p);
+                    else if (ik == "limit") it.limit = (int)parseInt2(s, p);
+                    skipWS(s, p);
+                }
+                p++; // }
+                items.push_back(it);
+            }
+        }
+        skipWS(s, p);
+    }
+    M = items.size();
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    
+    string input = readAll();
+    parseInput(input);
+    
+    vector<int> byDensity(M), byValue(M), byArea(M), byTotalVal(M);
+    iota(byDensity.begin(), byDensity.end(), 0);
+    iota(byValue.begin(), byValue.end(), 0);
+    iota(byArea.begin(), byArea.end(), 0);
+    iota(byTotalVal.begin(), byTotalVal.end(), 0);
+    
+    sort(byDensity.begin(), byDensity.end(), [](int a, int b){
+        double da = (double)items[a].v / ((double)items[a].w * items[a].h);
+        double db = (double)items[b].v / ((double)items[b].w * items[b].h);
+        return da > db;
+    });
+    sort(byValue.begin(), byValue.end(), [](int a, int b){ return items[a].v > items[b].v; });
+    sort(byArea.begin(), byArea.end(), [](int a, int b){ return items[a].w*items[a].h > items[b].w*items[b].h; });
+    sort(byTotalVal.begin(), byTotalVal.end(), [](int a, int b){
+        return items[a].v*(long long)items[a].limit > items[b].v*(long long)items[b].limit;
+    });
+    
+    double tlim = 0.85;
+    
+    // MaxRects strategies
+    vector<vector<int>> orderings = {byDensity, byValue, byArea, byTotalVal};
+    {
+        vector<int> r1 = byDensity; reverse(r1.begin(), r1.end()); orderings.push_back(r1);
+        vector<int> r2 = byValue; reverse(r2.begin(), r2.end()); orderings.push_back(r2);
+    }
+    
+    for (auto& ord : orderings) {
+        for (int method = 0; method < 4 && elapsed() < tlim; method++) {
+            greedyMaxRects(method, ord, true, tlim);
+            if (elapsed() > tlim) break;
+            greedyMaxRects(method, ord, false, tlim);
+            if (elapsed() > tlim) break;
+        }
+        if (elapsed() > tlim) break;
+    }
+    
+    // Grid tiling
+    for (int i = 0; i < M && elapsed() < tlim; i++) {
+        gridTiling(i, 0, tlim);
+        if (allowRotate && items[i].w != items[i].h && elapsed() < tlim) {
+            gridTiling(i, 1, tlim);
+        }
+    }
+    
+    // Two-type grid for top density pairs
+    if (elapsed() < tlim) {
+        for (int i = 0; i < min(M, 5) && elapsed() < tlim; i++) {
+            int p1 = byDensity[i];
+            for (int j = 0; j < min(M, 5) && elapsed() < tlim; j++) {
+                int p2 = byDensity[j];
+                if (p1 == p2) continue;
+                int nrots1 = (allowRotate && items[p1].w != items[p1].h) ? 2 : 1;
+                int nrots2 = (allowRotate && items[p2].w != items[p2].h) ? 2 : 1;
+                for (int r1 = 0; r1 < nrots1 && elapsed() < tlim; r1++) {
+                    for (int r2 = 0; r2 < nrots2 && elapsed() < tlim; r2++) {
+                        twoTypeGrid(p1, r1, p2, r2, tlim);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Strip packing
+    auto buildAlloc = [&](const vector<int>& order) {
+        vector<pair<int,int>> alloc;
+        for (int idx : order) {
+            int bestRot = 0;
+            int nrots = (allowRotate && items[idx].w != items[idx].h) ? 2 : 1;
+            double bestVal = -1;
+            for (int r = 0; r < nrots; r++) {
+                int iw = r ? items[idx].h : items[idx].w;
+                int ih = r ? items[idx].w : items[idx].h;
+                if (iw > W || ih > H) continue;
+                int cols = W / iw;
+                double val = (double)items[idx].v * cols / (double)(iw * ih);
+                if (val > bestVal) { bestVal = val; bestRot = r; }
+            }
+            alloc.push_back({idx, bestRot});
+        }
+        return alloc;
+    };
+    
+    if (elapsed() < tlim) stripPack(buildAlloc(byDensity), tlim);
+    if (elapsed() < tlim) stripPack(buildAlloc(byValue), tlim);
+    if (elapsed() < tlim) stripPack(buildAlloc(byTotalVal), tlim);
+    
+    // Try permutations of top items for strip packing (if M is small enough)
+    if (M <= 10 && elapsed() < tlim) {
+        // Random shuffles
+        mt19937 rng(42);
+        for (int iter = 0; iter < 200 && elapsed() < tlim; iter++) {
+            vector<int> perm(M);
+            iota(perm.begin(), perm.end(), 0);
+            shuffle(perm.begin(), perm.end(), rng);
+            stripPack(buildAlloc(perm), tlim);
+        }
+    }
+    
+    // More random MaxRects attempts
+    if (elapsed() < tlim) {
+        mt19937 rng(123);
+        for (int iter = 0; iter < 300 && elapsed() < tlim; iter++) {
+            vector<int> perm(M);
+            iota(perm.begin(), perm.end(), 0);
+            shuffle(perm.begin(), perm.end(), rng);
+            int method = rng() % 4;
+            bool exh = rng() % 2;
+            greedyMaxRects(method, perm, exh, tlim);
+        }
+    }
+    
+    // Output
+    printf("{\"placements\":[");
+    for (int i = 0; i < (int)bestPlacements.size(); i++) {
+        if (i) printf(",");
+        auto& p = bestPlacements[i];
+        printf("{\"type\":\"%s\",\"x\":%d,\"y\":%d,\"rot\":%d}", 
+               p.type.c_str(), p.x, p.y, p.rot);
+    }
+    printf("]}");
+    
+    return 0;
+}
