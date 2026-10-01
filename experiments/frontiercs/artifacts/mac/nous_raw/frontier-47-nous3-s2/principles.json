@@ -40,20 +40,17 @@
       "id": "RP-3",
       "statement": "For 2D rectangular knapsack with 8-12 item types, SA over joint (ordering \u00d7 per-item-heuristic) space achieves ~95.2/100, a 0.37-point improvement over ordering-only hill-climbing. The per-item heuristic dimension is the key lever; SA over orderings alone matches hill-climbing.",
       "confidence": "high",
-      "regime": "M=8-12 item types, bins 900-2000, 1s time budget, 4 MaxRects heuristics (BSSF/BAF/BL/BLSF)",
+      "regime": "2D rectangular knapsack, bin 900-2000, 8-12 item types, 1s time budget, MaxRects with 4 heuristics",
       "evidence": [
-        "iteration-2-h-main",
-        "iteration-2-h-ablation"
+        "iteration-2-h-main"
       ],
       "contradicts": [],
       "extraction_iteration": 2,
-      "mechanism": "Hill-climbing exhausts the ordering space for M=8-12 (O(M\u00b2) neighborhood is small enough). The actual unexplored dimension is per-item heuristic assignment: which placement heuristic to use for each item type. SA over the joint space of orderings and per-item heuristic assignments finds combinations where different items benefit from different heuristics \u2014 e.g., large items placed with bottom-left while small items use best-short-side-fit.",
-      "applicability_bounds": "Holds for M=8-12 with 4 heuristics. For larger M, ordering search may regain importance. For more heuristics, the per-item heuristic dimension grows combinatorially.",
-      "superseded_by": null,
+      "mechanism": "Per-item heuristic selection is the dominant lever.",
+      "applicability_bounds": "Applies with 4 heuristics. Superseded by RP-5 for 8 heuristics. Score of 95.2 is the 4-heuristic ceiling with default SA parameters; with tuned SA (cooling 0.995, 3 restarts) the 4-heuristic score reaches 95.8 (see RP-5).",
+      "superseded_by": "RP-5",
       "category": "domain",
-      "status": "active",
-      "empirical_content": true,
-      "derivation_type": "empirical"
+      "status": "refined"
     },
     {
       "id": "RP-4",
@@ -67,6 +64,25 @@
       "extraction_iteration": 2,
       "mechanism": "Gap filling tries to place remaining copies of item types (sorted by value density) into free rectangles left after ordered packing. When per-item heuristic selection is optimized, the packing already achieves near-maximal space utilization, leaving free rectangles too small for any item type.",
       "applicability_bounds": "May not hold if per-item heuristic selection is NOT optimized (i.e., with fixed heuristic, gap filling might contribute). Also may not hold for very large bins where more residual space exists.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "For 2D rectangular knapsack with 8-12 item types, expanding MaxRects from 4 to 8 heuristics with SA over joint (ordering \u00d7 per-item-heuristic \u00d7 per-item-rotation) space achieves ~96.5/100. The improvement decomposes as ~55% from expanded heuristics (4\u21928) and ~45% from SA tuning (faster cooling 0.995, 3 restarts, rotation mode). Both lever types are complementary.",
+      "confidence": "high",
+      "regime": "2D rectangular knapsack, bin 900-2000, 8-12 item types, 1s time budget, MaxRects packer with SA",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Expanding from 4 to 8 heuristics increases per-item placement options, enabling SA to find better per-item heuristic assignments. Faster cooling (T*=0.995 vs 0.9995) with 3 restarts trades exploration breadth for exploitation depth \u2014 appropriate given the larger combinatorial space (8^M vs 4^M for M\u224810 item types). Per-item rotation mode adds a third dimension to the SA search that prevents greedy rotation choices from locking in suboptimal orientations.",
+      "applicability_bounds": "Holds for MaxRects packer under 1s time budget. May not apply with different packing algorithms or much longer time budgets where broader exploration could help.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",

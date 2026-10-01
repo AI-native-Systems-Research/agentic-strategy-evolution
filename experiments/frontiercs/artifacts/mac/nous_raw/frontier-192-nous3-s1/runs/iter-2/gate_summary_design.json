@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a linear-cooling simulated annealing (SA) schedule outperforms the geometric-cooling SA baseline (~86.7 score) for the Max-Cut problem. The hypothesis is that spreading temperature decay proportionally across each restart's full time budget (0.10s) enables deeper exploration and yields 87+ score, compared to geometric cooling which exhausts useful exploration in ~0.5ms.",
+  "key_points": [
+    "h-main arm: Greedy init + linear-cooling SA (T0=3.0\u21920.001 over 0.10s per restart, time-checked every 256 iterations, total budget 0.90s). Predicted score: ~87.5, confirming that time-proportional cooling improves cut quality.",
+    "h-ablation arm: Greedy init + geometric-cooling SA (T=2.0, cooling=0.9995, 200k iter cap per restart, per-iteration time check, 0.90s total). Predicted score: ~86.7, serving as the iteration-1 baseline reference.",
+    "Confirmation criterion: h-main scores \u226587.0 AND exceeds h-ablation by \u22650.5 points. Refutation: h-main scores \u226486.7 or is within noise of h-ablation, suggesting the cooling schedule difference doesn't matter and restart count or other factors dominate.",
+    "Diagnostic fallback: If h-main underperforms, the 0.10s restart window may be too long (fewer restarts), and shorter windows (0.03\u20130.05s) should be tried next iteration."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

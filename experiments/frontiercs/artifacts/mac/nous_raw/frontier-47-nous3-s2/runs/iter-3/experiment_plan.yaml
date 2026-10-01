@@ -7,7 +7,6 @@ setup:
     description: "Apply h-main patch (8 heuristics + SA improvements)"
 arms:
   - arm_id: "h-main"
-    patch: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-nous3-s2/runs/iter-3/patches/h-main.patch"
     conditions:
       - name: "seed-1"
         cmd: "git checkout -- solution.cpp && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-47-nous3-s2/runs/iter-3/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_47.sh $PWD/solution.cpp"
@@ -25,7 +24,6 @@ arms:
         cmd: "git checkout -- solution.cpp && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-47-nous3-s2/runs/iter-3/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_47.sh $PWD/solution.cpp"
         output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-nous3-s2/runs/iter-3/results/h-main/seed-5.txt"
   - arm_id: "h-control-negative"
-    patch: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-nous3-s2/runs/iter-3/patches/h-control-negative.patch"
     conditions:
       - name: "seed-1"
         cmd: "git checkout -- solution.cpp && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-47-nous3-s2/runs/iter-3/patches/h-control-negative.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_47.sh $PWD/solution.cpp"
