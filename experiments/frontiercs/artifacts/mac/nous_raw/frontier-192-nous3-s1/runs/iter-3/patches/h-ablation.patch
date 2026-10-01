@@ -1,0 +1,212 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..dd38997 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,206 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++// Xorshift128+ RNG
++struct Xorshift128Plus {
++    uint64_t s[2];
++    Xorshift128Plus(uint64_t seed) {
++        s[0] = seed;
++        s[1] = seed ^ 0x6c62272e07bb0142ULL;
++        // Warm up
++        for(int i = 0; i < 16; i++) next();
++    }
++    uint64_t next() {
++        uint64_t s1 = s[0];
++        uint64_t s0 = s[1];
++        s[0] = s0;
++        s1 ^= s1 << 23;
++        s[1] = s1 ^ s0 ^ (s1 >> 17) ^ (s0 >> 26);
++        return s[1] + s0;
++    }
++    // Random int in [0, n)
++    int nextInt(int n) {
++        return (int)(next() % (uint64_t)n);
++    }
++    // Random double in [0, 1)
++    double nextDouble() {
++        return (next() >> 11) * (1.0 / 9007199254740992.0);
++    }
++};
++
++int main(){
++    ios_base::sync_with_stdio(false);
++    cin.tie(NULL);
++
++    int n, m;
++    cin >> n >> m;
++
++    vector<vector<int>> adj(n);
++    for(int i = 0; i < m; i++){
++        int u, v;
++        cin >> u >> v;
++        u--; v--;
++        adj[u].push_back(v);
++        adj[v].push_back(u);
++    }
++
++    if(m == 0){
++        for(int i = 0; i < n; i++){
++            if(i > 0) cout << ' ';
++            cout << 0;
++        }
++        cout << '\n';
++        return 0;
++    }
++
++    auto startTime = chrono::steady_clock::now();
++    auto elapsed = [&]() -> double {
++        return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
++    };
++
++    Xorshift128Plus rng(chrono::steady_clock::now().time_since_epoch().count());
++
++    vector<int> bestPart(n, 0);
++    int bestCut = -1;
++
++    vector<int> part(n);
++    vector<int> gain(n); // gain[u] = improvement in cut if we flip u
++
++    double timeLimit = 0.90;
++    double saBudget = 0.03;
++    double T0 = 3.0;
++    double Tf = 0.001;
++
++    while(elapsed() < timeLimit){
++        // Random initialization
++        for(int i = 0; i < n; i++){
++            part[i] = rng.next() & 1;
++        }
++
++        // Compute initial gain array
++        // gain[u] = #neighbors in same partition - #neighbors in different partition
++        // Flipping u changes cut by gain[u]
++        int cut = 0;
++        for(int u = 0; u < n; u++){
++            int same = 0, diff = 0;
++            for(int v : adj[u]){
++                if(part[u] == part[v]) same++;
++                else diff++;
++            }
++            gain[u] = same - diff;
++            cut += diff;
++        }
++        cut /= 2;
++
++        // Greedy phase: flip all positive-gain vertices
++        bool improved = true;
++        while(improved){
++            improved = false;
++            for(int u = 0; u < n; u++){
++                if(gain[u] > 0){
++                    // Flip u
++                    part[u] ^= 1;
++                    cut += gain[u];
++                    // Update gains: for each neighbor v, gain changes by ±2
++                    gain[u] = -gain[u];
++                    for(int v : adj[u]){
++                        if(part[u] == part[v]){
++                            // u moved to same side as v: edge no longer cut
++                            gain[v] += 2;
++                        } else {
++                            // u moved to different side from v: edge now cut
++                            gain[v] -= 2;
++                        }
++                    }
++                    improved = true;
++                }
++            }
++        }
++
++        // SA phase with linear cooling
++        auto saStart = chrono::steady_clock::now();
++        double saElapsed = 0.0;
++        int iter = 0;
++
++        while(true){
++            // Batched time check every 512 iterations
++            if((iter & 511) == 0){
++                saElapsed = chrono::duration<double>(chrono::steady_clock::now() - saStart).count();
++                if(saElapsed >= saBudget) break;
++                if(elapsed() >= timeLimit) break;
++            }
++
++            // Linear temperature
++            double frac = saElapsed / saBudget;
++            if(frac > 1.0) frac = 1.0;
++            double T = T0 * (1.0 - frac) + Tf * frac;
++
++            // Random vertex
++            int u = rng.nextInt(n);
++            int g = gain[u];
++
++            bool accept = false;
++            if(g > 0){
++                accept = true;
++            } else if(g == 0){
++                accept = (rng.next() & 1);
++            } else {
++                // Skip exp() for very negative gains
++                if((double)g > -10.0 * T){
++                    double prob = exp((double)g / T);
++                    accept = (rng.nextDouble() < prob);
++                }
++            }
++
++            if(accept){
++                part[u] ^= 1;
++                cut += g;
++                // Update gain array
++                gain[u] = -g;
++                for(int v : adj[u]){
++                    if(part[u] == part[v]){
++                        gain[v] += 2;
++                    } else {
++                        gain[v] -= 2;
++                    }
++                }
++            }
++
++            iter++;
++        }
++
++        // Post-SA greedy cleanup
++        improved = true;
++        while(improved){
++            improved = false;
++            for(int u = 0; u < n; u++){
++                if(gain[u] > 0){
++                    part[u] ^= 1;
++                    cut += gain[u];
++                    gain[u] = -gain[u];
++                    for(int v : adj[u]){
++                        if(part[u] == part[v]){
++                            gain[v] += 2;
++                        } else {
++                            gain[v] -= 2;
++                        }
++                    }
++                    improved = true;
++                }
++            }
++        }
++
++        if(cut > bestCut){
++            bestCut = cut;
++            bestPart = part;
++        }
++    }
++
++    for(int i = 0; i < n; i++){
++        if(i > 0) cout << ' ';
++        cout << bestPart[i];
++    }
++    cout << '\n';
++
++    return 0;
++}
