@@ -1,5 +1,5 @@
 diff --git a/solution.cpp b/solution.cpp
-index 7072b24..4f2c76e 100644
+index 7072b24..1c9cabe 100644
 --- a/solution.cpp
 +++ b/solution.cpp
 @@ -1,3 +1,501 @@
@@ -476,12 +476,12 @@ index 7072b24..4f2c76e 100644
 +        saJointSearch(0.80, rng);
 +    }
 +
-+    // Phase 6: Gap fill on all best orderings
-+    for (int h = 0; h < 4; h++) {
-+        packWithGapFill(heurBestPerm[h], h);
-+    }
++    // Phase 6: Gap fill DISABLED (ablation)
++    // for (int h = 0; h < 4; h++) {
++    //     packWithGapFill(heurBestPerm[h], h);
++    // }
 +
-+    // Phase 7: Random perturbation restarts with gap fill
++    // Phase 7: Random perturbation restarts WITHOUT gap fill (ablation)
 +    {
 +        mt19937 rng(42);
 +        while (elapsed() < 0.88) {
@@ -493,7 +493,7 @@ index 7072b24..4f2c76e 100644
 +                swap(perm[i], perm[j]);
 +            }
 +            for (int hh = 0; hh < 4; hh++)
-+                packWithGapFill(perm, hh);
++                packOrderedFull(perm, hh);
 +        }
 +    }
 +
