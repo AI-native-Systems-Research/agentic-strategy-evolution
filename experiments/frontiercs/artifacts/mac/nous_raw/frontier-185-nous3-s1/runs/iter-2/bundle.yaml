@@ -1,0 +1,37 @@
+metadata:
+  iteration: 2
+  family: "max-clique-local-search"
+  research_question: "Does adding swap-based local search after BnB timeout improve max clique score from 99.345 to 100?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — single mechanism (local search) added to iter-1's BnB, with ablation"
+
+arms:
+  - type: h-main
+    prediction: "Adding local search after BnB timeout will achieve score 100 consistently, up from 99.345 baseline, because the swap-based perturbation can escape the suboptimal cliques that BnB returns when it times out on hard instances."
+    mechanism: "BnB with greedy coloring bound is exact but may not complete within 1800ms on dense graphs. When it times out, the best clique found may be suboptimal by 1-2 vertices. Local search (1-remove/2-add swaps + random perturbation with greedy rebuild) explores the neighborhood of the BnB solution, finding improvements that would require deep BnB exploration. The swap neighborhood is small enough to search in the remaining ~100ms."
+    diagnostic: "If score doesn't improve, check (1) whether BnB actually times out (timed_out flag), (2) whether local search has enough time to find improvements, (3) whether the hard test cases require larger perturbations (remove 2, add 3)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Add local_search() function implementing swap-based perturbation (1-remove/2-add, random restart with greedy rebuild). Reduce BnB timeout from 1850 to 1800ms to reserve time. Increase greedy restarts from 500 to 2000. Call local_search() when BnB times out."
+        rationale: "The 0.655% gap comes from BnB timing out on hard instances. Local search can improve the partial BnB result using the remaining time budget."
+
+  - type: h-control-negative
+    prediction: "The iter-1 BnB-only solution (without local search) will score ~99.345, confirming the local search is responsible for the improvement to 100."
+    mechanism: "Without local search, BnB alone times out on hard instances and returns suboptimal cliques. This is the same behavior observed in iter-1."
+    diagnostic: "If control scores 100, the improvement may come from increased greedy restarts or reduced BnB timeout, not local search."
+
+# Arm selection: h-main tests the local search addition; h-control-negative isolates whether the improvement comes from local search vs other changes (more restarts, different timeout).
+
+experiment_spec:
+  verified_parameters:
+    time_limit_ms: 1800
+    greedy_restarts: 2000
+    greedy_time_budget_ms: 100
+    local_search_time_budget_ms: 1900
+  unlocked_parameters_audit:
+    - name: rng_seed_greedy
+      default_value: 42
+      justification: "Fixed seed for reproducibility; greedy with 2000 restarts covers enough permutations"
+    - name: rng_seed_local_search
+      default_value: 12345
+      justification: "Fixed seed for reproducibility; perturbation diversity comes from swap structure not seed"

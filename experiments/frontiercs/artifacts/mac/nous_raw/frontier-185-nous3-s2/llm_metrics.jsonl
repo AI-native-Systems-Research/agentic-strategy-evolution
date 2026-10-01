@@ -1,0 +1,2 @@
+{"dispatcher": "sdk", "role": "planner", "phase": "design", "model": "claude-opus-4-6", "input_tokens": 270, "output_tokens": 9466, "cache_creation_input_tokens": 29427, "cache_read_input_tokens": 1524927, "cost_usd": 1.23701725, "duration_ms": 233860, "num_turns": 28, "timestamp": "2026-10-01T07:36:19.952596+00:00"}
+{"dispatcher": "llm", "role": "summarizer", "phase": "summarize-gate", "model": "claude-opus-4-6", "input_tokens": 2475, "output_tokens": 403, "cost_usd": null, "duration_ms": 8870, "num_turns": 1, "timestamp": "2026-10-01T07:36:28.865281+00:00"}

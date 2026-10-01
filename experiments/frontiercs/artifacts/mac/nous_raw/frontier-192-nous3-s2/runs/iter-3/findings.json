@@ -1,0 +1,25 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Adaptive budget SA+ILS will score consistently >= 87.0, eliminating TLE-induced variance",
+      "observed": "Score 87.16 on both runs (perfectly consistent, 0 variance). Meets >= 87.0 threshold.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "Iter-2 fixed 12-restart SA+ILS will show score variance >= 3 points due to TLE",
+      "observed": "Scores: 84.05, 84.44, 87.27. Variance range = 3.22 points. Confirms TLE-induced inconsistency.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The control scored 87.27 on one run (matching iter-2 peak) but 84.0-84.4 on others. This demonstrates the TLE variance problem: when no test cases time out, fixed restarts achieves ~87.3; when some TLE, score drops ~3 points."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main achieves consistent 87.16 (0 variance across runs). h-control-negative shows 3.22-point variance (84.05 to 87.27), confirming TLE is the score bottleneck. The adaptive approach trades ~0.1 points of peak performance (87.16 vs 87.27 peak) for perfect consistency.",
+  "dominant_component_pct": null
+}
