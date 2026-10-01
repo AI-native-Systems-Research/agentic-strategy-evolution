@@ -403,7 +403,7 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
     cmd = [NOUS_BIN, "run", str(camp), "--auto-approve", "--agent", "sdk", "--sandbox", "bypass",
            "--max-iterations", str(nous_iters), "--timeout", "2400"]
     with open(log, "w") as lf:
-        subprocess.run(cmd, cwd=NOUS_REPO, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True, timeout=14400)
+        subprocess.run(cmd, cwd=NOUS_REPO, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True, timeout=36000)
     # harvest candidate solutions from every place Nous persists an arm:
     #  - per-arm worktrees at <repo_path>/.nous-experiments/<run>/<arm>/ (issue #133)
     #  - the campaign's per-arm saved inputs (runs/iter-*/inputs/<arm>-solution.cpp) — robust even
