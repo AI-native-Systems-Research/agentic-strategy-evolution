@@ -1,0 +1,11 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+setup: []
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "treatment"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh /Users/toslali/frontier/gen_logs/frontier_44_nous3-s2_ws/.nous-experiments/iter-1-ec2a67a3/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s2/runs/iter-1/results/h-main/score.json"
+        inputs: []
