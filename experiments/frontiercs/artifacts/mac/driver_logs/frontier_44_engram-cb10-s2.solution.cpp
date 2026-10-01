@@ -1,31 +1,146 @@
 #include <bits/stdc++.h>
 using namespace std;
+
 int main(){
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
+    
     int N;
     cin>>N;
     vector<double>X(N),Y(N);
     for(int i=0;i<N;i++) cin>>X[i]>>Y[i];
-    vector<bool>isp(N+2,false);
-    {vector<bool>s(N+2,true);s[0]=s[1]=false;
-    for(int i=2;i<=N;i++){if(s[i]){isp[i]=true;for(long long j=(long long)i*i;j<=N;j+=i)s[j]=false;}}}
-    auto dist=[&](int a,int b)->double{double dx=X[a]-X[b],dy=Y[a]-Y[b];return sqrt(dx*dx+dy*dy);};
-    auto pen=[&](int step,int c0)->double{int c1=c0+1;return(step%10==0&&!isp[c1])?1.1:1.0;};
-    auto tourCost=[&](const vector<int>&tr)->double{double c=0;for(int t=1;t<=N;t++)c+=pen(t,tr[t-1])*dist(tr[t-1],tr[t]);return c;};
-    auto buildNN=[&](int start)->vector<int>{vector<bool>used(N,false);vector<int>tour(N+1);tour[0]=start;used[start]=true;for(int i=1;i<N;i++){int cur=tour[i-1];int best=-1;double bd=1e18;for(int j=0;j<N;j++){if(used[j])continue;double c=dist(cur,j);if(c<bd){bd=c;best=j;}}tour[i]=best;used[best]=true;}tour[N]=start;return tour;};
-    int tries=min(N,N<=500?N:N<=2000?20:5);
-    vector<int>best_tour=buildNN(0);double best_cost=tourCost(best_tour);
-    for(int s=0;s<tries;s++){auto t=buildNN(s);double c=tourCost(t);if(c<best_cost){best_cost=c;best_tour=t;}}
-    vector<int>tour=best_tour;double cur=best_cost;
-    auto stime=chrono::steady_clock::now();
-    auto el=[&]()->double{return chrono::duration<double>(chrono::steady_clock::now()-stime).count();};
-    mt19937 rng(42);double T=cur*0.02,Tend=cur*1e-8,tlimit=1.85;
-    while(el()<tlimit){int i=rng()%(N-1)+1,j=rng()%(N-1)+1;if(i==j)continue;if(i>j)swap(i,j);
-    int lo=max(1,i),hi=min(N,j+1);double oldC=0;for(int t=lo;t<=hi;t++)oldC+=pen(t,tour[t-1])*dist(tour[t-1],tour[t]);
-    reverse(tour.begin()+i,tour.begin()+j+1);double newC=0;for(int t=lo;t<=hi;t++)newC+=pen(t,tour[t-1])*dist(tour[t-1],tour[t]);
-    double delta=newC-oldC;double frac=el()/tlimit;double Tcur=T*pow(Tend/T,frac);
-    if(delta<0||((double)(rng()%1000000)/1000000.0<exp(-delta/Tcur))){cur+=delta;if(cur<best_cost){best_cost=cur;best_tour=tour;}}
-    else{reverse(tour.begin()+i,tour.begin()+j+1);}}
-    for(int i=0;i<=N;i++) cout<<best_tour[i]+1<<"\n";
+    
+    vector<bool>isp(N,false);
+    if(N>2){
+        for(int i=2;i<N;i++) isp[i]=true;
+        for(int i=2;(long long)i*i<N;i++)
+            if(isp[i]) for(int j=i*i;j<N;j+=i) isp[j]=false;
+    }
+    
+    auto dist=[&](int a,int b)->double{
+        double dx=X[a]-X[b],dy=Y[a]-Y[b];
+        return sqrt(dx*dx+dy*dy);
+    };
+    
+    // mult for step t, source city c
+    auto mult=[&](int t,int c)->double{
+        return (t%10==0 && !isp[c])?1.1:1.0;
+    };
+    
+    // Start with input-order tour (which is x-sorted - the baseline)
+    vector<int>tour(N+1);
+    for(int i=0;i<N;i++) tour[i]=i;
+    tour[N]=0;
+    
+    // Compute full cost
+    auto fullCost=[&](const vector<int>&tr)->double{
+        double c=0;
+        for(int t=1;t<=N;t++)
+            c+=mult(t,tr[t-1])*dist(tr[t-1],tr[t]);
+        return c;
+    };
+    
+    // Try nearest-neighbor construction with grid
+    {
+        // Grid-based spatial index
+        double minx=*min_element(X.begin(),X.end());
+        double maxx=*max_element(X.begin(),X.end());
+        double miny=*min_element(Y.begin(),Y.end());
+        double maxy=*max_element(Y.begin(),Y.end());
+        
+        int GS=max(1,(int)sqrt((double)N/4.0));
+        double gw=(maxx-minx)/GS+1e-9;
+        double gh=(maxy-miny)/GS+1e-9;
+        if(gw<1e-12) gw=1;
+        if(gh<1e-12) gh=1;
+        
+        vector<vector<int>>grid(GS*GS);
+        auto getCell=[&](int id)->int{
+            int cx=min((int)((X[id]-minx)/gw),GS-1);
+            int cy=min((int)((Y[id]-miny)/gh),GS-1);
+            return cy*GS+cx;
+        };
+        
+        for(int i=0;i<N;i++) grid[getCell(i)].push_back(i);
+        
+        vector<bool>used(N,false);
+        vector<int>nn_tour(N+1);
+        nn_tour[0]=0; used[0]=true;
+        
+        for(int i=1;i<N;i++){
+            int cur=nn_tour[i-1];
+            int cx=min((int)((X[cur]-minx)/gw),GS-1);
+            int cy=min((int)((Y[cur]-miny)/gh),GS-1);
+            double m=mult(i,cur);
+            int best=-1; double bd=1e18;
+            for(int r=0;r<GS;r++){
+                if(best>=0){
+                    double dx2=max(0.0,(double)(abs(cx-min(max(0,cx-r),GS-1)))*gw-gw);
+                    double dy2=max(0.0,(double)(abs(cy-min(max(0,cy-r),GS-1)))*gh-gh);
+                    if(m*sqrt(dx2*dx2+dy2*dy2)>bd) break;
+                }
+                int x0=max(0,cx-r),x1=min(GS-1,cx+r);
+                int y0=max(0,cy-r),y1=min(GS-1,cy+r);
+                for(int gx=x0;gx<=x1;gx++)for(int gy=y0;gy<=y1;gy++){
+                    if(gx>x0&&gx<x1&&gy>y0&&gy<y1) continue;
+                    for(int id:grid[gy*GS+gx]){
+                        if(used[id]) continue;
+                        double c=m*dist(cur,id);
+                        if(c<bd){bd=c;best=id;}
+                    }
+                }
+                if(best>=0&&r>0) break;
+            }
+            if(best<0){for(int j=0;j<N;j++)if(!used[j]){best=j;break;}}
+            nn_tour[i]=best; used[best]=true;
+        }
+        nn_tour[N]=0;
+        
+        double nn_cost=fullCost(nn_tour);
+        double base_cost=fullCost(tour);
+        if(nn_cost<base_cost) tour=nn_tour;
+    }
+    
+    double cur=fullCost(tour);
+    
+    // Position lookup
+    vector<int>pos(N);
+    for(int i=0;i<=N;i++) if(i<N) pos[tour[i]]=i;
+    
+    auto start=chrono::steady_clock::now();
+    auto elapsed=[&]()->double{return chrono::duration<double>(chrono::steady_clock::now()-start).count();};
+    
+    mt19937 rng(12345);
+    
+    // 2-opt with segment cost recomputation
+    while(elapsed()<1.85){
+        bool improved=false;
+        for(int iter=0;iter<50000&&elapsed()<1.85;iter++){
+            int i=1+rng()%(N-1);
+            int len=2+rng()%min(50,N-1);
+            int j=i+len-1;
+            if(j>=N) continue;
+            
+            // Cost of segment [i..j] before and after reverse
+            double oldC=0,newC=0;
+            // Also edges i-1->i and j->j+1 change
+            for(int t=max(1,i);t<=min(N,j+1);t++)
+                oldC+=mult(t,tour[t-1])*dist(tour[t-1],tour[t]);
+            
+            reverse(tour.begin()+i,tour.begin()+j+1);
+            for(int t=max(1,i);t<=min(N,j+1);t++)
+                newC+=mult(t,tour[t-1])*dist(tour[t-1],tour[t]);
+            
+            if(newC<oldC-1e-9){
+                cur+=newC-oldC;
+                improved=true;
+            } else {
+                reverse(tour.begin()+i,tour.begin()+j+1);
+            }
+        }
+        if(!improved) break;
+    }
+    
+    cout<<N+1<<"\n";
+    for(int i=0;i<=N;i++) cout<<tour[i]<<"\n";
 }
