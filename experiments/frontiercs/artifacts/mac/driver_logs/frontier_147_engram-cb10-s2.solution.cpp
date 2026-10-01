@@ -1,114 +1,97 @@
 #include <bits/stdc++.h>
 using namespace std;
 
+int n;
+int X[205], Y[205];
+long long R[205];
+int A[205], B[205], C[205], D[205];
+
+void solve(vector<int>& ids, int ax, int ay, int cx, int cy) {
+    if (ids.empty()) return;
+    if (ids.size() == 1) {
+        int i = ids[0];
+        A[i] = ax; B[i] = ay; C[i] = cx; D[i] = cy;
+        return;
+    }
+
+    long long total_r = 0;
+    for (int i : ids) total_r += R[i];
+
+    double best_score = -1e18;
+    vector<int> best_left, best_right;
+    int best_split = 0;
+    int best_horiz = 0;
+
+    for (int horiz = 0; horiz < 2; horiz++) {
+        int span = horiz ? (cy - ay) : (cx - ax);
+        if (span < (int)ids.size() * 2) continue; // need enough room
+
+        vector<int> sorted_ids = ids;
+        if (horiz)
+            sort(sorted_ids.begin(), sorted_ids.end(), [](int a, int b){ return Y[a] < Y[b] || (Y[a]==Y[b] && X[a]<X[b]); });
+        else
+            sort(sorted_ids.begin(), sorted_ids.end(), [](int a, int b){ return X[a] < X[b] || (X[a]==X[b] && Y[a]<Y[b]); });
+
+        int sz = sorted_ids.size();
+        long long r_left = 0;
+        for (int k = 1; k < sz; k++) {
+            r_left += R[sorted_ids[k-1]];
+            double frac = (double)r_left / total_r;
+
+            int coord_left = horiz ? Y[sorted_ids[k-1]] : X[sorted_ids[k-1]];
+            int coord_right = horiz ? Y[sorted_ids[k]] : X[sorted_ids[k]];
+
+            int lo = coord_left + 1;
+            int hi = coord_right;
+            int base = horiz ? ay : ax;
+            int end = horiz ? cy : cx;
+            lo = max(lo, base + 1);
+            hi = min(hi, end - 1);
+            if (lo > hi) continue;
+
+            int ideal = (int)round(base + frac * (end - base));
+            int split = max(lo, min(hi, ideal));
+
+            double actual_frac = (double)(split - base) / (end - base);
+            double diff = frac - actual_frac;
+            double score = -diff * diff;
+
+            if (score > best_score) {
+                best_score = score;
+                best_left.assign(sorted_ids.begin(), sorted_ids.begin() + k);
+                best_right.assign(sorted_ids.begin() + k, sorted_ids.end());
+                best_split = split;
+                best_horiz = horiz;
+            }
+        }
+    }
+
+    if (best_score < -0.99e18) {
+        // Fallback: assign all area to heaviest
+        int heavy = ids[0];
+        for (int i : ids) if (R[i] > R[heavy]) heavy = i;
+        A[heavy]=ax; B[heavy]=ay; C[heavy]=cx; D[heavy]=cy;
+        for (int i : ids) {
+            if (i == heavy) continue;
+            A[i]=max(ax, X[i]-1); B[i]=max(ay, Y[i]-1);
+            C[i]=min(cx, X[i]+1); D[i]=min(cy, Y[i]+1);
+        }
+        return;
+    }
+
+    if (best_horiz) {
+        solve(best_left, ax, ay, cx, best_split);
+        solve(best_right, ax, best_split, cx, cy);
+    } else {
+        solve(best_left, ax, ay, best_split, cy);
+        solve(best_right, best_split, ay, cx, cy);
+    }
+}
+
 int main(){
-    ios_base::sync_with_stdio(false);
-    cin.tie(NULL);
-    
-    int n;
-    cin >> n;
-    
-    vector<int> x(n), y(n);
-    vector<long long> r(n);
-    vector<int> a(n), b(n), c(n), d(n);
-    
-    for(int i = 0; i < n; i++){
-        cin >> x[i] >> y[i] >> r[i];
-        a[i]=x[i]; b[i]=y[i]; c[i]=x[i]+1; d[i]=y[i]+1;
-    }
-    
-    vector<int> order(n);
-    iota(order.begin(), order.end(), 0);
-    sort(order.begin(), order.end(), [&](int u, int v){ return r[u] > r[v]; });
-    
-    vector<bool> placed(n, false);
-    
-    // Check if rectangle i overlaps rectangle j
-    auto overlaps = [&](int i, int j) -> bool {
-        return a[i]<c[j] && c[i]>a[j] && b[i]<d[j] && d[i]>b[j];
-    };
-    
-    // Binary search max expansion in direction dir for rectangle i
-    auto maxExpand = [&](int i, int dir) -> int {
-        int lo = 0, hi;
-        if(dir==0) hi = a[i]; // expand left
-        else if(dir==1) hi = b[i]; // expand up (decrease b)
-        else if(dir==2) hi = 10000 - c[i]; // expand right
-        else hi = 10000 - d[i]; // expand down
-        
-        int oa=a[i],ob=b[i],oc=c[i],od=d[i];
-        
-        while(lo < hi){
-            int mid = (lo+hi+1)/2;
-            if(dir==0) a[i]=oa-mid;
-            else if(dir==1) b[i]=ob-mid;
-            else if(dir==2) c[i]=oc+mid;
-            else d[i]=od+mid;
-            
-            bool ok = true;
-            for(int j = 0; j < n; j++){
-                if(j==i || !placed[j]) continue;
-                if(overlaps(i,j)){ ok=false; break; }
-            }
-            a[i]=oa;b[i]=ob;c[i]=oc;d[i]=od;
-            if(ok) lo=mid; else hi=mid-1;
-        }
-        return lo;
-    };
-    
-    for(int idx = 0; idx < n; idx++){
-        int i = order[idx];
-        placed[i] = true;
-        
-        long long target = r[i];
-        bool changed = true;
-        while(changed){
-            changed = false;
-            long long cur = (long long)(c[i]-a[i])*(d[i]-b[i]);
-            if(cur >= target) break;
-            
-            int dirs[] = {0,1,2,3};
-            for(int dir : dirs){
-                cur = (long long)(c[i]-a[i])*(d[i]-b[i]);
-                if(cur >= target) break;
-                int mx = maxExpand(i, dir);
-                if(mx <= 0) continue;
-                // Compute needed expansion
-                int side = (dir<2) ? (c[i]-a[i]) : (d[i]-b[i]);
-                int other = (dir<2) ? (d[i]-b[i]) : (c[i]-a[i]);
-                long long need = (target + other - 1) / max(other,1) - side;
-                int step = (int)min((long long)mx, max(1LL, need));
-                if(dir==0) a[i]-=step;
-                else if(dir==1) b[i]-=step;
-                else if(dir==2) c[i]+=step;
-                else d[i]+=step;
-                changed = true;
-            }
-        }
-    }
-    
-    // Refinement
-    auto t0 = chrono::steady_clock::now();
-    for(int pass=0; pass<500; pass++){
-        if(chrono::duration<double>(chrono::steady_clock::now()-t0).count()>4.0) break;
-        for(int idx=0; idx<n; idx++){
-            int i=order[idx];
-            long long cur=(long long)(c[i]-a[i])*(d[i]-b[i]);
-            if(cur>=r[i]) continue;
-            for(int dir=0;dir<4;dir++){
-                int mx=maxExpand(i,dir);
-                if(mx<=0) continue;
-                int other=(dir<2)?(d[i]-b[i]):(c[i]-a[i]);
-                int side=(dir<2)?(c[i]-a[i]):(d[i]-b[i]);
-                long long need=(r[i]+other-1)/max(other,1)-side;
-                int step=(int)min((long long)mx,max(1LL,need));
-                if(dir==0) a[i]-=step;
-                else if(dir==1) b[i]-=step;
-                else if(dir==2) c[i]+=step;
-                else d[i]+=step;
-            }
-        }
-    }
-    
-    for(int i=0;i<n;i++) printf("%d %d %d %d\n",a[i],b[i],c[i],d[i]);
+    scanf("%d",&n);
+    for(int i=0;i<n;i++) scanf("%d%d%lld",&X[i],&Y[i],&R[i]);
+    vector<int> ids(n); iota(ids.begin(),ids.end(),0);
+    solve(ids, 0, 0, 10000, 10000);
+    for(int i=0;i<n;i++) printf("%d %d %d %d\n",A[i],B[i],C[i],D[i]);
 }
