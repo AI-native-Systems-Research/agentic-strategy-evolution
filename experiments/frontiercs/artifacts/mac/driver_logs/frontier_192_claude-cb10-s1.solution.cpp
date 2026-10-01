@@ -17,76 +17,80 @@ int main(){
         adj[v].push_back(u);
     }
     
+    vector<int> best(n, 0);
+    
     if(m == 0){
         for(int i = 0; i < n; i++){ if(i) cout << ' '; cout << 0; }
         cout << '\n';
         return 0;
     }
     
-    vector<int> best(n,0), s(n), gain(n);
-    int bestCut = -1;
-    mt19937 rng(12345);
+    int bestCut = 0;
+    mt19937 rng(42);
+    vector<int> s(n), gain(n);
     
     auto calcGain = [&](){
-        fill(gain.begin(), gain.end(), 0);
-        for(auto&[a,b]: edges){
-            if(s[a]==s[b]){ gain[a]++; gain[b]++; }
-            else { gain[a]--; gain[b]--; }
+        for(int u = 0; u < n; u++){
+            int g = 0;
+            for(int v : adj[u]) g += (s[u] == s[v]) ? 1 : -1;
+            gain[u] = g;
         }
     };
     
     auto flipNode = [&](int u){
-        s[u]^=1;
-        gain[u]=-gain[u];
-        for(int v: adj[u]){
-            if(s[u]==s[v]){ gain[v]-=2; }
-            else { gain[v]+=2; }
+        s[u] ^= 1;
+        gain[u] = -gain[u];
+        for(int v : adj[u]){
+            if(s[u] == s[v]) gain[v] -= 2; else gain[v] += 2;
         }
     };
     
-    auto countCut=[&](){ int c=0; for(auto&[a,b]:edges) c+=(s[a]!=s[b]); return c; };
-    
-    auto localSearch=[&](){
-        bool imp=true;
-        while(imp){ imp=false; for(int u=0;u<n;u++) if(gain[u]>0){ flipNode(u); imp=true; } }
+    auto localSearch = [&](){
+        bool imp = true;
+        while(imp){ imp = false; for(int u = 0; u < n; u++) if(gain[u] > 0){ flipNode(u); imp = true; } }
     };
     
-    auto t0=chrono::steady_clock::now();
-    auto elapsed=[&](){ return chrono::duration<double>(chrono::steady_clock::now()-t0).count(); };
+    auto calcCut = [&](){ int c = 0; for(auto&[a,b] : edges) c += (s[a] != s[b]); return c; };
     
-    double timeLimit=1.85;
+    auto t0 = chrono::steady_clock::now();
+    auto elapsed = [&](){ return chrono::duration<double>(chrono::steady_clock::now() - t0).count(); };
     
-    while(elapsed()<timeLimit){
-        for(int i=0;i<n;i++) s[i]=rng()&1;
+    double timeLimit = 1.8;
+    
+    while(elapsed() < timeLimit){
+        for(int i = 0; i < n; i++) s[i] = rng() & 1;
         calcGain();
         localSearch();
-        int c=countCut();
-        if(c>bestCut){ bestCut=c; best=s; }
+        int c = calcCut();
+        if(c > bestCut){ bestCut = c; best = s; }
         
-        double st=elapsed();
-        double rt=min(timeLimit-st, 0.5);
-        if(rt<0.02) break;
+        // SA phase
+        double T0 = max(2.0, 0.3 * sqrt((double)m));
+        int curCut = c;
         
-        double T0=max(2.0, 0.3*sqrt((double)m));
-        int curCut=c;
-        
-        for(int it=0;;it++){
-            if((it&1023)==0 && elapsed()-st>rt) break;
-            double frac=(elapsed()-st)/rt;
-            if(frac>1.0) break;
-            double T=T0*(1.0-frac)+0.001;
-            int u=rng()%n;
-            int d=gain[u];
-            if(d>0 || (double)(rng()%1000000)/1000000.0 < exp((double)d/T)){
-                flipNode(u); curCut+=d;
-                if(curCut>bestCut){ bestCut=curCut; best=s; }
+        for(int it = 0; ; it++){
+            if((it & 255) == 0 && elapsed() >= timeLimit) break;
+            int u = rng() % n;
+            int d = gain[u];
+            if(d >= 0){
+                flipNode(u); curCut += d;
+                if(curCut > bestCut){ bestCut = curCut; best = s; }
+            } else {
+                double frac = min(1.0, elapsed() / timeLimit);
+                double T = T0 * (1.0 - frac) + 0.01;
+                double r = (rng() % 100000) / 100000.0;
+                if(exp((double)d / T) > r){
+                    flipNode(u); curCut += d;
+                }
             }
         }
-        s=best; calcGain(); localSearch();
-        int c2=countCut();
-        if(c2>bestCut){ bestCut=c2; best=s; }
+        
+        s = best; calcGain(); localSearch();
+        c = calcCut();
+        if(c > bestCut){ bestCut = c; best = s; }
     }
     
-    for(int i=0;i<n;i++){ if(i) cout<<' '; cout<<best[i]; }
-    cout<<'\n';
+    for(int i = 0; i < n; i++){ if(i) cout << ' '; cout << best[i]; }
+    cout << '\n';
+    return 0;
 }

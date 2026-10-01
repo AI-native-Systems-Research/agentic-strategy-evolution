@@ -1,76 +1,52 @@
 #include <bits/stdc++.h>
 using namespace std;
-
 int main(){
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
-    
-    int n, m;
-    cin >> n >> m;
-    
-    vector<vector<int>> adj(n);
+    int n,m;
+    cin>>n>>m;
+    vector<vector<int>> adj(n+1);
     vector<pair<int,int>> edges(m);
-    
-    for(int i = 0; i < m; i++){
-        int u, v;
-        cin >> u >> v;
-        u--; v--;
+    for(int i=0;i<m;i++){
+        int u,v; cin>>u>>v;
         adj[u].push_back(v);
         adj[v].push_back(u);
-        edges[i] = {u, v};
+        edges[i]={u,v};
     }
-    
-    mt19937 rng(42);
-    
-    auto computeCut = [&](vector<int>& side) -> int {
-        int c = 0;
-        for(auto&[u,v]:edges) if(side[u]!=side[v]) c++;
-        return c;
-    };
-    
-    auto localSearch = [&](vector<int>& side) {
-        vector<int> gain(n, 0);
-        for(int v = 0; v < n; v++)
-            for(int u : adj[v])
-                gain[v] += (side[u]==side[v]) ? 1 : -1;
-        
-        bool improved = true;
-        while(improved){
-            improved = false;
-            for(int v = 0; v < n; v++){
-                if(gain[v] > 0){
-                    side[v] ^= 1;
-                    for(int u : adj[v]){
-                        if(side[u]==side[v]) gain[u] += 2; else gain[u] -= 2;
-                    }
-                    gain[v] = -gain[v];
-                    improved = true;
-                }
+    int bestCut=-1;
+    vector<int> bestSide(n+1,0);
+    mt19937 rng(12345);
+    auto t0=chrono::steady_clock::now();
+    auto ms=[&](){return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now()-t0).count();};
+    while(ms()<4500){
+        vector<int> s(n+1);
+        for(int i=1;i<=n;i++) s[i]=rng()&1;
+        vector<int> g(n+1,0);
+        for(int v=1;v<=n;v++)
+            for(int u:adj[v])
+                g[v]+=(s[u]==s[v])?1:-1;
+        int cc=0;
+        for(auto&[u,v]:edges) cc+=(s[u]!=s[v]);
+        auto doFlip=[&](int v){
+            cc+=g[v]; s[v]^=1;
+            for(int u:adj[v]){
+                if(s[u]==s[v]) g[u]+=2;
+                else g[u]-=2;
             }
+            g[v]=-g[v];
+        };
+        bool imp=true;
+        while(imp){
+            imp=false;
+            for(int v=1;v<=n;v++)
+                if(g[v]>0){doFlip(v);imp=true;}
         }
-    };
-    
-    int bestCut = -1;
-    vector<int> bestSide(n, 0);
-    auto ts = chrono::steady_clock::now();
-    
-    int iters = 0;
-    while(chrono::duration<double>(chrono::steady_clock::now()-ts).count() < 4.0){
-        vector<int> side(n);
-        for(int i = 0; i < n; i++) side[i] = rng() & 1;
-        localSearch(side);
-        int c = computeCut(side);
-        if(c > bestCut){ bestCut = c; bestSide = side; }
-        iters++;
-        if(iters > 1000) break;
+        if(cc>bestCut){bestCut=cc;bestSide=s;}
     }
-    
-    // Output: just partition, space-separated, 1-indexed groups
-    for(int i = 0; i < n; i++){
-        if(i) cout << ' ';
-        cout << (bestSide[i] + 1);
+    cout<<bestCut<<"\n";
+    for(int i=1;i<=n;i++){
+        if(i>1) cout<<' ';
+        cout<<(bestSide[i]+1);
     }
-    cout << "\n";
-    
-    return 0;
+    cout<<"\n";
 }
