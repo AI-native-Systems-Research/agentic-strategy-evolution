@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both arms scored 100/100. The main BnB+DLS hybrid confirmed its perfect score, but the ablation revealed that BnB alone (without the DLS tabu search fallback) also achieves score 100, meaning the DLS component is unnecessary for this judge's test set.",
+  "key_points": [
+    "h-main (BnB+DLS hybrid): Predicted score 100, observed score 100 \u2014 CONFIRMED. The solution reliably achieves a perfect score across evaluations.",
+    "h-ablation (BnB-only, no DLS fallback): Predicted score 88-95, observed score 100 \u2014 REFUTED. The branch-and-bound solver with degeneracy ordering and bitset coloring bounds is sufficient on its own within the 1950ms budget.",
+    "The iter-1 belief that BnB alone 'plateaus around 88-90%' was based on a version without degeneracy ordering (which scored 80). With degeneracy ordering added, BnB handles all test instances optimally \u2014 the DLS tabu search adds zero value.",
+    "The problem is effectively solved: score 100 achieved with two independent approaches. No further optimization is needed unless the test set changes. The simpler BnB-only solution would be equally valid."
+  ]
+}
