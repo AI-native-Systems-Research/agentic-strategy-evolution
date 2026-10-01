@@ -21,12 +21,15 @@ score-vs-cost view (quality per dollar), not a forced equal cost.
 
 **What's left (checkpoints):**
 1. [ ] Fix the cloudcast story in our results → it's a tie at SOTA, not a Nous win.
-2. [ ] Swap the Claude baseline: use the **Claude *agent*** (with tools), not the old chat-only one.
-3. [ ] Run the real **Engram** on the hard/gate tasks (p0, p5, p9, p15, p22). (cloudcast already done.)
+2. [ ] Run the real **Engram** on the hard/gate tasks (p0, p5, p9, p15, p22). (cloudcast already done.)
+3. [ ] Then the **Claude *agent*** baseline (Engram `single_agent`, same harness — quick follow-on).
+       Use the Claude agent with tools, NOT the old chat-only loop.
 4. [ ] Re-run **Nous** only where it stopped early at a cap (p0, p211, p44) + a longer cloudcast run
        with the same hints Engram's prompt gets (fairness).
 5. [ ] Add **AIDE** as a 4th baseline and run it on our tasks.
 6. [ ] Put everything in one branch, update the results table + repro doc, commit & push.
+
+Order note: Engram FIRST (expensive pacing item), then Claude-agent reuses the same harness.
 
 **The honest headline:** the Nous advantage lives on the **gate tasks** (p15, p22, p9) where the
 other agents score ~0; cloudcast and the easy task (p1) are ties. We keep the losses in (p44) too.
