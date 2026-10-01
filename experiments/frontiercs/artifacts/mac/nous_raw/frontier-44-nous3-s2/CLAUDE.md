@@ -100,11 +100,12 @@ Output
 
 **Controllable knobs:** solution_cpp
 
-## Active Principles (after iteration 1)
+## Active Principles (after iteration 2)
 
-- **RP-1** [domain]: For TSP variant problem #44 with N up to 200K and 2-second time limit, grid-based nearest-neighbor construction accounts for ~93% of the final score (64.5 out of 69.5). SA optimization with random swap + 2-opt adds only ~5 points.
+- **RP-1** [domain]: For penalty-aware TSP with carrot constraint, grid-guided 2-opt with penalty-aware fast delta + Or-opt + position tracking outperforms random swap + approximate boundary-only 2-opt by ~9 points (78.8 vs 69.5), because spatially-guided moves are more productive and exact penalty delta avoids accepting bad moves.
 - **RP-2** [domain]: The penalty structure (10% surcharge on every 10th step when source is non-prime) contributes at most ~1% to total tour cost. Prime scheduling post-pass captures most available savings but adds <1 point to score.
-- **RP-3** [domain]: 2-opt with boundary-only delta approximation (ignoring internal penalty changes from segment reversal) provides comparable optimization to exact range recompute, while enabling ~10x more iterations per second.
+- **RP-3** [domain]: For penalty-aware TSP under tight time limits (2s, N=200K), grid-guided spatial neighbor selection for 2-opt (using the same grid as NN construction, O(1) per lookup) outperforms both precomputed KNN lists (O(N*K) build overhead) and random selection, because it provides spatial guidance without startup cost.
+- **RP-4** [domain]: Double-bridge perturbation (non-sequential 4-opt) does NOT improve TSP score within a 2-second time limit for N=200K, because the overhead of O(N) tour recomputation after each perturbation plus shorter SA phases with cold restarts outweighs the benefit of escaping local optima.
 
 ## Most Recent Handoff
 

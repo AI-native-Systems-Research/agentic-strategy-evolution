@@ -1,0 +1,10 @@
+{
+  "arm": "h-main",
+  "description": "ILS with double-bridge perturbation + grid-guided 2-opt + Or-opt + penalty-aware delta",
+  "scores": [78.744, 78.682, 73.724, 68.726, 78.714],
+  "mean": 75.718,
+  "median": 78.682,
+  "min": 68.726,
+  "max": 78.744,
+  "stdev": 4.37
+}

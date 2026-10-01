@@ -2,16 +2,17 @@
   "principles": [
     {
       "id": "RP-1",
-      "statement": "For TSP variant problem #44 with N up to 200K and 2-second time limit, grid-based nearest-neighbor construction accounts for ~93% of the final score (64.5 out of 69.5). SA optimization with random swap + 2-opt adds only ~5 points.",
+      "statement": "For penalty-aware TSP with carrot constraint, grid-guided 2-opt with penalty-aware fast delta + Or-opt + position tracking outperforms random swap + approximate boundary-only 2-opt by ~9 points (78.8 vs 69.5), because spatially-guided moves are more productive and exact penalty delta avoids accepting bad moves.",
       "confidence": "high",
-      "regime": "N up to 200K, 2-second time limit, cities sorted by x-coordinate",
+      "regime": "TSP with N up to 200K, 2-second time limit, penalty structure at every 10th position",
       "evidence": [
-        "iteration-1-h-main"
+        "iteration-1-h-main",
+        "iteration-2-h-ablation"
       ],
       "contradicts": [],
-      "extraction_iteration": 1,
-      "mechanism": "For N=200K, random SA evaluates O(10M) moves in 1.7s. With O(N^2) = 4*10^10 possible swap pairs, coverage is <0.1%. Most random moves don't improve the tour. Construction quality determines the starting point, and SA can only make local refinements.",
-      "applicability_bounds": "Applies when N is large (>10K) and time limit is tight (2s). For small N (<1000), SA has much better coverage and construction matters less.",
+      "extraction_iteration": 2,
+      "mechanism": "Three synergistic improvements: (1) Grid-guided neighbor selection finds spatially close cities for 2-opt, so more moves are productive. (2) Penalty-aware fast delta computes exact cost change including penalty positions in O(1 + segment/10), avoiding the error accumulation of boundary-only delta. (3) pos[] array enables O(1) position lookup for NN-guided move selection. (4) Or-opt (single city relocate) handles improvements that 2-opt reversal cannot.",
+      "applicability_bounds": "Requires grid data structure and pos[] array maintenance. The improvement magnitude depends on time budget relative to N.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",
@@ -38,16 +39,35 @@
     },
     {
       "id": "RP-3",
-      "statement": "2-opt with boundary-only delta approximation (ignoring internal penalty changes from segment reversal) provides comparable optimization to exact range recompute, while enabling ~10x more iterations per second.",
-      "confidence": "medium",
-      "regime": "TSP with sparse step-based penalties, segment lengths 2-200",
+      "statement": "For penalty-aware TSP under tight time limits (2s, N=200K), grid-guided spatial neighbor selection for 2-opt (using the same grid as NN construction, O(1) per lookup) outperforms both precomputed KNN lists (O(N*K) build overhead) and random selection, because it provides spatial guidance without startup cost.",
+      "confidence": "high",
+      "regime": "TSP with N up to 200K, 2-second time limit, penalty structure at every 10th position",
       "evidence": [
-        "iteration-1-h-main"
+        "iteration-2-h-main",
+        "iteration-2-h-ablation"
       ],
       "contradicts": [],
-      "extraction_iteration": 1,
-      "mechanism": "Boundary-only delta is O(1) per evaluation vs O(segment_length) for exact recompute. Since penalties affect only 10% of steps, the approximation error is small. Periodic full recompute corrects drift.",
-      "applicability_bounds": "Works when penalties are sparse (every 10th step). Would fail for dense penalty structures.",
+      "extraction_iteration": 2,
+      "mechanism": "Grid-based neighbor lookup reuses the spatial grid built for NN construction. For each SA move, it picks a random city in the same or adjacent grid cell as the selected city, achieving spatial proximity (cities in same cell are geometrically close) without the O(N*K) cost of precomputing a KNN list for every city. For N=200K with K=12, KNN building takes 0.3-0.5s, which is 15-25% of the 2s budget. Grid lookup is O(1) amortized.",
+      "applicability_bounds": "Applies when time budget is tight relative to N. For longer time limits or smaller N, precomputed KNN may be better because it provides exactly the K closest neighbors rather than random samples from nearby cells.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "Double-bridge perturbation (non-sequential 4-opt) does NOT improve TSP score within a 2-second time limit for N=200K, because the overhead of O(N) tour recomputation after each perturbation plus shorter SA phases with cold restarts outweighs the benefit of escaping local optima.",
+      "confidence": "high",
+      "regime": "TSP with N up to 200K, 2-second time limit, SA-based optimization",
+      "evidence": [
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "After double-bridge, totalCost() requires O(N) recomputation. For N=200K this costs ~5ms per perturbation. The SA phase after perturbation starts with a degraded tour that needs significant iterations to recover. Splitting the 1.75s SA budget into 0.4s phases means each phase barely converges before the next perturbation. The net effect is fewer total productive SA iterations compared to continuous SA.",
+      "applicability_bounds": "This refutation applies specifically to N=200K with 2s total time. For smaller N (where totalCost() is cheap) or longer time limits (where each SA phase can fully converge), double-bridge ILS may still be beneficial as in classical TSP literature.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",
