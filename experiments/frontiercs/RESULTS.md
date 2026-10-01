@@ -116,24 +116,36 @@ matched budget across 7 journal-sharing agents and still got 0. Nous's determini
 Score reported by the judge is `100/(1+total_cost)`, so the discriminating metric is **total_cost ($),
 lower = better**. Deterministic local evaluator (no judge noise). Naive dijkstra baseline = $1046.
 
-| Agent | transfer-cost $ (lower=better) | judge score | our $ spend | notes |
-|---|---|---|---|---|
-| **Nous** | **$626** | 0.1595 | $9.89 | directed Steiner arborescence (iter-2); ~40% cheaper than all |
-| Engram | $1077 | 0.0927 | $4.92 | cost-matched; plateaued after 3 agents, worse than naive |
-| Claude | $1107 | 0.0902 | $2.0 | plateaued, worse than naive |
-| naive dijkstra | $1046 | 0.0955 | — | reference anchor |
-| (published LLM refs) | $1072-1263 | — | — | gpt5 $1093, gemini3pro $1072, deepseek $1263 |
+cloudcast is **Engram's own published benchmark**. The fair comparator is therefore the **real
+Engram** (their actual code, `mit-nms/Engram`, run on the same model Opus 4.6 via litellm), not our
+reimplementation. Running it changes the result:
 
-**Nous beats the naive baseline, plain Claude, Engram, and every published LLM reference by ~40% on
-cost**, by discovering a directed-Steiner-arborescence routing in its iter-2 hypothesis. Decisively,
-this is on cloudcast — **Engram's own benchmark** — where Engram plateaued after 3 agents at $1077
-(slightly worse than the naive dijkstra baseline, far from Nous's $626). Sequential-agent memory alone
-did not find the structural insight that Nous's controlled-experiment loop surfaced.
+| Agent | transfer-cost $ (lower=better) | our $ spend | notes |
+|---|---|---|---|
+| **Nous** | **$626** | $9.89 | directed Steiner arborescence (iter-2) |
+| **real Engram** (as-is) | **~$624** | ~$52 | their code, Opus 4.6; ties Nous at SOTA |
+| human SOTA (their paper) | $626 | — | reference |
+| Engram paper (o3 / gpt-5.2) | $622-662 | — | their reported range |
+| evolutionary baselines (OpenEvolve/FunSearch/EoH) | $640-696 | — | their paper |
+| Claude (chat-loop) | $1107 | $2.0 | plateaus, worse than naive |
+| naive dijkstra | $1046 | — | reference anchor |
+
+**On cloudcast, Nous and real Engram are tied at the state of the art** ($626 vs ~$624, both at the
+human-expert level), and both find the solver-backed (Steiner/MILP) design that the evolutionary
+baselines miss ($640-696). This is **not** a Nous win; it is a tie between the two
+experimentation-driven agents, with Nous reaching it at ~5x lower $ (~$10 vs ~$52) — a cost-efficiency
+difference, not a quality one. The honest Nous advantage lives on the **algorithmic gate tasks**
+(p15, p22, p9) where the baselines score ~0 and only Nous solves, not on cloudcast.
+
+Footnote (do not headline): our earlier *reimplemented* Engram scored only $1077 here under
+scalar-score feedback; that number **understated Engram** and is superseded by the real-Engram ~$624.
+It stands only as evidence that memory-over-scalar-feedback (our reimpl) is far weaker than Engram's
+real tool-enabled agent.
 
 Infra note: the Nous SDK design turn froze once per campaign (p22 iter-1 on first launch, cloudcast
 iter-3) — a shared-litellm connection stall. p22 was relaunched clean; cloudcast had already completed
 iters 1-2 so its best solution was harvested (deterministic re-eval, no loss) and the dead iter-3
-killed. Engram/Claude use the plain chat API (retry-backoff) and are immune.
+killed.
 
 Artifacts: `artifacts/preds/{p22,cloudcast}.*.json`, `artifacts/nous_runs/{frontier-22,research-cloudcast-nous}/`
 (findings, patches, best solution, `llm_metrics.jsonl`), `artifacts/gen_logs/newtasks/` (agent logs +
