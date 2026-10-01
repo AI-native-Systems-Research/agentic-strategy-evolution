@@ -1,0 +1,22 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+setup:
+  - cmd: "g++ -O2 -o solution solution.cpp -lm"
+    description: "Build the solution binary"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "strip-2opt-carrot"
+        cmd: "git checkout -- solution.cpp && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-1/patches/h-main.patch && g++ -O2 -o solution solution.cpp -lm && bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-1/results/h-main/score.txt"
+        inputs: []
+        description: "Strip-based serpentine construction + 2-opt local search (window=30 for large N) + carrot-aware prime placement"
+
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "identity-order"
+        cmd: "git checkout -- solution.cpp && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-1/patches/h-control-negative.patch && g++ -O2 -o solution solution.cpp -lm && bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-1/results/h-control-negative/score.txt"
+        inputs: []
+        description: "Identity tour (0, 1, 2, ..., N-1, 0) - the baseline"

@@ -1,0 +1,82 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #211?'
+run_id: frontier-211-nous
+max_iterations: 3
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::211
+  description: "You are solving Frontier-CS algorithmic problem #211. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /home/ubuntu/frontier/gen_logs/fmeasure_211.sh $PWD/solution.cpp\nIt\
+    \ prints a single line 'SCORE: <n>' where n is the judge score (0-100). Record\
+    \ that number in the finding metadata under key 'score'. Each experiment arm should\
+    \ try a distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nPROBLEM STATEMENT:\nCommunication Robots\n\n## Problem Description\n\
+    \nIn a task area, there are several robots distributed that must maintain a connected\
+    \ network through wireless communication to complete tasks collaboratively.\n\n\
+    Wireless communication has the following characteristics:\n\n(1) Establishing\
+    \ communication links consumes energy.\n\n(2) There are high-power robots with\
+    \ more advanced communication modules, and links connected to them have lower\
+    \ energy consumption.\n\n(3) There are also several optional relay stations distributed\
+    \ in the task area that can serve as intermediate nodes for signals, helping to\
+    \ reduce overall energy consumption.\n\nYour task is to:\n\nDesign communication\
+    \ links, reasonably choose whether to enable relay stations, ensure all robots\
+    \ are connected, and minimize the overall energy consumption cost.\n\n## Communication\
+    \ Energy Consumption Rules\n\nThe square of the Euclidean distance between two\
+    \ nodes is the base value (D) of the communication energy consumption between\
+    \ the two nodes.\n\n- The energy consumption cost between an ordinary robot (R)\
+    \ and an ordinary robot (R) is 1 \xD7 D.\n- The energy consumption cost between\
+    \ an ordinary robot (R) and a high-power robot (S) is 0.8 \xD7 D.\n- The energy\
+    \ consumption cost between a high-power robot (S) and a high-power robot (S) is\
+    \ 0.8 \xD7 D.\n- The energy consumption cost between a relay station (C) and any\
+    \ robot (R or S) is 1 \xD7 D.\n- Relay stations (C) cannot communicate directly\
+    \ with each other.\n\n## Goal\n\nAll robots (R and S) must form a connected network.\
+    \ Any two robots must have a communication path between them, which can be a direct\
+    \ connection or pass through other robots or relay stations.\n\nYou can choose\
+    \ to use or not use any relay stations.\n\nMinimize the overall energy consumption\
+    \ cost.\n\n## Input Format\n\nThe first line contains two integers: N (number\
+    \ of robots) and K (number of optional relay stations).\n\nThe next N + K lines\
+    \ each contain: device ID, x-coordinate, y-coordinate, and type.\n\nConstraints:\n\
+    - N \u2264 1500, K \u2264 1500\n- Type R represents an ordinary robot, S represents\
+    \ a high-power robot, C represents an optional relay station\n- x-coordinates\
+    \ and y-coordinates are integers in the range [-10000, 10000]\n\n## Output Format\n\
+    \nThe first line: IDs of selected relay stations (if multiple, separated by \"\
+    #\"; if none, output \"#\").\n\nThe second line: Set of communication links (each\
+    \ link is represented as \"device_id-device_id\", multiple links are separated\
+    \ by \"#\").\n\n## Example\n\n### Input\n\n```\n3 1\n1 0 0 R\n2 100 0 R\n3 50\
+    \ 40 S\n4 50 0 C\n```\n\n### Output\n\n```\n4\n1-3#2-3#3-4\n```\n\n## Scoring\n\
+    \nYour solution will be evaluated based on the total energy consumption cost of\
+    \ the network you construct. The score is calculated as:\n\n- Base score: The\
+    \ minimum spanning tree (MST) cost of all non-relay nodes (without using any relay\
+    \ stations).\n- Your score: The actual total cost of your network.\n- Final score\
+    \ ratio: min(1.0, base_cost / actual_cost)\n\nIf your network cost is less than\
+    \ or equal to the base MST cost, you receive full score (1.0). Otherwise, your\
+    \ score decreases proportionally.\n\n## Constraints\n\n- 1 \u2264 N \u2264 1500\n\
+    - 0 \u2264 K \u2264 1500\n- Device coordinates: -10000 \u2264 x, y \u2264 10000\n\
+    - All robots (R and S) must be connected in the final network\n- Relay stations\
+    \ cannot be directly connected to each other\n\n## Time Limit\n\n10 seconds per\
+    \ test case\n\n## Memory Limit\n\n512 MB\n"
+  repo_path: /home/ubuntu/frontier/gen_logs/frontier_211_nous_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /home/ubuntu/nous_repo/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: 69f08f59abe658cdf6d3056d1568e41fd69d19b3
+  nous_version: 0.5.0
+  started_at: '2026-09-30T23:48:48.537008+00:00'

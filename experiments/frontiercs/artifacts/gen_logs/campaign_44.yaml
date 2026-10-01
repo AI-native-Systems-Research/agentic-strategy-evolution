@@ -1,0 +1,71 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #44?'
+run_id: frontier-44-nous
+max_iterations: 3
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::44
+  description: "You are solving Frontier-CS algorithmic problem #44. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp\nIt\
+    \ prints a single line 'SCORE: <n>' where n is the judge score (0-100). Record\
+    \ that number in the finding metadata under key 'score'. Each experiment arm should\
+    \ try a distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nPROBLEM STATEMENT:\nProblem: Traveling Santa with Carrot Constraint\n\
+    \nStory\nRudolph plans to shorten Santa\u2019s route by choosing a better order\
+    \ to visit cities. Every 10th step takes 10% longer unless that step starts from\
+    \ a prime-numbered city. Your task is to output a valid tour and compete on how\
+    \ much you improve over a strengthened baseline.\n\nFormal definition\n- There\
+    \ are N cities labeled 0, 1, 2, \u2026, N\u22121. City 0 is the North Pole.\n\
+    - Each city i has 2D Cartesian coordinates (xi, yi).\n- A route is a sequence\
+    \ P of length N+1: P0, P1, \u2026, PN with:\n  - P0 = PN = 0\n  - {P1, P2, \u2026\
+    , PN\u22121} is a permutation of {1, 2, \u2026, N\u22121}\n- The Euclidean distance\
+    \ between cities a and b is dist(a, b) = sqrt((xa \u2212 xb)^2 + (ya \u2212 yb)^2).\n\
+    - Carrot constraint (10% step penalty):\n  - For each step t = 1, 2, \u2026, N\
+    \ (moving from P[t\u22121] to P[t]), define a multiplier:\n    - If t is a multiple\
+    \ of 10 and P[t\u22121] is not a prime number, multiplier m[t] = 1.1\n    - Otherwise,\
+    \ m[t] = 1.0\n  - We use the standard definition of primes over city IDs: 2, 3,\
+    \ 5, 7, 11, \u2026 are prime; 0 and 1 are not prime.\n- The penalized length of\
+    \ the route is:\n  L(P) = sum over t = 1..N of m[t] \xD7 dist(P[t\u22121], P[t])\n\
+    \nGoal\nMinimize L(P) subject to the route validity constraints.\n\nInput\n- First\
+    \ line: integer N (2 \u2264 N \u2264 200000).\n- Next N lines: two integers xi\
+    \ yi for i = 0..N\u22121.\n  - Coordinates satisfy |xi|, |yi| \u2264 10^9.\n \
+    \ - IMPORTANT: The N lines are given in strictly increasing order by x:\n    x0\
+    \ < x1 < x2 < \u2026 < xN\u22121.\n    City IDs equal their input order. This\
+    \ strengthens the baseline path that follows the input order.\n\nOutput\n- First\
+    \ line: integer K, which must be exactly N+1.\n- Next K lines: one integer per\
+    \ line, the city ID sequence P0, P1, \u2026, PN.\n  - Must satisfy P0 = PN = 0\
+    \ and visit every city 1..N\u22121 exactly once.\n\nValidity checks\n- City IDs\
+    \ must be in [0, N\u22121].\n- The sequence must start and end at 0.\n- Each city\
+    \ 1..N\u22121 must appear exactly once between P1 and PN\u22121.\n- If any of\
+    \ these fail, the output is invalid and receives 0 for that test.\n\nNotes and\
+    \ clarifications\n- Step indexing for penalties is global over the entire tour:\
+    \ steps t = 10, 20, 30, \u2026 may be penalized depending on the source city ID\
+    \ at that step.\n- If N < 10, no step index is a multiple of 10, so no 10% penalties\
+    \ occur.\n- 0 and 1 are not prime. The first prime city ID is 2.\n- Distances\
+    \ and sums are computed in double precision; no rounding beyond floating-point\
+    \ arithmetic.\n- The platform may display normalized scores in [0, 100]; the checker\
+    \ outputs [0, 1] (after remap).\n- Multiple tests of varying sizes are used; your\
+    \ final score is the average of per-test scores.\n\nConstraints and limits\n-\
+    \ Time limit: 2 seconds\n- Memory limit: 512 MB\n\nSample\nInput\n5\n0 0\n1 0\n\
+    2 0\n3 1\n4 1\n\nOutput\n6\n0\n1\n2\n3\n4\n0\n\n(The sample illustrates format\
+    \ only.)\n"
+  repo_path: /home/ubuntu/frontier/gen_logs/frontier_44_nous_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /home/ubuntu/nous_repo/prompts/methodology
+  domain_adapter_layer: null

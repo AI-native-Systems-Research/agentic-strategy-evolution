@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Over two iterations, we improved the Traveling Santa score from 0 (identity baseline) \u2192 55.4 (strip construction + window 2-opt) \u2192 76.3 (nearest-neighbor construction + spatial NN-list 2-opt with K=20). The core insight is that geometric neighborhood search dominates performance: replacing tour-order window candidates with spatial nearest-neighbor candidates yielded a +21 point jump. The carrot penalty (~3% of total cost) is secondary to pure TSP optimization.",
+  "key_points": [
+    "Score progression: iter-0 baseline=0, iter-1=55.4, iter-2=76.3 (h-main, confirmed at predicted 70-80 range with 0 variance across 3 runs). The ablation (strip construction + same optimizer) scored 66.2\u00b13.8, confirming NN construction contributes ~10 points and stabilizes convergence.",
+    "Dominant factor identified: spatial NN-list 2-opt (K=20 precomputed nearest neighbors per city) is the single biggest lever. Window-based 2-opt (iter-1) only checks tour-order neighbors, missing geometrically close cities far apart in tour order. Forward-only 2-opt (j>i) outperforms bidirectional by 5 points because long reversals are harmful.",
+    "Dead ends confirmed: or-opt hurts (-5 points vs pure 2-opt), bidirectional 2-opt hurts (-5 points), grid-based NN precompute is O(N\u00b2) for scattered data. The carrot penalty is too small (~3%) to justify penalty-aware move evaluation.",
+    "Still unknown and worth investigating in iter-3: (1) Whether K>20 nearest neighbors improves score (diminishing returns vs precompute cost), (2) 3-opt or Lin-Kernighan moves for escaping 2-opt local optima, (3) multiple random NN construction starts with best-of selection, (4) double-bridge perturbation (ILS) if time permits for smaller test cases. The scoring curve is harsh (N^0.6 scaling), so incremental improvements from 76\u219285+ likely require qualitatively different move types.",
+    "Risk assessment: Current solution is stable (0 variance), within time limits, and handles both scattered (N\u226440K) and grid-like (N\u2264200K) test distributions. Further gains are expected to be smaller (diminishing returns on 2-opt improvements) unless we introduce 3-opt/LK-style moves."
+  ]
+}

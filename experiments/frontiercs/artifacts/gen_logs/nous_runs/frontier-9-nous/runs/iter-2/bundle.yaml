@@ -1,0 +1,97 @@
+metadata:
+  iteration: 2
+  family: "tree-matching-sort-dfs-timestamps"
+  research_question: "Can DFS-timestamp subtree membership queries replace all-pairs BFS distances for tree matching sort, eliminating O(n²) precomputation while maintaining score 100?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (DFS timestamps replacing BFS) + ablation (vector vs array adjacency). Tier 1 confirmed the core algorithm in iter-1; tier 2 tests a specific optimization."
+
+arms:
+  - type: h-main
+    prediction: "The DFS timestamps approach will achieve a judge score of 100, matching the iter-1 BFS-based solution, because it produces mathematically identical routing decisions (subtree membership ≡ distance reduction on trees) while eliminating the O(n²) BFS bottleneck and ~2MB D[][] matrix. The freed cache and CPU budget provides more timing headroom."
+    mechanism: >
+      On a tree rooted at vertex r, for edge (u,v) where v is u's child:
+      element a at u wants to cross to v iff a's target vertex is in v's subtree.
+      This is because the unique path from u to a must go through v when a is in
+      v's subtree. The check D[v][a] == D[u][a] - 1 is equivalent to
+      tin[v] <= tin[a] <= tout[v] (DFS timestamp subtree membership), verifiable
+      in O(1) after O(n) DFS preprocessing. This replaces O(n²) all-pairs BFS
+      precomputation and eliminates the D[MAXN][MAXN] distance matrix entirely.
+      All other algorithmic components (depth-parity coloring, tree DP max-weight
+      matching, type-2=2/type-1=1 weighting, anti-oscillation gating) remain
+      identical. The round counts are provably identical to the BFS version
+      (verified on all 20 test cases during exploration).
+    diagnostic: >
+      If score < 100: (a) verify routing decisions match BFS version by comparing
+      round counts on each test case — they must be identical. If not, there's a
+      bug in the subtree membership check (off-by-one in tin/tout, or wrong
+      parent/child identification for edge endpoints). (b) If round counts match
+      but score < 100, it's a timing issue — the implementation is correct but too
+      slow, suggesting the DFS improvement alone isn't sufficient and additional
+      optimizations (pragma, etc.) are needed.
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace all-pairs BFS with DFS timestamp subtree membership. Remove the D[MAXN][MAXN] distance matrix and bfs() function. Add tin[], tout[], dfs_timer, child_endpoint[] arrays. Add compute_dfs_timestamps() function. Replace the distance-based routing check (D[v][a] == D[u][a]-1) with is_in_subtree(v, a). Keep array-based adjacency, iterative DP, depth-parity coloring, output buffering, and GCC pragmas."
+        rationale: "This is the core algorithmic improvement: mathematically equivalent routing decisions with O(n) instead of O(n²) precomputation and ~2MB less memory"
+
+  - type: h-ablation
+    prediction: "The DFS timestamps approach with vector adjacency lists will score ≤99.4, because the vector overhead in per-round DP iteration (heap-allocated, non-contiguous memory access for child arrays) still causes enough slowdown to TLE on the largest test cases. This demonstrates that array-based adjacency is necessary regardless of the DFS improvement."
+    mechanism: >
+      Even though DFS timestamps eliminate the D[][] cache pressure, the per-round
+      tree DP still iterates over children of each node ~2000n times total (rounds
+      × nodes). With std::vector<int> children, each ch[u] access follows a pointer
+      to heap-allocated memory, causing cache misses. With ch_arr[u][ci], the
+      children are stored in a contiguous 2D array. The vector overhead is ~50ns per
+      node per round (measured indirectly: vector version is 0.63% slower, which
+      across ~2000 rounds × ~500 nodes accumulates to enough TLE). The DFS
+      improvement saves time in precomputation but not in the per-round inner loop,
+      which is where the vector overhead resides.
+    diagnostic: >
+      If score = 100 unexpectedly: the DFS speedup may have provided enough
+      headroom to compensate for vector overhead. This would mean the O(n²) BFS was
+      the dominant cost, and the per-round vector overhead is secondary. Check
+      execution times of both versions to quantify the tradeoff.
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement the DFS timestamps algorithm with vector<pair<int,int>> adjacency lists and vector<int> children instead of array-based adjacency (head_arr/nxt_arr/to_arr/ch_arr). Keep DFS timestamps, iterative DP, depth-parity coloring, output buffering, and GCC pragmas."
+        rationale: "Ablates the array-based adjacency optimization to test whether the DFS improvement compensates for vector overhead in the per-round DP loop"
+
+# Arm selection rationale:
+# h-main: Tests a genuine algorithmic improvement (DFS timestamps replacing BFS).
+#   This is not just an implementation tweak — it changes the asymptotic complexity
+#   of the precomputation from O(n²) to O(n) and eliminates a ~2MB data structure.
+# h-ablation: Isolates the array-adjacency optimization by removing it from the
+#   improved DFS version. If the DFS improvement alone isn't sufficient for 100,
+#   it confirms that per-round data structure efficiency is the binding constraint.
+# Not included: h-control-negative (already done in iter-1, score 5),
+#   h-dose-response (no continuous knob to vary — the DFS approach is binary),
+#   h-robustness (the test suite already covers random trees, paths, and bushy trees).
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -o solution solution.cpp"
+  verified_parameters:
+    max_rounds_multiplier: 6
+    root_vertex: 1
+    type2_weight: 2
+    type1_weight: 1
+    coloring_scheme: "depth_parity"
+    routing_method: "dfs_subtree_membership"
+  unlocked_parameters_audit:
+    - name: "max_rounds_multiplier"
+      default_value: 6
+      justification: "6n rounds provides generous headroom; max observed round count is 2.02n on bushy trees"
+    - name: "root_vertex"
+      default_value: 1
+      justification: "Vertex 1 is the default root; centroid rooting was tested in iter-1 (v6, score 90) and performed worse"
+    - name: "type2_weight"
+      default_value: 2
+      justification: "Type-2 swaps benefit both endpoints; weight 2 gives appropriate priority over type-1 in the matching"
+    - name: "type1_weight"
+      default_value: 1
+      justification: "Type-1 swaps benefit one endpoint; weight 1 is sufficient to include them when color-gating allows"
+    - name: "optimization_level"
+      default_value: "-O2"
+      justification: "Standard optimization flag used by the judge; pragma GCC optimize in source bumps to O3 for the solution code"
+    - name: "pragma_optimizations"
+      default_value: "O3,unroll-loops + avx2"
+      justification: "Provides consistent 5/5 scoring at 100 vs 4/5 without pragmas; the marginal timing benefit prevents occasional TLE"

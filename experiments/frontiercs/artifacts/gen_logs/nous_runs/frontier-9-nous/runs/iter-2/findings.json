@@ -1,0 +1,49 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The DFS timestamps approach will achieve a judge score of 100, matching the iter-1 BFS-based solution, because it produces mathematically identical routing decisions (subtree membership \u2261 distance reduction on trees) while eliminating the O(n\u00b2) BFS bottleneck and ~2MB D[][] matrix. The freed cache and CPU budget provides more timing headroom.",
+      "observed": "Score: 100/100 on all 3 runs (100, 100, 100). The DFS timestamps + array adjacency solution achieves perfect scores with complete consistency across all runs. This includes the smoke test during preparation (also 100). The solution uses O(n) DFS precomputation instead of O(n\u00b2) BFS, eliminates the D[MAXN][MAXN] distance matrix entirely, and replaces distance comparisons with O(1) subtree membership checks via tin[]/tout[] arrays.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Perfect 3/3 consistency at score 100 exceeds the iter-1 BFS-based solution's consistency (4/5 at 100, 1/5 at 95). The DFS approach provides strictly more timing headroom by eliminating the O(n\u00b2) precomputation phase, making the solution more robust to system load variance. Round counts are mathematically identical to the BFS version (verified by designer on all 20 test cases).",
+      "metadata": {
+        "score": 100,
+        "scores": [
+          100,
+          100,
+          100
+        ],
+        "mean_score": 100.0,
+        "consistency": "3/3 at 100"
+      }
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "The DFS timestamps approach with vector adjacency lists will score \u226499.4, because the vector overhead in per-round DP iteration (heap-allocated, non-contiguous memory access for child arrays) still causes enough slowdown to TLE on the largest test cases. This demonstrates that array-based adjacency is necessary regardless of the DFS improvement.",
+      "observed": "Score: 94.37 mean across 3 runs (94.37, 94.37, 99.37). The vector adjacency version scores consistently below 100, with 2/3 runs at 94.37 and 1/3 at 99.37. All scores are \u226499.4 as predicted. The magnitude of degradation (mean 96.03) is larger than the designer's exploration suggested (99.37), because the avx2 pragma had to be removed \u2014 #pragma GCC target(\"avx2\") causes a compilation error with std::vector's allocator in GCC 13 (always_inline target mismatch). This makes the vector approach doubly penalized: it loses both contiguous-array cache efficiency AND the avx2 vectorization optimization.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The ablation reveals two coupled costs of vector adjacency: (1) heap-allocated non-contiguous child arrays cause cache misses in the per-round DP inner loop (~2000 rounds \u00d7 ~500 nodes), and (2) vector types are incompatible with the #pragma GCC target(\"avx2\") optimization that the array version benefits from. The 5.63-point average gap (100 vs 96.03) is larger than the designer's predicted 0.63-point gap because both effects compound. This refines RP-3: array-based data structures are critical not just for cache efficiency but also for enabling compiler-level vectorization optimizations.",
+      "metadata": {
+        "score": 94.37,
+        "scores": [
+          94.37,
+          94.37,
+          99.37
+        ],
+        "mean_score": 96.03,
+        "consistency": "2/3 at 94.37, 1/3 at 99.37",
+        "bundle_amendment": "avx2 pragma removed due to compilation error with std::vector allocator"
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main scored 100 consistently (3/3 runs), confirming that DFS timestamps are a strict improvement over all-pairs BFS: identical routing decisions with O(n) instead of O(n\u00b2) precomputation. h-ablation scored \u226499.4 on all 3 runs (94.37, 94.37, 99.37), confirming that array-based adjacency remains necessary even with the DFS improvement. The ablation effect is larger than expected (mean 96.03 vs predicted ~99.37) because vector types additionally preclude avx2 optimization. The combined evidence establishes a clear optimization hierarchy: (1) algorithmic correctness (anti-oscillation + tree DP) provides the foundation (score 5\u2192100), (2) array-based data structures enable cache efficiency and vectorization (score ~96\u2192100), (3) DFS timestamps improve robustness by eliminating unnecessary O(n\u00b2) work.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}

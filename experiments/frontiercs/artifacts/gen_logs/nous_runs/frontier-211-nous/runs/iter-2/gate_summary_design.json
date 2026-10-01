@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether three enhancements to the iteration-1 metric closure MST algorithm (perturbed restarts, relay reassignment, and degree-3 hub insertion) can improve the judge score beyond the 86.951 baseline. Two experiment arms will run: h-main (all three enhancements combined, predicted score ~87.162) and h-ablation (perturbed restarts only, predicted ~87.07), which isolates the contribution of the post-processing steps.",
+  "key_points": [
+    "h-main combines three stacking improvements on the iter-1 foundation: (1) time-limited perturbed MC MST restarts with noise \u03b5\u2208[0.002,0.102] to explore alternative tree topologies, (2) relay reassignment that swaps each used relay for a potentially better unused one, and (3) degree-3 hub insertion that connects 3 robots through a single relay using Steiner subtree savings.",
+    "h-ablation runs perturbed restarts with unlimited greedy insertion rounds but omits relay reassignment and degree-3 hub insertion, allowing us to quantify whether post-processing adds measurable value (~0.09 points predicted) beyond what perturbation alone discovers.",
+    "Confirmation criteria: h-main scores \u226587.05 (above iter-1's 86.951) AND h-main > h-ablation. Refutation: if h-main \u2264 86.951, the enhancements are not helping; if h-main \u2248 h-ablation, the post-processing steps add no value. A key diagnostic is checking whether perturbed restarts actually produce diverse MST edge sets across trials.",
+    "Risk factors: the judge server may be slower than local probing, limiting the number of perturbation trials within the 9-second budget; the degree-3 hub insertion has O(K\u00b7C(8,3)) complexity per round which should be fast but needs verification; all measurements use the provided fmeasure_211.sh script and each arm calls it exactly once."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

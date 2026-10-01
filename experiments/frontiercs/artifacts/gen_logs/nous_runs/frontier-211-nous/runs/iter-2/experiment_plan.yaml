@@ -1,0 +1,22 @@
+metadata:
+  iteration: 2
+  bundle_ref: "runs/iter-2/bundle.yaml"
+  mode: real
+setup:
+  - cmd: "g++ -O2 -o sol solution.cpp"
+    description: "Build the current solution.cpp"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "h-main-treatment"
+        cmd: "git checkout -- solution.cpp && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-2/patches/h-main.patch && g++ -O2 -o sol solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_211.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-2/results/h-main/judge_output.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-2/patches/h-main.patch"
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "h-ablation-treatment"
+        cmd: "git checkout -- solution.cpp && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-2/patches/h-ablation.patch && g++ -O2 -o sol solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_211.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-2/results/h-ablation/judge_output.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-2/patches/h-ablation.patch"

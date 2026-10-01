@@ -1,0 +1,94 @@
+metadata:
+  iteration: 3
+  family: "matching-strategy-ablation"
+  research_question: "Is tree DP max-weight matching the necessary matching strategy for achieving score 100, or can simpler greedy matching suffice?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism ablation (tree DP vs greedy matching). Tier 1 confirmed core algorithm in iter-1, tier 2 confirmed DFS+array in iter-2; this ablates the remaining untested component."
+
+arms:
+  - type: h-main
+    prediction: "Replacing tree DP max-weight matching with two-pass greedy matching will cause consistent score degradation from 100 to ~99.4, because greedy matching cannot resolve weight conflicts at high-degree internal tree nodes — specifically on bushy trees (test 20, max_degree ~124) where greedy round counts exceed the 3n scoring threshold (observed 3.88n in probe vs DP's 2.02n)."
+    mechanism: >
+      The tree DP (solution.cpp:104-127) optimally resolves parent-child matching
+      conflicts: at each internal node u, the DP considers whether to match u with
+      its best-weight child (dp1[u]) or leave u unmatched for its parent's matching
+      (dp0[u]). On a bushy tree with high-degree nodes, many type-2 edges compete
+      for the same parent vertex. The DP picks the globally optimal set; the greedy
+      picks edges in input order (1 to n-1), often matching a low-priority edge
+      early and blocking a better one later. This produces ~92% more rounds on test
+      20 (3.88n vs 2.02n), pushing past the 3n scoring threshold. On low-degree
+      trees (paths, random), the conflict rate is low so greedy performs comparably
+      or even slightly better (fewer rounds due to simpler per-round overhead
+      allowing more rounds per time budget — but this is irrelevant since time
+      isn't the constraint here, round count is).
+    diagnostic: >
+      If score = 100 (refuted): the greedy's round counts must have stayed under
+      3n on all sub-tests, meaning the probe's 3.88n was an artifact of a different
+      implementation detail (perhaps the probe had a bug). Verify round counts by
+      adding stderr output. Also check: was the judge environment faster, allowing
+      the slightly slower greedy to still beat the time limit?
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace tree DP matching (compute_dp_iterative + extract_iterative) with a two-pass greedy matching function. First pass: scan edges 1 to n-1, include type-2 edges (EW[idx]==2) where both endpoints are unmatched. Second pass: scan edges 1 to n-1, include type-1 edges (EW[idx]==1) where both endpoints are unmatched. Use a boolean used_node[MAXN] array to track matched vertices, reset with memset each round. Remove dp0[], dp1[], best_ch[] arrays and both DP functions. Keep all other components: DFS timestamps, array adjacency, anti-oscillation, pragma, output buffering."
+        rationale: "This ablation isolates the tree DP component. The greedy matching has the same O(n) per-round complexity but with much smaller constant factor (no DP computation, no extraction trace-back). The score difference comes purely from suboptimal matching quality, not timing."
+
+  - type: h-robustness
+    prediction: "The proven DFS+DP+array solution will score 100 consistently across 3 measurements in the iter-3 judging environment, matching iter-2 results (3/3 at 100) and confirming cross-iteration robustness."
+    mechanism: >
+      The DFS+DP+array algorithm (solution.cpp:1-256) achieves round counts at
+      most 2.02n across all 44 sub-tests, well under the 3n scoring threshold.
+      The #pragma GCC optimize("O3,unroll-loops") and #pragma GCC target("avx2")
+      provide consistent sub-1-second execution. No code changes means no risk
+      of regression. This arm validates the baseline in the current environment.
+    diagnostic: >
+      If score < 100: check for system load variance (one run scoring 95 indicates
+      TLE on one test case). Run additional measurements. If consistently < 100,
+      investigate whether the judging environment changed.
+
+# Arm selection rationale:
+# h-main: Ablation of the tree DP matching component — the one remaining
+#   untested component of the algorithm. Iter-1 ablated anti-oscillation
+#   (score 100→5). Iter-2 ablated array adjacency (score 100→96) and
+#   all-pairs BFS (score unchanged, proving DFS equivalence). Iter-3
+#   ablates the matching strategy itself.
+# h-robustness: Verifies the proven solution in the current environment,
+#   providing the comparison point for h-main.
+# Not included:
+#   h-control-negative: would duplicate iter-1's control (naive=5)
+#   h-dose-response: no continuous knob to vary (matching is DP or greedy)
+#   h-ablation: h-main IS the ablation study
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -o solution solution.cpp"
+  verified_parameters:
+    max_rounds_multiplier: 6
+    root_vertex: 1
+    type2_weight: 2
+    type1_weight: 1
+    coloring_scheme: "depth_parity"
+    routing_method: "dfs_subtree_membership"
+    matching_strategy_baseline: "tree_dp_max_weight"
+    matching_strategy_hmain: "two_pass_greedy"
+  unlocked_parameters_audit:
+    - name: "max_rounds_multiplier"
+      default_value: 6
+      justification: "6n rounds provides headroom; DP max is 2.02n, greedy max is 3.88n, both under 6n"
+    - name: "root_vertex"
+      default_value: 1
+      justification: "Vertex 1 rooting; centroid rooting tested iter-1 (score 90), strictly worse"
+    - name: "type2_weight"
+      default_value: 2
+      justification: "Standard weight for bidirectional-benefit swaps; affects DP decisions at tie-breaks only"
+    - name: "type1_weight"
+      default_value: 1
+      justification: "Standard weight for unidirectional-benefit swaps; lower than type-2 ensures correct priority"
+    - name: "optimization_level"
+      default_value: "-O2"
+      justification: "Standard compiler flag; pragma in source provides O3+avx2 at runtime"
+    - name: "pragma_optimizations"
+      default_value: "O3,unroll-loops + avx2"
+      justification: "Provides 5/5 scoring consistency; marginal benefit over -O2 alone"
+    - name: "greedy_scan_order"
+      default_value: "edge_index_1_to_n"
+      justification: "Natural input ordering; alternative orderings (leaf-to-root) tested in exploration and scored 20 (catastrophic)"

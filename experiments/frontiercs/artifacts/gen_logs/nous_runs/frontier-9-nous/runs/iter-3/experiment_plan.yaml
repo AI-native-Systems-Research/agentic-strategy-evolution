@@ -1,0 +1,29 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+setup:
+  - cmd: "g++ -O2 -o solution solution.cpp"
+    description: "Build the baseline DFS+DP+array solution"
+arms:
+  - arm_id: "h-robustness"
+    conditions:
+      - name: "robustness-run1"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_9.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-9-nous/runs/iter-3/results/h-robustness/run1.txt"
+      - name: "robustness-run2"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_9.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-9-nous/runs/iter-3/results/h-robustness/run2.txt"
+      - name: "robustness-run3"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_9.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-9-nous/runs/iter-3/results/h-robustness/run3.txt"
+  - arm_id: "h-main"
+    conditions:
+      - name: "greedy-run1"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_9.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-9-nous/runs/iter-3/results/h-main/run1.txt"
+      - name: "greedy-run2"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_9.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-9-nous/runs/iter-3/results/h-main/run2.txt"
+      - name: "greedy-run3"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_9.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-9-nous/runs/iter-3/results/h-main/run3.txt"

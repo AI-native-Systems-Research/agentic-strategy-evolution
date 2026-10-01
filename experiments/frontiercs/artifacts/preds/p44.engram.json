@@ -1,0 +1,149 @@
+{
+  "problem_id": "44",
+  "agent": "engram",
+  "label": "engram",
+  "model": "claude-opus-4-6",
+  "final_score": 78.415,
+  "status": "success",
+  "solution": "/home/ubuntu/frontier/gen_logs/frontier_44_engram.solution.cpp",
+  "best_score": 78.415,
+  "method": "Engram-style (reimplementation)",
+  "agents_run": 6,
+  "rounds_per_agent": 3,
+  "code_generations": 18,
+  "cost_budget": 29.42,
+  "stop_reason": "plateau",
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 28.444000000000003,
+      "status": "success",
+      "plan": "Build an initial tour using nearest-neighbor, then run penalty-aware 2-opt and or-opt local search within the time limit, with special attention to placing primes at penalty positions."
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 21.9735,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 17.957500000000003,
+      "status": "success",
+      "plan": "Start with the natural x-sorted order tour, then greedily swap primes into penalty positions (indices 9,19,29,...) to eliminate 10% penalties, then perform penalty-aware 2-opt with efficient incremental cost evaluation using a restricted window, all within the time limit."
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 29.095499999999998,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 32.001000000000005,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 73.44800000000001,
+      "status": "success",
+      "plan": "Build an efficient nearest-neighbor tour using a KD-tree-like spatial index for O(N log N) construction, then apply penalty-aware Or-opt (single city relocations) and 2-opt moves with proper penalty recalculation, specifically targeting placing prime cities at penalty positions (step multiples of 10"
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 26.989,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 16.9935,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": 78.3885,
+      "status": "success",
+      "plan": "Build nearest-neighbor tour with grid, then run repeated passes of penalty-aware Or-opt (single city relocations) which are O(1) per evaluation and can cover much larger neighborhoods, combined with targeted prime-to-penalty-position swaps, all within the time budget."
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": 78.415,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": 27.483,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": 78.3145,
+      "status": "success",
+      "plan": "Build a strong nearest-neighbor tour with grid acceleration for all N sizes, then run penalty-aware 2-opt (with segment cost recomputation for affected penalty positions only), followed by targeted prime-swap optimization that relocates prime-numbered cities into every-10th positions and non-primes "
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": 72.465,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 4,
+      "round": 2,
+      "score": 72.3465,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 5,
+      "round": 0,
+      "score": 73.44649999999999,
+      "status": "success",
+      "plan": "Implement a clean nearest-neighbor construction with grid acceleration, followed by aggressive penalty-aware 2-opt using neighbor lists, then or-opt (single city relocations) with proper penalty recalculation, and finally a dedicated pass to swap cities into/out of penalty positions (every 10th step"
+    },
+    {
+      "agent": 5,
+      "round": 1,
+      "score": 58.423,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 5,
+      "round": 2,
+      "score": 73.202,
+      "status": "success",
+      "plan": null
+    }
+  ],
+  "input_tokens": 71875,
+  "output_tokens": 59735,
+  "cost_usd_est": 5.5583,
+  "journal": "/home/ubuntu/frontier/gen_logs/frontier_44_engram_engram/research_journal.md",
+  "seconds": 937.2
+}

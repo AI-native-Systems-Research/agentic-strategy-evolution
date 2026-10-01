@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed. The main arm (DFS timestamps with array adjacency) scored a perfect 100/100 on all 3 runs, improving consistency over iter-1's BFS approach (which had 4/5 at 100, 1/5 at 95). The ablation arm (DFS timestamps with vector adjacency) scored mean 96.03, confirming that array-based data structures remain critical for achieving perfect scores.",
+  "key_points": [
+    "h-main CONFIRMED: DFS timestamps + array adjacency achieved 100/100 consistently (3/3 runs), eliminating the O(n\u00b2) BFS precomputation while producing identical round counts. This is strictly more robust than iter-1's BFS solution.",
+    "h-ablation CONFIRMED: Vector adjacency scored \u226499.4 on all runs (94.37, 94.37, 99.37; mean 96.03), worse than predicted (~99.37) because std::vector is incompatible with the #pragma GCC target(\"avx2\") optimization, compounding the cache-miss penalty.",
+    "Optimization hierarchy established: (1) algorithmic correctness (anti-oscillation + tree DP) is the foundation (score 5\u2192100), (2) array-based data structures enable cache efficiency and avx2 vectorization (~96\u2192100), (3) DFS timestamps improve timing robustness by replacing O(n\u00b2) with O(n) precomputation.",
+    "The solution is fully optimized at score 100 with perfect 3/3 consistency \u2014 no further iteration is needed to improve the objective score."
+  ]
+}

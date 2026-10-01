@@ -1,0 +1,44 @@
+[
+  {
+    "id": "RP-6",
+    "statement": "Tree DP max-weight matching (not greedy matching) is the necessary matching strategy for achieving score 100 on bushy trees: greedy matching uses 3.88n rounds on bushy trees (max_degree ~124) vs DP's 2.02n, exceeding the 3n scoring threshold and causing consistent score degradation to 99.37.",
+    "confidence": "high",
+    "regime": "Bushy trees with max_degree > ~50, where multiple type-2 edges compete for the same internal node",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "At high-degree internal tree nodes, multiple type-2 edges (weight=2) compete for the same parent vertex. The tree DP (O(n) bottom-up computation) considers dp0[u] (leave u unmatched for parent) vs dp1[u] (match u with best child), globally optimizing matching weight. Greedy matching scans edges in input order (idx 1 to n-1), often matching a suboptimal edge early and blocking better alternatives at the same node. On bushy trees (test 20, n\u2248492, max_degree\u2248124), this produces 92% more rounds (3.88n vs 2.02n), pushing past the 3n scoring threshold. On low-degree trees (paths, random trees), greedy performs comparably or slightly better than DP because conflicts are rare.",
+    "applicability_bounds": "Applies specifically to bushy tree structures with high-degree internal nodes (degree > ~10). On path graphs and random trees with low max-degree, greedy matching achieves comparable round counts to DP and the score difference vanishes.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2-refined",
+    "statement": "The four critical algorithmic components for score 100 are: (1) anti-oscillation via depth-parity coloring (RP-1, without: 5), (2) tree DP max-weight matching (RP-6, without: 99.37), (3) array-based adjacency (RP-3-refined, without: 96), (4) DFS timestamp routing (RP-4, equivalent to BFS but more timing-robust). Removing any of components 1-3 causes measurable score degradation; the severity decreases by component: 95pts, 0.63pts, 4pts respectively.",
+    "confidence": "high",
+    "regime": "Tree matching sort on n\u22641000 with 1-second time limit and scoring formula s=(10n-m)/(7n)",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-1-h-control-negative",
+      "iteration-2-h-main",
+      "iteration-2-h-ablation",
+      "iteration-3-h-main",
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "Three-iteration ablation study systematically removed each component: iter-1 removed anti-oscillation (score 100\u21925, period-2 oscillation prevents convergence), iter-2 removed array adjacency (score 100\u219296, cache misses in per-round DP loop cause TLE), iter-3 removed tree DP matching (score 100\u219299.37, greedy exceeds 3n rounds on bushy trees). DFS timestamps (iter-2) are equivalent to BFS in correctness but use O(n) vs O(n\u00b2) precomputation, providing timing headroom.",
+    "applicability_bounds": "This hierarchy is specific to the scoring formula (10n base, 3n best) and n\u22641000 test sizes. For larger n or tighter time limits, the relative importance of components may shift.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

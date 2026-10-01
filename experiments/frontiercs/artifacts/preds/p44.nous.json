@@ -1,0 +1,16 @@
+{
+  "problem_id": "44",
+  "agent": "nous",
+  "label": "nous",
+  "model": "claude-opus-4-6",
+  "candidates": [
+    {
+      "path": "/home/ubuntu/frontier/gen_logs/frontier_44_nous_ws/solution.cpp",
+      "score": 68.8035,
+      "status": "success"
+    }
+  ],
+  "final_score": 68.8035,
+  "solution": "/home/ubuntu/frontier/gen_logs/frontier_44_nous_ws/solution.cpp",
+  "seconds": 9592.2
+}

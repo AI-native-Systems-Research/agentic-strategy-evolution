@@ -1,0 +1,99 @@
+metadata:
+  iteration: 1
+  family: "tsp-strip-2opt-carrot"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #44?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism: strip-based TSP construction + 2-opt local search + carrot prime placement"
+
+arms:
+  - type: h-main
+    prediction: "The strip-based serpentine construction with 2-opt local search and carrot-aware prime placement will produce a judge score significantly greater than 0, demonstrating that geometric tour optimization combined with penalty avoidance yields measurable improvement over the x-sorted baseline. Expected score range: 45-60."
+    mechanism: >
+      The baseline tour visits cities in x-sorted order, which for 2D-scattered
+      points creates large y-axis zigzags (expected step distance ~H/3 for
+      uniformly distributed y). The strip-based construction eliminates this by
+      grouping cities into horizontal strips and serpentining within strips,
+      reducing expected step distance to ~max(W,H)/sqrt(N). 2-opt local search
+      further reduces tour length by eliminating crossing edges. Carrot-aware
+      prime placement at penalty positions (indices 9, 19, 29, ...) avoids the
+      10% penalty on those steps, saving 0.1 * dist(tour[t-1], tour[t]) for
+      each position that would otherwise be penalized. Together, these produce
+      a tour with L(P) significantly below L_base, yielding positive r and s
+      values that map to a nonzero score through the checker's scoring curve.
+    diagnostic: >
+      If score is near 0: check if solution compiles and produces valid output
+      (correct K, starts/ends at 0, all cities visited). If score is lower than
+      expected: check if 2-opt is timing out on large test cases (N >= 120000);
+      check if strip count is poorly tuned for grid-like test data; check if
+      carrot swaps are increasing geometric cost more than the penalty savings.
+    code_changes:
+      - file: "solution.cpp"
+        intent: >
+          Replace the empty stub with a C++17 implementation of: (1) sieve of
+          Eratosthenes for prime city IDs, (2) strip-based serpentine tour
+          construction using sqrt(N*H/W) horizontal strips sorted alternately
+          by x, (3) 2-opt local search with adaptive window size (N for small
+          inputs, 30-50 for N >= 100K) running until 2.1 seconds elapsed,
+          (4) carrot-aware optimization that swaps prime cities to penalty
+          positions (indices 9, 19, 29, ...) when the net cost (penalty
+          savings minus geometric cost) is positive.
+        rationale: >
+          This tests whether the combination of geometric optimization (strip +
+          2-opt) and penalty avoidance (carrot primes) produces a significantly
+          shorter penalized tour than the x-sorted baseline. The strip
+          construction provides an O(N log N) starting tour that is much better
+          than the baseline for scattered points. The 2-opt improves it further
+          within the time limit. The carrot optimization handles the problem-
+          specific penalty mechanism.
+
+  - type: h-control-negative
+    prediction: "The identity tour (0, 1, 2, ..., N-1, 0) will score exactly 0, because it is the baseline used by the checker and produces zero improvement ratio."
+    mechanism: >
+      The checker computes L_base using exactly the identity order. When
+      L_you == L_base, r = 0 and s = 1.0. Both part1 (linear in r/r1)
+      and part2 (log((max(s,1) - log(s_start)) are zero or negative,
+      yielding ratio_base = 0 and final score = 0 after remap.
+    diagnostic: >
+      If score is not exactly 0: the checker's baseline computation may differ
+      from the identity order (check chk.cc:106-119), or the output format may
+      be wrong.
+    code_changes:
+      - file: "solution.cpp"
+        intent: >
+          Replace the empty stub with a minimal program that reads N and the
+          coordinates, then outputs N+1 followed by the sequence 0, 1, 2, ...,
+          N-1, 0 (the identity tour visiting cities in input order).
+        rationale: >
+          This is the control arm: the identity tour IS the baseline the checker
+          uses, so it should score exactly 0, confirming that the h-main arm's
+          score improvement is due to the algorithm, not a scoring artifact.
+
+# Arm selection rationale:
+# - h-main tests the primary algorithmic mechanism (strip + 2-opt + carrot)
+# - h-control-negative confirms the baseline scores 0 and validates that
+#   improvements measured in h-main are genuine
+# - No ablation arms in iter-1 (tier 1 constraint); iter-2 could test
+#   geometry-only vs carrot-only to decompose the contributions
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -std=c++17 -o /dev/null solution.cpp"
+  fanout_template: "bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+  verified_parameters:
+    time_limit_seconds: 2.5
+    memory_limit_mb: 512
+    num_test_cases: 20
+    max_N: 200000
+  unlocked_parameters_audit:
+    - name: "compiler_optimization_level"
+      default_value: "-O2"
+      justification: "Standard competitive programming optimization level; -O3 unlikely to change algorithmic score meaningfully"
+    - name: "strip_count_formula"
+      default_value: "sqrt(N * H / W)"
+      justification: "Classic strip-based TSP heuristic formula; optimal for rectangular point distributions"
+    - name: "2opt_window_sizes"
+      default_value: "adaptive: 30-N based on N"
+      justification: "Window trades search quality for speed within 2.5s time limit; tuned by manual testing"
+    - name: "carrot_search_radius"
+      default_value: 500
+      justification: "Generous radius ensures most penalty positions find a prime swap; cost is O(N/10 * 500) = O(50N)"

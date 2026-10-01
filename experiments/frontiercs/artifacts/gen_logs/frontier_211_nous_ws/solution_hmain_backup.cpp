@@ -1,0 +1,236 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+int N, K, total;
+int eid[3001], ex[3001], ey[3001];
+char et[3001];
+
+double ecost(int i, int j) {
+    long long dx = (long long)ex[i] - ex[j];
+    long long dy = (long long)ey[i] - ey[j];
+    double r = (double)(dx*dx + dy*dy);
+    if (et[i] == 'C' && et[j] == 'C') return 1e18;
+    if (et[i] != 'C' && et[j] != 'C' && (et[i] == 'S' || et[j] == 'S'))
+        return 0.8 * r;
+    return r;
+}
+
+int par[3001];
+int find_p(int x) { return par[x] == x ? x : par[x] = find_p(par[x]); }
+bool unite(int a, int b) {
+    a = find_p(a); b = find_p(b);
+    if (a == b) return false;
+    par[a] = b;
+    return true;
+}
+
+int main() {
+    scanf("%d%d", &N, &K);
+    total = N + K;
+    for (int i = 0; i < total; i++) {
+        char t[5];
+        scanf("%d%d%d %s", &eid[i], &ex[i], &ey[i], t);
+        et[i] = t[0];
+    }
+
+    vector<int> robots, relays;
+    for (int i = 0; i < total; i++) {
+        if (et[i] == 'C') relays.push_back(i);
+        else robots.push_back(i);
+    }
+    int Nr = robots.size(), Nc = relays.size();
+
+    // Precompute robot-to-relay costs (flat array for cache)
+    vector<double> drc(Nr * Nc);
+    for (int r = 0; r < Nr; r++)
+        for (int c = 0; c < Nc; c++) {
+            long long dx = (long long)ex[robots[r]] - ex[relays[c]];
+            long long dy = (long long)ey[robots[r]] - ey[relays[c]];
+            drc[r * Nc + c] = (double)(dx*dx + dy*dy);
+        }
+
+    // Metric closure: for each robot pair, find best cost (direct or via single relay)
+    struct Edge { int u, v; double w; int relay; };
+    vector<Edge> mc_edges;
+    mc_edges.reserve((long long)Nr * (Nr - 1) / 2);
+    for (int i = 0; i < Nr; i++) {
+        const double* di = &drc[i * Nc];
+        for (int j = i + 1; j < Nr; j++) {
+            double direct = ecost(robots[i], robots[j]);
+            double best = direct;
+            int best_relay = -1;
+            const double* dj = &drc[j * Nc];
+            for (int c = 0; c < Nc; c++) {
+                double via = di[c] + dj[c];
+                if (via < best) { best = via; best_relay = c; }
+            }
+            mc_edges.push_back({i, j, best, best_relay});
+        }
+    }
+
+    sort(mc_edges.begin(), mc_edges.end(), [](const Edge& a, const Edge& b) {
+        return a.w < b.w;
+    });
+
+    for (int i = 0; i < Nr; i++) par[i] = i;
+    vector<Edge> mst_edges;
+    for (auto& e : mc_edges) {
+        if (unite(e.u, e.v)) {
+            mst_edges.push_back(e);
+            if ((int)mst_edges.size() == Nr - 1) break;
+        }
+    }
+
+    // Reconstruct actual edges
+    set<int> used_nodes_set;
+    vector<pair<int,int>> actual_edge_pairs;
+    for (auto& e : mst_edges) {
+        int ri = robots[e.u], rj = robots[e.v];
+        used_nodes_set.insert(ri);
+        used_nodes_set.insert(rj);
+        if (e.relay == -1) {
+            actual_edge_pairs.push_back({ri, rj});
+        } else {
+            int rc = relays[e.relay];
+            used_nodes_set.insert(rc);
+            actual_edge_pairs.push_back({ri, rc});
+            actual_edge_pairs.push_back({rj, rc});
+        }
+    }
+
+    // Build subgraph MST
+    vector<int> sub_nodes(used_nodes_set.begin(), used_nodes_set.end());
+    int Sn = sub_nodes.size();
+    map<int, int> orig_to_sub;
+    for (int i = 0; i < Sn; i++) orig_to_sub[sub_nodes[i]] = i;
+
+    struct SEdge { int u, v; double w; };
+    vector<SEdge> sub_edges;
+    set<pair<int,int>> edge_dedup;
+
+    for (auto& [a, b] : actual_edge_pairs) {
+        int sa = orig_to_sub[a], sb = orig_to_sub[b];
+        if (sa > sb) swap(sa, sb);
+        if (edge_dedup.insert({sa, sb}).second)
+            sub_edges.push_back({sa, sb, ecost(a, b)});
+    }
+    for (int i = 0; i < Sn; i++)
+        for (int j = i + 1; j < Sn; j++) {
+            int oi = sub_nodes[i], oj = sub_nodes[j];
+            if (et[oi] == 'C' && et[oj] == 'C') continue;
+            if (edge_dedup.insert({i, j}).second)
+                sub_edges.push_back({i, j, ecost(oi, oj)});
+        }
+
+    sort(sub_edges.begin(), sub_edges.end(), [](const SEdge& a, const SEdge& b) {
+        return a.w < b.w;
+    });
+
+    for (int i = 0; i < Sn; i++) par[i] = i;
+    vector<set<int>> adj(Sn);
+    for (auto& e : sub_edges) {
+        if (unite(e.u, e.v)) {
+            adj[e.u].insert(e.v);
+            adj[e.v].insert(e.u);
+        }
+    }
+
+    // Prune relay leaves
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (int i = 0; i < Sn; i++) {
+            int orig = sub_nodes[i];
+            if (et[orig] == 'C' && !adj[i].empty() && (int)adj[i].size() <= 1) {
+                int v = *adj[i].begin();
+                adj[v].erase(i);
+                adj[i].clear();
+                changed = true;
+            }
+        }
+    }
+
+    // Relay insertion: add unused relays by splitting robot-robot edges
+    set<int> relays_used;
+    for (int i = 0; i < Sn; i++)
+        if (et[sub_nodes[i]] == 'C' && !adj[i].empty())
+            relays_used.insert(sub_nodes[i]);
+
+    for (int round = 0; round < 3; round++) {
+        vector<pair<int,int>> rr_edges;
+        for (int u = 0; u < Sn; u++)
+            for (int v : adj[u])
+                if (u < v && et[sub_nodes[u]] != 'C' && et[sub_nodes[v]] != 'C')
+                    rr_edges.push_back({sub_nodes[u], sub_nodes[v]});
+
+        struct Cand { int relay_orig, u_orig, v_orig; double savings; };
+        vector<Cand> cands;
+        for (int c : relays) {
+            if (relays_used.count(c)) continue;
+            double best = 0; int bu = -1, bv = -1;
+            for (auto& [u, v] : rr_edges) {
+                double s = ecost(u, v) - ecost(u, c) - ecost(c, v);
+                if (s > best) { best = s; bu = u; bv = v; }
+            }
+            if (best > 1e-9) cands.push_back({c, bu, bv, best});
+        }
+        sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+            return a.savings > b.savings;
+        });
+        bool improved = false;
+        for (auto& [c, u, v, s] : cands) {
+            if (relays_used.count(c)) continue;
+            int su = orig_to_sub.count(u) ? orig_to_sub[u] : -1;
+            int sv = orig_to_sub.count(v) ? orig_to_sub[v] : -1;
+            if (su < 0 || sv < 0 || !adj[su].count(sv)) continue;
+            int sc;
+            if (orig_to_sub.count(c)) {
+                sc = orig_to_sub[c];
+            } else {
+                sc = Sn++;
+                sub_nodes.push_back(c);
+                orig_to_sub[c] = sc;
+                adj.push_back({});
+            }
+            adj[su].erase(sv); adj[sv].erase(su);
+            adj[su].insert(sc); adj[sc].insert(su);
+            adj[sv].insert(sc); adj[sc].insert(sv);
+            relays_used.insert(c);
+            improved = true;
+        }
+        if (!improved) break;
+    }
+
+    // Output
+    set<int> out_relays;
+    vector<pair<int,int>> out_edges;
+    for (int i = 0; i < Sn; i++)
+        for (int j : adj[i])
+            if (i < j) {
+                int oi = sub_nodes[i], oj = sub_nodes[j];
+                out_edges.push_back({eid[oi], eid[oj]});
+                if (et[oi] == 'C') out_relays.insert(eid[oi]);
+                if (et[oj] == 'C') out_relays.insert(eid[oj]);
+            }
+
+    if (out_relays.empty()) printf("#\n");
+    else {
+        bool first = true;
+        for (int r : out_relays) {
+            if (!first) printf("#");
+            printf("%d", r);
+            first = false;
+        }
+        printf("\n");
+    }
+    {
+        bool first = true;
+        for (auto& [a, b] : out_edges) {
+            if (!first) printf("#");
+            printf("%d-%d", a, b);
+            first = false;
+        }
+        printf("\n");
+    }
+    return 0;
+}

@@ -1,0 +1,55 @@
+metadata:
+  iteration: 2
+  family: "nn-spatial-2opt"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for problem 44? Does NN construction + spatial NN-list 2-opt significantly improve over strip + window 2-opt?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — single mechanism (spatial NN-list 2-opt) + ablation (construction heuristic comparison)"
+
+arms:
+  - type: h-main
+    prediction: "NN construction + spatial NN-list 2-opt (K=20) + window 2-opt + carrot will score significantly higher than iter-1's 55.4 baseline, achieving approximately 70-80 on the judge. The spatial neighbor lookup finds cross-tour improvements that window-based 2-opt misses, and NN construction provides a better starting tour than strip construction."
+    mechanism: "Window-based 2-opt only checks cities within a fixed tour-order window (30-50 for large N), missing improving swaps between geometrically close cities that are far apart in tour order. NN-list 2-opt precomputes K=20 nearest spatial neighbors per city using dual x-sorted and y-sorted windows, then checks if edges adjacent to these neighbors can participate in improving 2-opt swaps. The greedy NN construction from city 0 produces a tour that naturally visits spatially close cities, providing a better starting point. Evidence: proto_v8.cpp scored 76.3 vs iter-1's 55.4 (chk.cc:133-176 scoring formula)."
+    diagnostic: "If score is below 70, check (1) NN precompute timeout eating into optimization time, (2) K_NN too small to cover true nearest neighbors for grid-like test cases, (3) time budget split between NN 2-opt and window 2-opt phases."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace stub with full algorithm: precompute K=20 nearest neighbors using dual x-sorted/y-sorted windows with squared distance, greedy NN construction from city 0, NN-list 2-opt (forward direction, ~1.7s budget), window-based 2-opt cleanup (~0.3s), carrot optimization. Use flat arrays for cache efficiency. Time-budgeted at 2.5s total."
+        rationale: "Spatial NN-list 2-opt finds improving swaps that window-based 2-opt misses, because it checks geometrically nearby cities regardless of tour position. NN construction provides a better initial tour than strip-based serpentine."
+
+  - type: h-ablation
+    prediction: "Strip construction + spatial NN-list 2-opt (same K=20 and optimization phases as h-main) will score higher than iter-1's 55.4 but lower than h-main, in the range 65-75. The NN-list 2-opt is the primary improvement over iter-1, but NN construction provides additional benefit by starting from a better initial tour."
+    mechanism: "Strip construction sorts cities by y-coordinate into strips, then traverses each strip alternately left-right. This produces a tour with long inter-strip edges but reasonable intra-strip ordering. The NN-list 2-opt can fix some but not all of the inter-strip crossings. NN construction avoids these inter-strip edges entirely, starting from a more locally-connected tour. Evidence: proto_v4.cpp (strip + NN 2-opt K=10) scored 71.2 vs proto_v5.cpp (NN + NN 2-opt K=15) at 76.0."
+    diagnostic: "If ablation scores close to h-main (within 3 points), the construction heuristic doesn't matter much and the optimization phase dominates. If ablation scores close to iter-1 baseline, the NN-list 2-opt needs a better starting tour to be effective."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Same algorithm as h-main but replace the greedy NN construction with strip-based serpentine construction (sort by y into strips, traverse alternating x direction). All other phases (NN precompute, NN-list 2-opt, window 2-opt, carrot) remain identical."
+        rationale: "Isolates the contribution of the construction heuristic. If strip construction scores significantly lower, it confirms that NN construction provides a qualitatively better starting point for the 2-opt optimization."
+
+# Arm selection notes:
+# - h-main: Tests the full improved algorithm (NN construction + NN-list 2-opt)
+# - h-ablation: Tests whether the NN construction specifically contributes vs just the NN-list 2-opt
+# - No h-control-negative needed: iter-1 already established identity order = 0
+# - No h-dose-response: the K_NN parameter is discrete and the interesting question is binary (does NN construction help?)
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -std=c++17 -o solution solution.cpp"
+  verified_parameters:
+    K_NN: 20
+    W_nn_large: 45
+    time_limit_2opt_ms: 2000
+    time_limit_total_ms: 2500
+  unlocked_parameters_audit:
+    - name: K_NN
+      default_value: 20
+      justification: "Tested K=10 (71.2), K=15 (76.0), K=20 (76.3) — diminishing returns above 20; NN precompute cost scales linearly with K"
+    - name: W_nn
+      default_value: "35-150 (N-dependent)"
+      justification: "Window for NN candidate search; tuned per-N to balance precompute time vs neighbor quality"
+    - name: time_allocation
+      default_value: "NN_2opt=1700ms, window_2opt=400ms, carrot=100ms"
+      justification: "NN 2-opt is the dominant improvement; giving it maximum time outperforms splitting time with or-opt (tested: or-opt mega-loop scored 71.3 vs pure 2-opt at 76.3)"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+      h-ablation: 45
+    observation_method: "fmeasure_44.sh runs 20 test cases sequentially with 2.5s timeout each; ~30s judge + 15s overhead"

@@ -1,0 +1,89 @@
+metadata:
+  iteration: 1
+  family: "tree-matching-sort-alternating-dp"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for problem #9 — sorting a permutation on a tree using minimum matching-swap operations?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism: next-step routing with tree DP max-weight matching and alternating anti-oscillation coloring"
+
+arms:
+  - type: h-main
+    prediction: "The next-step routing + tree DP max-weight matching + alternating depth-parity anti-oscillation algorithm will achieve a judge score significantly above the naive greedy baseline, consistently across all 20 test cases. The score will be ≥90 out of 100."
+    mechanism: >
+      Three synergistic components drive the score:
+      (1) Next-step routing assigns each edge a weight based on how many of its two
+      endpoint elements would move closer to their targets by swapping. Type-2
+      swaps (both benefit, weight=2) are always allowed; type-1 swaps (one benefits,
+      weight=1) are gated by the alternating color constraint.
+      (2) Tree DP computes a maximum weight matching in O(n) per round. dp0[u] tracks
+      the best matching in the subtree of u without matching u to its parent;
+      dp1[u] tracks with matching. This replaces greedy matching (which misses
+      globally optimal edge selections).
+      (3) Alternating depth-parity coloring assigns each edge color = depth(child) % 2.
+      Adjacent parent-child edges have different colors. Type-1 swaps are only
+      allowed when edge_color == round%2, preventing period-2 oscillation where
+      a displaced element bounces back and forth.
+      Without (3), the algorithm fails to converge (score=5 observed with v1).
+      Without (2), matching quality drops. Without (1), random swaps make no progress.
+    diagnostic: >
+      If the score is unexpectedly low: (a) Check if any test case produces a
+      wrong-answer verdict — indicates oscillation or matching validation failure.
+      (b) If scores are low but valid, check round counts per test case — the
+      alternating constraint may be too restrictive for certain tree structures
+      (bushy trees with max_degree > 100). (c) If only bushy-tree tests score
+      low, the depth-parity coloring creates a bottleneck at high-degree vertices
+      where all sibling edges share the same color.
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the stub with the tree DP + next-step routing + alternating anti-oscillation algorithm (v2): all-pairs BFS for distances, root tree at vertex 1 with depth-parity edge coloring, compute edge weights each round (type-2=2, type-1=1 if color matches, else 0), tree DP max-weight matching, execute swaps, repeat up to 6n rounds"
+        rationale: "This is the core algorithmic innovation — combining optimal matching with anti-oscillation to sort permutations on trees efficiently"
+
+  - type: h-control-negative
+    prediction: "A naive greedy approach without tree DP matching or anti-oscillation will score ≤10 out of 100, failing to converge on most test cases due to oscillation and suboptimal matching."
+    mechanism: >
+      Without anti-oscillation, type-1 swaps can cause period-2 oscillation:
+      element x gets swapped from u to v (displacing y), then y gets swapped
+      back from v to u (displacing x), infinitely. Without tree DP, greedy
+      matching selects locally good but globally suboptimal edges, leaving
+      many elements unmatched each round.
+    diagnostic: >
+      If the naive greedy unexpectedly scores well (>50), it would suggest the
+      test cases are structured to avoid oscillation (e.g., all permutations
+      have only type-2 swaps available). Check the fraction of type-1 vs type-2
+      swaps per round.
+
+# Arm selection rationale:
+# h-main: The primary algorithmic hypothesis — tests whether the combination of
+#   tree DP, next-step routing, and alternating anti-oscillation achieves high scores.
+# h-control-negative: Validates that the mechanisms (tree DP + anti-oscillation)
+#   are necessary by showing the naive approach fails. This confirms the effect
+#   isn't trivially achievable.
+# Not included: h-ablation, h-dose-response, h-robustness — at tier 1, the
+#   simplest treatment vs control design suffices. Ablation of individual
+#   components (e.g., tree DP without anti-oscillation, or anti-oscillation
+#   without tree DP) could be explored in iter 2 if needed.
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -o solution solution.cpp"
+  verified_parameters:
+    max_rounds_multiplier: 6
+    root_vertex: 1
+    type2_weight: 2
+    type1_weight: 1
+    coloring_scheme: "depth_parity"
+  unlocked_parameters_audit:
+    - name: "max_rounds_multiplier"
+      default_value: 6
+      justification: "6n rounds provides generous headroom; all test cases converge well within this limit with the alternating approach"
+    - name: "root_vertex"
+      default_value: 1
+      justification: "Vertex 1 is the default root; centroid rooting was tested (v6, score 90) and performed worse"
+    - name: "type2_weight"
+      default_value: 2
+      justification: "Type-2 swaps benefit both endpoints and should be prioritized over type-1 in the matching"
+    - name: "type1_weight"
+      default_value: 1
+      justification: "Type-1 swaps benefit one endpoint; weight=1 ensures they're included but deprioritized vs type-2"
+    - name: "optimization_level"
+      default_value: "-O2"
+      justification: "Standard optimization; -O3 unlikely to matter since algorithm is I/O and BFS bound, not compute bound"

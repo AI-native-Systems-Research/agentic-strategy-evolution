@@ -1,0 +1,24 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+  mode: real
+setup:
+  - cmd: "g++ -O2 -o sol solution.cpp"
+    description: "Build the solution"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "metric-closure-mst"
+        cmd: "git checkout -- solution.cpp && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-1/patches/h-main.patch && g++ -O2 -o sol solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_211.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-1/results/h-main/score.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-1/patches/h-main.patch"
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-1/results/h-main/solution.cpp"
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "full-mst-prune"
+        cmd: "git checkout -- solution.cpp && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-1/patches/h-ablation.patch && g++ -O2 -o sol solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_211.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-1/results/h-ablation/score.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-1/patches/h-ablation.patch"
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-211-nous/runs/iter-1/results/h-ablation/solution.cpp"

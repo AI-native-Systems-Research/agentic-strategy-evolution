@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether replacing the iter-1 algorithm (strip construction + window 2-opt, score 55.4) with nearest-neighbor construction + spatial NN-list 2-opt (K=20) significantly improves the TSP-with-carrot-penalty score, and whether the construction heuristic choice matters independently of the optimization phase.",
+  "key_points": [
+    "h-main: Full algorithm \u2014 greedy nearest-neighbor tour construction from city 0, then NN-list 2-opt using K=20 precomputed spatial neighbors (~1.7s), window 2-opt cleanup (~0.4s), and carrot step optimization. Predicted score: 70\u201380 (up from 55.4). Prior prototyping showed 76.3.",
+    "h-ablation: Same optimization phases (NN-list 2-opt K=20, window 2-opt, carrot) but with strip-based serpentine construction instead of NN construction. Predicted score: 65\u201375. Prior prototyping showed strip+NN-2opt at 71.2 vs NN+NN-2opt at 76.0, suggesting construction heuristic contributes ~5 points.",
+    "Confirmation criteria: h-main \u2265 70 confirms the spatial NN-list 2-opt mechanism works; h-main scoring \u22655 points above h-ablation confirms NN construction provides meaningful additional benefit. If h-ablation matches h-main within 3 points, construction choice is secondary and future iterations should focus on the optimization phase (e.g., Or-opt, 3-opt, LKH-style moves).",
+    "Risk factors to watch: NN precomputation could consume too much time on large N (up to 200K cities), leaving insufficient budget for 2-opt iterations. If score < 70, diagnostics point to checking time allocation and whether K=20 neighbors adequately cover true nearest neighbors in non-uniform point distributions.",
+    "Each arm runs ~45 seconds (20 test cases \u00d7 2.5s timeout + overhead). Total experiment wall time ~90 seconds for both arms."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

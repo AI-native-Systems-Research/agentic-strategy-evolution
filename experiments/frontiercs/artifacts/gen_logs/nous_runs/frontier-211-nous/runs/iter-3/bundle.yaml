@@ -1,0 +1,65 @@
+metadata:
+  iteration: 3
+  family: "steiner-tree-relay-optimization"
+  research_question: "Can interleaved multi-seed perturbation improve the judge score beyond the iter-2 baseline of 87.162 by increasing the diversity of MST topologies explored?"
+  complexity_tier: 2
+  tier_justification: "Iter 3, single mechanism (perturbation seed diversity) building on tier-2 iter-2 foundation. Tier 1 established the metric closure MST (iter-1); tier 2 added perturbation + post-processing (iter-2); this iter-3 optimizes the perturbation strategy at the same tier."
+
+# Arms rationale: Two arms — h-main tests whether interleaving three independent
+# perturbation seed sequences improves score through exploration diversity, and
+# h-control-negative provides the single-seed baseline for comparison. This is the
+# minimal design for testing the multi-seed hypothesis. No ablation arm is needed
+# since the mechanism (seed diversity) is atomic and cannot be decomposed further.
+# Additional arms tested during exploration (5-seed, varying-epsilon, Prim-all-nodes,
+# relay-degree-upgrade, relay-swap) all failed to improve beyond the 3-seed approach.
+
+arms:
+  - type: h-main
+    prediction: "Interleaved multi-seed perturbation (3 seeds: 54321, 98765, 33333 in round-robin) will achieve a higher judge score than the single-seed baseline of 87.162. Probe measurement: 87.18 (+0.018 points). The improvement comes from exploring independent perturbation trajectories that discover MST topologies the single seed never reaches."
+    mechanism: "The perturbation loop uses an LCG (linear congruential generator) to add noise to MC edge weights before rebuilding the MST via Kruskal's. A single LCG seed generates a correlated sequence of perturbation patterns. Different initial seeds produce completely independent perturbation sequences that explore different regions of the MST topology space. Probing confirmed this: seed 98765 finds cost 159,260,358 on test 3 while seed 54321 finds 159,274,195 — a difference of 13,837 cost units that corresponds to a distinct MST topology. By interleaving three seeds round-robin, each trial explores a different trajectory, and the best-of-N selection benefits from this diversity. The total number of trials remains the same (~10 for N=K=1500 tests), but they span a wider region of the solution space."
+    diagnostic: "If the score is not higher than 87.162: (1) Check that all three seed states are actually being used (verify round-robin logic). (2) Check whether the best solution came from seed 54321 trials (meaning the other seeds didn't find anything better). (3) Verify timing — if the interleaved version is slightly slower per trial due to seed state management, it might complete fewer trials, negating the diversity benefit."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the single LCG seed variable (unsigned seed = 54321) with an array of 3 seed states {54321, 98765, 33333}. In the perturbation while-loop, use seed_states[trial % 3] for each trial, and save the updated state back after generating the perturbation. This cycles through three independent perturbation trajectories round-robin while keeping the same 9.0s time limit and all other parameters unchanged."
+        rationale: "Probing showed different seeds find different and sometimes better MST topologies (seed 98765 beats seed 54321 by 13.8K cost on test 3). The interleaved approach maximizes diversity within the fixed time budget."
+
+  - type: h-control-negative
+    prediction: "The baseline single-seed perturbation (seed 54321) will score 87.162, matching the iter-2 result. This is the control condition — no code changes from iter-2."
+    mechanism: "The single LCG seed explores one perturbation trajectory. Within this trajectory, trial 1 typically finds the best solution (observed on test 3: trial 1 at 159,274,195 vs trial 0 at 159,313,903). The remaining ~9 trials explore the same LCG sequence without finding improvements."
+    diagnostic: "If the score differs from 87.162: (1) Check CPU contention — under contention, fewer perturbation trials complete, potentially reducing score. (2) Verify the solution.cpp matches the iter-2 version exactly (single seed 54321, 9.0s time limit)."
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -o sol solution.cpp"
+  verified_parameters:
+    compiler_flags: "-O2"
+    perturbation_epsilon_range: "0.002 to 0.102"
+    time_limit_per_test: 10
+    perturbation_time_budget: 9.0
+    hub_search_top_k: 8
+    hub_search_rounds: 5
+    reassignment_rounds: 20
+    greedy_insertion_rounds: 100
+    h_main_seeds: [54321, 98765, 33333]
+    h_control_seed: 54321
+  unlocked_parameters_audit:
+    - name: "perturbation_rng_type"
+      default_value: "LCG (x = x * 1103515245 + 12345)"
+      justification: "LCG quality sufficient for perturbation noise; higher-quality RNG adds overhead without measurable benefit."
+    - name: "hub_search_top_k"
+      default_value: 8
+      justification: "Top 8 nearest robots limits triplet enumeration to C(8,3)=56 per relay. Probing in iter-3 showed top-6 and top-10 give identical scores; top-12 causes TLE."
+    - name: "subgraph_mst_method"
+      default_value: "Prim O(Sn^2)"
+      justification: "Dense subgraph makes Prim faster than Kruskal. No change from iter-2."
+    - name: "perturbation_seed_count"
+      default_value: 1
+      justification: "The baseline uses 1 seed. h-main tests 3 seeds. This is the variable under study."
+    - name: "number_of_seeds"
+      default_value: 3
+      justification: "Probed 3 vs 5 seeds. 5-seed (87.179) slightly worse than 3-seed (87.18) because fewer trials per seed. 3 seeds is the optimal diversity-vs-depth tradeoff."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 35
+      h-control-negative: 35
+    observation_method: "Judge call timing from fmeasure_211.sh (10 test cases × ~3.5s each)"

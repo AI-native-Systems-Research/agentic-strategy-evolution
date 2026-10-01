@@ -1,0 +1,28 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The strip-based serpentine construction with 2-opt local search and carrot-aware prime placement will produce a judge score significantly greater than 0, expected range 45-60.",
+      "observed": "SCORE: 55.4535. The algorithm produces a penalized tour significantly shorter than the baseline across all 20 test cases. Score is within the predicted 45-60 range, near the upper end. The strip construction eliminates y-zigzag, 2-opt further optimizes edges within adaptive windows, and carrot prime placement reduces penalty cost at every-10th-step positions. Score is reproducible across runs (confirmed at 55.4535 in multiple executions).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Score of 55.45 near top of predicted range (45-60). The 2-opt local optimum with window=30 for large N appears robust - multiple alternative approaches (ILS/double-bridge, or-opt, edge caching, wide-first 2-opt) all either matched or degraded this score, suggesting the 2-opt basin is well-converged within the 2.5s time limit."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The identity tour (0, 1, 2, ..., N-1, 0) will score exactly 0.",
+      "observed": "SCORE: 0. The identity order is exactly the baseline used by the checker (chk.cc:106-119). L_you == L_base, so r = 0 and s = 1, yielding ratio_base = 0 and final score 0 after the visibility remap.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. The h-main arm scored 55.4535 (within predicted 45-60 range, near upper end), demonstrating that strip-based construction + 2-opt + carrot optimization produces meaningful improvement over the x-sorted baseline. The h-control-negative arm scored exactly 0, confirming the identity order matches the checker's baseline. The contrast (55.4535 vs 0) validates the optimization mechanism. Multiple alternative algorithmic improvements (ILS, or-opt, edge caching) were explored but none surpassed the baseline 2-opt approach, indicating the strip+2opt+carrot combination is at a robust local optimum for this time budget.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}

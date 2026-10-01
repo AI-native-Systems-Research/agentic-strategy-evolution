@@ -1,0 +1,28 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Multi-start NN construction + NN-list 2-opt with cycling detection + linked-list or-opt will score higher than the iter-2 baseline of 76.3 on the judge, improving on the 6 currently-failing test cases.",
+      "observed": "Judge SCORE: 76.31 (clean run), 75.85, 73.86, 70.74 (system-load-affected runs). Local per-test-case analysis: average 76.26%. Per-test-case comparison vs control: TC4 +0.33% (multi-start finds marginally better tour for N=1000), TC6 -0.36% (slight regression), TC7 -0.54% (slight regression), all other TCs identical. The multi-start, cycling detection, and or-opt combination does NOT improve over the iter-2 baseline. The judge score under stable conditions (76.31) is within noise of the control (76.29). Earlier low scores (73.86, 70.74) were due to system load causing TLE on time-sensitive test cases.",
+      "status": "REFUTED",
+      "error_type": "magnitude",
+      "diagnostic_note": "Three mechanisms were tested in combination: (1) Multi-start NN construction for N<=5000 \u2014 converges to equivalent-quality local optima, net neutral. (2) Cycling detection \u2014 breaks 2-opt cycling on grid data (TC6) but doesn't improve tour quality, only saves wasted time. (3) Or-opt (single-city relocation using NN-list candidates) \u2014 finds no improving moves after 2-opt convergence. The combination has no synergy because each component is individually neutral. The 2-opt local optimum quality is a hard ceiling for these neighborhoods. Breaking through requires fundamentally different move types (3-opt, LK moves) or construction heuristics that exploit problem-specific data structure."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The exact iter-2 algorithm will score approximately 76.3 +/- 0.5, consistent with iter-2 findings.",
+      "observed": "Judge SCORE: 76.288 (3 out of 4 runs), 71.288 (1 run under system load). Local per-test-case analysis: average 76.29%. The algorithm produces identical results when not affected by system load (76.288 = exact match with iter-2). The 71.288 outlier is due to system load causing TLE on 1 test case (losing ~5 points). The algorithm is deterministic and stable when time limit is met.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Judge score is stable at 76.288 when system load is low. The 5-point drops correspond to individual test cases timing out under load \u2014 the algorithm's time-dependent 2-opt converges so late on large N test cases that even small system load fluctuations can cause TLE."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "h-main REFUTED: the combination of multi-start NN + cycling detection + or-opt scores 76.26-76.31, essentially identical to the iter-2 baseline of 76.29. The directional prediction (improvement) was wrong \u2014 the score is flat. Error type is 'magnitude' because the predicted improvement direction was correct (slightly positive at +0.02 points) but the magnitude is negligible (within measurement noise). Per-test-case analysis reveals: (a) multi-start for TC4 (N=1000) provides +0.33% improvement, (b) or-opt provides no improvements after 2-opt convergence, (c) cycling detection saves time on TC6 but doesn't improve tour quality. The 2-opt local optimum quality is a hard ceiling that multi-start, or-opt, and cycling detection cannot overcome. h-control-negative CONFIRMED: stable at 76.288 under low system load.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}

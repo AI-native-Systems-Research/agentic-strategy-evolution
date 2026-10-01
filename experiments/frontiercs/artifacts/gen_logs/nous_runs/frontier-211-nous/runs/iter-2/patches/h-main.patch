@@ -1,0 +1,431 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..3a232c6 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,425 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++int N, K, total;
++int eid[3001], ex[3001], ey[3001];
++char et[3001];
++
++double ecost(int i, int j) {
++    long long dx = (long long)ex[i] - ex[j];
++    long long dy = (long long)ey[i] - ey[j];
++    double r = (double)(dx * dx + dy * dy);
++    if (et[i] == 'C' && et[j] == 'C') return 1e18;
++    if (et[i] != 'C' && et[j] != 'C' && (et[i] == 'S' || et[j] == 'S'))
++        return 0.8 * r;
++    return r;
++}
++
++int par[6001];
++int find_p(int x) { return par[x] == x ? x : par[x] = find_p(par[x]); }
++bool unite(int a, int b) {
++    a = find_p(a); b = find_p(b);
++    if (a == b) return false;
++    par[a] = b;
++    return true;
++}
++
++vector<int> robots, relays;
++int Nr, Nc;
++vector<double> drc; // flat Nr*Nc
++vector<double> mc_w; // flat Nr*Nr
++vector<int> mc_relay; // flat Nr*Nr
++
++struct Solution {
++    double cost;
++    set<int> out_relays;
++    vector<pair<int, int>> out_edges;
++};
++
++struct MCEdge { int u, v; double w; int relay; double w_pert; };
++vector<MCEdge> mc_edges;
++
++Solution build_solution(vector<MCEdge>& mst_edges) {
++    set<int> used_set;
++    for (auto& e : mst_edges) {
++        used_set.insert(robots[e.u]);
++        used_set.insert(robots[e.v]);
++        if (e.relay != -1) used_set.insert(relays[e.relay]);
++    }
++    vector<int> sn(used_set.begin(), used_set.end());
++    int Sn = sn.size();
++    map<int, int> o2s;
++    for (int i = 0; i < Sn; i++) o2s[sn[i]] = i;
++
++    // Prim's MST on subgraph
++    vector<double> dist(Sn, 1e18);
++    vector<int> prnt(Sn, -1);
++    vector<bool> inTree(Sn, false);
++    dist[0] = 0;
++    vector<set<int>> adj(Sn);
++
++    for (int step = 0; step < Sn; step++) {
++        int u = -1; double mn = 1e18;
++        for (int i = 0; i < Sn; i++)
++            if (!inTree[i] && dist[i] < mn) { mn = dist[i]; u = i; }
++        if (u < 0) break;
++        inTree[u] = true;
++        if (prnt[u] >= 0) { adj[u].insert(prnt[u]); adj[prnt[u]].insert(u); }
++        for (int v = 0; v < Sn; v++) {
++            if (inTree[v]) continue;
++            double c = ecost(sn[u], sn[v]);
++            if (c < dist[v]) { dist[v] = c; prnt[v] = u; }
++        }
++    }
++
++    // Prune relay leaves
++    bool changed = true;
++    while (changed) {
++        changed = false;
++        for (int i = 0; i < Sn; i++)
++            if (et[sn[i]] == 'C' && adj[i].size() == 1) {
++                int v = *adj[i].begin();
++                adj[v].erase(i); adj[i].clear();
++                changed = true;
++            }
++    }
++
++    // Greedy relay insertion
++    set<int> rused;
++    for (int i = 0; i < Sn; i++)
++        if (et[sn[i]] == 'C' && !adj[i].empty()) rused.insert(sn[i]);
++
++    for (int round = 0; round < 100; round++) {
++        vector<pair<int, int>> rr;
++        for (int u = 0; u < Sn; u++)
++            for (int v : adj[u])
++                if (u < v && et[sn[u]] != 'C' && et[sn[v]] != 'C')
++                    rr.push_back({sn[u], sn[v]});
++        if (rr.empty()) break;
++
++        struct Cand { int c, u, v; double s; };
++        vector<Cand> cands;
++        for (int c : relays) {
++            if (rused.count(c)) continue;
++            double best = 0; int bu = -1, bv = -1;
++            for (auto& [u, v] : rr) {
++                double s = ecost(u, v) - ecost(u, c) - ecost(c, v);
++                if (s > best) { best = s; bu = u; bv = v; }
++            }
++            if (best > 1e-9) cands.push_back({c, bu, bv, best});
++        }
++        sort(cands.begin(), cands.end(),
++             [](const Cand& a, const Cand& b) { return a.s > b.s; });
++
++        bool imp = false;
++        for (auto& [c, u, v, s] : cands) {
++            if (rused.count(c)) continue;
++            int su = o2s.count(u) ? o2s[u] : -1;
++            int sv = o2s.count(v) ? o2s[v] : -1;
++            if (su < 0 || sv < 0 || !adj[su].count(sv)) continue;
++            int sc;
++            if (o2s.count(c)) { sc = o2s[c]; }
++            else { sc = Sn++; sn.push_back(c); o2s[c] = sc; adj.push_back({}); }
++            adj[su].erase(sv); adj[sv].erase(su);
++            adj[su].insert(sc); adj[sc].insert(su);
++            adj[sv].insert(sc); adj[sc].insert(sv);
++            rused.insert(c); imp = true;
++        }
++        if (!imp) break;
++    }
++
++    // Relay reassignment
++    for (int round = 0; round < 20; round++) {
++        bool any = false;
++        for (int i = 0; i < Sn; i++) {
++            if (et[sn[i]] != 'C' || adj[i].empty()) continue;
++            int co = sn[i];
++            vector<int> nb;
++            for (int v : adj[i]) nb.push_back(sn[v]);
++            double cur = 0;
++            for (int n : nb) cur += ecost(co, n);
++            double bs = 0; int bc = -1;
++            for (int c : relays) {
++                if (rused.count(c)) continue;
++                double nc = 0;
++                for (int n : nb) nc += ecost(c, n);
++                double s = cur - nc;
++                if (s > bs) { bs = s; bc = c; }
++            }
++            if (bs > 1e-9) {
++                int nsc;
++                if (o2s.count(bc)) { nsc = o2s[bc]; }
++                else { nsc = Sn++; sn.push_back(bc); o2s[bc] = nsc; adj.push_back({}); }
++                for (int v : adj[i]) {
++                    adj[v].erase(i); adj[v].insert(nsc); adj[nsc].insert(v);
++                }
++                adj[i].clear();
++                rused.erase(co); rused.insert(bc);
++                any = true; break;
++            }
++        }
++        if (!any) break;
++    }
++
++    // Degree-3 hub insertion
++    for (int hub_round = 0; hub_round < 5; hub_round++) {
++        vector<int> depth(Sn, -1);
++        vector<int> par_node(Sn, -1);
++        vector<double> par_cost(Sn, 0);
++        int root = -1;
++        for (int i = 0; i < Sn; i++)
++            if (!adj[i].empty()) { root = i; break; }
++        if (root < 0) break;
++
++        queue<int> bfs;
++        depth[root] = 0;
++        bfs.push(root);
++        while (!bfs.empty()) {
++            int u = bfs.front(); bfs.pop();
++            for (int v : adj[u]) {
++                if (depth[v] == -1) {
++                    depth[v] = depth[u] + 1;
++                    par_node[v] = u;
++                    par_cost[v] = ecost(sn[u], sn[v]);
++                    bfs.push(v);
++                }
++            }
++        }
++
++        auto path_max = [&](int a, int b) -> double {
++            double mx = 0;
++            while (a != b) {
++                if (depth[a] < depth[b]) swap(a, b);
++                mx = max(mx, par_cost[a]);
++                a = par_node[a];
++            }
++            return mx;
++        };
++
++        vector<int> tree_robots;
++        for (int i = 0; i < Sn; i++)
++            if (et[sn[i]] != 'C' && !adj[i].empty())
++                tree_robots.push_back(i);
++
++        double best_save = 0;
++        int best_c = -1;
++        vector<int> best_rs;
++
++        for (int ci = 0; ci < Nc; ci++) {
++            int c = relays[ci];
++            if (rused.count(c)) continue;
++            vector<pair<double, int>> dists;
++            for (int ri : tree_robots)
++                dists.push_back({ecost(c, sn[ri]), ri});
++            sort(dists.begin(), dists.end());
++            int limit = min((int)dists.size(), 8);
++            for (int a = 0; a < limit; a++)
++                for (int b = a + 1; b < limit; b++)
++                    for (int d = b + 1; d < limit; d++) {
++                        int ra = dists[a].second, rb = dists[b].second, rd = dists[d].second;
++                        double hub_cost = dists[a].first + dists[b].first + dists[d].first;
++                        double pm_ab = path_max(ra, rb);
++                        double pm_ad = path_max(ra, rd);
++                        double pm_bd = path_max(rb, rd);
++                        double pms[3] = {pm_ab, pm_ad, pm_bd};
++                        sort(pms, pms + 3);
++                        double s = pms[2] + pms[0] - hub_cost;
++                        if (s > best_save) {
++                            best_save = s;
++                            best_c = ci;
++                            best_rs = {ra, rb, rd};
++                        }
++                    }
++        }
++
++        if (best_save < 1e-9) break;
++
++        int c = relays[best_c];
++        int ra = best_rs[0], rb = best_rs[1], rd = best_rs[2];
++        double pm_ab = path_max(ra, rb);
++        double pm_ad = path_max(ra, rd);
++        double pm_bd = path_max(rb, rd);
++
++        auto find_bottleneck_edge = [&](int a, int b) -> pair<int, int> {
++            int aa = a, bb = b;
++            while (aa != bb) {
++                if (depth[aa] < depth[bb]) swap(aa, bb);
++                aa = par_node[aa];
++            }
++            int lca = aa;
++            double mx = 0; int mu = -1, mv = -1;
++            aa = a;
++            while (aa != lca) {
++                if (par_cost[aa] > mx) { mx = par_cost[aa]; mu = aa; mv = par_node[aa]; }
++                aa = par_node[aa];
++            }
++            bb = b;
++            while (bb != lca) {
++                if (par_cost[bb] > mx) { mx = par_cost[bb]; mu = bb; mv = par_node[bb]; }
++                bb = par_node[bb];
++            }
++            return {mu, mv};
++        };
++
++        struct PM { double val; int a, b; };
++        PM pms[3] = {{pm_ab, ra, rb}, {pm_ad, ra, rd}, {pm_bd, rb, rd}};
++        sort(pms, pms + 3, [](const PM& x, const PM& y) { return x.val < y.val; });
++
++        auto [e1u, e1v] = find_bottleneck_edge(pms[2].a, pms[2].b);
++        auto [e2u, e2v] = find_bottleneck_edge(pms[0].a, pms[0].b);
++
++        if (e1u < 0 || e2u < 0) break;
++        if ((e1u == e2u && e1v == e2v) || (e1u == e2v && e1v == e2u)) break;
++
++        adj[e1u].erase(e1v); adj[e1v].erase(e1u);
++        adj[e2u].erase(e2v); adj[e2v].erase(e2u);
++
++        int sc;
++        if (o2s.count(c)) { sc = o2s[c]; }
++        else { sc = Sn++; sn.push_back(c); o2s[c] = sc; adj.push_back({}); }
++        adj[sc].insert(ra); adj[ra].insert(sc);
++        adj[sc].insert(rb); adj[rb].insert(sc);
++        adj[sc].insert(rd); adj[rd].insert(sc);
++        rused.insert(c);
++    }
++
++    // Final prune
++    changed = true;
++    while (changed) {
++        changed = false;
++        for (int i = 0; i < Sn; i++)
++            if (et[sn[i]] == 'C' && adj[i].size() == 1) {
++                int v = *adj[i].begin();
++                adj[v].erase(i); adj[i].clear();
++                changed = true;
++            }
++    }
++
++    Solution sol;
++    sol.cost = 0;
++    for (int i = 0; i < Sn; i++)
++        for (int j : adj[i])
++            if (i < j) {
++                sol.cost += ecost(sn[i], sn[j]);
++                sol.out_edges.push_back({eid[sn[i]], eid[sn[j]]});
++                if (et[sn[i]] == 'C') sol.out_relays.insert(eid[sn[i]]);
++                if (et[sn[j]] == 'C') sol.out_relays.insert(eid[sn[j]]);
++            }
++    return sol;
++}
++
++int main() {
++    unsigned seed = 54321;
++    auto t0 = chrono::steady_clock::now();
++
++    scanf("%d%d", &N, &K);
++    total = N + K;
++    for (int i = 0; i < total; i++) {
++        char t[5];
++        scanf("%d%d%d %s", &eid[i], &ex[i], &ey[i], t);
++        et[i] = t[0];
++    }
++
++    for (int i = 0; i < total; i++) {
++        if (et[i] == 'C') relays.push_back(i);
++        else robots.push_back(i);
++    }
++    Nr = robots.size();
++    Nc = relays.size();
++
++    // Precompute robot-to-relay distances
++    drc.resize(Nr * Nc);
++    for (int r = 0; r < Nr; r++)
++        for (int c = 0; c < Nc; c++) {
++            long long dx = (long long)ex[robots[r]] - ex[relays[c]];
++            long long dy = (long long)ey[robots[r]] - ey[relays[c]];
++            drc[r * Nc + c] = (double)(dx * dx + dy * dy);
++        }
++
++    // Compute metric closure edges
++    mc_edges.reserve((long long)Nr * (Nr - 1) / 2);
++    for (int i = 0; i < Nr; i++) {
++        const double* di = &drc[i * Nc];
++        for (int j = i + 1; j < Nr; j++) {
++            double direct = ecost(robots[i], robots[j]);
++            double best = direct;
++            int br = -1;
++            const double* dj = &drc[j * Nc];
++            for (int c = 0; c < Nc; c++) {
++                double via = di[c] + dj[c];
++                if (via < best) { best = via; br = c; }
++            }
++            mc_edges.push_back({i, j, best, br, best});
++        }
++    }
++
++    // Phase 1: Original MC MST (Kruskal)
++    sort(mc_edges.begin(), mc_edges.end(),
++         [](const MCEdge& a, const MCEdge& b) { return a.w < b.w; });
++    for (int i = 0; i < Nr; i++) par[i] = i;
++    vector<MCEdge> best_mst;
++    for (auto& e : mc_edges) {
++        if (unite(e.u, e.v)) {
++            best_mst.push_back(e);
++            if ((int)best_mst.size() == Nr - 1) break;
++        }
++    }
++
++    Solution best_sol = build_solution(best_mst);
++
++    // Phase 2: Perturbed MC MST restarts
++    double time_limit = 9.0;
++
++    while (true) {
++        auto tn = chrono::steady_clock::now();
++        double elapsed = chrono::duration<double>(tn - t0).count();
++        if (elapsed > time_limit) break;
++
++        // Perturb weights and rebuild MST with Kruskal
++        double eps = 0.002 + 0.10 * ((seed % 100) / 100.0);
++        seed = seed * 1103515245 + 12345;
++        for (auto& e : mc_edges) {
++            double noise = 1.0 + eps * (2.0 * ((seed % 10001) / 10000.0) - 1.0);
++            seed = seed * 1103515245 + 12345;
++            e.w_pert = e.w * noise;
++        }
++        sort(mc_edges.begin(), mc_edges.end(),
++             [](const MCEdge& a, const MCEdge& b) { return a.w_pert < b.w_pert; });
++
++        for (int i = 0; i < Nr; i++) par[i] = i;
++        vector<MCEdge> trial_mst;
++        for (auto& e : mc_edges) {
++            if (unite(e.u, e.v)) {
++                trial_mst.push_back(e);
++                if ((int)trial_mst.size() == Nr - 1) break;
++            }
++        }
++
++        Solution trial_sol = build_solution(trial_mst);
++        if (trial_sol.cost < best_sol.cost)
++            best_sol = trial_sol;
++    }
++
++    // Output
++    if (best_sol.out_relays.empty()) printf("#\n");
++    else {
++        bool first = true;
++        for (int r : best_sol.out_relays) {
++            if (!first) printf("#");
++            printf("%d", r);
++            first = false;
++        }
++        printf("\n");
++    }
++    {
++        bool first = true;
++        for (auto& [a, b] : best_sol.out_edges) {
++            if (!first) printf("#");
++            printf("%d-%d", a, b);
++            first = false;
++        }
++        printf("\n");
++    }
++
++    return 0;
++}
