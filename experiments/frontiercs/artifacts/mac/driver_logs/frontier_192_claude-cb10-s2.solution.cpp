@@ -7,94 +7,85 @@ int main(){
     
     int n, m;
     cin >> n >> m;
+    
+    vector<vector<int>> adj(n+1);
     vector<pair<int,int>> edges(m);
-    vector<vector<int>> adj(n);
+    
     for(int i = 0; i < m; i++){
-        int u, v; cin >> u >> v; u--; v--;
-        edges[i] = {u, v};
+        int u, v; cin >> u >> v;
         adj[u].push_back(v);
         adj[v].push_back(u);
+        edges[i] = {u, v};
     }
     
+    vector<int> bestS(n+1, 0);
+    
     if(m == 0){
-        for(int i = 0; i < n; i++){ if(i) cout << ' '; cout << 0; }
+        for(int i = 1; i <= n; i++){ if(i>1) cout << ' '; cout << 0; }
         cout << '\n';
         return 0;
     }
     
+    vector<int> s(n+1), gain(n+1);
+    int bestCut = -1;
     mt19937 rng(12345);
-    vector<int> s(n), gain(n), bestS(n, 0);
-    int bestCut = 0;
     
-    auto computeCut = [&]() -> int {
-        int c = 0;
-        for(auto& [a,b] : edges) c += (s[a] != s[b]);
-        return c;
+    auto startTime = chrono::steady_clock::now();
+    auto ms_elapsed = [&]() -> double {
+        return chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now()-startTime).count()/1000.0;
     };
     
-    auto computeGain = [&](){
-        for(int u = 0; u < n; u++){
-            int g = 0;
-            for(int v : adj[u]) g += (s[u] == s[v]) ? 1 : -1;
-            gain[u] = g;
+    double timeLimit = 900.0; // 900ms to be safe
+    
+    while(ms_elapsed() < timeLimit){
+        if(bestCut < 0 || (rng()%3) != 0){
+            for(int i=1;i<=n;i++) s[i] = rng()&1;
+        } else {
+            s = bestS;
+            for(int k=0; k < max(1,n/10); k++) s[(rng()%n)+1] ^= 1;
         }
-    };
-    
-    auto doFlip = [&](int u, int& cur){
-        cur += gain[u];
-        s[u] ^= 1;
-        gain[u] = -gain[u];
-        for(int v : adj[u]){
-            if(s[u] == s[v]) gain[v] += 2;
-            else gain[v] -= 2;
+        
+        for(int u=1;u<=n;u++){
+            gain[u]=0;
+            for(int v:adj[u]) gain[u] += (s[u]==s[v]) ? 1 : -1;
         }
-    };
-    
-    auto localSearch = [&](int& cur){
-        bool imp = true;
+        int curCut=0;
+        for(auto&[u,v]:edges) curCut += (s[u]!=s[v]);
+        
+        bool imp=true;
         while(imp){
-            imp = false;
-            for(int u = 0; u < n; u++){
-                if(gain[u] > 0){ doFlip(u, cur); imp = true; }
+            imp=false;
+            for(int u=1;u<=n;u++){
+                if(gain[u]>0){
+                    for(int v:adj[u]){
+                        if(s[u]==s[v]) gain[v]-=2; else gain[v]+=2;
+                    }
+                    curCut+=gain[u]; s[u]^=1; gain[u]=-gain[u]; imp=true;
+                }
             }
         }
-    };
-    
-    auto t0 = chrono::steady_clock::now();
-    auto elapsed = [&]() -> double {
-        return chrono::duration<double>(chrono::steady_clock::now() - t0).count();
-    };
-    
-    double timeLimit = 1.8;
-    
-    while(elapsed() < timeLimit){
-        for(int i = 0; i < n; i++) s[i] = rng() & 1;
-        computeGain();
-        int cur = computeCut();
-        localSearch(cur);
-        if(cur > bestCut){ bestCut = cur; bestS = s; }
+        if(curCut>bestCut){bestCut=curCut; bestS=s;}
         
-        double Tinit = max(2.0, 0.3 * sqrt((double)m));
-        double Tfinal = 0.01;
-        int totalIter = max(200000, n * 500);
-        
-        for(int iter = 0; iter < totalIter; iter++){
-            if((iter & 4095) == 0 && elapsed() >= timeLimit) break;
-            double frac = (double)iter / totalIter;
-            double T = Tinit * pow(Tfinal / Tinit, frac);
-            int u = rng() % n;
-            int g = gain[u];
-            if(g > 0 || (uniform_real_distribution<double>(0,1)(rng) < exp((double)g / T))){
-                doFlip(u, cur);
-                if(cur > bestCut){ bestCut = cur; bestS = s; }
+        double t0=ms_elapsed();
+        double budget=min(200.0, (timeLimit-t0)*0.5);
+        if(budget < 5) continue;
+        for(int iter=0;;iter++){
+            if((iter&1023)==0 && ms_elapsed()-t0>=budget) break;
+            double frac=(ms_elapsed()-t0)/budget;
+            if(frac>1.0) break;
+            double T=3.0*(1.0-frac)+0.01;
+            int u=(rng()%n)+1;
+            int g=gain[u];
+            if(g>0 || (double)(rng()%65536)/65536.0 < exp((double)g/T)){
+                for(int v:adj[u]){
+                    if(s[u]==s[v]) gain[v]-=2; else gain[v]+=2;
+                }
+                s[u]^=1; gain[u]=-gain[u]; curCut+=g;
+                if(curCut>bestCut){bestCut=curCut; bestS=s;}
             }
         }
-        
-        s = bestS; computeGain(); int cc = computeCut();
-        localSearch(cc);
-        if(cc > bestCut){ bestCut = cc; bestS = s; }
     }
     
-    for(int i = 0; i < n; i++){ if(i) cout << ' '; cout << bestS[i]; }
-    cout << '\n';
+    for(int i=1;i<=n;i++){if(i>1)cout<<' ';cout<<bestS[i];}
+    cout<<'\n';
 }

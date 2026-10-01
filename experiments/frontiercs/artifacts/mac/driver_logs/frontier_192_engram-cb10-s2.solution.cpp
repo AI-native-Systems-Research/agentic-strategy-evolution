@@ -17,27 +17,57 @@ int main(){
         edges[i] = {u, v};
     }
     
+    if(m == 0){
+        for(int i = 1; i <= n; i++){
+            if(i > 1) cout << ' ';
+            cout << 0;
+        }
+        cout << '\n';
+        return 0;
+    }
+    
+    auto calcCut = [&](vector<int>& s) -> int {
+        int cut = 0;
+        for(auto& [u,v] : edges)
+            if(s[u] != s[v]) cut++;
+        return cut;
+    };
+    
     vector<int> bestS(n+1, 0);
     int bestCut = -1;
     
     mt19937 rng(42);
     auto startTime = chrono::steady_clock::now();
+    
     auto elapsed = [&]() -> double {
         return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
     };
     
-    while(elapsed() < 1.85){
-        vector<int> s(n+1);
-        for(int i = 1; i <= n; i++) s[i] = rng() & 1;
+    int restarts = 0;
+    while(elapsed() < 1.8){
+        restarts++;
+        vector<int> s(n+1, 0);
         
-        vector<int> gain(n+1, 0);
-        for(int v = 1; v <= n; v++){
+        // Greedy init with random order
+        vector<int> order(n);
+        iota(order.begin(), order.end(), 1);
+        shuffle(order.begin(), order.end(), rng);
+        
+        for(int v : order){
+            int c0 = 0, c1 = 0;
             for(int u : adj[v]){
-                if(s[u] == s[v]) gain[v]++; else gain[v]--;
+                if(s[u] == 0) c0++; else c1++;
             }
+            s[v] = (c0 >= c1) ? 1 : 0;
         }
         
-        // Local search to local optimum
+        // Compute gains
+        vector<int> gain(n+1, 0);
+        for(int v = 1; v <= n; v++)
+            for(int u : adj[v])
+                if(s[u] == s[v]) gain[v]++; else gain[v]--;
+        
+        // 1-flip local search
         bool imp = true;
         while(imp){
             imp = false;
@@ -54,35 +84,36 @@ int main(){
             }
         }
         
-        int cut = 0;
-        for(auto& [u,v] : edges) if(s[u] != s[v]) cut++;
+        // Simulated annealing phase
+        int curCut = calcCut(s);
+        double temp = 2.0;
+        double coolRate = 0.9995;
+        int iters = 0;
+        int maxIters = (n <= 100) ? 100000 : (n <= 500) ? 50000 : 20000;
         
-        vector<int> bestLocal = s;
-        int bestLocalCut = cut;
-        
-        double T0 = max(1.0, 0.02 * m / (double)n);
-        double Tmin = 0.01;
-        
-        for(int iter = 0; elapsed() < 1.83; iter++){
-            double frac = min(1.0, iter / 500000.0);
-            double T = T0 * pow(Tmin / T0, frac);
-            
+        while(iters < maxIters && elapsed() < 1.75){
             int v = (rng() % n) + 1;
-            int g = gain[v];
-            if(g > 0 || (rng() % 1000000) < (int)(1000000.0 * exp((double)g / T))){
+            int delta = -gain[v]; // negative of gain means worsening
+            // flipping v changes cut by gain[v]
+            if(gain[v] > 0 || (uniform_real_distribution<double>(0,1)(rng) < exp((double)gain[v] / temp))){
                 s[v] ^= 1;
-                cut += g;
-                gain[v] = -g;
+                curCut += gain[v];
+                gain[v] = -gain[v];
                 for(int u : adj[v]){
                     if(s[u] == s[v]) gain[u] += 2;
                     else gain[u] -= 2;
                 }
-                if(cut > bestLocalCut){ bestLocalCut = cut; bestLocal = s; }
             }
-            if(frac >= 1.0) break;
+            temp *= coolRate;
+            if(temp < 0.01) temp = 0.01;
+            iters++;
         }
         
-        if(bestLocalCut > bestCut){ bestCut = bestLocalCut; bestS = bestLocal; }
+        curCut = calcCut(s);
+        if(curCut > bestCut){
+            bestCut = curCut;
+            bestS = s;
+        }
     }
     
     for(int i = 1; i <= n; i++){
