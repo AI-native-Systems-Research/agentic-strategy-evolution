@@ -1,0 +1,34 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Multi-start SA with greedy local search (20 restarts, T=3.0, alpha=0.99997) achieves 87.28% cut ratio on Max-Cut with n<=1000, m<=20000. Adding ILS perturbation with fewer restarts (12) does not improve this — more SA restarts outperform fewer restarts + perturbation. The 87.28% score is near the theoretical GW bound of 87.8%.",
+    "confidence": "high",
+    "regime": "Max-Cut, n<=1000, m<=20000, fixed iteration count SA",
+    "evidence": ["iteration-1-h-main", "iteration-2-h-main", "iteration-2-h-control-negative"],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "20 SA restarts with greedy+random initialization explore 20 independent basins of attraction. Each restart runs ~267k SA steps. The total computation (20 × 267k = 5.3M steps) fits within time limits and produces consistent results. ILS perturbation (flipping 4-5% of vertices) explores local neighborhoods but cannot compensate for 40% fewer global restarts.",
+    "applicability_bounds": "Applies when time budget allows 20 full SA restarts. If time budget shrinks, fewer restarts + perturbation may become competitive.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "The Frontier-CS judge for problem 192 produces deterministic scores for deterministic solutions (fixed RNG seed). Run-to-run variance of 0 observed across 2-3 consecutive runs for both tested solutions. Prior observed variance (84.62 vs 87.28) was anomalous, not systematic.",
+    "confidence": "medium",
+    "regime": "Problem 192 judge, deterministic C++ solutions with fixed seeds",
+    "evidence": ["iteration-2-h-main", "iteration-2-h-control-negative"],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The judge compiles and runs the solution on a fixed test set. With a fixed RNG seed and no time-dependent behavior (RP-2), the output is deterministic. Prior variance was likely due to different judge environments or test sets, not the solution itself.",
+    "applicability_bounds": "Assumes solution uses fixed RNG seed and iteration-based termination. May not hold if judge infrastructure changes.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]
