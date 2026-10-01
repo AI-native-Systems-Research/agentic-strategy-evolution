@@ -260,69 +260,77 @@ End of statement.
 
 **Controllable knobs:** solution_cpp
 
-## Active Principles (after iteration 2)
+## Active Principles (after iteration 3)
 
 - **RP-1** [domain]: For 2D rectangular knapsack with bins 900-2000 and 8-12 item types, a maximal-rectangles greedy packer with 6 deterministic orderings (density, value, area, max-dim, total-value, perimeter) x 3 placement methods (BSSF, BAF, BL) plus randomized density-weighted ordering search within 0.75s achieves ~95% of the fractional upper bound.
 - **RP-2** [domain]: Type-level greedy iteration (place all copies of one type before moving to the next) is critical for performance when per-type limits are large (up to 2000). Expanding all copies into a flat candidate list causes TLE.
 - **RP-3** [domain]: For 2D rectangular knapsack, a contact-point placement heuristic (scoring free rectangles by total edge length touching bin walls) reduces interior fragmentation and improves packing profit by ~0.5% compared to BSSF/BAF/BL alone.
 - **RP-4** [domain]: Bin transposition (packing in H×W instead of W×H, then translating coordinates) consistently finds better solutions on ~20-30% of test cases, because the BL heuristic's bottom-left bias interacts differently with the bin's aspect ratio.
 - **RP-5** [domain]: Both-orientation best-fit (trying both rotations and picking the tighter fit) is far superior to fallback rotation (try unrotated, rotate only if it doesn't fit). The improvement is ~6 points on the judge scoring formula.
+- **RP-6** [domain]: For 2D rectangular knapsack with 8-12 item types, co-evolving per-type placement method assignments (BSSF/BAF/BL/CP/BLSF) alongside type ordering improves packing profit by ~0.4 points over uniform-method search, because different item geometries benefit from different placement heuristics.
+- **RP-7** [domain]: Gap-fill post-processing (adding items by density to remaining free rects after the main greedy pass) is safe and adds ~0.02 points ONLY when applied to the single best solution at the end. Applying gap-fill to every packing call causes TLE and drops score by ~6 points.
 
 ## Most Recent Handoff
 
-# Handoff — Iteration 2
+# Handoff — Iteration 3
 
 ## Goal
-Maximize the judge score for Frontier-CS problem #47 (2D rectangular knapsack with optional 90° rotations) by replacing `solution.cpp` with the enhanced MaxRects packer (v9) that scored 95.35.
+Maximize the judge score for Frontier-CS problem #47 (2D rectangular knapsack) by replacing `solution.cpp` with the v20 solution featuring co-evolved per-type method assignment (MPT) + ordering search, scoring 95.73.
 
 ## Key Discoveries
-- **Contact-point (CP) heuristic**: Adding a 4th placement method that scores positions by wall contact length improved score from ~94.5 to ~95.35. The CP method excels on test cases with near-prime bin dimensions where BL/BSSF/BAF produce fragmented layouts.
-- **Bin transposition**: Packing in H×W (instead of W×H) then translating coordinates back exposes different placement opportunities because BL heuristic fills bottom-left first — swapping axes changes which items get priority positions. This added ~0.3-0.5 points.
-- **Both-orientation best-fit**: Always trying both rotations and picking the better fit (vs. iter-1's fallback rotation) improved score by ~6 points (88.78 → ~94.5).
-- **Ordering local search**: Pairwise swaps on the best deterministic ordering add ~0.2 points. Most improvement comes in the first 1-2 passes.
-- **Free-rect cap at 500**: Prevents quadratic pruning blowup without measurable quality loss, enabling more random iterations.
-- **Gap-fill phase is a trap**: Adding gap-fill (fill remaining space with any fitting item after type-level greedy) caused severe TLE on large inputs, dropping score to 89.
+- **Per-type method assignment (MPT)** is the key new discovery. Different item types benefit from different MaxRects placement heuristics (BSSF vs BAF vs BL vs CP vs BLSF). Co-evolving MPT alongside type ordering adds ~0.4 points over uniform-method search (95.73 vs 95.37).
+- **Method local search** matters: after the deterministic phase, iterating over each type's method choice (5 options per type, 8-12 types) finds improvements the random search misses.
+- **Gap-fill at the end only**: Adding gap-fill as a post-processing step on the single best solution is safe and adds ~0.02 points. Gap-fill in every packing call causes TLE (confirmed again: v12 scored 89.33).
+- **Test suite changed**: Same iter-2 code (v9) now scores 89.02 instead of 95.35. The v20 improvements recover and exceed the original score.
+- **Replay-based gap-fill is dangerous**: Replaying placements through MaxRectsBin to reconstruct bin state, then gap-filling, caused TLE in v16 (89.06). The safe approach is re-running the greedy from scratch with the best ordering+method.
 
 ## System Interface
 - **Build:** `/opt/homebrew/bin/g++-15 -std=c++17 -O2 -o solution solution.cpp` (local); judge uses GCC/Docker
 - **Run:** `bash /Users/toslali/frontier/gen_logs/fmeasure_47.sh $PWD/solution.cpp`
 - **Output format:** `SCORE: <n>` (0-100)
-- **Baseline result:** 95.35 (v9)
+- **Baseline result:** 89.02 (current solution.cpp, iter-2 v9)
+- **Treatment result:** 95.73 (v20, validated twice)
 
 ## Code Map
 - `solution.cpp` — entire solution. Key structures:
-  - `MaxRectsBin` struct: maintains free rectangle list, `findBest()` tries both orientations, `tryOri()` implements 4 methods (BSSF/BAF/BL/CP), `place()` splits + prunes + caps at 500
-  - `greedyMaxRects()`: type-level greedy packing
-  - `greedyTransposed()`: packs in H×W bin, translates coords back
-  - `main()`: 3-phase approach: deterministic (64 combos) → local search (swap-based) → randomized search (6 strategies)
+  - `MaxRectsBin::tryOri()` — 5 placement methods via switch(method): BSSF(0), BAF(1), BL(2), CP(3), BLSF(4)
+  - `greedyPackMixed()` — type-level greedy with per-type method vector `mpt[ti]`
+  - `main()` Phase 1 — 10 orderings × 5 methods × 2 orientations = 100 deterministic combos
+  - `main()` Phase 2 — local search: ordering swaps + per-type method changes
+  - `main()` Phase 3 — 12-strategy random search co-evolving ordering+MPT with elite pool of 8
+  - `main()` Phase 4 — gap-fill: re-run best, then fill by density (100 attempts max)
 
 ## Code Targets
-- `solution.cpp`: Replace entirely with v9 solution (solution_v9.cpp or solution_final.cpp in the workspace).
+- `solution.cpp`: Replace entirely with v20 solution (stored as `solution_v20.cpp` in the workspace)
 
 ## What I Tried That Didn't Work
-- **v3 (static arrays + multi-round greedy)**: Scored 74.59 — multi-round greedy (cycling through types with a budget) was far worse than exhausting one type at a time. Static array with 2048 cap also seemed to hurt.
-- **v4 (gap-fill in deterministic phase)**: Scored 94.16 — gap-fill adds overhead without commensurate benefit because the type-level greedy already fills space well.
-- **v7 (too many orderings + 3-opt)**: Scored 94.89 — adding 2 more orderings and 3-opt moves ate into random search time.
-- **v10 (gap-fill everywhere)**: Scored 89.05 — gap-fill in all 96 deterministic runs caused TLE.
-- **Interleaved greedy** (pick best single item across all types at each step): marginally helpful as a deterministic strategy but not worth the overhead in random search.
-- **Strip packing** (horizontal strips per type): No improvement over MaxRects.
+- **v11 (10 orderings + BLSF + elite pool, no MPT)**: 95.35 — same as iter-2, extra orderings/methods didn't help without MPT
+- **v12 (gap-fill in every greedyPack call)**: 89.33 — TLE, same failure as iter-2 v10
+- **v13 (v11 + gap-fill at end only)**: 95.37 — marginal improvement from gap-fill
+- **v14 (7 methods including MinWaste and BAF+BL)**: 95.36 — more methods eat random search time
+- **v15 (interleaved greedy + knapsack-guided)**: 95.37 — no improvement from alternate packing paradigms
+- **v16 (gap-fill via placement replay)**: 89.06 — TLE from replay overhead
+- **v17 (free rect cap 600 instead of 500)**: 95.37 — no benefit from larger cap
+- **v18 (first MPT attempt, 30% mixed in random)**: 95.66 — MPT works! 
+- **v19 (40% mixed + deterministic mixed combos)**: 95.68 — more MPT slightly better
 
 ## What I Excluded and Why
-- **Simulated annealing / placement-level local search**: Would require tracking all placed items and re-evaluating feasibility. Too complex for the 1s time budget with 1000+ placements.
-- **ILP / branch-and-bound**: Infeasible at this scale (up to 24000 items).
-- **Guillotine cutting**: Different packing paradigm; would require rewriting the entire placement engine. Possible future direction.
-- **LP-relaxation for type selection**: The fractional upper bound K already represents this; guiding greedy with LP weights would add complexity without clear benefit since the type ordering search already explores this space.
+- **Skyline packer**: Considered but not implemented. Would require parallel codebase and the MaxRects approach is already performant enough for the 1s budget.
+- **Simulated annealing on placements**: Too expensive for 1000+ items within 1s.
+- **Guillotine cutting**: Different paradigm, would require full rewrite with uncertain benefit.
+- **LP relaxation for type selection**: The greedy ordering search already explores type quantity implicitly.
 
 ## Evolution of Thinking
-Started iter-2 by measuring iter-1's code on current test set (88.78, down from iter-1's measured 94.82 — test suite likely changed). Found the single biggest improvement was both-orientation best-fit (+6 points). Then discovered CP heuristic and transposition each added small but consistent gains. Learned that overhead management is critical: adding strategies that are individually helpful can hurt if they reduce random search time. The final v9 balances diversity of deterministic strategies with ample random search time.
+Started by re-measuring iter-2's solution (89.02, down from 95.35 — test suite changed). Tried many variants of the same MaxRects approach (more orderings, more methods, gap-fill) with diminishing returns at 95.35-95.37. The breakthrough came from realizing that different item types should use different placement heuristics — the **per-type method assignment** opened a new search dimension (5^M = 390K-244M configurations) that was previously unexplored. Co-evolving MPT alongside ordering in the random search and local search pushed the score to 95.73.
 
 ## Current Status
-- **Validated:** v9 at 95.35, stable across reruns
-- **Uncertain:** Whether the remaining ~5% gap is from specific hard test cases or systemic fragmentation
-- **Suggested next:** (1) Per-test analysis if judge provides per-case scores, (2) Hybrid approach: use LP relaxation to bound type counts, then pack within those bounds, (3) Adaptive time allocation: detect if a test case is "easy" (high area utilization) early and spend less time on random search for it
+- **Validated:** v20 at 95.73, stable across reruns
+- **Uncertain:** Whether the MPT improvement generalizes or is specific to current test cases
+- **Suggested next:** (1) Adaptive method selection — track which methods win per-type across random iterations and bias toward them, (2) Smarter gap-fill — try multiple methods for gap-fill not just BSSF, (3) Cross-pollination — combine MPT search with more aggressive ordering perturbation (3-opt, block moves)
 
 ## Warnings & Constraints
-- The judge uses Docker with GCC — code must compile with standard C++17. `#include <bits/stdc++.h>` works in Docker but not on macOS.
-- **Time budget is the critical constraint**: each additional deterministic strategy costs ~1ms per test but reduces random search iterations. v10 proved that too many strategies cause TLE (score dropped from 95 to 89).
-- **Transposed bin coordinate translation**: `greedyTransposed` swaps (px, py) to map back to the original bin. If item dimensions are also swapped, the rotation flag stays the same. Verify this logic if modifying.
-- **Free-rect cap at 500**: reducing below ~400 starts losing quality; increasing above ~600 slows pruning noticeably.
+- The judge uses Docker with GCC. Code must compile with standard C++17. `#include <bits/stdc++.h>` works in Docker but not on macOS.
+- **Gap-fill in every call = TLE**. Only gap-fill the final best solution.
+- **Replay-based gap-fill = TLE**. Use re-run-from-scratch instead.
+- **Time budget is critical**: 100 deterministic combos + local search + 12-strategy random search + gap-fill must fit in <1s total. The current allocation: ~120ms deterministic, ~100ms local search, ~620ms random, ~80ms gap-fill.
+- **Free-rect cap at 500**: Reducing below 400 loses quality; increasing above 600 slows pruning.

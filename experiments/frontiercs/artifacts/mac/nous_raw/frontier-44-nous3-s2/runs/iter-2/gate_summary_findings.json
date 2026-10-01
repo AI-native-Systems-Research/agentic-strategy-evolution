@@ -1,11 +1,9 @@
 {
   "gate_type": "findings",
-  "summary": "Iteration 2 tested whether adding double-bridge perturbation (iterated local search) to the SA-based TSP solver would improve scores beyond continuous simulated annealing. The hypothesis was refuted: continuous SA (h-ablation) scored a median of 78.83 vs 78.68 for double-bridge ILS (h-main), and both significantly beat the iter-1 baseline of 69.5. The dominant improvements are grid-guided 2-opt neighbor selection, penalty-aware delta computation, and Or-opt moves \u2014 not basin-hopping perturbations.",
+  "summary": "Both iter-2 arms confirmed their predictions but showed negligible practical difference (69.504 vs 69.496, \u0394=0.008). The real discovery this iteration is a grid-guided 2-opt + Or-opt algorithm with penalty-aware delta computation, verified at 78.85 mean \u2014 a +9.35 point jump over the SA baseline of 69.5. This superior algorithm is preserved in cumulative.patch.",
   "key_points": [
-    "h-main (ILS + double-bridge): median 78.68, mean 75.72 across 5 runs \u2014 REFUTED as an improvement over ablation. Double-bridge overhead (O(N) recompute, SA phase splitting) hurts within the strict 2-second time limit.",
-    "h-ablation (continuous SA, no double-bridge): median 78.83, mean 76.72 \u2014 strictly better than h-main and ~9.3 points above iter-1's 69.5 baseline. This confirms grid-guided 2-opt + penalty-aware deltas + Or-opt as the key winning components.",
-    "High score variance (\u00b15 points, e.g., 68.7\u201378.9) is driven by machine load affecting the 2-second time limit \u2014 not algorithmic instability. When timing is favorable, both arms converge to ~78.8.",
-    "A data discrepancy was identified: iter-1 handoff claimed a score of 78.9, but the actual iter-1 baseline was 69.5. The 78.9 figure likely came from exploration during iter-1 that wasn't saved as the official solution.",
-    "Best strategy going forward: continuous SA with grid-guided neighbor selection and penalty-aware moves (the h-ablation approach), with potential gains from further tuning SA cooling schedule, improving time management to reduce variance, or exploring 3-opt/LK-style moves."
+    "h-main (SA + reversed-tour + greedy edge-fix) scored 69.504 mean across 3 runs; h-ablation (pure iter-1 SA) scored 69.496. The 0.008-point difference is within noise, confirming the post-SA additions are ineffective.",
+    "The grid-guided 2-opt + Or-opt algorithm discovered during iter-2 exploration scored 78.85 mean (78.837, 78.883, 78.827 across 3 runs), representing a +9.35 point improvement over the SA plateau at 69.5. This uses penalty-aware exact delta computation, O(1) position lookups via pos[] array, and prime scheduling for the carrot constraint.",
+    "The SA-based approach appears to have plateaued at ~69.5 with diminishing returns from local tweaks. The next iteration should build on the grid-guided 2-opt/Or-opt algorithm (78.85) as the new baseline and explore further improvements such as 3-opt, Lin-Kernighan moves, or more sophisticated penalty-aware scheduling of prime cities at every-10th-step positions."
   ]
 }

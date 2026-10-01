@@ -1,10 +1,10 @@
 {
   "arm": "h-ablation",
-  "description": "Continuous SA with grid-guided 2-opt + Or-opt + penalty-aware delta (no double-bridge)",
-  "scores": [78.829, 73.822, 78.828, 78.857, 73.271],
-  "mean": 76.721,
-  "median": 78.828,
-  "min": 73.271,
-  "max": 78.857,
-  "stdev": 2.79
+  "description": "Pure iter-1 SA code (no reversed-tour, no greedy edge-fix)",
+  "scores": [69.4945, 69.497, 69.496],
+  "mean": 69.496,
+  "median": 69.496,
+  "min": 69.4945,
+  "max": 69.497,
+  "stdev": 0.001
 }

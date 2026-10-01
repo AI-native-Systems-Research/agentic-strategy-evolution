@@ -4,7 +4,10 @@
     "statement": "For 2D rectangular knapsack with 8-12 item types, co-evolving per-type placement method assignments (BSSF/BAF/BL/CP/BLSF) alongside type ordering improves packing profit by ~0.4 points over uniform-method search, because different item geometries benefit from different placement heuristics.",
     "confidence": "high",
     "regime": "Bins 900-2000, 8-12 item types with diverse geometries, 5 placement methods, 1s time budget",
-    "evidence": ["iteration-3-h-main", "iteration-3-h-control-negative"],
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-control-negative"
+    ],
     "contradicts": [],
     "extraction_iteration": 3,
     "mechanism": "Items with high aspect ratios benefit from BL (bottom-left) placement which creates regular stacking; compact items benefit from BSSF (best short-side fit) which minimizes waste; items near bin edges benefit from CP (contact-point) which reduces interior fragmentation. The 5^M method space (390K-244M configurations) contains many local optima that a co-evolutionary search with elite pool, crossover, and mutation can efficiently explore.",
@@ -20,10 +23,14 @@
     "statement": "Gap-fill post-processing (adding items by density to remaining free rects after the main greedy pass) is safe and adds ~0.02 points ONLY when applied to the single best solution at the end. Applying gap-fill to every packing call causes TLE and drops score by ~6 points.",
     "confidence": "high",
     "regime": "1s time budget, 15 test cases, hundreds of packing evaluations in random search",
-    "evidence": ["iteration-3-h-main", "iteration-2-v10-failure", "iteration-3-v12-failure"],
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-2-v10-failure",
+      "iteration-3-v12-failure"
+    ],
     "contradicts": [],
     "extraction_iteration": 3,
-    "mechanism": "Each gap-fill pass scans all types against all free rects (O(M × free_rects)), which adds ~50-100ms per packing. With hundreds of random search iterations, this overhead compounds to exceed the 1s time limit on large test cases. Limiting gap-fill to the final best solution avoids the compounding.",
+    "mechanism": "Each gap-fill pass scans all types against all free rects (O(M \u00d7 free_rects)), which adds ~50-100ms per packing. With hundreds of random search iterations, this overhead compounds to exceed the 1s time limit on large test cases. Limiting gap-fill to the final best solution avoids the compounding.",
     "applicability_bounds": "Specific to tight time budgets (<1s) with many packing evaluations. With longer time budgets, gap-fill per iteration might be affordable.",
     "superseded_by": null,
     "category": "domain",

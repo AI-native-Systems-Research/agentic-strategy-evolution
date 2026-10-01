@@ -27,5 +27,6 @@
   ],
   "experiment_valid": true,
   "discrepancy_analysis": "Both predictions confirmed. h-main exceeded the 95.0 threshold at 95.73. h-control-negative scored 88.85 as expected. The 6.88-point gap confirms that per-type method assignment is the primary mechanism. Additional contributors: 10 orderings (vs 8), BLSF method, crossover/insertion strategies in random search, gap-fill post-processing.",
-  "dominant_component_pct": null
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
 }

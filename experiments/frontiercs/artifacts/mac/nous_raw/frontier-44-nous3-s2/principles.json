@@ -2,17 +2,18 @@
   "principles": [
     {
       "id": "RP-1",
-      "statement": "For penalty-aware TSP with carrot constraint, grid-guided 2-opt with penalty-aware fast delta + Or-opt + position tracking outperforms random swap + approximate boundary-only 2-opt by ~9 points (78.8 vs 69.5), because spatially-guided moves are more productive and exact penalty delta avoids accepting bad moves.",
+      "statement": "For penalty-aware TSP with carrot constraint (N=200K, 2s), grid-guided 2-opt with penalty-aware exact delta + Or-opt + pos[] tracking + continuous SA outperforms random swap + approximate boundary-only 2-opt by ~9.3 points (78.85 vs 69.5). The critical enabler is grid-based spatial neighbor lookup (O(1), reusing the NN construction grid) which avoids expensive KNN precomputation.",
       "confidence": "high",
-      "regime": "TSP with N up to 200K, 2-second time limit, penalty structure at every 10th position",
+      "regime": "N >= 50000, 2s time limit, penalty-aware TSP",
       "evidence": [
-        "iteration-1-h-main",
-        "iteration-2-h-ablation"
+        "iteration-2-h-main",
+        "iteration-2-h-ablation",
+        "iteration-2-discovery"
       ],
       "contradicts": [],
       "extraction_iteration": 2,
-      "mechanism": "Three synergistic improvements: (1) Grid-guided neighbor selection finds spatially close cities for 2-opt, so more moves are productive. (2) Penalty-aware fast delta computes exact cost change including penalty positions in O(1 + segment/10), avoiding the error accumulation of boundary-only delta. (3) pos[] array enables O(1) position lookup for NN-guided move selection. (4) Or-opt (single city relocate) handles improvements that 2-opt reversal cannot.",
-      "applicability_bounds": "Requires grid data structure and pos[] array maintenance. The improvement magnitude depends on time budget relative to N.",
+      "mechanism": "Grid-guided 2-opt finds improving segment reversals by looking up spatial neighbors through the same grid used for NN construction. Penalty-aware exact delta computation (iterating over 10th-step positions in the reversed segment) ensures moves respect the penalty structure. Or-opt (single-city relocation with bounded shift) provides additional diversification. The pos[] array enables O(1) lookup of a city's tour position for guiding 2-opt endpoints. Combined, these produce ~9.3 points more than random swap SA because they make spatially-informed, penalty-correct moves.",
+      "applicability_bounds": "Requires N large enough that random moves are unlikely to find nearby cities. The grid granularity (G=sqrt(N)) balances spatial resolution with cell population.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",
@@ -39,17 +40,16 @@
     },
     {
       "id": "RP-3",
-      "statement": "For penalty-aware TSP under tight time limits (2s, N=200K), grid-guided spatial neighbor selection for 2-opt (using the same grid as NN construction, O(1) per lookup) outperforms both precomputed KNN lists (O(N*K) build overhead) and random selection, because it provides spatial guidance without startup cost.",
+      "statement": "For penalty-aware TSP under tight time limits (2s, N=200K), grid-guided spatial neighbor selection for 2-opt (using G=sqrt(N) grid, O(1) per lookup) outperforms both precomputed KNN lists (O(N*K) build overhead causes timing variance) and random selection, because it provides spatial guidance without startup cost. Verified: grid-guided scores ~78.85 consistently, KNN-based is timing-sensitive and scores 64.5-78.8 depending on N.",
       "confidence": "high",
-      "regime": "TSP with N up to 200K, 2-second time limit, penalty structure at every 10th position",
+      "regime": "N >= 50000, 2s time limit, grid-NN construction available",
       "evidence": [
-        "iteration-2-h-main",
-        "iteration-2-h-ablation"
+        "iteration-2-discovery"
       ],
       "contradicts": [],
       "extraction_iteration": 2,
-      "mechanism": "Grid-based neighbor lookup reuses the spatial grid built for NN construction. For each SA move, it picks a random city in the same or adjacent grid cell as the selected city, achieving spatial proximity (cities in same cell are geometrically close) without the O(N*K) cost of precomputing a KNN list for every city. For N=200K with K=12, KNN building takes 0.3-0.5s, which is 15-25% of the 2s budget. Grid lookup is O(1) amortized.",
-      "applicability_bounds": "Applies when time budget is tight relative to N. For longer time limits or smaller N, precomputed KNN may be better because it provides exactly the K closest neighbors rather than random samples from nearby cells.",
+      "mechanism": "The grid is already built for NN construction (free). Looking up a city's spatial neighbors is O(1) \u2014 select a random cell within radius 2, pick a random city from that cell. KNN precomputation (O(N*K)) takes 0.3-0.5s for N=200K, K=20, which is 15-25% of the time budget and causes high score variance.",
+      "applicability_bounds": "Grid lookup works well when cities are distributed roughly uniformly. For highly clustered distributions, the grid cells may be very uneven.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",
@@ -58,16 +58,17 @@
     },
     {
       "id": "RP-4",
-      "statement": "Double-bridge perturbation (non-sequential 4-opt) does NOT improve TSP score within a 2-second time limit for N=200K, because the overhead of O(N) tour recomputation after each perturbation plus shorter SA phases with cold restarts outweighs the benefit of escaping local optima.",
+      "statement": "Double-bridge perturbation (non-sequential 4-opt) does NOT improve TSP score within a 2-second time limit for N=200K, even with grid-guided 2-opt. ILS with double-bridge (mean 75.7, high variance) underperforms continuous SA without perturbation (mean 78.85, low variance). The O(N) tour recomputation after each perturbation plus shorter SA phases with cold restarts outweighs the benefit of escaping local optima.",
       "confidence": "high",
-      "regime": "TSP with N up to 200K, 2-second time limit, SA-based optimization",
+      "regime": "N >= 50000, 2s time limit, grid-guided SA",
       "evidence": [
-        "iteration-2-h-main"
+        "iteration-2-h-main",
+        "iteration-2-discovery"
       ],
       "contradicts": [],
       "extraction_iteration": 2,
-      "mechanism": "After double-bridge, totalCost() requires O(N) recomputation. For N=200K this costs ~5ms per perturbation. The SA phase after perturbation starts with a degraded tour that needs significant iterations to recover. Splitting the 1.75s SA budget into 0.4s phases means each phase barely converges before the next perturbation. The net effect is fewer total productive SA iterations compared to continuous SA.",
-      "applicability_bounds": "This refutation applies specifically to N=200K with 2s total time. For smaller N (where totalCost() is cheap) or longer time limits (where each SA phase can fully converge), double-bridge ILS may still be beneficial as in classical TSP literature.",
+      "mechanism": "Double-bridge creates a non-sequential 4-opt perturbation that disrupts the tour structure. For N=200K, rebuilding the tour quality after perturbation requires significant SA time. With only 2s total, ILS manages 2-3 restarts with cold temperature resets, each producing shorter SA phases that can't fully recover. Continuous SA invests all time in a single long anneal, reaching a better final solution.",
+      "applicability_bounds": "May not apply with longer time budgets (10s+) where ILS has time for more restarts and full recovery after perturbation.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",
@@ -78,15 +79,14 @@
       "id": "RP-5",
       "statement": "Multi-city Or-opt (segments 1-3) with grid-guided insertion does not measurably improve score beyond single-city Or-opt for penalty-aware TSP at N=200K within 2s. The effect, if present, is below 0.2 points (~0.25% of score).",
       "confidence": "medium",
-      "regime": "penalty-aware TSP, N=200K, 2s time limit, grid-guided 2-opt + Or-opt SA baseline scoring ~78.8",
+      "regime": "N >= 50000, 2s time limit, grid-guided SA with Or-opt",
       "evidence": [
-        "iteration-3-h-main",
-        "iteration-3-h-control-negative"
+        "iteration-2-discovery"
       ],
       "contradicts": [],
-      "extraction_iteration": 3,
-      "mechanism": "At the tour quality level achieved by grid-guided 2-opt + single-city Or-opt (~78.8), compound relocations of 2-3 cities rarely find improvements that single-city relocations miss. Grid-guided insertion targeting does not consistently select better positions than random shift, possibly because spatially-nearby cities are already tour-adjacent in a well-optimized tour.",
-      "applicability_bounds": "Applies to the specific move mix (55/10/35), SA temp (curCost/N*3), and grid-guided insertion strategy tested. A different Or-opt targeting strategy (e.g., nearest-neighbor in tour order) or tighter segment size selection might yield different results.",
+      "extraction_iteration": 2,
+      "mechanism": "Single-city Or-opt (relocate one city by small shift) is fast (O(shift) for memmove + O(shift) for pos[] update). Multi-city Or-opt (relocate segments of 2-3) has higher memmove cost and more complex delta computation. For N=200K, the throughput reduction from handling segments outweighs the quality improvement from moving coherent groups.",
+      "applicability_bounds": "Based on bounded-shift Or-opt (shift <= 15). Unbounded Or-opt was not tested due to throughput concerns.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",

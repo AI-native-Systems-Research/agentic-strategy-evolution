@@ -1,10 +1,10 @@
 {
   "arm": "h-main",
-  "description": "ILS with double-bridge perturbation + grid-guided 2-opt + Or-opt + penalty-aware delta",
-  "scores": [78.744, 78.682, 73.724, 68.726, 78.714],
-  "mean": 75.718,
-  "median": 78.682,
-  "min": 68.726,
-  "max": 78.744,
-  "stdev": 4.37
+  "description": "Iter-1 SA (40% swap + 60% boundary 2-opt) + reversed-tour direction check + greedy edge-fix post-pass",
+  "scores": [69.5055, 69.5025, 69.5025],
+  "mean": 69.504,
+  "median": 69.5025,
+  "min": 69.5025,
+  "max": 69.5055,
+  "stdev": 0.002
 }
