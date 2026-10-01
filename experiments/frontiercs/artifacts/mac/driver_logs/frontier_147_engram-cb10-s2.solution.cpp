@@ -2,171 +2,173 @@
 using namespace std;
 
 int n;
-int X[200], Y[200];
-long long R[200];
-int A[200], B[200], C[200], D[200];
+int x_[200], y_[200];
+long long r_[200];
+int a_[200], b_[200], c_[200], d_[200];
 
-bool overlaps(int i, int j){
-    return A[i]<C[j]&&C[i]>A[j]&&B[i]<D[j]&&D[i]>B[j];
-}
-
-double score_i(int i){
-    long long si=(long long)(C[i]-A[i])*(D[i]-B[i]);
-    if(si<=0) return 0;
-    if(X[i]<A[i]||X[i]>=C[i]||Y[i]<B[i]||Y[i]>=D[i]) return 0;
-    double mn=min((double)R[i],(double)si);
-    double mx=max((double)R[i],(double)si);
-    double ratio=1.0-mn/mx;
-    return 1.0-ratio*ratio;
-}
-
-double totalScore(){
-    double s=0;
-    for(int i=0;i<n;i++) s+=score_i(i);
-    return s;
-}
-
-void doPartition(vector<int>& ids, int ax, int ay, int cx, int cy, bool horiz){
-    if(ids.size()==1){
-        int i=ids[0];
-        A[i]=ax; B[i]=ay; C[i]=cx; D[i]=cy;
+void solve_rec(vector<int>& ids, int ax, int ay, int cx, int cy, bool horiz) {
+    if (ids.size() == 1) {
+        int i = ids[0];
+        a_[i] = ax; b_[i] = ay; c_[i] = cx; d_[i] = cy;
         return;
     }
-    if(ids.empty()) return;
-    if(cx-ax<=0||cy-ay<=0){
-        for(int i:ids){A[i]=X[i];B[i]=Y[i];C[i]=X[i]+1;D[i]=Y[i]+1;}
+    if (ids.empty()) return;
+    
+    long long totalR = 0;
+    for (int i : ids) totalR += r_[i];
+    
+    // Sort by coordinate
+    if (horiz) sort(ids.begin(), ids.end(), [](int a, int b){ return x_[a] < x_[b]; });
+    else sort(ids.begin(), ids.end(), [](int a, int b){ return y_[a] < y_[b]; });
+    
+    // Find best split
+    int bestK = -1;
+    double bestCost = 1e18;
+    long long cumR = 0;
+    
+    for (int k = 0; k < (int)ids.size() - 1; k++) {
+        cumR += r_[ids[k]];
+        double frac = (double)cumR / totalR;
+        int splitPos;
+        if (horiz) splitPos = ax + (int)round(frac * (cx - ax));
+        else splitPos = ay + (int)round(frac * (cy - ay));
+        
+        // Check all points in left group are < splitPos, right group >= splitPos
+        bool valid = true;
+        if (horiz) {
+            if (splitPos <= ax || splitPos >= cx) { valid = false; }
+            for (int j = 0; j <= k && valid; j++) if (x_[ids[j]] >= splitPos) valid = false;
+            for (int j = k+1; j < (int)ids.size() && valid; j++) if (x_[ids[j]] < splitPos) valid = false;
+        } else {
+            if (splitPos <= ay || splitPos >= cy) { valid = false; }
+            for (int j = 0; j <= k && valid; j++) if (y_[ids[j]] >= splitPos) valid = false;
+            for (int j = k+1; j < (int)ids.size() && valid; j++) if (y_[ids[j]] < splitPos) valid = false;
+        }
+        if (!valid) continue;
+        
+        // Cost: deviation from ideal area proportions
+        double leftArea, rightArea;
+        if (horiz) {
+            leftArea = (double)(splitPos - ax) * (cy - ay);
+            rightArea = (double)(cx - splitPos) * (cy - ay);
+        } else {
+            leftArea = (double)(cx - ax) * (splitPos - ay);
+            rightArea = (double)(cx - ax) * (cy - splitPos);
+        }
+        double idealLeft = (double)cumR / totalR * (double)(cx-ax) * (cy-ay);
+        double idealRight = (double)(totalR - cumR) / totalR * (double)(cx-ax) * (cy-ay);
+        double cost = abs(leftArea - idealLeft) + abs(rightArea - idealRight);
+        
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestK = k;
+        }
+    }
+    
+    if (bestK == -1) {
+        // Fallback: try other direction
+        if (ids.size() == 2) {
+            // assign minimal rects
+            for (int i : ids) {
+                a_[i] = x_[i]; b_[i] = y_[i]; c_[i] = x_[i]+1; d_[i] = y_[i]+1;
+            }
+            return;
+        }
+        solve_rec(ids, ax, ay, cx, cy, !horiz);
         return;
     }
     
-    long long totalR=0;
-    for(int i:ids) totalR+=R[i];
+    long long cumR2 = 0;
+    for (int k = 0; k <= bestK; k++) cumR2 += r_[ids[k]];
+    double frac = (double)cumR2 / totalR;
+    int splitPos;
+    if (horiz) splitPos = ax + max(1, min((int)(cx-ax)-1, (int)round(frac * (cx - ax))));
+    else splitPos = ay + max(1, min((int)(cy-ay)-1, (int)round(frac * (cy - ay))));
     
-    // Try splitting
-    auto trySplit=[&](bool h) -> pair<double,tuple<int,int,vector<int>,vector<int>>>{
-        vector<int> sorted_ids=ids;
-        if(h) sort(sorted_ids.begin(),sorted_ids.end(),[](int a,int b){return X[a]<X[b];});
-        else sort(sorted_ids.begin(),sorted_ids.end(),[](int a,int b){return Y[a]<Y[b];});
-        
-        double bestCost=1e18;
-        int bestK=-1, bestSp=-1;
-        long long cumR=0;
-        
-        for(int k=0;k<(int)sorted_ids.size()-1;k++){
-            cumR+=R[sorted_ids[k]];
-            double frac=(double)cumR/totalR;
-            int lo,hi,span;
-            if(h){lo=ax;span=cx-ax;
-                int need_lo=X[sorted_ids[k]]+1;
-                int need_hi=X[sorted_ids[k+1]];
-                if(need_hi<need_lo) continue;
-                int sp=lo+(int)round(frac*span);
-                sp=max(sp,need_lo); sp=min(sp,need_hi);
-                sp=max(sp,ax+1); sp=min(sp,cx-1);
-                if(sp<=ax||sp>=cx) continue;
-                double af=(double)(sp-ax)/span;
-                double cost=abs(af-frac);
-                if(cost<bestCost){bestCost=cost;bestK=k;bestSp=sp;}
-            } else {lo=ay;span=cy-ay;
-                int need_lo=Y[sorted_ids[k]]+1;
-                int need_hi=Y[sorted_ids[k+1]];
-                if(need_hi<need_lo) continue;
-                int sp=lo+(int)round(frac*span);
-                sp=max(sp,need_lo); sp=min(sp,need_hi);
-                sp=max(sp,ay+1); sp=min(sp,cy-1);
-                if(sp<=ay||sp>=cy) continue;
-                double af=(double)(sp-ay)/span;
-                double cost=abs(af-frac);
-                if(cost<bestCost){bestCost=cost;bestK=k;bestSp=sp;}
-            }
-        }
-        if(bestK<0){
-            bestK=(int)sorted_ids.size()/2-1;
-            if(bestK<0) bestK=0;
-            if(h) bestSp=(ax+cx)/2; else bestSp=(ay+cy)/2;
-            // clamp
-            if(h){
-                int mxL=X[sorted_ids[bestK]]+1;
-                int mnR=X[sorted_ids[bestK+1]];
-                bestSp=max(bestSp,mxL);bestSp=min(bestSp,mnR);
-                bestSp=max(bestSp,ax+1);bestSp=min(bestSp,cx-1);
-            } else {
-                int mxL=Y[sorted_ids[bestK]]+1;
-                int mnR=Y[sorted_ids[bestK+1]];
-                bestSp=max(bestSp,mxL);bestSp=min(bestSp,mnR);
-                bestSp=max(bestSp,ay+1);bestSp=min(bestSp,cy-1);
-            }
-        }
-        vector<int> left(sorted_ids.begin(),sorted_ids.begin()+bestK+1);
-        vector<int> right(sorted_ids.begin()+bestK+1,sorted_ids.end());
-        return {bestCost,{bestSp,h?1:0,left,right}};
-    };
-    
-    auto [c1,r1]=trySplit(true);
-    auto [c2,r2]=trySplit(false);
-    
-    auto& [sp,dir,left,right] = (c1<=c2)?r1:r2;
-    
-    if(left.empty()||right.empty()){
-        // fallback
-        if(horiz) sort(ids.begin(),ids.end(),[](int a,int b){return X[a]<X[b];});
-        else sort(ids.begin(),ids.end(),[](int a,int b){return Y[a]<Y[b];});
-        int k=ids.size()/2;
-        left.assign(ids.begin(),ids.begin()+k);
-        right.assign(ids.begin()+k,ids.end());
-        sp=horiz?(ax+cx)/2:(ay+cy)/2;
-        dir=horiz?1:0;
-    }
-    
-    if(dir==1){
-        doPartition(left,ax,ay,sp,cy,!horiz);
-        doPartition(right,sp,ay,cx,cy,!horiz);
+    // Adjust to ensure containment
+    if (horiz) {
+        int maxLeft = -1;
+        for (int j = 0; j <= bestK; j++) maxLeft = max(maxLeft, x_[ids[j]]);
+        int minRight = 10001;
+        for (int j = bestK+1; j < (int)ids.size(); j++) minRight = min(minRight, x_[ids[j]]);
+        splitPos = max(splitPos, maxLeft + 1);
+        splitPos = min(splitPos, minRight);
     } else {
-        doPartition(left,ax,ay,cx,sp,!horiz);
-        doPartition(right,ax,sp,cx,cy,!horiz);
+        int maxLeft = -1;
+        for (int j = 0; j <= bestK; j++) maxLeft = max(maxLeft, y_[ids[j]]);
+        int minRight = 10001;
+        for (int j = bestK+1; j < (int)ids.size(); j++) minRight = min(minRight, y_[ids[j]]);
+        splitPos = max(splitPos, maxLeft + 1);
+        splitPos = min(splitPos, minRight);
+    }
+    
+    vector<int> left(ids.begin(), ids.begin() + bestK + 1);
+    vector<int> right(ids.begin() + bestK + 1, ids.end());
+    
+    if (horiz) {
+        solve_rec(left, ax, ay, splitPos, cy, !horiz);
+        solve_rec(right, splitPos, ay, cx, cy, !horiz);
+    } else {
+        solve_rec(left, ax, ay, cx, splitPos, !horiz);
+        solve_rec(right, ax, splitPos, cx, cy, !horiz);
     }
 }
 
 int main(){
-    scanf("%d",&n);
-    for(int i=0;i<n;i++) scanf("%d%d%lld",&X[i],&Y[i],&R[i]);
+    ios_base::sync_with_stdio(false);
+    cin.tie(NULL);
     
-    vector<int> ids(n); iota(ids.begin(),ids.end(),0);
-    doPartition(ids,0,0,10000,10000,true);
+    cin >> n;
+    for(int i=0;i<n;i++) cin >> x_[i] >> y_[i] >> r_[i];
     
+    vector<int> ids(n);
+    iota(ids.begin(), ids.end(), 0);
+    solve_rec(ids, 0, 0, 10000, 10000, true);
+    
+    // Verify and fix
     for(int i=0;i<n;i++){
-        if(A[i]>=C[i]||B[i]>=D[i]||X[i]<A[i]||X[i]>=C[i]||Y[i]<B[i]||Y[i]>=D[i])
-            {A[i]=X[i];B[i]=Y[i];C[i]=X[i]+1;D[i]=Y[i]+1;}
+        if(a_[i]>=c_[i]||b_[i]>=d_[i]||x_[i]<a_[i]||x_[i]>=c_[i]||y_[i]<b_[i]||y_[i]>=d_[i]){
+            a_[i]=x_[i]; b_[i]=y_[i]; c_[i]=x_[i]+1; d_[i]=y_[i]+1;
+        }
     }
-    for(int i=0;i<n;i++) for(int j=i+1;j<n;j++)
-        if(overlaps(i,j)){A[j]=X[j];B[j]=Y[j];C[j]=X[j]+1;D[j]=Y[j]+1;}
+    
+    // SA refinement
+    auto score_i = [&](int i) -> double {
+        long long si = (long long)(c_[i]-a_[i])*(d_[i]-b_[i]);
+        double mn = min((double)r_[i], (double)si);
+        double mx = max((double)r_[i], (double)si);
+        double ratio = 1.0 - mn/mx;
+        return 1.0 - ratio*ratio;
+    };
     
     mt19937 rng(42);
-    auto st=chrono::steady_clock::now();
-    double tl=4.5;
+    auto startTime = chrono::steady_clock::now();
+    double timeLimit = 4.7;
+    double T = 0.05;
     
     for(int iter=0;;iter++){
         if((iter&511)==0){
-            double el=chrono::duration<double>(chrono::steady_clock::now()-st).count();
-            if(el>tl) break;
+            double el = chrono::duration<double>(chrono::steady_clock::now()-startTime).count();
+            if(el > timeLimit) break;
+            T = 0.05 * (1.0 - el/timeLimit) + 1e-6;
         }
-        int i=rng()%n;
-        int dir=rng()%4;
-        double oldS=score_i(i);
-        int oa=A[i],ob=B[i],oc=C[i],od=D[i];
-        int mag=1+rng()%100;
-        int delta=(rng()&1)?mag:-mag;
-        if(dir==0)A[i]+=delta;else if(dir==1)B[i]+=delta;else if(dir==2)C[i]+=delta;else D[i]+=delta;
-        
-        A[i]=max(A[i],0);B[i]=max(B[i],0);C[i]=min(C[i],10000);D[i]=min(D[i],10000);
-        
-        bool ok=A[i]<C[i]&&B[i]<D[i]&&X[i]>=A[i]&&X[i]<C[i]&&Y[i]>=B[i]&&Y[i]<D[i];
-        if(ok) for(int j=0;j<n&&ok;j++) if(j!=i) ok=!overlaps(i,j);
+        int i = rng()%n;
+        int dir = rng()%4;
+        double oldS = score_i(i);
+        int oa=a_[i],ob=b_[i],oc=c_[i],od=d_[i];
+        int delta = (rng()%2)?1:-1;
+        if(rng()%3==0) delta *= (1+rng()%20);
+        if(dir==0) a_[i]+=delta; else if(dir==1) b_[i]+=delta;
+        else if(dir==2) c_[i]+=delta; else d_[i]+=delta;
+        bool ok = a_[i]>=0&&b_[i]>=0&&c_[i]<=10000&&d_[i]<=10000&&a_[i]<c_[i]&&b_[i]<d_[i]&&x_[i]>=a_[i]&&x_[i]<c_[i]&&y_[i]>=b_[i]&&y_[i]<d_[i];
+        if(ok) for(int j=0;j<n&&ok;j++) if(j!=i) if(a_[i]<c_[j]&&c_[i]>a_[j]&&b_[i]<d_[j]&&d_[i]>b_[j]) ok=false;
         if(ok){
-            double nS=score_i(i);
-            if(nS>=oldS){/*accept*/}
-            else {A[i]=oa;B[i]=ob;C[i]=oc;D[i]=od;}
-        } else {A[i]=oa;B[i]=ob;C[i]=oc;D[i]=od;}
+            double newS = score_i(i);
+            double diff = newS - oldS;
+            if(diff < 0 && (double)(rng()%10000)/10000.0 > exp(diff/T)) ok = false;
+        }
+        if(!ok){ a_[i]=oa;b_[i]=ob;c_[i]=oc;d_[i]=od; }
     }
     
-    for(int i=0;i<n;i++) printf("%d %d %d %d\n",A[i],B[i],C[i],D[i]);
+    for(int i=0;i<n;i++) printf("%d %d %d %d\n",a_[i],b_[i],c_[i],d_[i]);
 }
