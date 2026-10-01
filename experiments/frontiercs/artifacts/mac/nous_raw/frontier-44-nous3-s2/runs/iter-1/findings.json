@@ -1,6 +1,5 @@
 {
   "iteration": 1,
-  "mode": "real",
   "bundle_ref": "runs/iter-1/bundle.yaml",
   "arms": [
     {
@@ -9,11 +8,11 @@
       "observed": "Score = 78.881, a 2.35x improvement over the NN+limited-SA baseline of 33.456. The efficient penalty delta (O(segment/10) instead of O(segment)) enabled NN-guided 2-opt with large segments up to 5000, dramatically improving solution quality.",
       "status": "CONFIRMED",
       "error_type": null,
-      "diagnostic_note": null,
-      "score": 78.881
+      "diagnostic_note": null
     }
   ],
   "experiment_valid": true,
-  "discrepancy_analysis": "Prediction confirmed. The SA with NN-guided 2-opt and efficient penalty delta computation scored 78.88, well above the 33.5 baseline probe. Key mechanism: NN-guided move selection focused 2-opt on pairs of cities that are close in Euclidean space but far apart in tour order — exactly the most productive improvements. The efficient delta computation (only checking penalty positions at every 10th step) enabled evaluation of much larger segments than full O(N) recompute.",
-  "dominant_component_pct": null
+  "discrepancy_analysis": "Prediction confirmed. The SA with NN-guided 2-opt and efficient penalty delta computation scored 78.88, well above the 33.5 baseline probe. Key mechanism: NN-guided move selection focused 2-opt on pairs of cities that are close in Euclidean space but far apart in tour order \u2014 exactly the most productive improvements. The efficient delta computation (only checking penalty positions at every 10th step) enabled evaluation of much larger segments than full O(N) recompute.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
 }

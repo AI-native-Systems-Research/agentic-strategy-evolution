@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "The main hypothesis was confirmed: a simulated annealing approach with nearest-neighbor-guided 2-opt and efficient penalty delta computation scored 78.88 out of 100, a 2.35\u00d7 improvement over the baseline probe score of 33.5. The key enabler was an O(segment/10) penalty recomputation that allowed evaluating large 2-opt segments (up to 5000 cities) within the 2-second time limit.",
+  "key_points": [
+    "Score achieved: 78.88/100, up from 33.46 baseline \u2014 a substantial improvement confirming the algorithmic strategy works well.",
+    "The efficient delta computation (only checking every 10th step for penalty changes during segment reversal) was the critical optimization, reducing per-move cost from O(N) to O(segment/10) and enabling much larger neighborhood exploration.",
+    "Nearest-neighbor-guided 2-opt focused search on city pairs that are geographically close but far apart in tour order \u2014 exactly the highest-value improvements \u2014 rather than random pair selection.",
+    "Roughly 21 points of headroom remain (78.88 vs 100); further gains could come from 3-opt/LK moves, better prime-city scheduling at penalty positions (every 10th step), or longer SA cooling schedules tuned to stay within the time budget."
+  ]
+}
