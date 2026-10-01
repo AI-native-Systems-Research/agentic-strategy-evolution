@@ -26,11 +26,11 @@ int main(){
         return 0;
     }
     
-    mt19937 rng(12345);
+    mt19937 rng(42);
     vector<int> bestS(n, 0), s(n), gain(n);
-    int bestCut = 0;
+    int bestCut = -1;
     
-    auto calcCut = [&](){
+    auto calcCut = [&]() -> int {
         int c = 0;
         for(auto&[a,b] : edges) c += (s[a] != s[b]);
         return c;
@@ -49,8 +49,8 @@ int main(){
         s[u] ^= 1;
         gain[u] = -gain[u];
         for(int v : adj[u]){
-            if(s[u] == s[v]) gain[v] += 2;
-            else gain[v] -= 2;
+            if(s[u] == s[v]) gain[v] -= 2;
+            else gain[v] += 2;
         }
     };
     
@@ -59,45 +59,33 @@ int main(){
         while(imp){
             imp = false;
             for(int u = 0; u < n; u++){
-                if(gain[u] > 0){
-                    doFlip(u, cur);
-                    imp = true;
-                }
+                if(gain[u] > 0){ doFlip(u, cur); imp = true; }
             }
         }
     };
     
     auto t0 = chrono::steady_clock::now();
-    auto ms = [&]() -> long long {
-        return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - t0).count();
+    auto elapsed = [&]()->double{
+        return chrono::duration<double>(chrono::steady_clock::now() - t0).count();
     };
     
-    long long timeLimit = 1800;
+    double timeLimit = 1.8;
     
-    while(ms() < timeLimit){
+    while(elapsed() < timeLimit){
         for(int i = 0; i < n; i++) s[i] = rng() & 1;
         int cur = calcCut();
         computeGain();
         localSearch(cur);
         if(cur > bestCut){ bestCut = cur; bestS = s; }
         
-        // Simulated annealing from this local optimum
-        double T = 3.0;
-        while(T > 0.01 && ms() < timeLimit){
-            for(int it = 0; it < n * 2; it++){
-                int u = rng() % n;
-                int g = gain[u];
-                if(g >= 0){
-                    doFlip(u, cur);
-                } else {
-                    double p = exp((double)g / T);
-                    if((double)(rng() & 0xFFFFFF) / 0xFFFFFF < p){
-                        doFlip(u, cur);
-                    }
-                }
+        // SA phase
+        for(double T = 4.0; T > 0.005 && elapsed() < timeLimit; T *= 0.9995){
+            int u = rng() % n;
+            int g = gain[u];
+            if(g >= 0 || (double)(rng() % 1000000) / 1000000.0 < exp((double)g / T)){
+                doFlip(u, cur);
                 if(cur > bestCut){ bestCut = cur; bestS = s; }
             }
-            T *= 0.999;
         }
     }
     
