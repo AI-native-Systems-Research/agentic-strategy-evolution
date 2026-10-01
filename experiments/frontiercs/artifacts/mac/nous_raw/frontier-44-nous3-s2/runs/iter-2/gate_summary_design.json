@@ -1,12 +1,12 @@
 {
   "gate_type": "design",
-  "summary": "We are testing whether adding double-bridge perturbation (a standard TSP escape mechanism) on top of improved move operators (Or-opt for 1-3 city segments, larger KNN=20) can push the score beyond iter-1's 78.9/100 on this penalized TSP problem. Two arms isolate the contribution of perturbation vs. better moves alone.",
+  "summary": "We are testing whether two targeted post-processing additions (reversed-tour direction selection and greedy worst-edge fix) can improve upon the iteration-1 simulated annealing baseline score of 69.5 on a penalized TSP problem. An ablation arm re-runs the pure iter-1 code to confirm the baseline, while the main arm adds the post-SA optimizations.",
   "key_points": [
-    "h-main combines three improvements over iter-1: double-bridge perturbation to escape local optima, Or-opt extended to 1-3 city segments (was single-city only), and KNN increased from 12 to 20 for wider neighbor search. Prediction: score > 78.9.",
-    "h-ablation removes double-bridge but keeps the improved move operators (Or-opt 1-3, KNN=20), isolating whether the gain comes from better moves or from the perturbation/restart mechanism. Prediction: scores between 78.9 and h-main.",
-    "Confirmation criteria: h-main > h-ablation > 78.9 confirms both mechanisms contribute; h-ablation \u2265 h-main would indicate perturbation wastes time; both \u2264 78.9 would indicate the new move operators have bugs or overhead issues.",
-    "Key risk: with N up to 200K and a 2-second time limit, double-bridge + SA re-optimization cycles may not complete enough iterations to be useful; time budgeting allocates 0.1s construction, SA+perturbation until 1.75s, prime scheduling in remaining time.",
-    "Diagnostics are built in: if scores don't improve, check (a) whether delta computations for multi-city Or-opt are correct, (b) whether double-bridge destroys too much tour structure, (c) whether KNN=20 construction overhead eats into SA time."
+    "Arm h-main adds two mechanisms to iter-1's SA: (1) choosing the cheaper direction of the nearest-neighbor initial tour (forward vs reversed) to exploit the step-dependent 10% penalty structure, and (2) a greedy edge-fix pass that targets the 50 worst penalized edges with 200 random swap trials each after SA converges.",
+    "Arm h-ablation re-runs the exact iter-1 SA code (40% swap + 60% boundary-2-opt, NN initialization) to establish a clean 69.5 baseline for comparison.",
+    "Confirmation: h-main scores measurably above 69.5 (even a fraction helps given continuous 0-100 scoring). Refutation: h-main scores equal to or below h-ablation, indicating the post-SA pass adds noise or wastes time budget. If h-ablation scores higher, the post-SA additions are actively harmful.",
+    "Extensive prior exploration already ruled out NN-guided 2-opt, double-bridge perturbation, Or-opt, and Hilbert-curve construction \u2014 none improved on iter-1. The two proposed additions are the only untested mechanisms with plausible benefit.",
+    "Risk: the greedy edge-fix consumes ~0.08s of the 2s time budget; if this crowds out SA iterations on large inputs (N=200K), it could hurt. The diagnostic is to compare pre- vs post-pass tour cost."
   ],
   "campaign_spec_diff": {
     "locked_parameters_violations": [],

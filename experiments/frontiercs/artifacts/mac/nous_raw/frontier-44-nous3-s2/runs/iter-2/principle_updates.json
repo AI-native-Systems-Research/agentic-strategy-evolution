@@ -1,35 +1,14 @@
 [
   {
-    "id": "RP-3",
-    "statement": "For penalty-aware TSP under tight time limits (2s, N=200K), grid-guided spatial neighbor selection for 2-opt (using the same grid as NN construction, O(1) per lookup) outperforms both precomputed KNN lists (O(N*K) build overhead) and random selection, because it provides spatial guidance without startup cost.",
-    "confidence": "high",
-    "regime": "TSP with N up to 200K, 2-second time limit, penalty structure at every 10th position",
-    "evidence": [
-      "iteration-2-h-main",
-      "iteration-2-h-ablation"
-    ],
-    "contradicts": [],
-    "extraction_iteration": 2,
-    "mechanism": "Grid-based neighbor lookup reuses the spatial grid built for NN construction. For each SA move, it picks a random city in the same or adjacent grid cell as the selected city, achieving spatial proximity (cities in same cell are geometrically close) without the O(N*K) cost of precomputing a KNN list for every city. For N=200K with K=12, KNN building takes 0.3-0.5s, which is 15-25% of the 2s budget. Grid lookup is O(1) amortized.",
-    "applicability_bounds": "Applies when time budget is tight relative to N. For longer time limits or smaller N, precomputed KNN may be better because it provides exactly the K closest neighbors rather than random samples from nearby cells.",
-    "superseded_by": null,
-    "category": "domain",
-    "status": "active",
-    "empirical_content": true,
-    "derivation_type": "empirical"
-  },
-  {
     "id": "RP-4",
-    "statement": "Double-bridge perturbation (non-sequential 4-opt) does NOT improve TSP score within a 2-second time limit for N=200K, because the overhead of O(N) tour recomputation after each perturbation plus shorter SA phases with cold restarts outweighs the benefit of escaping local optima.",
+    "statement": "For TSP #44 with N up to 200K and 2s time limit, boundary-only 2-opt contributes zero score improvement. 100% random swap SA gives identical score (69.49) to 40% swap + 60% 2-opt (69.50). All SA improvement over NN construction comes from random city swaps, not segment reversals.",
     "confidence": "high",
-    "regime": "TSP with N up to 200K, 2-second time limit, SA-based optimization",
-    "evidence": [
-      "iteration-2-h-main"
-    ],
+    "regime": "N >= 1000, 2s time limit, grid-NN construction, SA optimization",
+    "evidence": ["iteration-2-h-main", "iteration-2-h-ablation"],
     "contradicts": [],
     "extraction_iteration": 2,
-    "mechanism": "After double-bridge, totalCost() requires O(N) recomputation. For N=200K this costs ~5ms per perturbation. The SA phase after perturbation starts with a degraded tour that needs significant iterations to recover. Splitting the 1.75s SA budget into 0.4s phases means each phase barely converges before the next perturbation. The net effect is fewer total productive SA iterations compared to continuous SA.",
-    "applicability_bounds": "This refutation applies specifically to N=200K with 2s total time. For smaller N (where totalCost() is cheap) or longer time limits (where each SA phase can fully converge), double-bridge ILS may still be beneficial as in classical TSP literature.",
+    "mechanism": "Random 2-opt with boundary delta cannot find improving moves in a post-NN tour because the NN construction already ensures consecutive cities are close. Random swaps work because they provide long-range diversification — exchanging two cities at distant tour positions can shorten 4 edges simultaneously.",
+    "applicability_bounds": "Applies to random (non-NN-guided) 2-opt with boundary-only delta. NN-guided 2-opt with exact delta might contribute, but for N=200K the pos[] overhead makes it slower than random SA.",
     "superseded_by": null,
     "category": "domain",
     "status": "active",
@@ -37,18 +16,31 @@
     "derivation_type": "empirical"
   },
   {
-    "id": "RP-1",
-    "statement": "For penalty-aware TSP with carrot constraint, grid-guided 2-opt with penalty-aware fast delta + Or-opt + position tracking outperforms random swap + approximate boundary-only 2-opt by ~9 points (78.8 vs 69.5), because spatially-guided moves are more productive and exact penalty delta avoids accepting bad moves.",
+    "id": "RP-5",
+    "statement": "SA swap ratio has a critical threshold near 30%: below this, SA fails to improve NN construction at all (score stays at 64.5). Above 30%, diminishing returns (40% ≈ 100% ≈ 69.5).",
     "confidence": "high",
-    "regime": "TSP with N up to 200K, 2-second time limit, penalty structure at every 10th position",
-    "evidence": [
-      "iteration-1-h-main",
-      "iteration-2-h-ablation"
-    ],
+    "regime": "N >= 1000, 2s time limit, SA with swap + 2-opt moves",
+    "evidence": ["iteration-2-h-main"],
     "contradicts": [],
     "extraction_iteration": 2,
-    "mechanism": "Three synergistic improvements: (1) Grid-guided neighbor selection finds spatially close cities for 2-opt, so more moves are productive. (2) Penalty-aware fast delta computes exact cost change including penalty positions in O(1 + segment/10), avoiding the error accumulation of boundary-only delta. (3) pos[] array enables O(1) position lookup for NN-guided move selection. (4) Or-opt (single city relocate) handles improvements that 2-opt reversal cannot.",
-    "applicability_bounds": "Requires grid data structure and pos[] array maintenance. The improvement magnitude depends on time budget relative to N.",
+    "mechanism": "Random swaps provide essential long-range mixing in the SA search space. Below the threshold, the SA cannot escape the NN local basin. Above it, additional swaps find diminishing improvements because the search space is exponentially large.",
+    "applicability_bounds": "Specific to random swap (uniform over all positions). Guided swaps (e.g., targeting long edges) might lower the threshold.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-6",
+    "statement": "For N=200K TSP with 2s time limit, NN-guided local search moves (2-opt, Or-opt) using a position array are slower than random moves because the O(segment) pos[] update overhead exceeds the targeting benefit.",
+    "confidence": "medium",
+    "regime": "N >= 50000, 2s time limit, array-based tour representation",
+    "evidence": ["iteration-2-h-main"],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "For NN-guided 2-opt, after accepting a segment reversal, all positions in the reversed segment must be updated in the pos[] array. For segments of length S, this is O(S). When S is large (two geographically close cities far apart in tour), the overhead exceeds the cost of O(1) random 2-opt moves.",
+    "applicability_bounds": "Might not apply with doubly-linked-list tour representation (O(1) insert/delete) or for smaller N where pos[] updates are cheaper.",
     "superseded_by": null,
     "category": "domain",
     "status": "active",

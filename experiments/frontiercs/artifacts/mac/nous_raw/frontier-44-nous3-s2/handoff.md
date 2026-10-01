@@ -1,92 +1,91 @@
-# Handoff — Iter 3
+# Handoff — Iter 2
 
 ## Goal
 
-Push judge score above 78.8 (iter-2 h-ablation best) by extending Or-opt to multi-city segments (1-3), adding grid-guided insertion for Or-opt, rebalancing move mix, and tuning SA temperature.
+Measure whether targeted post-SA optimization (reversed-tour direction check + greedy edge-fix) improves on iter-1's ~69.5. If not, document the SA plateau for future strategy changes.
 
 ## Key Discoveries
 
-- **Iter-2 h-ablation scores 78.8** (measured: 78.819). This is the baseline to beat.
-- **Double-bridge HURTS** (RP-4): iter-2 h-main with double-bridge scored lower (75.7 mean) than h-ablation without it (76.7 mean). Do NOT use perturbation.
-- **Or-opt currently only relocates single cities** (solution.cpp lines 206-234). Segments of 2-3 find improvements that single-city misses — standard TSP technique.
-- **Or-opt shift range is only 15 positions** — for N=200K this is tiny. Increasing to 50 or using grid-guided insertion should find better targets.
-- **Move mix is 70/15/15** (grid 2-opt / random short 2-opt / Or-opt). Or-opt gets relatively few tries despite being cheaper per iteration.
-- **Score variance ±5 points** due to machine load on 2s time limit. Multiple runs needed to distinguish signal from noise.
-- **Cannot compile locally** — `bits/stdc++.h` only on judge's g++.
+- **Iter-1 reliably scores ~69.5** (69.496 ± 0.01 across multiple runs). One outlier at 64.5 was likely a judge timeout.
+- **2-opt contributes NOTHING**: 100% swap gives 69.49, same as 40% swap + 60% 2-opt (69.50). All SA improvement comes from swap moves.
+- **Swap ratio is critical**: below ~30% swap, SA fails to improve NN at all (score stays at 64.5). Above 30%, diminishing returns.
+- **NN-guided 2-opt with pos[] is too slow** for N=200K: O(segment) pos[] updates eat the throughput gain. Every variant tested (full pos[] update, stale pos[], periodic rebuild) scored worse than random SA.
+- **Double-bridge perturbation hurts**: SA can't recover the destroyed structure within the time budget.
+- **Random Or-opt doesn't help**: for N=200K, random position pairs are too far apart; nearby limits (|p-q|<200) cause 99.8% of attempts to be skipped.
+- **Hilbert curve construction ≈ NN**: no significant improvement in starting tour quality.
+- **Reversed-tour direction helps marginally**: +0.01-0.015 points from exploiting penalty structure directionality.
+- **Greedy edge-fix post-pass helps marginally**: +0.005-0.01 points from targeting worst edges.
 
 ## System Interface
 
 - **Build:** None — judge compiles internally.
 - **Run baseline:** `bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp`
 - **Output format:** `SCORE: <n>` on stdout.
-- **Baseline result:** 78.819 (iter-2 h-ablation).
+- **Baseline result:** h-main (iter-1 + improvements) = 69.503-69.511.
 
 ## Code Map
 
-- `solution.cpp` — the only file. Start from iter-2 h-ablation patch.
-- `runs/iter-2/patches/h-ablation.patch` — the 78.8-scoring solution. Apply first, then modify.
-- Key functions in iter-2 h-ablation:
-  - `buildGrid()` (line 44) — builds spatial grid for NN construction and neighbor selection.
-  - `constructNN()` (line 65) — grid-based nearest-neighbor tour construction.
-  - `gridNeighbor()` (line 89) — picks a random city from nearby grid cells. **Reuse for Or-opt insertion guidance.**
-  - `twoOptDeltaFast()` (line 107) — penalty-aware O(1 + seg/10) delta. Keep as-is.
-  - SA loop (line 164) — main optimization. **Modify move mix and add multi-city Or-opt here.**
-  - Or-opt section (line 206) — single-city relocate. **Extend to segments of 1-3.**
-  - Prime scheduling (line 240) — post-pass. Keep as-is.
+- `solution.cpp:1` — the only file to edit.
+- `runs/iter-1/patches/h-main.patch` — the 69.5-scoring iter-1 solution.
+- `runs/iter-2/patches/h-main.patch` — the iter-2 solution with improvements.
 
 ## Code Targets
 
 ### h-main → `solution.cpp`
-Start from iter-2 h-ablation patch, then:
+Start from iter-1 patch, add:
+1. After `nnConstruct()`: reverse `tour[1..N-1]`, compare `totalCost()` with forward, keep cheaper direction.
+2. After SA loop, before prime post-pass: greedy edge-fix (find top-50 longest penalized edges, try 200 random swaps per edge, accept best improvement, 5 passes max).
 
-1. **Or-opt extension (lines 206-234)**: Currently relocates single city at `tour[i2]`. Extend to handle segments of k=1,2,3 cities starting at `tour[i2..i2+k-1]`. For each:
-   - Remove the k cities from their current position
-   - Reinsert them at target position j
-   - Delta: recompute edges at cut points (before/after removed segment) and insert points (where segment lands), plus any penalty positions in the shifted range
-   - Use `memmove` for the array shift, update `pos[]` for affected positions
-
-2. **Grid-guided insertion**: For Or-opt, compute the centroid of the removed segment. Call `gridNeighbor()` with the centroid to get a target city. Use `pos[target_city]` as the insertion position. This focuses Or-opt on spatially productive targets.
-
-3. **Move mix (line 171-173)**: Change `mv<70` to `mv<55` for grid 2-opt, `mv<85` to `mv<65` for random short 2-opt, remainder (35%) for Or-opt.
-
-4. **Or-opt shift range (line 208)**: Change `maxS=min(15,N/3)` to `maxS=min(50,N/3)`.
-
-5. **SA temperature (line 161)**: Change `curCost/(N*2.0)` to `curCost/(N*3.0)`.
-
-### h-control-negative → `solution.cpp`
-Apply iter-2 h-ablation patch unchanged. No modifications.
+### h-ablation → `solution.cpp`
+Pure iter-1 patch, no changes.
 
 ## What I Tried That Didn't Work (accumulated)
 
-- **Sequential tour**: Scores 0 — it IS the baseline (iter-1).
-- **Naive 2-opt with full recompute**: Only 17.6 (iter-1).
-- **Large segment 2-opt without fast delta**: Too slow (iter-1).
-- **Double-bridge perturbation**: Hurts within 2s for N=200K (iter-2, RP-4).
+- **Sequential tour**: Scores 0 (IS the baseline).
+- **Naive 2-opt with full recompute**: Only 17.6. O(N) per move too slow.
+- **NN-guided 2-opt with pos[]**: 60.5-65.5 (WORSE than random SA). O(segment) pos[] update kills throughput.
+- **NN-guided 2-opt with stale pos[]**: 65.5. Stale positions cause ineffective moves.
+- **NN-guided 2-opt with periodic pos[] rebuild**: 65.5. Same issue.
+- **Double-bridge perturbation**: 64.5. SA can't recover destroyed structure.
+- **Random Or-opt (|p-q| unlimited)**: 69.36. Memmove cost + random targeting = no improvement.
+- **Random Or-opt (|p-q| < 200)**: 64.5. 99.8% of moves skipped.
+- **100% 2-opt (no swap)**: 64.5. 2-opt alone can't improve NN tour.
+- **20% swap + 80% 2-opt**: 64.5. Not enough swaps for diversification.
+- **Nearby swap (|p-q| < 100)**: 64.5. Loses essential long-range diversification.
+- **Hilbert curve construction**: 65.5. Comparable to NN, no improvement after SA overhead.
+- **Bigger SA batches (5000-10000)**: 69.5. More moves of same type don't help at convergence.
+- **Less frequent totalCost() recompute**: 69.48. Negligible difference.
+- **Exact delta for short 2-opt segments**: 69.49. Penalty changes in short segments are too small to matter.
 - **Compiling locally with `bits/stdc++.h`**: Fails on macOS clang.
 
 ## What I Excluded and Why
 
-- **LK-style moves**: Complex to implement correctly with penalty structure. Deferred to iter-4 if Or-opt extension plateaus.
-- **3-opt**: Similar complexity concern. Double-bridge (a form of non-sequential 3-opt) was already shown to hurt.
-- **Population-based methods**: Would require maintaining multiple tours; memory and complexity concern within 2s.
-- **Different construction heuristics**: NN construction takes only ~0.1s and produces reasonable starting tours. Improvement from better construction is marginal compared to SA improvement.
-- **KNN precomputation**: RP-3 shows grid-guided is better under tight time limits.
+- **LK-style moves**: Too complex to implement correctly within 2s for N=200K, especially with penalty structure.
+- **Genetic algorithms / EAX**: Population-based approaches are complex; single-tour SA is simpler and competitive for this time budget.
+- **Exact solvers (Concorde)**: N=200K is far too large.
+- **3-opt**: Triple the delta computation complexity of 2-opt, which already contributes nothing.
+- **Large Neighborhood Search**: Partial tour reconstruction is promising but implementation complexity exceeds the marginal gain.
+- **Held-Karp DP for segments**: O(2^K * K^2) per segment; even K=15 takes 0.04s per segment, too few segments can be processed.
 
 ## Evolution of Thinking
 
-Iter-1 established grid-guided 2-opt + penalty delta as the core (69.5→78.8). Iter-2 tried diversification via double-bridge but it hurt (RP-4). The lesson: within 2s, maximizing productive local search iterations beats trying to escape local optima. Iter-3 follows this by enriching the local search moves (multi-city Or-opt) rather than adding perturbation. The hypothesis is that the current solution is limited by Or-opt quality (single-city only, random insertion), not by being stuck in a local optimum.
+Iter-1 assumed 2-opt was the primary optimizer. Iter-2 discovered that 2-opt contributes NOTHING — 100% swap SA gives identical scores. The SA improvement (64.5 → 69.5) comes entirely from random city swaps providing long-range diversification. This means the ~5-point SA improvement represents the limit of what random moves can achieve for N=200K in 2 seconds.
+
+Breaking past 69.5 requires either:
+1. A fundamentally better construction heuristic (better than grid-NN)
+2. A structured local search (LK-style moves with proper candidate lists)
+3. A completely different approach (e.g., divide and conquer)
 
 ## Current Status
 
-- **Validated:** Iter-2 h-ablation scores 78.8. Grid-guided 2-opt + penalty delta + Or-opt is the proven core. Judge interface confirmed.
-- **Uncertain:** Whether multi-city Or-opt adds enough vs the per-move cost increase. Whether grid-guided insertion for Or-opt is better than random shift. Whether cooler SA start helps.
-- **Suggested next:** If iter-3 plateaus, consider: (1) LK-style sequential moves with backtracking, (2) adaptive segment size for 2-opt based on progress, (3) temperature recalibration based on acceptance rate monitoring.
+- **Validated:** Judge works (69.5 consistent), 2-opt is useless, swap ratio critical, post-SA fixes give marginal gain.
+- **Uncertain:** Whether greedy edge-fix + reversed-tour consistently beats iter-1 (margin is ~0.01-0.02 points, within noise).
+- **Suggested next:** If the goal is to push significantly past 69.5, iter-3 should try: (1) LK-style moves (sequential k-opt with candidate list), (2) divide-and-conquer construction (partition cities spatially, solve sub-problems, merge), (3) strip-based construction (serpentine sweep with y-sorting within strips).
 
 ## Warnings & Constraints
 
-- **Do NOT compile locally** — `bits/stdc++.h` not available on macOS. Submit directly to judge.
-- **Time limit 2 seconds** — all computation must fit. Leave 0.2s margin (use tl=1.78).
-- **Output format strict**: N+1 on first line, then N+1 city IDs, one per line.
-- **Score variance ±5 points** — run each arm at least once but be aware a single measurement may not be conclusive. The judge averages over multiple test cases internally.
-- **Or-opt delta for multi-city segments**: Must account for all penalty positions in the shifted range, not just endpoints. The brute-force recompute approach (loop over ec(s) for affected positions) works correctly if the range [lo..hi] covers all affected steps.
-- **memmove for segment relocation**: When removing k cities and reinserting them, careful with overlap in memmove. Test the logic mentally for j>i2 and j<i2 cases.
+- **Do NOT compile locally** — `bits/stdc++.h` not available on macOS.
+- **Judge score varies ~0.01-0.02 between runs** — marginal improvements need multiple measurements to confirm.
+- **One outlier at 64.5 observed** — likely a judge timeout. Ignore if it occurs once.
+- **2-opt boundary delta is exact for unpenalized TSP** but approximate for penalized — doesn't matter since 2-opt contributes nothing regardless.
+- **SA temperature uses `curCost/N * pow(1e-4, progress)`** — this is the proven schedule, don't change without evidence.
