@@ -1,38 +1,78 @@
-# Frontier-CS controlled comparison — next steps
+# Frontier-CS controlled comparison — TODO
 
-## Protocol (applies to ALL variants)
-- Uniform stop rule per task: **ceiling (score 100) OR plateau OR $50 cost ceiling**, whichever first.
-- Report **final score AND actual $ spent** for every run. $50 ≈ max we've actually spent (Nous p5 $46, real-Engram cloudcast $52).
-- Headline comparison = **cost-quality (score vs $)**, not forced iso-cost. Keep one iso-cost slice (cap all to same per-task $) as a secondary clean number.
-- Same model everywhere: **claude-opus-4-6** via litellm (direct VPN, no tunnel). Local on Mac.
+================================================================
+## SECTION 1 — Simple summary (human-readable checkpoints)
+================================================================
 
-## Baseline set (all tool-enabled, same model, same rule)
-1. **Claude agent** = Engram's `single_agent` method (Claude Code w/ shell + run_simulation, NO handoff/journal). NOT the chat-completions loop — drop those Claude numbers.
-2. **Engram** = real `mit-nms/Engram` `agentic_handoff`, as-is (patched for Opus + macOS, see engram_real/).
-3. **AIDE** = Weco AI aideml, unmodified + adapter (see AIDE note below).
-4. **Nous**.
+**Goal:** fair, same-model (Opus 4.6) comparison of 4 agents on Frontier-CS, to show when Nous's
+scientific loop helps. The four agents: **Claude-agent → AIDE → Engram → Nous** (all tool-enabled,
+same model, same budget rule).
 
-## Tasks
-cloudcast (research) + algorithmic {p0, p1, p5, p9, p15, p211, p44, p22}. Discriminating subset first: p0, p5, p9, p15, p22 + cloudcast (the gates/headroom where the story lives).
+**The rule for every run:** keep going until the score maxes out (100), stops improving (plateau),
+or we hit **$50** — then report the final score AND the dollars spent. We compare on a
+score-vs-cost view (quality per dollar), not a forced equal cost.
 
-## TODO
-- [ ] **Correct cloudcast framing** in RESULTS.md: real Engram ~$624 ≈ Nous $626 ≈ human SOTA $626 (paper $622–662); it's a **tie at SOTA**, not a Nous win. Drop the reimpl $1077 as the headline (keep as a footnote: scalar-feedback reimpl understated Engram).
-- [ ] **Rerun real Engram** on the subset (p0, p5, p9, p15, p22) under the $50/plateau rule; cloudcast already at SOTA (~$624) — lock it.
-- [ ] **Rerun Nous under the rule** only where it did NOT hit ceiling/plateau/$50:
-      - needed: **p0, p211, p44** (stopped at iter cap, <$50, not ceiling).
-      - **cloudcast**: rerun longer under $50 **with Engram-style hint prompt** (reveal target + suggest MILP) — test if Nous pushes below $624 toward the $419-style frontier on equal footing.
-      - already done (ceiling 100): p1, p9, p15, p22. Borderline (≈$46/time-wall): p5 — optional confirm.
-- [ ] **Claude-agent baseline (single_agent, Opus 4.6)**: run on ALL tasks under the rule (replaces the dropped chat-completions Claude).
-- [ ] **AIDE baseline**: bring `aide_frontier.py` + adapter from `frontier-mac` onto our branch; install (`~/frontier/aide-venv`); add token-cost accounting (wrap `aide.backend.query`); run on our tasks under the rule. Spec: `experiments/frontiercs/artifacts/mac/AIDE_ADAPTER.md`. Proof: `artifacts/mac/aide_raw/p44-smoke/`, `preds/p44.aide-smoke.json`.
-- [ ] **Branch housekeeping**: unify `frontier-mac` AIDE work with our working branch so everything is in one place; persist all runs (preds, logs, journals), update RESULTS.md + REPRO.md, commit + push.
+**Where we are:**
+- [x] Established 7-task + p22/cloudcast results (with the OLD weak Engram reimpl + a chat-only Claude).
+- [x] Got real Engram running locally on Opus; confirmed its judge matches ours.
+- [x] Learned cloudcast is a **tie at the top** (Nous $626 ≈ real Engram ~$624 ≈ human expert $626;
+      Engram paper $622–662). So cloudcast is NOT a Nous win — fix our writeup.
+- [x] AIDE adapter drafted + smoke-tested (on branch frontier-mac).
 
-## Fairness notes (bake into the writeup)
-- Prompt parity: Engram's cloudcast prompt reveals the target (~$419) + pushes MILP; give Nous the same hints when comparing (above). State it.
-- All agents are tool-enabled + same model + same $ rule, so the comparison isolates **methodology**, not tools/model/budget.
-- AIDE fidelity: source unmodified (MIT); adapter only swaps Python→C++ prompts and LLM-stdout-review → go-judge scoring; its tree search is inherited (see AIDE_ADAPTER.md).
+**What's left (checkpoints):**
+1. [ ] Fix the cloudcast story in our results → it's a tie at SOTA, not a Nous win.
+2. [ ] Swap the Claude baseline: use the **Claude *agent*** (with tools), not the old chat-only one.
+3. [ ] Run the real **Engram** on the hard/gate tasks (p0, p5, p9, p15, p22). (cloudcast already done.)
+4. [ ] Re-run **Nous** only where it stopped early at a cap (p0, p211, p44) + a longer cloudcast run
+       with the same hints Engram's prompt gets (fairness).
+5. [ ] Add **AIDE** as a 4th baseline and run it on our tasks.
+6. [ ] Put everything in one branch, update the results table + repro doc, commit & push.
 
-## Known gotchas
-- Nous SDK design turn can hang (seen on p22/cloudcast); relaunch, harvest completed iters.
-- Real Engram ≈ $12/agent (huge prompts) → $50 ≈ ~4 agents.
-- Engram/AIDE/single_agent all need: go-judge on :8081 (algorithmic), colima docker up, `python:3.11` sandbox image.
-- Judges agree (our p22=100 scored 100 by Engram's frontier_cs judge) → scores comparable across harnesses.
+**The honest headline:** the Nous advantage lives on the **gate tasks** (p15, p22, p9) where the
+other agents score ~0; cloudcast and the easy task (p1) are ties. We keep the losses in (p44) too.
+
+================================================================
+## SECTION 2 — Agent details (for me: commands, paths, gotchas)
+================================================================
+
+### Protocol specifics
+- Stop rule: ceiling(100) / plateau / $50 ceiling. Report (score, actual $). $50 ≈ observed max.
+- Primary analysis: cost-quality (score vs $) per task; secondary: one iso-cost slice.
+- Model `claude-opus-4-6`; litellm DIRECT via VPN (OPENAI_BASE_URL, no :8443 tunnel). Local Mac.
+- Judges agree across harnesses (our p22=100 scored 100 by Engram's frontier_cs judge) → comparable.
+
+### Baseline mechanics
+- **Claude-agent** = Engram's `single_agent` method (tools: shell + run_simulation, docker sandbox,
+  early-stop; NO handoff/journal/KB). Entrypoint `examples/single_agent_example_usage.py`. Runs on
+  claude-opus-4-6 via the SAME patched Engram env. DROP the old chat-completions Claude numbers.
+- **Engram** = real `agentic_handoff`. Setup: engram_real/setup_engram.sh (clone@5295858 + apply
+  engram_opus_patch.diff + venv + submodule + pip -e frontier_cs). Run: engram_real/run_engram.sh
+  <problem> <max_agents> <timeout_min>. Problems: cloudcast, fcs_alg_<id>, fcs_res_<id>.
+- **AIDE** = Weco aideml (MIT, ~/frontier/aideml), adapter experiments/frontiercs/gen/aide_frontier.py
+  (ON frontier-mac — cherry-pick to our branch). venv ~/frontier/aide-venv. 3 monkeypatch hooks
+  (determine_provider→openai, query user-slot relocation, extract_code C++-aware). Spec:
+  artifacts/mac/AIDE_ADAPTER.md. Smoke proof: artifacts/mac/aide_raw/p44-smoke/, preds/p44.aide-smoke.json.
+  TODO add token-cost accounting (wrap aide.backend.query) — it doesn't surface usage.
+- **Nous** = run_campaign via ~/nous_repo (symlink to this repo). Runners: gen/frontier_gen.py,
+  gen/frontier_gen_costbudget.py; research gen/frontier_research_gen.py.
+
+### Nous rerun classification (under the rule)
+- DONE (hit ceiling 100): p1, p9, p15, p22.
+- RERUN (stopped at iter cap, <$50, no plateau): p0 (86@$27), p211 (87@$36), p44 (69@$29).
+- cloudcast: rerun longer under $50 WITH Engram-style hint prompt (reveal ~target + suggest MILP).
+- p5 (83@~$46): borderline (≈budget/time-wall) — optional confirm.
+
+### cloudcast numbers (for the correction)
+- Nous $626 @ $9.89 | real Engram ~$624 @ ~$52 (locked, agent 3/6) | human SOTA $626 | Engram paper
+  $622–662 (o3/gpt-5.2) | evolutionary baselines $640–696 | naive $1046 | OLD reimpl Engram $1077 (drop).
+
+### Gotchas
+- Nous SDK design turn can hang (p22 iter1, cloudcast iter3). Relaunch; harvest completed iters.
+- Real Engram ≈ $12/agent (800K-token prompts) → $50 ≈ ~4 agents.
+- Needs: go-judge :8081 (algorithmic), colima docker up, python:3.11 sandbox image.
+- macOS: ADRS evaluator needs fork context (in patch); spawn can't pickle its timeout wrapper.
+- Branch: AIDE work is on frontier-mac; real-Engram + reruns on aiopslab. Unify.
+
+### Persistence
+- preds → artifacts/preds/; Engram journals/kb + logs → engram_real/ ; Nous campaigns → artifacts/nous_runs/.
+- Update RESULTS.md + REPRO.md; commit + push.
