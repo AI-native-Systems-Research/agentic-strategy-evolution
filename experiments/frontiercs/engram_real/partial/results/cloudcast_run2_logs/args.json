@@ -1,0 +1,8 @@
+{
+  "max_agents": 6,
+  "agent_timeout_minutes": 20.0,
+  "model": "claude-opus-4-6",
+  "task_name": "cloudcast",
+  "target_name": "search_algorithm",
+  "debug": true
+}
