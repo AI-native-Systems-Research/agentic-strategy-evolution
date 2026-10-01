@@ -20,7 +20,7 @@ score-vs-cost view (quality per dollar), not a forced equal cost.
 - [x] AIDE adapter drafted + smoke-tested (on branch frontier-mac).
 
 **What's left (checkpoints):**
-1. [ ] Fix the cloudcast story in our results → it's a tie at SOTA, not a Nous win.
+1. [x] Fix the cloudcast story in our results → it's a tie at SOTA, not a Nous win. (DONE 2026-10-01)
 2. [ ] Run the real **Engram** on the hard/gate tasks (p0, p5, p9, p15, p22). (cloudcast already done.)
 3. [ ] Then the **Claude *agent*** baseline (Engram `single_agent`, same harness — quick follow-on).
        Use the Claude agent with tools, NOT the old chat-only loop.
