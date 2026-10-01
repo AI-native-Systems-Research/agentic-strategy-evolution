@@ -1,25 +1,17 @@
 #include <bits/stdc++.h>
 using namespace std;
 
-struct ItemType {
-    string type;
-    int w, h, v, limit;
-};
-
-struct Placement {
-    string type;
-    int x, y, rot;
-};
-
-struct Rect {
-    int x, y, w, h;
-};
+struct ItemType { string type; int w, h, v, limit; };
+struct Placement { string type; int x, y, rot; };
+struct Rect { int x, y, w, h; };
 
 static int gW, gH;
 static bool gAllowRotate;
 static int gM;
 static vector<ItemType> items;
 static vector<double> density;
+static vector<Placement> bestPlacements;
+static long long bestProfit = 0;
 
 struct State {
     vector<Rect> freeRects;
@@ -35,12 +27,39 @@ struct State {
         placements.clear();
     }
     
+    void pruneRects() {
+        int n = freeRects.size();
+        if (n <= 1) return;
+        vector<bool> rem(n, false);
+        for (int i = 0; i < n; i++) {
+            if (rem[i]) continue;
+            for (int j = i+1; j < n; j++) {
+                if (rem[j]) continue;
+                auto &a = freeRects[i], &b = freeRects[j];
+                if (b.x >= a.x && b.y >= a.y && b.x+b.w <= a.x+a.w && b.y+b.h <= a.y+a.h) {
+                    rem[j] = true;
+                } else if (a.x >= b.x && a.y >= b.y && a.x+a.w <= b.x+b.w && a.y+a.h <= b.y+b.h) {
+                    rem[i] = true; break;
+                }
+            }
+        }
+        vector<Rect> nr;
+        for (int i = 0; i < n; i++) if (!rem[i]) nr.push_back(freeRects[i]);
+        freeRects = move(nr);
+        if ((int)freeRects.size() > 600) {
+            sort(freeRects.begin(), freeRects.end(), [](const Rect& a, const Rect& b) {
+                return (long long)a.w * a.h > (long long)b.w * b.h;
+            });
+            freeRects.resize(600);
+        }
+    }
+    
     void splitAndUpdate(int px, int py, int pw, int ph) {
         vector<Rect> newRects;
-        newRects.reserve(freeRects.size() * 4);
+        newRects.reserve(freeRects.size() + 4);
+        int pR = px + pw, pT = py + ph;
         for (auto& fr : freeRects) {
             int frR = fr.x + fr.w, frT = fr.y + fr.h;
-            int pR = px + pw, pT = py + ph;
             if (px >= frR || pR <= fr.x || py >= frT || pT <= fr.y) {
                 newRects.push_back(fr);
                 continue;
@@ -50,55 +69,8 @@ struct State {
             if (py > fr.y) newRects.push_back({fr.x, fr.y, fr.w, py - fr.y});
             if (pT < frT) newRects.push_back({fr.x, pT, fr.w, frT - pT});
         }
-        // Remove dominated
-        int n = newRects.size();
-        vector<bool> rem(n, false);
-        // Sort by area descending for faster pruning
-        for (int i = 0; i < n; i++) {
-            if (rem[i]) continue;
-            for (int j = 0; j < n; j++) {
-                if (i == j || rem[j]) continue;
-                if (newRects[j].x >= newRects[i].x && newRects[j].y >= newRects[i].y &&
-                    newRects[j].x + newRects[j].w <= newRects[i].x + newRects[i].w &&
-                    newRects[j].y + newRects[j].h <= newRects[i].y + newRects[i].h) {
-                    rem[j] = true;
-                }
-            }
-        }
-        freeRects.clear();
-        for (int i = 0; i < n; i++)
-            if (!rem[i]) freeRects.push_back(newRects[i]);
-    }
-    
-    // Try placing item, return true if successful
-    // strategy: 0=best-short-side, 1=best-long-side, 2=best-area, 3=bottom-left, 4=contact
-    bool tryPlace(int ti, int rw, int rh, int rot, int strategy, int& ox, int& oy) {
-        int bestScore = INT_MIN;
-        ox = -1; oy = -1;
-        for (auto& fr : freeRects) {
-            if (rw <= fr.w && rh <= fr.h) {
-                int x = fr.x, y = fr.y;
-                int score;
-                switch(strategy) {
-                    case 0: score = -min(fr.w - rw, fr.h - rh); break;
-                    case 1: score = -max(fr.w - rw, fr.h - rh); break;
-                    case 2: score = -(fr.w * fr.h - rw * rh); break;
-                    case 3: score = -(y * 20000 + x); break;
-                    default: {
-                        score = 0;
-                        if (x == 0) score += rh;
-                        if (y == 0) score += rw;
-                        if (x + rw == gW) score += rh;
-                        if (y + rh == gH) score += rw;
-                    }
-                }
-                if (score > bestScore) {
-                    bestScore = score;
-                    ox = x; oy = y;
-                }
-            }
-        }
-        return ox >= 0;
+        freeRects = move(newRects);
+        pruneRects();
     }
     
     void doPlace(int ti, int ox, int oy, int rot) {
@@ -109,19 +81,15 @@ struct State {
         totalProfit += items[ti].v;
         splitAndUpdate(ox, oy, rw, rh);
     }
+    
+    void updateBest() {
+        if (totalProfit > bestProfit) {
+            bestProfit = totalProfit;
+            bestPlacements = placements;
+        }
+    }
 };
 
-static vector<Placement> bestPlacements;
-static long long bestProfit = 0;
-
-void updateBest(State& s) {
-    if (s.totalProfit > bestProfit) {
-        bestProfit = s.totalProfit;
-        bestPlacements = s.placements;
-    }
-}
-
-// Greedy: given ordered list of (typeIdx, rot), place greedily
 void runGreedy(vector<pair<int,int>>& order, int strategy) {
     State state;
     state.init();
@@ -130,16 +98,32 @@ void runGreedy(vector<pair<int,int>>& order, int strategy) {
         int rw = (rot == 0) ? items[ti].w : items[ti].h;
         int rh = (rot == 0) ? items[ti].h : items[ti].w;
         if (rw > gW || rh > gH) continue;
-        int ox, oy;
-        if (state.tryPlace(ti, rw, rh, rot, strategy, ox, oy)) {
-            state.doPlace(ti, ox, oy, rot);
+        int bestScore = INT_MIN;
+        int ox = -1, oy = -1;
+        for (auto& fr : state.freeRects) {
+            if (rw <= fr.w && rh <= fr.h) {
+                int score;
+                switch(strategy) {
+                    case 0: score = -min(fr.w - rw, fr.h - rh); break;
+                    case 1: score = -max(fr.w - rw, fr.h - rh); break;
+                    case 2: score = -(fr.w * fr.h - rw * rh); break;
+                    case 3: score = -(fr.y * 20000 + fr.x); break;
+                    default: score = 0;
+                        if (fr.x == 0) score += rh;
+                        if (fr.y == 0) score += rw;
+                        if (fr.x + rw == gW) score += rh;
+                        if (fr.y + rh == gH) score += rw;
+                        break;
+                }
+                if (score > bestScore) { bestScore = score; ox = fr.x; oy = fr.y; }
+            }
         }
+        if (ox >= 0) state.doPlace(ti, ox, oy, rot);
     }
-    updateBest(state);
+    state.updateBest();
 }
 
-// Smart greedy: at each step pick best item
-void runSmart(int strategy, double alpha) {
+void runSmart(int strategy, double alpha, mt19937* rng = nullptr, double noise = 0.0) {
     State state;
     state.init();
     while (true) {
@@ -147,30 +131,28 @@ void runSmart(int strategy, double alpha) {
         double bestEval = -1e18;
         for (int ti = 0; ti < gM; ti++) {
             if (state.used[ti] >= items[ti].limit) continue;
-            int rots_arr[2] = {0, 1};
             int nrots = 1;
             if (gAllowRotate && items[ti].w != items[ti].h) nrots = 2;
-            for (int ri = 0; ri < nrots; ri++) {
-                int rot = rots_arr[ri];
+            for (int rot = 0; rot < nrots; rot++) {
                 int rw = (rot == 0) ? items[ti].w : items[ti].h;
                 int rh = (rot == 0) ? items[ti].h : items[ti].w;
                 if (rw > gW || rh > gH) continue;
                 for (auto& fr : state.freeRects) {
                     if (rw <= fr.w && rh <= fr.h) {
-                        int x = fr.x, y = fr.y;
                         double fitScore;
-                        int ss = min(fr.w - rw, fr.h - rh);
-                        int ls = max(fr.w - rw, fr.h - rh);
                         switch(strategy) {
-                            case 0: fitScore = -ss; break;
-                            case 1: fitScore = -ls; break;
+                            case 0: fitScore = -min(fr.w - rw, fr.h - rh); break;
+                            case 1: fitScore = -max(fr.w - rw, fr.h - rh); break;
                             case 2: fitScore = -(double)(fr.w * fr.h - rw * rh); break;
-                            default: fitScore = -(y * 20000.0 + x); break;
+                            default: fitScore = -(fr.y * 20000.0 + fr.x); break;
                         }
                         double eval = alpha * density[ti] + (1.0 - alpha) * fitScore / (double)(gW + gH);
+                        if (rng && noise > 0.0) {
+                            eval += uniform_real_distribution<double>(-noise, noise)(*rng);
+                        }
                         if (eval > bestEval) {
                             bestEval = eval;
-                            bestTi = ti; bestRot = rot; bestX = x; bestY = y;
+                            bestTi = ti; bestRot = rot; bestX = fr.x; bestY = fr.y;
                         }
                     }
                 }
@@ -179,7 +161,59 @@ void runSmart(int strategy, double alpha) {
         if (bestTi < 0) break;
         state.doPlace(bestTi, bestX, bestY, bestRot);
     }
-    updateBest(state);
+    state.updateBest();
+}
+
+void runStrip() {
+    for (int ti = 0; ti < gM; ti++) {
+        int nrots = 1;
+        if (gAllowRotate && items[ti].w != items[ti].h) nrots = 2;
+        for (int rot = 0; rot < nrots; rot++) {
+            int rw = (rot == 0) ? items[ti].w : items[ti].h;
+            int rh = (rot == 0) ? items[ti].h : items[ti].w;
+            if (rw > gW || rh > gH) continue;
+            int nx = gW / rw, ny = gH / rh;
+            int count = min((long long)nx * ny, (long long)items[ti].limit);
+            if (count == 0) continue;
+            State state;
+            state.init();
+            int placed = 0;
+            for (int iy = 0; iy < ny && placed < count; iy++)
+                for (int ix = 0; ix < nx && placed < count; ix++, placed++)
+                    state.doPlace(ti, ix * rw, iy * rh, rot);
+            
+            vector<pair<double,int>> densOrder;
+            for (int j = 0; j < gM; j++) densOrder.push_back({density[j], j});
+            sort(densOrder.begin(), densOrder.end(), greater<>());
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (auto& [d, tj] : densOrder) {
+                    if (state.used[tj] >= items[tj].limit) continue;
+                    int nr2 = 1;
+                    if (gAllowRotate && items[tj].w != items[tj].h) nr2 = 2;
+                    for (int r2 = 0; r2 < nr2; r2++) {
+                        int w2 = (r2 == 0) ? items[tj].w : items[tj].h;
+                        int h2 = (r2 == 0) ? items[tj].h : items[tj].w;
+                        if (w2 > gW || h2 > gH) continue;
+                        bool found = true;
+                        while (found && state.used[tj] < items[tj].limit) {
+                            found = false;
+                            int bs = INT_MAX, bx = -1, by = -1;
+                            for (auto& fr : state.freeRects) {
+                                if (w2 <= fr.w && h2 <= fr.h) {
+                                    int s = min(fr.w - w2, fr.h - h2);
+                                    if (s < bs) { bs = s; bx = fr.x; by = fr.y; }
+                                }
+                            }
+                            if (bx >= 0) { state.doPlace(tj, bx, by, r2); found = true; changed = true; }
+                        }
+                    }
+                }
+            }
+            state.updateBest();
+        }
+    }
 }
 
 int main() {
@@ -188,194 +222,98 @@ int main() {
     
     string input((istreambuf_iterator<char>(cin)), istreambuf_iterator<char>());
     
-    auto findKey = [&](const string& s, const string& key, size_t start = 0) -> size_t {
-        string k = "\"" + key + "\"";
-        return s.find(k, start);
+    // Simple JSON parsing
+    auto getInt = [&](const string& s, size_t p) -> pair<int,size_t> {
+        while (p < s.size() && !isdigit(s[p]) && s[p]!='-') p++;
+        bool neg = s[p]=='-'; if(neg) p++;
+        int v=0; while(p<s.size()&&isdigit(s[p])) v=v*10+(s[p++]-'0');
+        return {neg?-v:v, p};
     };
-    auto readInt = [&](const string& s, size_t pos) -> pair<long long, size_t> {
-        while (pos < s.size() && !isdigit(s[pos]) && s[pos] != '-') pos++;
-        bool neg = false;
-        if (s[pos] == '-') { neg = true; pos++; }
-        long long v = 0;
-        while (pos < s.size() && isdigit(s[pos])) { v = v * 10 + (s[pos] - '0'); pos++; }
-        return {neg ? -v : v, pos};
-    };
-    auto readString = [&](const string& s, size_t pos) -> pair<string, size_t> {
-        while (pos < s.size() && s[pos] != '"') pos++;
-        pos++;
-        string result;
-        while (pos < s.size() && s[pos] != '"') { result += s[pos]; pos++; }
-        pos++;
-        return {result, pos};
-    };
-    auto readBool = [&](const string& s, size_t pos) -> pair<bool, size_t> {
-        while (pos < s.size() && s[pos] != 't' && s[pos] != 'f') pos++;
-        if (s[pos] == 't') return {true, pos + 4};
-        return {false, pos + 5};
+    auto getStr = [&](const string& s, size_t p) -> pair<string,size_t> {
+        while(p<s.size()&&s[p]!='"') p++; p++;
+        string r; while(p<s.size()&&s[p]!='"') r+=s[p++]; p++;
+        return {r,p};
     };
     
-    {
-        size_t p = findKey(input, "W");
-        auto [v, np] = readInt(input, p + 3);
-        gW = (int)v;
-        p = findKey(input, "H");
-        // Make sure we find standalone "H" not part of another key
-        while (p != string::npos) {
-            // Check it's "H" exactly
-            if (input[p+1] == 'H' && input[p+2] == '"') break;
-            p = findKey(input, "H", p + 1);
-        }
-        auto [v2, np2] = readInt(input, p + 3);
-        gH = (int)v2;
-        p = findKey(input, "allow_rotate");
-        auto [b, np3] = readBool(input, p + 14);
-        gAllowRotate = b;
+    // Parse W, H
+    size_t p = input.find("\"W\""); auto [W,p1] = getInt(input, p+3); gW=W;
+    // Find "H" that's exactly "H" not "Hxxx"
+    p = 0;
+    while(true) {
+        p = input.find("\"H\"", p);
+        if(p==string::npos) break;
+        auto [H,p2] = getInt(input, p+3); gH=H; break;
+    }
+    p = input.find("\"allow_rotate\"");
+    size_t tp = p+14; while(tp<input.size()&&input[tp]!='t'&&input[tp]!='f') tp++;
+    gAllowRotate = input[tp]=='t';
+    
+    p = input.find("\"items\"");
+    p = input.find('[', p);
+    size_t endArr = input.rfind(']');
+    
+    while(true) {
+        size_t ob = input.find('{', p);
+        if(ob==string::npos||ob>endArr) break;
+        size_t cb = input.find('}', ob);
+        string obj = input.substr(ob, cb-ob+1);
+        ItemType it;
+        
+        size_t q = obj.find("\"type\""); auto [ts,_1] = getStr(obj, q+6); it.type=ts;
+        
+        // find "w" exactly
+        q=0; while(true){q=obj.find("\"w\"",q); if(q==string::npos)break; break;} 
+        auto [wv,_2] = getInt(obj, q+3); it.w=wv;
+        q=0; while(true){q=obj.find("\"h\"",q); if(q==string::npos)break; break;}
+        auto [hv,_3] = getInt(obj, q+3); it.h=hv;
+        q=obj.find("\"v\""); auto [vv,_4] = getInt(obj, q+3); it.v=vv;
+        q=obj.find("\"limit\""); auto [lv,_5] = getInt(obj, q+7); it.limit=lv;
+        
+        items.push_back(it);
+        p = cb+1;
     }
     
-    {
-        size_t p = findKey(input, "items");
-        p = input.find('[', p);
-        while (true) {
-            size_t nextObj = input.find('{', p);
-            if (nextObj == string::npos) break;
-            // Find matching closing brace
-            size_t endObj = input.find('}', nextObj);
-            if (endObj == string::npos) break;
-            // Check if this is past the items array
-            size_t closeBracket = input.find(']', p);
-            if (closeBracket != string::npos && nextObj > closeBracket) break;
-            
-            string obj = input.substr(nextObj, endObj - nextObj + 1);
-            ItemType it;
-            
-            size_t tp = findKey(obj, "type");
-            auto [ts, _1] = readString(obj, tp + 6);
-            it.type = ts;
-            
-            // Find "w" key carefully
-            size_t wp = 0;
-            while (true) {
-                wp = findKey(obj, "w", wp);
-                if (wp == string::npos) break;
-                if (obj[wp+1] == 'w' && obj[wp+2] == '"') break;
-                wp += 2;
-            }
-            auto [wv, _2] = readInt(obj, wp + 3);
-            it.w = (int)wv;
-            
-            size_t hp = 0;
-            while (true) {
-                hp = findKey(obj, "h", hp);
-                if (hp == string::npos) break;
-                if (obj[hp+1] == 'h' && obj[hp+2] == '"') break;
-                hp += 2;
-            }
-            auto [hv, _3] = readInt(obj, hp + 3);
-            it.h = (int)hv;
-            
-            size_t vp = findKey(obj, "v");
-            auto [vv, _4] = readInt(obj, vp + 3);
-            it.v = (int)vv;
-            
-            size_t lp = findKey(obj, "limit");
-            auto [lv, _5] = readInt(obj, lp + 7);
-            it.limit = (int)lv;
-            
-            items.push_back(it);
-            p = endObj + 1;
-        }
-    }
-    
-    gM = (int)items.size();
+    gM = items.size();
     density.resize(gM);
-    for (int i = 0; i < gM; i++)
-        density[i] = (double)items[i].v / ((double)items[i].w * items[i].h);
+    for(int i=0;i<gM;i++) density[i]=(double)items[i].v/((double)items[i].w*items[i].h);
     
-    auto clock_start = chrono::steady_clock::now();
-    auto elapsed_ms = [&]() {
-        return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - clock_start).count();
-    };
-    
-    // Helper to build order
-    auto makeOrder = [&](int sortMode, mt19937& rng) -> vector<pair<int,int>> {
-        struct Cand { int ti, rot; double score; };
-        vector<Cand> cands;
-        for (int i = 0; i < gM; i++) {
-            vector<int> rots = {0};
-            if (gAllowRotate && items[i].w != items[i].h) rots.push_back(1);
-            for (int r : rots) {
-                int rw = (r == 0) ? items[i].w : items[i].h;
-                int rh = (r == 0) ? items[i].h : items[i].w;
-                if (rw > gW || rh > gH) continue;
-                double sc;
-                switch(sortMode) {
-                    case 0: sc = density[i]; break;
-                    case 1: sc = (double)items[i].v; break;
-                    case 2: sc = -(double)(items[i].w * items[i].h); break;
-                    case 3: sc = (double)(items[i].w * items[i].h); break;
-                    case 4: sc = -max(rw, rh); break;
-                    case 5: sc = max(rw, rh); break;
-                    case 6: sc = density[i] + 0.001 * max(rw, rh); break;
-                    case 7: sc = density[i] - 0.001 * max(rw, rh); break;
-                    default: {
-                        uniform_real_distribution<double> dist(0.0, 1.0);
-                        sc = dist(rng);
-                        break;
-                    }
-                }
-                for (int k = 0; k < items[i].limit; k++)
-                    cands.push_back({i, r, sc});
-            }
-        }
-        if (sortMode >= 8) {
-            shuffle(cands.begin(), cands.end(), rng);
-        } else {
-            sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score > b.score; });
-        }
-        vector<pair<int,int>> result;
-        vector<int> uc(gM, 0);
-        for (auto& c : cands) {
-            if (uc[c.ti] < items[c.ti].limit) {
-                result.push_back({c.ti, c.rot});
-                uc[c.ti]++;
-            }
-        }
-        return result;
-    };
+    auto t0 = chrono::steady_clock::now();
+    auto ms = [&](){return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now()-t0).count();};
     
     mt19937 rng(42);
     
-    // Deterministic orderings
-    for (int sm = 0; sm < 8 && elapsed_ms() < 300; sm++) {
-        for (int ps = 0; ps < 5 && elapsed_ms() < 300; ps++) {
-            auto order = makeOrder(sm, rng);
-            runGreedy(order, ps);
+    auto makeOrder = [&](int sm) -> vector<pair<int,int>> {
+        struct C{int ti,rot;double sc;};
+        vector<C> cs;
+        for(int i=0;i<gM;i++){
+            int nr=1; if(gAllowRotate&&items[i].w!=items[i].h) nr=2;
+            for(int r=0;r<nr;r++){
+                int rw=(r==0)?items[i].w:items[i].h, rh=(r==0)?items[i].h:items[i].w;
+                if(rw>gW||rh>gH) continue;
+                double sc; switch(sm){case 0:sc=density[i];break;case 1:sc=items[i].v;break;case 2:sc=-(double)(items[i].w*items[i].h);break;case 3:sc=(double)(items[i].w*items[i].h);break;case 4:sc=-max(rw,rh);break;case 5:sc=max(rw,rh);break;default:sc=uniform_real_distribution<>(0,1)(rng);break;}
+                for(int k=0;k<items[i].limit;k++) cs.push_back({i,r,sc});
+            }
         }
-    }
+        if(sm>=6) shuffle(cs.begin(),cs.end(),rng);
+        else sort(cs.begin(),cs.end(),[](const C&a,const C&b){return a.sc>b.sc;});
+        vector<pair<int,int>> res; vector<int> uc(gM,0);
+        for(auto&c:cs) if(uc[c.ti]<items[c.ti].limit){res.push_back({c.ti,c.rot});uc[c.ti]++;}
+        return res;
+    };
     
-    // Smart greedy with different alpha values
-    for (double alpha : {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}) {
-        for (int ps = 0; ps < 4 && elapsed_ms() < 600; ps++) {
-            runSmart(ps, alpha);
-        }
-    }
+    runStrip();
+    for(int sm=0;sm<6&&ms()<200;sm++) for(int ps=0;ps<5&&ms()<200;ps++){auto o=makeOrder(sm);runGreedy(o,ps);}
+    for(double a:{0.0,0.1,0.2,0.3,0.5,0.7,0.9,1.0}) for(int ps=0;ps<4&&ms()<500;ps++) runSmart(ps,a);
+    for(int i=0;i<100&&ms()<700;i++){int ps=rng()%4;double a=uniform_real_distribution<>(0,1)(rng);double n=uniform_real_distribution<>(0.001,0.1)(rng);runSmart(ps,a,&rng,n);}
+    while(ms()<920){int c=rng()%2;if(c==0){auto o=makeOrder(6);runGreedy(o,rng()%5);}else{runSmart(rng()%4,uniform_real_distribution<>(0,1)(rng),&rng,uniform_real_distribution<>(0.001,0.05)(rng));}}
     
-    // Random restarts for remaining time
-    while (elapsed_ms() < 900) {
-        int sm = 8; // random
-        int ps = rng() % 5;
-        auto order = makeOrder(sm, rng);
-        runGreedy(order, ps);
-    }
-    
-    // Output
+    // Output JSON
     cout << "{\"placements\":[";
-    for (int i = 0; i < (int)bestPlacements.size(); i++) {
-        if (i > 0) cout << ",";
-        auto& p = bestPlacements[i];
-        cout << "{\"type\":\"" << p.type << "\",\"x\":" << p.x << ",\"y\":" << p.y << ",\"rot\":" << p.rot << "}";
+    for(int i=0;i<(int)bestPlacements.size();i++){
+        if(i) cout<<",";
+        auto&p=bestPlacements[i];
+        cout<<"{\"type\":\""<<p.type<<"\",\"x\":"<<p.x<<",\"y\":"<<p.y<<",\"rot\":"<<p.rot<<"}";
     }
-    cout << "]}" << endl;
-    
+    cout<<"]}"<<endl;
     return 0;
 }
