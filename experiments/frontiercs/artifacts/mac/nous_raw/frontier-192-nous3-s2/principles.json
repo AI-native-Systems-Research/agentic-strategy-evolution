@@ -2,18 +2,18 @@
   "principles": [
     {
       "id": "RP-1",
-      "statement": "Multi-start SA with greedy local search (20 restarts, T=3.0, alpha=0.99997) achieves 87.28% cut ratio on Max-Cut with n<=1000, m<=20000. Adding ILS perturbation with fewer restarts (12) does not improve this \u2014 more SA restarts outperform fewer restarts + perturbation. The 87.28% score is near the theoretical GW bound of 87.8%.",
+      "statement": "Multi-start SA with greedy local search and ILS perturbation, using adaptive restart scaling (1.5M fixed iteration budget, 30 ILS cycles), achieves 87.16% cut ratio consistently on Max-Cut with n<=1000, m<=20000. This is near the theoretical GW bound of 87.8%. Fixed restart counts (12 or 20) produce inconsistent scores due to TLE on large graphs.",
       "confidence": "high",
-      "regime": "Max-Cut, n<=1000, m<=20000, fixed iteration count SA",
+      "regime": "Max-Cut with n<=1000, m<=20000",
       "evidence": [
         "iteration-1-h-main",
         "iteration-2-h-main",
-        "iteration-2-h-control-negative"
+        "iteration-3-h-main"
       ],
       "contradicts": [],
-      "extraction_iteration": 2,
-      "mechanism": "20 SA restarts with greedy+random initialization explore 20 independent basins of attraction. Each restart runs ~267k SA steps. The total computation (20 \u00d7 267k = 5.3M steps) fits within time limits and produces consistent results. ILS perturbation (flipping 4-5% of vertices) explores local neighborhoods but cannot compensate for 40% fewer global restarts.",
-      "applicability_bounds": "Applies when time budget allows 20 full SA restarts. If time budget shrinks, fewer restarts + perturbation may become competitive.",
+      "extraction_iteration": 3,
+      "mechanism": "SA explores beyond 1-flip local optima; ILS perturbation adds diversity cheaply; adaptive restarts prevent TLE. Combined, these achieve near-optimal cuts within tight time constraints.",
+      "applicability_bounds": "For graphs in this size range with ~2s per-test time limits. Larger graphs or tighter limits would need further budget reduction.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",
@@ -51,6 +51,25 @@
       "extraction_iteration": 2,
       "mechanism": "The judge compiles and runs the solution on a fixed test set. With a fixed RNG seed and no time-dependent behavior (RP-2), the output is deterministic. Prior variance was likely due to different judge environments or test sets, not the solution itself.",
       "applicability_bounds": "Assumes solution uses fixed RNG seed and iteration-based termination. May not hold if judge infrastructure changes.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "Adaptive restart scaling (adjusting SA restart count by graph size with a fixed total iteration budget of 1.5M) achieves 87.16% cut ratio consistently with zero run-to-run variance, compared to fixed 12-restart SA+ILS which varies 84-87 due to TLE. The key parameters: n<=100->20 restarts, n<=300->12, n<=600->8, n>600->5.",
+      "confidence": "high",
+      "regime": "Max-Cut with n<=1000, m<=20000, per-test time limit ~2s",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Fixed restart counts ignore graph size: 12 restarts \u00d7 253K SA iterations = 3M total iterations. For large graphs (n>600, avg degree 40), each iteration touches ~40 adjacency entries, totaling ~120M memory accesses. This exceeds the ~2s per-test time limit. Adaptive scaling keeps total work proportional to time budget by reducing restarts for larger graphs.",
+      "applicability_bounds": "Applies to SA-based Max-Cut solvers with per-test time limits. The specific thresholds (1.5M budget, restart tiers) are tuned for n<=1000, m<=20000 with ~2s time limit.",
       "superseded_by": null,
       "category": "domain",
       "status": "active",

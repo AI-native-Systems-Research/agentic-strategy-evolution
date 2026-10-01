@@ -1,0 +1,5 @@
+The prior attempt appears complete. Let me check if it already has the campaign-level handoff and run validation.All artifacts exist. Let me check the result files and run validation.Everything is in place. Let me run validation.Design validation passes. Now let me also validate the execution artifacts:Need to create the h-control-negative patch. Let me read the current solution.cpp and the sa_ils_solution.cpp to generate the diff.Both validations pass. 
+
+**Summary:** The prior attempt was complete — all artifacts (problem.md, bundle.yaml, handoff_snapshot.md, experiment_plan.yaml, findings.json, principle_updates.json, results, inputs) were already written. The only missing piece was `patches/h-control-negative.patch`, which I generated. Both `design` and `execution` validation now pass.
+
+**Results:** h-main (adaptive budget SA+ILS) scored **87.16** consistently (2 runs, 0 variance). h-control-negative (fixed 12-restart SA+ILS) scored 84.05, 84.44, 87.27 (3.2-point variance from TLE). Both predictions confirmed.

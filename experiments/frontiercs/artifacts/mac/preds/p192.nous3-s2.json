@@ -1,0 +1,61 @@
+{
+  "problem_id": "192",
+  "agent": "nous",
+  "label": "nous3-s2",
+  "model": "claude-opus-4-6",
+  "candidates": [
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/inputs/sa_v3_solution.cpp",
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/inputs/sa_v4_solution.cpp",
+      "score": 82.33242,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/inputs/sa_v5_solution.cpp",
+      "score": 86.95177,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/inputs/sa_v2_solution.cpp",
+      "score": 78.27030333333335,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/inputs/sa_v8_solution.cpp",
+      "score": 84.60249666666667,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/inputs/sa_solution.cpp",
+      "score": 81.55843666666665,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/inputs/sa_v7_solution.cpp",
+      "score": 84.64148333333334,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/inputs/sa_v6_solution.cpp",
+      "score": 83.73479666666665,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-2/inputs/sa_ils_solution.cpp",
+      "score": 87.27137999999998,
+      "status": "success"
+    }
+  ],
+  "final_score": 87.27137999999998,
+  "solution": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-2/inputs/sa_ils_solution.cpp",
+  "input_tokens": 30076,
+  "output_tokens": 158920,
+  "cost_usd_est": 13.6417,
+  "llm_calls": 16,
+  "campaign_dir": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2",
+  "seconds": 2831.9
+}

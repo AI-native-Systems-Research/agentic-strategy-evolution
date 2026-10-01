@@ -63,77 +63,85 @@ The score is clamped to [0, 1].
 
 **Controllable knobs:** solution_cpp
 
-## Active Principles (after iteration 2)
+## Active Principles (after iteration 3)
 
-- **RP-1** [domain]: Multi-start SA with greedy local search (20 restarts, T=3.0, alpha=0.99997) achieves 87.28% cut ratio on Max-Cut with n<=1000, m<=20000. Adding ILS perturbation with fewer restarts (12) does not improve this — more SA restarts outperform fewer restarts + perturbation. The 87.28% score is near the theoretical GW bound of 87.8%.
+- **RP-1** [domain]: Multi-start SA with greedy local search and ILS perturbation, using adaptive restart scaling (1.5M fixed iteration budget, 30 ILS cycles), achieves 87.16% cut ratio consistently on Max-Cut with n<=1000, m<=20000. This is near the theoretical GW bound of 87.8%. Fixed restart counts (12 or 20) produce inconsistent scores due to TLE on large graphs.
 - **RP-2** [domain]: Do not use chrono/clock-based timing in Frontier-CS judge solutions — use fixed iteration counts instead.
 - **RP-3** [domain]: The Frontier-CS judge for problem 192 produces deterministic scores for deterministic solutions (fixed RNG seed). Run-to-run variance of 0 observed across 2-3 consecutive runs for both tested solutions. Prior observed variance (84.62 vs 87.28) was anomalous, not systematic.
+- **RP-4** [domain]: Adaptive restart scaling (adjusting SA restart count by graph size with a fixed total iteration budget of 1.5M) achieves 87.16% cut ratio consistently with zero run-to-run variance, compared to fixed 12-restart SA+ILS which varies 84-87 due to TLE. The key parameters: n<=100->20 restarts, n<=300->12, n<=600->8, n>600->5.
 
 ## Most Recent Handoff
 
-# Handoff — Max-Cut (Problem #192), Iteration 2
+# Handoff — Max-Cut (Problem #192), Iteration 3
 
 ## Goal
 
-Implement the SA+ILS solution in `solution.cpp`, measure its score, and compare against the iter-1 SA-only baseline. The SA+ILS solution is fully written and validated at `inputs/sa_ils_solution.cpp` — copy it directly.
+Implement and measure two solutions: (1) adaptive budget SA+ILS (h-main at `inputs/solution_adaptive_sa_ils.cpp`) and (2) iter-2 fixed 12-restart SA+ILS (h-control-negative at `inputs/sa_ils_solution.cpp`). Copy each to `solution.cpp` and run the judge. Record scores.
 
 ## Key Discoveries
 
-- **TLE is the main score bottleneck.** The iter-1 solution (20 restarts) is at the TLE boundary — scores vary 83-87 across runs because large test cases sometimes time out. Reducing to 12 restarts eliminates TLE and scores consistently.
-- **ILS perturbation compensates for fewer restarts.** After SA reaches a local optimum, flipping ~4-5% of vertices randomly and re-running greedy_improve finds nearby local optima cheaply. 12 perturbation cycles per restart add diversity without SA's computational cost.
-- **Consistent 87.27.** The SA+ILS approach (12 restarts, 12 perturbation) scores 87.27 on repeated judge runs (verified 2× identical). The iter-1 baseline scores 83.9-87.3 (inconsistent).
-- **KL (Kernighan-Lin) is too expensive.** O(n²) per pass due to linear scan for best unlocked vertex — drops score to 84.0 from TLE. Would need bucket/PQ optimization to be viable.
-- **Tabu search is too slow.** O(n) per iteration for best-move scan makes it 44.4 with 15 restarts × 200k iterations.
-- **More than 12 restarts causes TLE.** 15 restarts scores 84.4-84.5 consistently (some tests TLE). 20+ restarts causes 3-point variance.
-- **Near the GW bound.** 87.27% is close to the theoretical Goemans-Williamson 0.878 approximation. Further gains would require fundamentally different approaches (SDP, spectral methods) or significant code optimization.
+- **1.5M total SA iterations is the safe ceiling.** At 1.5M budget, the solution never TLE's (verified 3× at 87.16). At 1.7M, TLE variance returns. At 2.0M, score swings 82-87.
+- **Adaptive restarts eliminate TLE variance.** Scaling restarts by n (20 for n≤100, 12 for n≤300, 8 for n≤600, 5 for n>600) distributes the 1.5M budget safely across all graph sizes.
+- **CSR adjacency + static arrays provide ~constant speedup** but don't change the algorithm's quality ceiling — the score is 87.16 either way, just more consistent.
+- **Fixed iteration count SA beats temperature-based SA** for this problem because timing is deterministic. T_start=3.0, T_end=0.001, geometric cooling ratio computed from budget.
+- **30 ILS cycles is sufficient** — increasing to 30 from 12 doesn't improve the score (same 87.16), but the extra cycles are cheap and don't hurt.
+- **Judge variance is purely from TLE.** For deterministic solutions, the judge produces identical scores across runs — unless some test cases time out.
+- **Score 87.16 appears to be the practical ceiling** for SA+ILS given the time constraints. Near the GW 0.878 bound.
 
 ## System Interface
 
-- **Build:** Not needed — the judge compiles `solution.cpp` internally.
+- **Build:** Not needed — judge compiles internally.
 - **Run/measure:** `bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp`
 - **Output format:** `SCORE: <n>` on stdout, where n is 0–100.
-- **Baseline result:** Iter-1 SA-only → 83.9-87.3 (inconsistent). SA+ILS → 87.27 (consistent).
+- **Baseline result:** Adaptive SA+ILS → 87.16 (consistent). Fixed 12-restart SA+ILS → 81-87 (inconsistent).
 
 ## Code Map
 
 - `solution.cpp:1` — the only file to edit. Must read n/m/edges from stdin, output n space-separated 0/1 values on one line.
-- `inputs/sa_ils_solution.cpp` — the validated SA+ILS implementation. Copy directly to solution.cpp for h-main.
+- `inputs/solution_adaptive_sa_ils.cpp` — the h-main solution (fully validated, 87.16 × 3).
+- `inputs/sa_ils_solution.cpp` — the h-control-negative solution (iter-2 baseline, 81-87 range).
 
 ## Code Targets
 
-- **h-main** → `solution.cpp`: Replace entire file with contents of `inputs/sa_ils_solution.cpp`. The implementation is fully validated and tested.
-- **h-control-negative** → `solution.cpp`: Use the current solution.cpp unchanged (iter-1 SA v8 with 20 restarts, no perturbation).
+- **h-main** → `solution.cpp`: Copy `inputs/solution_adaptive_sa_ils.cpp` directly. The implementation is fully validated.
+- **h-control-negative** → `solution.cpp`: Copy `inputs/sa_ils_solution.cpp` directly.
 
 ## What I Tried That Didn't Work
 
-- **KL refinement (solution_v6):** O(n²) per KL pass caused TLE, scoring 84.0. Not viable without bucket data structure.
-- **Tabu search (solution_tabu):** O(n) per iteration for best-move scan → 44.4 score with 15 restarts × 200k steps.
-- **SA with reheating (solution_reheat):** 3 temperature cycles × 8 restarts = too much total work, scored 84.0.
-- **40 restarts with shorter SA (solution_v8):** More restarts but less SA depth → 84.4 (TLE + quality loss).
-- **Gain-saving optimization (solution_fast5):** Saving gain during SA to avoid calc_state in perturbation backfired — vector copies during SA (on every improvement) added more overhead than they saved.
-- **15 restarts + 8 perturbation (solution_fast2):** 84.4-84.5, borderline TLE.
-- **Adaptive restarts by n (solution_v10):** 84.0, over-aggressive for small n.
+- **2M total SA budget (v9):** 87.25/82.05 — TLE variance returned.
+- **1.7M budget (v10):** 83.95 — also TLE.
+- **100 greedy restarts, no SA (v6):** 84.67 — SA quality is needed.
+- **2-flip neighborhood (v11):** 84.59 — O(m) per 2-flip pass adds too much overhead in ILS.
+- **Spectral initialization (v18):** 87.14 — no improvement over greedy init.
+- **Fast xoshiro128+ RNG (v14):** 84.21 — worse than mt19937 for this problem.
+- **Input-dependent seed (v16):** 87.05 — seed 31415 is better on average.
+- **Higher start temperature T=5.0 (v15):** 87.07 — T=3.0 is better tuned.
+- **Skip best-tracking in SA (v19):** 84.48 — losing the best SA state hurts quality.
+- **Deeper SA with fewer restarts (v4):** 79.09 — TLE.
+- **Final refinement SA on global best (v13):** 84.62 — splitting budget between restarts and refinement hurts.
 
 ## What I Excluded and Why
 
-- **SDP relaxation (Goemans-Williamson exact):** Complex to implement in competitive C++, likely too slow. We're already at ~87.3% which is near the 87.8% GW bound.
-- **Spectral initialization (Laplacian eigenvector):** Would require eigenvalue computation, heavy dependency. Could help for specific graph structures but unlikely to beat 87.3% overall.
-- **Efficient tabu search with bucket structures:** Would need O(1) best-move lookup. Complex to implement correctly. Diminishing returns given we're near GW.
+- **SDP relaxation:** Too complex for competitive C++, likely too slow. Already near GW bound.
+- **Graph coarsening (METIS-style):** Would require significant infrastructure (matching, coarsening, refinement). Diminishing returns at 87.16.
+- **Population-based / genetic algorithms:** More complex, no clear advantage over multi-start SA+ILS for this graph size.
+- **Efficient tabu search (bucket structures):** O(1) best-move lookup is complex to implement. Tried in iter-2, scored 44.4.
 
 ## Evolution of Thinking
 
-Started iter-2 trying to improve SA quality (deeper SA, KL, tabu). Discovered the real bottleneck was **TLE inconsistency** — the iter-1 solution was flirting with time limits, causing 3-point score swings. The key insight shifted from "better algorithm" to "faster algorithm that still computes well." ILS perturbation is the perfect fit: it's O(n) per cycle (vs O(n²) for KL or O(n) per SA step), so it adds diversity cheaply.
+Started iter-3 assuming the bottleneck was algorithmic quality (better SA, 2-flip moves, spectral init). Quickly discovered **TLE consistency** is the real challenge — the same solution scores 81 or 87 depending on whether large test cases time out. The key insight: **adaptive workload scaling** (fewer restarts for bigger graphs) gives consistent scores, while the iter-2 approach with fixed restarts is a coin flip. The solution quality at 87.16 is nearly at the GW theoretical ceiling; further gains require fundamentally different methods that are impractical given the time constraint.
 
 ## Current Status
 
-- **Validated:** SA+ILS with 12 restarts scores 87.27 consistently. Output format correct. No TLE.
-- **Uncertain:** Whether further micro-optimizations (loop unrolling, cache-friendly adjacency) could squeeze another 0.5 points. Whether the 87.27 score is the practical ceiling given time constraints.
-- **Suggested next:** (1) Try O(1) bucket-based tabu search for potentially better quality, (2) Try pair-swap moves (flip u and v simultaneously) for escaping single-flip local optima, (3) Profile to find if any inner loop can be optimized to allow more restarts.
+- **Validated:** Adaptive SA+ILS scores 87.16 consistently (3× verified). Fixed 12-restart SA+ILS scores 81-87 (inconsistent).
+- **Uncertain:** Whether the 87.16 score can be pushed to 87.5+ with more aggressive optimizations that stay within the time limit. Whether different RNG seeds could find marginally better solutions on specific test cases.
+- **Suggested next:** (1) Try population-based crossover of top solutions from multiple restarts. (2) Try variable neighborhood descent (VND) with 1-flip, 2-flip, and 3-flip neighborhoods in sequence. (3) Profile the solution to find if any inner-loop optimization enables one more restart.
 
 ## Warnings & Constraints
 
 - **Do NOT use chrono or clock() for timing.** Score goes to 0 (RP-2).
 - **Output must be exactly one line** of n space-separated integers (0 or 1).
-- **12 restarts is the safe maximum.** 15 restarts causes TLE on some runs. 20+ restarts causes major variance.
+- **1.5M total SA iterations is the safe ceiling.** Going to 1.7M+ causes TLE variance.
 - **bits/stdc++.h works** in the judge (Linux GCC).
-- **RNG seed matters.** Different seeds give slightly different scores (±0.1 within consistent range). seed=31415 validated.
+- **mt19937 with seed 31415 produces better results** than xoshiro128+ or input-dependent seeds for this specific problem.
+- **The judge produces deterministic scores** when the solution is deterministic (fixed RNG seed). Run-to-run variance = 0 when no TLE occurs.
