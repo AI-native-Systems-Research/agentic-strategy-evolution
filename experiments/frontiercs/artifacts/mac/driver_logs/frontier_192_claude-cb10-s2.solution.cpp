@@ -7,7 +7,6 @@ int main(){
     
     int n, m;
     cin >> n >> m;
-    
     vector<pair<int,int>> edges(m);
     vector<vector<int>> adj(n);
     for(int i = 0; i < m; i++){
@@ -18,21 +17,18 @@ int main(){
     }
     
     if(m == 0){
-        for(int i = 0; i < n; i++){
-            if(i) cout << ' ';
-            cout << 0;
-        }
+        for(int i = 0; i < n; i++){ if(i) cout << ' '; cout << 0; }
         cout << '\n';
         return 0;
     }
     
-    mt19937 rng(42);
-    vector<int> bestS(n, 0), s(n), gain(n);
-    int bestCut = -1;
+    mt19937 rng(12345);
+    vector<int> s(n), gain(n), bestS(n, 0);
+    int bestCut = 0;
     
-    auto calcCut = [&]() -> int {
+    auto computeCut = [&]() -> int {
         int c = 0;
-        for(auto&[a,b] : edges) c += (s[a] != s[b]);
+        for(auto& [a,b] : edges) c += (s[a] != s[b]);
         return c;
     };
     
@@ -44,17 +40,17 @@ int main(){
         }
     };
     
-    auto doFlip = [&](int u, int &cur){
+    auto doFlip = [&](int u, int& cur){
         cur += gain[u];
         s[u] ^= 1;
         gain[u] = -gain[u];
         for(int v : adj[u]){
-            if(s[u] == s[v]) gain[v] -= 2;
-            else gain[v] += 2;
+            if(s[u] == s[v]) gain[v] += 2;
+            else gain[v] -= 2;
         }
     };
     
-    auto localSearch = [&](int &cur){
+    auto localSearch = [&](int& cur){
         bool imp = true;
         while(imp){
             imp = false;
@@ -65,7 +61,7 @@ int main(){
     };
     
     auto t0 = chrono::steady_clock::now();
-    auto elapsed = [&]()->double{
+    auto elapsed = [&]() -> double {
         return chrono::duration<double>(chrono::steady_clock::now() - t0).count();
     };
     
@@ -73,26 +69,32 @@ int main(){
     
     while(elapsed() < timeLimit){
         for(int i = 0; i < n; i++) s[i] = rng() & 1;
-        int cur = calcCut();
         computeGain();
+        int cur = computeCut();
         localSearch(cur);
         if(cur > bestCut){ bestCut = cur; bestS = s; }
         
-        // SA phase
-        for(double T = 4.0; T > 0.005 && elapsed() < timeLimit; T *= 0.9995){
+        double Tinit = max(2.0, 0.3 * sqrt((double)m));
+        double Tfinal = 0.01;
+        int totalIter = max(200000, n * 500);
+        
+        for(int iter = 0; iter < totalIter; iter++){
+            if((iter & 4095) == 0 && elapsed() >= timeLimit) break;
+            double frac = (double)iter / totalIter;
+            double T = Tinit * pow(Tfinal / Tinit, frac);
             int u = rng() % n;
             int g = gain[u];
-            if(g >= 0 || (double)(rng() % 1000000) / 1000000.0 < exp((double)g / T)){
+            if(g > 0 || (uniform_real_distribution<double>(0,1)(rng) < exp((double)g / T))){
                 doFlip(u, cur);
                 if(cur > bestCut){ bestCut = cur; bestS = s; }
             }
         }
+        
+        s = bestS; computeGain(); int cc = computeCut();
+        localSearch(cc);
+        if(cc > bestCut){ bestCut = cc; bestS = s; }
     }
     
-    for(int i = 0; i < n; i++){
-        if(i) cout << ' ';
-        cout << bestS[i];
-    }
+    for(int i = 0; i < n; i++){ if(i) cout << ' '; cout << bestS[i]; }
     cout << '\n';
-    return 0;
 }

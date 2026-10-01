@@ -8,43 +8,46 @@ int main(){
     int n, m;
     cin >> n >> m;
     
-    vector<vector<int>> adj(n);
+    vector<vector<int>> adj(n+1);
     vector<pair<int,int>> edges(m);
     for(int i = 0; i < m; i++){
-        int u, v; cin >> u >> v; u--; v--;
+        int u, v; cin >> u >> v;
         adj[u].push_back(v);
         adj[v].push_back(u);
         edges[i] = {u, v};
     }
     
-    auto start_time = chrono::steady_clock::now();
-    auto elapsed_ms = [&]() -> double {
-        return chrono::duration<double,milli>(chrono::steady_clock::now()-start_time).count();
+    vector<int> bestS(n+1, 0);
+    int bestCut = -1;
+    
+    mt19937 rng(42);
+    auto startTime = chrono::steady_clock::now();
+    auto elapsed = [&]() -> double {
+        return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
     };
     
-    vector<int> best_s(n, 0);
-    int best_cut = -1;
-    mt19937 rng(12345);
-    
-    while(elapsed_ms() < 1800.0){
-        vector<int> s(n);
-        for(int i = 0; i < n; i++) s[i] = rng()&1;
+    while(elapsed() < 1.85){
+        vector<int> s(n+1);
+        for(int i = 1; i <= n; i++) s[i] = rng() & 1;
         
-        vector<int> gain(n, 0);
-        for(int v = 0; v < n; v++){
+        vector<int> gain(n+1, 0);
+        for(int v = 1; v <= n; v++){
             for(int u : adj[v]){
-                if(s[u]==s[v]) gain[v]++; else gain[v]--;
+                if(s[u] == s[v]) gain[v]++; else gain[v]--;
             }
         }
         
+        // Local search to local optimum
         bool imp = true;
         while(imp){
             imp = false;
-            for(int v = 0; v < n; v++){
+            for(int v = 1; v <= n; v++){
                 if(gain[v] > 0){
-                    s[v]^=1; gain[v]=-gain[v];
+                    s[v] ^= 1;
+                    gain[v] = -gain[v];
                     for(int u : adj[v]){
-                        if(s[u]==s[v]) gain[u]+=2; else gain[u]-=2;
+                        if(s[u] == s[v]) gain[u] += 2;
+                        else gain[u] -= 2;
                     }
                     imp = true;
                 }
@@ -52,31 +55,40 @@ int main(){
         }
         
         int cut = 0;
-        for(auto&[u,v]:edges) if(s[u]!=s[v]) cut++;
-        if(cut > best_cut){ best_cut = cut; best_s = s; }
+        for(auto& [u,v] : edges) if(s[u] != s[v]) cut++;
         
-        double T = 3.0;
-        while(T > 0.01 && elapsed_ms() < 1800.0){
-            for(int it = 0; it < n; it++){
-                int v = rng()%n;
-                int g = gain[v];
-                if(g > 0 || (rng()%1000000) < (int)(1000000.0*exp((double)g/T))){
-                    s[v]^=1; gain[v]=-gain[v];
-                    for(int u : adj[v]){
-                        if(s[u]==s[v]) gain[u]+=2; else gain[u]-=2;
-                    }
+        vector<int> bestLocal = s;
+        int bestLocalCut = cut;
+        
+        double T0 = max(1.0, 0.02 * m / (double)n);
+        double Tmin = 0.01;
+        
+        for(int iter = 0; elapsed() < 1.83; iter++){
+            double frac = min(1.0, iter / 500000.0);
+            double T = T0 * pow(Tmin / T0, frac);
+            
+            int v = (rng() % n) + 1;
+            int g = gain[v];
+            if(g > 0 || (rng() % 1000000) < (int)(1000000.0 * exp((double)g / T))){
+                s[v] ^= 1;
+                cut += g;
+                gain[v] = -g;
+                for(int u : adj[v]){
+                    if(s[u] == s[v]) gain[u] += 2;
+                    else gain[u] -= 2;
                 }
+                if(cut > bestLocalCut){ bestLocalCut = cut; bestLocal = s; }
             }
-            T *= 0.999;
-            cut = 0;
-            for(auto&[u,v]:edges) if(s[u]!=s[v]) cut++;
-            if(cut > best_cut){ best_cut = cut; best_s = s; }
+            if(frac >= 1.0) break;
         }
+        
+        if(bestLocalCut > bestCut){ bestCut = bestLocalCut; bestS = bestLocal; }
     }
     
-    for(int i = 0; i < n; i++){
-        if(i) cout << ' ';
-        cout << best_s[i];
+    for(int i = 1; i <= n; i++){
+        if(i > 1) cout << ' ';
+        cout << bestS[i];
     }
     cout << '\n';
+    return 0;
 }
