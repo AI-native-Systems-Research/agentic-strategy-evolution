@@ -220,3 +220,35 @@ tool-enabled agents are expensive and hard to budget-cap on this harness.)
 
 Artifacts: `claude_agent_gates/` (preds, best `*.cpp`, logs). Patch adds the `single_agent` fcs
 C++/research prompt selection (`engram_opus_patch.diff`).
+
+## AIDE (4th baseline) vs Nous — algorithmic subset (2026-10-02)
+
+**AIDE** = Weco AIDE (arXiv:2502.13138), MIT. We run AIDE's tree search (draft/debug/improve,
+greedy-best + stochastic debug) **unmodified**; a ~200-line adapter teaches it two things: write
+C++17 (override the operator prompts) and score each node with the Frontier-CS go-judge (override
+`parse_exec_result` + exec callback) instead of AIDE's LLM stdout-reviewer. Same model
+(`claude-opus-4-6`), same rule (**run to $50 or score ceiling**). We added token-level cost
+accounting (wrap `backend_openai.query`; $15/M in, $75/M out, same pricing as the other agents), so
+AIDE's cost is measured, not guessed. Every task ran to the $50 cap.
+
+| task | Nous (score @ $) | AIDE (score @ $) | real Engram | Claude-agent |
+|---|---|---|---|---|
+| p0  | **86** ($27)   | 0  ($50.07) | 70.0 | ~26 |
+| p5  | **83** ($46)   | 44 ($50.28) | 49.0 | ~39 |
+| p9  | **100** ($38)  | 95 ($50.16) | 55.0 | 80 |
+| p15 | **100** ($32)  | 0  ($50.41) | 20.0 | 0 |
+| p22 | **100** ($4.85)| 0  ($50.04) | 0.0  | 0 |
+
+(AIDE scores = best node re-scored on OUR judge; p5=44 and p9=95 reproduce on isolated re-eval. The
+go-judge shows ~5pt downward variance under load on time-limited tasks, so p9 occasionally reads 90.)
+
+**Reading.** AIDE is the strongest single-task baseline on **p9 (95)**, beating Engram (55) and
+Claude (80), just under Nous (100). But it scores **0 on p0** (its 124 nodes all compile and run yet
+the judge returns 0 — a format/validity wall its score-only search can't climb) and **0 on both
+gates (p15, p22)**. So AIDE's tree search helps where incremental improvement has a gradient and
+fails exactly where Nous's hypothesis-driven loop is decisive. **Nous wins all 5 on score AND spends
+far less** ($4.85-$46 vs AIDE's full $50 every time). cloudcast was not run for AIDE (the adapter is
+algorithmic-only; a research-track callback would be needed).
+
+Artifacts: `aide_gates/` (preds, best `*.cpp`, logs); adapter `gen/aide_frontier.py`; spec
+`artifacts/mac/AIDE_ADAPTER.md`.
