@@ -13,7 +13,7 @@ caveat.
 |---|---|---|---|---|
 | p0  | **86** ($27) | 70.0 | ~26 | Claude's 73 needed ~$84; at $50 it's ~26 |
 | p5  | **83** ($46) | 49.0 | ~39 | |
-| p9  | **100** ($38) | 55.0 | undetermined | Claude run leaked -> cost corrupted; 98.5 at unknown (likely >$50) cost |
+| p9  | **100** ($38) | 55.0 | 80 | capped rerun (killed at ~$50 wall-clock proxy); best cpp re-scored 80 on our judge |
 | p15 | **100** ($32) | 20.0 | 0 | gate |
 | p22 | **100** ($4.85) | 0.0 | 0 | gate |
 
@@ -23,10 +23,9 @@ cloudcast (transfer-cost $, lower=better): Nous **$626** @ $9.89 (<=$50); real E
 ## Takeaways (iso-$50)
 - **Nous is best on every task at <= $50**, and on the gates (p15, p22) it's the only one that scores.
 - Capping at $50 barely changes Engram (it runs near $50/agent anyway): 70/49/55/20/0.
-- Capping HURTS Claude-agent a lot where its best came late: p0 73 -> ~26 at $50. So the earlier
-  "Claude nearly solves p9 (98.5)" is NOT an iso-$50 result — that run leaked (cost data corrupted),
-  and by analogy to p0 (73 needed ~$84) the 98.5 likely needed >$50 too. At a true $50 budget, Claude's
-  p9 is undetermined and probably well below 98.5.
+- Capping HURTS Claude-agent a lot where its best came late: p0 73 -> ~26 at $50. For p9 the earlier
+  "98.5" was a leaked (cost-corrupted) run; a clean capped rerun (killed at the ~$50 wall-clock proxy)
+  reaches 80 on our judge, below Nous's 100.
 - Net: on the fair iso-$50 axis, **Nous dominates all five algorithmic tasks**; cloudcast is a tie
   with Engram at SOTA. This is stronger and cleaner than the raw final-best table.
 
