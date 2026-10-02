@@ -150,3 +150,35 @@ killed.
 Artifacts: `artifacts/preds/{p22,cloudcast}.*.json`, `artifacts/nous_runs/{frontier-22,research-cloudcast-nous}/`
 (findings, patches, best solution, `llm_metrics.jsonl`), `artifacts/gen_logs/newtasks/` (agent logs +
 Engram journal/knowledgebase).
+
+## Real Engram (as-is) vs Nous — gate/headroom subset (2026-10-01)
+
+The Engram rows above use our *reimplementation*. The fair comparator is the **real Engram**
+(`mit-nms/Engram` @5295858, run on the same model Opus 4.6 via litellm; setup + patch in
+`engram_real/`). We ran it on the discriminating subset under the agreed rule (stop at ceiling /
+plateau / ~$50) and **re-scored its best candidate on OUR judge** (same `frontier eval` used for Nous
+and Claude), so the numbers are directly comparable.
+
+| Task | Nous (score, $) | real Engram (score, $) | note |
+|---|---|---|---|
+| p0  | **86** ($27) | 74.8 ($84) | Nous higher, 3x cheaper |
+| p5  | **83** ($46) | 49.0 ($69) | Nous higher |
+| p9  | **100** ($38) | 55.0 (~$45*) | Nous higher |
+| p15 | **100** ($32) | 20.0 (~$70*) | gate — Nous solves, Engram partial |
+| p22 | **100** ($4.85) | 0.0 (~$55*) | gate — Nous solves, Engram fails |
+
+\* p9/p15/p22 killed mid-agent (plateau/stuck), so usage was not finalized; cost estimated from agent
+count at real Engram's ~$25-30/agent. p0/p5 costs are exact.
+
+**Nous beats real Engram on every task in this subset, and at lower cost** (Engram ~$45-84/task vs
+Nous ~$5-46). Two honest refinements over the reimpl story: (1) real Engram is clearly stronger than
+our reimpl and than Claude — e.g. p9 55 (our judge) vs reimpl/Claude 5, p0 75 vs reimpl 56 — so it is
+*not* stuck at 0 on headroom tasks; (2) but it still does not reach Nous on any of them, and on the
+hardest gate (p22, Halin-graph tree decomposition) it scores 0 while Nous solves it (100). The Nous
+advantage is a genuine quality gap on hard/gate tasks, now shown against the real system, not a
+reimplementation artifact.
+
+Caveats: Engram's own internal score disagreed with our judge on p9 (its log said 5, our judge says
+55) — we report OUR judge uniformly across all agents. Engram's per-agent cost (~$25-30, from 5M-token
+prompts) makes a strict $50 cap impractical (1-2 agents); p0/p5 overshot to $69-84. Artifacts +
+per-task best solutions + logs: `engram_real/gates/`.

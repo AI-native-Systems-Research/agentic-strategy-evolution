@@ -21,7 +21,11 @@ score-vs-cost view (quality per dollar), not a forced equal cost.
 
 **What's left (checkpoints):**
 1. [x] Fix the cloudcast story in our results → it's a tie at SOTA, not a Nous win. (DONE 2026-10-01)
-2. [ ] Run the real **Engram** on the hard/gate tasks (p0, p5, p9, p15, p22). (cloudcast already done.)
+2. [x] Run the real **Engram** on the hard/gate tasks (p0, p5, p9, p15, p22). (DONE 2026-10-01)
+       Result (our judge): Nous beats real Engram on all 5, cheaper: p0 86/74.8, p5 83/49, p9 100/55,
+       p15 100/20, p22 100/0. Real Engram > reimpl/Claude but < Nous everywhere. See RESULTS.md +
+       engram_real/gates/. LEARNING: real Engram ~$25-30/agent, so $50 cap = max_agents 2 (p0/p5
+       overshot to $69-84). Usage not finalized if killed mid-agent → prefer max_agents=2 next time.
 3. [ ] Then the **Claude *agent*** baseline (Engram `single_agent`, same harness — quick follow-on).
        Use the Claude agent with tools, NOT the old chat-only loop.
 4. [ ] Re-run **Nous** only where it stopped early at a cap (p0, p211, p44) + a longer cloudcast run
