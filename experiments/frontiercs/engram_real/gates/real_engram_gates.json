@@ -1,0 +1,37 @@
+{
+  "agent": "real-engram (mit-nms/Engram @5295858, opus-4-6)",
+  "judge": "frontier eval algorithmic (ours), best candidate, 3x",
+  "note": "p0/p5 cost exact; p9/p15/p22 killed mid-agent so usage not finalized (est from agent count ~$25-30/agent); all exceeded or near the $50 target due to Engram's high per-agent cost",
+  "results": {
+    "p0": {
+      "score": 74.79,
+      "cost_usd": 83.61,
+      "cost_exact": true,
+      "agents_run": 2
+    },
+    "p5": {
+      "score": 49.0,
+      "cost_usd": 68.89,
+      "cost_exact": true,
+      "agents_run": 2
+    },
+    "p9": {
+      "score": 55.0,
+      "cost_usd": null,
+      "cost_exact": false,
+      "agents_run": 2
+    },
+    "p15": {
+      "score": 20.0,
+      "cost_usd": null,
+      "cost_exact": false,
+      "agents_run": 3
+    },
+    "p22": {
+      "score": 0.0,
+      "cost_usd": null,
+      "cost_exact": false,
+      "agents_run": 1
+    }
+  }
+}
