@@ -182,3 +182,41 @@ Caveats: Engram's own internal score disagreed with our judge on p9 (its log sai
 55) — we report OUR judge uniformly across all agents. Engram's per-agent cost (~$25-30, from 5M-token
 prompts) makes a strict $50 cap impractical (1-2 agents); p0/p5 overshot to $69-84. Artifacts +
 per-task best solutions + logs: `engram_real/gates/`.
+
+## Three-way, tool-enabled, same model (Opus 4.6), same judge — gate/headroom subset
+
+The **Claude baseline is now a Claude *agent*** (Engram's `single_agent` method: one agent with the
+same shell + judge tools as Engram, but no handoff / journal / knowledgebase — a pure "tools + model,
+no methodology" control). The old chat-completions Claude loop is **dropped**. All three re-scored on
+OUR judge (best candidate).
+
+| Task | Nous | real Engram | Claude-agent | type |
+|---|---|---|---|---|
+| p0  | **86** | 74.8 | 73.3 | headroom |
+| p5  | **83** | 49.0 | 44.0 | headroom |
+| p9  | **100** | 55.0 | 98.5 | NOT a gate (tooled agent nearly solves) |
+| p15 | **100** | 20.0 | 0 | gate — only Nous |
+| p22 | **100** | 0.0 | 0 | gate — only Nous |
+
+**Refined, honest story:**
+- **True gates = p15, p22**: only Nous solves (100); real Engram gets partial/zero (20/0), Claude-agent
+  0. This is the strongest evidence.
+- **p9 is NOT a discriminator**: a tool-enabled single Claude agent nearly solves it (98.5) — the old
+  chat-loop Claude scored 5 there, so that gap was *tools*, not methodology. Dropping the chat-loop
+  baseline was the right call.
+- **Headroom (p0, p5)**: Nous highest (86/83), with real Engram and Claude-agent clustered lower
+  (~73-75 / ~44-49). Nous's lead here is real but modest.
+- Net: Nous is best on all 5, but the *decisive* "only Nous can" claim rests on the gates (p15, p22),
+  not p9.
+
+**COST — read with caution (do NOT use as iso-$50).** The Claude-agent runs exposed a harness
+cost-control problem: `single_agent` writes usage only late/periodically, catches SIGTERM (finishes
+the current experiment), and spawns `multiprocessing` workers that **orphan and keep calling the LLM**
+if only the parent is killed. Before we fixed the watchdog to tree-kill + wall-clock proxy, p0/p5/p9
+leaked to **$201 / $106 / $207**. After the fix, p15 finished clean at **$37.75**. So Claude-agent
+costs here are upper bounds, not controlled $50 figures. Nous (controlled, $5-46) and the clean p15
+point are the trustworthy cost anchors; the leaked figures are flagged. (Finding for the paper:
+tool-enabled agents are expensive and hard to budget-cap on this harness.)
+
+Artifacts: `claude_agent_gates/` (preds, best `*.cpp`, logs). Patch adds the `single_agent` fcs
+C++/research prompt selection (`engram_opus_patch.diff`).

@@ -80,3 +80,21 @@ index 0000000..f0487c4
 +            problem_id=os.environ["FCS_PROBLEM_ID"],
 +            **kwargs,
 +        )
+diff --git a/examples/single_agent_example_usage.py b/examples/single_agent_example_usage.py
+index 8d3ddeb..647d4fc 100644
+--- a/examples/single_agent_example_usage.py
++++ b/examples/single_agent_example_usage.py
+@@ -51,6 +51,13 @@ def run_single_agent_optimization(
+ 
+     # Single-agent system prompt (no handoff, no summary, no journal/kb)
+     system_prompt_path = prompts_dir / "system_prompt_single_agent.txt"
++    # Frontier-CS needs track-specific task instructions (C++ for algorithmic);
++    # the generic single-agent prompt is Python/ADRS-flavored and would mis-steer.
++    # Single-agent code still provides NO handoff/journal/kb (the ablation holds).
++    if problem_name.startswith("fcs_alg_"):
++        system_prompt_path = prompts_dir / "handoff_system_prompt_algorithms.txt"
++    elif problem_name.startswith("fcs_res_"):
++        system_prompt_path = prompts_dir / "handoff_system_prompt_research.txt"
+ 
+ 
+     results_base = get_results_base_dir(base_dir)

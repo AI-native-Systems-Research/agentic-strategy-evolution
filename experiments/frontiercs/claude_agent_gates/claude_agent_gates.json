@@ -1,0 +1,27 @@
+{
+  "agent": "claude-agent (Engram single_agent, opus-4-6, tools, no methodology)",
+  "judge": "frontier eval algorithmic (ours), best of all *.cpp, 3x",
+  "note": "COST UNRELIABLE for p0/p5/p9: watchdog SIGTERM didn't kill cleanly and multiprocessing-spawn workers orphaned+leaked, inflating cost ($200/$106/$207). p15 ($37.75) is the one clean-cost run (tree-kill fix). single_agent uses virtual-mode FS; some candidates may not have flushed on kill. Costs should be treated as upper bounds / not iso-$50.",
+  "results": {
+    "p0": {
+      "score": 73.27,
+      "cost_usd": 200.84
+    },
+    "p5": {
+      "score": 44.0,
+      "cost_usd": 105.94
+    },
+    "p9": {
+      "score": 98.53,
+      "cost_usd": 207.28
+    },
+    "p15": {
+      "score": 0.0,
+      "cost_usd": 37.75
+    },
+    "p22": {
+      "score": 0.0,
+      "cost_usd": null
+    }
+  }
+}

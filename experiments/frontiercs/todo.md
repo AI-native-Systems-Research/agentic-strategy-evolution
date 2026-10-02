@@ -26,8 +26,13 @@ score-vs-cost view (quality per dollar), not a forced equal cost.
        p15 100/20, p22 100/0. Real Engram > reimpl/Claude but < Nous everywhere. See RESULTS.md +
        engram_real/gates/. LEARNING: real Engram ~$25-30/agent, so $50 cap = max_agents 2 (p0/p5
        overshot to $69-84). Usage not finalized if killed mid-agent → prefer max_agents=2 next time.
-3. [ ] Then the **Claude *agent*** baseline (Engram `single_agent`, same harness — quick follow-on).
-       Use the Claude agent with tools, NOT the old chat-only loop.
+3. [x] Then the **Claude *agent*** baseline (Engram `single_agent`, Opus 4.6, tools). (DONE 2026-10-01)
+       Our judge: p0 73.3, p5 44.0, p9 98.5, p15 0, p22 0. KEY: tool-enabled Claude nearly solves p9
+       (98.5) — p9 is NOT a gate; true gates = p15, p22 (only Nous). COST BUG (fixed): SIGTERM didn't
+       kill + multiprocessing-spawn workers orphaned & leaked -> p0/p5/p9 hit $201/$106/$207; p15 clean
+       at $37.75 after tree-kill+wall-proxy fix. Costs are upper bounds, not iso-$50. See RESULTS.md +
+       claude_agent_gates/. LESSON: for single_agent, watchdog must TREE-KILL (kids first) + wall-clock
+       proxy (usage writes late, invisible for stuck runs); macOS ps uses etime not etimes.
 4. [ ] Re-run **Nous** only where it stopped early at a cap (p0, p211, p44) + a longer cloudcast run
        with the same hints Engram's prompt gets (fairness).
 5. [ ] Add **AIDE** as a 4th baseline and run it on our tasks.
