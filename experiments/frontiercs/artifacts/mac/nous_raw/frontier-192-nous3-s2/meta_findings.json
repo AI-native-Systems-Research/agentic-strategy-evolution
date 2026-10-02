@@ -1,0 +1,29 @@
+{
+  "schema_version": "1",
+  "generated_at": "2026-10-01T07:42:09.835995+00:00",
+  "run_id": "frontier-192-nous3-s2",
+  "iterations_completed": 3,
+  "campaign_design_lessons": [
+    {
+      "lesson": "Initial mechanism hypothesis was wrong \u2014 schedule simpler alternative arms in iter 1 next time.",
+      "evidence": "h-main was REFUTED in iter-2 and only CONFIRMED in iter-3."
+    }
+  ],
+  "target_system_asks": [],
+  "nous_asks": [],
+  "deployment_recommendation": {
+    "verdict": "fall_back_to_baseline",
+    "top_candidate_id": "iter-1/h-main/0",
+    "score": 0.0,
+    "citations": [
+      {
+        "iteration": 1,
+        "arm_id": "h-main",
+        "evidence_snippet": "iter-1 arm_id=h-main score=0.000"
+      }
+    ],
+    "caveats": [
+      "iter-1 arm h-main: best_score = 0.000 <= baseline = 0.000"
+    ]
+  }
+}

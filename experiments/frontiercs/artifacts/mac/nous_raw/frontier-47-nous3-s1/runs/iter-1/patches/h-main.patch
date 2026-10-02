@@ -1,0 +1,448 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..5a51c9b 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,441 @@
+-#include <bits/stdc++.h>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <cmath>
++#include <ctime>
++#include <string>
++#include <vector>
++#include <algorithm>
++#include <random>
++#include <chrono>
++#include <sstream>
++#include <iostream>
++#include <climits>
++
+ using namespace std;
+-int main(){return 0;}
++
++struct Rect { int x, y, w, h; };
++
++struct ItemType {
++    string type;
++    int w, h, v, limit;
++    double density; // v / (w*h)
++};
++
++struct Placement {
++    string type;
++    int x, y, rot;
++};
++
++// ---- MaxRects Bin ----
++struct MaxRectsBin {
++    int W, H;
++    vector<Rect> freeRects;
++
++    void init(int w, int h) {
++        W = w; H = h;
++        freeRects.clear();
++        freeRects.push_back({0, 0, W, H});
++    }
++
++    // method: 0=BSSF, 1=BAF, 2=BL
++    Rect findBest(int w, int h, int method, int &bestScore1, int &bestScore2) {
++        bestScore1 = INT_MAX;
++        bestScore2 = INT_MAX;
++        Rect best = {-1, -1, 0, 0};
++        for (auto &r : freeRects) {
++            if (w <= r.w && h <= r.h) {
++                int s1, s2;
++                if (method == 0) { // BSSF
++                    s1 = min(r.w - w, r.h - h);
++                    s2 = max(r.w - w, r.h - h);
++                } else if (method == 1) { // BAF
++                    s1 = r.w * r.h - w * h;
++                    s2 = min(r.w - w, r.h - h);
++                } else { // BL
++                    s1 = r.y;
++                    s2 = r.x;
++                }
++                if (s1 < bestScore1 || (s1 == bestScore1 && s2 < bestScore2)) {
++                    bestScore1 = s1;
++                    bestScore2 = s2;
++                    best = {r.x, r.y, w, h};
++                }
++            }
++        }
++        return best;
++    }
++
++    void placeRect(Rect placed) {
++        vector<Rect> newFree;
++        for (auto &r : freeRects) {
++            // Check overlap
++            if (placed.x >= r.x + r.w || placed.x + placed.w <= r.x ||
++                placed.y >= r.y + r.h || placed.y + placed.h <= r.y) {
++                newFree.push_back(r);
++                continue;
++            }
++            // Split
++            if (placed.x > r.x)
++                newFree.push_back({r.x, r.y, placed.x - r.x, r.h});
++            if (placed.x + placed.w < r.x + r.w)
++                newFree.push_back({placed.x + placed.w, r.y, r.x + r.w - placed.x - placed.w, r.h});
++            if (placed.y > r.y)
++                newFree.push_back({r.x, r.y, r.w, placed.y - r.y});
++            if (placed.y + placed.h < r.y + r.h)
++                newFree.push_back({r.x, placed.y + placed.h, r.w, r.y + r.h - placed.y - placed.h});
++        }
++        freeRects = newFree;
++        pruneFreeRects();
++    }
++
++    void pruneFreeRects() {
++        for (int i = (int)freeRects.size() - 1; i >= 0; i--) {
++            for (int j = (int)freeRects.size() - 1; j >= 0; j--) {
++                if (i == j) continue;
++                auto &a = freeRects[i], &b = freeRects[j];
++                if (a.x >= b.x && a.y >= b.y &&
++                    a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h) {
++                    freeRects.erase(freeRects.begin() + i);
++                    break;
++                }
++            }
++        }
++    }
++};
++
++// ---- Skyline Bin ----
++struct SkylineBin {
++    int W, H;
++    struct Segment { int x, y, w; };
++    vector<Segment> skyline;
++
++    void init(int w, int h) {
++        W = w; H = h;
++        skyline.clear();
++        skyline.push_back({0, 0, W});
++    }
++
++    // Bottom-left, find best position for (w, h)
++    bool findPosition(int w, int h, int &bestX, int &bestY, int &bestIdx) {
++        bestY = INT_MAX;
++        bestX = INT_MAX;
++        bestIdx = -1;
++        for (int i = 0; i < (int)skyline.size(); i++) {
++            int x = skyline[i].x;
++            if (x + w > W) continue;
++            int y = 0;
++            int widthLeft = w;
++            bool fits = true;
++            for (int j = i; j < (int)skyline.size() && widthLeft > 0; j++) {
++                y = max(y, skyline[j].y);
++                if (y + h > H) { fits = false; break; }
++                widthLeft -= skyline[j].w;
++                if (j == i) widthLeft += (x - skyline[j].x);
++            }
++            if (!fits || widthLeft > 0) continue;
++            if (y < bestY || (y == bestY && x < bestX)) {
++                bestY = y;
++                bestX = x;
++                bestIdx = i;
++            }
++        }
++        return bestIdx != -1;
++    }
++
++    void addSkylineLevel(int x, int y, int w, int h) {
++        Segment s = {x, y + h, w};
++        // Remove covered segments
++        vector<Segment> newSky;
++        bool inserted = false;
++        for (auto &seg : skyline) {
++            if (seg.x + seg.w <= x || seg.x >= x + w) {
++                newSky.push_back(seg);
++            } else {
++                if (!inserted) {
++                    newSky.push_back(s);
++                    inserted = true;
++                }
++                // Trim left part
++                if (seg.x < x) {
++                    newSky.insert(newSky.end() - (inserted ? 1 : 0), {seg.x, seg.y, x - seg.x});
++                }
++                // Trim right part
++                if (seg.x + seg.w > x + w) {
++                    newSky.push_back({x + w, seg.y, seg.x + seg.w - x - w});
++                }
++            }
++        }
++        if (!inserted) newSky.push_back(s);
++        skyline = newSky;
++        // Merge adjacent same-height
++        vector<Segment> merged;
++        for (auto &seg : skyline) {
++            if (!merged.empty() && merged.back().y == seg.y &&
++                merged.back().x + merged.back().w == seg.x) {
++                merged.back().w += seg.w;
++            } else {
++                merged.push_back(seg);
++            }
++        }
++        skyline = merged;
++    }
++};
++
++// ---- JSON parsing helpers ----
++int parseInt(const string &s, size_t &pos) {
++    while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t' || s[pos] == '\n' || s[pos] == '\r')) pos++;
++    bool neg = false;
++    if (pos < s.size() && s[pos] == '-') { neg = true; pos++; }
++    long long val = 0;
++    while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9') {
++        val = val * 10 + (s[pos] - '0');
++        pos++;
++    }
++    return neg ? -(int)val : (int)val;
++}
++
++string parseString(const string &s, size_t &pos) {
++    while (pos < s.size() && s[pos] != '"') pos++;
++    pos++; // skip opening "
++    string result;
++    while (pos < s.size() && s[pos] != '"') {
++        result += s[pos++];
++    }
++    pos++; // skip closing "
++    return result;
++}
++
++bool parseBool(const string &s, size_t &pos) {
++    while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t' || s[pos] == '\n' || s[pos] == '\r')) pos++;
++    if (pos < s.size() && s[pos] == 't') { pos += 4; return true; }
++    pos += 5; return false;
++}
++
++void skipTo(const string &s, size_t &pos, char c) {
++    while (pos < s.size() && s[pos] != c) pos++;
++}
++
++int main() {
++    auto startTime = chrono::steady_clock::now();
++
++    // Read all input
++    string input;
++    {
++        ostringstream ss;
++        ss << cin.rdbuf();
++        input = ss.str();
++    }
++
++    // Parse bin
++    int W, H;
++    bool allowRotate = false;
++    {
++        size_t p = input.find("\"W\"");
++        p += 3;
++        skipTo(input, p, ':'); p++;
++        W = parseInt(input, p);
++
++        p = input.find("\"H\"");
++        p += 3;
++        skipTo(input, p, ':'); p++;
++        H = parseInt(input, p);
++
++        p = input.find("\"allow_rotate\"");
++        p += 14;
++        skipTo(input, p, ':'); p++;
++        allowRotate = parseBool(input, p);
++    }
++
++    // Parse items
++    vector<ItemType> items;
++    {
++        size_t p = input.find("\"items\"");
++        p += 7;
++        skipTo(input, p, '['); p++;
++
++        while (p < input.size()) {
++            skipTo(input, p, '{');
++            if (p >= input.size()) break;
++            p++;
++
++            ItemType it;
++            it.w = 0; it.h = 0; it.v = 0; it.limit = 0;
++
++            // Parse 5 key-value pairs
++            for (int k = 0; k < 5; k++) {
++                string key = parseString(input, p);
++                skipTo(input, p, ':'); p++;
++                if (key == "type") {
++                    it.type = parseString(input, p);
++                } else if (key == "w") {
++                    it.w = parseInt(input, p);
++                } else if (key == "h") {
++                    it.h = parseInt(input, p);
++                } else if (key == "v") {
++                    it.v = parseInt(input, p);
++                } else if (key == "limit") {
++                    it.limit = parseInt(input, p);
++                }
++                // skip comma
++                while (p < input.size() && (input[p] == ',' || input[p] == ' ' || input[p] == '\n' || input[p] == '\r' || input[p] == '\t')) p++;
++                if (p < input.size() && input[p] == '}') break;
++            }
++            it.density = (double)it.v / ((double)it.w * it.h);
++            items.push_back(it);
++
++            skipTo(input, p, '}'); p++;
++            // Check for ] (end of array)
++            size_t q = p;
++            while (q < input.size() && (input[q] == ',' || input[q] == ' ' || input[q] == '\n' || input[q] == '\r' || input[q] == '\t')) q++;
++            if (q >= input.size() || input[q] == ']') break;
++            p = q;
++        }
++    }
++
++    int M = items.size();
++
++    // ---- Greedy MaxRects packing ----
++    // Returns total profit and placements
++    auto greedyMaxRects = [&](const vector<int> &order, int method, bool tryRotate) -> pair<long long, vector<Placement>> {
++        MaxRectsBin bin;
++        bin.init(W, H);
++        vector<Placement> placements;
++        long long profit = 0;
++        vector<int> used(M, 0);
++
++        for (int idx : order) {
++            auto &it = items[idx];
++            while (used[idx] < it.limit) {
++                int s1, s2;
++                Rect r = bin.findBest(it.w, it.h, method, s1, s2);
++                int rot = 0;
++                if (r.x == -1 && tryRotate && allowRotate && it.w != it.h) {
++                    r = bin.findBest(it.h, it.w, method, s1, s2);
++                    rot = 1;
++                }
++                if (r.x == -1) break;
++                bin.placeRect(r);
++                placements.push_back({it.type, r.x, r.y, rot});
++                profit += it.v;
++                used[idx]++;
++            }
++        }
++        return {profit, placements};
++    };
++
++    // ---- Greedy Skyline packing ----
++    auto greedySkyline = [&](const vector<int> &order, bool tryRotate) -> pair<long long, vector<Placement>> {
++        SkylineBin bin;
++        bin.init(W, H);
++        vector<Placement> placements;
++        long long profit = 0;
++        vector<int> used(M, 0);
++
++        for (int idx : order) {
++            auto &it = items[idx];
++            while (used[idx] < it.limit) {
++                int bx, by, bi;
++                bool found = bin.findPosition(it.w, it.h, bx, by, bi);
++                int rot = 0;
++                if (!found && tryRotate && allowRotate && it.w != it.h) {
++                    found = bin.findPosition(it.h, it.w, bx, by, bi);
++                    rot = 1;
++                }
++                if (!found) break;
++                int pw = rot ? it.h : it.w;
++                int ph = rot ? it.w : it.h;
++                bin.addSkylineLevel(bx, by, pw, ph);
++                placements.push_back({it.type, bx, by, rot});
++                profit += it.v;
++                used[idx]++;
++            }
++        }
++        return {profit, placements};
++    };
++
++    long long bestProfit = -1;
++    vector<Placement> bestPlacements;
++
++    auto tryResult = [&](pair<long long, vector<Placement>> &res) {
++        if (res.first > bestProfit) {
++            bestProfit = res.first;
++            bestPlacements = res.second;
++        }
++    };
++
++    // Generate orderings
++    // 0: density desc, 1: value desc, 2: area desc, 3: max-dim desc, 4: total-value desc, 5: perimeter desc
++    vector<vector<int>> orderings(6, vector<int>(M));
++    for (int i = 0; i < M; i++) for (int j = 0; j < 6; j++) orderings[j][i] = i;
++
++    sort(orderings[0].begin(), orderings[0].end(), [&](int a, int b) {
++        return items[a].density > items[b].density;
++    });
++    sort(orderings[1].begin(), orderings[1].end(), [&](int a, int b) {
++        return items[a].v > items[b].v;
++    });
++    sort(orderings[2].begin(), orderings[2].end(), [&](int a, int b) {
++        return items[a].w * items[a].h > items[b].w * items[b].h;
++    });
++    sort(orderings[3].begin(), orderings[3].end(), [&](int a, int b) {
++        return max(items[a].w, items[a].h) > max(items[b].w, items[b].h);
++    });
++    sort(orderings[4].begin(), orderings[4].end(), [&](int a, int b) {
++        return (long long)items[a].v * items[a].limit > (long long)items[b].v * items[b].limit;
++    });
++    sort(orderings[5].begin(), orderings[5].end(), [&](int a, int b) {
++        return 2*(items[a].w + items[a].h) > 2*(items[b].w + items[b].h);
++    });
++
++    // Run deterministic orderings × 3 MaxRects methods
++    for (int o = 0; o < 6; o++) {
++        for (int m = 0; m < 3; m++) {
++            auto res = greedyMaxRects(orderings[o], m, true);
++            tryResult(res);
++        }
++    }
++
++    // Run Skyline with each ordering
++    for (int o = 0; o < 6; o++) {
++        auto res = greedySkyline(orderings[o], true);
++        tryResult(res);
++    }
++
++    // Randomized search
++    mt19937 rng(12345);
++    uniform_real_distribution<double> dist(0.1, 10.0);
++
++    auto elapsed = [&]() -> double {
++        auto now = chrono::steady_clock::now();
++        return chrono::duration<double>(now - startTime).count();
++    };
++
++    while (elapsed() < 0.75) {
++        // Create a random ordering based on density * noise
++        vector<pair<double, int>> scored(M);
++        for (int i = 0; i < M; i++) {
++            scored[i] = {items[i].density * dist(rng), i};
++        }
++        sort(scored.begin(), scored.end(), [](auto &a, auto &b) { return a.first > b.first; });
++        vector<int> order(M);
++        for (int i = 0; i < M; i++) order[i] = scored[i].second;
++
++        int method = rng() % 3;
++        auto res = greedyMaxRects(order, method, true);
++        tryResult(res);
++    }
++
++    // Output
++    printf("{\"placements\":[");
++    for (int i = 0; i < (int)bestPlacements.size(); i++) {
++        if (i > 0) printf(",");
++        printf("{\"type\":\"%s\",\"x\":%d,\"y\":%d,\"rot\":%d}",
++               bestPlacements[i].type.c_str(),
++               bestPlacements[i].x, bestPlacements[i].y,
++               bestPlacements[i].rot);
++    }
++    printf("]}");
++
++    return 0;
++}

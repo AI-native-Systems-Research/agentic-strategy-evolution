@@ -1,0 +1,505 @@
+{
+  "problem_id": "147",
+  "agent": "engram",
+  "label": "engram-cb10-s2",
+  "model": "claude-opus-4-6",
+  "final_score": 83.238,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_147_engram-cb10-s2.solution.cpp",
+  "best_score": 84.96060000000001,
+  "method": "Engram-style (reimplementation)",
+  "agents": 11,
+  "rounds_per_agent": 4,
+  "code_generations": 36,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 78.87789999999997,
+      "status": "success",
+      "plan": "Use a Voronoi-like partition approach based on a KD-tree/binary space partition, then refine with simulated annealing. Start by assigning each company a 1\u00d71 cell containing its point, then use iterative improvement. Specifically, I'll implement a BSP-tree approach that recursively splits the space, ",
+      "cum_cost": 0.1503,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.2868,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.4352,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 0,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.5724,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 14.2848,
+      "status": "success",
+      "plan": "Implement a BSP/KD-tree recursive partitioning that assigns each company a rectangle proportional to its desired area r_i, ensuring each point is inside its rectangle, then refine with simulated annealing that adjusts shared boundaries between adjacent rectangles to improve the score.",
+      "cum_cost": 0.7968,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 14.0205,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.9285,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 14.2848,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.0585,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 1,
+      "round": 3,
+      "score": 14.2848,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.1949,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 74.92060000000004,
+      "status": "success",
+      "plan": "Use weighted recursive KD-tree partitioning to initialize rectangles proportional to desired areas, then refine with simulated annealing that properly accepts worse moves with SA probability, using binary search for maximum expansion distances.",
+      "cum_cost": 1.5182,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 75.19819999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.7337,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 73.80500000000002,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.9494,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 2,
+      "round": 3,
+      "score": 75.93889999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.1942,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": 61.92390000000001,
+      "status": "success",
+      "plan": "Implement weighted KD-tree initialization (recursive axis-aligned splits proportional to desired areas), then simulated annealing with binary-search-based edge moves that find the maximum feasible expansion, proper SA acceptance criterion, and efficient overlap checking using a spatial index.",
+      "cum_cost": 2.5551,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": 63.47009999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.7803,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": 78.4994,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.0321,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 3,
+      "round": 3,
+      "score": 58.021700000000024,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.2866,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Use KD-tree recursive partitioning weighted by desired areas for initialization (giving rectangles roughly proportional to r_i), then run simulated annealing with proper acceptance of worse moves, binary search for maximum feasible edge movements, and larger move sizes early on. The initialization i",
+      "cum_cost": 3.6527,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": 14.141799999999998,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.811,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 4,
+      "round": 2,
+      "score": 14.161400000000002,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.9469,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 4,
+      "round": 3,
+      "score": 11.775999999999998,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.0886,
+      "best_score": 78.87789999999997
+    },
+    {
+      "agent": 5,
+      "round": 0,
+      "score": 81.43360000000001,
+      "status": "success",
+      "plan": "Start with 1\u00d71 rectangles at each point, then iteratively expand rectangles toward their target areas using binary-search to find maximum feasible edge expansions, prioritizing rectangles with worst satisfaction, followed by simulated annealing refinement with proper temperature-based acceptance of ",
+      "cum_cost": 4.5365,
+      "best_score": 81.43360000000001
+    },
+    {
+      "agent": 5,
+      "round": 1,
+      "score": 80.2824,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.7717,
+      "best_score": 81.43360000000001
+    },
+    {
+      "agent": 5,
+      "round": 2,
+      "score": 16.76120000000001,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.9682,
+      "best_score": 81.43360000000001
+    },
+    {
+      "agent": 5,
+      "round": 3,
+      "score": 37.337,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.1586,
+      "best_score": 81.43360000000001
+    },
+    {
+      "agent": 6,
+      "round": 0,
+      "score": 84.96060000000001,
+      "status": "success",
+      "plan": "Use weighted recursive guillotine-cut initialization (splitting along the axis that gives better aspect ratios, positioning cuts to respect area proportions and point containment), then run an optimized SA with faster neighbor-finding using sorted coordinate lists, allowing both expand and shrink mo",
+      "cum_cost": 5.686,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 6,
+      "round": 1,
+      "score": 84.8737,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.9872,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 6,
+      "round": 2,
+      "score": 79.16210000000004,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.3384,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 6,
+      "round": 3,
+      "score": 80.9686,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.6839,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 7,
+      "round": 0,
+      "score": 79.8646,
+      "status": "success",
+      "plan": "Improve the existing guillotine-cut + SA approach by (1) adding coordinated boundary-shift moves where expanding one rectangle simultaneously shrinks the blocking neighbor, (2) using a spatial grid for O(1) neighbor finding instead of O(n) scans, (3) better SA temperature schedule, and (4) more iter",
+      "cum_cost": 7.4366,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 7,
+      "round": 1,
+      "score": 82.9262,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.8598,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 7,
+      "round": 2,
+      "score": 14.2848,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.1623,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 7,
+      "round": 3,
+      "score": 14.125800000000002,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.3336,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 8,
+      "round": 0,
+      "score": 81.09839999999998,
+      "status": "success",
+      "plan": "Improve the existing best approach by (1) using a spatial grid for O(1) neighbor lookup in maxExpand, (2) adding coordinated SA moves where we shift a boundary between two adjacent rectangles (one grows, other shrinks), (3) tuning SA parameters, and (4) adding a final greedy expansion pass to fill r",
+      "cum_cost": 8.8522,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 8,
+      "round": 1,
+      "score": null,
+      "status": "error",
+      "plan": null,
+      "cum_cost": 9.0741,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 8,
+      "round": 2,
+      "score": 76.444,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.2639,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 8,
+      "round": 3,
+      "score": 61.20299999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.4812,
+      "best_score": 84.96060000000001
+    },
+    {
+      "agent": 9,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Improve the existing best approach by (1) adding a spatial grid for O(1) neighbor lookups to dramatically increase SA iterations, (2) adding coordinated boundary-shift moves where one rectangle expands while its neighbor shrinks, (3) using a better SA temperature schedule, and (4) doing multiple gre",
+      "cum_cost": 10.3211,
+      "best_score": 84.96060000000001
+    }
+  ],
+  "input_tokens": 152793,
+  "output_tokens": 107568,
+  "cost_usd_est": 10.3595,
+  "journal": "/Users/toslali/frontier/gen_logs/frontier_147_engram-cb10-s2_engram/research_journal.md",
+  "trajectory": [
+    {
+      "cum_cost": 0.1503,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 0.2868,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 0.4352,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 0.5724,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 0.7968,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 0.9285,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 1.0585,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 1.1949,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 1.5182,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 1.7337,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 1.9494,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 2.1942,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 2.5551,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 2.7803,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 3.0321,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 3.2866,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 3.6527,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 3.811,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 3.9469,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 4.0886,
+      "best_score": 78.87789999999997
+    },
+    {
+      "cum_cost": 4.5365,
+      "best_score": 81.43360000000001
+    },
+    {
+      "cum_cost": 4.7717,
+      "best_score": 81.43360000000001
+    },
+    {
+      "cum_cost": 4.9682,
+      "best_score": 81.43360000000001
+    },
+    {
+      "cum_cost": 5.1586,
+      "best_score": 81.43360000000001
+    },
+    {
+      "cum_cost": 5.686,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 5.9872,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 6.3384,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 6.6839,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 7.4366,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 7.8598,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 8.1623,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 8.3336,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 8.8522,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 9.0741,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 9.2639,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 9.4812,
+      "best_score": 84.96060000000001
+    },
+    {
+      "cum_cost": 10.3211,
+      "best_score": 84.96060000000001
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 4043.8
+}

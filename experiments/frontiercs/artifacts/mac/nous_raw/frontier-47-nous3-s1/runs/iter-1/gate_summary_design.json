@@ -1,0 +1,17 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a multi-heuristic greedy 2D bin packing algorithm (maximal-rectangles + skyline) with randomized search over item orderings can achieve a high score (target \u226580/100) on the Frontier-CS problem #47, a 2D rectangular knapsack with optional 90\u00b0 rotations, partial credit scoring, and a 1-second time limit across 15 test cases.",
+  "key_points": [
+    "Single experiment arm replaces the empty stub (score 0) with a C++17 solution implementing two complementary packing strategies: maximal-rectangles (BSSF/BAF/BL placement rules) and skyline bottom-left, each tried with multiple deterministic item orderings (by value density, area, height, width) plus randomized density-weighted permutations within 75% of the 1s time budget.",
+    "The hypothesis predicts a score \u226580 based on the mechanism that greedily packing high-value-density items into best-fit free rectangles, across diverse orderings, should approximate near-optimal profit. The score is averaged across 15 tests as clamp((V\u2212B)/(K\u2212B), 0, 1) where B is a baseline shelf heuristic and K is a fractional upper bound.",
+    "Confirmation: measured judge score \u226580. Partial confirmation: score 50\u201379 (algorithm works but needs refinement). Refutation: score <50, suggesting greedy multi-heuristic isn't sufficient and more sophisticated methods (e.g., column generation, LP relaxation-guided search, or recursive guillotine cuts) are needed. Key diagnostics if low: check for TLE on large inputs (bins up to 2000\u00d72000 with up to 2000 copies per type), JSON format mismatches, or excessive free-rectangle fragmentation causing quadratic slowdown."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

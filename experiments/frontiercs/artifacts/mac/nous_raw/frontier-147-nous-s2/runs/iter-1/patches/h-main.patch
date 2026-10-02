@@ -1,0 +1,262 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..4943d1c 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,255 @@
+-#include <bits/stdc++.h>
++#include <iostream>
++#include <vector>
++#include <cmath>
++#include <algorithm>
++#include <cstdlib>
++#include <cstring>
++#include <ctime>
++#include <random>
++
+ using namespace std;
+-int main(){return 0;}
++
++struct Rect {
++    int x1, y1, x2, y2;
++    long long area() const { return (long long)(x2 - x1) * (y2 - y1); }
++};
++
++static int N;
++static int px[201], py[201];
++static long long r[201];
++static Rect rects[201], best_rects[201];
++
++static bool intersects(const Rect& a, const Rect& b) {
++    return a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2;
++}
++
++static bool canPlace(int idx, const Rect& nr) {
++    if (nr.x1 < 0 || nr.y1 < 0 || nr.x2 > 10000 || nr.y2 > 10000) return false;
++    if (nr.x1 >= nr.x2 || nr.y1 >= nr.y2) return false;
++    for (int j = 0; j < N; j++) {
++        if (j == idx) continue;
++        if (intersects(nr, rects[j])) return false;
++    }
++    return true;
++}
++
++// Maximum expansion in direction d for rect idx
++// d: 0=left, 1=right, 2=up, 3=down
++static int maxExp(int idx, int d) {
++    Rect& rc = rects[idx];
++    int lim;
++    if (d == 0) lim = rc.x1;
++    else if (d == 1) lim = 10000 - rc.x2;
++    else if (d == 2) lim = rc.y1;
++    else lim = 10000 - rc.y2;
++
++    for (int j = 0; j < N; j++) {
++        if (j == idx) continue;
++        Rect& oj = rects[j];
++        if (d == 0) {
++            // expand left: need oj in vertical band
++            if (oj.y1 < rc.y2 && oj.y2 > rc.y1 && oj.x2 <= rc.x1) {
++                lim = min(lim, rc.x1 - oj.x2);
++            }
++        } else if (d == 1) {
++            if (oj.y1 < rc.y2 && oj.y2 > rc.y1 && oj.x1 >= rc.x2) {
++                lim = min(lim, oj.x1 - rc.x2);
++            }
++        } else if (d == 2) {
++            if (oj.x1 < rc.x2 && oj.x2 > rc.x1 && oj.y2 <= rc.y1) {
++                lim = min(lim, rc.y1 - oj.y2);
++            }
++        } else {
++            if (oj.x1 < rc.x2 && oj.x2 > rc.x1 && oj.y1 >= rc.y2) {
++                lim = min(lim, oj.y1 - rc.y2);
++            }
++        }
++    }
++    return lim;
++}
++
++static double satisfaction(int i) {
++    long long si = rects[i].area();
++    if (si <= 0) return 0.0;
++    // check point containment: (px[i]+0.5, py[i]+0.5) in rect
++    if (rects[i].x1 > px[i] || rects[i].x2 <= px[i] ||
++        rects[i].y1 > py[i] || rects[i].y2 <= py[i]) return 0.0;
++    double ratio = (double)min(r[i], si) / (double)max(r[i], si);
++    double v = 1.0 - ratio;
++    return 1.0 - v * v;
++}
++
++static double totalSatisfaction() {
++    double s = 0;
++    for (int i = 0; i < N; i++) s += satisfaction(i);
++    return s;
++}
++
++int main() {
++    ios::sync_with_stdio(false);
++    cin.tie(nullptr);
++
++    cin >> N;
++    for (int i = 0; i < N; i++) {
++        cin >> px[i] >> py[i] >> r[i];
++    }
++
++    // Initialize: 1x1 rects at each point
++    for (int i = 0; i < N; i++) {
++        rects[i] = {px[i], py[i], px[i] + 1, py[i] + 1};
++    }
++
++    // Greedy expansion phase (~2s)
++    clock_t greedy_end = clock() + (clock_t)(2.0 * CLOCKS_PER_SEC);
++    bool changed = true;
++    while (changed && clock() < greedy_end) {
++        changed = false;
++        for (int i = 0; i < N; i++) {
++            long long cur_area = rects[i].area();
++            if (cur_area >= r[i]) continue;
++            double ratio = (double)r[i] / (double)cur_area;
++            int step = max(1, min(150, (int)(sqrt(ratio) * 3)));
++            for (int d = 0; d < 4; d++) {
++                Rect nr = rects[i];
++                if (d == 0) nr.x1 -= step;
++                else if (d == 1) nr.x2 += step;
++                else if (d == 2) nr.y1 -= step;
++                else nr.y2 += step;
++                if (canPlace(i, nr)) {
++                    rects[i] = nr;
++                    changed = true;
++                }
++            }
++        }
++    }
++
++    // Save greedy result as initial best
++    double best_score = totalSatisfaction();
++    memcpy(best_rects, rects, sizeof(rects));
++
++    // SA phase (~7s)
++    mt19937 rng(42);
++    clock_t sa_start = clock();
++    double sa_time = 7.3; // seconds for SA
++    clock_t sa_end = sa_start + (clock_t)(sa_time * CLOCKS_PER_SEC);
++    double T0 = 0.01;
++    long long iter_count = 0;
++
++    while (true) {
++        clock_t now = clock();
++        if (now >= sa_end) break;
++        double progress = (double)(now - sa_start) / (double)(sa_end - sa_start);
++        double T = T0 * (1.0 - progress);
++
++        int i = rng() % N;
++        int move_type = rng() % 8;
++        Rect old_rect = rects[i];
++        double old_sat = satisfaction(i);
++
++        if (move_type < 4) {
++            // Boundary shift: move one edge by random amount
++            int d = move_type;
++            int me = maxExp(i, d);
++            if (me <= 0 && rng() % 2 == 0) {
++                // Try shrinking instead
++                Rect nr = rects[i];
++                int shrink = 1 + rng() % 5;
++                if (d == 0) nr.x1 = min(nr.x1 + shrink, px[i]);
++                else if (d == 1) nr.x2 = max(nr.x2 - shrink, px[i] + 1);
++                else if (d == 2) nr.y1 = min(nr.y1 + shrink, py[i]);
++                else nr.y2 = max(nr.y2 - shrink, py[i] + 1);
++                if (nr.x1 < nr.x2 && nr.y1 < nr.y2) rects[i] = nr;
++            } else if (me > 0) {
++                int shift = 1 + rng() % min(me, 50);
++                Rect nr = rects[i];
++                if (d == 0) nr.x1 -= shift;
++                else if (d == 1) nr.x2 += shift;
++                else if (d == 2) nr.y1 -= shift;
++                else nr.y2 += shift;
++                rects[i] = nr;
++            }
++        } else if (move_type == 4 || move_type == 5) {
++            // Shrink a random edge
++            Rect nr = rects[i];
++            int d = rng() % 4;
++            int shrink = 1 + rng() % 10;
++            if (d == 0) nr.x1 = min(nr.x1 + shrink, px[i]);
++            else if (d == 1) nr.x2 = max(nr.x2 - shrink, px[i] + 1);
++            else if (d == 2) nr.y1 = min(nr.y1 + shrink, py[i]);
++            else nr.y2 = max(nr.y2 - shrink, py[i] + 1);
++            if (nr.x1 < nr.x2 && nr.y1 < nr.y2) rects[i] = nr;
++        } else if (move_type == 6) {
++            // Expand to limit in a random direction
++            int d = rng() % 4;
++            int me = maxExp(i, d);
++            if (me > 0) {
++                Rect nr = rects[i];
++                if (d == 0) nr.x1 -= me;
++                else if (d == 1) nr.x2 += me;
++                else if (d == 2) nr.y1 -= me;
++                else nr.y2 += me;
++                rects[i] = nr;
++            }
++        } else {
++            // Target-aware: expand/shrink toward target area
++            long long cur = rects[i].area();
++            if (cur < r[i]) {
++                // expand in random direction
++                int d = rng() % 4;
++                int me = maxExp(i, d);
++                if (me > 0) {
++                    // compute ideal expansion
++                    long long need = r[i] - cur;
++                    int perp;
++                    if (d <= 1) perp = rects[i].y2 - rects[i].y1;
++                    else perp = rects[i].x2 - rects[i].x1;
++                    int ideal = (perp > 0) ? (int)(need / perp + 1) : 1;
++                    int shift = min(ideal, me);
++                    Rect nr = rects[i];
++                    if (d == 0) nr.x1 -= shift;
++                    else if (d == 1) nr.x2 += shift;
++                    else if (d == 2) nr.y1 -= shift;
++                    else nr.y2 += shift;
++                    rects[i] = nr;
++                }
++            } else {
++                // shrink toward target
++                int d = rng() % 4;
++                long long excess = cur - r[i];
++                int perp;
++                if (d <= 1) perp = rects[i].y2 - rects[i].y1;
++                else perp = rects[i].x2 - rects[i].x1;
++                int ideal = (perp > 0) ? (int)(excess / perp) : 1;
++                if (ideal < 1) ideal = 1;
++                Rect nr = rects[i];
++                if (d == 0) nr.x1 = min(nr.x1 + ideal, px[i]);
++                else if (d == 1) nr.x2 = max(nr.x2 - ideal, px[i] + 1);
++                else if (d == 2) nr.y1 = min(nr.y1 + ideal, py[i]);
++                else nr.y2 = max(nr.y2 - ideal, py[i] + 1);
++                if (nr.x1 < nr.x2 && nr.y1 < nr.y2) rects[i] = nr;
++            }
++        }
++
++        double new_sat = satisfaction(i);
++        double delta = new_sat - old_sat;
++        if (delta >= 0 || (T > 0 && (double)(rng() % 10000) / 10000.0 < exp(delta / T))) {
++            // accept
++            double cur_score = totalSatisfaction();
++            if (cur_score > best_score) {
++                best_score = cur_score;
++                memcpy(best_rects, rects, sizeof(rects));
++            }
++        } else {
++            // reject
++            rects[i] = old_rect;
++        }
++        iter_count++;
++    }
++
++    // Output best solution
++    for (int i = 0; i < N; i++) {
++        cout << best_rects[i].x1 << " " << best_rects[i].y1 << " "
++             << best_rects[i].x2 << " " << best_rects[i].y2 << "\n";
++    }
++    return 0;
++}

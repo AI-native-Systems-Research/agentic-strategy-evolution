@@ -1,0 +1,53 @@
+metadata:
+  iteration: 3
+  family: "coevolved-mpt-maxrects"
+  research_question: "Can co-evolving per-type placement method assignments alongside type ordering improve the MaxRects packer's score beyond the iter-2 plateau?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism (MaxRects) + multi-knob (per-type method + ordering co-evolution); building on confirmed iter-1/2 foundations"
+
+arms:
+  - type: h-main
+    prediction: "The co-evolved MPT (method-per-type) + ordering packer will achieve a judge score above 95.0, improving over the 89.02 baseline by at least 6 points, because per-type method differentiation allows each item type to use the placement heuristic best suited to its geometry."
+    mechanism: "Different item types have different geometric properties (aspect ratio, size relative to bin, density). A single placement method (e.g., BSSF) may favor compact items but waste space for elongated ones. By assigning each type its own method, the packer adapts: high-density small items use BSSF (tight fit), large items use BL (bottom-left for stable stacking), wall-adjacent items use CP (contact-point). The co-evolutionary search over the 5^M method space (alongside M! orderings) discovers type-method combinations that the uniform-method search cannot reach."
+    diagnostic: "If score is below 95: (1) check if TLE occurs on large inputs — the method-per-type local search adds overhead; reduce local search passes; (2) if gap-fill causes issues, remove it; (3) if the MPT search space is too large, reduce to 3 methods for random search"
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace with v20 solution: unified greedyPackMixed() that takes a method-per-type vector, 12-strategy random search co-evolving ordering+MPT, local search over both ordering swaps and method changes, gap-fill post-processing, 10 deterministic orderings, 5 placement methods (BSSF/BAF/BL/CP/BLSF)"
+        rationale: "Per-type method assignment adds a new dimension to the search space that the uniform-method approach cannot explore. Probed score: 95.73 vs 89.02 baseline."
+
+  - type: h-control-negative
+    prediction: "The current solution.cpp (uniform method per packing, no MPT) will score approximately 89 on the current test set, confirming that per-type method differentiation is the primary source of improvement."
+    mechanism: "Without per-type method assignment, the packer uses the same placement heuristic for all items in each run. This is the iter-2 approach. On the changed test set, it cannot adapt to diverse item geometries within a single packing."
+    diagnostic: "If control scores above 95, the improvement is from test-set variance not the MPT mechanism."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 1
+    memory_limit_mb: 512
+    num_test_cases: 15
+    bin_size_range: [900, 2000]
+    num_item_types_range: [8, 12]
+    item_limit_max: 2000
+  unlocked_parameters_audit:
+    - name: "random_seed"
+      default_value: 42
+      justification: "Fixed seed for reproducibility; random search explores orderings+methods, not seed-dependent behavior."
+    - name: "time_budget_random_search"
+      default_value: 0.84
+      justification: "Leaves ~160ms for I/O, output, and gap-fill; deterministic+local typically finish in <220ms."
+    - name: "max_free_rects"
+      default_value: 500
+      justification: "Empirically prevents quadratic pruning blowup while retaining spatial resolution."
+    - name: "local_search_time_budget"
+      default_value: 0.22
+      justification: "Covers ordering swaps + per-type method changes for 8-12 types in 2-3 passes."
+    - name: "gap_fill_max_attempts"
+      default_value: 100
+      justification: "Limits gap-fill to prevent TLE; 100 attempts add <50ms."
+    - name: "elite_pool_size"
+      default_value: 8
+      justification: "Maintains diversity in ordering+method space without excessive memory."
+    - name: "num_placement_methods"
+      default_value: 5
+      justification: "BSSF, BAF, BL, CP, BLSF — each excels on different item geometries."

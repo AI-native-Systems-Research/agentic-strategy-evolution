@@ -1,0 +1,226 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..d580f6d 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,220 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++struct Timer {
++    chrono::high_resolution_clock::time_point start;
++    Timer() : start(chrono::high_resolution_clock::now()) {}
++    double elapsed() const {
++        return chrono::duration<double>(chrono::high_resolution_clock::now() - start).count();
++    }
++};
++
++const int GRID = 10000;
++int N;
++int x[205], y[205], r[205];
++int a[205], b[205], c[205], d[205];
++
++unsigned long long xorstate = 88172645463325252ULL;
++inline unsigned long long xorshift() {
++    xorstate ^= xorstate << 13;
++    xorstate ^= xorstate >> 7;
++    xorstate ^= xorstate << 17;
++    return xorstate;
++}
++
++inline bool contains_point(int i) {
++    return a[i] <= x[i] && x[i] < c[i] && b[i] <= y[i] && y[i] < d[i];
++}
++
++inline long long area(int i) {
++    return (long long)(c[i] - a[i]) * (d[i] - b[i]);
++}
++
++inline double satisfaction(int i) {
++    if (!contains_point(i)) return 0.0;
++    long long s = area(i);
++    if (s <= 0) return 0.0;
++    double mn = (s < r[i]) ? (double)s : (double)r[i];
++    double mx = (s > r[i]) ? (double)s : (double)r[i];
++    double diff = 1.0 - mn / mx;
++    return 1.0 - diff * diff;
++}
++
++inline bool check_no_overlap(int i) {
++    for (int j = 0; j < N; j++) {
++        if (i == j) continue;
++        if (a[i] < c[j] && a[j] < c[i] && b[i] < d[j] && b[j] < d[i])
++            return false;
++    }
++    return true;
++}
++
++inline int max_expand_left(int i) {
++    int lim = 0;
++    for (int j = 0; j < N; j++) {
++        if (j == i) continue;
++        if (b[i] < d[j] && b[j] < d[i] && c[j] <= a[i]) {
++            lim = max(lim, c[j]);
++        }
++    }
++    return lim;
++}
++inline int max_expand_right(int i) {
++    int lim = GRID;
++    for (int j = 0; j < N; j++) {
++        if (j == i) continue;
++        if (b[i] < d[j] && b[j] < d[i] && a[j] >= c[i]) {
++            lim = min(lim, a[j]);
++        }
++    }
++    return lim;
++}
++inline int max_expand_down(int i) {
++    int lim = 0;
++    for (int j = 0; j < N; j++) {
++        if (j == i) continue;
++        if (a[i] < c[j] && a[j] < c[i] && d[j] <= b[i]) {
++            lim = max(lim, d[j]);
++        }
++    }
++    return lim;
++}
++inline int max_expand_up(int i) {
++    int lim = GRID;
++    for (int j = 0; j < N; j++) {
++        if (j == i) continue;
++        if (a[i] < c[j] && a[j] < c[i] && b[j] >= d[i]) {
++            lim = min(lim, b[j]);
++        }
++    }
++    return lim;
++}
++
++Timer gtimer;
++
++void greedy_init() {
++    for (int i = 0; i < N; i++) {
++        a[i] = x[i]; b[i] = y[i]; c[i] = x[i] + 1; d[i] = y[i] + 1;
++    }
++
++    while (gtimer.elapsed() < 0.15) {
++        for (int i = 0; i < N; i++) {
++            if (area(i) >= (long long)r[i]) continue;
++            int dir = xorshift() % 4;
++            int oa = a[i], ob = b[i], oc = c[i], od = d[i];
++            switch(dir) {
++                case 0: if (a[i] > 0) a[i]--; break;
++                case 1: if (c[i] < GRID) c[i]++; break;
++                case 2: if (b[i] > 0) b[i]--; break;
++                case 3: if (d[i] < GRID) d[i]++; break;
++            }
++            if (!check_no_overlap(i)) {
++                a[i] = oa; b[i] = ob; c[i] = oc; d[i] = od;
++            }
++        }
++    }
++}
++
++void simulated_annealing() {
++    double T0 = 0.05, T1 = 0.001;
++    double sa_start = gtimer.elapsed();
++    double total_time = 2.85;
++    double sa_budget = total_time - sa_start;
++
++    double progress = 0;
++    double T = T0;
++    int iter = 0;
++
++    while (true) {
++        if ((iter & 0x3FF) == 0) {
++            double elapsed = gtimer.elapsed();
++            if (elapsed > total_time) break;
++            progress = (elapsed - sa_start) / sa_budget;
++            if (progress > 1.0) break;
++            T = T0 * pow(T1 / T0, progress);
++        }
++        iter++;
++
++        int i = xorshift() % N;
++        int edge = xorshift() % 4;
++
++        double old_si = satisfaction(i);
++        int oa = a[i], ob = b[i], oc = c[i], od = d[i];
++
++        int lo, hi, newval;
++        switch(edge) {
++            case 0:
++                lo = max_expand_left(i);
++                hi = c[i] - 1;
++                if (lo >= hi) continue;
++                {
++                    int range = hi - lo;
++                    int step = xorshift() % range;
++                    newval = lo + step;
++                    if (newval > x[i]) newval = x[i];
++                }
++                a[i] = newval;
++                break;
++            case 1:
++                lo = a[i] + 1;
++                hi = max_expand_right(i);
++                if (lo >= hi) continue;
++                {
++                    int range = hi - lo;
++                    int step = xorshift() % range;
++                    newval = lo + step + 1;
++                    if (newval < x[i] + 1) newval = x[i] + 1;
++                    if (newval > hi) newval = hi;
++                }
++                c[i] = newval;
++                break;
++            case 2:
++                lo = max_expand_down(i);
++                hi = d[i] - 1;
++                if (lo >= hi) continue;
++                {
++                    int range = hi - lo;
++                    int step = xorshift() % range;
++                    newval = lo + step;
++                    if (newval > y[i]) newval = y[i];
++                }
++                b[i] = newval;
++                break;
++            case 3:
++                lo = b[i] + 1;
++                hi = max_expand_up(i);
++                if (lo >= hi) continue;
++                {
++                    int range = hi - lo;
++                    int step = xorshift() % range;
++                    newval = lo + step + 1;
++                    if (newval < y[i] + 1) newval = y[i] + 1;
++                    if (newval > hi) newval = hi;
++                }
++                d[i] = newval;
++                break;
++        }
++
++        double new_si = satisfaction(i);
++        double delta = new_si - old_si;
++
++        if (delta >= 0 || (xorshift() % 10000) < (unsigned long long)(exp(delta / T) * 10000)) {
++            // accept
++        } else {
++            a[i] = oa; b[i] = ob; c[i] = oc; d[i] = od;
++        }
++    }
++}
++
++int main() {
++    scanf("%d", &N);
++    for (int i = 0; i < N; i++) scanf("%d %d %d", &x[i], &y[i], &r[i]);
++
++    greedy_init();
++    simulated_annealing();
++
++    for (int i = 0; i < N; i++) {
++        printf("%d %d %d %d\n", a[i], b[i], c[i], d[i]);
++    }
++    return 0;
++}

@@ -1,0 +1,40 @@
+metadata:
+  iteration: 3
+  family: "adaptive-budget-sa-ils"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #192?"
+  complexity_tier: 2
+  tier_justification: "iter 3 — iter-1 established SA baseline (tier 1), iter-2 added ILS (tier 1), now testing adaptive restart scaling as a second knob (tier 2)"
+
+arms:
+  - type: h-main
+    prediction: "Adaptive budget SA+ILS (scaling restarts by graph size with 1.5M fixed iteration budget) will score consistently >= 87.0, eliminating the TLE-induced variance observed in iter-2's fixed 12-restart approach."
+    mechanism: "The iter-2 solution uses a fixed restart count (12) with temperature-based SA (alpha=0.99997). On large graphs (n>600), each restart does ~253K SA iterations touching ~40 adjacency entries each, totaling ~120M memory accesses. This exceeds the per-test time limit on some runs, causing TLE and zero scores for those test cases. By capping total SA iterations at 1.5M and distributing them across fewer restarts for larger graphs (5 for n>600), the solution stays within the time limit while maintaining search quality through 30 ILS perturbation cycles per restart."
+    diagnostic: "If the prediction is wrong: (1) check if the adaptive restart count is too aggressive for any graph size tier, (2) check if reducing SA restarts below iter-2's 12 loses too much search diversity, (3) check if 1.5M budget is borderline for some test cases"
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace entire file with inputs/solution_adaptive_sa_ils.cpp — adaptive restart SA+ILS with CSR adjacency, static arrays, fixed iteration budget of 1.5M"
+        rationale: "Tests whether adaptive work scaling eliminates TLE variance while maintaining or improving cut quality"
+
+  - type: h-control-negative
+    prediction: "Iter-2's fixed 12-restart SA+ILS will show score variance of >= 3 points across multiple judge runs due to TLE on large test cases."
+    mechanism: "With 12 fixed restarts and temperature-based SA, the total iteration count is approximately 12 * 253K = 3M iterations regardless of graph size. For large graphs (n~1000, m~20000), this exceeds the time limit on some test cases, producing zero scores for those cases and lowering the overall average."
+    diagnostic: "If variance is low: either the judge environment was unusually fast during testing, or the time limit is more generous than observed. Check individual test case results if possible."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace entire file with inputs/sa_ils_solution.cpp — the iter-2 SA+ILS with 12 fixed restarts"
+        rationale: "Baseline to measure TLE-induced variance and compare against adaptive approach"
+
+experiment_spec:
+  verified_parameters:
+    total_sa_budget: 1500000
+    sa_temp_start: 3.0
+    sa_temp_end: 0.001
+    ils_perturbation_cycles: 30
+    rng_seed: 31415
+  unlocked_parameters_audit:
+    - name: greedy_init_ratio
+      default_value: 0.5
+      justification: "Half greedy, half random init is standard for SA restarts — provides diversity"
+    - name: ils_perturbation_strength_base
+      default_value: 15
+      justification: "n/(15+p) gives ~6.7% flip rate at p=0 for n=1000, which is the standard ILS perturbation range"

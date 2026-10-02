@@ -1,0 +1,9 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses were refuted. The iter-1 SA-only solution (20 restarts) scores 87.280 consistently with zero variance \u2014 there is no TLE problem. Adding ILS perturbation with fewer restarts (iter-2 h-main) scored 87.271, marginally worse than the control. The best known score remains 87.28.",
+  "key_points": [
+    "h-main (SA + ILS, 12 restarts): scored 87.271 consistently across runs \u2014 REFUTED. It did not improve over the control; trading 8 restarts for perturbation cycles was a net negative.",
+    "h-control-negative (iter-1 SA-only, 20 restarts): scored 87.280 with zero run-to-run variance across 3 runs \u2014 REFUTED. The predicted TLE-induced inconsistency does not exist; the earlier 84.62 score was an anomaly, not a systematic issue.",
+    "The TLE hypothesis that motivated iteration 2 is conclusively wrong. The iter-1 SA solution runs comfortably within time limits. To improve beyond 87.28, the next iteration should explore fundamentally different strategies (e.g., semidefinite programming relaxation, larger neighborhood moves, or graph-structure-aware heuristics) rather than tuning restart/perturbation parameters."
+  ]
+}

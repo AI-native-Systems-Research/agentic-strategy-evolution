@@ -1,0 +1,9 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 confirmed that multi-start simulated annealing (SA) massively outperforms the stub (84.62 vs 0) and random assignment (~51), reaching 84.62\u201387.28 on the Max-Cut scoring metric (cut edges / total edges \u00d7 100). This is near the theoretical Goemans-Williamson 0.878 approximation ratio, suggesting we're close to the heuristic ceiling but may have room for 2\u20135 more points with deeper optimization.",
+  "key_points": [
+    "SA with 20 restarts, greedy+random init, and cooling alpha=0.99997 scored 84.62 (treatment) and 87.28 (designer probe) \u2014 both far above the ~51 random baseline and near the GW 87.8% theoretical bound.",
+    "Critical implementation lessons: chrono-based timing causes score 0 in the judge (use fixed iteration counts), gain updates must be \u00b12 not \u00b11, and output must be exactly one line of space-separated 0/1 values.",
+    "Still unknown: exact per-test time limit, whether the ~87 plateau is from local-search quality or time budget constraints. Next iteration should explore (1) slower cooling with fewer restarts for deeper SA, (2) Kernighan-Lin pair-swap neighborhood to escape local optima, and (3) spectral initialization using the Laplacian eigenvector to start closer to the optimal partition."
+  ]
+}

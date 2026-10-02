@@ -37,6 +37,24 @@ rule**, and Nous already beats the baselines at those lower bounds. The reruns w
 Deferred — same SDK-hang blocker. This one has independent value (tests prompt-fairness: give Nous
 Engram's target/MILP hints), so worth retrying when the SDK-stream issue clears.
 
+## Update 2026-10-02 (after VPN recovery): still stall-prone, reruns can't reach $50
+VPN came back (plain + sustained streaming curls work: 171 chunks/18s). But Nous `--agent sdk` turns
+STILL stall intermittently — the claude CLI connects (ESTABLISHED https to litellm) then sits at 0%
+CPU, streaming not flowing; disabling nonessential traffic + clean-slate orphan kills didn't stop it.
+It's probabilistic PER SDK TURN, so multi-iter runs wedge within 1-2 iters. Observed: p0 cleared
+iter-1→iter-2 then stalled; p5 stalled iter-1; cloudcast stalled iter-1. Reaching $50 needs ~14 clean
+turns in a row — not achievable under current flakiness.
+
+New rule applied (no plateau; stop at $50 or ceiling), but $50 is unreachable due to stalls.
+
+Harvested partials (our judge), NOT full-budget runs:
+- p0 rerun: **85.1 @ $2** (iter-1/2 arm) — usable, corroborates original 86 @ $27.
+- p5 rerun: 34 @ $1.16 (iter-1 stub only) — NOT usable (undershoots; original 83 @ $46 stands).
+- cloudcast rerun (hinted): stalled at the seed, $1046 @ $1.16 — NOT usable; the hinted-prompt
+  experiment did not complete. `--hint` flag added to frontier_research_gen.py for when infra is stable.
+`nous resume` is available (state.json persists) to continue a campaign past a stall, but each resume
+also risks immediate re-stall, so it's impractical right now.
+
 ## Recommendation
 Either (a) retry the Nous reruns later when the SDK-streaming hang clears (unchanged commands), or
 (b) accept the originals as conservative, rule-compatible numbers and proceed. Not a blocker for the

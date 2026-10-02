@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether simulated annealing with coordinated neighbor moves significantly outperforms a greedy-only baseline for the rectangle ad-placement optimization problem (#147), where the goal is to assign non-overlapping axis-aligned rectangles to companies such that each rectangle's area closely matches the company's desired area while containing its desired point.",
+  "key_points": [
+    "Two arms will run: (1) h-main \u2014 SA with coordinated edge moves (shrink one rectangle, expand adjacent neighbor) on top of a greedy initialization, predicted to score >85; (2) h-control-negative \u2014 greedy-only expansion with no SA phase, predicted to score 15-30.",
+    "Confirmation criterion: If the SA arm scores meaningfully higher (e.g., 50+ points above) than the greedy-only arm, the hypothesis that SA's backtracking and area-transfer mechanism is the key driver is confirmed. If both score similarly, the SA mechanism adds no value and the problem may be solvable with simpler approaches.",
+    "Key risk factors to watch: the 3-second time limit must be respected (SA budget set to 2.8s with 0.2s margin); coordinated move acceptance rate should be monitored via diagnostics \u2014 if near 0%, the neighbor detection logic is likely broken; output format must be exactly one line per company with 4 space-separated integers (a_i b_i c_i d_i).",
+    "The greedy initialization processes companies in ascending desired-area order and expands 1x1 seed rectangles; this ordering is chosen so that small-area companies don't get overwhelmed by large ones expanding first.",
+    "Unlocked parameters (SA temperatures 0.05\u21920.001, 2000 greedy iterations, 2.8s SA budget) are justified by the satisfaction function's 0-1 range and the stated time limit; these can be tuned in future iterations if the mechanism is validated."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

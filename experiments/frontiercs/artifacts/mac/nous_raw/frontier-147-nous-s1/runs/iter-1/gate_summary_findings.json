@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed. The main arm (simulated annealing with precomputed per-edge expansion bounds) scored 89.53, well above the 85 target. The negative control (greedy-only, no SA) scored 20.25, confirming SA is the dominant scoring mechanism. The experiment is valid and the current best solution achieves strong partial credit on the judge.",
+  "key_points": [
+    "h-main scored 89.53 (predicted >85) \u2014 CONFIRMED. The key algorithmic insight was precomputing max-expansion bounds per rectangle edge, making every SA proposal valid by construction and dramatically improving acceptance rates.",
+    "h-control-negative scored 20.25 (predicted 15\u201330) \u2014 CONFIRMED. Greedy expansion alone without SA optimization is insufficient, confirming that iterative stochastic optimization is the dominant contributor (~70 points of the score).",
+    "An unexpected finding: coordinated neighbor moves (adjusting adjacent rectangles together) were dropped because the O(N) adjacency search per SA step reduced total iteration count and actually hurt performance. Single-rectangle moves with bounded proposals were more effective.",
+    "Potential next steps to push beyond 89.5: try more sophisticated neighborhood structures (e.g., swap-based moves between adjacent companies), better initial placement via Voronoi partitioning, or tuning the SA cooling schedule and time allocation."
+  ]
+}

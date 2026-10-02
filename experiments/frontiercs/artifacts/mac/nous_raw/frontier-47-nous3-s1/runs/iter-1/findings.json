@@ -1,0 +1,23 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The maximal-rectangles + skyline packer with multi-ordering randomized search will achieve a judge score significantly above 0, targeting >=80.",
+      "observed": "Score = 94.82. The multi-strategy greedy packer with 6 orderings x 3 MaxRects methods + skyline + randomized search achieved 94.82/100 on the judge's 15 test cases.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null,
+      "metadata": {
+        "score": 94.82227333333333
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The prediction of score >=80 was confirmed with a score of 94.82, well above the target. The multi-heuristic MaxRects approach with randomized ordering search effectively maximizes packing profit.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution"
+  ]
+}

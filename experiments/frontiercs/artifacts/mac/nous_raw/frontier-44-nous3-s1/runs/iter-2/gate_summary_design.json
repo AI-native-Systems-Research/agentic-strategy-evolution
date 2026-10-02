@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a more sophisticated TSP solver \u2014 combining finer spatial grid (sqrt(N/2.5)), K=15 candidate-list 2-opt with don't-look bits, and ILS with double-bridge perturbation \u2014 can beat iteration 1's score of 78.43 on the penalized TSP problem. Iteration 1 used a coarser grid and only ran 2-opt on instances with N\u226410K, leaving large instances unoptimized.",
+  "key_points": [
+    "Single arm: replaces iter-1's solution with a full algorithm that enables candidate-list 2-opt for ALL N values (up to 200K), uses a finer grid (divisor 2.5 vs 4.0), and adds ILS double-bridge perturbation to escape local optima \u2014 validated at 78.93 in pre-testing vs iter-1's 78.43.",
+    "Key parameter choices justified by sweep: K=15 nearest neighbors (K=5\u219278.63, K=10\u219278.72, K=15\u219278.75, K=20\u219278.73), grid divisor 2.5 (78.93 vs 78.85 at 4.0), and Euclidean-only delta evaluation (78.75 vs penalty-aware at 78.56 due to speed tradeoff).",
+    "Prediction: score \u2265 79. Confirmed if judge score exceeds 78.43 (iter-1 baseline). Refuted if score \u2264 78.43, which would indicate either TLE on large cases or that candidate-list 2-opt + ILS doesn't improve over windowed 2-opt. Diagnostic: if score equals iter-1 exactly, KNN construction or pos[] maintenance is likely buggy.",
+    "Risk: 2-second time limit on N=200K is tight \u2014 candidate-list 2-opt with K=15 processes 3M candidate pairs per pass; ILS needs \u2265200ms remaining to attempt perturbation+recovery cycles. Time budget allocation: 65% candidate 2-opt, 15% window 2-opt, 20% ILS."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

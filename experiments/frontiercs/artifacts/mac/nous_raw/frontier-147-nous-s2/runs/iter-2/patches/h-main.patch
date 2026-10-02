@@ -1,0 +1,113 @@
+--- solution.cpp	2026-09-30 17:29:01
++++ solution_hmain.cpp	2026-09-30 17:29:28
+@@ -19,7 +19,7 @@
+ long long R[210];
+ 
+ struct Rect { int x1,y1,x2,y2; long long area()const{return(long long)(x2-x1)*(y2-y1);} };
+-Rect rects[210], best_rects[210];
++Rect rects[210], best_rects[210], global_best[210];
+ 
+ inline double sat(int i) {
+     const Rect& r = rects[i];
+@@ -62,26 +62,24 @@
+     return lim;
+ }
+ 
+-int main() {
+-    ios::sync_with_stdio(false);
+-    cin.tie(nullptr);
+-    cin>>N;
+-    for (int i=0;i<N;i++) cin>>px[i]>>py[i]>>R[i];
++void doGreedy(mt19937& rng) {
+     for (int i=0;i<N;i++) rects[i]={px[i],py[i],px[i]+1,py[i]+1};
++    // Randomize expansion order for diversity across restarts
++    vector<int> order(N);
++    iota(order.begin(), order.end(), 0);
++    shuffle(order.begin(), order.end(), rng);
+ 
+-    // Greedy expansion with small steps
+     for (int round=0; round<300; round++) {
+-        if (elapsed()>2.0) break;
+         bool any=false;
+-        for (int idx=0;idx<N;idx++) {
++        for (int idx : order) {
+             long long cur=rects[idx].area();
+             long long target=R[idx];
+             if (cur>=target) continue;
+             for (int d=0;d<4;d++) {
+                 Rect nr=rects[idx];
+                 double ratio=(double)target/max(1LL,cur);
+-                int step=max(1,(int)(sqrt(ratio)*3));
+-                step=min(step,150);
++                int step=max(1,(int)(sqrt(ratio)*5));
++                step=min(step,300);
+                 if (d==0) nr.x1=max(0,nr.x1-step);
+                 else if (d==1) nr.x2=min(W,nr.x2+step);
+                 else if (d==2) nr.y1=max(0,nr.y1-step);
+@@ -96,20 +94,22 @@
+         }
+         if (!any) break;
+     }
++}
+ 
+-    // SA
+-    mt19937 rng(42);
++void doSA(mt19937& rng, double endTime) {
+     double total=0;
+     for (int i=0;i<N;i++) total+=sat(i);
+     double best=total;
+     memcpy(best_rects,rects,sizeof(Rect)*N);
+ 
+-    double time_limit=9.3;
++    double startTime = elapsed();
++    double duration = endTime - startTime;
+ 
+     while (true) {
+         double t=elapsed();
+-        if (t>time_limit) break;
+-        double temp=0.01*(1.0-t/time_limit);
++        if (t>endTime) break;
++        double progress = (t - startTime) / duration;
++        double temp=0.01*(1.0-progress);
+         if (temp<1e-9) temp=1e-9;
+ 
+         int idx=rng()%N;
+@@ -188,8 +188,37 @@
+             rects[idx]=old;
+         }
+     }
++    // Restore best from this SA run
++    memcpy(rects, best_rects, sizeof(Rect)*N);
++}
+ 
++int main() {
++    ios::sync_with_stdio(false);
++    cin.tie(nullptr);
++    cin>>N;
++    for (int i=0;i<N;i++) cin>>px[i]>>py[i]>>R[i];
++
++    double globalBest = -1;
++    mt19937 rng(42);
++
++    // Multi-restart: 3 restarts with shuffled greedy ordering
++    int nRestarts = 3;
++    double timePerRestart = 9.0 / nRestarts;
++
++    for (int restart = 0; restart < nRestarts; restart++) {
++        double restartEnd = min(9.3, (restart + 1) * timePerRestart + 0.5);
++        doGreedy(rng);
++        doSA(rng, restartEnd);
++
++        double total = 0;
++        for (int i = 0; i < N; i++) total += sat(i);
++        if (total > globalBest) {
++            globalBest = total;
++            memcpy(global_best, rects, sizeof(Rect) * N);
++        }
++    }
++
+     for (int i=0;i<N;i++)
+-        cout<<best_rects[i].x1<<" "<<best_rects[i].y1<<" "<<best_rects[i].x2<<" "<<best_rects[i].y2<<"\n";
++        cout<<global_best[i].x1<<" "<<global_best[i].y1<<" "<<global_best[i].x2<<" "<<global_best[i].y2<<"\n";
+     return 0;
+ }

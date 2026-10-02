@@ -1,0 +1,26 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The greedy+SA approach will score above 80 on the judge, with SA contributing a significant improvement over greedy-only placement.",
+      "observed": "Score: 81.61. The greedy+SA solution scored above 80 as predicted.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The greedy-only approach will score significantly lower than h-main, likely below 70.",
+      "observed": "Score: 46.76. Greedy-only scored 34.85 points lower than greedy+SA (81.61 vs 46.76), confirming SA is the dominant contributor.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The gap is even larger than predicted (34.85 points vs expected ~15+). SA nearly doubles the score."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main scored 81.61 (>80 threshold). h-control-negative scored 46.76, far below h-main, confirming SA is essential. The magnitude of SA's contribution (34.85 points) exceeds expectations.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

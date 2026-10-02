@@ -1,0 +1,46 @@
+metadata:
+  iteration: 2
+  family: "multicell-init-sa"
+  research_question: "Can multi-cell greedy initialization with max-expansion bounds improve rectangle packing SA scores above the iter-1 baseline?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — single mechanism (init quality) + ablation comparing init strategies"
+
+arms:
+  - type: h-main
+    prediction: "Multi-cell greedy init (0.12s, using max-expansion bounds for multi-cell steps) followed by SA will score higher than single-cell greedy init (0.15s) followed by SA, because faster init gives SA more iterations AND a better starting configuration with larger initial rectangle areas."
+    mechanism: "Single-cell expansion grows each rectangle by 1 pixel per direction per pass. In 0.15s, rectangles only cover a small fraction of their target area, leaving SA to do most of the redistribution work. Multi-cell expansion uses the same max_expand_left/right/down/up bounds (O(N) per call) to grow by up to half the current dimension per step. This fills available space much faster — in 0.12s, each rect reaches a larger fraction of its target area. SA then starts from a higher-quality configuration AND has 0.03s more budget, translating to thousands more iterations."
+    diagnostic: "If h-main does NOT outperform h-ablation: the init quality may not matter because SA is powerful enough to converge regardless of starting point. Check the final satisfaction distribution — if both arms have similar distributions, SA is the dominant factor and init is irrelevant."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace single-cell greedy init with multi-cell bounds-aware expansion (expanding by up to half current dimension per step using max_expand bounds), keeping SA phase identical to iter-1. Init budget 0.12s, SA budget ~2.73s."
+        rationale: "Tests whether faster, more aggressive init translates to better SA starting point and higher final score."
+
+  - type: h-ablation
+    prediction: "Single-cell greedy init (0.15s) + SA will score lower than h-main but close to iter-1 results (~88-90), because SA with valid-by-construction moves already works well regardless of init quality."
+    mechanism: "This is the iter-1 approach with slightly shorter init (0.15s vs 0.3s). SA gets more time but starts from smaller initial rectangles. The comparison with h-main isolates the effect of init quality."
+    diagnostic: "If h-ablation matches or beats h-main: init quality is irrelevant; all score gains come from SA duration. Future iterations should focus on SA move types rather than initialization."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement iter-1 SA with valid-by-construction moves. Single-cell greedy init for 0.15s, then SA with T0=0.05, T1=0.001 until 2.85s. Uniform random edge selection, uniform random new value within max-expansion bounds."
+        rationale: "Serves as the ablation control — same SA but without the multi-cell init improvement."
+
+# Arm selection rationale: h-main tests the new init; h-ablation isolates the init effect
+# by running identical SA with the old init. No h-control-negative needed because iter-1
+# already confirmed SA is essential (greedy-only scored 20.2). No dose-response because
+# the init time is not a continuous knob worth sweeping — it's either the new or old method.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 2.85
+    T0: 0.05
+    T1: 0.001
+    init_time_hmain: 0.12
+    init_time_ablation: 0.15
+  unlocked_parameters_audit:
+    - name: xorshift_seed
+      default_value: 88172645463325252
+      justification: "Fixed seed for deterministic SA. Same seed across arms so differences are from init, not randomness."
+    - name: greedy_expansion_passes
+      default_value: 200
+      justification: "Max passes in multi-cell init. Time-bounded (0.12s), so pass count is a ceiling, not a bottleneck."

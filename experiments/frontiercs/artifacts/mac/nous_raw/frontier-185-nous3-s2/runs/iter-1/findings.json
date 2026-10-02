@@ -1,0 +1,32 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "A branch-and-bound solver with degeneracy ordering and greedy coloring upper bound will achieve score >= 90, significantly higher than greedy-only.",
+      "observed": "SCORE: 100. The hybrid BnB + DLS local search approach achieved perfect score across all test cases. BnB with bitset color classes solves most instances optimally within 1.6s; for hard dense instances where BnB times out, the DLS (Dynamic Local Search) tabu fallback finds the optimal clique in the remaining time.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null,
+      "metadata": {
+        "score": 100
+      }
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "A greedy-only clique builder will score significantly lower than the BnB solver, likely below 50.",
+      "observed": "SCORE: 33.76. Greedy by degree descending finds only ~34% of optimal clique size on average. Confirms that exhaustive search or sophisticated local search is necessary.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null,
+      "metadata": {
+        "score": 33.76
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main achieved score 100 (predicted >= 90). h-control-negative scored 33.76 (predicted < 50). The key insight beyond the original hypothesis: pure BnB with coloring bound tops out around 88-90 on the hardest dense instances. A DLS tabu search fallback is needed to close the gap to 100 on those cases.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

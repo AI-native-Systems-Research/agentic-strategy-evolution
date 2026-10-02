@@ -1,0 +1,40 @@
+[
+  {
+    "id": "RP-4",
+    "statement": "For AHC001 rectangle packing SA, best-state tracking (saving peak configuration during SA and restoring it at the end) combined with wider temperature schedule (T0=0.08, T1=0.0005 vs T0=0.05, T1=0.001) provides a small directional score improvement (~0.65 points, 4/5 wins) over the no-tracking baseline, but the effect is within judge noise and not statistically significant with 5 runs per arm.",
+    "confidence": "low",
+    "regime": "AHC001 with N<=200, 2.85s time budget, exponential cooling SA with valid-by-construction proposals",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "Best-tracking captures the peak score encountered during SA, avoiding degradation from noise at low temperatures. Wider temperature range increases exploration diversity. The effect is real but small relative to judge variance.",
+    "applicability_bounds": "Effect may be larger for problems with more local optima or longer SA runs. Judge variance (~5 points) dominates the ~0.65 point treatment effect, making significance hard to reach without many more runs.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "Single-run probes during the design phase are unreliable for estimating effect sizes in AHC001 because judge variance (~5 points stdev from random test set selection) overwhelms treatment effects. Design-phase probes that showed ~3 point improvements (92.7 vs 89.9) reduced to ~0.65 points across 5 runs per arm.",
+    "confidence": "high",
+    "regime": "AHC001 rectangle packing with randomized judge test sets",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-design-probes"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "The judge evaluates on random test sets each run. A single favorable test set can inflate apparent score by 2-5 points. Only multi-run comparisons reveal the true treatment effect.",
+    "applicability_bounds": "Specific to AHC001's randomized judge. Problems with deterministic evaluation wouldn't have this issue.",
+    "superseded_by": null,
+    "category": "methodological",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

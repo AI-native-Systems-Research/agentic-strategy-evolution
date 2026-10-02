@@ -1,0 +1,42 @@
+{
+  "top_k": [
+    {
+      "candidate_id": "iter-3/h-main/0",
+      "score": 95.72918666666666,
+      "components": {
+        "score": 95.72918666666666
+      },
+      "iteration": 3,
+      "arm_id": "h-main"
+    },
+    {
+      "candidate_id": "iter-2/h-main/0",
+      "score": 95.35010666666666,
+      "components": {
+        "score": 95.35010666666666
+      },
+      "iteration": 2,
+      "arm_id": "h-main"
+    },
+    {
+      "candidate_id": "iter-1/h-main/0",
+      "score": 94.82227333333333,
+      "components": {
+        "score": 94.82227333333333
+      },
+      "iteration": 1,
+      "arm_id": "h-main"
+    },
+    {
+      "candidate_id": "iter-3/h-control-negative/1",
+      "score": 88.85129333333333,
+      "components": {
+        "score": 88.85129333333333
+      },
+      "iteration": 3,
+      "arm_id": "h-control-negative"
+    }
+  ],
+  "k": 5,
+  "updated_at": "2026-10-01T06:15:05.563459+00:00"
+}

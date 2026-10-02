@@ -1,0 +1,22 @@
+{
+  "last_entered_phase": "DESIGN",
+  "iteration": 1,
+  "run_id": "frontier-8-nous-s1",
+  "family": null,
+  "timestamp": "2026-09-30T19:39:45.400732+00:00",
+  "config_ref": null,
+  "work_dir": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-8-nous-s1",
+  "repo_path": "/Users/toslali/frontier/gen_logs/frontier_8_nous-s1_ws",
+  "reproducibility_metadata": {
+    "captured_at": "2026-09-30T19:39:44Z",
+    "repo_commit": "06cfc0cf3f76feda57fafe15e2a3f289822f3ce2",
+    "repo_dirty": false,
+    "language_versions": {
+      "python": "Python 3.11.7",
+      "go": "go version go1.24.0 darwin/arm64",
+      "node": "v25.2.1",
+      "rust": "rustc 1.93.1 (01f6ddf75 2026-02-11) (Homebrew)"
+    }
+  },
+  "max_iterations": 5
+}

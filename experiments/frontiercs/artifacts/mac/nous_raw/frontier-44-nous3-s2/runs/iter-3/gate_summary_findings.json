@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 3's main hypothesis was REFUTED. The new two-phase grid-guided 2-opt SA approach scored 72.2, which is a 6.6-point regression from the actual best solution (~78.8 from iteration 2's h-ablation). The root cause was an incorrect baseline assumption: the bundle designer believed iter-2 scored 69.5 (which was actually the iter-1 score), so the \"improvement\" was measured against the wrong reference point.",
+  "key_points": [
+    "h-main scored 72.2 (mean of 7 clean runs), while the iter-2 baseline (h-control-negative) scored 78.8 (mean excluding timing outliers) \u2014 a regression of ~6.6 points, not the predicted improvement.",
+    "The bundle's premise was flawed: it assumed iter-2's score was 69.5, but the actual iter-2 cumulative best (from iter-2 h-ablation) was ~78.8. This misinformation led to designing a simpler algorithm that omitted critical components.",
+    "The iter-2 h-ablation solution remains the best at ~78.8. Its key components \u2014 penalty-aware exact delta computation, Or-opt city relocation, pos[] tracking, and prime scheduling post-pass \u2014 were all absent from the iter-3 approach and collectively account for the ~6.6-point gap.",
+    "Next iteration should build on the iter-2 h-ablation solution (score ~78.8) as the true baseline and explore incremental improvements such as 3-opt moves, Lin-Kernighan style chains, or better temperature schedules \u2014 not replace the core algorithm."
+  ]
+}

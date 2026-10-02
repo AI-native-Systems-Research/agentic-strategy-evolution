@@ -1,0 +1,26 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Adding or-opt1 to the local search pipeline will consistently improve tour quality, yielding a higher judge score than the 2-opt-only baseline (~0.04+ points improvement).",
+      "observed": "h-main (v32 with or-opt1) scored 78.966 in both run1 and run2. Compared to control non-TLE score of 78.905, this is a +0.061 improvement. v32 also showed zero TLE incidents across 5+ runs during design, while v25 TLE'd in 2 of 6 runs.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Or-opt1 finds improvements 2-opt can't (single-city relocation vs segment reversal). The improvement is small but consistent. Additional benefit: dist\u00b2 early rejection in 2-opt appears to reduce TLE susceptibility. Score: 78.966"
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "v25 baseline will score ~78.93 (matching iter-2 performance).",
+      "observed": "v25 scored 73.926 (TLE) in run1 and 78.905 in run2. The non-TLE score of 78.905 is slightly below iter-2's 78.93 but within normal variance. TLE in run1 is consistent with RP-5 (environmental TLE).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Baseline performs as expected. TLE susceptibility is an existing issue (RP-5). Non-TLE score: 78.905"
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms behave as predicted. h-main shows a consistent +0.06 point improvement over h-control-negative in non-TLE runs. The improvement comes from two sources: (1) or-opt1 finding relocation improvements that 2-opt cannot, and (2) dist\u00b2 early rejection giving a minor speedup to 2-opt. h-main also appears more TLE-resistant (0/5+ TLE vs 2/6 for control), likely due to the dist\u00b2 speedup reducing total computation time.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

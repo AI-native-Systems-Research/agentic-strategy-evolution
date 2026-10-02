@@ -1,0 +1,30 @@
+metadata:
+  iteration: 1
+  family: "maxrects-multi-heuristic"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for problem #47 (2D rectangular knapsack with optional 90° rotations)?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (MaxRects packing with multi-heuristic search)"
+
+arms:
+  - type: h-main
+    prediction: "A MaxRects packer with multiple placement heuristics (BSSF, BAF, BL), diverse item orderings (7 sorting strategies), global greedy selection, permutation exhaustion for M<=10, and random search will achieve a score consistently above 90, demonstrating that exhaustive ordering search over a good packer yields high packing quality."
+    mechanism: "MaxRects maintains a set of maximal free rectangles after each placement, enabling efficient best-fit decisions. By trying all M! orderings (feasible for M<=12 item types) across multiple heuristics, the algorithm explores a large portion of the packing decision space. The best-of-both-orientations rotation strategy further doubles the effective search. Value-density ordering as the primary sort ensures high-value items are placed first when permutation exhaustion times out."
+    diagnostic: "If score is below 90: (1) check if JSON parsing is correct for all test cases, (2) check if rotation handling respects allow_rotate=false cases, (3) check if time budget is being exceeded causing incomplete search, (4) examine whether the free-rectangle pruning is losing valid placement opportunities."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the empty stub with a full MaxRects bin packing implementation featuring multiple heuristics (BSSF, BAF, BL), 7 sorting strategies, global greedy packing, multi-pass packing, permutation exhaustion for small M, and time-budgeted random search. Includes rotation support with best-of-both-orientations selection."
+        rationale: "This is the core algorithm under test. The MaxRects approach is well-suited for 2D knapsack because it tracks all available space efficiently and supports multiple placement heuristics that perform differently across problem instances."
+
+experiment_spec:
+  verified_parameters:
+    time_budget_seconds: 0.88
+    heuristics: ["BSSF", "BAF", "BL"]
+    sorting_strategies: 7
+    permutation_limit_M: 10
+  unlocked_parameters_audit:
+    - name: "permutation_count_cap"
+      default_value: 20000
+      justification: "Cap ensures we don't exceed time budget on M=10 (3.6M perms); 20K is reachable within 0.7s on judge hardware"
+    - name: "random_search_seed"
+      default_value: 42
+      justification: "Deterministic seed for reproducibility; the random search is supplementary to exhaustive permutation search"

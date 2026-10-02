@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether simulated annealing (SA) over item orderings, combined with a residual gap-filling pass, can improve the 2D rectangular knapsack score beyond the 94.84 achieved by iter-1's hill-climbing MaxRects approach. Two arms will run: the full SA+gap-fill method (h-main) and SA without gap-fill (h-ablation), to isolate the contribution of each component.",
+  "key_points": [
+    "Iteration 1 established a baseline of 94.84/100 using MaxRects with hill-climbing over item orderings and 9 sorting strategies across 4 heuristics (BSSF, BAF, BL, BLSF). The key limitation identified was hill-climbing's inability to escape local optima.",
+    "h-main predicts a score above 95.0 by replacing hill-climbing with SA (T\u2080=0.1\u00d7bestProfit, \u03b1=0.995, swap/insert/reverse neighborhoods) plus a post-pack greedy gap-filling pass that places remaining item copies into free rectangles by value density.",
+    "h-ablation removes only the gap-filling pass, keeping SA identical, predicting a score above 95.0 but 0.1\u20130.5 points below h-main. If h-ablation matches or exceeds h-main, gap filling is redundant and future work should focus on search quality instead.",
+    "Confirmation criteria: h-main > 95.0 confirms SA improves over hill-climbing; h-main > h-ablation by 0.1+ confirms gap filling adds independent value. Refutation: score \u2264 94.84 suggests SA parameters need tuning (temperature schedule, iteration count) or the ordering landscape has few local optima to escape.",
+    "Risk factors: the 1-second time limit constrains SA to roughly 1000 iterations across 4 heuristic restarts; if this is insufficient for convergence, SA may underperform hill-climbing. Diagnostic: check whether accepted-worsening-move count is nonzero and whether gap filling actually places items."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

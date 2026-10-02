@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 3 tested whether incremental gain tracking (faster per-iteration SA) combined with different restart strategies (deep vs shallow) could exceed the iter-2 baseline of ~87.5. Both arms matched but did not exceed the baseline on fast machines, scoring 87.54-87.57. The depth-vs-breadth hypothesis was refuted: 3 long restarts and 30 short restarts produce identical quality.",
+  "key_points": [
+    "h-main (0.30s \u00d7 3 restarts, incremental gain) scored 87.54/87.55/84.82 (mean 86.64); matches iter-2 baseline (~87.5) on fast machines but shows no improvement despite ~5\u00d7 faster iteration throughput.",
+    "h-ablation (0.03s \u00d7 30 restarts, incremental gain) scored 87.57/87.57/84.69 (mean 86.61); REFUTED the prediction that shallow restarts would underperform \u2014 many short restarts equal few long restarts, indicating Max-Cut local optima are easily reachable via shallow search.",
+    "The score ceiling of ~87.5 persists across three iterations and multiple algorithmic configurations (basic SA, incremental SA, depth-varied restarts), suggesting the current SA framework is near its limit for this problem size \u2014 a fundamentally different approach (e.g., semidefinite programming relaxation, Goemans-Williamson, or hybrid local search like BLS) may be needed to break through.",
+    "Dominant variance source remains judge machine speed (bimodal ~84-85 vs ~87.5), not algorithm design \u2014 any next iteration should either increase the time budget margin or use a deterministic/polynomial algorithm to eliminate this sensitivity."
+  ]
+}

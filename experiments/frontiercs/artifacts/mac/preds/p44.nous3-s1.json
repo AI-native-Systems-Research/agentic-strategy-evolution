@@ -1,0 +1,15 @@
+{
+  "problem_id": "44",
+  "agent": "nous",
+  "label": "nous3-s1",
+  "model": "claude-opus-4-6",
+  "candidates": [],
+  "final_score": null,
+  "solution": null,
+  "input_tokens": 35855,
+  "output_tokens": 390666,
+  "cost_usd_est": 26.5786,
+  "llm_calls": 15,
+  "campaign_dir": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1",
+  "seconds": 7594.4
+}

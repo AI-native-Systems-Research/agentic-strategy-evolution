@@ -1,0 +1,145 @@
+{
+  "iterations": [
+    {
+      "iteration": 0,
+      "family": "baseline",
+      "timestamp": "1970-01-01T00:00:00Z",
+      "candidate_id": "baseline",
+      "h_main_result": null,
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": null,
+      "principles_extracted": [],
+      "frontier_update": null
+    },
+    {
+      "iteration": 1,
+      "family": "sa-rectangle-packing",
+      "timestamp": "2026-09-30T19:21:34.865846+00:00",
+      "candidate_id": "iter-1",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": "CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-1",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-2",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 2,
+      "family": "multicell-init-sa",
+      "timestamp": "2026-09-30T20:01:58.849770+00:00",
+      "candidate_id": "iter-2",
+      "h_main_result": "REFUTED",
+      "ablation_results": {
+        "ablation-0": "PARTIALLY_CONFIRMED"
+      },
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 0,
+        "arms_total": 2,
+        "accuracy_pct": 0.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-3",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 3,
+      "family": "sa-best-tracking-wider-temps",
+      "timestamp": "2026-09-30T20:49:05.204917+00:00",
+      "candidate_id": "iter-3",
+      "h_main_result": "PARTIALLY_CONFIRMED",
+      "ablation_results": {},
+      "control_result": "CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 2,
+        "accuracy_pct": 50.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-4",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 4,
+      "family": "sa-time-budget",
+      "timestamp": "2026-09-30T21:46:25.356887+00:00",
+      "candidate_id": "iter-4",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": "CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-6",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 5,
+      "family": "cooling-schedule-shape",
+      "timestamp": "2026-09-30T22:54:33.412161+00:00",
+      "candidate_id": "iter-5",
+      "h_main_result": "PARTIALLY_CONFIRMED",
+      "ablation_results": {},
+      "control_result": "PARTIALLY_CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 0,
+        "arms_total": 2,
+        "accuracy_pct": 0.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-7",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    }
+  ]
+}

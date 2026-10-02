@@ -1,0 +1,26 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "SA solution with grid-based NN construction, swap and 2-opt moves, and prime-scheduling post-pass will score higher than the baseline probe of 33.5",
+      "observed": "Score: 69.50. Grid-based NN construction alone produces ~64.5. SA with swap (exact O(1) delta) + 2-opt (boundary-only approximate delta, segment len 2-200) adds ~5 points. Prime scheduling post-pass adds marginal improvement. Tested 12+ algorithm variants; all converge to 69.5 \u00b1 0.5. NN-only baseline: 64.5, sequential baseline: 0.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The directional prediction is confirmed: the SA approach significantly outperforms the 33.5 baseline probe. However, the score plateau at 69.5 suggests random SA with O(1) moves is throughput-limited for large N (200K). Construction quality (NN) accounts for ~93% of the score; SA optimization adds only ~7%. For large N, neighbor-list-guided 2-opt or LK-style moves would be needed to break past 69.5.",
+      "metadata": {
+        "score": 69.4965,
+        "nn_only_score": 64.4665,
+        "baseline_probe_score": 33.456,
+        "sequential_score": 0,
+        "variants_tested": 12,
+        "best_variant_score": 69.5
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The prediction was directionally confirmed (69.5 >> 33.5). Magnitude exceeded expectations for the baseline comparison but fell below the 50+ target. The main bottleneck is SA scalability: for N=200K, random swap/2-opt can only improve the NN tour by ~5 points. Construction quality dominates. The penalty structure (10% penalty every 10th step on non-prime sources) has limited impact (~1% of total cost) and the prime scheduling post-pass captures most of the available penalty savings.",
+  "dominant_component_pct": 93,
+  "worktree_uncommitted_writes": []
+}

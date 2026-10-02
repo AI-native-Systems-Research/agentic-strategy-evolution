@@ -1,0 +1,9 @@
+{
+  "gate_type": "findings",
+  "summary": "The hypothesis that a faster multi-cell greedy initialization would improve simulated annealing (SA) scores was refuted. Both arms scored in the 88\u201391 range (h-main mean 89.92, h-ablation mean 89.38), with a difference of only +0.54 points \u2014 well within the ~5-point run-to-run variance from different random test cases. SA dominates final score quality regardless of initialization method.",
+  "key_points": [
+    "h-main (multi-cell init + SA) scored 88.71, 90.65, 90.39 (mean 89.92); h-ablation (single-cell init + SA) scored 88.88, 88.82, 90.45 (mean 89.38) \u2014 the +0.54 difference is not statistically meaningful given judge variance.",
+    "The directional prediction (multi-cell init > single-cell init) failed in 2 of 3 runs, confirming that initialization quality is not a bottleneck \u2014 SA converges to similar solutions from either starting point.",
+    "Two iterations have now established that SA is the dominant scoring mechanism (~88\u201391 range). Further gains likely require changes to SA neighborhood structure, cooling schedule, or a fundamentally different representation \u2014 not init improvements."
+  ]
+}

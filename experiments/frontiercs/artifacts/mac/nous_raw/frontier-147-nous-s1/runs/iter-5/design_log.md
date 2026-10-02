@@ -1,0 +1,11 @@
+Let me probe the current solution and explore what improvements to test.Good, baseline at 2.85s scores ~91.6. Now let me create and test the improved version with 5.3s and tuned temperature.Let me also probe a version with just 5.3s (same temp) to isolate the time effect:The 5.3s + wider temp scored 90.8 — the wider temperature (T0=0.1) hurts, consistent with iter-3 findings. Waiting for the 5.3s same-temp probe...Still running. Let me also prepare a version with 4.8s (the confirmed best from iter-4) to use as the baseline and think about a more creative approach.While waiting for the probe, let me also try a different approach — a Gaussian-biased move toward target area:Let me create a more interesting variant — a two-phase cooling schedule that keeps temperature higher for longer:5.3s probes came in lower than 4.8s mean — likely just judge variance. Let me probe the two-phase cooling approach:While waiting for the probe, let me also try a 4.8s baseline probe to compare apples-to-apples this session:Let me check the 4.8s baseline probe:All probes land in 90-92 range (judge variance dominates). Good — this confirms RP-5 and means multi-run experiments are essential. Let me now design the experiment.
+
+The iter-4 confirmed finding: 4.8s >> 2.85s. The suggested next: tune the cooling schedule for the 4.8s budget. I'll test **two-phase cooling** (linear→exponential) vs **pure exponential** at 4.8s.
+
+Key observation: the current exponential cooling drops from T0=0.08 to T≈0.006 by the halfway point. Two-phase linear cooling keeps T≈0.022 at the halfway point — 3.5x higher, maintaining exploration for longer before converging.
+
+Let me write the design artifacts:Now the handoff:Now validate:Validation passes. Here's the summary:
+
+**Iter-5 design**: Tests **two-phase cooling** (linear T0→T_mid over 60%, then exponential T_mid→T1 over 40%) vs **pure exponential cooling**, both at the confirmed 4.8s budget. The key insight: exponential cooling drops to T≈0.006 by midpoint, but two-phase maintains T≈0.022 — 3.5× more exploration. Single probes are within noise (91.0 vs 90.4); the full 5-seed experiment will determine if the shape matters.
+
+Three files written to `runs/iter-5/`: `problem.md`, `bundle.yaml`, `handoff_snapshot.md`. Campaign-level `handoff.md` updated.

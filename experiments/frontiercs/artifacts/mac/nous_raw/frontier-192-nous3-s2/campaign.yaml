@@ -1,0 +1,58 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #192?'
+run_id: frontier-192-nous3-s2
+max_iterations: 3
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::192
+  description: "You are solving Frontier-CS algorithmic problem #192. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp\n\
+    It prints a single line 'SCORE: <n>' where n is the judge score (0-100). Record\
+    \ that number in the finding metadata under key 'score'. Each experiment arm should\
+    \ try a distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nOUTPUT FORMAT: Match the statement's Output section EXACTLY: the number\
+    \ of lines, the separators (spaces vs newlines), and the token order. A correct\
+    \ algorithm can score near zero purely from a format mismatch (for example printing\
+    \ one value per line when a single space-separated line is required, or emitting\
+    \ extra or blank lines). Re-read the Output section and conform to it precisely.\n\
+    TIME BUDGET: Respect the per-test time limit stated in the problem. A solution\
+    \ that exceeds the limit on a test case scores 0 for that case even if its answer\
+    \ is correct, so choose an algorithm and parameters (iteration counts, restarts)\
+    \ that comfortably finish within the limit on the largest inputs.\n\nPROBLEM STATEMENT:\n\
+    # Max-Cut\n\n## Problem\n\nYou are given an undirected graph with n vertices and\
+    \ m edges.\nYour task is to partition the vertices into two sets to maximize the\
+    \ number of edges crossing the partition.\n\nAn edge is a cut edge if its two\
+    \ endpoints are in different sets.\n\n## Input Format\n\n- Line 1: two integers\
+    \ n and m (1 \u2264 n \u2264 1000, 0 \u2264 m \u2264 20000)\n- Next m lines: two\
+    \ integers u v (1 \u2264 u, v \u2264 n, u \u2260 v)\n\nThe graph may be disconnected.\n\
+    There are no multiple edges or self-loops.\n\n## Output Format\n\n- Output exactly\
+    \ one line:\n  - n integers s\u2081 s\u2082 \u2026 s\u2099\n  - each s\u1D62 \u2208\
+    \ {0, 1}\n  - s\u1D62 = 0 means vertex i is in set S\n  - s\u1D62 = 1 means vertex\
+    \ i is in set T\n\n## Scoring\n\nLet:\n- m be the number of edges\n- c be the\
+    \ number of cut edges\n\nScore is defined as:\n- If m > 0:  score = c / m\n- If\
+    \ m = 0:  score = 1\n\nThe score is clamped to [0, 1].\n"
+  repo_path: /Users/toslali/frontier/gen_logs/frontier_192_nous3-s2_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/asr-frontier-mac/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: 0813be2bafe5d4e0a8ad491975bf2d5674d2f036
+  nous_version: 0.5.0
+  started_at: '2026-10-01T06:56:03.774717+00:00'

@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, the penalized TSP solution has improved from ~78.29 (iter-1 baseline) to 78.93 (iter-2 treatment), a confirmed +0.63 point gain. The improvement comes from candidate-list 2-opt with K=15 nearest neighbors, finer grid resolution (G=sqrt(N/2.5)), and ILS double-bridge perturbation. The solution is stable and within time limits, but has not yet broken the 79-point threshold.",
+  "key_points": [
+    "Score progression: iter-1 = 78.29 \u2192 iter-2 = 78.93 (non-TLE measurements). The +0.63 gain is confirmed across 4/6 treatment runs; 2/6 runs showed ~5-point drops due to environmental TLE, identical to baseline TLE behavior.",
+    "Three validated improvements: (1) KNN candidate-list 2-opt (+0.45 pts, enables 2-opt for all N values), (2) finer grid G=sqrt(N/2.5) (+0.08 pts), (3) ILS double-bridge (+0.10 pts). Each was measured independently.",
+    "Extensive dead-ends mapped: or-opt (single city relocate), 3-opt (too slow for N=200K in 2s), penalty-aware delta (speed cost > accuracy gain), K>15 KNN (build overhead), G=sqrt(N/2) grid (TLE-unstable).",
+    "Next iteration should investigate: (a) simplified Lin-Kernighan sequential search (depth-2, 3-opt-like moves unreachable by 2-opt), (b) segment or-opt (move chains of 2-3 cities rather than single cities), (c) penalty-aware move scheduling (place prime cities at steps 9,19,29... to avoid 10% penalty without costly per-move delta), (d) better initial tour construction (e.g., greedy nearest-neighbor from city 0 instead of grid-strip NN).",
+    "Key unknown: whether the ~1-point gap to 79+ is achievable within the 2s time limit, or if diminishing returns from local search mean a fundamentally different approach (e.g., LKH-style moves or better construction heuristic) is needed."
+  ]
+}

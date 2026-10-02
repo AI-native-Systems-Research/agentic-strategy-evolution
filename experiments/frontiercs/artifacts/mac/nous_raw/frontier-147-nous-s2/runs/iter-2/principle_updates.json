@@ -1,0 +1,21 @@
+[
+  {
+    "id": "RP-2",
+    "statement": "For AHC001 rectangle packing with SA, multi-restart (3x3s) with randomized greedy initialization does not improve over a single long SA run (1x9s). SA convergence time dominates over starting-point diversity.",
+    "confidence": "medium",
+    "regime": "N<=200, 10s time limit, 10000x10000 grid, linear cooling T0=0.01, 8-move uniform SA",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "SA moves 6 (expand-to-limit) and 7 (target-aware resize) are effective at restructuring the layout, making the initial greedy ordering largely irrelevant after sufficient SA time. Splitting the SA budget into shorter runs reduces per-run convergence quality, approximately offsetting any benefit from exploring different starting configurations.",
+    "applicability_bounds": "Applies to this specific SA design with 8 uniform moves including expand-to-limit. May not hold for SA variants with weaker exploration moves (e.g., only boundary shifts) where the starting point would matter more.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

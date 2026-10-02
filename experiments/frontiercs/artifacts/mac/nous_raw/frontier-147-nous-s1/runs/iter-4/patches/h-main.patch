@@ -1,0 +1,273 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..316977d 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,267 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++struct Timer {
++    chrono::high_resolution_clock::time_point start;
++    Timer() : start(chrono::high_resolution_clock::now()) {}
++    double elapsed() const {
++        return chrono::duration<double>(chrono::high_resolution_clock::now() - start).count();
++    }
++};
++
++const int GRID = 10000;
++int N;
++int x[205], y[205], r[205];
++int a[205], b[205], c[205], d[205];
++
++// Best-tracking arrays
++int best_a[205], best_b[205], best_c[205], best_d[205];
++double best_score = -1.0;
++
++unsigned long long xorstate = 88172645463325252ULL;
++inline unsigned long long xorshift() {
++    xorstate ^= xorstate << 13;
++    xorstate ^= xorstate >> 7;
++    xorstate ^= xorstate << 17;
++    return xorstate;
++}
++
++inline bool contains_point(int i) {
++    return a[i] <= x[i] && x[i] < c[i] && b[i] <= y[i] && y[i] < d[i];
++}
++
++inline long long area(int i) {
++    return (long long)(c[i] - a[i]) * (d[i] - b[i]);
++}
++
++inline double satisfaction(int i) {
++    if (!contains_point(i)) return 0.0;
++    long long s = area(i);
++    if (s <= 0) return 0.0;
++    double mn = (s < r[i]) ? (double)s : (double)r[i];
++    double mx = (s > r[i]) ? (double)s : (double)r[i];
++    double diff = 1.0 - mn / mx;
++    return 1.0 - diff * diff;
++}
++
++double total_score() {
++    double sum = 0;
++    for (int i = 0; i < N; i++) sum += satisfaction(i);
++    return sum / N;
++}
++
++void save_best() {
++    double sc = total_score();
++    if (sc > best_score) {
++        best_score = sc;
++        memcpy(best_a, a, sizeof(int) * N);
++        memcpy(best_b, b, sizeof(int) * N);
++        memcpy(best_c, c, sizeof(int) * N);
++        memcpy(best_d, d, sizeof(int) * N);
++    }
++}
++
++void restore_best() {
++    memcpy(a, best_a, sizeof(int) * N);
++    memcpy(b, best_b, sizeof(int) * N);
++    memcpy(c, best_c, sizeof(int) * N);
++    memcpy(d, best_d, sizeof(int) * N);
++}
++
++inline int max_expand_left(int i) {
++    int lim = 0;
++    for (int j = 0; j < N; j++) {
++        if (j == i) continue;
++        if (b[i] < d[j] && b[j] < d[i] && c[j] <= a[i]) {
++            lim = max(lim, c[j]);
++        }
++    }
++    return lim;
++}
++inline int max_expand_right(int i) {
++    int lim = GRID;
++    for (int j = 0; j < N; j++) {
++        if (j == i) continue;
++        if (b[i] < d[j] && b[j] < d[i] && a[j] >= c[i]) {
++            lim = min(lim, a[j]);
++        }
++    }
++    return lim;
++}
++inline int max_expand_down(int i) {
++    int lim = 0;
++    for (int j = 0; j < N; j++) {
++        if (j == i) continue;
++        if (a[i] < c[j] && a[j] < c[i] && d[j] <= b[i]) {
++            lim = max(lim, d[j]);
++        }
++    }
++    return lim;
++}
++inline int max_expand_up(int i) {
++    int lim = GRID;
++    for (int j = 0; j < N; j++) {
++        if (j == i) continue;
++        if (a[i] < c[j] && a[j] < c[i] && b[j] >= d[i]) {
++            lim = min(lim, b[j]);
++        }
++    }
++    return lim;
++}
++
++Timer gtimer;
++
++void greedy_init_multicell() {
++    for (int i = 0; i < N; i++) {
++        a[i] = x[i]; b[i] = y[i]; c[i] = x[i] + 1; d[i] = y[i] + 1;
++    }
++
++    int pass = 0;
++    while (gtimer.elapsed() < 0.12 && pass < 200) {
++        pass++;
++        bool any_change = false;
++        for (int i = 0; i < N; i++) {
++            if (area(i) >= (long long)r[i]) continue;
++
++            int lim = max_expand_left(i);
++            int w = c[i] - a[i];
++            int step = max(1, w / 2);
++            int new_a = max(lim, a[i] - step);
++            if (new_a < a[i]) { a[i] = new_a; any_change = true; }
++
++            lim = max_expand_right(i);
++            step = max(1, w / 2);
++            int new_c = min(lim, c[i] + step);
++            if (new_c > c[i]) { c[i] = new_c; any_change = true; }
++
++            lim = max_expand_down(i);
++            int h = d[i] - b[i];
++            step = max(1, h / 2);
++            int new_b = max(lim, b[i] - step);
++            if (new_b < b[i]) { b[i] = new_b; any_change = true; }
++
++            lim = max_expand_up(i);
++            step = max(1, h / 2);
++            int new_d = min(lim, d[i] + step);
++            if (new_d > d[i]) { d[i] = new_d; any_change = true; }
++        }
++        if (!any_change) break;
++    }
++}
++
++void simulated_annealing() {
++    double T0 = 0.08, T1 = 0.0005;
++    double sa_start = gtimer.elapsed();
++    double total_time = 4.8;
++    double sa_budget = total_time - sa_start;
++
++    double progress = 0;
++    double T = T0;
++    int iter = 0;
++
++    // Save initial state as best
++    save_best();
++
++    while (true) {
++        if ((iter & 0x3FF) == 0) {
++            double elapsed = gtimer.elapsed();
++            if (elapsed > total_time) break;
++            progress = (elapsed - sa_start) / sa_budget;
++            if (progress > 1.0) break;
++            T = T0 * pow(T1 / T0, progress);
++        }
++
++        // Best-tracking: check every 32K iterations
++        if ((iter & 0x7FFF) == 0 && iter > 0) {
++            save_best();
++        }
++
++        iter++;
++
++        int i = xorshift() % N;
++        int edge = xorshift() % 4;
++
++        double old_si = satisfaction(i);
++        int oa = a[i], ob = b[i], oc = c[i], od = d[i];
++
++        int lo, hi, newval;
++        switch(edge) {
++            case 0:
++                lo = max_expand_left(i);
++                hi = c[i] - 1;
++                if (lo >= hi) continue;
++                {
++                    int range = hi - lo;
++                    int step = xorshift() % range;
++                    newval = lo + step;
++                    if (newval > x[i]) newval = x[i];
++                }
++                a[i] = newval;
++                break;
++            case 1:
++                lo = a[i] + 1;
++                hi = max_expand_right(i);
++                if (lo >= hi) continue;
++                {
++                    int range = hi - lo;
++                    int step = xorshift() % range;
++                    newval = lo + step + 1;
++                    if (newval < x[i] + 1) newval = x[i] + 1;
++                    if (newval > hi) newval = hi;
++                }
++                c[i] = newval;
++                break;
++            case 2:
++                lo = max_expand_down(i);
++                hi = d[i] - 1;
++                if (lo >= hi) continue;
++                {
++                    int range = hi - lo;
++                    int step = xorshift() % range;
++                    newval = lo + step;
++                    if (newval > y[i]) newval = y[i];
++                }
++                b[i] = newval;
++                break;
++            case 3:
++                lo = b[i] + 1;
++                hi = max_expand_up(i);
++                if (lo >= hi) continue;
++                {
++                    int range = hi - lo;
++                    int step = xorshift() % range;
++                    newval = lo + step + 1;
++                    if (newval < y[i] + 1) newval = y[i] + 1;
++                    if (newval > hi) newval = hi;
++                }
++                d[i] = newval;
++                break;
++        }
++
++        double new_si = satisfaction(i);
++        double delta = new_si - old_si;
++
++        if (delta >= 0 || (xorshift() % 10000) < (unsigned long long)(exp(delta / T) * 10000)) {
++            // accept
++        } else {
++            a[i] = oa; b[i] = ob; c[i] = oc; d[i] = od;
++        }
++    }
++
++    // Restore best configuration found during SA
++    save_best(); // final check
++    restore_best();
++}
++
++int main() {
++    scanf("%d", &N);
++    for (int i = 0; i < N; i++) scanf("%d %d %d", &x[i], &y[i], &r[i]);
++
++    greedy_init_multicell();
++    simulated_annealing();
++
++    for (int i = 0; i < N; i++) {
++        printf("%d %d %d %d\n", a[i], b[i], c[i], d[i]);
++    }
++    return 0;
++}

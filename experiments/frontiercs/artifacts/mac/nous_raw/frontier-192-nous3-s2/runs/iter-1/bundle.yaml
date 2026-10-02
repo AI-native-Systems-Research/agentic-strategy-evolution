@@ -1,0 +1,36 @@
+metadata:
+  iteration: 1
+  family: "maxcut-sa-local-search"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for Max-Cut (problem #192)?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (SA + greedy local search) vs random baseline"
+
+arms:
+  - type: h-main
+    prediction: "Multi-start simulated annealing with greedy local search will score significantly higher than random assignment — predicting score >= 85 vs ~51 for random, because SA explores the neighborhood of local optima and escapes shallow traps via probabilistic acceptance of worsening moves."
+    mechanism: "Max-Cut local optima under single-vertex flips are plentiful but shallow. Greedy local search reaches a local optimum quickly (~80 score). SA's temperature-controlled random perturbation allows escape from these local optima, reaching solutions closer to the global optimum. The multi-start strategy (20 restarts) diversifies initial conditions. Greedy construction for 5/20 restarts provides higher-quality starting points than pure random."
+    diagnostic: "If score < 85: check whether the judge's time limit is being exceeded (try fewer restarts or faster alpha). If score is ~80 (same as greedy-only), SA temperature schedule may be wrong — check that worsening moves are actually being accepted by logging acceptance rate."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the stub with a multi-start SA algorithm for Max-Cut: 20 restarts, each with greedy/random init → greedy local search → SA (T=3.0, T_min=0.001, alpha=0.99997) → re-greedy. Track and output the global best partition."
+        rationale: "This is the validated sa_v8 approach that scored 87.28 in probing. The combination of greedy init, local search, SA perturbation, and re-greedy covers the exploration-exploitation spectrum."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    algorithm: "multi-start-sa-greedy"
+    restarts: 20
+    sa_T_start: 3.0
+    sa_T_min: 0.001
+    sa_alpha: 0.99997
+    greedy_init_fraction: 0.25
+  unlocked_parameters_audit:
+    - name: "rng_seed"
+      default_value: 42
+      justification: "Fixed seed ensures reproducibility; score is averaged across judge test cases so seed choice has minimal impact."
+    - name: "sa_alpha"
+      default_value: 0.99997
+      justification: "Tuned empirically — slower cooling (0.99997) gave marginal improvement over 0.9999; further tuning is iter-2 territory."
+    - name: "num_restarts"
+      default_value: 20
+      justification: "Balanced between diversity and time budget; 30 restarts with faster alpha scored similarly."

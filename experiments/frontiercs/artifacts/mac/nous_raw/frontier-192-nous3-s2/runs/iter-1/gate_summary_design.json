@@ -1,0 +1,17 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a multi-start simulated annealing algorithm with greedy local search can achieve a high score (predicted \u226585/100) on the Max-Cut optimization problem (#192), compared to a naive random assignment baseline (~51/100). This is the first iteration, establishing a strong single-mechanism baseline before exploring more sophisticated approaches.",
+  "key_points": [
+    "Single arm (h-main): Multi-start SA with 20 restarts, greedy + random initialization, greedy local search, and SA cooling schedule (T=3.0\u21920.001, alpha=0.99997). This approach scored 87.28 in prior probing and is now being formally tested.",
+    "Confirmation criterion: Score \u226585 confirms that SA with greedy local search substantially outperforms random assignment and justifies this as a strong baseline. Score <85 would trigger diagnostics \u2014 checking for time-limit violations (reduce restarts) or ineffective SA acceptance (verify temperature schedule).",
+    "Key risks: (1) The judge may have larger/harder test cases than probing, causing timeouts (n\u22641000, m\u226420000 with 20 restarts \u00d7 SA iterations must fit within the time limit). (2) Output format must be exactly one line of space-separated 0/1 values \u2014 any deviation scores 0. (3) Fixed seed (42) is used; score variability across judge test cases is the main source of variance."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

@@ -1,0 +1,9 @@
+{
+  "gate_type": "findings",
+  "summary": "Both arms confirmed: the maximum clique solver scores 100/100 consistently, and is robust to shifting 100ms from branch-and-bound to local search (1700ms BnB + 200ms LS vs production 1800ms + 100ms). This is the third consecutive iteration achieving perfect scores.",
+  "key_points": [
+    "h-main CONFIRMED: Reallocating time (1700ms BnB / 200ms local search) scored 100 across all 3 runs, matching the production configuration \u2014 BnB completes well before any timeout in the 1700\u20131800ms range.",
+    "h-control-negative CONFIRMED: Production solution (1800ms BnB / 100ms local search) scored 100 across all 3 runs, consistent with iter-2 results (7/7 post-warmup).",
+    "The solver has achieved score 100 in every single run across iterations 1\u20133. The solution is stable, optimal on the test distribution, and well within the 2s time budget. No further optimization appears necessary \u2014 recommend approving and closing the campaign."
+  ]
+}

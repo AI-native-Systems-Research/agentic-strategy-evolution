@@ -1,0 +1,869 @@
+{
+  "problem_id": "192",
+  "agent": "engram",
+  "label": "engram-cb10-s2",
+  "model": "claude-opus-4-6",
+  "final_score": 86.70343666666668,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_192_engram-cb10-s2.solution.cpp",
+  "best_score": 86.70164666666668,
+  "method": "Engram-style (reimplementation)",
+  "agents": 18,
+  "rounds_per_agent": 4,
+  "code_generations": 63,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a multi-start local search with greedy initialization, followed by iterative 1-flip improvement, plus Kernighan-Lin style 2-opt moves, and simulated annealing to escape local optima, all within time limits.",
+      "cum_cost": 0.1235,
+      "best_score": 0
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 80.86874666666668,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.24,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.3497,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 0,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.4844,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a robust multi-restart local search with simulated annealing, using careful time management to maximize the number of restarts and escape local optima, building on the working baseline but adding SA perturbation and multiple random restarts to significantly improve cut quality.",
+      "cum_cost": 0.6765,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.81,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.9449,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 1,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.0685,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Multi-restart local search with greedy initialization using different random orderings, followed by 1-flip local search to reach local optima, then a lightweight simulated annealing phase to escape local optima, all within a strict time budget of ~2.5 seconds, keeping the best solution found across ",
+      "cum_cost": 1.2621,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.3946,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.5212,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 2,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.6352,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Multi-restart approach with greedy initialization + 1-flip local search to local optimum, then simulated annealing to escape, repeated with different random seeds until time runs out (~1.8s), keeping the globally best partition found.",
+      "cum_cost": 1.8341,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.9731,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.1025,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 3,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.2324,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Multi-restart local search with greedy initialization using different random orderings, followed by 1-flip local search to local optimum, then a lightweight perturbation (flip random vertices) to escape and re-run local search. Track the best cut across all restarts. Use time-based loop to maximize ",
+      "cum_cost": 2.4479,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.5745,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 4,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.6875,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 4,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.828,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 5,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Multi-restart greedy initialization + 1-flip local search with simulated annealing perturbation, keeping the best solution across restarts, all within a strict time budget of ~1.8 seconds. Building carefully on the working baseline code to avoid crashes.",
+      "cum_cost": 3.0543,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 5,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.1855,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 5,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.317,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 5,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.4519,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 6,
+      "round": 0,
+      "score": null,
+      "status": "parse_error",
+      "plan": "Multi-restart greedy + 1-flip local search with many random seeds within a 1.8s time budget, plus a perturbation phase (flip ~10% of vertices randomly then re-run local search) to escape local optima, keeping the best cut found across all restarts.",
+      "cum_cost": 3.6693,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 6,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.7969,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 6,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.9261,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 6,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.0621,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 7,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Multi-restart greedy + 1-flip local search with time-bounded iterations, random perturbation to escape local optima, and keeping the best solution found across all restarts \u2014 building directly on the working baseline but with many more restarts and perturbation-based diversification.",
+      "cum_cost": 4.3,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 7,
+      "round": 1,
+      "score": null,
+      "status": "error",
+      "plan": null,
+      "cum_cost": 4.4378,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 7,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.5323,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 7,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.6333,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 8,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a robust multi-restart local search with greedy initialization, 1-flip local search to local optimum, then perturbation (random flips) to escape, keeping the best solution found across many restarts within a ~1.8 second time budget. Also add a lightweight simulated annealing phase after lo",
+      "cum_cost": 4.8891,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 8,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.0306,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 8,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.1541,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 8,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.2789,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 9,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Multi-restart simulated annealing with greedy initialization and 1-flip local search, running many restarts within a 1.8s time budget, keeping the best cut found across all restarts.",
+      "cum_cost": 5.5458,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 9,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.6812,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 9,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.8013,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 9,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.9286,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 10,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a robust multi-restart local search with simulated annealing, building on the working baseline (score 80.87) by adding multiple random restarts, SA to escape local optima, and time-bounded execution to maximize cut quality within the time limit.",
+      "cum_cost": 6.1942,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 10,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.343,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 10,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.4713,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 10,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.6025,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 11,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a robust multi-restart simulated annealing with greedy initialization and 1-flip local search, using time-based termination to maximize the number of restarts and SA iterations within the time limit, building on the working baseline code structure.",
+      "cum_cost": 6.8774,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 11,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.005,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 11,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.1353,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 11,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.27,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 12,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a time-budgeted multi-restart approach with greedy initialization (random vertex orderings), 1-flip local search to local optimum, then perturbation (flip ~10-15% of vertices randomly) followed by more local search, keeping the global best across all restarts. This should substantially bea",
+      "cum_cost": 7.5574,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 12,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.6917,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 12,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.8093,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 12,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.9301,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 13,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Multi-restart greedy initialization + 1-flip local search with perturbation kicks (Breakout Local Search style) within a 1.8s time budget, keeping the best solution found across all restarts.",
+      "cum_cost": 8.2194,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 13,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.3468,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 13,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.4754,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 13,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.5995,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 14,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Multi-restart approach with greedy init + 1-flip local search + perturbation kicks (flip random vertices to escape local optima), all within a 1.8s time budget, keeping the best cut found across all restarts.",
+      "cum_cost": 8.9002,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 14,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.0134,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 14,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.131,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 14,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.2594,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 15,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Multi-restart local search with greedy initialization using different random orderings, followed by 1-flip local search to local optimum, then perturbation kicks (flip random vertices) to escape, all within a 1.5-second time budget, keeping the best cut found across all restarts.",
+      "cum_cost": 9.569,
+      "best_score": 80.86874666666668
+    },
+    {
+      "agent": 15,
+      "round": 1,
+      "score": 86.70164666666668,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.7007,
+      "best_score": 86.70164666666668
+    },
+    {
+      "agent": 15,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.8261,
+      "best_score": 86.70164666666668
+    },
+    {
+      "agent": 15,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.9644,
+      "best_score": 86.70164666666668
+    },
+    {
+      "agent": 16,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Improve the existing best solution by implementing a more sophisticated local search with simulated annealing, Kernighan-Lin style variable-depth moves, and better time management to explore more solution space within the time limit.",
+      "cum_cost": 10.3216,
+      "best_score": 86.70164666666668
+    }
+  ],
+  "input_tokens": 180870,
+  "output_tokens": 102005,
+  "cost_usd_est": 10.3634,
+  "journal": "/Users/toslali/frontier/gen_logs/frontier_192_engram-cb10-s2_engram/research_journal.md",
+  "trajectory": [
+    {
+      "cum_cost": 0.1235,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 0.24,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 0.3497,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 0.4844,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 0.6765,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 0.81,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 0.9449,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 1.0685,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 1.2621,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 1.3946,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 1.5212,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 1.6352,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 1.8341,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 1.9731,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 2.1025,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 2.2324,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 2.4479,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 2.5745,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 2.6875,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 2.828,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 3.0543,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 3.1855,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 3.317,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 3.4519,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 3.6693,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 3.7969,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 3.9261,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 4.0621,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 4.3,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 4.4378,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 4.5323,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 4.6333,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 4.8891,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 5.0306,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 5.1541,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 5.2789,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 5.5458,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 5.6812,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 5.8013,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 5.9286,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 6.1942,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 6.343,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 6.4713,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 6.6025,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 6.8774,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 7.005,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 7.1353,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 7.27,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 7.5574,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 7.6917,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 7.8093,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 7.9301,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 8.2194,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 8.3468,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 8.4754,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 8.5995,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 8.9002,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 9.0134,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 9.131,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 9.2594,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 9.569,
+      "best_score": 80.86874666666668
+    },
+    {
+      "cum_cost": 9.7007,
+      "best_score": 86.70164666666668
+    },
+    {
+      "cum_cost": 9.8261,
+      "best_score": 86.70164666666668
+    },
+    {
+      "cum_cost": 9.9644,
+      "best_score": 86.70164666666668
+    },
+    {
+      "cum_cost": 10.3216,
+      "best_score": 86.70164666666668
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 2039.8
+}

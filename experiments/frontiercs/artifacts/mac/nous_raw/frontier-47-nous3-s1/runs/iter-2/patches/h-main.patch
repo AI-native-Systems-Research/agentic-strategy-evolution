@@ -1,0 +1,296 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..a677575 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,289 @@
+-#include <bits/stdc++.h>
++#include <iostream>
++#include <sstream>
++#include <string>
++#include <vector>
++#include <algorithm>
++#include <functional>
++#include <cmath>
++#include <climits>
++#include <random>
++#include <chrono>
++#include <numeric>
+ using namespace std;
+-int main(){return 0;}
++
++struct Item { string type; int w, h; long long v; int limit; double density; };
++struct Rect { int x, y, w, h; };
++struct Placement { string type; int x, y, rot; };
++
++struct MaxRectsBin {
++    int binW, binH;
++    vector<Rect> freeRects;
++
++    void init(int W, int H) {
++        binW = W; binH = H;
++        freeRects.clear();
++        freeRects.reserve(256);
++        freeRects.push_back({0, 0, W, H});
++    }
++
++    struct FindResult { int px, py, rot; long long score; bool found; };
++
++    FindResult findBest(int w, int h, bool allowRot, int method) const {
++        FindResult best = {-1, -1, 0, LLONG_MAX, false};
++        tryOri(w, h, 0, method, best);
++        if (allowRot && w != h) tryOri(h, w, 1, method, best);
++        return best;
++    }
++
++    void tryOri(int w, int h, int rot, int method, FindResult &best) const {
++        int n = freeRects.size();
++        for (int i = 0; i < n; i++) {
++            const Rect &r = freeRects[i];
++            if (w > r.w || h > r.h) continue;
++            long long score;
++            if (method == 0) { // BSSF
++                int s = min(r.h-h, r.w-w), l = max(r.h-h, r.w-w);
++                score = (long long)s * 100000 + l;
++            } else if (method == 1) { // BAF
++                score = (long long)(r.w*r.h - w*h) * 100000 + min(r.h-h, r.w-w);
++            } else if (method == 2) { // BL
++                score = (long long)r.y * 100000 + r.x;
++            } else { // CP-like: prefer positions touching bin edges
++                int contact = 0;
++                if (r.x == 0) contact += h;         // left wall
++                if (r.y == 0) contact += w;         // bottom wall
++                if (r.x + w == binW) contact += h;  // right wall
++                if (r.y + h == binH) contact += w;  // top wall
++                // Higher contact = better = lower score
++                score = (long long)(10000 - contact) * 1000000LL + (long long)r.y * 1000 + r.x;
++            }
++            if (score < best.score) {
++                best = {r.x, r.y, rot, score, true};
++            }
++        }
++    }
++
++    void place(int x, int y, int w, int h) {
++        Rect used = {x, y, w, h};
++        int n = freeRects.size();
++        for (int i = n-1; i >= 0; i--) {
++            Rect &r = freeRects[i];
++            if (used.x >= r.x+r.w || used.x+used.w <= r.x ||
++                used.y >= r.y+r.h || used.y+used.h <= r.y) continue;
++            Rect orig = r;
++            freeRects[i] = freeRects.back(); freeRects.pop_back();
++            if (used.x > orig.x) freeRects.push_back({orig.x, orig.y, used.x-orig.x, orig.h});
++            if (used.x+used.w < orig.x+orig.w) freeRects.push_back({used.x+used.w, orig.y, orig.x+orig.w-used.x-used.w, orig.h});
++            if (used.y > orig.y) freeRects.push_back({orig.x, orig.y, orig.w, used.y-orig.y});
++            if (used.y+used.h < orig.y+orig.h) freeRects.push_back({orig.x, used.y+used.h, orig.w, orig.y+orig.h-used.y-used.h});
++        }
++        n = freeRects.size();
++        for (int i = n-1; i >= 0; i--) {
++            if (i >= (int)freeRects.size()) continue;
++            for (int j = (int)freeRects.size()-1; j >= 0; j--) {
++                if (i == j || i >= (int)freeRects.size()) continue;
++                if (freeRects[i].x >= freeRects[j].x && freeRects[i].y >= freeRects[j].y &&
++                    freeRects[i].x+freeRects[i].w <= freeRects[j].x+freeRects[j].w &&
++                    freeRects[i].y+freeRects[i].h <= freeRects[j].y+freeRects[j].h) {
++                    freeRects[i] = freeRects.back(); freeRects.pop_back(); break;
++                }
++            }
++        }
++        if ((int)freeRects.size() > 500) {
++            sort(freeRects.begin(), freeRects.end(),
++                 [](const Rect &a, const Rect &b){ return (long long)a.w*a.h > (long long)b.w*b.h; });
++            freeRects.resize(500);
++        }
++    }
++};
++
++struct PackResult { vector<Placement> pl; long long profit; };
++
++PackResult greedyMaxRects(int W, int H, bool allowRotate, const vector<Item> &items,
++                           const vector<int> &typeOrder, int method) {
++    MaxRectsBin bin; bin.init(W, H);
++    PackResult res; res.profit = 0;
++    vector<int> used(items.size(), 0);
++    for (int ti : typeOrder) {
++        const auto &it = items[ti];
++        while (used[ti] < it.limit) {
++            auto fr = bin.findBest(it.w, it.h, allowRotate, method);
++            if (!fr.found) break;
++            int pw = (fr.rot == 1) ? it.h : it.w;
++            int ph = (fr.rot == 1) ? it.w : it.h;
++            bin.place(fr.px, fr.py, pw, ph);
++            res.pl.push_back({it.type, fr.px, fr.py, fr.rot});
++            res.profit += it.v;
++            used[ti]++;
++        }
++    }
++    return res;
++}
++
++PackResult greedyTransposed(int W, int H, bool allowRotate, const vector<Item> &items,
++                             const vector<int> &typeOrder, int method) {
++    MaxRectsBin bin; bin.init(H, W);
++    PackResult res; res.profit = 0;
++    vector<int> used(items.size(), 0);
++    for (int ti : typeOrder) {
++        const auto &it = items[ti];
++        while (used[ti] < it.limit) {
++            auto fr = bin.findBest(it.h, it.w, allowRotate, method);
++            if (!fr.found) break;
++            int pw = (fr.rot == 1) ? it.w : it.h;
++            int ph = (fr.rot == 1) ? it.h : it.w;
++            bin.place(fr.px, fr.py, pw, ph);
++            res.pl.push_back({it.type, fr.py, fr.px, fr.rot});
++            res.profit += it.v;
++            used[ti]++;
++        }
++    }
++    return res;
++}
++
++int main(){
++    auto t0 = chrono::steady_clock::now();
++    auto elapsed = [&](){ return chrono::duration<double>(chrono::steady_clock::now()-t0).count(); };
++
++    string input; { ostringstream o; o << cin.rdbuf(); input = o.str(); }
++
++    auto fI = [&](const string &s, const string &key) -> long long {
++        string k = "\"" + key + "\"";
++        size_t p = s.find(k); if (p==string::npos) return 0;
++        p = s.find(':', p)+1;
++        while (p<s.size()&&isspace(s[p])) p++;
++        long long v=0; bool neg=false;
++        if (s[p]=='-'){neg=true;p++;}
++        while (p<s.size()&&isdigit(s[p])){v=v*10+(s[p]-'0');p++;}
++        return neg?-v:v;
++    };
++    auto fB = [&](const string &s, const string &key) -> bool {
++        size_t p=s.find("\""+key+"\""); if(p==string::npos) return false;
++        p=s.find(':',p)+1; while(p<s.size()&&isspace(s[p]))p++;
++        return s.substr(p,4)=="true";
++    };
++    auto fS = [&](const string &s, const string &key) -> string {
++        size_t p=s.find("\""+key+"\""); if(p==string::npos) return "";
++        p=s.find(':',p)+1; while(p<s.size()&&isspace(s[p]))p++;
++        if(s[p]!='"') return ""; p++; string r;
++        while(p<s.size()&&s[p]!='"') r+=s[p++]; return r;
++    };
++
++    int W=(int)fI(input,"W"), H=(int)fI(input,"H");
++    bool allowRot=fB(input,"allow_rotate");
++
++    vector<Item> items;
++    size_t ip=input.find("\"items\""), as=input.find('[',ip);
++    int d=0; size_t ae=as;
++    for(size_t i=as;i<input.size();i++){if(input[i]=='[')d++;if(input[i]==']'){d--;if(!d){ae=i;break;}}}
++    size_t pos=as;
++    while(true){
++        size_t os=input.find('{',pos+1); if(os==string::npos||os>ae) break;
++        size_t oe=input.find('}',os); if(oe==string::npos) break;
++        string obj=input.substr(os,oe-os+1);
++        Item it; it.type=fS(obj,"type");
++        if(it.type.empty()){pos=oe;continue;}
++        it.w=(int)fI(obj,"w"); it.h=(int)fI(obj,"h");
++        it.v=fI(obj,"v"); it.limit=(int)fI(obj,"limit");
++        it.density=(double)it.v/((double)it.w*it.h);
++        items.push_back(it); pos=oe;
++    }
++    int M=items.size();
++    if(!M){cout<<"{\"placements\":[]}"<<endl;return 0;}
++
++    vector<Placement> best; long long bestP=-1;
++    vector<int> bestOrder;
++    int bestMethod = 0;
++    auto tryR=[&](PackResult &r, const vector<int> &ord, int meth){
++        if(r.profit>bestP){bestP=r.profit;best=move(r.pl);bestOrder=ord;bestMethod=meth;}
++    };
++
++    auto mkOrd=[&](function<bool(int,int)> cmp){
++        vector<int> o(M); iota(o.begin(),o.end(),0);
++        sort(o.begin(),o.end(),cmp); return o;
++    };
++
++    vector<function<bool(int,int)>> cmps = {
++        [&](int a,int b){return items[a].density>items[b].density;},
++        [&](int a,int b){return items[a].v>items[b].v;},
++        [&](int a,int b){return (long long)items[a].w*items[a].h>(long long)items[b].w*items[b].h;},
++        [&](int a,int b){return max(items[a].w,items[a].h)>max(items[b].w,items[b].h);},
++        [&](int a,int b){return items[a].v*(long long)items[a].limit>items[b].v*(long long)items[b].limit;},
++        [&](int a,int b){return items[a].w+items[a].h>items[b].w+items[b].h;},
++        [&](int a,int b){return items[a].density*items[a].limit>items[b].density*items[b].limit;},
++        [&](int a,int b){return (double)items[a].v/max(items[a].w,items[a].h)>(double)items[b].v/max(items[b].w,items[b].h);},
++    };
++
++    // Phase 1: Deterministic — 8 orderings × 4 methods × 2 (normal + transposed)
++    for(auto &c:cmps){
++        auto o=mkOrd(c);
++        for(int m=0;m<4;m++){
++            auto r=greedyMaxRects(W,H,allowRot,items,o,m); tryR(r,o,m);
++            auto r2=greedyTransposed(W,H,allowRot,items,o,m); tryR(r2,o,m);
++        }
++    }
++
++    // Phase 2: Local search on best ordering
++    for (int pass = 0; pass < 3 && elapsed() < 0.25; pass++) {
++        bool improved = false;
++        for (int i = 0; i < M && elapsed() < 0.25; i++) {
++            for (int j = i+1; j < M && elapsed() < 0.25; j++) {
++                vector<int> o = bestOrder;
++                swap(o[i], o[j]);
++                for (int m = 0; m < 4; m++) {
++                    auto r = greedyMaxRects(W,H,allowRot,items,o,m);
++                    long long oldBest = bestP;
++                    tryR(r,o,m);
++                    if (bestP > oldBest) improved = true;
++                }
++            }
++        }
++        if (!improved) break;
++    }
++
++    // Phase 3: Random search
++    mt19937 rng(42);
++    while(elapsed() < 0.83){
++        vector<int> o(M);
++        iota(o.begin(), o.end(), 0);
++
++        int strategy = rng() % 6;
++        if (strategy == 0) {
++            shuffle(o.begin(), o.end(), rng);
++        } else if (strategy == 1) {
++            vector<pair<double,int>> sc(M);
++            for(int i=0;i<M;i++) sc[i]={items[i].density*exp(uniform_real_distribution<>(-3.0,3.0)(rng)),i};
++            sort(sc.rbegin(),sc.rend());
++            for(int i=0;i<M;i++) o[i]=sc[i].second;
++        } else if (strategy == 2 || strategy == 3) {
++            o = bestOrder;
++            int i = rng() % M, j = rng() % M;
++            swap(o[i], o[j]);
++        } else if (strategy == 4) {
++            o = bestOrder;
++            int i = rng() % M, j = rng() % M;
++            if (i > j) swap(i, j);
++            reverse(o.begin()+i, o.begin()+j+1);
++        } else {
++            vector<pair<double,int>> sc(M);
++            for(int i=0;i<M;i++) sc[i]={items[i].v*(double)items[i].limit*exp(uniform_real_distribution<>(-2.0,2.0)(rng)),i};
++            sort(sc.rbegin(),sc.rend());
++            for(int i=0;i<M;i++) o[i]=sc[i].second;
++        }
++
++        int m=uniform_int_distribution<>(0,3)(rng);
++        auto r=greedyMaxRects(W,H,allowRot,items,o,m); tryR(r,o,m);
++        if (rng() % 5 == 0) {
++            auto r2=greedyTransposed(W,H,allowRot,items,o,m); tryR(r2,o,m);
++        }
++    }
++
++    cout<<"{\"placements\":[";
++    for(int i=0;i<(int)best.size();i++){
++        if(i) cout<<",";
++        cout<<"{\"type\":\""<<best[i].type<<"\",\"x\":"<<best[i].x
++            <<",\"y\":"<<best[i].y<<",\"rot\":"<<best[i].rot<<"}";
++    }
++    cout<<"]}"<<endl;
++    return 0;
++}
