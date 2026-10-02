@@ -33,8 +33,13 @@ score-vs-cost view (quality per dollar), not a forced equal cost.
        at $37.75 after tree-kill+wall-proxy fix. Costs are upper bounds, not iso-$50. See RESULTS.md +
        claude_agent_gates/. LESSON: for single_agent, watchdog must TREE-KILL (kids first) + wall-clock
        proxy (usage writes late, invisible for stuck runs); macOS ps uses etime not etimes.
-4. [ ] Re-run **Nous** only where it stopped early at a cap (p0, p211, p44) + a longer cloudcast run
-       with the same hints Engram's prompt gets (fairness).
+4. [~] Re-run **Nous** (p0, p5 iso-rule; cloudcast hinted). BLOCKED 2026-10-02 by a reproducible
+       Nous `--agent sdk` streaming hang (gateway/CLI/deepagents all fine; only Nous streaming wedges
+       after ~1 iter; 3 relaunches). See engram_real/NOUS_RERUN_STATUS.md. FALLBACK (sound): originals
+       ran UNDER $50 (p0 86@$27, p5 83@$46); Nous keeps best across iters so more budget can only hold
+       or raise them -> 86/83 are conservative lower bounds under the rule, and Nous already beats the
+       baselines there. p9/p15/p22 hit ceiling 100 (already compliant). Not required for the conclusion;
+       retry reruns + cloudcast-hinted when the SDK-stream hang clears.
 5. [ ] Add **AIDE** as a 4th baseline and run it on our tasks.
 6. [ ] **Variance check:** pick a small subset (1–3 tasks), rerun each variant **2 more times**
        (3 total), and report run-to-run variance per variant.
