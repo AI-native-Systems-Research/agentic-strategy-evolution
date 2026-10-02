@@ -1,0 +1,43 @@
+{
+  "pid": 9,
+  "agent": "aide",
+  "method": "AIDE (unmodified search) + Frontier adapter",
+  "model": "claude-opus-4-6",
+  "label": "aide-smoke",
+  "final_score": 5.0,
+  "elapsed_sec": 103.9,
+  "final_cost_usd": 0.4825,
+  "tokens_in": 5834,
+  "tokens_out": 5267,
+  "llm_calls": 3,
+  "stop_reason": "steps",
+  "budget": 5.0,
+  "steps": 3,
+  "num_drafts": 2,
+  "tree_size": 3,
+  "n_good": 3,
+  "n_buggy": 0,
+  "nodes": [
+    {
+      "step": 0,
+      "stage": "draft",
+      "is_buggy": false,
+      "score": 5.0
+    },
+    {
+      "step": 1,
+      "stage": "draft",
+      "is_buggy": false,
+      "score": 5.0
+    },
+    {
+      "step": 2,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 5.0
+    }
+  ],
+  "best_solution_path": "/Users/toslali/frontier/gen_logs/frontier_9_aide-smoke_aide/solution.cpp",
+  "aide_paper": "arXiv:2502.13138",
+  "aide_repo": "github.com/WecoAI/aideml"
+}
