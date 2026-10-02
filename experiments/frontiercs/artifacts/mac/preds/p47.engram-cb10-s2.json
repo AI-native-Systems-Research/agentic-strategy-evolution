@@ -1,0 +1,310 @@
+{
+  "problem_id": "47",
+  "agent": "engram",
+  "label": "engram-cb10-s2",
+  "model": "claude-opus-4-6",
+  "final_score": 95.05297999999999,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_47_engram-cb10-s2.solution.cpp",
+  "best_score": 95.05889333333333,
+  "method": "Engram-style (reimplementation)",
+  "agents": 7,
+  "rounds_per_agent": 4,
+  "code_generations": 21,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a multi-strategy approach combining (1) a skyline/maximal-rectangles bottom-left packer with multiple item orderings sorted by value density, area, height etc., (2) strip-based packing where we try to fill horizontal strips with items of similar height, and (3) a greedy column/row tiling a",
+      "cum_cost": 0.5344,
+      "best_score": 0
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.9187,
+      "best_score": 0
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.2823,
+      "best_score": 0
+    },
+    {
+      "agent": 0,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.6227,
+      "best_score": 0
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Fix the JSON parsing (the root cause of score 0) using a proper recursive descent parser, then implement a robust maximal-rectangles bin packer with multiple ordering strategies and adaptive orientation selection.",
+      "cum_cost": 2.141,
+      "best_score": 0
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.4548,
+      "best_score": 0
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.7547,
+      "best_score": 0
+    },
+    {
+      "agent": 1,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.0582,
+      "best_score": 0
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 94.3957533333333,
+      "status": "success",
+      "plan": "Rewrite with robust character-by-character JSON parsing and an efficient skyline bottom-left packer, trying multiple item orderings (density, value, area) to maximize profit within 1 second.",
+      "cum_cost": 3.705,
+      "best_score": 94.3957533333333
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.1732,
+      "best_score": 94.3957533333333
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.52,
+      "best_score": 94.3957533333333
+    },
+    {
+      "agent": 2,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.7911,
+      "best_score": 94.3957533333333
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": 94.84166666666665,
+      "status": "success",
+      "plan": "Improve the MaxRects packer with (1) an interleaved greedy that generates items sorted by value-density and places them one-at-a-time (not all copies of one type first), (2) more MaxRects placement heuristics, (3) try both orientations properly in all modes, (4) add a strip/shelf packing mode for hi",
+      "cum_cost": 5.4645,
+      "best_score": 94.84166666666665
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": 95.03936666666665,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.9082,
+      "best_score": 95.03936666666665
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.3442,
+      "best_score": 95.03936666666665
+    },
+    {
+      "agent": 3,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.7291,
+      "best_score": 95.03936666666665
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": 95.05889333333333,
+      "status": "success",
+      "plan": "Improve the MaxRects packer by adding a removal-and-reinsertion local search phase after the greedy construction \u2014 after finding the best greedy solution, repeatedly try removing low-density placed items and reinserting higher-value items into the freed space, using a rebuild approach with time-limi",
+      "cum_cost": 7.4085,
+      "best_score": 95.05889333333333
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.9433,
+      "best_score": 95.05889333333333
+    },
+    {
+      "agent": 4,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.3801,
+      "best_score": 95.05889333333333
+    },
+    {
+      "agent": 4,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.7371,
+      "best_score": 95.05889333333333
+    },
+    {
+      "agent": 5,
+      "round": 0,
+      "score": null,
+      "status": "parse_error",
+      "plan": "Enhance the MaxRects packer with (1) a ruin-and-recreate local search that removes random subsets of placed items and re-packs the freed space, (2) more interleaved scoring variants including hybrid density-fit scores, (3) trying both bin orientations (swap W/H conceptually by swapping all item dime",
+      "cum_cost": 9.5861,
+      "best_score": 95.05889333333333
+    },
+    {
+      "agent": 5,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 10.1415,
+      "best_score": 95.05889333333333
+    }
+  ],
+  "input_tokens": 142618,
+  "output_tokens": 107299,
+  "cost_usd_est": 10.1867,
+  "journal": "/Users/toslali/frontier/gen_logs/frontier_47_engram-cb10-s2_engram/research_journal.md",
+  "trajectory": [
+    {
+      "cum_cost": 0.5344,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 0.9187,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 1.2823,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 1.6227,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.141,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.4548,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.7547,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 3.0582,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 3.705,
+      "best_score": 94.3957533333333
+    },
+    {
+      "cum_cost": 4.1732,
+      "best_score": 94.3957533333333
+    },
+    {
+      "cum_cost": 4.52,
+      "best_score": 94.3957533333333
+    },
+    {
+      "cum_cost": 4.7911,
+      "best_score": 94.3957533333333
+    },
+    {
+      "cum_cost": 5.4645,
+      "best_score": 94.84166666666665
+    },
+    {
+      "cum_cost": 5.9082,
+      "best_score": 95.03936666666665
+    },
+    {
+      "cum_cost": 6.3442,
+      "best_score": 95.03936666666665
+    },
+    {
+      "cum_cost": 6.7291,
+      "best_score": 95.03936666666665
+    },
+    {
+      "cum_cost": 7.4085,
+      "best_score": 95.05889333333333
+    },
+    {
+      "cum_cost": 7.9433,
+      "best_score": 95.05889333333333
+    },
+    {
+      "cum_cost": 8.3801,
+      "best_score": 95.05889333333333
+    },
+    {
+      "cum_cost": 8.7371,
+      "best_score": 95.05889333333333
+    },
+    {
+      "cum_cost": 9.5861,
+      "best_score": 95.05889333333333
+    },
+    {
+      "cum_cost": 10.1415,
+      "best_score": 95.05889333333333
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 1326.6
+}

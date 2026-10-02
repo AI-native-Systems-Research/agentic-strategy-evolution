@@ -1,0 +1,36 @@
+metadata:
+  iteration: 1
+  family: "maxrects-skyline-packer"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for problem #47 (2D rectangular knapsack with optional rotations)?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism — greedy bin packing with multi-heuristic search"
+
+arms:
+  - type: h-main
+    prediction: "The maximal-rectangles + skyline packer with multi-ordering randomized search will achieve a judge score significantly above 0, targeting ≥80, by efficiently packing high-value-density items first using best-fit heuristics."
+    mechanism: "The maximal-rectangles algorithm maintains a set of free rectangles and places items into the best-fitting one (minimizing short-side waste). By trying multiple item orderings (density, value, area, etc.) and placement methods (BSSF, BAF, BL), plus randomized density-weighted permutations within the 1s budget, the algorithm explores a diverse set of packings and selects the highest-profit result. Skyline packing provides an additional strategy that excels when items tile well in horizontal strips."
+    diagnostic: "If score is unexpectedly low: (1) check JSON parsing correctness on edge cases (type names containing special chars, large limits), (2) verify time budget isn't exceeded causing TLE on large inputs, (3) check if the pruning step in MaxRects creates too many free rectangles causing quadratic slowdown."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the empty stub with a comprehensive 2D bin packing solution implementing maximal-rectangles and skyline algorithms with multiple ordering heuristics and randomized search."
+        rationale: "The empty stub scores 0. A multi-strategy greedy packer should score high by efficiently filling the bin with high-value-density items."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 1
+    memory_limit_mb: 512
+    num_test_cases: 15
+    bin_size_range: [900, 2000]
+    num_item_types_range: [8, 12]
+    item_limit_max: 2000
+  unlocked_parameters_audit:
+    - name: "random_seed"
+      default_value: 12345
+      justification: "Fixed seed for deterministic reproducibility; randomized search explores orderings, not seed-dependent behavior."
+    - name: "time_budget_fraction"
+      default_value: 0.75
+      justification: "Leaves 0.25s margin for I/O and output generation; safe within the 1s limit."
+    - name: "max_free_rects"
+      default_value: "unlimited"
+      justification: "No cap applied; pruning keeps count manageable for the observed input sizes."

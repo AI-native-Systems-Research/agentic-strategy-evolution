@@ -1,0 +1,56 @@
+metadata:
+  iteration: 5
+  family: "cooling-schedule-shape"
+  research_question: "Does a two-phase cooling schedule (linear exploration + exponential convergence) improve SA score over pure exponential cooling at the confirmed 4.8s time budget?"
+  complexity_tier: 1
+  tier_justification: "iter 5, single mechanism (cooling schedule shape), treatment vs control at fixed time budget"
+
+arms:
+  - type: h-main
+    prediction: "Two-phase cooling (linear T0→T_mid over 60%, exponential T_mid→T1 over 40%) will score higher than pure exponential cooling on average across 5 runs, because maintaining higher temperature for longer (T≈0.022 vs T≈0.006 at midpoint) enables broader exploration before convergence, finding better configurations."
+    mechanism: "The exponential schedule T=T0·(T1/T0)^progress drops temperature rapidly: by 50% elapsed, T≈0.006. Most of the 'exploration budget' is spent in the first 30% of time. The two-phase schedule redistributes exploration time: linear cooling from T0=0.08 to T_mid=0.01 over 60% of budget keeps T at moderate levels (T≈0.022 at midpoint) where the SA can still accept moderately worse moves to escape local optima. The final 40% uses exponential cooling from T_mid=0.01 to T1=0.0005 for convergence refinement. With 4.8s budget providing ample total iterations (RP-6), the question is whether the cooling shape matters."
+    diagnostic: "If refuted: the exponential cooling's rapid early temperature drop is actually beneficial — spending more time at low temperatures (fine-tuning) matters more than exploration for this landscape. Check iteration counts in both phases and whether the two-phase schedule has enough convergence time."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the single exponential cooling line (T = T0 * pow(T1/T0, progress)) with a two-phase schedule: if progress < 0.6, use linear interpolation from T0=0.08 to T_mid=0.01; else use exponential from T_mid=0.01 to T1=0.0005. Also set total_time = 4.8."
+        rationale: "Tests whether the cooling schedule shape (exploration vs convergence time allocation) affects SA quality at 4.8s budget."
+  - type: h-control-negative
+    prediction: "Pure exponential cooling at 4.8s will score in the 90-93 range with stdev ~0.53, consistent with iter-4 findings. This serves as the reference for h-main comparison."
+    mechanism: "This is the iter-4 confirmed configuration (RP-6). The exponential cooling T=T0·(T1/T0)^progress with T0=0.08, T1=0.0005, total_time=4.8 provides a known performance baseline."
+    diagnostic: "If scores deviate significantly from iter-4 (mean 91.52, stdev 0.53), investigate whether the judge environment has changed."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Set total_time = 4.8 (change from 2.85). Keep all other parameters (T0=0.08, T1=0.0005, exponential cooling) unchanged."
+        rationale: "Replicates the iter-4 confirmed best setting as a control."
+
+# Arm selection rationale: Two arms chosen — h-main tests the two-phase cooling
+# hypothesis, h-control-negative replicates the iter-4 best as reference.
+# No ablation needed (single-mechanism change). No dose-response (cooling shape
+# is categorical, not a continuous knob). No robustness arm (same time budget).
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    total_time: 4.8
+    T0: 0.08
+    T1: 0.0005
+    greedy_time_limit: 0.12
+    best_check_interval: 0x7FFF
+  unlocked_parameters_audit:
+    - name: "phase1_frac"
+      default_value: 0.6
+      justification: "60% exploration / 40% convergence is a common SA partition; no prior data to tune this ratio."
+    - name: "T_mid"
+      default_value: 0.01
+      justification: "Chosen as geometric mean between T0 and T1 (0.08 and 0.0005); provides natural transition point."
+    - name: "xorstate_seed"
+      default_value: 88172645463325252
+      justification: "Fixed RNG seed; both arms use the same seed so differences come only from cooling schedule."
+    - name: "greedy_init_passes"
+      default_value: 200
+      justification: "Per RP-3, greedy init quality doesn't affect final SA score."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 75
+      h-control-negative: 75
+    observation_method: "Observed 60-90s per judge call during iter-4 and iter-5 probes"

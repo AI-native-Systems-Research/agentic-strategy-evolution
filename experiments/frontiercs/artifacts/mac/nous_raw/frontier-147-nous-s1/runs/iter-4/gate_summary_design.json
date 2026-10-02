@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether extending the simulated annealing (SA) time budget from 2.85s to 4.8s improves the judge score for AHC001 rectangle packing. Prior probes suggest 93.2 vs 91.6 in favor of the longer budget, and this experiment formalizes that comparison with a treatment arm (4.8s) and a control arm (2.85s baseline from iteration 3).",
+  "key_points": [
+    "Two arms: h-main (total_time=4.8s) vs h-control-negative (total_time=2.85s). All other parameters held constant (T0=0.08, T1=0.0005, best-tracking every 32K iters, greedy init 0.12s).",
+    "Confirmation criterion: h-main scores consistently higher than h-control-negative (predicted ~93 vs ~90-92). Refutation signals: h-main scores equal or lower, likely due to TLE on some test cases (4.8s exceeding the per-test limit) or unproductive low-temperature iterations.",
+    "Risk assessment: Probes showed the judge accepts runtimes up to ~5.8s without TLE, so 4.8s should be safe. Diagnostic plan if refuted includes checking for TLE zeros, verifying iteration counts, and potentially re-tuning the cooling schedule for the longer budget.",
+    "The experiment is tier-1 (single knob change), so two arms are sufficient \u2014 no ablation needed. Expected wall-clock time is ~60s for h-main and ~45s for h-control-negative."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

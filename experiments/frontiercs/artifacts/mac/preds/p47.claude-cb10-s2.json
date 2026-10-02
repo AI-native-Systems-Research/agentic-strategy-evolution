@@ -1,0 +1,185 @@
+{
+  "problem_id": "47",
+  "agent": "claude",
+  "label": "claude-cb10-s2",
+  "model": "claude-opus-4-6",
+  "final_score": 95.54957999999999,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_47_claude-cb10-s2.solution.cpp",
+  "best_score": 95.54957999999999,
+  "rounds": 15,
+  "history": [
+    {
+      "round": 0,
+      "score": 85.93426666666667,
+      "status": "success",
+      "cum_cost": 0.2452,
+      "best_score": 85.93426666666667
+    },
+    {
+      "round": 1,
+      "score": 95.54957999999999,
+      "status": "success",
+      "cum_cost": 0.7997,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 2,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 1.5393,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 3,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 2.3082,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 4,
+      "score": 37.28670666666666,
+      "status": "success",
+      "cum_cost": 3.0552,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 5,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 3.818,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 6,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 4.5869,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 7,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 5.3558,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 8,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 6.1246,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 9,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 6.8935,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 10,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 7.6624,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 11,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 8.4312,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 12,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 9.2001,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 13,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 9.969,
+      "best_score": 95.54957999999999
+    },
+    {
+      "round": 14,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 10.7379,
+      "best_score": 95.54957999999999
+    }
+  ],
+  "input_tokens": 152892,
+  "output_tokens": 112593,
+  "cost_usd_est": 10.7379,
+  "trajectory": [
+    {
+      "cum_cost": 0.2452,
+      "best_score": 85.93426666666667
+    },
+    {
+      "cum_cost": 0.7997,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 1.5393,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 2.3082,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 3.0552,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 3.818,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 4.5869,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 5.3558,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 6.1246,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 6.8935,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 7.6624,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 8.4312,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 9.2001,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 9.969,
+      "best_score": 95.54957999999999
+    },
+    {
+      "cum_cost": 10.7379,
+      "best_score": 95.54957999999999
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 1235.5
+}

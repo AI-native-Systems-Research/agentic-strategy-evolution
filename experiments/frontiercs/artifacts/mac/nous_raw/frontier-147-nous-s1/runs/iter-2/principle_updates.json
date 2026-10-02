@@ -1,0 +1,21 @@
+[
+  {
+    "id": "RP-3",
+    "statement": "For rectangle packing SA on AHC001, greedy initialization quality (single-cell vs multi-cell expansion) does not significantly affect final SA score. SA converges to similar quality (~89-90) regardless of init method, given sufficient SA budget (>2.5s).",
+    "confidence": "medium",
+    "regime": "AHC001 rectangle packing with N<=200, 10000x10000 grid, 3s time limit, SA with valid-by-construction moves",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "SA with max-expansion-bound proposals explores the solution space broadly enough that initial rectangle sizes don't constrain final quality. The landscape is well-connected under single-edge moves, so SA reaches similar basins from different starting points.",
+    "applicability_bounds": "Holds when SA budget >= 2.5s and N <= 200. May not hold for much larger N where init quality determines which basin SA falls into.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

@@ -1,0 +1,20 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether spatially-intelligent 2-opt moves (using a grid-based neighbor lookup) can improve TSP tour quality beyond the 69.5 score achieved in iteration 2's random-swap + boundary 2-opt approach. A single experiment arm implements a two-phase simulated annealing strategy: Phase 1 (0\u20131.3s) uses grid-guided 2-opt with stale position tracking for broad exploration, Phase 2 (1.3\u20131.85s) uses exact position tracking with short segments (\u226420) for precise refinement.",
+  "key_points": [
+    "Testing one arm (h-main): grid-guided 2-opt SA replacing iter-2's random 2-opt, predicted to score above 71.0 vs iter-2's 69.5 baseline",
+    "Core mechanism: a sqrt(N)-sized grid partitions cities spatially, enabling O(1) lookup of nearby cities as 2-opt reversal partners \u2014 this should find edge-uncrossing opportunities that random selection misses",
+    "Two-phase design: Phase 1 allows unlimited segment reversals with periodic pos[] rebuild (batch=300) for exploration; Phase 2 restricts to segments \u226420 with per-move pos[] update for precise local optimization",
+    "Confirmation criterion: measured judge score consistently above 71.0; refutation if score \u2264 69.5, which would indicate grid-guided candidates aren't producing accepted moves or pos[] staleness is harmful",
+    "Key diagnostic: if score doesn't improve, check (1) acceptance rate of grid-guided 2-opt moves, (2) pos[] accuracy drift in Phase 1, (3) whether Phase 1\u2192Phase 2 transition degrades quality",
+    "Time budget: 2s per test case; phases end at 1.3s and 1.85s respectively, leaving margin; judge call expected ~45s wall time"
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

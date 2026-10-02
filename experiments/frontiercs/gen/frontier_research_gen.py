@@ -358,7 +358,7 @@ def run_engram(pid, stmt, sol_path, model, logdir, label, agents=3, rounds_per_a
                         "stop_reason": stop_reason, "journal": str(journal_path)}
 
 
-def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
+def run_nous(pid, stmt, ws, model, logdir, nous_iters, label, hint=""):
     import yaml
     ws = Path(ws); ws.mkdir(parents=True, exist_ok=True)
     (ws / "solution.py").write_text(SEED)
@@ -391,7 +391,8 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
         f"finding metadata under key 'score'. Each experiment arm should try a distinct routing "
         f"strategy (shortest-cost tree, multi-path partition splitting, Steiner/relay routing, "
         f"load-balancing to avoid bandwidth bottlenecks) and report its measured score.\n\n"
-        f"PROBLEM README:\n{stmt}"
+        + (f"HINT: {hint}\n\n" if hint else "")
+        + f"PROBLEM README:\n{stmt}"
     )
     run_slug = re.sub(r"[^A-Za-z0-9]+", "-", f"research-{pid}-{label}").strip("-")
     spec = {
@@ -449,6 +450,7 @@ def main():
     ap.add_argument("--agents", type=int, default=3)
     ap.add_argument("--rounds-per-agent", type=int, default=3)
     ap.add_argument("--cost-budget", type=float, default=None)
+    ap.add_argument("--hint", default="", help="optional hint text appended to the Nous campaign desc (prompt-fairness)")
     args = ap.parse_args()
     pid = args.problem_id
     label = args.label or args.agent
@@ -483,7 +485,7 @@ def main():
                     cost_usd_est=info["cost_usd_est"], journal=info["journal"])
     else:
         ws = Path(args.logdir) / f"research_{pid}_{label}_ws"
-        cands = run_nous(pid, stmt, ws, args.model, args.logdir, args.nous_iters, label)
+        cands = run_nous(pid, stmt, ws, args.model, args.logdir, args.nous_iters, label, hint=args.hint)
         scored = []
         for c in cands:
             s, st, raw = evaluate(pid, c)

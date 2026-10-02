@@ -1,0 +1,43 @@
+metadata:
+  iteration: 2
+  family: "linear-cooling-sa-maxcut"
+  research_question: "Does linear-cooling SA with time-proportional temperature scheduling outperform geometric-cooling SA for Max-Cut?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (SA cooling schedule) + ablation against iter-1 baseline"
+
+arms:
+  - type: h-main
+    prediction: "Linear-cooling SA with 0.10s per restart and T0=3.0 will score higher than the geometric-cooling SA baseline (~86.7), achieving 87+ on the judge, because time-proportional temperature gives each restart a complete annealing schedule regardless of how many SA iterations fit, enabling deeper exploration of the cut landscape per restart."
+    mechanism: "Geometric cooling (T*=0.9995) converges after ~10k iterations regardless of available time, wasting remaining budget as essentially greedy. Linear cooling (T proportional to remaining fraction of 0.10s) ensures temperature scales from T0=3.0 to near-zero across the full SA phase, providing exploration at the optimal rate. Batched time checks (every 256 iterations) minimize chrono syscall overhead."
+    diagnostic: "If score ≤ 86.7, check whether the 0.10s SA budget per restart is too long (reducing restart count below a critical threshold). Try 0.05s or 0.03s per restart."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the entire solution with greedy + linear-cooling SA with restarts. Random init → greedy to local optimum → SA with linear temperature schedule (T = T0*(1-frac) + Tf*frac where frac = elapsed/0.10s) → track best across restarts. T0=3.0, Tf=0.001. Batched time checks every 256 SA iterations."
+        rationale: "Linear cooling adapts to the actual time budget per restart, giving a complete annealing schedule. Probed score: 87.6 peak, 87.55 median (5 runs)."
+
+  - type: h-ablation
+    prediction: "The original geometric-cooling SA (T=2.0, cooling=0.9995) will score consistently around 86.7, approximately 0.9 points below h-main, because geometric cooling exhausts useful exploration after ~10k iterations while the remaining time per restart adds no value."
+    mechanism: "With cooling=0.9995, temperature drops below 0.01 after ~10.6k iterations (~0.5ms), effectively ending exploration. The many restarts (~1000+) provide consistency but each restart's SA phase is too short for deep landscape exploration."
+    diagnostic: "If score > 87, the many-restarts strategy compensates for shallow per-restart exploration."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Use the iter-1 baseline solution: random init → greedy → SA with T=2.0, geometric cooling 0.9995, 200k iteration cap, per-iteration time check. Time limit 0.90s. Track best across restarts."
+        rationale: "Baseline reference from iter-1 scoring ~86.7 consistently."
+
+experiment_spec:
+  verified_parameters:
+    time_limit_seconds: 0.90
+    sa_t0_main: 3.0
+    sa_tf_main: 0.001
+    sa_time_per_restart_main: 0.10
+    sa_batch_size_main: 256
+    sa_t0_ablation: 2.0
+    sa_cooling_ablation: 0.9995
+    sa_iter_cap_ablation: 200000
+  unlocked_parameters_audit:
+    - name: n_max
+      default_value: 1000
+      justification: "Fixed by problem constraints, not a tunable parameter."
+    - name: m_max
+      default_value: 20000
+      justification: "Fixed by problem constraints, not a tunable parameter."

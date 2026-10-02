@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For maximum clique on graphs with N<=1000, a hybrid approach combining BnB (degeneracy ordering + greedy coloring bound with bitset color classes) with DLS tabu search fallback achieves optimal solutions within 2s, whereas pure BnB plateaus around 88-90% on hard dense instances.",
+    "confidence": "high",
+    "regime": "N <= 1000, M <= 500000, time limit 2s, undirected graphs",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "BnB with degeneracy ordering focuses search on the densest core first. Bitset color classes provide O(N/64) adjacency checks for coloring. When BnB times out on hard dense instances, DLS tabu search escapes local optima by systematically removing/adding clique vertices with tabu-based diversification, finding the optimal clique heuristically.",
+    "applicability_bounds": "Applies to maximum clique on moderate-size graphs. For N >> 1000 or very dense graphs, the BnB component may contribute less and local search becomes dominant.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Greedy clique construction by degree descending finds only ~34% of optimal clique size on average for the test suite, confirming that exhaustive search or sophisticated local search is essential for near-optimal max clique.",
+    "confidence": "high",
+    "regime": "N <= 1000, varied graph densities",
+    "evidence": [
+      "iteration-1-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Greedy selection gets stuck in local optima: high-degree vertices are chosen first but may not participate in the maximum clique. Without backtracking or swapping, the greedy solution is far from optimal.",
+    "applicability_bounds": "The 34% ratio depends on the specific test instance mix. For easy instances (sparse graphs or graphs where the max clique is small), greedy may perform better.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

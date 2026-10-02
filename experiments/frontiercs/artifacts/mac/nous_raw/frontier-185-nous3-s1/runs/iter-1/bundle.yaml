@@ -1,0 +1,41 @@
+metadata:
+  iteration: 1
+  family: "max-clique-bnb"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #185 (Maximum Clique)?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (BnB with coloring bound) vs greedy baseline"
+
+arms:
+  - type: h-main
+    prediction: "A branch-and-bound algorithm with degeneracy ordering, greedy coloring bounds, and bitset-accelerated candidate intersection will achieve score >= 95, substantially outperforming a greedy-only approach."
+    mechanism: "Degeneracy ordering processes vertices from highest core number first, concentrating search in the dense core where large cliques exist. Greedy coloring provides a tight upper bound (chromatic number ≥ clique number), pruning branches early. Bitset intersection computes candidate sets in O(N/64) per operation, making the BnB fast enough for N=1000 within 2s."
+    diagnostic: "If score is low, check (1) whether the time limit is being hit (timing issues), (2) whether the coloring bound is too loose on specific graph structures, (3) whether the degeneracy ordering is suboptimal for the test distribution."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement branch-and-bound max clique with degeneracy ordering, greedy coloring bound, bitset candidate intersection, and 500 random greedy restarts for initial lower bound."
+        rationale: "This is the gold-standard approach for exact/near-exact max clique on graphs with N up to ~1000. The bitset acceleration makes it feasible within 2s."
+
+  - type: h-control-negative
+    prediction: "A greedy-only approach (500 random restarts, no BnB) will score substantially lower than h-main, likely below 85."
+    mechanism: "Greedy clique construction is a polynomial-time heuristic that does not explore the exponential search space. It misses cliques that require non-greedy vertex selections, especially on graphs where the maximum clique is not reachable by any single greedy ordering."
+    diagnostic: "If greedy-only scores as high as BnB, the test cases may have structure that makes greedy sufficient (e.g., cliques formed by highest-degree vertices)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement greedy-only max clique with 500 random restarts and degree-based ordering, but no branch-and-bound search."
+        rationale: "Control arm to isolate the contribution of the BnB component."
+
+# Arm selection rationale: h-main tests the primary BnB algorithm; h-control-negative
+# validates that the BnB component (not just greedy restarts) is responsible for the
+# high score. This is the simplest meaningful contrast for iteration 1.
+
+experiment_spec:
+  verified_parameters:
+    solution_cpp: "solution.cpp"
+  preflight_commands: []
+  unlocked_parameters_audit:
+    - name: "greedy_restarts"
+      default_value: 500
+      justification: "500 restarts take <50ms total; diminishing returns beyond this based on testing."
+    - name: "time_cutoff_ms"
+      default_value: 1850
+      justification: "Leaves 150ms buffer for I/O and compilation overhead within the 2s judge limit."

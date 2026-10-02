@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For 2D rectangular knapsack with 8-12 item types, MaxRects with hill-climbing over item orderings achieves ~94.8/100, with item ordering being the dominant lever over packer heuristic choice.",
+    "confidence": "high",
+    "regime": "Bin 900-2000, 8-12 item types, 1s time limit, profits up to 10^9",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "MaxRects maintains maximal free rectangles enabling efficient best-fit placement. Hill-climbing (swap + insert neighborhoods) over item type orderings finds near-optimal orderings within 0.5s. The ordering determines which items get priority for the best free rectangles, which cascades through the entire packing.",
+    "applicability_bounds": "Applies when M <= 12 (small enough for effective local search). For very large M, the ordering space becomes too large for hill-climbing to be effective.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Contact perimeter heuristic is too slow for this time budget (1s) due to O(n^2) per-placement cost of tracking placed rectangles, and reduces effective search iterations.",
+    "confidence": "high",
+    "regime": "1s time limit with hundreds of placements per test case",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Each placement requires checking overlap with all previously placed rectangles to compute contact perimeter. With 100-1000 placements per test and 15 tests, this overhead reduces the number of ordering permutations that can be evaluated.",
+    "applicability_bounds": "May be worth it with longer time budgets (>5s) or fewer placements per test.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

@@ -1,0 +1,146 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..c0f7e93 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,140 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++int main(){
++    ios_base::sync_with_stdio(false);
++    cin.tie(NULL);
++
++    int n, m;
++    cin >> n >> m;
++
++    vector<vector<int>> adj(n+1);
++    for(int i = 0; i < m; i++){
++        int u, v;
++        cin >> u >> v;
++        adj[u].push_back(v);
++        adj[v].push_back(u);
++    }
++
++    if(m == 0){
++        for(int i = 1; i <= n; i++){
++            if(i > 1) cout << ' ';
++            cout << 0;
++        }
++        cout << '\n';
++        return 0;
++    }
++
++    mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
++
++    vector<int> bestPart(n+1, 0);
++    int bestCut = -1;
++
++    // Compute gain of flipping vertex u
++    auto calcGain = [&](vector<int>& part, int u) -> int {
++        int gain = 0;
++        for(int v : adj[u]){
++            if(part[u] == part[v]) gain++;
++            else gain--;
++        }
++        return gain;
++    };
++
++    // Greedy local search
++    auto greedyLS = [&](vector<int>& part) -> int {
++        bool improved = true;
++        while(improved){
++            improved = false;
++            for(int u = 1; u <= n; u++){
++                int g = calcGain(part, u);
++                if(g > 0){
++                    part[u] ^= 1;
++                    improved = true;
++                }
++            }
++        }
++        // Count cut
++        int cut = 0;
++        for(int u = 1; u <= n; u++)
++            for(int v : adj[u])
++                if(part[u] != part[v]) cut++;
++        return cut / 2;
++    };
++
++    auto startTime = chrono::steady_clock::now();
++    auto elapsed = [&]() -> double {
++        return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
++    };
++
++    double timeLimit = 0.90;
++    double saTimePerRestart = 0.10;
++    double T0 = 3.0;
++    double Tf = 0.001;
++
++    while(elapsed() < timeLimit){
++        // Random initialization
++        vector<int> part(n+1);
++        for(int i = 1; i <= n; i++){
++            part[i] = rng() & 1;
++        }
++
++        // Greedy to local optimum
++        int cut = greedyLS(part);
++
++        // SA with linear cooling
++        auto saStart = chrono::steady_clock::now();
++        int iter = 0;
++        double saElapsed = 0.0;
++
++        while(true){
++            // Batched time check every 256 iterations
++            if((iter & 255) == 0){
++                saElapsed = chrono::duration<double>(chrono::steady_clock::now() - saStart).count();
++                if(saElapsed >= saTimePerRestart) break;
++                if(elapsed() >= timeLimit) break;
++            }
++
++            // Linear temperature: T = T0*(1-frac) + Tf*frac
++            double frac = saElapsed / saTimePerRestart;
++            if(frac > 1.0) frac = 1.0;
++            double T = T0 * (1.0 - frac) + Tf * frac;
++
++            // Random vertex
++            int u = (rng() % n) + 1;
++            int g = calcGain(part, u);
++
++            if(g > 0){
++                part[u] ^= 1;
++                cut += g;
++            } else if(g == 0){
++                // Accept neutral moves with 50% probability
++                if(rng() & 1){
++                    part[u] ^= 1;
++                }
++            } else {
++                // Accept bad move with Boltzmann probability
++                double prob = exp((double)g / T);
++                double r = (double)(rng() % 10000) / 10000.0;
++                if(r < prob){
++                    part[u] ^= 1;
++                    cut += g;
++                }
++            }
++
++            iter++;
++        }
++
++        if(cut > bestCut){
++            bestCut = cut;
++            bestPart = part;
++        }
++    }
++
++    for(int i = 1; i <= n; i++){
++        if(i > 1) cout << ' ';
++        cout << bestPart[i];
++    }
++    cout << '\n';
++
++    return 0;
++}

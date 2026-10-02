@@ -1,0 +1,32 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Grid NN construction with time-guarded 2-opt will score significantly above the x-sorted baseline (score >> 0), achieving score >= 78 on the judge. The dominant factor is construction quality (visiting nearby cities via spatial grid), not penalty optimization.",
+      "observed": "Score: 78.428 (stable across 4 runs: 78.428, 78.428, 78.428, 78.4275). The grid NN construction with candidate-list 2-opt using fast penalty-aware delta (O(1) Euclidean + O(seg/10) penalty) consistently achieves ~78.4. The penalty (carrot constraint) is confirmed as a ~1% effect \u2014 pure Euclidean NN scores 78.19, and penalty-aware 2-opt adds ~0.2 points. SA and ILS variants were tested but proved unstable (73-78 range) due to timing sensitivity. The deterministic greedy approach dominates.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null,
+      "metadata": {
+        "score": 78.428,
+        "scores_observed": [
+          78.428,
+          78.428,
+          78.428,
+          78.4275
+        ],
+        "baseline_nn_only": 78.19,
+        "reference_nn_2opt": 78.29,
+        "sa_variant_range": "73-78.5 (unstable)",
+        "ils_variant": 78.47,
+        "approach": "Grid NN (G=sqrt(N/4)) + candidate-list 2-opt (K=5-10 spatial neighbors, seg_limit 200-500) with fast penalty delta"
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Prediction confirmed: score >= 78 achieved consistently at 78.43. The dominant factor is construction quality (grid NN), not penalty optimization. The fast 2-opt delta computation (O(1) Euclidean + O(seg/10) penalty positions) enables candidate-list 2-opt for all N sizes, adding ~0.2 points over pure NN. Advanced local search (SA, ILS) provides marginal and unstable improvements, confirming that the NN construction quality is the bottleneck.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

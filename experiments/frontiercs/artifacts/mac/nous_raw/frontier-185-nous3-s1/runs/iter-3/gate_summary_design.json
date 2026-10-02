@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether the production maximum-clique solver (Branch-and-Bound with greedy coloring + local search) is robust to minor time-budget reallocation, and confirming its reliability at iteration 3. Two arms compare BnB at 1800ms vs 1700ms timeout, with the freed 100ms going to local search recovery.",
+  "key_points": [
+    "h-main arm shifts 100ms from BnB to local search (1700ms BnB + 200ms local search), predicting score stays at 100 \u2014 confirming robustness to parameter tuning within the 2s budget.",
+    "h-control-negative arm reruns the production solution (1800ms BnB + 100ms local search) expecting score 100, providing a third-iteration reliability data point after iter-2 confirmed this configuration.",
+    "Confirmation criterion: both arms score 100. If h-main drops below 100, it means BnB needs the full 1800ms on some test cases and the time reallocation is harmful. If control drops below 100, system load variance (observed in iter-1) is the likely cause.",
+    "This is a low-risk robustness test \u2014 iter-2 already established that BnB solves instances well within budget and local search is defensive insurance, so the main scientific value is confirming stability across iterations."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

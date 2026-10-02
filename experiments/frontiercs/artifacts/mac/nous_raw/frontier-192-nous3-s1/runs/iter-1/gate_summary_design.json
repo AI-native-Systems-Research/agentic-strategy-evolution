@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether an FM (Fiduccia-Mattheyses) partitioning algorithm with greedy local search and random restarts can achieve a high Max-Cut score (predicted >85/100) on problem #192, compared to a trivial alternating baseline (predicted ~50/100). This validates that the FM escape-from-local-optima mechanism is the key driver of performance.",
+  "key_points": [
+    "h-main: FM partitioning with greedy local search init, FM passes (best-prefix vertex-flip sequences), and multiple random restarts within a 0.90s time budget. Predicted score >85.",
+    "h-control-negative: Trivial s[i] = i%2 assignment ignoring graph structure. Predicted score ~50, establishing a lower bound to confirm the FM mechanism matters.",
+    "Confirmation criteria: h-main scores significantly above h-control-negative (ideally >85 vs ~50). Refutation: if h-main scores \u226460 or h-control-negative scores unexpectedly high (>75), indicating either FM isn't helping or the problem structure makes any assignment work well.",
+    "Key risk: the 1s time limit per test case \u2014 the 0.90s budget leaves only 0.10s margin. If FM restarts are too slow for n=1000, m=20000 graphs, score could drop to 0 on large cases.",
+    "Output format is critical: exactly one line of n space-separated 0/1 values. Any deviation (extra newlines, wrong separators) could zero the score regardless of algorithmic quality."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

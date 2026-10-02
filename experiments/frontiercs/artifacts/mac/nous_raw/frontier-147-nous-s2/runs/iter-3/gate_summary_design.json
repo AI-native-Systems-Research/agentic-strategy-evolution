@@ -1,0 +1,17 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether multi-restart simulated annealing (3 restarts with shuffled greedy initialization) outperforms single-run SA for the AHC001 rectangle packing problem, where N companies' ad rectangles must be placed in a 10000\u00d710000 grid to maximize satisfaction. Prior probing in iterations 1-2 established SA as the dominant approach; this iteration isolates the restart mechanism's contribution via a controlled ablation.",
+  "key_points": [
+    "h-main: 3-restart SA with shuffled greedy order each restart (expected score ~87.5). Each restart explores a different basin of attraction by randomizing which rectangles get priority in the greedy expansion phase, then SA refines locally. Global best across restarts is kept.",
+    "h-ablation: Single-run SA with fixed greedy order and full 9.3s SA budget (expected score ~85.4). This has more SA iterations but no starting-point diversity, isolating whether restart diversity or raw SA convergence time matters more.",
+    "Confirmation criterion: h-main scoring \u22652 points above h-ablation would confirm that restart diversity is the key driver. If scores are within ~1 point, it would refute the restart hypothesis and suggest SA convergence time is the bottleneck instead. Both arms use identical SA parameters (T=0.01 linear cooling, 8 move types) to ensure a clean comparison."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

@@ -1,0 +1,146 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..51dfe43 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,140 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++const int MAXN = 1001;
++bitset<MAXN> adj[MAXN];
++int N, M;
++int best[MAXN], bestSz;
++int cur[MAXN], curSz;
++chrono::steady_clock::time_point t0;
++bool tup;
++int calls;
++
++inline void ckTime() {
++    if (chrono::duration_cast<chrono::milliseconds>(
++            chrono::steady_clock::now() - t0).count() > 1900)
++        tup = true;
++}
++
++// BBMC-style expand: P is the candidate set (passed by ref, will be modified)
++void expand(bitset<MAXN>& P) {
++    if (tup) return;
++    if (P.none()) {
++        if (curSz > bestSz) {
++            bestSz = curSz;
++            memcpy(best, cur, curSz * sizeof(int));
++        }
++        return;
++    }
++
++    // BBMC greedy coloring using bitset operations
++    int ordered[MAXN];
++    int vColor[MAXN];
++    int nOrd = 0, numColors = 0;
++
++    bitset<MAXN> U = P;
++    while (U.any()) {
++        bitset<MAXN> Q = U;
++        while (Q.any()) {
++            int v = Q._Find_first();
++            ordered[nOrd] = v;
++            vColor[nOrd] = numColors + 1;
++            nOrd++;
++            Q &= ~adj[v];
++            Q.reset(v);
++            U.reset(v);
++        }
++        numColors++;
++    }
++
++    if (curSz + numColors <= bestSz) return;
++
++    for (int i = nOrd - 1; i >= 0; i--) {
++        if (tup) return;
++        if (curSz + vColor[i] <= bestSz) return;
++
++        int v = ordered[i];
++        bitset<MAXN> newP = P & adj[v];
++
++        cur[curSz++] = v;
++        expand(newP);
++        curSz--;
++
++        P.reset(v);
++
++        if (++calls % 50000 == 0) ckTime();
++    }
++}
++
++void greedy(int* ord, int n) {
++    bitset<MAXN> cs;
++    int cl[MAXN], sz = 0;
++    for (int i = 0; i < n; i++) {
++        int v = ord[i];
++        if ((int)(cs & adj[v]).count() == sz) {
++            cl[sz++] = v;
++            cs.set(v);
++        }
++    }
++    if (sz > bestSz) {
++        bestSz = sz;
++        memcpy(best, cl, sz * sizeof(int));
++    }
++}
++
++int main() {
++    ios::sync_with_stdio(false);
++    cin.tie(nullptr);
++    t0 = chrono::steady_clock::now();
++
++    cin >> N >> M;
++    for (int i = 0; i < M; i++) {
++        int u, v; cin >> u >> v; u--; v--;
++        adj[u].set(v); adj[v].set(u);
++    }
++    bestSz = curSz = calls = 0;
++    tup = false;
++
++    // Greedy restarts
++    int ord[MAXN];
++    iota(ord, ord + N, 0);
++    sort(ord, ord + N, [](int a, int b){ return adj[a].count() > adj[b].count(); });
++    greedy(ord, N);
++    mt19937 rng(42);
++    for (int r = 0; r < 499; r++) {
++        shuffle(ord, ord + N, rng);
++        greedy(ord, N);
++    }
++
++    // Degeneracy ordering
++    int degOrd[MAXN], deg[MAXN];
++    bool rm[MAXN] = {};
++    for (int i = 0; i < N; i++) deg[i] = (int)adj[i].count();
++    for (int it = 0; it < N; it++) {
++        int mv = -1, md = N + 1;
++        for (int i = 0; i < N; i++)
++            if (!rm[i] && deg[i] < md) { md = deg[i]; mv = i; }
++        degOrd[it] = mv; rm[mv] = true;
++        for (int j = adj[mv]._Find_first(); j < N; j = adj[mv]._Find_next(j))
++            if (!rm[j]) deg[j]--;
++    }
++
++    // BnB
++    ckTime();
++    for (int idx = N - 1; idx >= 0 && !tup; idx--) {
++        int v = degOrd[idx];
++        bitset<MAXN> P;
++        for (int j = idx + 1; j < N; j++) {
++            int u = degOrd[j];
++            if (adj[v].test(u)) P.set(u);
++        }
++        if ((int)P.count() + 1 <= bestSz) continue;
++
++        cur[0] = v; curSz = 1;
++        expand(P);
++    }
++
++    bool inCl[MAXN] = {};
++    for (int i = 0; i < bestSz; i++) inCl[best[i]] = true;
++    for (int i = 0; i < N; i++) cout << inCl[i] << "\n";
++}

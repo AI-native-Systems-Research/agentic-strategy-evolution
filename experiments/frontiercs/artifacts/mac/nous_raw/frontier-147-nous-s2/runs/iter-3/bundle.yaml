@@ -1,0 +1,42 @@
+metadata:
+  iteration: 3
+  family: "multi-restart-sa-confirmation"
+  research_question: "Can multi-restart SA with shuffled greedy initialization be confirmed as the dominant strategy for AHC001 rectangle packing?"
+  complexity_tier: 2
+  tier_justification: "iter-3 — tier 1 established SA dominance (iter-1), tier 2 tests restart mechanism with ablation"
+
+arms:
+  - type: h-main
+    prediction: "Multi-restart SA (3 restarts, shuffled greedy, T=0.01 linear cooling) will score higher than single-run SA, with the improvement consistent across judge evaluations (expected ~87.5 vs ~85.4)."
+    mechanism: "Multiple restarts with different greedy expansion orders explore different basins of attraction in the solution space. Each restart's shuffled greedy produces a distinct initial configuration where different rects get priority for space allocation. SA then optimizes within each basin. The global-best selection across restarts captures the best basin. With N=50-200 rects competing for 10000x10000 space, the greedy ordering determines which rects get prime real estate early, creating fundamentally different starting configurations. Code ref: solution_v5.cpp:68-70 (shuffle), solution_v5.cpp:208-219 (restart loop with global_best)."
+    diagnostic: "If h-main does not outperform h-ablation, it means the SA landscape has a single dominant basin reachable from any reasonable starting point, making restart diversity unnecessary. Check whether all 3 restarts converge to similar total satisfaction values (same basin) vs different values (different basins)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Refactor into doGreedy(rng) and doSA(rng, endTime) functions. Add global_best array. Main loop: 3 restarts, each calling shuffle(order)+doGreedy+doSA with endTime=(restart+1)*3.0+0.5 capped at 9.3. Keep global_best across restarts. Use sqrt(ratio)*3 max 150 for greedy steps. Reference: solution_v5.cpp."
+        rationale: "Multi-restart with shuffled greedy explores multiple basins of attraction. Probing showed this scores 87.55 vs 85.44 for single-run SA."
+
+  - type: h-ablation
+    prediction: "Single-run SA (fixed greedy order, one 9.3s SA run) will score ~85.4, consistently lower than h-main by ~2 points."
+    mechanism: "Without restarts, the SA is locked into the single basin determined by the fixed greedy expansion order. It has more total SA time (~7.5s vs ~5s spread across restarts) but explores only one region of the solution space. The longer SA time cannot compensate for the lack of diversity in starting configurations."
+    diagnostic: "If h-ablation matches h-main, it means SA convergence time is the bottleneck (not starting-point diversity). The single long run's extra iterations would then outweigh the restart diversity benefit."
+
+# Arm selection note: h-main + h-ablation is the minimal pair needed to
+# isolate the restart mechanism. Additional arms (dose-response on restart
+# count, alternative initialization methods) were explored during design
+# probing and all scored worse than v5, so they would not add information.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    n_restarts: 3
+    greedy_step_factor: 3
+    greedy_step_max: 150
+    sa_temperature_initial: 0.01
+    sa_cooling: "linear"
+    sa_move_count: 8
+    sa_time_limit: 9.3
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 180
+      h-ablation: 180
+    observation_method: "Judge eval via fmeasure_147.sh takes ~2-3 minutes per solution"

@@ -1,0 +1,72 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..206492a 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,66 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++int N;
++int x[205], y[205], r[205];
++int a[205], b[205], c[205], d[205];
++
++mt19937 rng(42);
++
++inline bool overlaps(int i, int j) {
++    return a[i] < c[j] && a[j] < c[i] && b[i] < d[j] && b[j] < d[i];
++}
++
++inline long long area(int i) {
++    return (long long)(c[i] - a[i]) * (d[i] - b[i]);
++}
++
++bool check_no_overlap(int i) {
++    for (int j = 0; j < N; j++) {
++        if (i == j) continue;
++        if (overlaps(i, j)) return false;
++    }
++    return true;
++}
++
++int main() {
++    scanf("%d", &N);
++    for (int i = 0; i < N; i++) {
++        scanf("%d %d %d", &x[i], &y[i], &r[i]);
++    }
++
++    // Initialize 1x1 at desired point
++    for (int i = 0; i < N; i++) {
++        a[i] = x[i];
++        b[i] = y[i];
++        c[i] = x[i] + 1;
++        d[i] = y[i] + 1;
++    }
++
++    // Greedy expansion only — no SA
++    for (int iter = 0; iter < 2000; iter++) {
++        for (int i = 0; i < N; i++) {
++            long long cur = area(i);
++            if (cur >= r[i]) continue;
++
++            int dir = rng() % 4;
++            int oa = a[i], ob = b[i], oc = c[i], od = d[i];
++
++            switch(dir) {
++                case 0: if (a[i] > 0) a[i]--; break;
++                case 1: if (c[i] < 10000) c[i]++; break;
++                case 2: if (b[i] > 0) b[i]--; break;
++                case 3: if (d[i] < 10000) d[i]++; break;
++            }
++
++            if (!check_no_overlap(i)) {
++                a[i] = oa; b[i] = ob; c[i] = oc; d[i] = od;
++            }
++        }
++    }
++
++    for (int i = 0; i < N; i++) {
++        printf("%d %d %d %d\n", a[i], b[i], c[i], d[i]);
++    }
++    return 0;
++}

@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After 3 iterations optimizing a rectangle-packing SA for AHC001, the best strategy (multi-restart SA with shuffled greedy init, 3 restarts, T=0.01 linear cooling) scores ~86-87 points. The predicted 2-point advantage of multi-restart over single-run SA turned out to be only ~0.6 points (not statistically significant at n=3), with judge variance (~0.5-0.7 pts) much larger than the 0.02 previously claimed.",
+  "key_points": [
+    "Best measured scores: multi-restart SA averages 86.07 (range 85.75\u201386.61), single-run SA averages 85.46 (range 84.76\u201386.09). The improvement from restarts is real but small (~0.6 pts, p\u22480.13).",
+    "Extensive ablation in iter-3 ruled out many 'smart' enhancements: neighbor-swap moves (85.2), weighted selection (85.1), spatial grid indexing (84.7), recursive bisection (30.2), 5 restarts (83.5), higher temperatures (82.6\u201384.6). For N\u2264200, raw iteration throughput with O(N) brute-force collision checking dominates all clever data structures.",
+    "Key tuning parameters are locked in: greedy step = sqrt(ratio)*3 capped at 150, 8-move uniform SA, T\u2080=0.01 linear cooling, 3 restarts. The careful greedy initialization matters more than SA duration.",
+    "Judge variance was discovered to be ~0.5\u20130.7 points per run (not 0.02 as iter-2 claimed), meaning design probes can be misleading \u2014 the 87.55 'validated' score and 85.44 baseline were likely favorable/unfavorable samples rather than true performance levels.",
+    "Next iteration should explore fundamentally different approaches: (1) LP/assignment-based formulation for initial placement, (2) proper Voronoi-like recursive bisection with guaranteed point containment, (3) adaptive per-test-case tuning (e.g., restart count based on N), or (4) a two-phase approach with coarse placement followed by fine boundary optimization. Incremental SA tuning appears to have hit diminishing returns around 85\u201387."
+  ]
+}

@@ -8,9 +8,12 @@
 scientific loop helps. The four agents: **Claude-agent → AIDE → Engram → Nous** (all tool-enabled,
 same model, same budget rule).
 
-**The rule for every run:** keep going until the score maxes out (100), stops improving (plateau),
-or we hit **$50** — then report the final score AND the dollars spent. We compare on a
-score-vs-cost view (quality per dollar), not a forced equal cost.
+**The rule for every run (UPDATED 2026-10-02):** keep going until the score maxes out (100) OR we
+hit **$50** spent — **NO plateau early-stop** (removed). Report the final score AND the dollars spent.
+We compare on a score-vs-cost view (quality per dollar), not a forced equal cost. Applies to ALL
+variants going forward; set per-run caps high (e.g. Nous --nous-iters 12) so $50 is the binding limit.
+NOTE: already-completed Claude-agent runs used --early_stop_patience 3 (plateau); if we want strict
+conformance they'd re-run to $50, but their scores already exceed/plateau so it's low-value.
 
 **Where we are:**
 - [x] Established 7-task + p22/cloudcast results (with the OLD weak Engram reimpl + a chat-only Claude).

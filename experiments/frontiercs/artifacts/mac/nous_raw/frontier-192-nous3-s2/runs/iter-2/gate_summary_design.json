@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether combining Simulated Annealing with Iterated Local Search (ILS) perturbation, while reducing restarts from 20 to 12, can improve Max-Cut score consistency and magnitude beyond the iteration-1 SA-only baseline that scored 84.62. The hypothesis is that fewer restarts avoid time-limit exceeded (TLE) issues on large inputs, while ILS perturbation cycles cheaply explore more local optima to compensate.",
+  "key_points": [
+    "Main arm (SA+ILS): 12 restarts with 12 perturbation+greedy cycles each, SA parameters T=3.0/alpha=0.99997. Prediction: consistent ~87 score with no TLE variance.",
+    "Control arm: Re-run the iteration-1 SA-only solution (20 restarts, no perturbation) to check whether its 84.62 score was due to TLE on large cases or just algorithmic limitation. If it scores >87 consistently, the TLE hypothesis is wrong.",
+    "Confirmation criteria: h-main scores \u226587 consistently AND h-control scores lower or inconsistently \u2192 TLE+diversity hypothesis confirmed. If h-main doesn't improve over h-control \u2192 perturbation mechanism is ineffective or restarts reduction hurt more than perturbation helped.",
+    "Key risk: The perturbation strength range (n/20 to n/32 vertices flipped) may be too narrow to escape local optima basins on dense graphs, or 12 restarts may still be too many for n=1000, m=20000 within the time limit."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

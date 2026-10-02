@@ -1,0 +1,44 @@
+metadata:
+  iteration: 2
+  family: "max-clique-dls-ablation"
+  research_question: "Is the DLS tabu search fallback necessary for score 100, or does BnB alone (with degeneracy ordering + coloring bound) suffice within the 2s budget?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — single mechanism ablation to isolate DLS contribution, building on iter-1 confirmed BnB+DLS hybrid"
+
+arms:
+  - type: h-main
+    prediction: "The BnB+DLS hybrid from iter-1 will reproduce score 100, confirming the approach is reliable across judge evaluations."
+    mechanism: "BnB with degeneracy ordering focuses on densest-core vertices first. Bitset color classes provide O(N/64) adjacency intersection for tight upper bounds. DLS tabu fallback catches any instances where BnB times out at 1600ms, using tabu-driven add/remove swaps to escape local optima. Together they cover both easy (BnB-solvable) and hard (DLS-needed) instances."
+    diagnostic: "If score < 100, check whether the judge test set changed or if there's a compilation difference."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace contents with the full BnB+DLS hybrid: degeneracy ordering, bitset greedy coloring bound with color-class vertex ordering, greedy warm-starts (degree-sorted, degeneracy-sorted, per-vertex from high-core), BnB with 1600ms timeout, DLS tabu local search fallback for remaining time up to 1950ms."
+        rationale: "This is the proven iter-1 solution that scored 100. Reproducing it confirms reliability."
+
+  - type: h-ablation
+    prediction: "BnB alone (without DLS fallback) will score lower than 100, likely in the 88-95 range, because hard dense instances cause BnB to time out before finding the optimal clique."
+    mechanism: "Without DLS, the solver relies entirely on BnB. Even with degeneracy ordering and tight coloring bounds, some dense instances have exponential search trees that BnB cannot fully explore in 2s. The missing DLS fallback means these instances return the best clique found before timeout, which may not be optimal."
+    diagnostic: "If score == 100, then the test set may not contain instances hard enough to time out BnB, or the extra 350ms (1950ms vs 1600ms) is enough for BnB to complete. Check per-test timing if available."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Same as h-main but remove the local_search function entirely and remove the 'if (timed_out) local_search(1950)' call. Increase BnB time_limit_ms from 1600 to 1950 to give BnB the full time budget."
+        rationale: "Isolates the DLS contribution by removing it while giving BnB extra time to compensate."
+
+# Arms chosen: h-main (reproduce proven solution) + h-ablation (test DLS necessity).
+# Skipped h-control-negative (already done in iter-1 with greedy at 33.8).
+# Skipped h-dose-response (DLS is binary — present or absent, not a continuous knob).
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_bnb_ms: 1600
+    time_limit_dls_ms: 1950
+    dls_tenure_base: 5
+    dls_no_improve_restart: 500
+  unlocked_parameters_audit:
+    - name: "dls_seed"
+      default_value: 42
+      justification: "Fixed seed for reproducibility; DLS result is deterministic given this seed."
+    - name: "greedy_warm_start_limit"
+      default_value: 100
+      justification: "Per-vertex greedy limited to top 100 by core number; higher values add negligible benefit within 100ms warm-start budget."

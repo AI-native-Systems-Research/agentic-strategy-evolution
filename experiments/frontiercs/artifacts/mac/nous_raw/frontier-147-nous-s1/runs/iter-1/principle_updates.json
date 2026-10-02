@@ -1,0 +1,39 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For rectangle packing SA, computing max expansion bounds per edge before proposing moves (valid-by-construction proposals) yields higher scores than random-step + overlap-rejection, despite the O(N) cost per bound computation.",
+    "confidence": "high",
+    "regime": "N <= 200, 10000x10000 grid, 2.8s SA budget",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Random step proposals waste most SA iterations on collisions (especially in crowded regions). Computing the exact valid range per edge ensures every proposal is feasible, dramatically increasing the effective iteration count and enabling larger moves.",
+    "applicability_bounds": "Holds when N is small enough that O(N) bound computation is cheap. May not hold for N >> 200 where bound computation dominates.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "SA is the dominant score mechanism for AHC001 rectangle packing, providing ~70 points over greedy-only (89.5 vs 20.2).",
+    "confidence": "high",
+    "regime": "N in [50,200], time budget ~3s",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-1-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Greedy expansion can only grow rectangles and cannot redistribute area from oversized to undersized rects. SA enables both grow and shrink moves, allowing area redistribution that matches the satisfaction function's area-matching requirement.",
+    "applicability_bounds": "Greedy alone will always be weak for this problem because area targets sum to grid area, meaning redistribution is essential.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

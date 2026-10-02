@@ -1,0 +1,178 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #47?'
+run_id: frontier-47-nous3-s1
+max_iterations: 3
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::47
+  description: "You are solving Frontier-CS algorithmic problem #47. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /Users/toslali/frontier/gen_logs/fmeasure_47.sh $PWD/solution.cpp\n\
+    It prints a single line 'SCORE: <n>' where n is the judge score (0-100). Record\
+    \ that number in the finding metadata under key 'score'. Each experiment arm should\
+    \ try a distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nOUTPUT FORMAT: Match the statement's Output section EXACTLY: the number\
+    \ of lines, the separators (spaces vs newlines), and the token order. A correct\
+    \ algorithm can score near zero purely from a format mismatch (for example printing\
+    \ one value per line when a single space-separated line is required, or emitting\
+    \ extra or blank lines). Re-read the Output section and conform to it precisely.\n\
+    TIME BUDGET: Respect the per-test time limit stated in the problem. A solution\
+    \ that exceeds the limit on a test case scores 0 for that case even if its answer\
+    \ is correct, so choose an algorithm and parameters (iteration counts, restarts)\
+    \ that comfortably finish within the limit on the largest inputs.\n\nPROBLEM STATEMENT:\n\
+    2D Rectangular Knapsack with (Optional) 90\xB0 Rotations \u2014 Official Problem\
+    \ Statement (Hard Set)\n============================================================================================\n\
+    \nSummary\n-------\nYou are given a single rectangular **bin** and several **item\
+    \ types**. Each item type t has\ndimensions (w_t, h_t), profit v_t, and an availability\
+    \ limit L_t. You may place zero or more\naxis\u2011aligned rectangles (items)\
+    \ of these types into the bin, without overlap and fully inside\nits boundary.\
+    \ In some tests, 90\xB0 rotation of items is allowed; in others it is not. Your\
+    \ goal is\nto maximize the **total profit** of the placed items.\n\nThis is an\
+    \ **optimization** problem with **partial scoring**. Your program prints a **feasible\
+    \ packing**\n(i.e., a list of placements). The judge validates feasibility and\
+    \ computes your score relative to\nreference values for that test case.\n\n\n\
+    1) Formal Model\n---------------\n\u2022 The bin is a rectangle of integer width\
+    \ W and height H, with its bottom\u2011left corner at (0, 0).\n  Coordinates increase\
+    \ to the right (x) and up (y).\n\n\u2022 There are M item types. Each type t has:\n\
+    \  \u2013 width  w_t  (integer, \u2265 1)\n  \u2013 height h_t  (integer, \u2265\
+    \ 1)\n  \u2013 profit v_t  (integer, \u2265 0)\n  \u2013 limit  L_t  (integer,\
+    \ \u2265 0), the maximum number of copies you may place.\n\n\u2022 A **placement**\
+    \ is a tuple (type_id, x, y, rot) where:\n  \u2013 type_id is the string id of\
+    \ some item type t,\n  \u2013 (x, y) are **integers** giving the bottom\u2011\
+    left corner of the placed rectangle,\n  \u2013 rot \u2208 {0, 1}. If rot = 1 and\
+    \ rotation is allowed in this test, the item is rotated by 90\xB0\n    so its\
+    \ realized size is (w\u2032, h\u2032) = (h_t, w_t). If rot = 0, size is (w\u2032\
+    , h\u2032) = (w_t, h_t).\n    If rotation is **not** allowed in this test, then\
+    \ rot must be 0 for every placement.\n\n\u2022 **Feasibility constraints**:\n\
+    \  \u2013 **Inside the bin**: 0 \u2264 x and 0 \u2264 y and x + w\u2032 \u2264\
+    \ W and y + h\u2032 \u2264 H.\n  \u2013 **Non\u2011overlap**: we use the **half\u2011\
+    open rectangle** convention. A placement occupies the set\n    [x, x + w\u2032\
+    ) \xD7 [y, y + h\u2032). Two placements are considered non\u2011overlapping iff\
+    \ their intervals\n    are disjoint on **at least one** axis. In particular, **touching\
+    \ at edges or corners is allowed**.\n  \u2013 **Limits**: for each type t, the\
+    \ number of placements with type_id = t must be \u2264 L_t.\n\n\u2022 Objective:\
+    \ maximize the sum of profits v_t over all placed items.\n\n\n2) Input Format\
+    \ (read from stdin)\n---------------------------------\nThe input is a single\
+    \ JSON object with exactly two keys: \"bin\" and \"items\".\n\n\u2022 \"bin\"\
+    \ is a JSON object:\n  { \"W\": <int>, \"H\": <int>, \"allow_rotate\": <true|false>\
+    \ }\n\n\u2022 \"items\" is a JSON array of item\u2011type objects. Each item object\
+    \ has **exactly** the following keys:\n  {\n    \"type\":  \"<id-string>\",\n\
+    \    \"w\":     <int>,\n    \"h\":     <int>,\n    \"v\":     <int>,\n    \"limit\"\
+    : <int>\n  }\n\nAdditional or missing keys are considered invalid.\n\nExample\
+    \ (abridged):\n{\n  \"bin\":   {\"W\": 1399, \"H\": 1699, \"allow_rotate\": true},\n\
+    \  \"items\": [\n    {\"type\":\"A\",\"w\":33,\"h\":89,\"v\":4237,\"limit\":120},\n\
+    \    {\"type\":\"B\",\"w\":91,\"h\":55,\"v\":8121,\"limit\":60}\n    // ... more\
+    \ types ...\n  ]\n}\n\n\n3) Output Format (write to stdout)\n----------------------------------\n\
+    Your program must print a single JSON object with exactly one key: \"placements\"\
+    .\n\n\u2022 \"placements\" is a JSON array. Each element is a placement object\
+    \ with **exactly** these keys:\n  { \"type\": \"<id-string>\", \"x\": <int>, \"\
+    y\": <int>, \"rot\": <0|1> }\n\nNotes:\n\u2022 The order of placements does not\
+    \ matter.\n\u2022 Do **not** add extra keys; the checker will reject unknown keys.\n\
+    \u2022 It is valid to output an empty array if you choose to place nothing.\n\n\
+    Example (feasible output):\n{\n  \"placements\": [\n    {\"type\":\"B\",\"x\"\
+    :0,\"y\":0,\"rot\":1},\n    {\"type\":\"A\",\"x\":91,\"y\":0,\"rot\":0},\n   \
+    \ {\"type\":\"A\",\"x\":124,\"y\":0,\"rot\":0}\n  ]\n}\n\n\n4) Feasibility Details\
+    \ and Edge Cases\n-------------------------------------\n\u2022 **Half\u2011open\
+    \ geometry**: A rectangle occupies [x, x+w\u2032)\xD7[y, y+h\u2032). Therefore:\n\
+    \  \u2013 Two rectangles with x + w\u2032 = x\u2032 (or y + h\u2032 = y\u2032\
+    ) **do not overlap** (touching is allowed).\n  \u2013 The checker\u2019s sweep\u2011\
+    line treats rectangles that **end** at x before inserting rectangles that\n  \
+    \  **start** at the same x. This matches the half\u2011open convention.\n\n\u2022\
+    \ **Rotation permission**: If \"allow_rotate\" is false in the input, every placement\
+    \ must have rot = 0\n  (no rotation). If \"allow_rotate\" is true, you may choose\
+    \ rot \u2208 {0, 1} per placement.\n\n\u2022 **Limits**: The checker counts how\
+    \ many times each type appears in your placements and rejects outputs\n  that\
+    \ exceed the per\u2011type limit L_t.\n\n\u2022 **Coordinate system**: (0,0) is\
+    \ the bin\u2019s bottom\u2011left corner. x increases to the right, y upward.\n\
+    \  Coordinates and sizes are integers throughout.\n\n\u2022 **Validation**: The\
+    \ checker rejects outputs that are not valid JSON or that violate any of the rules\n\
+    \  above (unknown types, out\u2011of\u2011bounds, overlap, invalid rot, extra/missing\
+    \ keys).\n\n\n5) Constraints (Hard Set for this Round)\n----------------------------------------\n\
+    The official hidden tests in this round follow these ranges:\n\n\u2022 Bin:\n\
+    \  \u2013 900 \u2264 W, H \u2264 2000\n  \u2013 Some tests use near\u2011prime/co\u2011\
+    prime\u2011like dimensions to discourage trivial tilings.\n\n\u2022 Items:\n \
+    \ \u2013 Number of types M: 8 \u2264 M \u2264 12\n  \u2013 Dimensions: 7 \u2264\
+    \ w_t, h_t \u2264 \u230A0.6 \xB7 max(W, H)\u230B and w_t \u2264 W, h_t \u2264\
+    \ H\n  \u2013 Profit: 1 \u2264 v_t \u2264 10^9\n  \u2013 Limit: 1 \u2264 L_t \u2264\
+    \ 2000\n  \u2013 The distribution mixes high\u2011density but supply\u2011limited\
+    \ types with awkward aspect ratios\n    and strip\u2011like pieces. Rotation is\
+    \ disabled in some tests.\n\n\u2022 Output size: Near\u2011optimal solutions typically\
+    \ use O(10^2\u201310^3) placements per test.\n  (There is no explicit hard cap,\
+    \ but extremely large outputs may risk time limits.)\n\n\u2022 Time & memory limits:\
+    \ see Section 8.\n\n\n6) Scoring\n----------\nFor each test, the judge computes:\n\
+    \u2022 V = your total profit (sum of v_t for all placements).\n\u2022 B = a **lower\
+    \ bound** (baseline value) \u2014 a simple shelf heuristic without rotation, in\
+    \ input order.\n\u2022 K = an **upper bound** (\u201Cbest\u201D for this round)\
+    \ \u2014 a fractional area fill that respects per\u2011type limits\n      but\
+    \ ignores geometry (optimistically packs by value density).\n\nYour per\u2011\
+    test ratio is:\n  ratio = clamp( (V \u2212 B) / (K \u2212 B), 0, 1 )\n\nCorner\
+    \ case: if K \u2264 B, then ratio = 1 if V \u2265 K, else 0.\n\nYour problem score\
+    \ is the **average** ratio over all tests. Future rounds may tighten how B and/or\
+    \ K\nare computed; you do not need to output B or K.\n\n\n7) Common Mistakes That\
+    \ Cause Wrong Answer\n------------------------------------------\n\u2022 Using\
+    \ rot = 1 when \"allow_rotate\" is false.\n\u2022 Overlapping rectangles (especially\
+    \ at shared edges): remember we use **half\u2011open** geometry; touching\n  is\
+    \ allowed, overlap is not.\n\u2022 Out\u2011of\u2011bounds placements: x + w\u2032\
+    \ must be \u2264 W and y + h\u2032 \u2264 H.\n\u2022 Exceeding per\u2011type limits\
+    \ L_t.\n\u2022 Output JSON not exactly following the schema (wrong top\u2011level\
+    \ key, extra keys in placements,\n  missing keys, non\u2011integer x/y/rot).\n\
+    \n\n8) Limits\n---------\n\u2022 Time limit: 1 second\n\u2022 Memory limit: 512\
+    \ MB\n\u2022 Number of test cases: 15\n(These values correspond to the current\
+    \ hard set and match the contest configuration.)\n\n\n9) Reference Implementations\
+    \ and Hints (Non\u2011binding)\n----------------------------------------------------\n\
+    You may find success with:\n\u2022 Maximal\u2011rectangles or skyline\u2011based\
+    \ packers, combined with multiple item orderings (by value density,\n  by height/width/area),\
+    \ and local repair.\n\u2022 Consider that the highest value density items are\
+    \ **supply\u2011limited**; good solutions typically mix\n  several types and use\
+    \ strips/slenders to close narrow leftovers.\n\u2022 When rotation is disabled,\
+    \ favor orderings that reduce fragmentation in one orientation.\n\n\n10) Small\
+    \ Worked Example\n------------------------\nInput:\n{\n  \"bin\": {\"W\": 10,\
+    \ \"H\": 6, \"allow_rotate\": true},\n  \"items\": [\n    {\"type\":\"a\",\"w\"\
+    :4,\"h\":3,\"v\":10,\"limit\":3},\n    {\"type\":\"b\",\"w\":3,\"h\":2,\"v\":6,\"\
+    limit\":10}\n  ]\n}\n\nOne feasible output (not necessarily optimal):\n{\n  \"\
+    placements\": [\n    {\"type\":\"a\",\"x\":0,\"y\":0,\"rot\":0},\n    {\"type\"\
+    :\"a\",\"x\":4,\"y\":0,\"rot\":0},\n    {\"type\":\"b\",\"x\":8,\"y\":0,\"rot\"\
+    :1},\n    {\"type\":\"b\",\"x\":8,\"y\":2,\"rot\":1},\n    {\"type\":\"b\",\"\
+    x\":0,\"y\":3,\"rot\":0},\n    {\"type\":\"b\",\"x\":3,\"y\":3,\"rot\":0},\n \
+    \   {\"type\":\"b\",\"x\":6,\"y\":3,\"rot\":0}\n  ]\n}\n\nThese placements are\
+    \ inside the bin, respect limits, and do not overlap under the half\u2011open\
+    \ convention.\n\n\n11) Compliance Checklist (Before You Submit)\n--------------------------------------------\n\
+    [ ] Output exactly one top\u2011level key: \"placements\".\n[ ] Each placement\
+    \ contains exactly the keys \"type\", \"x\", \"y\", \"rot\".\n[ ] All coordinates\
+    \ and rot are **integers**; rot \u2208 {0,1}.\n[ ] When rotation is disabled in\
+    \ the test input, use rot = 0 everywhere.\n[ ] No placement exceeds the bin boundary.\n\
+    [ ] No two placements overlap (touching at edges/corners is OK).\n[ ] Per\u2011\
+    type counts do not exceed L_t.\n[ ] Your JSON is syntactically valid (commas,\
+    \ quotes, etc.).\n\n\n12) Clarifications\n------------------\n\u2022 \u201CHalf\u2011\
+    open\u201D: a rectangle [x, x+w\u2032)\xD7[y, y+h\u2032) includes all integer\
+    \ points with x \u2264 X < x+w\u2032 and\n  y \u2264 Y < y+h\u2032. Two rectangles\
+    \ that meet at a vertical or horizontal line **do not** overlap.\n\u2022 There\
+    \ is **no requirement** to fill the bin or to use all limits; you may place any\
+    \ multiset\n  that satisfies the constraints.\n\u2022 Rotations are exactly 90\xB0\
+    ; no other angles are allowed. Rotating swaps width and height.\n\u2022 Profits,\
+    \ coordinates, and counts are within 64\u2011bit signed integer ranges in all\
+    \ official tests.\n\n\nEnd of statement.\n"
+  repo_path: /Users/toslali/frontier/gen_logs/frontier_47_nous3-s1_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/asr-frontier-mac/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: a2cd0594925cfbeaa049d7174ccf663182f637c2
+  nous_version: 0.5.0
+  started_at: '2026-10-01T05:16:48.774481+00:00'

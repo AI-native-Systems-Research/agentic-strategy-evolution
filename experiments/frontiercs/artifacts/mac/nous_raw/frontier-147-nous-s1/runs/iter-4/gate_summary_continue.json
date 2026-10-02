@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Across 4 iterations we've improved the SA-based ad placement solver from ~83 (BSP init) to a stable ~91.5 (mean) by optimizing the greedy initialization, SA move types, and time budget. The latest experiment confirmed that extending the SA time budget from 2.85s to 4.8s yields a statistically significant +2.28 point improvement (mean 91.52 vs 89.24, p=0.025) with 4x lower variance, making it the single most impactful change found so far.",
+  "key_points": [
+    "CONFIRMED: 4.8s SA budget scores 91.52 mean (stdev 0.53) vs 2.85s baseline at 89.24 mean (stdev 2.16). Statistically significant (p=0.025, 5 runs each). The longer budget both improves score and dramatically stabilizes it.",
+    "Dead ends catalogued across all iterations: BSP init (83-86), compound neighbor moves (89.5), multi-start SA (87.9), contract-expand (87.0), kick moves (89.9), paired boundary moves (0), area-biased proposals (85.7), adaptive step sizes (88.2), two-edge moves (89.7), SA with reheat (90.4), post-SA refinement (37.7). Raw iteration count consistently beats move-type cleverness for this problem.",
+    "The judge TLE boundary is between 6-8s (8s scored only 91.9 vs 93.2 at 4.5s). The current 4.8s sweet spot leaves margin. The exponential cooling schedule auto-adapts to longer budgets without re-tuning.",
+    "Next iteration should investigate: (1) Re-tuning T0/T1 specifically for the 4.8s budget \u2014 the wider time window may benefit from a different temperature range; (2) Non-exponential cooling schedules (linear or piecewise) which could allocate iterations differently across temperature levels; (3) Probing the TLE boundary more precisely at 5.2s and 5.5s to squeeze out additional free iterations.",
+    "Key unknown: We've been using fixed T0=0.05, T1=0.001, and the xorshift seed 88172645463325252. Temperature tuning for the extended budget is the most promising unexplored lever \u2014 a wider initial temperature with more time could explore the solution space more effectively before converging."
+  ]
+}

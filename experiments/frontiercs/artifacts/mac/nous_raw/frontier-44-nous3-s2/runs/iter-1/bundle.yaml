@@ -1,0 +1,46 @@
+metadata:
+  iteration: 1
+  family: "sa-penalty-aware-tsp"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #44?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism — simulated annealing with penalty-aware optimization"
+
+# Arm selection rationale: Tier 1 / iter 1 requires a single h-main arm.
+# The natural first test is whether a well-implemented SA with penalty-aware
+# move selection can substantially outperform the naive NN+limited-SA baseline (33.5).
+# No ablation or dose-response needed yet — we first establish what a strong
+# single-strategy solution can achieve.
+
+arms:
+  - type: h-main
+    prediction: "An SA solution with grid-based NN construction, mixed Or-opt/2-opt moves with O(1) delta evaluation, and a prime-scheduling post-pass will score higher than the baseline probe of 33.5, because it can evaluate orders of magnitude more moves within the 2-second time limit and specifically optimizes the penalty structure."
+    mechanism: "Three synergistic improvements over the probe: (1) Grid-based NN avoids O(N²) brute-force, freeing time budget for SA. (2) Or-opt moves with O(1) delta evaluation (3 edges + local penalty recheck) allow millions of iterations vs thousands with full-recompute. (3) Prime scheduling post-pass directly targets the penalty mechanism by placing prime cities at step-10 positions, eliminating the 10% surcharge on those edges."
+    diagnostic: "If score does not improve: check whether the construction phase consumes too much time (leaving insufficient budget for SA), whether Or-opt delta computation is incorrect (verify by comparing incremental vs full-recompute costs), or whether the prime scheduling pass is undoing SA improvements (compare score before/after prime pass)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the stub with a full SA-based TSP solver. Implementation should include: (1) Sieve of Eratosthenes for prime detection. (2) Grid/bucket-based nearest-neighbor construction for O(N√N) initial tour. (3) Simulated annealing loop with Or-opt (relocate 1-3 cities) and small-segment 2-opt moves, using incremental cost delta computation that accounts for the 10% penalty at step multiples of 10. (4) A final prime-scheduling pass that swaps prime cities into penalty positions (tour indices 9, 19, 29, ...) when doing so reduces penalized cost. (5) Adaptive temperature schedule starting at tourCost/N, cooling factor ~0.99999, with time-based termination at 1.8 seconds."
+        rationale: "This is the only file the judge compiles. The approach targets all three bottlenecks identified in the probe: construction speed, move evaluation throughput, and penalty structure exploitation."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 2
+    memory_limit_mb: 512
+    max_n: 200000
+    primes_under_200k: 17984
+    penalty_positions_at_max_n: 20000
+    baseline_sequential_score: 0
+    baseline_nn_sa_score: 33.456
+  unlocked_parameters_audit:
+    - name: "rng_seed"
+      default_value: 42
+      justification: "Single fixed seed is standard for deterministic reproducibility within the 2s time limit; the judge runs multiple test cases so variance comes from test diversity not randomness."
+    - name: "sa_cooling_rate"
+      default_value: 0.99999
+      justification: "Standard geometric cooling; the executor may tune within [0.9999, 0.999999] for best throughput-quality tradeoff."
+    - name: "max_segment_length_2opt"
+      default_value: 500
+      justification: "Caps 2-opt segment to bound penalty recomputation cost; the executor may adjust based on profiling."
+    - name: "construction_method"
+      default_value: "grid-nn"
+      justification: "Grid-based NN chosen over sequential start because probe showed NN provides much better SA starting point."

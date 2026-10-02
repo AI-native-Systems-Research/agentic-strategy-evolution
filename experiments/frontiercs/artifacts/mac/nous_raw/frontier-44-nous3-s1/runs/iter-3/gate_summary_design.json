@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether adding or-opt1 (single-city relocation using KNN candidate lists) to the existing 2-opt + ILS local search pipeline improves the penalized TSP tour score beyond the ~78.93 baseline established in iteration 2. Two arms will run: a treatment arm with or-opt1 integrated into the search loop, and a negative control rerunning the v25 baseline.",
+  "key_points": [
+    "Treatment arm adds a new move type (or-opt1: remove a city and reinsert it near a KNN neighbor) that explores a neighborhood 2-opt cannot reach \u2014 specifically, relocating a single city without reversing the intervening segment. It also adds dist\u00b2 early rejection to speed up 2-opt.",
+    "Control arm reruns the validated v25 solution (2-opt + ILS only, no or-opt) expecting ~78.93 score, providing a direct comparison point and checking for environmental variability.",
+    "Confirmation criterion: treatment score exceeds control by \u22650.04 points consistently. Refutation: no improvement or regression, which would suggest either (a) or-opt1 finds zero improving moves on 2-opt-optimal tours, or (b) the time spent on or-opt1 steals budget from more productive 2-opt passes.",
+    "Key risk mitigated: or-opt2/3 (pair/triple relocation) were excluded due to TLE on large N from O(N) array shifts; only seg=1 with memmove is included, keeping within the 2-second time limit.",
+    "Time budget allocation: 50% for initial 2-opt, 8% for or-opt1, 7% for 2-opt redo, 10% for window 2-opt, remainder for ILS perturbation+recovery \u2014 all within 1900ms wall clock."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

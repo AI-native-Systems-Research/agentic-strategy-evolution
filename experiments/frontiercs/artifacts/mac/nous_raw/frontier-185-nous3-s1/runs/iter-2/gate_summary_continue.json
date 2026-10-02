@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "The Maximum Clique solver (problem #185) achieves a perfect score of 100 consistently using a Branch-and-Bound algorithm with greedy coloring, supplemented by a swap-based local search fallback. The iter-2 experiment confirmed h-main at 100 (7/7 post-warmup), but the control also scored 100 (5/5), revealing that the iter-1 baseline of 99.345 was a system-load measurement artifact rather than an algorithmic deficiency.",
+  "key_points": [
+    "Score 100 achieved reliably: Both the BnB+local-search solution (h-main) and the BnB-only solution (h-control) score 100 in 12/12 combined post-warmup runs. The problem is effectively solved.",
+    "The iter-1 score of 99.345 was a measurement artifact caused by system load variance, not a fundamental algorithmic gap \u2014 the h-control-negative arm refuted the hypothesis that BnB alone was insufficient.",
+    "Local search adds defensive robustness (not algorithmic necessity): Under heavy system load, BnB may time out before finding the optimal clique; the 100ms local search window provides insurance against this edge case.",
+    "Approaches that failed: BBMC-style bitset coloring had too much constant-factor overhead for N\u22641000 (score dropped to 90). Incremental candidate-set updates provided no net benefit due to cache effects.",
+    "If further iteration were needed, the only remaining risk is tight time margins (1800ms BnB + 100ms local search vs 2000ms limit). Adaptive time management could mitigate load-induced variance, but with 12/12 runs at 100, this is low priority.",
+    "Recommendation: The problem is solved at score 100. No further iteration is needed unless the test distribution changes or system load conditions degrade significantly."
+  ]
+}

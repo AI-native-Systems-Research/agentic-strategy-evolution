@@ -1,0 +1,43 @@
+metadata:
+  iteration: 2
+  bundle_ref: "runs/iter-2/bundle.yaml"
+setup:
+  - cmd: "git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/patches/h-main.patch"
+    description: "Apply h-main patch (solution_v25 with KNN 2-opt + ILS)"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline-run1"
+        cmd: "cp /Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-1/inputs/solution_nn_2opt.cpp solution.cpp && bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/baseline1.txt"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-1/inputs/solution_nn_2opt.cpp"
+      - name: "baseline-run2"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/baseline2.txt"
+      - name: "baseline-run3"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/baseline3.txt"
+      - name: "baseline-run4"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/baseline4.txt"
+      - name: "treatment-run1"
+        cmd: "cp /Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/inputs/solution_v25.cpp solution.cpp && bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/run1.txt"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/inputs/solution_v25.cpp"
+      - name: "treatment-run2"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/run2.txt"
+      - name: "treatment-run3"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/run3.txt"
+      - name: "treatment-run4"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/run4.txt"
+      - name: "treatment-run5"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/run5.txt"
+      - name: "treatment-run6"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-2/results/h-main/run6.txt"

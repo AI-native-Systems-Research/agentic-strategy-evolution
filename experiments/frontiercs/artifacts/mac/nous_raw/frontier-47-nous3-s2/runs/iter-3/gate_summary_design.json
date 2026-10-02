@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether doubling the MaxRects heuristic palette from 4 to 8 options (adding perimeter-sum fit, top-right, left-bottom x-primary, aspect-ratio fit) combined with per-item rotation mode as a new SA search dimension can push the score beyond the current best of 95.21. A control arm isolates whether the expanded heuristic set or the SA tuning changes (faster cooling at 0.995, 3 restarts, reheat every 500 steps) are the primary driver of improvement.",
+  "key_points": [
+    "Main arm (h-main): 8 MaxRects heuristics \u00d7 3 rotation modes per item, SA with cooling=0.995, 3 restarts, reheat every 500 iters. Predicted score ~96.4 (up from 95.21).",
+    "Control arm (h-control-negative): Same SA tuning but only the original 4 heuristics, keeping rotation mode. If this matches h-main, the new heuristics are redundant and SA tuning alone explains gains; if it stays near 95.21, expanded heuristics are the key lever.",
+    "Confirmation criterion: h-main scores \u226596.0 AND h-main exceeds h-control by \u22650.5 points, demonstrating that the expanded heuristic space is a necessary contributor beyond SA tuning alone.",
+    "Refutation signals: (1) h-main \u2264 95.5 means neither change helps meaningfully; (2) h-control matches h-main means new heuristics are redundant; (3) h-main improves but h-control also improves similarly means SA tuning is the real driver.",
+    "Risk: 1-second time limit is tight for 3 SA restarts over a 24^M search space; if timeouts occur on large tests, scores will drop to 0 on those cases. The diagnostic is to check per-test scores for zeros."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

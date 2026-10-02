@@ -1,0 +1,3 @@
+Now let me implement the solution. Based on the designer's handoff, I need a maximal-rectangles + skyline packer with multiple orderings and randomized search.Compiles. Now save the patch and run the judge.Score: **94.82**. Now let me write all the artifacts.Now write all protocol artifacts:Now validate:Validation passes.
+
+**Summary:** The h-main arm is **CONFIRMED**. The maximal-rectangles + skyline packer with 6 orderings × 3 placement methods + randomized search scored **94.82/100**, well above the ≥80 target. The patch is saved at `patches/h-main.patch` and all artifacts validate.

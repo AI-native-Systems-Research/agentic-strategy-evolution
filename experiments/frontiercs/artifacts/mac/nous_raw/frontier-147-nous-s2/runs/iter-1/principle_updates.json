@@ -1,0 +1,21 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For AHC001 rectangle packing, simulated annealing with boundary-shift moves nearly doubles the score over greedy expansion alone (81.6 vs 46.8), making SA the dominant algorithmic component.",
+    "confidence": "high",
+    "regime": "N=50-200 companies, 10000x10000 grid, 10s time limit",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-1-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Greedy expansion gets stuck when neighboring rectangles block each other. SA's ability to shrink rectangles and redistribute space (via boundary shifts, expand-to-limit, and target-aware moves) enables escape from local optima.",
+    "applicability_bounds": "Holds for the standard AHC001 problem constraints. May not hold if the time limit were much shorter (<2s) since SA needs sufficient iterations to converge.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

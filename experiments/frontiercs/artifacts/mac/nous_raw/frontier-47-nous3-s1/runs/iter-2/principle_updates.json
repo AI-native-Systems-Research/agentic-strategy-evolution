@@ -1,0 +1,56 @@
+[
+  {
+    "id": "RP-3",
+    "statement": "For 2D rectangular knapsack, a contact-point placement heuristic (scoring free rectangles by total edge length touching bin walls) reduces interior fragmentation and improves packing profit by ~0.5% compared to BSSF/BAF/BL alone.",
+    "confidence": "medium",
+    "regime": "Bins 900-2000 with 8-12 item types; most effective when bin dimensions are near-prime and items have diverse aspect ratios",
+    "evidence": [
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "CP scoring pushes items toward bin walls, creating larger contiguous interior spaces rather than scattered fragments. This is especially helpful when no item dimension evenly divides the bin dimension.",
+    "applicability_bounds": "Effect is small (~0.5 points); may not manifest on bins with dimensions that are multiples of common item sizes",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-4",
+    "statement": "Bin transposition (packing in H\u00d7W instead of W\u00d7H, then translating coordinates) consistently finds better solutions on ~20-30% of test cases, because the BL heuristic's bottom-left bias interacts differently with the bin's aspect ratio.",
+    "confidence": "medium",
+    "regime": "Most effective when W != H; no benefit when bin is square",
+    "evidence": [
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The BL heuristic fills from (0,0) upward and rightward. In a W\u00d7H bin vs H\u00d7W bin, items encounter different free-rect geometries at each step. Transposition is equivalent to rotating the bin 90\u00b0, which changes which dimension 'fills first'.",
+    "applicability_bounds": "Only useful for non-square bins; adds constant overhead of duplicating packing runs",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "Both-orientation best-fit (trying both rotations and picking the tighter fit) is far superior to fallback rotation (try unrotated, rotate only if it doesn't fit). The improvement is ~6 points on the judge scoring formula.",
+    "confidence": "high",
+    "regime": "Any 2D knapsack with rotation allowed; the largest single improvement found in this campaign",
+    "evidence": [
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Fallback rotation commits to the unrotated orientation even when the rotated version produces a tighter fit with less wasted space. Best-fit rotation evaluates both and picks the one minimizing the heuristic score, leading to consistently less fragmentation.",
+    "applicability_bounds": "No effect when allow_rotate=false or when w==h for all types",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

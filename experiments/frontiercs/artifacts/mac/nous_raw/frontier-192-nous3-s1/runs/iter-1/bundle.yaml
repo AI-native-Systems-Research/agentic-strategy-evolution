@@ -1,0 +1,47 @@
+metadata:
+  iteration: 1
+  family: "fm-local-search-maxcut"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for Max-Cut problem #192?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (FM partitioning vs greedy baseline)"
+
+arms:
+  - type: h-main
+    prediction: "FM partitioning with greedy local search restarts will achieve a higher score than greedy local search alone, consistently scoring above 85 on the judge."
+    mechanism: "Greedy local search gets trapped in local optima. FM passes consider the entire sequence of vertex flips and select the best prefix, enabling escape from local optima that single-flip greedy cannot. Multiple restarts with different random seeds explore diverse regions of the solution space."
+    diagnostic: "If score does not exceed greedy baseline, check whether FM passes are actually improving cuts beyond the greedy local optimum — log cut value before and after each FM pass. Also verify time budget allows sufficient restarts."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement FM partitioning with greedy local search: random init, greedy flip-positive-gain loop, then FM passes (priority-queue-based vertex ordering with gain tracking, best-prefix selection), repeated with random restarts under 0.90s time budget."
+        rationale: "FM is the strongest single-mechanism approach for graph partitioning within tight time limits. Greedy local search provides fast convergence to a local optimum; FM passes then escape it."
+
+  - type: h-control-negative
+    prediction: "Trivial alternating assignment (vertex i gets side i%2) will score approximately 50, far below h-main, because it ignores graph structure entirely."
+    mechanism: "Alternating assignment places adjacent vertices in different sets only when their indices differ by 1, which is uncorrelated with actual graph structure. For random or structured graphs, this achieves roughly half the edges as cuts by chance."
+    diagnostic: "If score is unexpectedly high, the test graphs may have a structure where vertex ordering correlates with good cuts (e.g., bipartite graphs numbered by side)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the entire algorithm with a trivial assignment: output s[i] = i%2 for each vertex. No optimization, no graph analysis."
+        rationale: "Establishes a lower bound showing the FM mechanism is necessary for high scores."
+
+# Arms chosen: h-main tests the primary FM mechanism; h-control-negative validates
+# that the score improvement is from the algorithm, not from problem structure.
+
+experiment_spec:
+  verified_parameters:
+    time_limit_seconds: 1
+    memory_limit_mb: 1024
+    n_test_cases: 30
+  unlocked_parameters_audit:
+    - name: "time_budget_seconds"
+      default_value: 0.90
+      justification: "Leaves 0.10s margin under the 1s hard limit; validated in probes."
+    - name: "rng_seed"
+      default_value: "chrono-based"
+      justification: "Using time-based seed for diversity across restarts; deterministic seed would limit exploration."
+    - name: "fm_max_passes"
+      default_value: 30
+      justification: "FM passes converge quickly; 30 is an upper bound rarely reached."
+    - name: "sa_temperature"
+      default_value: "not used"
+      justification: "SA tested at 84.1, underperforms FM; excluded from h-main."

@@ -1,0 +1,26 @@
+{
+  "problem_id": "47",
+  "agent": "nous",
+  "label": "nous3-s1",
+  "model": "claude-opus-4-6",
+  "candidates": [
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-nous3-s1/runs/iter-1/inputs/solution.cpp",
+      "score": 94.79722666666667,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/frontier_47_nous3-s1_ws/solution.cpp",
+      "score": 95.72918666666666,
+      "status": "success"
+    }
+  ],
+  "final_score": 95.72918666666666,
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_47_nous3-s1_ws/solution.cpp",
+  "input_tokens": 46149,
+  "output_tokens": 227747,
+  "cost_usd_est": 16.71,
+  "llm_calls": 15,
+  "campaign_dir": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-nous3-s1",
+  "seconds": 3546.0
+}

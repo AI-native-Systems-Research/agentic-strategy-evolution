@@ -1,0 +1,39 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For maximum clique on graphs with N<=1000, BnB with degeneracy ordering + greedy coloring bound (bitset color classes) achieves score 100 within 2s. The DLS tabu search fallback is unnecessary for this problem's test set \u2014 BnB alone with 1950ms budget solves all instances optimally.",
+    "confidence": "high",
+    "regime": "N<=1000, M<=500000, 2s time limit, judge test set for problem 185",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Degeneracy ordering processes vertices by decreasing core number, focusing BnB on the densest subgraph first. Bitset greedy coloring provides tight upper bounds via O(N/64) adjacency intersection. Together these prune the search tree enough that BnB completes all instances in the judge's test set before the 1950ms deadline.",
+    "applicability_bounds": "Holds for this specific judge test set. Harder instances (e.g., random dense graphs near the phase transition, or adversarial constructions) might still benefit from DLS fallback.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "The DLS tabu search fallback adds no scoring improvement over BnB-only on the problem 185 judge test set when BnB uses degeneracy ordering and has 1950ms budget.",
+    "confidence": "high",
+    "regime": "N<=1000, 2s time limit, problem 185 judge",
+    "evidence": [
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "BnB with degeneracy ordering + coloring bound is powerful enough to solve all test instances optimally within 1950ms. DLS never activates because BnB doesn't time out, or when it does the best found is already optimal.",
+    "applicability_bounds": "Specific to this judge's test distribution. DLS may still be valuable on harder instance families.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

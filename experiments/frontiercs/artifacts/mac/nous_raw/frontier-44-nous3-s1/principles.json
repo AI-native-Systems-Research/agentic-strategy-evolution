@@ -1,0 +1,132 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For penalized TSP problem #44, grid nearest-neighbor construction dominates tour quality. The spatial grid with G=sqrt(N/2.5) cells per dimension achieves ~78.2/100 score for construction alone. Combined with candidate-list 2-opt + ILS, total reaches 78.93. Local search adds ~0.7 points.",
+      "confidence": "high",
+      "regime": "N up to 200K, 2-second time limit, cities sorted by x-coordinate",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Grid NN groups cities by spatial proximity in 2D. Finer grid (N/2.5 vs N/4) provides more precise neighbor lookup. Local search (candidate-list 2-opt + ILS) adds ~0.7 points by eliminating crossing edges and escaping local optima.",
+      "applicability_bounds": "Finer grid (N/2.5) is optimal when KNN build time is budgeted; coarser grid (N/4) is safer if timing is tight.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "The 10% step penalty (carrot constraint) affects only ~1% of total tour cost. Penalty-aware optimizations (prime placement, penalty-aware NN) yield negligible improvement (<0.1 points).",
+      "confidence": "high",
+      "regime": "N up to 200K, penalty at every 10th step, ~N/ln(N) prime city IDs",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Only 10% of steps (multiples of 10) are candidates for penalty. The penalty is 10% extra distance. Combined: 10% * 10% = 1% of total cost. By PNT, ~N/ln(N) primes exist among N cities, covering ~85% of penalty positions naturally. The remaining ~15% uncovered positions contribute ~0.15% of total cost.",
+      "applicability_bounds": "Specific to the carrot constraint definition in problem #44. Would differ with higher penalty rate or larger multiplier.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "Fast 2-opt delta for penalized TSP can be computed in O(1) Euclidean + O(segment/10) penalty, enabling candidate-list 2-opt for large N. Interior edge lengths are unchanged by segment reversal; only boundary edges and penalty positions (t%10==0) need evaluation.",
+      "confidence": "high",
+      "regime": "Any TSP variant with step-position-dependent penalties",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "When reversing tour segment [i+1..j], interior edges have identical Euclidean lengths (just reversed direction). Only the 2 boundary edges change distance. For penalties at step t%10==0, the source city and edge length change only at positions where the reversal remaps cities. These occur at O((j-i)/10) positions.",
+      "applicability_bounds": "Requires penalties to depend on step number modulo K (here K=10). For position-independent penalties, standard O(1) delta works.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": false,
+      "derivation_type": "algebraic"
+    },
+    {
+      "id": "RP-4",
+      "statement": "For penalized TSP problem #44, candidate-list 2-opt with K=15 KNN + finer grid G=sqrt(N/2.5) + ILS double-bridge scores 78.93 (non-TLE), improving +0.63 over iter-1's grid NN + window 2-opt (78.29 non-TLE). KNN candidate-list 2-opt is the main contributor (~0.45 points) by enabling local search for all N values.",
+      "confidence": "high",
+      "regime": "N up to 200K, 2-second time limit, penalized TSP",
+      "evidence": [
+        "iteration-2-h-main: treatment 78.93 vs baseline 78.29 (non-TLE medians, 6+4 runs)"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Candidate-list 2-opt with K=15 KNN checks O(N*15) candidates per pass with DLB pruning. KNN precomputed using dist\u00b2 avoids sqrt in build. Zero-sqrt edge updates after reversal (interior edges reverse order). This enables 2-opt for N=200K within 1 second, whereas window 2-opt was infeasible for N>10K.",
+      "applicability_bounds": "Holds for grid-distributed cities with uniform-ish density. TLE instability (~5-point drops on 2/6 runs) is environmental, not algorithmic \u2014 both baseline and treatment suffer identically.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "Both iter-1 and iter-2 TSP solutions exhibit ~5-point score drops on some judge runs due to TLE on large test cases. This is environmental (machine load), not algorithmic \u2014 both solutions drop identically. Reported scores should use non-TLE runs for algorithm comparison.",
+      "confidence": "high",
+      "regime": "Problem #44 judge, 2-second time limit",
+      "evidence": [
+        "iteration-2: treatment TLE'd 2/6 runs (73.93 vs 78.93), baseline TLE'd 3/4 runs (73.29 vs 78.29)"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Judge enforces 2-second wall-clock limit per test case. Under machine load, solutions that use most of the time budget (1.7-1.9s) occasionally exceed 2s on the largest test cases, receiving zero score for those cases. The 5-point drop corresponds to ~1 large test case TLE.",
+      "applicability_bounds": "Specific to local execution environment. Judge server may have more stable timing.",
+      "superseded_by": null,
+      "category": "methodological",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "Or-opt1 (single-city relocation with KNN candidates) adds ~0.06 points to 2-opt + ILS for penalized TSP problem #44, yielding 78.97 vs 78.91. Or-opt2 (pair relocation) and or-opt3 (triple relocation) cause TLE on large N even with efficient memmove implementations. Only or-opt1 is safe within the 2s time budget.",
+      "confidence": "medium",
+      "regime": "N up to 200K, 2s time limit, K=15 KNN, G=sqrt(N/2.5) grid",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Or-opt1 explores the relocation neighborhood (remove city, reinsert elsewhere) which is disjoint from 2-opt's reversal neighborhood. After 2-opt convergence, ~5% of cities have positive removal gain and some of those have improving insertion points near KNN neighbors. The improvement is small because 2-opt already captures most local improvements.",
+      "applicability_bounds": "Applies to TSP-like problems with 2s time limit and N up to 200K. The ~0.06 point improvement is at the edge of measurement noise for single judge runs; confidence is medium. For problems with more generous time limits, or-opt2/3 might also be viable.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "dist\u00b2 early rejection before eucl() in candidate-list 2-opt provides a minor speedup by avoiding sqrt for most non-improving candidates. This may contribute to TLE avoidance: v32 (with dist\u00b2 rejection) showed 0 TLE in 5+ runs vs v25 (without) showing 2 TLE in 6 runs, though the evidence is circumstantial.",
+      "confidence": "low",
+      "regime": "N up to 200K, 2s time limit",
+      "evidence": [
+        "iteration-3-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "dist\u00b2(a,c) = (xa-xc)\u00b2+(ya-yc)\u00b2 is computed with 2 subtractions, 2 multiplications, and 1 addition (~5 cycles). eucl() adds sqrt (~20 cycles). For K=15 candidates per city where ~80% are rejected by dist\u00b2, the savings are ~270 cycles/city \u00d7 N cities per pass. For N=200K, this saves ~18ms per pass.",
+      "applicability_bounds": "The TLE-avoidance effect is circumstantial (small sample). The dist\u00b2 check is always safe to add and never hurts performance.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

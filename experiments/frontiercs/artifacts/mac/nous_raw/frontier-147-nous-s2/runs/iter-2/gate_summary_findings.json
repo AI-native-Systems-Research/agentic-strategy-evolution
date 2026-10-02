@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "The hypothesis that multi-restart simulated annealing (best-of-3 runs with shuffled greedy initialization) would outperform a single long SA run was refuted. Mean scores were 84.53 (multi-restart) vs 84.34 (single-run), a difference of +0.19 points \u2014 well within the \u00b12-point judge variance and not statistically meaningful.",
+  "key_points": [
+    "h-main (multi-restart SA, 3\u00d72.5s runs): scores 84.14, 86.01, 83.43 (mean 84.53). h-ablation (single SA, 1\u00d77s run): scores 83.73, 82.94, 86.36 (mean 84.34). The 0.19-point gap is noise \u2014 h-ablation's best single run (86.36) beat all h-main runs.",
+    "Key insight: SA convergence time matters more than starting-point diversity. The SA neighborhood moves (expand-to-limit, target-aware adjustments) are effective enough to escape the initial greedy layout, so shuffled greedy orderings provide no measurable advantage.",
+    "Both approaches plateau around 83\u201386 on the judge. To break past this ceiling, future iterations should investigate fundamentally different strategies \u2014 e.g., better neighborhood operators, constraint-aware placement heuristics, or hybrid approaches \u2014 rather than tuning restart mechanics.",
+    "Current best score observed across all runs: 86.36 (from the single-run SA ablation arm)."
+  ]
+}

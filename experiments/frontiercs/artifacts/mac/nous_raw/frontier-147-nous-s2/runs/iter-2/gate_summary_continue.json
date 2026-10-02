@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, our best approach (simulated annealing with greedy initialization) scores 84-86 on the judge. The iter-2 hypothesis that multi-restart SA would outperform single-run SA was refuted \u2014 the mean difference was only +0.19 points (84.53 vs 84.34), well within \u00b12 point judge variance. The SA inner loop and move set from iter-1 remain the dominant performance driver.",
+  "key_points": [
+    "Iteration 1 established that simple SA moves with high iteration throughput beat complex compound moves (score ~84.5). Spatial indexing, weighted selection, and boundary-swap moves all hurt by reducing iterations per second.",
+    "Iteration 2 tested multi-restart SA (3 restarts with shuffled greedy ordering) vs single-run SA. Result: mean 84.53 vs 84.34 \u2014 no statistically meaningful difference given \u00b12 point judge variance. Hypothesis refuted.",
+    "Dead ends confirmed: BSP initialization (72.5), sorted greedy (83.6), weighted rectangle selection (83.6), 5 restarts (86.0 but inconsistent), and temperature tuning (marginal). The current 8-move uniform SA with linear cooling is a strong local optimum for this approach.",
+    "Key unknowns: (1) Can a fundamentally different move \u2014 e.g., simultaneously shifting a shared boundary between adjacent rectangles \u2014 improve SA quality without hurting throughput? (2) Would a two-phase approach (coarse placement via assignment/LP, then SA refinement) break out of the 84-86 plateau? (3) Is there a better cooling schedule (e.g., reheating) that could help?",
+    "Recommended next iteration: Focus on a well-implemented 'boundary shift' move that identifies adjacent rectangles sharing an edge and moves that edge, adjusting both rectangles atomically. This is the most promising unexplored direction \u2014 it directly addresses the core constraint (non-overlapping rectangles with target areas) without the throughput penalty of the failed v3 attempt. Alternatively, try adaptive move selection that biases toward whichever move type is currently producing accepted improvements."
+  ]
+}

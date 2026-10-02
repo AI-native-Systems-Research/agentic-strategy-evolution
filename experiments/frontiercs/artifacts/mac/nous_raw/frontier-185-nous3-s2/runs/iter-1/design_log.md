@@ -1,0 +1,9 @@
+Now let me write a strong maximum clique solution and test it. The key algorithms for max clique on N≤1000 graphs are Bron-Kerbosch with pivoting, or a branch-and-bound approach. Let me implement a solid branch-and-bound with greedy coloring bound.Need to replace the header. Let me also check how the judge compiles:The judge uses docker. Let me look at how `frontier eval` actually works — it probably compiles with g++ internally.The compilation happens inside the Docker judge. On macOS, `bits/stdc++.h` isn't available — but the judge compiles inside Docker (Linux), so it should be fine. Let me just test by running the measure script directly:Score 80 with a basic branch-and-bound. The algorithm works but needs improvement. The issue is likely that the greedy coloring bound isn't tight enough for pruning, or the vertex ordering is suboptimal for harder test cases. Let me improve the algorithm with a more sophisticated approach — Tomita's MCQ algorithm or a better BnB with tighter bounds.
+
+Let me write an improved version with better vertex ordering (degeneracy ordering) and more aggressive pruning:Score 100 with the improved approach. Now let me design the experiment properly. The key insight is that degeneracy ordering + greedy coloring bound gives a much tighter BnB. Let me now write a simpler greedy-only baseline to establish the control:Good data points: greedy-only=33.8, basic BnB=80, improved BnB=100. Now let me write the artifacts.Now the handoff:Now validate:Validation passes. 
+
+**Summary:** Designed iter-1 for Maximum Clique problem #185. Probe results:
+- **Greedy-only (h-control-negative):** score 33.8
+- **BnB with degeneracy ordering + coloring bound (h-main):** score 100
+
+The h-main algorithm uses bitset adjacency, degeneracy ordering, greedy coloring upper bound for pruning, and a greedy warm-start. All three artifacts written (`problem.md`, `bundle.yaml`, `handoff_snapshot.md`) and validation passed.

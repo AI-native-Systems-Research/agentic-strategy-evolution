@@ -1,0 +1,39 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For max clique on graphs with N <= 1000, BBMC-style bitset coloring (independent-set extraction via bitset AND/complement) is dramatically faster than pairwise O(n^2) sequential greedy coloring, enabling the BnB to solve instances that otherwise timeout.",
+    "confidence": "high",
+    "regime": "Undirected graphs, N <= 1000, M <= 500000, 2-second time limit",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Pairwise coloring checks each vertex against all previously colored vertices (O(n^2) comparisons). BBMC coloring extracts independent sets using Q &= ~adj[v] which processes 64 vertices per word operation, reducing the constant factor by ~64x for MAXN=1001.",
+    "applicability_bounds": "Applies when candidate sets are large (>100 vertices). For small candidate sets the overhead of bitset operations may not pay off vs simple array checks.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Greedy clique construction with 5000 random restarts achieves ~92% of optimal on the test distribution, but BnB with BBMC coloring achieves 100%.",
+    "confidence": "high",
+    "regime": "Max clique problem #185 test distribution, N <= 1000",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-1-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Greedy restarts sample many random vertex orderings, finding cliques reachable by greedy extension. BnB exhaustively searches the space (pruned by coloring bounds), finding cliques that require non-greedy vertex selections.",
+    "applicability_bounds": "The 92% figure is specific to this test distribution. On adversarial graphs (e.g., Keller graphs), greedy could perform much worse.",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  }
+]

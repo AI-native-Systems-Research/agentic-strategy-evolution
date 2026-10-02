@@ -1,0 +1,43 @@
+metadata:
+  iteration: 3
+  family: "bnb-degeneracy-confirmation"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #185?"
+  complexity_tier: 2
+  tier_justification: "iter-3, single mechanism (BnB) + robustness check on time budget"
+
+arms:
+  - type: h-main
+    prediction: "BnB-only with degeneracy ordering and 1950ms budget will score 100, confirming iter-2 ablation result at full real-mode scope."
+    mechanism: "Degeneracy ordering processes vertices from highest core number first, maximizing early pruning. Greedy coloring bound with bitset color classes provides tight upper bounds. Together they solve all N<=1000 test instances optimally within 1950ms."
+    diagnostic: "If score < 100, check whether specific test instances have unusually dense subgraphs causing BnB timeout. Compare against iter-1 BnB+DLS hybrid to identify which instances regressed."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace entire file with BnB-only solution: degeneracy ordering, greedy coloring bound with bitset color classes, greedy warm-starts (degree + core-number + per-vertex), BnB with 1950ms budget, no DLS fallback."
+        rationale: "This is the minimal algorithm proven to score 100 in iter-2. Confirming at full scope in real mode."
+
+  - type: h-robustness
+    prediction: "BnB-only with a tighter 1000ms budget will still score 100, demonstrating comfortable timing margin on all test instances."
+    mechanism: "If BnB with degeneracy ordering finishes all instances well before 1950ms, halving the budget should not affect the result. This tests whether the solution's timing is robust or marginal."
+    diagnostic: "If score < 100, identify which test instances cause BnB to exceed 1000ms. This reveals the hardest instances and quantifies the timing safety margin."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Same BnB-only solution as h-main but change time_limit_ms from 1950 to 1000."
+        rationale: "Tests timing robustness by halving the BnB budget."
+
+# Arm selection rationale: h-main confirms the winning algorithm at full scope.
+# h-robustness tests timing margin — important for understanding how close
+# the solution runs to the 2s wall-clock limit, which determines deployment safety.
+
+experiment_spec:
+  verified_parameters:
+    time_limit_ms_main: 1950
+    time_limit_ms_robustness: 1000
+    N_max: 1000
+    M_max: 500000
+  unlocked_parameters_audit:
+    - name: "greedy_warm_start_count"
+      default_value: 100
+      justification: "Per-vertex greedy limited to top-100 by core number; sufficient for N<=1000 and takes <100ms."
+    - name: "bnb_check_interval"
+      default_value: 2047
+      justification: "Time check every 2048 BnB calls; fine-grained enough for 1950ms budget without overhead."

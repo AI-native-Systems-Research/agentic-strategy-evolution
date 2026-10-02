@@ -1,0 +1,42 @@
+metadata:
+  iteration: 2
+  family: "enhanced-maxrects-cp-transpose"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for problem #47 (2D rectangular knapsack with optional rotations)?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (MaxRects) + multi-knob (CP heuristic, transposition, ordering optimization)"
+
+arms:
+  - type: h-main
+    prediction: "The enhanced MaxRects packer with contact-point heuristic, bin transposition, and ordering local search will achieve a judge score above 93, improving over iter-1's 88.78 baseline by at least 5 points."
+    mechanism: "Three key improvements reduce packing fragmentation: (1) The CP heuristic scores positions by wall contact, pushing items toward edges and reducing interior voids. (2) Bin transposition (packing in H×W then translating back) exposes different BL/BSSF/BAF optima since the coordinate sweep direction changes. (3) Local search on type orderings (pairwise swaps) hill-climbs from the best deterministic ordering, finding test-case-specific arrangements the fixed heuristics miss. Together with the existing density-weighted random search across 4 methods × both orientations, the algorithm explores a much larger packing space within the 1s time budget."
+    diagnostic: "If score is unexpectedly low: (1) check if TLE occurs — the 96 deterministic runs + local search + random search may exceed 1s on large inputs with fragmented bins; reduce deterministic count or local search passes; (2) if specific tests score near 0, check JSON output validity; (3) if transposed packing produces invalid placements, verify coordinate translation logic."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace iter-1's MaxRects+Skyline packer with enhanced MaxRects featuring: contact-point placement method, both-orientation best-fit, bin transposition, pairwise-swap local search on type orderings, and 6-strategy randomized search with free-rect capping at 500."
+        rationale: "The CP heuristic, transposition, and ordering optimization each address a different weakness of the iter-1 greedy: fragmentation, orientation bias, and ordering suboptimality."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 1
+    memory_limit_mb: 512
+    num_test_cases: 15
+    bin_size_range: [900, 2000]
+    num_item_types_range: [8, 12]
+    item_limit_max: 2000
+  unlocked_parameters_audit:
+    - name: "random_seed"
+      default_value: 42
+      justification: "Fixed seed for deterministic reproducibility; the randomized search phase explores orderings, not seed-dependent behavior."
+    - name: "time_budget_random_search"
+      default_value: 0.83
+      justification: "Leaves ~170ms margin for I/O and output; deterministic + local search typically finish in <250ms."
+    - name: "max_free_rects"
+      default_value: 500
+      justification: "Empirically prevents quadratic pruning blowup while retaining sufficient spatial resolution for good placements."
+    - name: "local_search_time_budget"
+      default_value: 0.25
+      justification: "2-3 passes of pairwise swaps on 8-12 types is fast; 250ms is sufficient and leaves time for random search."
+    - name: "num_placement_methods"
+      default_value: 4
+      justification: "BSSF, BAF, BL, and CP — each method excels on different bin/item geometries."

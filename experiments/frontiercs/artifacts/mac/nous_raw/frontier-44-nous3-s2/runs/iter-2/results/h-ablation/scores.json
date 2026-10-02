@@ -1,0 +1,10 @@
+{
+  "arm": "h-ablation",
+  "description": "Pure iter-1 SA code (no reversed-tour, no greedy edge-fix)",
+  "scores": [69.4945, 69.497, 69.496],
+  "mean": 69.496,
+  "median": 69.496,
+  "min": 69.4945,
+  "max": 69.497,
+  "stdev": 0.001
+}

@@ -1,0 +1,46 @@
+metadata:
+  iteration: 4
+  family: "multi-restart-sa-consolidation"
+  research_question: "Does multi-restart SA (v5) consistently outperform single-run SA for AHC001 rectangle packing, and is it the production-optimal approach after exhaustive exploration?"
+  complexity_tier: 2
+  tier_justification: "iter 4 — tier 1 confirmed SA dominance (iter-1), tier 2 tests the specific restart mechanism. Extensive exploration of tier-3 alternatives (pair moves, LNS, treemap, threading, adaptive delta, weighted moves) all failed — consolidating at tier 2."
+
+arms:
+  - type: h-main
+    prediction: "Multi-restart SA (v5) will score consistently higher than single-run SA across judge evaluations, with a directional improvement of ~0.5-2.0 points (mean ~1 point). The shuffled greedy initialization provides restart diversity that allows the SA to escape local optima."
+    mechanism: "Each of 3 restarts begins with a different shuffled greedy order (solution_v5.cpp:70), producing different initial states. The SA then optimizes each independently. The global-best tracking (solution_v5.cpp:215-218) ensures the best restart survives. Different initial states explore different basins of attraction — some basins contain better optima than others. The restart mechanism's value comes from the greedy order sensitivity: small changes in expansion order produce substantially different packings (different rects claim different spaces first), giving SA distinct starting configurations."
+    diagnostic: "If refuted (v5 doesn't consistently beat single-run SA), investigate: (1) whether judge test-case sampling dominates over algorithmic differences, (2) whether 3×3s SA runs produce worse individual optima than 1×9s due to insufficient convergence time per restart, (3) whether the shuffled greedy actually produces meaningfully different initial states or converges to the same fixed point regardless of order."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Refactor into doGreedy(rng) with shuffle(order) + doSA(rng, endTime) with time-bounded progress. Add global_best[210]. Main loop: 3 restarts with timePerRestart=9.0/3, restartEnd=min(9.3, (i+1)*timePerRestart+0.5). Keep global best across restarts. Reference implementation: solution_v5.cpp."
+        rationale: "This is the v5 code structure that scored 86-87 consistently across iterations 3-4. All alternative approaches tested in iter-4 exploration scored worse."
+
+  - type: h-ablation
+    prediction: "Single-run SA (current solution.cpp) will score ~85-86, approximately 0.5-2.0 points lower than v5. The single run uses the full 9.3s for SA but lacks restart diversity."
+    mechanism: "Without restarts, the SA explores only one basin of attraction determined by the fixed greedy expansion order. If this basin's optimum is suboptimal (which happens on some test cases), there's no recovery mechanism. The fixed order in solution.cpp:72-97 (sequential 0..N-1) gives the same initial state every time."
+    diagnostic: "If the ablation scores as high as h-main, the restart diversity mechanism provides no benefit for this problem at this time budget, and the longer single SA run fully compensates."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    n_restarts: 3
+    time_per_restart: 3.0
+    sa_t0: 0.01
+    sa_cooling: "linear"
+    greedy_step_scale: 3
+    greedy_step_max: 150
+    greedy_rounds: 300
+    sa_moves: 8
+    sa_delta_small_max: 20
+    sa_delta_large_max: 200
+    time_limit: 9.3
+  unlocked_parameters_audit:
+    - name: "rng_seed"
+      default_value: 42
+      justification: "Fixed seed for deterministic behavior. Different seeds produce ~0.5 point variance but the experiment tests algorithmic structure, not seed sensitivity."
+    - name: "sa_move_distribution"
+      default_value: "uniform across 8 moves"
+      justification: "Tested weighted distribution (v22, 3x weight for moves 6,7) — scored worse (84.0). Uniform is optimal."
+    - name: "greedy_order"
+      default_value: "shuffled (v5) or sequential (baseline)"
+      justification: "This IS the treatment variable. v5 shuffles; baseline is sequential."

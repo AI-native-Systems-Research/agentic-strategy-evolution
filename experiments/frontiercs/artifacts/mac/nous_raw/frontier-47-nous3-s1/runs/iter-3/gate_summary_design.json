@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether assigning each item type its own placement heuristic (per-type method, 5 options) and co-evolving these assignments alongside type orderings can push the 2D knapsack packer score from ~89 to above 95. This builds on two prior iterations that established MaxRects with multi-ordering search as a solid baseline (89.02).",
+  "key_points": [
+    "Main arm (h-main): Replaces solution.cpp with a v20 packer featuring per-type method assignment (BSSF/BAF/BL/CP/BLSF), co-evolutionary random search over 5^M method vectors \u00d7 M! orderings, local search over both dimensions, gap-fill post-processing, and 10 deterministic seed orderings. Prediction: score \u2265 95.0 (probed at 95.73).",
+    "Negative control (h-control-negative): Runs the current iter-2 solution (uniform method per packing, no per-type differentiation). Prediction: score \u2248 89, confirming the ~6-point gain comes from the MPT mechanism rather than test-set variance.",
+    "Confirmation criteria: If main arm scores \u2265 95 AND control scores \u2264 91, the per-type method hypothesis is confirmed. If control also scores \u2265 95, the gain is attributable to test-set changes. If main arm scores < 92, the co-evolutionary overhead or search-space explosion is hurting more than the added flexibility helps.",
+    "Key risk: The 5^M method space (up to 5^12 \u2248 244M combinations) combined with M! orderings may be too large for the 1-second time budget; diagnostics include checking for TLE and reducing methods to 3 if needed.",
+    "Time/resource budget is carefully partitioned: ~840ms for random search, ~220ms for local search, ~50ms for gap-fill, with a 500-rect cap to prevent quadratic blowup."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

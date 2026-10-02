@@ -1,0 +1,17 @@
+{
+  "problem_id": "147",
+  "agent": "nous",
+  "label": "nous-s2",
+  "model": "claude-opus-4-6",
+  "final_score": 84.21,
+  "reeval_scores": [
+    82.106,
+    86.3054
+  ],
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_147_nous-s2_ws/solution.cpp",
+  "input_tokens": 37173,
+  "output_tokens": 193153,
+  "cost_usd_est": 14.5707,
+  "note": "SALVAGED: run hit 4h subprocess timeout before harvest; score from best ws/solution.cpp re-evaluated 2x",
+  "campaign_dir": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-147-nous-s2"
+}

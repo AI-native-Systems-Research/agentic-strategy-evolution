@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed in iteration 3. The adaptive-budget SA+ILS approach scores a consistent 87.16 (zero variance across runs), while the fixed 12-restart SA+ILS control shows 3.22-point variance (84.05\u201387.27) due to intermittent time-limit exceeded (TLE) on some test cases.",
+  "key_points": [
+    "h-main CONFIRMED: Adaptive budget SA+ILS scored 87.16 on both runs (0 variance), meeting the \u226587.0 consistency target. This eliminates TLE-induced score drops.",
+    "h-control-negative CONFIRMED: Fixed 12-restart SA+ILS scored 84.05, 84.44, and 87.27 across three runs \u2014 a 3.22-point range \u2014 validating that TLE is the dominant source of score instability.",
+    "Trade-off is minimal: adaptive approach sacrifices only ~0.1 points of peak performance (87.16 vs 87.27 best-case) in exchange for perfect run-to-run consistency.",
+    "Current best score is 87.16. Further improvement would likely require a fundamentally stronger algorithm (e.g., semidefinite programming relaxation, longer local search with smarter time management, or population-based metaheuristics) rather than tuning the current SA+ILS framework."
+  ]
+}

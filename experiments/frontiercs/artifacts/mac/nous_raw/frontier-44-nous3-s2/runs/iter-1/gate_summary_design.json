@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a well-engineered simulated annealing solver with penalty-aware move evaluation and prime-city scheduling can substantially beat the baseline score of 33.5 on a penalized TSP problem (problem #44). A single experimental arm will implement grid-based nearest-neighbor construction, incremental Or-opt/2-opt SA moves, and a prime-scheduling post-pass, all within a 2-second time limit.",
+  "key_points": [
+    "The baseline probe (naive NN + limited SA) scored 33.5/100; this arm predicts improvement by addressing three bottlenecks: O(N\u00b2) construction cost, full-recompute move evaluation, and unexploited penalty structure (every 10th step costs 10% more unless the source city ID is prime).",
+    "The single h-main arm combines three mechanisms: (1) grid-bucketed nearest-neighbor for fast O(N\u221aN) initial tour, (2) SA with Or-opt and bounded 2-opt moves using O(1) incremental delta evaluation that accounts for step-10 penalties, and (3) a final pass that swaps prime cities into penalty positions (indices 9, 19, 29, \u2026) when cost-beneficial.",
+    "Confirmation: score significantly above 33.5 (target >50). Refutation: score \u2264 33.5, which would indicate either implementation bugs (diagnosable by comparing incremental vs full cost), excessive construction time leaving no SA budget, or the prime-scheduling pass undoing SA gains (diagnosable by comparing scores before/after the pass).",
+    "Key risk: N can reach 200,000 with a 2-second time limit, so the implementation must be very efficient \u2014 grid NN must be O(N\u221aN), and SA iterations must avoid any O(N) penalty recomputation per move. The cooling rate (0.99999) and segment length cap (500 for 2-opt) are tunable if profiling shows bottlenecks."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

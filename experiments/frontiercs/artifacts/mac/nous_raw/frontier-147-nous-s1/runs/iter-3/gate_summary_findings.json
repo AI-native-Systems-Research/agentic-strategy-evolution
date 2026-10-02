@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "The hypothesis that SA with best-tracking and wider temperature schedule (T0=0.08, T1=0.0005) outperforms the iter-2 baseline SA (T0=0.05, T1=0.001) is directionally confirmed but the effect is much smaller than predicted: mean improvement of +0.65 points (90.93 vs 90.28) instead of the probe-estimated ~3 points. The result is not statistically significant (p\u22480.41, 5 runs per arm).",
+  "key_points": [
+    "h-main (wider temps + best-tracking) scored mean 90.93 (stdev 1.36) vs h-control baseline mean 90.28 (stdev 0.87) \u2014 a +0.65 point advantage, winning 4/5 paired comparisons but far short of the probe-suggested ~3 point gain.",
+    "The large per-run variance (scores ranging from 89.39 to 92.50 for h-main) means single-run probes used during design phase grossly overestimated the treatment effect; ~25 runs per arm would be needed to reach statistical significance at this effect size (Cohen's d=0.56).",
+    "Best current score plateau is ~90-91 average. To meaningfully improve beyond this, the next iteration should explore fundamentally different strategies (e.g., different neighborhood operators, constraint-handling changes, or non-SA approaches) rather than further SA temperature tuning, which appears to be yielding diminishing returns.",
+    "Baseline (h-control) performed as expected from iter-2 (mean 90.28, range 88.98\u201390.92), confirming reproducibility of prior results."
+  ]
+}

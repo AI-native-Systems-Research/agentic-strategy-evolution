@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a grid-based nearest-neighbor TSP construction plus time-guarded 2-opt local search can significantly outperform the x-sorted baseline on problem #44 (penalized TSP with 'carrot constraint'). The hypothesis predicts a score \u2265 78/100, with the dominant improvement coming from spatial proximity grouping rather than penalty optimization.",
+  "key_points": [
+    "Single arm (h-main): Grid NN construction using spatial hashing (cell size ~sqrt(N/4)) to find nearest unvisited cities, plus systematic 2-opt for N \u2264 10,000, outputting pure NN tour for larger N. Includes prime sieve for the 10%-penalty calculation on every 10th step.",
+    "Prediction: score \u2265 78. If score < 70, likely TLE on large inputs (N up to 200K). If score = 0, output format mismatch (must be exactly N+1 lines, one city per line, start/end at city 0). The 10% penalty on non-prime source cities at multiples-of-10 steps is estimated as ~1% of total cost and is not actively optimized in this iteration.",
+    "Confirmation criteria: score \u2265 78 confirms that spatial NN construction is the dominant factor. Refutation: score < 70 suggests either TLE, a bug, or that the baseline (x-sorted) is already strong enough that NN provides limited marginal gain given the x-sorted input ordering. Next iteration would then explore penalty-aware placement or more aggressive local search (Or-opt, 3-opt, LK).",
+    "Key risk: the 2-second time limit on N=200K with grid NN construction\u2014expanding-ring search must terminate quickly. The 1.5s time budget leaves 25% safety margin for unknown judge machine speed."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

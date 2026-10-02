@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Increasing the simulated annealing time budget from 2.85s to 4.8s produced a statistically significant score improvement of +2.28 points (mean 91.52 vs 89.24, one-sided t-test p=0.025). Both the main hypothesis and the negative control behaved as predicted, confirming that more SA iterations yield better ad placement quality.",
+  "key_points": [
+    "CONFIRMED: h-main (4.8s SA) scored mean 91.52 (stdev 0.53) across 5 runs, consistently beating h-control (2.85s SA) at mean 89.24 (stdev 2.16) \u2014 every paired comparison favored the longer budget.",
+    "Unexpected bonus: the 4.8s budget reduced score variance by ~4x (stdev 0.53 vs 2.16), meaning the algorithm converges more reliably with more iterations, reducing sensitivity to random test set composition.",
+    "The negative control confirmed the baseline range (mean 89.24, 4/5 runs in predicted 89\u201392 range, one outlier at 86.24), validating that the experimental setup and judge measurements are behaving consistently with prior observations (RP-5 judge variance ~5 points).",
+    "The current best solution uses SA with a 4.8s time budget and achieves scores in the 91\u201392 range; further gains may require algorithmic changes beyond simply increasing time (e.g., better neighborhood operators, smarter initialization, or hybrid approaches)."
+  ]
+}

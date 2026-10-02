@@ -1,0 +1,17 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a MaxRects bin-packing algorithm with exhaustive item-ordering search across multiple placement heuristics can score above 90/100 on a 2D rectangular knapsack problem (problem #47) with 8\u201312 item types, bins up to 2000\u00d72000, optional 90\u00b0 rotations, and a 1-second time limit per test case.",
+  "key_points": [
+    "Single arm (h-main): Implements MaxRects packer with 3 heuristics (BSSF, BAF, BL), 7 sorting strategies, exhaustive permutation search over item-type orderings (feasible for M\u226410, capped at 20K permutations for M>10), plus time-budgeted random shuffling \u2014 all within a 0.88s wall-clock budget.",
+    "Confirmation criterion: Judge score consistently above 90 (averaged across 15 hidden test cases). Scores below 90 trigger diagnostics \u2014 JSON format issues, rotation-flag mishandling, time-limit overruns, or free-rectangle pruning losses.",
+    "Key risk factors: (1) Permutation exhaustion may be insufficient for M=11\u201312 (up to 479M orderings), relying on heuristic orderings and random search to compensate; (2) MaxRects free-rectangle list can grow large on big bins, potentially exceeding the 1s time limit; (3) The scoring formula rewards beating a baseline shelf heuristic relative to a fractional upper bound, so even good packings may score modestly if the upper bound is loose."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

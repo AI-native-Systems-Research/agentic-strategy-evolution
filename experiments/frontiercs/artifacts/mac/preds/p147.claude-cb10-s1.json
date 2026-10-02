@@ -1,0 +1,273 @@
+{
+  "problem_id": "147",
+  "agent": "claude",
+  "label": "claude-cb10-s1",
+  "model": "claude-opus-4-6",
+  "final_score": 89.9318,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_147_claude-cb10-s1.solution.cpp",
+  "best_score": 89.84249999999997,
+  "rounds": 23,
+  "history": [
+    {
+      "round": 0,
+      "score": 53.9083,
+      "status": "success",
+      "cum_cost": 0.1281,
+      "best_score": 53.9083
+    },
+    {
+      "round": 1,
+      "score": 16.5477,
+      "status": "success",
+      "cum_cost": 0.2746,
+      "best_score": 53.9083
+    },
+    {
+      "round": 2,
+      "score": 52.39520000000001,
+      "status": "success",
+      "cum_cost": 0.5409,
+      "best_score": 53.9083
+    },
+    {
+      "round": 3,
+      "score": 41.02819999999999,
+      "status": "success",
+      "cum_cost": 0.8096,
+      "best_score": 53.9083
+    },
+    {
+      "round": 4,
+      "score": 48.2077,
+      "status": "success",
+      "cum_cost": 1.0855,
+      "best_score": 53.9083
+    },
+    {
+      "round": 5,
+      "score": 50.1149,
+      "status": "success",
+      "cum_cost": 1.3895,
+      "best_score": 53.9083
+    },
+    {
+      "round": 6,
+      "score": 53.18650000000002,
+      "status": "success",
+      "cum_cost": 1.6684,
+      "best_score": 53.9083
+    },
+    {
+      "round": 7,
+      "score": 60.209499999999984,
+      "status": "success",
+      "cum_cost": 1.9349,
+      "best_score": 60.209499999999984
+    },
+    {
+      "round": 8,
+      "score": 81.25420000000003,
+      "status": "success",
+      "cum_cost": 2.2224,
+      "best_score": 81.25420000000003
+    },
+    {
+      "round": 9,
+      "score": 86.7334,
+      "status": "success",
+      "cum_cost": 2.4953,
+      "best_score": 86.7334
+    },
+    {
+      "round": 10,
+      "score": 87.09979999999999,
+      "status": "success",
+      "cum_cost": 2.7663,
+      "best_score": 87.09979999999999
+    },
+    {
+      "round": 11,
+      "score": 81.83030000000002,
+      "status": "success",
+      "cum_cost": 3.0317,
+      "best_score": 87.09979999999999
+    },
+    {
+      "round": 12,
+      "score": 86.26070000000001,
+      "status": "success",
+      "cum_cost": 3.5167,
+      "best_score": 87.09979999999999
+    },
+    {
+      "round": 13,
+      "score": 80.60209999999996,
+      "status": "success",
+      "cum_cost": 3.987,
+      "best_score": 87.09979999999999
+    },
+    {
+      "round": 14,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 4.68,
+      "best_score": 87.09979999999999
+    },
+    {
+      "round": 15,
+      "score": 87.5762,
+      "status": "success",
+      "cum_cost": 5.209,
+      "best_score": 87.5762
+    },
+    {
+      "round": 16,
+      "score": 87.11249999999998,
+      "status": "success",
+      "cum_cost": 5.835,
+      "best_score": 87.5762
+    },
+    {
+      "round": 17,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 6.5616,
+      "best_score": 87.5762
+    },
+    {
+      "round": 18,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 7.3058,
+      "best_score": 87.5762
+    },
+    {
+      "round": 19,
+      "score": 89.84249999999997,
+      "status": "success",
+      "cum_cost": 8.0339,
+      "best_score": 89.84249999999997
+    },
+    {
+      "round": 20,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 8.7735,
+      "best_score": 89.84249999999997
+    },
+    {
+      "round": 21,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 9.5177,
+      "best_score": 89.84249999999997
+    },
+    {
+      "round": 22,
+      "score": null,
+      "status": "parse_error",
+      "cum_cost": 10.2618,
+      "best_score": 89.84249999999997
+    }
+  ],
+  "input_tokens": 135362,
+  "output_tokens": 109752,
+  "cost_usd_est": 10.2618,
+  "trajectory": [
+    {
+      "cum_cost": 0.1281,
+      "best_score": 53.9083
+    },
+    {
+      "cum_cost": 0.2746,
+      "best_score": 53.9083
+    },
+    {
+      "cum_cost": 0.5409,
+      "best_score": 53.9083
+    },
+    {
+      "cum_cost": 0.8096,
+      "best_score": 53.9083
+    },
+    {
+      "cum_cost": 1.0855,
+      "best_score": 53.9083
+    },
+    {
+      "cum_cost": 1.3895,
+      "best_score": 53.9083
+    },
+    {
+      "cum_cost": 1.6684,
+      "best_score": 53.9083
+    },
+    {
+      "cum_cost": 1.9349,
+      "best_score": 60.209499999999984
+    },
+    {
+      "cum_cost": 2.2224,
+      "best_score": 81.25420000000003
+    },
+    {
+      "cum_cost": 2.4953,
+      "best_score": 86.7334
+    },
+    {
+      "cum_cost": 2.7663,
+      "best_score": 87.09979999999999
+    },
+    {
+      "cum_cost": 3.0317,
+      "best_score": 87.09979999999999
+    },
+    {
+      "cum_cost": 3.5167,
+      "best_score": 87.09979999999999
+    },
+    {
+      "cum_cost": 3.987,
+      "best_score": 87.09979999999999
+    },
+    {
+      "cum_cost": 4.68,
+      "best_score": 87.09979999999999
+    },
+    {
+      "cum_cost": 5.209,
+      "best_score": 87.5762
+    },
+    {
+      "cum_cost": 5.835,
+      "best_score": 87.5762
+    },
+    {
+      "cum_cost": 6.5616,
+      "best_score": 87.5762
+    },
+    {
+      "cum_cost": 7.3058,
+      "best_score": 87.5762
+    },
+    {
+      "cum_cost": 8.0339,
+      "best_score": 89.84249999999997
+    },
+    {
+      "cum_cost": 8.7735,
+      "best_score": 89.84249999999997
+    },
+    {
+      "cum_cost": 9.5177,
+      "best_score": 89.84249999999997
+    },
+    {
+      "cum_cost": 10.2618,
+      "best_score": 89.84249999999997
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 3656.4
+}

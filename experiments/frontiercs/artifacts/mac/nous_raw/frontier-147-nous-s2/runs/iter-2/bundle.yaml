@@ -1,0 +1,49 @@
+metadata:
+  iteration: 2
+  family: "multi-restart-sa-rect-packing"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #147?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — iter-1 confirmed SA dominance (tier 1); now testing multi-restart strategy (single mechanism + structural ablation)"
+
+arms:
+  - type: h-main
+    prediction: "Multi-restart SA with randomized greedy initialization will score higher than single-run SA on the judge. The diversity of starting configurations from shuffled greedy ordering allows the algorithm to explore structurally different local optima, and best-of-3 selection captures the best outcome."
+    mechanism: "The greedy expansion phase processes companies in order, giving earlier companies priority in claiming space. Shuffling this order creates structurally different initial layouts (different companies get more/less space). Each layout represents a different basin of attraction for SA. By running 3 independent greedy+SA pipelines with different orderings and keeping the best, the algorithm samples from multiple basins instead of being trapped in one."
+    diagnostic: "If multi-restart does not improve: (1) Check if greedy ordering actually produces meaningfully different layouts (compare satisfaction distributions). (2) Check if 2.5s per SA restart is sufficient for convergence — if SA needs more time to find the local optimum, splitting into 3 short runs hurts. (3) Check if the judge's test-case variance masks a real improvement."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Refactor the single greedy+SA pipeline into a doGreedy(rng, maxTime) + doSA(rng, endTime) function pair. Add a main loop with 3 restarts, each calling shuffle() on the processing order before greedy, then running SA. Track global_best across restarts. Use larger greedy steps (sqrt(ratio)*5, max 300) for faster convergence (~0.3s per greedy)."
+        rationale: "Multi-restart SA explores diverse starting configurations. The shuffled greedy ordering is the key source of diversity. Larger greedy steps reduce greedy time to ~0.3s per restart, maximizing SA time."
+
+  - type: h-ablation
+    prediction: "Single-run SA (the iter-1 approach) will score lower than multi-restart SA because it can only explore one basin of attraction from one fixed greedy ordering."
+    mechanism: "Without restarts, the algorithm is limited to the local optimum reachable from the single fixed-order greedy initialization. SA can refine within that basin but cannot jump to a structurally different configuration."
+    diagnostic: "If single-run scores as well as multi-restart: the greedy ordering doesn't meaningfully affect the SA outcome, meaning SA is powerful enough to escape any initial configuration. In that case, a single long run is preferred over multiple short ones."
+
+# Arm selection note: h-main tests multi-restart SA; h-ablation is the iter-1 single-run SA.
+# This is a clean ablation of the restart mechanism. No negative control needed —
+# iter-1 already established SA >> greedy-only.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 10
+    grid_size: 10000
+    max_n: 200
+    num_restarts: 3
+    sa_initial_temperature: 0.01
+    greedy_step_multiplier: 5
+    greedy_max_step: 300
+  unlocked_parameters_audit:
+    - name: sa_cooling_schedule
+      default_value: "linear"
+      justification: "Geometric cooling was worse in iter-1 probing. Linear T0*(1-progress) is well-tuned."
+    - name: sa_move_distribution
+      default_value: "uniform over 8 moves"
+      justification: "Weighted distributions were worse in iter-1. Uniform keeps iteration throughput high."
+    - name: rng_seed
+      default_value: 42
+      justification: "Fixed seed for reproducibility. The restart mechanism introduces randomness via shuffle."
+    - name: sa_time_budget
+      default_value: "~2.5s per restart"
+      justification: "9.0s / 3 restarts minus 0.3-0.5s greedy. 3 restarts was optimal (5 too many, 2 too few)."

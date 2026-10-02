@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether adding best-state tracking and a wider temperature schedule (T0=0.08, T1=0.0005) to our simulated annealing rectangle-packing solver pushes the score above the ~90-point plateau observed in iteration 2. A probe showed the combined changes scoring 92.7 vs 89.9 for the baseline, and this experiment formalizes that comparison with a controlled negative arm.",
+  "key_points": [
+    "h-main: SA with best-tracking (save best config every 32K iters, restore at end) + wider temps (T0=0.08\u2192T1=0.0005). Predicted score ~92-93, based on probe result of 92.7.",
+    "h-control-negative: Iter-2 baseline SA (T0=0.05\u2192T1=0.001, no best-tracking). Predicted score 88-91. If this arm scores above 92, the h-main improvement is within noise and the hypothesis is refuted.",
+    "Confirmation criteria: h-main scores \u22652 points above h-control on the same judge run, indicating the combined best-tracking + wider temps mechanism is real and not judge variance.",
+    "Key risk: best-tracking overhead (copying full state every 32K iters) could reduce total SA iterations enough to negate benefits; diagnostic is to check iteration count in both arms.",
+    "Prior iterations established: (1) SA beats greedy by ~20 points, (2) SA with T0=0.05/T1=0.001 plateaus around 88-91, (3) wider temps alone without tracking degraded to ~88.4, confirming tracking is the critical component."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

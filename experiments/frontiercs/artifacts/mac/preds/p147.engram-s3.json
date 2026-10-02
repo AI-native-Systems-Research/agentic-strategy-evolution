@@ -1,0 +1,84 @@
+{
+  "problem_id": "147",
+  "agent": "engram",
+  "label": "engram-s3",
+  "model": "claude-opus-4-6",
+  "final_score": 88.2672,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_147_engram-s3.solution.cpp",
+  "best_score": 86.4965,
+  "method": "Engram-style (reimplementation)",
+  "agents": 3,
+  "rounds_per_agent": 3,
+  "code_generations": 9,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 83.04800000000002,
+      "status": "success",
+      "plan": "Use a Voronoi-like partition approach \u2014 start by assigning each company a 1\u00d71 cell at its desired point, then iteratively grow rectangles toward their desired areas using a simulated annealing approach on a grid-based assignment, combined with a KD-tree style recursive partitioning as the initial so"
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 77.83540000000002,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a recursive space partitioning (BSP/KD-tree) where at each level we sort points by x or y, split proportionally to desired area sums, recurse on each half. This gives a valid non-overlapping partition. Then apply simulated annealing that adjusts the split positions within the BSP tree to o"
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 19.814600000000002,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 18.2222,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 86.4965,
+      "status": "success",
+      "plan": "Implement BSP-tree initialization that recursively partitions space proportionally to desired areas while keeping each point in its assigned region, then run optimized simulated annealing with spatial indexing for fast overlap checks and smart boundary-sharing moves."
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 51.428500000000014,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 0.0712,
+      "status": "success",
+      "plan": null
+    }
+  ],
+  "input_tokens": 25814,
+  "output_tokens": 21245,
+  "cost_usd_est": 1.9806,
+  "journal": "/Users/toslali/frontier/gen_logs/frontier_147_engram-s3_engram/research_journal.md",
+  "seconds": 717.8
+}

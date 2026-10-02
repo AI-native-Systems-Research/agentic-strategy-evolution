@@ -1,0 +1,41 @@
+metadata:
+  iteration: 2
+  family: "sa-ils-tlefix"
+  research_question: "Can adding ILS perturbation to SA while reducing restarts to avoid TLE improve score consistency and magnitude over SA-only?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — single mechanism (ILS perturbation) + ablation against iter-1 baseline"
+
+arms:
+  - type: h-main
+    prediction: "SA + ILS perturbation with 12 restarts will consistently score ~87 (no TLE variance), improving over the iter-1 SA-only approach that scored 84.62 with high variance due to TLE."
+    mechanism: "Reducing restarts from 20 to 12 eliminates TLE on large test cases, ensuring all tests complete. Adding 12 cheap perturbation+greedy cycles per restart compensates for fewer restarts by exploring more local-optima neighborhoods from each SA solution. Perturbation escapes the greedy basin by randomly flipping ~4-5% of vertices, then greedy_improve finds the nearest local optimum — this is ILS (Iterated Local Search)."
+    diagnostic: "If score doesn't improve: (1) check if perturbation is actually finding new local optima (all perturbation results identical to pre-perturbation = perturbation strength too low), (2) check if 12 restarts is still too many for large n (score inconsistency = TLE still occurring)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace with SA+ILS algorithm: 12 restarts (6 greedy-init, 6 random-init), SA with T=3.0/alpha=0.99997, then 12 perturbation+greedy cycles per restart with varying perturbation strength (n/20 to n/32 vertices flipped)."
+        rationale: "Fewer restarts avoid TLE; perturbation cycles add diversity cheaply without SA overhead."
+
+  - type: h-control-negative
+    prediction: "The iter-1 SA-only solution (20 restarts, no perturbation) will score inconsistently in the 83-87 range due to TLE on large test cases."
+    mechanism: "20 restarts × 267k SA steps = 5.3M steps plus greedy overhead is at the TLE boundary. On judge runs with higher system load or stricter timing, some large test cases time out, dropping the score."
+    diagnostic: "If score is consistently high (>87): the TLE hypothesis is wrong, and the original approach is sufficient — the iter-1 low score was noise."
+
+# Arms rationale: h-main tests the SA+ILS+TLE-fix combination.
+# h-control-negative uses the iter-1 solution unchanged to demonstrate
+# the TLE inconsistency problem that h-main solves.
+
+experiment_spec:
+  verified_parameters:
+    restarts: 12
+    sa_alpha: 0.99997
+    sa_T_init: 3.0
+    sa_T_min: 0.001
+    perturbation_cycles: 12
+    rng_seed: 31415
+  unlocked_parameters_audit:
+    - name: greedy_init_fraction
+      default_value: 0.5
+      justification: "Half greedy / half random init provides good diversity; not a sensitive parameter."
+    - name: perturbation_strength
+      default_value: "n/20 to n/32 (varying)"
+      justification: "Empirically tuned range — too small doesn't escape basin, too large destroys solution quality."

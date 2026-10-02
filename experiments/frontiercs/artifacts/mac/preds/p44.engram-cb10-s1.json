@@ -1,0 +1,700 @@
+{
+  "problem_id": "44",
+  "agent": "engram",
+  "label": "engram-cb10-s1",
+  "model": "claude-opus-4-6",
+  "final_score": 78.446,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_44_engram-cb10-s1.solution.cpp",
+  "best_score": 78.446,
+  "method": "Engram-style (reimplementation)",
+  "agents": 14,
+  "rounds_per_agent": 4,
+  "code_generations": 52,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 22.843999999999998,
+      "status": "success",
+      "plan": "Start with a nearest-neighbor heuristic from city 0, then apply 2-opt local search with the penalized cost function. Additionally, try to swap cities to place primes at every 10th step position. Use Or-opt moves too. Given the 2-second time limit, I'll use efficient 2-opt with time-based termination",
+      "cum_cost": 0.1292,
+      "best_score": 22.843999999999998
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 31.913000000000004,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.2528,
+      "best_score": 31.913000000000004
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.3951,
+      "best_score": 31.913000000000004
+    },
+    {
+      "agent": 0,
+      "round": 3,
+      "score": 5,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.5345,
+      "best_score": 31.913000000000004
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 28.932000000000002,
+      "status": "success",
+      "plan": "Implement a high-quality TSP solver using nearest-neighbor construction followed by aggressive 2-opt local search with proper penalty-aware cost evaluation, using efficient delta computations instead of full tour re-evaluation, and also try to place prime cities at positions that are multiples of 10",
+      "cum_cost": 0.7656,
+      "best_score": 31.913000000000004
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 32.904999999999994,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.8968,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 18.195,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.0188,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 1,
+      "round": 3,
+      "score": 20.9055,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.155,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 21.102999999999998,
+      "status": "success",
+      "plan": "Start from identity tour, then apply fast penalty-aware 2-opt and or-opt (single city relocation) with O(1) delta evaluation, plus a dedicated prime-placement optimization pass to ensure prime cities occupy positions at multiples of 10, all within the 2-second time limit.",
+      "cum_cost": 1.4781,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.6404,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.7732,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 2,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.911,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": 19.200999999999997,
+      "status": "success",
+      "plan": "Start with identity tour, implement fast 2-opt with O(1) delta evaluation (accounting for multipliers at the two changed edge positions only, accepting that internal multiplier changes are small), run many iterations within time limit, then do a prime-placement swap pass to ensure primes are at posi",
+      "cum_cost": 2.132,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": 28.253,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.2643,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": 26.912000000000003,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.4018,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 3,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.5408,
+      "best_score": 32.904999999999994
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": 40.693999999999996,
+      "status": "success",
+      "plan": "Implement nearest-neighbor construction, then fast 2-opt where delta evaluation only checks the two endpoint edges plus any positions within the reversed segment that are multiples of 10 (sparse check), combined with or-opt (single node relocation) moves, all within a time-budgeted loop. This avoids",
+      "cum_cost": 2.8416,
+      "best_score": 40.693999999999996
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": 78.446,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.9958,
+      "best_score": 78.446
+    },
+    {
+      "agent": 4,
+      "round": 2,
+      "score": 31.991000000000003,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.122,
+      "best_score": 78.446
+    },
+    {
+      "agent": 4,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.2448,
+      "best_score": 78.446
+    },
+    {
+      "agent": 5,
+      "round": 0,
+      "score": 33.928999999999995,
+      "status": "success",
+      "plan": "Use nearest-neighbor construction, then do intensive city-swap local search (swapping cities at positions i and j), which has O(1) delta evaluation since positions/multipliers don't change - only 4 edges are affected per swap. This allows many more iterations within the time limit. Also add a dedica",
+      "cum_cost": 3.5223,
+      "best_score": 78.446
+    },
+    {
+      "agent": 5,
+      "round": 1,
+      "score": 5,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.7605,
+      "best_score": 78.446
+    },
+    {
+      "agent": 5,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.8901,
+      "best_score": 78.446
+    },
+    {
+      "agent": 5,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.0117,
+      "best_score": 78.446
+    },
+    {
+      "agent": 6,
+      "round": 0,
+      "score": 16.941,
+      "status": "success",
+      "plan": "Implement nearest-neighbor construction followed by systematic 2-opt (limited segment length for speed) with full penalty-aware delta, then or-opt (single node relocation), then a dedicated prime-placement pass that swaps prime cities into positions that are multiples of 10, all within the time budg",
+      "cum_cost": 4.4143,
+      "best_score": 78.446
+    },
+    {
+      "agent": 6,
+      "round": 1,
+      "score": 34.1055,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.5682,
+      "best_score": 78.446
+    },
+    {
+      "agent": 6,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.7087,
+      "best_score": 78.446
+    },
+    {
+      "agent": 6,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.866,
+      "best_score": 78.446
+    },
+    {
+      "agent": 7,
+      "round": 0,
+      "score": 78.249,
+      "status": "success",
+      "plan": "Keep the NN construction with grid spatial hashing, then run simulated annealing with both segment reversal (2-opt) and single-node relocation (or-opt) moves, all with proper penalty-aware cost evaluation, plus periodic prime-placement swaps to move prime cities into every-10th position.",
+      "cum_cost": 5.2291,
+      "best_score": 78.446
+    },
+    {
+      "agent": 7,
+      "round": 1,
+      "score": 20.5485,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.3969,
+      "best_score": 78.446
+    },
+    {
+      "agent": 7,
+      "round": 2,
+      "score": 5.3575,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.5598,
+      "best_score": 78.446
+    },
+    {
+      "agent": 7,
+      "round": 3,
+      "score": 5,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.7249,
+      "best_score": 78.446
+    },
+    {
+      "agent": 8,
+      "round": 0,
+      "score": 78.28250000000001,
+      "status": "success",
+      "plan": "Implement a robust simulated annealing approach with nearest-neighbor construction, using or-opt (single node relocation) and city-swap moves with O(1) delta evaluation that properly accounts for the 10th-step prime penalty, running for the full time budget with careful temperature scheduling.",
+      "cum_cost": 6.1372,
+      "best_score": 78.446
+    },
+    {
+      "agent": 8,
+      "round": 1,
+      "score": 26.6055,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.3061,
+      "best_score": 78.446
+    },
+    {
+      "agent": 8,
+      "round": 2,
+      "score": 34.042,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.4428,
+      "best_score": 78.446
+    },
+    {
+      "agent": 8,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.5745,
+      "best_score": 78.446
+    },
+    {
+      "agent": 9,
+      "round": 0,
+      "score": 73.38250000000001,
+      "status": "success",
+      "plan": "Implement a high-quality simulated annealing approach with nearest-neighbor construction, using or-opt (single node relocation) and segment reversal moves with proper penalty-aware O(1) delta evaluation for or-opt moves, running within the 2-second time limit.",
+      "cum_cost": 6.9474,
+      "best_score": 78.446
+    },
+    {
+      "agent": 9,
+      "round": 1,
+      "score": 33.978,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.1194,
+      "best_score": 78.446
+    },
+    {
+      "agent": 9,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.2548,
+      "best_score": 78.446
+    },
+    {
+      "agent": 9,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.392,
+      "best_score": 78.446
+    },
+    {
+      "agent": 10,
+      "round": 0,
+      "score": 69.35,
+      "status": "success",
+      "plan": "Implement a strong simulated annealing approach with nearest-neighbor construction, using or-opt (single node relocation) and 2-opt segment reversal moves with proper O(1) delta evaluation for the prime penalty structure, with careful temperature scheduling to maximize iterations within 1.8 seconds.",
+      "cum_cost": 7.8223,
+      "best_score": 78.446
+    },
+    {
+      "agent": 10,
+      "round": 1,
+      "score": 34.059,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.9775,
+      "best_score": 78.446
+    },
+    {
+      "agent": 10,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.1188,
+      "best_score": 78.446
+    },
+    {
+      "agent": 10,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.254,
+      "best_score": 78.446
+    },
+    {
+      "agent": 11,
+      "round": 0,
+      "score": 16.936,
+      "status": "success",
+      "plan": "Implement a strong simulated annealing approach with nearest-neighbor construction, using both or-opt (single node relocation) and 2-opt moves with proper penalty-aware delta evaluation, running within the 2-second time limit with careful temperature scheduling.",
+      "cum_cost": 8.6799,
+      "best_score": 78.446
+    },
+    {
+      "agent": 11,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.8454,
+      "best_score": 78.446
+    },
+    {
+      "agent": 11,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.9935,
+      "best_score": 78.446
+    },
+    {
+      "agent": 11,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.1478,
+      "best_score": 78.446
+    },
+    {
+      "agent": 12,
+      "round": 0,
+      "score": 78.214,
+      "status": "success",
+      "plan": "Improve the existing best solution by implementing a proper simulated annealing with both 2-opt segment reversal and or-opt (single node relocation) moves, with correct penalty-aware delta evaluation, using the full 1.8 seconds budget with adaptive temperature scheduling to maximize tour quality.",
+      "cum_cost": 9.6025,
+      "best_score": 78.446
+    },
+    {
+      "agent": 12,
+      "round": 1,
+      "score": 33.8945,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.8034,
+      "best_score": 78.446
+    },
+    {
+      "agent": 12,
+      "round": 2,
+      "score": 33.899499999999996,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.9411,
+      "best_score": 78.446
+    },
+    {
+      "agent": 12,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 10.073,
+      "best_score": 78.446
+    }
+  ],
+  "input_tokens": 169414,
+  "output_tokens": 101097,
+  "cost_usd_est": 10.1235,
+  "journal": "/Users/toslali/frontier/gen_logs/frontier_44_engram-cb10-s1_engram/research_journal.md",
+  "trajectory": [
+    {
+      "cum_cost": 0.1292,
+      "best_score": 22.843999999999998
+    },
+    {
+      "cum_cost": 0.2528,
+      "best_score": 31.913000000000004
+    },
+    {
+      "cum_cost": 0.3951,
+      "best_score": 31.913000000000004
+    },
+    {
+      "cum_cost": 0.5345,
+      "best_score": 31.913000000000004
+    },
+    {
+      "cum_cost": 0.7656,
+      "best_score": 31.913000000000004
+    },
+    {
+      "cum_cost": 0.8968,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 1.0188,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 1.155,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 1.4781,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 1.6404,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 1.7732,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 1.911,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 2.132,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 2.2643,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 2.4018,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 2.5408,
+      "best_score": 32.904999999999994
+    },
+    {
+      "cum_cost": 2.8416,
+      "best_score": 40.693999999999996
+    },
+    {
+      "cum_cost": 2.9958,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 3.122,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 3.2448,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 3.5223,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 3.7605,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 3.8901,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 4.0117,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 4.4143,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 4.5682,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 4.7087,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 4.866,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 5.2291,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 5.3969,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 5.5598,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 5.7249,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 6.1372,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 6.3061,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 6.4428,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 6.5745,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 6.9474,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 7.1194,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 7.2548,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 7.392,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 7.8223,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 7.9775,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 8.1188,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 8.254,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 8.6799,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 8.8454,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 8.9935,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 9.1478,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 9.6025,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 9.8034,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 9.9411,
+      "best_score": 78.446
+    },
+    {
+      "cum_cost": 10.073,
+      "best_score": 78.446
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 1994.2
+}

@@ -1,0 +1,26 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Multi-cell greedy init (0.12s) followed by SA will score higher than single-cell greedy init (0.15s) followed by SA, because faster init gives SA more iterations AND a better starting configuration.",
+      "observed": "h-main scores: 88.71, 90.65, 90.39 (mean 89.92). h-ablation scores: 88.88, 88.82, 90.45 (mean 89.38). The difference is +0.54 points in favor of h-main, but this is within the ~5-point run-to-run variance caused by different random test cases per judge call. The effect is not reliably directional across runs (h-main lost run1 88.71 < 88.88, won run2 90.65 > 88.82, won run3 90.39 < 90.45).",
+      "status": "REFUTED",
+      "error_type": "magnitude",
+      "diagnostic_note": "The multi-cell init does fill space faster (finishes in fewer passes), but SA is powerful enough to converge to similar quality regardless of starting configuration. The 0.03s extra SA time from faster init is negligible (~1000 extra iterations out of millions). Init quality is not a bottleneck \u2014 SA dominates final score as predicted by RP-2."
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Single-cell greedy init (0.15s) + SA will score lower than h-main but close to iter-1 results (~88-90).",
+      "observed": "h-ablation scores: 88.88, 88.82, 90.45 (mean 89.38). Consistent with iter-1 range of 85-90. The prediction that it would score lower than h-main was not confirmed \u2014 both arms produced statistically indistinguishable scores.",
+      "status": "PARTIALLY_CONFIRMED",
+      "error_type": "direction",
+      "diagnostic_note": "The absolute score range (88-90) matches the prediction. However, the directional claim (lower than h-main) was not confirmed. Both inits produce equivalent starting points for SA."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The hypothesis that multi-cell init would improve SA scores was refuted. Both arms score in the 88-91 range with overlapping distributions. The ~0.5 point mean difference is not meaningful given ~5-point judge variance. SA converges to similar final quality regardless of init method, confirming RP-2's claim that SA is the dominant mechanism. Init quality improvement is not a fruitful direction \u2014 future iterations should explore SA neighborhood structure or fundamentally different representations.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

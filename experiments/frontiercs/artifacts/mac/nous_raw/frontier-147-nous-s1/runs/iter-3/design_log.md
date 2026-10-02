@@ -1,0 +1,9 @@
+Let me examine the iter-2 best solution more closely and probe for improvement opportunities.Now let me write an improved solution with kick moves and targeted selection, then probe it:Score 89.94 — similar to baseline ~90. Kick moves + targeted selection didn't help. Let me try a different approach: post-SA greedy refinement + best-tracking.Post-refinement destroyed the score (37.7). The greedy shrink/expand creates cascading mess. Let me try just best-tracking with original SA, and explore a "contract-expand" move type.Contract-expand hurts (87 vs 90). Let me try the pure SA baseline with just best-tracking.91.84 — best score yet! Best-tracking provides meaningful improvement by capturing the peak SA state. Let me try wider temperature with best-tracking:92.73! Wider temps + best-tracking synergize. Let me push further:T0=0.1 too aggressive (90.7). Let me refine around the T0=0.08 sweet spot:While that runs, let me also try a variant with more frequent best-checking:Now let me write the design artifacts while waiting for the background task:Now write the handoff:Background task confirms T0=0.08/T1=0.0003 scores only 87.07 — T1=0.0005 is clearly the sweet spot.
+
+Now copy handoff to campaign level and run validation:Validation passes. Here's the summary:
+
+**Iter-3 design for AHC001 rectangle packing.** Key discovery: SA best-state tracking + wider temperature schedule (T0=0.08, T1=0.0005) scored 92.73 in probes — up from ~90 baseline. The insight is that SA already visits good configurations but doesn't keep them; best-tracking captures the peak while wider temps increase exploration diversity. The combination is super-additive (wider temps alone failed at 88.4 in iter-2, tracking alone gave 91.8, combined gave 92.7).
+
+Bundle has two arms:
+- **h-main**: SA + best-tracking + T0=0.08/T1=0.0005
+- **h-control-negative**: iter-2 baseline SA (T0=0.05/T1=0.001, no tracking)

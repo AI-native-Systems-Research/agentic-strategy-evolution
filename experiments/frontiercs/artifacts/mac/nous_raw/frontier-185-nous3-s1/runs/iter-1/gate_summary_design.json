@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a branch-and-bound (BnB) maximum clique solver with degeneracy ordering, greedy coloring bounds, and bitset-accelerated candidate intersection can achieve near-perfect scores (\u226595/100) on the Maximum Clique problem with N\u22641000, and whether this significantly outperforms a greedy-only baseline. This is iteration 1, establishing the core algorithmic mechanism.",
+  "key_points": [
+    "h-main arm: BnB with degeneracy ordering + greedy coloring upper bound + bitset intersection + 500 greedy restarts for initial lower bound. Prediction: score \u2265 95. This is the standard exact/near-exact approach for max clique at this scale (N\u22641000, 2s time limit).",
+    "h-control-negative arm: Greedy-only with 500 random restarts and degree-based ordering, no BnB search. Prediction: score < 85. This isolates the contribution of exhaustive BnB search vs. simple heuristic restarts.",
+    "Confirmation: h-main scores \u2265 95 AND meaningfully outperforms h-control-negative (\u226510 point gap). Refutation: if both score similarly (greedy is sufficient) or if h-main scores low (BnB hits time limit or has bugs). Key diagnostic: if h-main is slow, check whether coloring bound is too loose or bitset operations have overhead issues.",
+    "Design is well-scoped: N\u22641000 means bitsets fit in ~16 64-bit words, making BnB with bitset intersection very fast. The 1850ms time cutoff leaves a 150ms safety buffer. The approach is the gold standard for exact max clique at this graph size."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

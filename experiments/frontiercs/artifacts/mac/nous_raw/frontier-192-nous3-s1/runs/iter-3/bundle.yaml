@@ -1,0 +1,49 @@
+metadata:
+  iteration: 3
+  family: "incremental-gain-deep-sa"
+  research_question: "Does incremental gain tracking with longer SA restarts (0.30s vs 0.10s) improve Max-Cut score beyond iter-2's 87.5 baseline?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism (SA depth) + ablation on restart budget"
+
+arms:
+  - type: h-main
+    prediction: "Incremental gain tracking + 0.30s SA restarts will score ≥87.5 consistently and match or exceed iter-2's 87.54 mean, with lower variance due to deeper per-restart exploration."
+    mechanism: "Incremental gain array (maintained in O(degree) per accepted flip, O(1) per rejected flip) eliminates redundant gain recomputation, allowing ~5x more SA iterations per second. Longer SA budgets (0.30s vs 0.10s) give ~5M iterations per restart, enabling deeper basin exploration. Post-SA greedy ensures each restart converges to a local optimum. Combined, these yield higher cut quality per restart, compensating for fewer total restarts (3 vs 9)."
+    diagnostic: "If h-main scores below 87.5, check: (1) whether the judge machine is unusually slow (timing variance), (2) whether 3 restarts provide insufficient diversity, (3) whether incremental gain has a bug causing incorrect cut values."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Full rewrite: xorshift128+ RNG, incremental gain array, linear-cooling SA with 0.30s per restart, T0=3.0/Tf=0.001, post-SA greedy cleanup, 0.90s total budget, batch time checks every 512 iterations"
+        rationale: "Tests depth-over-breadth hypothesis with faster per-iteration SA"
+
+  - type: h-ablation
+    prediction: "Short SA (0.03s per restart, ~30 restarts) with the same incremental gain tracking will score lower and with higher variance than h-main, because shallow restarts cannot escape deep local optima despite exploring more starting points."
+    mechanism: "With 0.03s per restart and incremental gain, each restart gets ~500K SA iterations — enough for some exploration but not deep enough to find the best solutions. More restarts (30 vs 3) provide diversity but each restart's quality ceiling is lower."
+    diagnostic: "If h-ablation scores higher than h-main, the diversity of many random starts matters more than depth of search, suggesting the solution landscape has many shallow optima rather than a few deep ones."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Same as h-main but with saBudget=0.03 instead of 0.30 (and post-SA greedy)"
+        rationale: "Controls for restart budget while keeping incremental gain constant"
+
+experiment_spec:
+  verified_parameters:
+    time_limit: 0.90
+    T0: 3.0
+    Tf: 0.001
+    sa_budget_main: 0.30
+    sa_budget_ablation: 0.03
+    batch_time_check_interval: 512
+  unlocked_parameters_audit:
+    - name: n_max
+      default_value: 1000
+      justification: "Problem constraint, not tunable"
+    - name: m_max
+      default_value: 20000
+      justification: "Problem constraint, not tunable"
+    - name: num_test_cases
+      default_value: 30
+      justification: "Judge-determined, not controllable"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+      h-ablation: 45
+    observation_method: "Judge call takes ~30-60s based on observed probe runs"

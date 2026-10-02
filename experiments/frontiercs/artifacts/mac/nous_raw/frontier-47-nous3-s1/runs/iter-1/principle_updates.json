@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For 2D rectangular knapsack with bins 900-2000 and 8-12 item types, a maximal-rectangles greedy packer with 6 deterministic orderings (density, value, area, max-dim, total-value, perimeter) x 3 placement methods (BSSF, BAF, BL) plus randomized density-weighted ordering search within 0.75s achieves ~95% of the fractional upper bound.",
+    "confidence": "high",
+    "regime": "Bin sizes 900-2000, 8-12 item types, limits up to 2000, 1s time limit",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "MaxRects maintains free rectangle set and greedily places items using best-fit heuristics. Type-level iteration (not per-copy expansion) keeps complexity manageable. Multiple orderings and randomized noise in density-based ordering explore diverse packings.",
+    "applicability_bounds": "Applies to axis-aligned 2D bin packing with modest type counts (<15) and high per-type limits. May not scale to thousands of distinct types.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Type-level greedy iteration (place all copies of one type before moving to the next) is critical for performance when per-type limits are large (up to 2000). Expanding all copies into a flat candidate list causes TLE.",
+    "confidence": "high",
+    "regime": "Per-type limits > 100, time limit 1s",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Flat expansion creates O(limit * M) candidates (~24000), causing quadratic free-rect scanning. Type-level iteration processes each type's copies sequentially, exiting early when no fit is found.",
+    "applicability_bounds": "Relevant when limits are large relative to bin capacity. With small limits this distinction is irrelevant.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

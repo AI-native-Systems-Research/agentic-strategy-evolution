@@ -1,0 +1,33 @@
+metadata:
+  iteration: 3
+  family: "grid-guided-2opt-sa"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #44?"
+  complexity_tier: 1
+  tier_justification: "iter 3, single mechanism (grid-guided 2-opt replaces random 2-opt), treatment vs control"
+
+arms:
+  - type: h-main
+    prediction: "Two-phase grid-guided 2-opt SA will score consistently above 71.0, a directional improvement over iter-2's 69.5 baseline. The improvement comes from spatially-intelligent 2-opt candidate selection via grid lookup."
+    mechanism: "Grid-based spatial neighbor lookup (GG=sqrt(N), ~1 city/cell) finds nearby cities in O(1). Using these as 2-opt partners produces short segments that uncross edges efficiently. Phase 1 uses stale pos[] with periodic rebuild (batch=300) for unlimited segment lengths. Phase 2 uses exact pos[] with per-move O(seg) update for short segments (≤20). Random swaps (20%) provide diversification. The grid reuses the NN construction infrastructure."
+    diagnostic: "If score does not improve over 69.5: (1) check if grid-guided 2-opt moves are actually being accepted (most may fail the segment length filter), (2) verify pos[] accuracy after accepted moves, (3) check if the Phase 1→Phase 2 transition loses tour quality."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace iter-2's random swap + boundary 2-opt SA with a two-phase grid-guided 2-opt SA. Phase 1 (0-1.3s): grid-guided 2-opt with stale pos[], unlimited segments, batch=300 rebuild. Phase 2 (1.3-1.85s): grid-guided 2-opt with exact pos[], segment≤20, lower temperature. Both phases use 80% 2-opt + 20% random swap."
+        rationale: "Grid-guided 2-opt finds spatially promising edge pairs that random selection misses. Short segments keep pos[] update O(20). Two-phase design: Phase 1 explores with larger moves (stale pos allows any segment), Phase 2 refines with precise short moves."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    grid_size: "sqrt(N)"
+    max_segment_phase2: 20
+    phase1_batch: 300
+    phase2_batch: 1000
+    twoopt_ratio: 0.8
+    swap_ratio: 0.2
+    phase1_end_seconds: 1.30
+    phase2_end_seconds: 1.85
+    sa_temp_schedule: "(initCost/N) * pow(1e-4, progress)"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+    observation_method: "fmeasure_44.sh judge call"

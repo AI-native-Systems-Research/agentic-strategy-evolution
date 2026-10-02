@@ -1,0 +1,26 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The BnB+DLS hybrid from iter-1 will reproduce score 100, confirming the approach is reliable across judge evaluations.",
+      "observed": "Score 100. Confirmed \u2014 the BnB+DLS hybrid reliably achieves perfect score.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "BnB alone (without DLS fallback) will score lower than 100, likely in the 88-95 range, because hard dense instances cause BnB to time out before finding the optimal clique.",
+      "observed": "Score 100. BnB-only with 1950ms time limit also achieves perfect score. The DLS fallback is not necessary for this test set.",
+      "status": "REFUTED",
+      "error_type": "regime",
+      "diagnostic_note": "The judge test set does not contain instances hard enough to time out BnB within 1950ms. With degeneracy ordering and bitset coloring bounds, BnB alone completes all instances optimally. The extra 350ms (1950 vs 1600) may also help. RP-1's claim that BnB 'plateaus around 88-90% on hard dense instances' was based on the iter-1 estimate without degeneracy ordering \u2014 with degeneracy ordering and full time budget, BnB alone suffices."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The h-ablation refutation reveals that the DLS tabu search fallback is redundant for this problem's test set when BnB has degeneracy ordering + coloring bound + 1950ms. The iter-1 estimate of 88-90% for BnB-only was likely based on BnB without degeneracy ordering (which scored 80 in iter-1). With proper degeneracy ordering, BnB alone handles all test instances within budget. The DLS component adds no value for this judge.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

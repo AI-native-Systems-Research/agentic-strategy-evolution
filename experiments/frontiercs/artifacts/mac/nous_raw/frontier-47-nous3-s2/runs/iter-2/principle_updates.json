@@ -1,0 +1,39 @@
+[
+  {
+    "id": "RP-3",
+    "statement": "For 2D rectangular knapsack with 8-12 item types, SA over joint (ordering \u00d7 per-item-heuristic) space achieves ~95.2/100, a 0.37-point improvement over ordering-only hill-climbing. The per-item heuristic dimension is the key lever; SA over orderings alone matches hill-climbing.",
+    "confidence": "high",
+    "regime": "M=8-12 item types, bins 900-2000, 1s time budget, 4 MaxRects heuristics (BSSF/BAF/BL/BLSF)",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Hill-climbing exhausts the ordering space for M=8-12 (O(M\u00b2) neighborhood is small enough). The actual unexplored dimension is per-item heuristic assignment: which placement heuristic to use for each item type. SA over the joint space of orderings and per-item heuristic assignments finds combinations where different items benefit from different heuristics \u2014 e.g., large items placed with bottom-left while small items use best-short-side-fit.",
+    "applicability_bounds": "Holds for M=8-12 with 4 heuristics. For larger M, ordering search may regain importance. For more heuristics, the per-item heuristic dimension grows combinatorially.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-4",
+    "statement": "Residual gap filling after ordered packing provides zero additional value when per-item heuristic selection is optimized. The ordered pack with individually-tuned heuristics per item type leaves no exploitable residual space.",
+    "confidence": "high",
+    "regime": "M=8-12 item types, bins 900-2000, MaxRects with 4 heuristics, SA-optimized per-item heuristic assignment",
+    "evidence": [
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Gap filling tries to place remaining copies of item types (sorted by value density) into free rectangles left after ordered packing. When per-item heuristic selection is optimized, the packing already achieves near-maximal space utilization, leaving free rectangles too small for any item type.",
+    "applicability_bounds": "May not hold if per-item heuristic selection is NOT optimized (i.e., with fixed heuristic, gap filling might contribute). Also may not hold for very large bins where more residual space exists.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

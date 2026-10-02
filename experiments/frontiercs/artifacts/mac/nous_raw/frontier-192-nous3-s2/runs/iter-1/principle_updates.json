@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Multi-start simulated annealing with greedy local search achieves ~85% cut ratio on Max-Cut instances with n<=1000, m<=20000, far exceeding the ~50% random baseline.",
+    "confidence": "high",
+    "regime": "Undirected graphs with n<=1000, m<=20000, single-vertex-flip neighborhood",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Greedy local search reaches local optima (~80% cut ratio). SA with slow cooling (alpha=0.99997) escapes shallow local optima via probabilistic acceptance of worsening moves. Multi-start (20 restarts) diversifies initial conditions. Re-greedy after SA polishes the SA solution.",
+    "applicability_bounds": "Holds for sparse-to-moderate density graphs within the stated size bounds. May not scale to n>>1000 due to fixed iteration counts. The ~85% score is near the Goemans-Williamson 0.878 approximation bound, suggesting diminishing returns from SA alone.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Do not use chrono/clock-based timing in Frontier-CS judge solutions \u2014 use fixed iteration counts instead.",
+    "confidence": "high",
+    "regime": "Frontier-CS algorithmic judge environment",
+    "evidence": [
+      "iteration-1-designer-probe"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The designer observed that chrono::steady_clock-based loop control caused score=0, likely due to judge environment restrictions or overhead. Fixed iteration counts with tuned alpha work reliably.",
+    "applicability_bounds": "Applies to all Frontier-CS algorithmic problems. May not apply to other judges.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

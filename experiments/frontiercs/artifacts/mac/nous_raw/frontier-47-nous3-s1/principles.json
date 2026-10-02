@@ -1,0 +1,133 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For 2D rectangular knapsack with bins 900-2000 and 8-12 item types, a maximal-rectangles greedy packer with 6 deterministic orderings (density, value, area, max-dim, total-value, perimeter) x 3 placement methods (BSSF, BAF, BL) plus randomized density-weighted ordering search within 0.75s achieves ~95% of the fractional upper bound.",
+      "confidence": "high",
+      "regime": "Bin sizes 900-2000, 8-12 item types, limits up to 2000, 1s time limit",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "MaxRects maintains free rectangle set and greedily places items using best-fit heuristics. Type-level iteration (not per-copy expansion) keeps complexity manageable. Multiple orderings and randomized noise in density-based ordering explore diverse packings.",
+      "applicability_bounds": "Applies to axis-aligned 2D bin packing with modest type counts (<15) and high per-type limits. May not scale to thousands of distinct types.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Type-level greedy iteration (place all copies of one type before moving to the next) is critical for performance when per-type limits are large (up to 2000). Expanding all copies into a flat candidate list causes TLE.",
+      "confidence": "high",
+      "regime": "Per-type limits > 100, time limit 1s",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Flat expansion creates O(limit * M) candidates (~24000), causing quadratic free-rect scanning. Type-level iteration processes each type's copies sequentially, exiting early when no fit is found.",
+      "applicability_bounds": "Relevant when limits are large relative to bin capacity. With small limits this distinction is irrelevant.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "For 2D rectangular knapsack, a contact-point placement heuristic (scoring free rectangles by total edge length touching bin walls) reduces interior fragmentation and improves packing profit by ~0.5% compared to BSSF/BAF/BL alone.",
+      "confidence": "medium",
+      "regime": "Bins 900-2000 with 8-12 item types; most effective when bin dimensions are near-prime and items have diverse aspect ratios",
+      "evidence": [
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "CP scoring pushes items toward bin walls, creating larger contiguous interior spaces rather than scattered fragments. This is especially helpful when no item dimension evenly divides the bin dimension.",
+      "applicability_bounds": "Effect is small (~0.5 points); may not manifest on bins with dimensions that are multiples of common item sizes",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "Bin transposition (packing in H\u00d7W instead of W\u00d7H, then translating coordinates) consistently finds better solutions on ~20-30% of test cases, because the BL heuristic's bottom-left bias interacts differently with the bin's aspect ratio.",
+      "confidence": "medium",
+      "regime": "Most effective when W != H; no benefit when bin is square",
+      "evidence": [
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "The BL heuristic fills from (0,0) upward and rightward. In a W\u00d7H bin vs H\u00d7W bin, items encounter different free-rect geometries at each step. Transposition is equivalent to rotating the bin 90\u00b0, which changes which dimension 'fills first'.",
+      "applicability_bounds": "Only useful for non-square bins; adds constant overhead of duplicating packing runs",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "Both-orientation best-fit (trying both rotations and picking the tighter fit) is far superior to fallback rotation (try unrotated, rotate only if it doesn't fit). The improvement is ~6 points on the judge scoring formula.",
+      "confidence": "high",
+      "regime": "Any 2D knapsack with rotation allowed; the largest single improvement found in this campaign",
+      "evidence": [
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Fallback rotation commits to the unrotated orientation even when the rotated version produces a tighter fit with less wasted space. Best-fit rotation evaluates both and picks the one minimizing the heuristic score, leading to consistently less fragmentation.",
+      "applicability_bounds": "No effect when allow_rotate=false or when w==h for all types",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "For 2D rectangular knapsack with 8-12 item types, co-evolving per-type placement method assignments (BSSF/BAF/BL/CP/BLSF) alongside type ordering improves packing profit by ~0.4 points over uniform-method search, because different item geometries benefit from different placement heuristics.",
+      "confidence": "high",
+      "regime": "Bins 900-2000, 8-12 item types with diverse geometries, 5 placement methods, 1s time budget",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Items with high aspect ratios benefit from BL (bottom-left) placement which creates regular stacking; compact items benefit from BSSF (best short-side fit) which minimizes waste; items near bin edges benefit from CP (contact-point) which reduces interior fragmentation. The 5^M method space (390K-244M configurations) contains many local optima that a co-evolutionary search with elite pool, crossover, and mutation can efficiently explore.",
+      "applicability_bounds": "Requires multiple item types with diverse geometries. With only 1-2 types, all methods produce similar results. Benefit diminishes with >5 methods (search space grows faster than improvement).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "Gap-fill post-processing (adding items by density to remaining free rects after the main greedy pass) is safe and adds ~0.02 points ONLY when applied to the single best solution at the end. Applying gap-fill to every packing call causes TLE and drops score by ~6 points.",
+      "confidence": "high",
+      "regime": "1s time budget, 15 test cases, hundreds of packing evaluations in random search",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-2-v10-failure",
+        "iteration-3-v12-failure"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Each gap-fill pass scans all types against all free rects (O(M \u00d7 free_rects)), which adds ~50-100ms per packing. With hundreds of random search iterations, this overhead compounds to exceed the 1s time limit on large test cases. Limiting gap-fill to the final best solution avoids the compounding.",
+      "applicability_bounds": "Specific to tight time budgets (<1s) with many packing evaluations. With longer time budgets, gap-fill per iteration might be affordable.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

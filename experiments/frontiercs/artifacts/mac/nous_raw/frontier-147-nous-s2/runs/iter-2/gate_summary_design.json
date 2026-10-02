@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether running 3 independent simulated-annealing restarts (each starting from a differently-shuffled greedy initialization) outscores a single long SA run for the rectangle ad-placement problem. Iteration 1 established that greedy+SA significantly beats greedy-only; this iteration ablates the restart mechanism to see if exploring multiple basins of attraction yields further improvement.",
+  "key_points": [
+    "h-main: Multi-restart SA (3 restarts, ~2.5s SA each, shuffled greedy order) \u2014 predicted to score higher by sampling diverse initial layouts and keeping the best.",
+    "h-ablation: Single-run SA (iter-1 approach, full ~9s SA budget on one greedy init) \u2014 serves as the baseline to isolate the effect of restarts.",
+    "Confirmation criterion: h-main scores measurably higher than h-ablation on the judge (SCORE metric, 0\u2013100 scale). Refutation: single-run matches or beats multi-restart, indicating SA is strong enough to escape any single basin and benefits more from longer run time than from restart diversity.",
+    "Key risk: splitting the 9s budget into 3\u00d72.5s runs may not give each SA enough time to converge, especially on larger instances (n up to 200). The diagnostic checks whether greedy orderings actually produce structurally different layouts.",
+    "Design parameters are locked: linear cooling, uniform move selection, 3 restarts, greedy step multiplier 5 (max 300). Each arm measures the judge score once via the provided fmeasure script."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

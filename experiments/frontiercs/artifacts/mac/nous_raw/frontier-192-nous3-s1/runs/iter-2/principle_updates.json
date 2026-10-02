@@ -1,0 +1,39 @@
+[
+  {
+    "id": "RP-3",
+    "statement": "Linear-cooling SA (T proportional to remaining time fraction, T0=3.0, 0.10s per restart) outperforms geometric-cooling SA (T*=0.9995) by ~1 point on Max-Cut (87.5 vs 86.6), because geometric cooling exhausts useful exploration in ~0.5ms while linear cooling uses the full restart budget.",
+    "confidence": "high",
+    "regime": "Max-Cut with n<=1000, m<=20000, 1s time limit, greedy+SA+restarts framework",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Geometric cooling (0.9995^k) drops temperature below 0.01 after ~10.6k iterations (~0.5ms), making the remaining ~0.4ms per restart equivalent to greedy. Linear cooling (T = T0*(1-t/budget)) ensures temperature scales from T0 to Tf across the full 0.10s SA phase, giving ~1.7M SA iterations of productive exploration per restart. Fewer but deeper restarts (9 vs 1000+) yield higher-quality cuts.",
+    "applicability_bounds": "Tested on competition-style Max-Cut instances. The optimal restart budget (0.10s) may differ on larger/denser graphs or different hardware speeds.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2-update",
+    "statement": "Linear-cooling SA with time-proportional restarts reduces RNG-seed variance from ~5 points (iter-1 FM+SA) to ~0.05 points (std 0.03), likely because the fixed 0.10s SA budget per restart is more deterministic than time-checked geometric cooling that races against the clock.",
+    "confidence": "medium",
+    "regime": "Max-Cut with n<=1000, 1s time limit",
+    "evidence": [
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The batched time check (every 256 iterations) and fixed SA budget per restart make each restart's behavior more predictable across seeds. Geometric cooling with per-iteration time checks introduces more timing-dependent variance.",
+    "applicability_bounds": "Variance reduction observed on local hardware. Judge hardware variance may differ.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

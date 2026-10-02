@@ -1,0 +1,26 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Linear-cooling SA with 0.10s per restart and T0=3.0 will score higher than the geometric-cooling SA baseline (~86.7), achieving 87+ on the judge.",
+      "observed": "Three runs scored 87.52, 87.57, 87.52 (mean 87.54, std 0.03). All runs exceeded 87.0 and all exceeded the ablation baseline (mean 86.56). The ~1.0 point improvement is consistent across all seeds with very low variance.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Linear-cooling SA achieves consistently higher scores than geometric cooling. The low variance (std 0.03) suggests the 0.10s-per-restart budget and batched time checks provide stable performance."
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "The original geometric-cooling SA (T=2.0, cooling=0.9995) will score consistently around 86.7, approximately 0.9 points below h-main.",
+      "observed": "Three runs scored 86.60, 86.54, 86.55 (mean 86.56, std 0.03). Consistent with prediction (~86.7). The gap to h-main is 0.98 points (87.54 - 86.56), matching the predicted ~0.9 point difference.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Geometric cooling baseline is stable but ~1 point below linear cooling, confirming the mechanism: geometric cooling wastes time budget after temperature drops to near-zero."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed. h-main (linear cooling) scored 87.54 mean vs h-ablation (geometric cooling) 86.56 mean \u2014 a 0.98-point gap consistent across all 3 seeds. Low variance in both arms (std 0.03) provides high confidence in the directional result. The mechanism is confirmed: linear cooling uses the full SA time budget per restart for temperature scheduling, while geometric cooling exhausts useful exploration after ~10k iterations (~0.5ms).",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

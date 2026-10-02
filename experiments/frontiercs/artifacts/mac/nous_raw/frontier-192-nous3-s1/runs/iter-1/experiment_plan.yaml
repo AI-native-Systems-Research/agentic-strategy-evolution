@@ -1,0 +1,23 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+setup:
+  - cmd: "# No build step needed — frontier eval compiles internally"
+    description: "No explicit build required"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "fm-greedy-run1"
+        cmd: "git checkout -- . && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp | tee /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/results/h-main/run1.txt"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/results/h-main/run1.txt"
+      - name: "fm-greedy-run2"
+        cmd: "git checkout -- . && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp | tee /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/results/h-main/run2.txt"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/results/h-main/run2.txt"
+      - name: "fm-greedy-run3"
+        cmd: "git checkout -- . && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp | tee /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/results/h-main/run3.txt"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/results/h-main/run3.txt"
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "trivial-alternating"
+        cmd: "git checkout -- . && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/patches/h-control-negative.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp | tee /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/results/h-control-negative/run1.txt"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-1/results/h-control-negative/run1.txt"

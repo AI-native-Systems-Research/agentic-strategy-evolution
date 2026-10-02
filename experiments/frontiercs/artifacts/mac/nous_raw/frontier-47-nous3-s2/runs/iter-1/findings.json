@@ -1,0 +1,18 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "A MaxRects packer with multiple placement heuristics (BSSF, BAF, BL, BLSF), diverse item orderings, permutation exhaustion for M<=8, and hill-climbing local search will achieve a score consistently above 90.",
+      "observed": "Score: 94.84 (averaged over 15 hidden test cases). The solution uses MaxRects with 4 heuristics, 9 sorting strategies, global greedy packing (5 modes), permutation exhaustion for M<=8, hill-climbing with swap+insert neighborhoods on all 4 heuristics, and random perturbation restarts.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The prediction of score > 90 was confirmed at 94.84. The hill-climbing local search over item orderings added ~0.4 points over pure permutation exhaustion + random shuffle (94.45 -> 94.84). The key finding is that item ordering is the dominant lever, and local search over orderings is more effective than exhaustive permutation for larger M.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

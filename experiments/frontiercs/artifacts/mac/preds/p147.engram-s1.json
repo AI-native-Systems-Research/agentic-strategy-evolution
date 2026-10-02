@@ -1,0 +1,84 @@
+{
+  "problem_id": "147",
+  "agent": "engram",
+  "label": "engram-s1",
+  "model": "claude-opus-4-6",
+  "final_score": 36.0984,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_147_engram-s1.solution.cpp",
+  "best_score": 31.6588,
+  "method": "Engram-style (reimplementation)",
+  "agents": 3,
+  "rounds_per_agent": 3,
+  "code_generations": 9,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 19.789299999999997,
+      "status": "success",
+      "plan": "Use a KD-tree style recursive partitioning approach where I split the 10000\u00d710000 space into rectangles by repeatedly choosing the best split (horizontal or vertical) that divides the set of points proportionally to their desired areas, then use simulated annealing to refine boundaries between adjac"
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 18.26609999999999,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 18.472,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a greedy expansion approach where each company starts with a 1x1 rectangle at its point, then iteratively expand rectangles in random directions (up/down/left/right) prioritizing companies whose current area is furthest below their target, checking for overlaps via a 2D ownership grid, com"
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 31.6588,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 22.3866,
+      "status": "success",
+      "plan": "Recursive space partitioning (split rectangle of points into halves by x or y coordinate proportional to total desired area) for a good initial solution, then aggressive simulated annealing with moves that adjust shared boundaries between adjacent rectangles (find neighbors efficiently), allowing mu"
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 14.6284,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 0.21839999999999998,
+      "status": "success",
+      "plan": null
+    }
+  ],
+  "input_tokens": 25610,
+  "output_tokens": 19922,
+  "cost_usd_est": 1.8783,
+  "journal": "/Users/toslali/frontier/gen_logs/frontier_147_engram-s1_engram/research_journal.md",
+  "seconds": 748.1
+}

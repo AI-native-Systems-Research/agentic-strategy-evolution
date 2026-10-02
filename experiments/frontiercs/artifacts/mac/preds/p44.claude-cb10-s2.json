@@ -1,0 +1,526 @@
+{
+  "problem_id": "44",
+  "agent": "claude",
+  "label": "claude-cb10-s2",
+  "model": "claude-opus-4-6",
+  "final_score": 78.4745,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_44_claude-cb10-s2.solution.cpp",
+  "best_score": 78.478,
+  "rounds": 46,
+  "history": [
+    {
+      "round": 0,
+      "score": 16.222,
+      "status": "success",
+      "cum_cost": 0.1341,
+      "best_score": 16.222
+    },
+    {
+      "round": 1,
+      "score": 18.0535,
+      "status": "success",
+      "cum_cost": 0.5873,
+      "best_score": 18.0535
+    },
+    {
+      "round": 2,
+      "score": 41.235499999999995,
+      "status": "success",
+      "cum_cost": 0.7564,
+      "best_score": 41.235499999999995
+    },
+    {
+      "round": 3,
+      "score": 77.622,
+      "status": "success",
+      "cum_cost": 0.9762,
+      "best_score": 77.622
+    },
+    {
+      "round": 4,
+      "score": 77.8505,
+      "status": "success",
+      "cum_cost": 1.196,
+      "best_score": 77.8505
+    },
+    {
+      "round": 5,
+      "score": 57.43000000000001,
+      "status": "success",
+      "cum_cost": 1.4398,
+      "best_score": 77.8505
+    },
+    {
+      "round": 6,
+      "score": 56.484,
+      "status": "success",
+      "cum_cost": 1.6987,
+      "best_score": 77.8505
+    },
+    {
+      "round": 7,
+      "score": 21.426,
+      "status": "success",
+      "cum_cost": 1.8586,
+      "best_score": 77.8505
+    },
+    {
+      "round": 8,
+      "score": 34.003499999999995,
+      "status": "success",
+      "cum_cost": 1.9945,
+      "best_score": 77.8505
+    },
+    {
+      "round": 9,
+      "score": 77.7595,
+      "status": "success",
+      "cum_cost": 2.2378,
+      "best_score": 77.8505
+    },
+    {
+      "round": 10,
+      "score": 73.0865,
+      "status": "success",
+      "cum_cost": 2.4369,
+      "best_score": 77.8505
+    },
+    {
+      "round": 11,
+      "score": 78.343,
+      "status": "success",
+      "cum_cost": 2.6613,
+      "best_score": 78.343
+    },
+    {
+      "round": 12,
+      "score": 78.405,
+      "status": "success",
+      "cum_cost": 2.8431,
+      "best_score": 78.405
+    },
+    {
+      "round": 13,
+      "score": 68.4095,
+      "status": "success",
+      "cum_cost": 3.0034,
+      "best_score": 78.405
+    },
+    {
+      "round": 14,
+      "score": 78.3485,
+      "status": "success",
+      "cum_cost": 3.2741,
+      "best_score": 78.405
+    },
+    {
+      "round": 15,
+      "score": 69.425,
+      "status": "success",
+      "cum_cost": 3.507,
+      "best_score": 78.405
+    },
+    {
+      "round": 16,
+      "score": 77.8995,
+      "status": "success",
+      "cum_cost": 3.7275,
+      "best_score": 78.405
+    },
+    {
+      "round": 17,
+      "score": 78.38350000000001,
+      "status": "success",
+      "cum_cost": 3.916,
+      "best_score": 78.405
+    },
+    {
+      "round": 18,
+      "score": 42.845000000000006,
+      "status": "success",
+      "cum_cost": 4.1178,
+      "best_score": 78.405
+    },
+    {
+      "round": 19,
+      "score": 53.8835,
+      "status": "success",
+      "cum_cost": 4.3783,
+      "best_score": 78.405
+    },
+    {
+      "round": 20,
+      "score": 78.42399999999999,
+      "status": "success",
+      "cum_cost": 4.5703,
+      "best_score": 78.42399999999999
+    },
+    {
+      "round": 21,
+      "score": 78.367,
+      "status": "success",
+      "cum_cost": 4.7424,
+      "best_score": 78.42399999999999
+    },
+    {
+      "round": 22,
+      "score": 77.9265,
+      "status": "success",
+      "cum_cost": 4.9197,
+      "best_score": 78.42399999999999
+    },
+    {
+      "round": 23,
+      "score": 68.307,
+      "status": "success",
+      "cum_cost": 5.1358,
+      "best_score": 78.42399999999999
+    },
+    {
+      "round": 24,
+      "score": 31.994500000000002,
+      "status": "success",
+      "cum_cost": 5.3827,
+      "best_score": 78.42399999999999
+    },
+    {
+      "round": 25,
+      "score": 78.478,
+      "status": "success",
+      "cum_cost": 5.6432,
+      "best_score": 78.478
+    },
+    {
+      "round": 26,
+      "score": 78.467,
+      "status": "success",
+      "cum_cost": 5.8507,
+      "best_score": 78.478
+    },
+    {
+      "round": 27,
+      "score": 37.75749999999999,
+      "status": "success",
+      "cum_cost": 6.1085,
+      "best_score": 78.478
+    },
+    {
+      "round": 28,
+      "score": 78.35300000000001,
+      "status": "success",
+      "cum_cost": 6.3924,
+      "best_score": 78.478
+    },
+    {
+      "round": 29,
+      "score": 72.9365,
+      "status": "success",
+      "cum_cost": 6.728,
+      "best_score": 78.478
+    },
+    {
+      "round": 30,
+      "score": 73.3325,
+      "status": "success",
+      "cum_cost": 7.0379,
+      "best_score": 78.478
+    },
+    {
+      "round": 31,
+      "score": 71.3875,
+      "status": "success",
+      "cum_cost": 7.2837,
+      "best_score": 78.478
+    },
+    {
+      "round": 32,
+      "score": 78.3735,
+      "status": "success",
+      "cum_cost": 7.6166,
+      "best_score": 78.478
+    },
+    {
+      "round": 33,
+      "score": 78.3455,
+      "status": "success",
+      "cum_cost": 7.8737,
+      "best_score": 78.478
+    },
+    {
+      "round": 34,
+      "score": null,
+      "status": "error",
+      "cum_cost": 8.1832,
+      "best_score": 78.478
+    },
+    {
+      "round": 35,
+      "score": 41.9955,
+      "status": "success",
+      "cum_cost": 8.3873,
+      "best_score": 78.478
+    },
+    {
+      "round": 36,
+      "score": 26.554500000000004,
+      "status": "success",
+      "cum_cost": 8.5404,
+      "best_score": 78.478
+    },
+    {
+      "round": 37,
+      "score": 24.920499999999997,
+      "status": "success",
+      "cum_cost": 8.6913,
+      "best_score": 78.478
+    },
+    {
+      "round": 38,
+      "score": 33.894999999999996,
+      "status": "success",
+      "cum_cost": 8.8485,
+      "best_score": 78.478
+    },
+    {
+      "round": 39,
+      "score": 33.7975,
+      "status": "success",
+      "cum_cost": 9.0147,
+      "best_score": 78.478
+    },
+    {
+      "round": 40,
+      "score": 33.9215,
+      "status": "success",
+      "cum_cost": 9.1668,
+      "best_score": 78.478
+    },
+    {
+      "round": 41,
+      "score": 63.336000000000006,
+      "status": "success",
+      "cum_cost": 9.427,
+      "best_score": 78.478
+    },
+    {
+      "round": 42,
+      "score": 0.9304999999999999,
+      "status": "success",
+      "cum_cost": 9.6162,
+      "best_score": 78.478
+    },
+    {
+      "round": 43,
+      "score": 76.3305,
+      "status": "success",
+      "cum_cost": 9.8022,
+      "best_score": 78.478
+    },
+    {
+      "round": 44,
+      "score": 18.903,
+      "status": "success",
+      "cum_cost": 9.9497,
+      "best_score": 78.478
+    },
+    {
+      "round": 45,
+      "score": 67.75800000000001,
+      "status": "success",
+      "cum_cost": 10.193,
+      "best_score": 78.478
+    }
+  ],
+  "input_tokens": 144442,
+  "output_tokens": 107018,
+  "cost_usd_est": 10.193,
+  "trajectory": [
+    {
+      "cum_cost": 0.1341,
+      "best_score": 16.222
+    },
+    {
+      "cum_cost": 0.5873,
+      "best_score": 18.0535
+    },
+    {
+      "cum_cost": 0.7564,
+      "best_score": 41.235499999999995
+    },
+    {
+      "cum_cost": 0.9762,
+      "best_score": 77.622
+    },
+    {
+      "cum_cost": 1.196,
+      "best_score": 77.8505
+    },
+    {
+      "cum_cost": 1.4398,
+      "best_score": 77.8505
+    },
+    {
+      "cum_cost": 1.6987,
+      "best_score": 77.8505
+    },
+    {
+      "cum_cost": 1.8586,
+      "best_score": 77.8505
+    },
+    {
+      "cum_cost": 1.9945,
+      "best_score": 77.8505
+    },
+    {
+      "cum_cost": 2.2378,
+      "best_score": 77.8505
+    },
+    {
+      "cum_cost": 2.4369,
+      "best_score": 77.8505
+    },
+    {
+      "cum_cost": 2.6613,
+      "best_score": 78.343
+    },
+    {
+      "cum_cost": 2.8431,
+      "best_score": 78.405
+    },
+    {
+      "cum_cost": 3.0034,
+      "best_score": 78.405
+    },
+    {
+      "cum_cost": 3.2741,
+      "best_score": 78.405
+    },
+    {
+      "cum_cost": 3.507,
+      "best_score": 78.405
+    },
+    {
+      "cum_cost": 3.7275,
+      "best_score": 78.405
+    },
+    {
+      "cum_cost": 3.916,
+      "best_score": 78.405
+    },
+    {
+      "cum_cost": 4.1178,
+      "best_score": 78.405
+    },
+    {
+      "cum_cost": 4.3783,
+      "best_score": 78.405
+    },
+    {
+      "cum_cost": 4.5703,
+      "best_score": 78.42399999999999
+    },
+    {
+      "cum_cost": 4.7424,
+      "best_score": 78.42399999999999
+    },
+    {
+      "cum_cost": 4.9197,
+      "best_score": 78.42399999999999
+    },
+    {
+      "cum_cost": 5.1358,
+      "best_score": 78.42399999999999
+    },
+    {
+      "cum_cost": 5.3827,
+      "best_score": 78.42399999999999
+    },
+    {
+      "cum_cost": 5.6432,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 5.8507,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 6.1085,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 6.3924,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 6.728,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 7.0379,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 7.2837,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 7.6166,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 7.8737,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 8.1832,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 8.3873,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 8.5404,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 8.6913,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 8.8485,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 9.0147,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 9.1668,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 9.427,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 9.6162,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 9.8022,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 9.9497,
+      "best_score": 78.478
+    },
+    {
+      "cum_cost": 10.193,
+      "best_score": 78.478
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 1809.6
+}

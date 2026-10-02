@@ -1,0 +1,17 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+setup:
+  - cmd: "# No build needed — judge compiles solution.cpp internally"
+    description: "No-op build step"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline-stub"
+        cmd: "git checkout -- solution.cpp && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/results/h-main/baseline.txt"
+      - name: "treatment-sa-v8"
+        cmd: "git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/results/h-main/treatment.txt"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-1/patches/h-main.patch"

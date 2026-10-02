@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether adding swap-based local search after Branch-and-Bound (BnB) timeout improves the maximum clique score from 99.345 (iter-1 baseline) to 100. The hypothesis is that BnB times out on dense/hard instances and returns cliques that are 1-2 vertices short, and local search (1-remove/2-add swaps + greedy rebuild) can close this gap in the remaining time budget.",
+  "key_points": [
+    "h-main arm: BnB with 1800ms timeout + local search using remaining ~100-200ms. Also increases greedy restarts from 500\u21922000. Prediction: score reaches 100 (up from 99.345).",
+    "h-control-negative arm: Iter-1 BnB-only solution (no local search) to confirm the baseline score of ~99.345 and isolate whether improvements come from local search vs. other parameter changes (more restarts, adjusted timeout).",
+    "Confirmation criteria: h-main scores \u226599.9 AND h-control-negative scores \u226499.5 \u2192 local search is the key mechanism. If h-control-negative also scores ~100, the improvement comes from increased greedy restarts, not local search. If h-main still scores ~99.3, local search swaps are insufficient and larger perturbations or different algorithms are needed.",
+    "Key risk: The 2-second time limit is tight. BnB at 1800ms leaves only ~200ms for local search \u2014 if swap neighborhoods are too large on dense graphs, local search may not explore enough. Diagnostic: check the timed_out flag and number of swap iterations completed.",
+    "Design is sound: two arms with clear ablation structure, fixed RNG seeds for reproducibility, and the scoring metric (continuous 0-100) directly measures improvement."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

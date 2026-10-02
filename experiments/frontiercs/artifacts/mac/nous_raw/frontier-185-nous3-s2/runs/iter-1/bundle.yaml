@@ -1,0 +1,35 @@
+metadata:
+  iteration: 1
+  family: "max-clique-bnb"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #185 (Maximum Clique)?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (BnB with coloring bound) vs greedy control"
+
+arms:
+  # Two arms: the main BnB solver and a greedy-only negative control.
+  # This is the simplest treatment-vs-control design — tier 1.
+  - type: h-main
+    prediction: "A branch-and-bound solver with degeneracy ordering and greedy coloring upper bound will achieve score >= 90 (observed 100 in probe), significantly higher than greedy-only."
+    mechanism: "Degeneracy ordering places vertices with highest coreness first, focusing search on the densest subgraph where the max clique lives. Greedy coloring provides a tight upper bound (chromatic number >= clique number), enabling aggressive pruning of branches that cannot improve the incumbent. Bitset adjacency enables O(N/64) neighbor intersection, keeping each BnB node fast enough to complete within 2s even for N=1000."
+    diagnostic: "If score < 90, check whether specific test cases time out (algorithm too slow for dense graphs) or produce suboptimal cliques (pruning too aggressive, or vertex ordering ineffective). Profile which test cases lose points."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the empty stub with a complete MCQ-style maximum clique solver: bitset adjacency matrix, degeneracy ordering, greedy coloring upper bound, color-class branching order, and greedy warm-start."
+        rationale: "This is the core algorithmic intervention — an exact BnB solver that should find optimal cliques within the time limit for N<=1000."
+
+  - type: h-control-negative
+    prediction: "A greedy-only clique builder (sort by degree, greedily add compatible vertices) will score significantly lower than the BnB solver, likely below 50."
+    mechanism: "Greedy selection without backtracking gets stuck in local optima — it picks high-degree vertices that may not be part of the maximum clique. Without exhaustive search, it cannot discover the true max clique structure."
+    diagnostic: "If greedy scores close to BnB, the test graphs may be easy (e.g., max clique is trivially findable by greedy). Inspect which test cases have trivial vs hard clique structures."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the stub with a greedy clique builder: sort vertices by degree descending, then iteratively add each vertex if it's adjacent to all vertices already in the clique."
+        rationale: "Establishes that search is necessary — greedy alone is insufficient for hard max clique instances."
+
+experiment_spec:
+  verified_parameters:
+    N_max: 1000
+    M_max: 500000
+    time_limit_seconds: 2.0
+  preflight_commands: []
+  fanout_template: "bash /Users/toslali/frontier/gen_logs/fmeasure_185.sh $PWD/solution.cpp"

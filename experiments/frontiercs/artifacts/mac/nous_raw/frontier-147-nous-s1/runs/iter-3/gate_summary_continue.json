@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After 3 iterations, our best strategy (SA with best-tracking + wider temperature range T0=0.08, T1=0.0005) scores ~90.9 mean across 5 runs vs ~90.3 for the baseline \u2014 a small directional win (+0.65 points) but not statistically significant (p~0.41). Many alternative SA move types and meta-strategies have been eliminated. The core insight is that best-tracking (saving the best configuration seen during SA) is a cheap but real improvement, while novel move types (kicks, contract-expand, targeted selection) and post-SA refinement all failed.",
+  "key_points": [
+    "Best result so far: SA with best-tracking + T0=0.08/T1=0.0005 scores mean 90.93 (range 89.4\u201392.5). Baseline without best-tracking scores mean 90.28 (range 89.0\u201390.9). The improvement is directionally consistent (4/5 paired wins) but small (~0.65 points) relative to judge variance (~1.0\u20131.4 stdev).",
+    "Eliminated approaches across all iterations: BSP initialization (83\u201386), paired boundary moves (0), area-biased proposals (85.7), adaptive step sizes (88.2), two-edge moves (89.7), SA with reheat (90.4), weighted rect selection (85.3), kick moves (89.9), contract-expand (87.0), targeted selection (89.9), post-SA greedy refinement (37.7 \u2014 catastrophic).",
+    "Key principle discovered: The SA already explores good configurations but doesn't keep them. Best-tracking (bookkeeping the peak score every 32K iterations) turned a 'failed' wider-temperature experiment from 88.4 to 92.7. The fix was bookkeeping, not algorithmic.",
+    "Single-run probe scores are unreliable \u2014 the initial probe showed a 3-point improvement (92.7 vs 89.9) but multi-run validation showed only 0.65 points. Judge variance of ~5 points between runs inflates single-run comparisons.",
+    "Next iteration should investigate: (1) tuning best-check frequency (every 4K or 16K instead of 32K iterations), (2) non-exponential cooling schedules (linear or piecewise), (3) fundamentally improving the initialization (e.g., Voronoi-based starting rectangles instead of 1\u00d71), (4) optimizing max_expand functions with spatial bucketing to increase SA throughput at the same wall-clock budget."
+  ]
+}

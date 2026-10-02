@@ -1,0 +1,52 @@
+metadata:
+  iteration: 2
+  family: "targeted-post-sa-tsp"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #44?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (swap-only SA) + ablation of post-SA optimization additions"
+
+# Arm selection: h-main tests the best achievable solution (iter-1 SA + post-SA fixes).
+# h-ablation is the pure iter-1 code for comparison.
+# NN-guided 2-opt, double-bridge, and Or-opt were all extensively tested during
+# exploration and failed to improve on iter-1 (see handoff dead ends).
+# The marginal improvements from reversed-tour + greedy edge-fix are the only
+# verified gains found after exhaustive search.
+
+arms:
+  - type: h-main
+    prediction: "Iter-1 SA with reversed-tour direction check and greedy edge-fix post-pass will score at least as high as iter-1's 69.5, with a small improvement from targeting the worst edges after SA convergence."
+    mechanism: "Two additions to iter-1: (1) The penalty structure makes tour direction matter — step t's 10% surcharge depends on which city is at position t-1. Choosing the cheaper of forward vs reversed NN tour exploits this. (2) After SA converges, the remaining long edges are systematically targeted: for each of the top-50 worst edges, best-of-200 random swaps are tried. This is more effective than continuing random SA because it concentrates effort on the worst parts of the tour."
+    diagnostic: "If score does not improve: the greedy edge-fix may be undoing SA improvements (check if post-pass cost is higher than pre-pass). The reversed-tour check may pick a direction that's locally cheaper but harder for SA to optimize."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Start from iter-1 patch. Add: (1) After NN construction, reverse tour[1..N-1] and compare totalCost of forward vs reversed tour, keep cheaper. (2) After SA loop and before prime post-pass, add greedy edge-fix: find top-50 longest penalized edges, for each try 200 random swaps targeting that position, accept best improvement. Run for 5 passes or until no improvement."
+        rationale: "These are the only verified improvements found after extensive testing of NN-guided 2-opt, double-bridge, Or-opt, Hilbert construction, and various SA parameter tunings."
+
+  - type: h-ablation
+    prediction: "Pure iter-1 code (no post-SA optimization) will score ~69.5, establishing the baseline that the post-SA additions improve upon."
+    mechanism: "Iter-1's SA with 40% swap + 60% boundary-2-opt converges to ~69.5. Without post-SA targeting, the remaining suboptimal edges persist."
+    diagnostic: "If ablation scores higher: the post-SA pass is introducing noise or consuming time that would be better spent on SA."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 2
+    memory_limit_mb: 512
+    max_n: 200000
+    baseline_iter1_score: 69.5
+    nn_only_score: 64.5
+    swap_only_sa_score: 69.49
+    twoopt_contribution: 0
+  unlocked_parameters_audit:
+    - name: "sa_swap_ratio"
+      default_value: 0.4
+      justification: "40% swap is critical minimum; below 30% SA fails to improve NN. 100% swap gives same score. Kept at 40% to preserve established behavior."
+    - name: "sa_segment_cap"
+      default_value: 200
+      justification: "2-opt contributes nothing to score (verified: 100% swap equals mixed). Cap is irrelevant but kept for code stability."
+    - name: "greedy_fix_top_k"
+      default_value: 50
+      justification: "Top-50 worst edges covers most improvement opportunities; more adds diminishing returns."
+    - name: "greedy_fix_trials"
+      default_value: 200
+      justification: "200 random swap trials per edge position; more is too slow within the 0.08s post-SA budget."

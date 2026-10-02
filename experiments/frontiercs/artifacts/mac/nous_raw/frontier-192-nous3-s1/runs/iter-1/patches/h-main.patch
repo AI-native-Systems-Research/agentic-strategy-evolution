@@ -1,0 +1,184 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..d3cbfc7 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,178 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++int main(){
++    ios_base::sync_with_stdio(false);
++    cin.tie(NULL);
++
++    int n, m;
++    cin >> n >> m;
++
++    vector<vector<int>> adj(n+1);
++    for(int i = 0; i < m; i++){
++        int u, v;
++        cin >> u >> v;
++        adj[u].push_back(v);
++        adj[v].push_back(u);
++    }
++
++    if(m == 0){
++        for(int i = 1; i <= n; i++){
++            if(i > 1) cout << ' ';
++            cout << 0;
++        }
++        cout << '\n';
++        return 0;
++    }
++
++    mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
++
++    vector<int> bestPart(n+1, 0);
++    int bestCut = -1;
++
++    auto calcCut = [&](vector<int>& part) -> int {
++        int cut = 0;
++        for(int u = 1; u <= n; u++){
++            for(int v : adj[u]){
++                if(part[u] != part[v]) cut++;
++            }
++        }
++        return cut / 2;
++    };
++
++    auto calcGain = [&](vector<int>& part, int u) -> int {
++        int gain = 0;
++        for(int v : adj[u]){
++            if(part[u] == part[v]) gain++;  // would become cut
++            else gain--;                     // would become uncut
++        }
++        return gain;
++    };
++
++    // Greedy local search: flip any vertex with positive gain
++    auto greedyLS = [&](vector<int>& part) -> int {
++        bool improved = true;
++        while(improved){
++            improved = false;
++            for(int u = 1; u <= n; u++){
++                int g = calcGain(part, u);
++                if(g > 0){
++                    part[u] ^= 1;
++                    improved = true;
++                }
++            }
++        }
++        return calcCut(part);
++    };
++
++    // FM pass: try all vertices in gain order, find best prefix
++    auto fmPass = [&](vector<int>& part) -> int {
++        int nn = n;
++        vector<int> gain(n+1);
++        for(int u = 1; u <= n; u++){
++            gain[u] = calcGain(part, u);
++        }
++
++        vector<bool> locked(n+1, false);
++        vector<int> flipSeq;
++        vector<int> cumGain;
++        int cumSum = 0;
++
++        for(int step = 0; step < nn; step++){
++            // Find unlocked vertex with max gain
++            int bestV = -1, bestG = INT_MIN;
++            for(int u = 1; u <= n; u++){
++                if(!locked[u] && gain[u] > bestG){
++                    bestG = gain[u];
++                    bestV = u;
++                }
++            }
++            if(bestV == -1) break;
++
++            locked[bestV] = true;
++            flipSeq.push_back(bestV);
++            cumSum += bestG;
++            cumGain.push_back(cumSum);
++
++            // Flip bestV and update gains of neighbors
++            part[bestV] ^= 1;
++            for(int v : adj[bestV]){
++                if(!locked[v]){
++                    // Recompute gain for v
++                    // If bestV moved to same side as v, v's gain increases by 2
++                    // (the edge bestV-v was cut, now uncut, so flipping v would make it cut again)
++                    // If bestV moved to different side from v, v's gain decreases by 2
++                    if(part[bestV] == part[v]){
++                        gain[v] += 2;
++                    } else {
++                        gain[v] -= 2;
++                    }
++                }
++            }
++        }
++
++        // Find best prefix
++        int bestIdx = -1;
++        int bestCumGain = 0;
++        for(int i = 0; i < (int)cumGain.size(); i++){
++            if(cumGain[i] > bestCumGain){
++                bestCumGain = cumGain[i];
++                bestIdx = i;
++            }
++        }
++
++        if(bestIdx == -1){
++            // No improvement: undo all flips
++            for(int v : flipSeq){
++                part[v] ^= 1;
++            }
++            return 0;
++        } else {
++            // Undo flips after bestIdx
++            for(int i = (int)flipSeq.size()-1; i > bestIdx; i--){
++                part[flipSeq[i]] ^= 1;
++            }
++            return bestCumGain;
++        }
++    };
++
++    auto startTime = chrono::steady_clock::now();
++    auto elapsed = [&]() -> double {
++        return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
++    };
++
++    double timeLimit = 0.90;
++
++    while(elapsed() < timeLimit){
++        // Random initialization
++        vector<int> part(n+1);
++        for(int i = 1; i <= n; i++){
++            part[i] = rng() & 1;
++        }
++
++        // Greedy local search
++        int cut = greedyLS(part);
++
++        // FM passes to escape local optima
++        for(int pass = 0; pass < 30 && elapsed() < timeLimit; pass++){
++            int improvement = fmPass(part);
++            if(improvement <= 0) break;
++            // After FM, do greedy again
++            cut = greedyLS(part);
++        }
++
++        cut = calcCut(part);
++        if(cut > bestCut){
++            bestCut = cut;
++            bestPart = part;
++        }
++    }
++
++    for(int i = 1; i <= n; i++){
++        if(i > 1) cout << ' ';
++        cout << bestPart[i];
++    }
++    cout << '\n';
++
++    return 0;
++}

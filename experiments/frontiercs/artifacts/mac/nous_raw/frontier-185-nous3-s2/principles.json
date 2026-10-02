@@ -1,0 +1,62 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For maximum clique on graphs with N<=1000, BnB with degeneracy ordering + greedy coloring bound (bitset color classes) achieves score 100 within 1000ms \u2014 a 2x margin under the 2s wall-clock limit. The DLS tabu search fallback is unnecessary.",
+      "confidence": "high",
+      "regime": "N<=1000, M<=500000, 2s time limit",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-2-h-ablation",
+        "iteration-3-h-main",
+        "iteration-3-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Degeneracy ordering processes vertices from highest core number first, maximizing early pruning. Greedy coloring bound provides tight upper bounds. Together they solve all test instances optimally well within 1000ms.",
+      "applicability_bounds": "Holds for the problem 185 test set (N<=1000). May not hold for denser/larger graphs.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Greedy clique construction by degree descending finds only ~34% of optimal clique size on average for the test suite, confirming that exhaustive search or sophisticated local search is essential for near-optimal max clique.",
+      "confidence": "high",
+      "regime": "N <= 1000, varied graph densities",
+      "evidence": [
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Greedy selection gets stuck in local optima: high-degree vertices are chosen first but may not participate in the maximum clique. Without backtracking or swapping, the greedy solution is far from optimal.",
+      "applicability_bounds": "The 34% ratio depends on the specific test instance mix. For easy instances (sparse graphs or graphs where the max clique is small), greedy may perform better.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "The DLS tabu search fallback adds no scoring improvement over BnB-only on the problem 185 judge test set when BnB uses degeneracy ordering and has 1950ms budget.",
+      "confidence": "high",
+      "regime": "N<=1000, 2s time limit, problem 185 judge",
+      "evidence": [
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "BnB with degeneracy ordering + coloring bound is powerful enough to solve all test instances optimally within 1950ms. DLS never activates because BnB doesn't time out, or when it does the best found is already optimal.",
+      "applicability_bounds": "Specific to this judge's test distribution. DLS may still be valuable on harder instance families.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

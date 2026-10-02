@@ -1,0 +1,49 @@
+metadata:
+  iteration: 4
+  family: "sa-time-budget"
+  research_question: "Does extending the SA time budget from 2.85s to 4.8s consistently improve the judge score for AHC001 rectangle packing?"
+  complexity_tier: 1
+  tier_justification: "Single mechanism (SA time budget), single knob (total_time), treatment vs control."
+
+# Arms: h-main tests the extended time budget; h-control-negative is the iter-3 baseline.
+# Only two arms because the mechanism is simple (more time → more iterations → better result)
+# and tier 1 is appropriate. No ablation needed since the intervention is a single parameter change.
+
+arms:
+  - type: h-main
+    prediction: "SA with total_time=4.8s will score consistently higher than the 2.85s baseline across multiple judge runs. The extended budget provides ~68% more SA iterations, enabling deeper exploration of the configuration space. Probe showed 93.2 (4.8s-class) vs 91.6 (2.85s)."
+    mechanism: "SA quality improves monotonically with iteration count (given appropriate temperature schedule). The exponential cooling schedule is parametrized by progress (elapsed/budget), so extending the budget doesn't change the cooling curve shape — it increases iterations at every temperature level. Best-tracking captures the peak configuration across all additional iterations."
+    diagnostic: "If refuted: (1) check whether 4.8s causes TLEs on some test cases (would show as score=0 for those cases), (2) verify the solution actually uses the full 4.8s by checking iteration count, (3) the cooling schedule may need re-tuning for the longer budget (T1 too low → too much time at very low T where moves are rarely accepted)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Change total_time from 2.85 to 4.8 on the line where it is defined in simulated_annealing()"
+        rationale: "Probes showed the judge accepts solutions running 4.5-5.8s without TLE. 4.8s provides ~68% more SA budget while staying safely under the limit."
+
+  - type: h-control-negative
+    prediction: "The baseline SA with total_time=2.85s will score in the 89-92 range, consistently below h-main. This is the same code as iter-3 h-main (best-tracking + T0=0.08, T1=0.0005)."
+    mechanism: "With the shorter time budget, SA has fewer iterations and less opportunity to find the peak configuration. Best-tracking mitigates late-SA deterioration but cannot compensate for the smaller search budget."
+    diagnostic: "If this scores higher than h-main, the 4.8s version is likely TLEing on some test cases or the extra iterations at very low temperature (near T1=0.0005) are unproductive."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    T0: 0.08
+    T1: 0.0005
+    best_check_interval: 32768
+    greedy_init_time: 0.12
+    xorshift_seed: 88172645463325252
+  unlocked_parameters_audit:
+    - name: total_time
+      default_value: 2.85
+      justification: "This is the experimental variable — h-main changes it to 4.8."
+    - name: greedy_init_time
+      default_value: 0.12
+      justification: "Init quality doesn't significantly affect final SA score (RP-3). 0.12s is negligible vs SA budget."
+    - name: best_check_interval
+      default_value: 32768
+      justification: "Checking every 32K iters adds ~0.1% overhead (RP-4). Not the focus of this experiment."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 60
+      h-control-negative: 45
+    observation_method: "Judge completed in ~40s for 50 tests at 2.85s; extrapolating ~60s for 4.8s."

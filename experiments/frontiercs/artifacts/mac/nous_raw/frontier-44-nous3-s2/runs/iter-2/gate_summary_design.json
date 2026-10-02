@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether two targeted post-processing additions (reversed-tour direction selection and greedy worst-edge fix) can improve upon the iteration-1 simulated annealing baseline score of 69.5 on a penalized TSP problem. An ablation arm re-runs the pure iter-1 code to confirm the baseline, while the main arm adds the post-SA optimizations.",
+  "key_points": [
+    "Arm h-main adds two mechanisms to iter-1's SA: (1) choosing the cheaper direction of the nearest-neighbor initial tour (forward vs reversed) to exploit the step-dependent 10% penalty structure, and (2) a greedy edge-fix pass that targets the 50 worst penalized edges with 200 random swap trials each after SA converges.",
+    "Arm h-ablation re-runs the exact iter-1 SA code (40% swap + 60% boundary-2-opt, NN initialization) to establish a clean 69.5 baseline for comparison.",
+    "Confirmation: h-main scores measurably above 69.5 (even a fraction helps given continuous 0-100 scoring). Refutation: h-main scores equal to or below h-ablation, indicating the post-SA pass adds noise or wastes time budget. If h-ablation scores higher, the post-SA additions are actively harmful.",
+    "Extensive prior exploration already ruled out NN-guided 2-opt, double-bridge perturbation, Or-opt, and Hilbert-curve construction \u2014 none improved on iter-1. The two proposed additions are the only untested mechanisms with plausible benefit.",
+    "Risk: the greedy edge-fix consumes ~0.08s of the 2s time budget; if this crowds out SA iterations on large inputs (N=200K), it could hurt. The diagnostic is to compare pre- vs post-pass tour cost."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

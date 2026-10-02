@@ -1,0 +1,264 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..f98a7e2 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,258 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++const int MAXN = 1001;
++bitset<MAXN> adj[MAXN];
++int N, M;
++int best_size;
++int best_arr[MAXN];
++int cur_arr[MAXN];
++long long ncalls;
++bool timed_out;
++int time_limit_ms;
++chrono::steady_clock::time_point t0;
++
++inline int ms_elapsed() {
++    return (int)chrono::duration_cast<chrono::milliseconds>(
++        chrono::steady_clock::now() - t0).count();
++}
++
++int degree[MAXN];
++bitset<MAXN> cc[MAXN];
++
++void expand(int* P, int np, int depth) {
++    if (timed_out) return;
++    if (np == 0) {
++        if (depth > best_size) {
++            best_size = depth;
++            memcpy(best_arr, cur_arr, depth * sizeof(int));
++        }
++        return;
++    }
++    if (depth + np <= best_size) return;
++
++    int mc = 0, vcol[np];
++    for (int i = 0; i < np; i++) {
++        int v = P[i], c;
++        for (c = 0; c < mc; c++)
++            if ((adj[v] & cc[c]).none()) break;
++        if (c == mc) { cc[mc].reset(); mc++; }
++        cc[c].set(v); vcol[i] = c;
++    }
++    for (int i = 0; i < np; i++) cc[vcol[i]].reset(P[i]);
++    if (depth + mc <= best_size) return;
++
++    int bv[np], bca[np];
++    {
++        int cnt[mc+1]; memset(cnt, 0, (mc+1)*sizeof(int));
++        for (int i = 0; i < np; i++) cnt[vcol[i]]++;
++        int off[mc+2]; off[0] = 0;
++        for (int c = 0; c < mc; c++) off[c+1] = off[c]+cnt[c];
++        int wp[mc+1]; memcpy(wp, off, (mc+1)*sizeof(int));
++        for (int i = 0; i < np; i++) {
++            int c = vcol[i]; bv[wp[c]] = P[i]; bca[wp[c]] = c+1; wp[c]++;
++        }
++    }
++
++    for (int k = np-1; k >= 0; k--) {
++        if (timed_out) return;
++        ncalls++;
++        if ((ncalls & 2047) == 0 && ms_elapsed() > time_limit_ms)
++            { timed_out = true; return; }
++        int v = bv[k], c = bca[k];
++        if (depth + c <= best_size) return;
++        int newP[MAXN], nnp = 0;
++        for (int j = 0; j < np; j++)
++            if (adj[v][P[j]]) newP[nnp++] = P[j];
++        cur_arr[depth] = v;
++        expand(newP, nnp, depth+1);
++    }
++}
++
++void update_best(int* clique, int sz) {
++    if (sz > best_size) {
++        best_size = sz;
++        memcpy(best_arr, clique, sz * sizeof(int));
++    }
++}
++
++// DLS-style local search
++void local_search(int deadline_ms) {
++    mt19937 rng(42);
++
++    // tightness[v] = number of clique members adjacent to v
++    int tightness[MAXN];
++    bool in_clique[MAXN];
++    int clique[MAXN], csz;
++
++    auto restart = [&]() {
++        memset(tightness, 0, sizeof(int)*(N+1));
++        memset(in_clique, 0, sizeof(bool)*(N+1));
++        csz = 0;
++        for (int i = 0; i < best_size; i++) {
++            int v = best_arr[i];
++            clique[csz++] = v; in_clique[v] = true;
++        }
++        for (int v = 1; v <= N; v++) {
++            tightness[v] = 0;
++            for (int i = 0; i < csz; i++)
++                if (adj[v][clique[i]]) tightness[v]++;
++        }
++    };
++
++    int tabu[MAXN]; memset(tabu, 0, sizeof(tabu));
++    int iter = 0, no_improve = 0;
++    int tenure = 5;
++
++    restart();
++
++    while (ms_elapsed() < deadline_ms) {
++        iter++; no_improve++;
++
++        // Try to add
++        int add_v = -1, add_deg = -1;
++        for (int v = 1; v <= N; v++) {
++            if (!in_clique[v] && tightness[v] == csz &&
++                (tabu[v] <= iter || csz + 1 > best_size)) {
++                if (degree[v] > add_deg) { add_deg = degree[v]; add_v = v; }
++            }
++        }
++
++        if (add_v != -1) {
++            clique[csz++] = add_v; in_clique[add_v] = true;
++            for (int u = 1; u <= N; u++) if (adj[add_v][u]) tightness[u]++;
++            if (csz > best_size) {
++                best_size = csz;
++                memcpy(best_arr, clique, csz*sizeof(int));
++                no_improve = 0;
++            }
++        } else {
++            // Remove vertex that creates most add opportunities
++            int rem_v = -1, rem_score = -1;
++            for (int i = 0; i < csz; i++) {
++                int v = clique[i];
++                if (tabu[v] > iter && csz > best_size) continue;
++                int score = 0;
++                for (int u = 1; u <= N; u++)
++                    if (!in_clique[u] && tightness[u] == csz-1 && !adj[v][u]) score++;
++                if (score > rem_score) { rem_score = score; rem_v = v; }
++            }
++            if (rem_v == -1) rem_v = clique[rng() % csz];
++
++            in_clique[rem_v] = false;
++            tabu[rem_v] = iter + tenure;
++            for (int u = 1; u <= N; u++) if (adj[rem_v][u]) tightness[u]--;
++            int nc = 0;
++            for (int i = 0; i < csz; i++) if (clique[i] != rem_v) clique[nc++] = clique[i];
++            csz = nc;
++        }
++
++        if (no_improve > 500) {
++            tenure = 3 + rng() % 15;
++            restart();
++            no_improve = 0;
++        }
++    }
++}
++
++int main(){
++    ios::sync_with_stdio(false);
++    cin.tie(nullptr);
++    t0 = chrono::steady_clock::now();
++    timed_out = false; ncalls = 0;
++
++    cin >> N >> M;
++    for (int i = 0; i < M; i++) {
++        int u, v; cin >> u >> v;
++        adj[u].set(v); adj[v].set(u);
++    }
++
++    for (int i = 1; i <= N; i++) degree[i] = (int)adj[i].count();
++
++    int dorder[MAXN]; int core_num[MAXN] = {};
++    {
++        bool removed[MAXN] = {};
++        int ddeg[MAXN]; memcpy(ddeg, degree, sizeof(ddeg));
++        for (int it = 0; it < N; it++) {
++            int mv = -1, md = N+1;
++            for (int i = 1; i <= N; i++)
++                if (!removed[i] && ddeg[i] < md) { md = ddeg[i]; mv = i; }
++            removed[mv] = true; dorder[it] = mv; core_num[mv] = md;
++            for (int j = 1; j <= N; j++)
++                if (!removed[j] && adj[mv][j]) ddeg[j]--;
++        }
++        for (int i = 0; i < N/2; i++) swap(dorder[i], dorder[N-1-i]);
++    }
++
++    best_size = 0;
++    int tmp[MAXN];
++
++    // Quick greedy warm starts
++    {
++        int sv[MAXN]; for (int i = 0; i < N; i++) sv[i] = i+1;
++        sort(sv, sv+N, [&](int a, int b){ return degree[a] > degree[b]; });
++        int sz = 0;
++        for (int i = 0; i < N; i++) {
++            int v = sv[i]; bool ok = true;
++            for (int k = 0; k < sz; k++) if (!adj[v][tmp[k]]) { ok = false; break; }
++            if (ok) tmp[sz++] = v;
++        }
++        update_best(tmp, sz);
++    }
++    {
++        int sz = 0;
++        for (int i = 0; i < N; i++) {
++            int v = dorder[i]; bool ok = true;
++            for (int k = 0; k < sz; k++) if (!adj[v][tmp[k]]) { ok = false; break; }
++            if (ok) tmp[sz++] = v;
++        }
++        update_best(tmp, sz);
++    }
++
++    // Per-vertex greedy (high-core only, quick)
++    {
++        int sv[MAXN]; for (int i = 0; i < N; i++) sv[i] = i+1;
++        sort(sv, sv+N, [&](int a, int b){ return core_num[a] > core_num[b]; });
++        for (int si = 0; si < min(N, 100) && ms_elapsed() < 100; si++) {
++            int start = sv[si];
++            if (core_num[start] + 1 <= best_size) break;
++            int nbrs[MAXN], nn = 0;
++            for (int j = 1; j <= N; j++) if (adj[start][j]) nbrs[nn++] = j;
++            sort(nbrs, nbrs+nn, [&](int a, int b){
++                return (int)(adj[a] & adj[start]).count() > (int)(adj[b] & adj[start]).count();
++            });
++            tmp[0] = start; int sz = 1;
++            for (int i = 0; i < nn; i++) {
++                int v = nbrs[i]; bool ok = true;
++                for (int k = 0; k < sz; k++) if (!adj[v][tmp[k]]) { ok = false; break; }
++                if (ok) tmp[sz++] = v;
++            }
++            update_best(tmp, sz);
++        }
++    }
++
++    // BnB phase
++    time_limit_ms = 1600;
++    for (int idx = 0; idx < N && !timed_out; idx++) {
++        int v = dorder[idx];
++        if (core_num[v] + 1 <= best_size) continue;
++        int plist[MAXN], np = 0;
++        for (int j = idx+1; j < N; j++) {
++            int u = dorder[j];
++            if (adj[v][u]) plist[np++] = u;
++        }
++        if (np+1 <= best_size) continue;
++        cur_arr[0] = v;
++        expand(plist, np, 1);
++    }
++
++    // If BnB timed out, try local search with remaining time
++    if (timed_out) {
++        local_search(1950);
++    }
++
++    bool inc[MAXN] = {};
++    for (int i = 0; i < best_size; i++) inc[best_arr[i]] = true;
++    for (int i = 1; i <= N; i++) cout << inc[i] << "\n";
++    return 0;
++}

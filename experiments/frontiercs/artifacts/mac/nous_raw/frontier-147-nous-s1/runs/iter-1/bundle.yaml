@@ -1,0 +1,49 @@
+metadata:
+  iteration: 1
+  family: "sa-rectangle-packing"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #147?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism — simulated annealing vs greedy baseline"
+
+arms:
+  - type: h-main
+    prediction: "Simulated annealing with coordinated neighbor moves and adaptive step sizes will score higher than the basic SA baseline (~85), achieving a score above 85 on the judge."
+    mechanism: "SA explores the solution space by perturbing rectangle edges. Coordinated moves (shrink one rect, expand neighbor into freed space) enable more efficient space reallocation than independent edge moves. The scoring function p_i = 1-(1-min(r,s)/max(r,s))^2 rewards area-matching — SA can navigate the non-convex overlap constraints to find configurations where more rectangles closely match their desired areas."
+    diagnostic: "If score does not improve, check: (1) acceptance rate of coordinated moves — if near 0, the neighbor detection may be broken; (2) temperature schedule — if too cold, no exploration; (3) time budget — if greedy phase takes too long, SA phase is starved."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement simulated annealing with coordinated neighbor moves: when moving an edge of rectangle i, detect if rectangle j is adjacent on that edge and simultaneously expand j into the freed space. Use adaptive step sizes (larger early, smaller late). Process greedy init by ascending desired area. Add 2-opt style swaps between nearby rectangles."
+        rationale: "Coordinated moves allow the SA to transfer area between adjacent rectangles, which is the primary mechanism for improving satisfaction — one company may have excess area while its neighbor is starved."
+
+  - type: h-control-negative
+    prediction: "A greedy-only approach (no SA phase) will score significantly lower than the SA approach, in the range of 15-30."
+    mechanism: "Greedy expansion can only grow rectangles one cell at a time without any backtracking. Once a rectangle blocks another's path, there is no mechanism to shrink it. This leads to suboptimal area allocation where early-processed rectangles hog space."
+    diagnostic: "If greedy scores comparably to SA, the problem instances may be easy enough that simple expansion suffices — check if N is small in test cases."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Implement greedy-only expansion: initialize 1x1 rectangles at desired points, then iterate 2000 times expanding each rectangle by 1 in a random direction if no overlap. No simulated annealing phase."
+        rationale: "This isolates the contribution of the SA optimization phase by removing it entirely."
+
+# Arms chosen: h-main (SA with improvements) and h-control-negative (greedy only).
+# The control validates that SA is the mechanism driving score improvement.
+# Skipped ablation/robustness since this is iter 1 — keep it simple.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 3
+    grid_size: 10000
+    max_n: 200
+  unlocked_parameters_audit:
+    - name: "sa_initial_temperature"
+      default_value: 0.05
+      justification: "Tuned empirically in baseline probe; satisfaction values are 0-1 so T=0.05 allows moderate uphill moves."
+    - name: "sa_final_temperature"
+      default_value: 0.001
+      justification: "Standard cooling to near-greedy at end of SA run."
+    - name: "greedy_iterations"
+      default_value: 2000
+      justification: "Sufficient to fill most space in <1s, leaving >1.8s for SA."
+    - name: "sa_time_budget"
+      default_value: 2.8
+      justification: "Leaves 0.2s margin before 3s time limit."

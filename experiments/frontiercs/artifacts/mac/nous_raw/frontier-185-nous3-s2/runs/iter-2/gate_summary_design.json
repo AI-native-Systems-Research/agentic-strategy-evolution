@@ -1,0 +1,17 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether the DLS (tabu-based local search) fallback is necessary for achieving a perfect score of 100 on the maximum clique problem, or whether the Branch-and-Bound solver alone suffices within the 2-second time limit. This is an ablation study building on iteration 1, which achieved score 100 with the combined BnB+DLS hybrid.",
+  "key_points": [
+    "Arm 1 (h-main): Reproduces the proven BnB+DLS hybrid from iteration 1 \u2014 BnB with degeneracy ordering and bitset coloring bounds runs for up to 1600ms, then DLS tabu search takes over if BnB times out, running until 1950ms. Predicted score: 100.",
+    "Arm 2 (h-ablation): Removes the DLS fallback entirely and gives BnB the full 1950ms budget. This isolates the contribution of DLS. Predicted score: 88\u201395, because dense instances likely cause BnB to time out before finding the optimal clique.",
+    "Confirmation criterion: If h-main scores 100 and h-ablation scores strictly less, the DLS fallback is confirmed as necessary. If both score 100, the test instances are BnB-tractable and DLS adds no value on this particular judge set. If h-main scores below 100, something changed in the judge environment and we need to debug."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

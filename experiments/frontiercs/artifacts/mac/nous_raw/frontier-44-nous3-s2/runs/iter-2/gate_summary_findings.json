@@ -1,0 +1,9 @@
+{
+  "gate_type": "findings",
+  "summary": "Both iter-2 arms confirmed their predictions but showed negligible practical difference (69.504 vs 69.496, \u0394=0.008). The real discovery this iteration is a grid-guided 2-opt + Or-opt algorithm with penalty-aware delta computation, verified at 78.85 mean \u2014 a +9.35 point jump over the SA baseline of 69.5. This superior algorithm is preserved in cumulative.patch.",
+  "key_points": [
+    "h-main (SA + reversed-tour + greedy edge-fix) scored 69.504 mean across 3 runs; h-ablation (pure iter-1 SA) scored 69.496. The 0.008-point difference is within noise, confirming the post-SA additions are ineffective.",
+    "The grid-guided 2-opt + Or-opt algorithm discovered during iter-2 exploration scored 78.85 mean (78.837, 78.883, 78.827 across 3 runs), representing a +9.35 point improvement over the SA plateau at 69.5. This uses penalty-aware exact delta computation, O(1) position lookups via pos[] array, and prime scheduling for the carrot constraint.",
+    "The SA-based approach appears to have plateaued at ~69.5 with diminishing returns from local tweaks. The next iteration should build on the grid-guided 2-opt/Or-opt algorithm (78.85) as the new baseline and explore further improvements such as 3-opt, Lin-Kernighan moves, or more sophisticated penalty-aware scheduling of prime cities at every-10th-step positions."
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, linear-cooling simulated annealing (SA) is the best strategy found, scoring 87.54 mean (std 0.03) \u2014 roughly 1 point above the geometric-cooling baseline (86.56 mean). The improvement mechanism is confirmed: linear cooling uses the full 0.10s restart budget for temperature scheduling, yielding ~1.7M SA iterations per restart versus ~10k useful iterations under geometric cooling. Many alternative approaches (KL passes, tabu search, LAHC, spectral init, ILS) were tested and all scored equal or worse.",
+  "key_points": [
+    "Best score so far: 87.54 (linear-cooling SA, T0=3.0, 0.10s per restart, ~9 restarts per test). Baseline geometric SA: 86.56. Gap of ~1 point confirmed across 3 seeds with std 0.03 in both arms.",
+    "Key mechanism validated: geometric cooling exhausts useful exploration in ~0.5ms per restart (T\u21920), wasting 99% of allocated time. Linear cooling spreads exploration evenly across the full 0.10s budget, giving 170\u00d7 more SA iterations per restart at meaningful temperatures.",
+    "Alternatives exhaustively explored and rejected: KL/Kernighan-Lin (high variance, 84\u201387), tabu search (85), LAHC (80\u201383), greedy-only restarts (81), spectral initialization (no gain), greedy construction (84), ILS with adaptive perturbation (80.6).",
+    "Next iteration should investigate: (1) hybrid linear-cooling SA + post-SA KL refinement passes within each restart, (2) tuning restart budget (e.g., 0.05s vs 0.15s per restart to find optimal depth-vs-diversity tradeoff), (3) population-based approaches where multiple SA solutions share information, (4) 2-opt neighborhood (swap pairs of vertices) mixed into the SA move set.",
+    "Remaining uncertainty: judge machine timing variability (\u00b10.5 points between runs), whether combining SA with a structured local search (KL) can push past 88, and whether the 0.10s restart budget is truly optimal or just a local sweet spot."
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, our best approach (greedy init + simulated annealing) scores 88-91 out of 100 on the AHC001 rectangle packing problem. The iter-2 hypothesis that a faster multi-cell initialization would meaningfully improve SA scores was refuted \u2014 both init methods produce statistically indistinguishable results (mean 89.9 vs 89.4, within the ~5-point judge variance). SA dominates final quality regardless of starting configuration.",
+  "key_points": [
+    "Best measured scores: 88-91 range across all runs. The SA approach with simple single-edge moves is well-optimized and consistently reaches this band.",
+    "Init quality does NOT matter: Multi-cell init (mean 89.9) vs single-cell init (mean 89.4) showed only +0.5 difference, well within the ~5-point run-to-run variance. SA converges to similar quality from either starting point.",
+    "Many SA enhancements were tried and failed in iter-2 probes: paired boundary moves (score 0 \u2014 buggy), area-biased proposals (85.7), adaptive step sizes (88.2), two-edge moves (89.7), weighted rect selection (85.3). All added overhead that reduced iteration throughput without compensating quality gains.",
+    "The scoring function is forgiving \u2014 50% area match gives p=0.75 \u2014 so the remaining 9-12 points likely come from rectangles that either miss their target point entirely or have very poor area ratios. Targeted improvements should focus on these worst-case companies.",
+    "Next iteration should explore fundamentally different strategies: (1) rectangle swap/exchange moves that let two adjacent companies trade area, (2) a company-priority scheme that gives SA more effort to the worst-scoring rectangles, (3) a completely different representation like power diagrams or weighted Voronoi tessellation converted to axis-aligned rectangles. The current single-edge SA neighborhood may be at its ceiling around 90."
+  ]
+}

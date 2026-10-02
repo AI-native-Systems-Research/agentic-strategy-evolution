@@ -1,0 +1,40 @@
+[
+  {
+    "id": "RP-3",
+    "statement": "On the problem-185 test distribution with N<=1000, BnB with greedy coloring bound completes within 1900ms under normal system load, achieving score 100 without needing local search. The iter-1 observed variance (90-100) was caused by system load, not algorithmic timeout.",
+    "confidence": "high",
+    "regime": "problem-185 test distribution, N<=1000, M<=500000, normal system load (no heavy background processes)",
+    "evidence": [
+      "iteration-2-h-control-negative: 5/5 runs scored 100 with BnB-only",
+      "iteration-2-h-main: 7/7 post-warmup runs scored 100"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The BnB with greedy coloring bound (solution.cpp:18-80 in iter-2 v4, or expand() in iter-1) explores the search tree efficiently enough to find the optimal clique on all test cases within 1900ms when the system is not under contention. The 1800ms timeout leaves sufficient margin.",
+    "applicability_bounds": "May not hold under heavy system load \u2014 iter-1 showed a score of 90 in one run, likely from load-induced timeout. The local search provides insurance against this failure mode.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-4",
+    "statement": "Swap-based local search (1-remove/2-add + random perturbation) provides defensive value against BnB timeout but is not necessary for score 100 under normal conditions on the problem-185 test distribution.",
+    "confidence": "high",
+    "regime": "problem-185 test distribution, BnB timeout at 1800ms, local search budget 100ms",
+    "evidence": [
+      "iteration-2-h-main: 7/7 post-warmup runs scored 100",
+      "iteration-2-h-control-negative: 5/5 runs scored 100 without local search"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Local search activates only when BnB sets timed_out=true (solution.cpp:308). Under normal load, BnB completes within 1800ms, so local search never runs. Its value is as insurance: when system load causes BnB to timeout, local search can recover using the remaining ~100ms budget.",
+    "applicability_bounds": "The defensive value becomes critical under system load. The 100ms local search budget is tight \u2014 if both BnB and local search are starved for time, scores may still drop.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

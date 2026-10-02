@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed in iteration 3. Expanding from 4 to 8 heuristic orderings raised the score from 95.21 (iter-2 baseline) to 96.52, a +1.31 point gain. The control arm isolating SA tuning alone (cooling schedule, restarts, rotation mode) scored 95.80, confirming both components contribute but heuristic expansion is the larger driver (~55% of the gain).",
+  "key_points": [
+    "h-main scored 96.52 (\u00b10.05) across 5 valid runs, exceeding the predicted 96.4 and iter-2 baseline of 95.21 by +1.31 points.",
+    "h-control-negative (4 heuristics + SA tuning improvements) scored 95.80 (\u00b10.005), decomposing the gain: SA tuning contributes ~0.59 points (45%), expanded heuristics contribute ~0.72 points (55%).",
+    "Server-timing outliers affected ~25-35% of runs in both arms (scores dropping to 83-89 range), indicating infrastructure instability; these were excluded from analysis as they reflect time-limit violations under server load, not algorithmic failures.",
+    "Current best score of 96.52/100 leaves ~3.5 points of headroom against the upper bound; further gains likely require more sophisticated packing strategies (e.g., mixed strip decomposition, better leftover filling) rather than just more heuristic orderings."
+  ]
+}

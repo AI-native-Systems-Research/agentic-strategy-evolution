@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "The hypothesis was confirmed: grid-based nearest-neighbor construction with candidate-list 2-opt consistently scores ~78.43 out of 100, well above the x-sorted baseline. The \"carrot constraint\" penalty accounts for only ~1% of tour cost and is not the primary optimization lever. Advanced search methods (simulated annealing, iterated local search) proved unstable and did not reliably improve over the deterministic approach.",
+  "key_points": [
+    "Score achieved: 78.43/100, stable across 4 independent runs (78.428, 78.428, 78.428, 78.4275), confirming prediction of \u226578.",
+    "Construction quality dominates: pure grid NN scores 78.19; adding penalty-aware 2-opt gains only ~0.24 points, confirming the penalty is a ~1% effect on total tour cost.",
+    "SA and ILS variants scored in the 73\u201378.5 range with high variance due to timing sensitivity under the 2-second time limit \u2014 the deterministic greedy approach is more reliable.",
+    "Remaining ~21.6 points of improvement likely require fundamentally better TSP algorithms (e.g., LKH-style moves, Or-opt, 3-opt) or more sophisticated tour construction, not penalty optimization.",
+    "Next iteration should investigate Or-opt moves, 3-opt, or Lin-Kernighan style perturbations within the time budget to push beyond the 78.4 plateau."
+  ]
+}

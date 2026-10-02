@@ -1,0 +1,81 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #185?'
+run_id: frontier-185-nous3-s2
+max_iterations: 3
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::185
+  description: "You are solving Frontier-CS algorithmic problem #185. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /Users/toslali/frontier/gen_logs/fmeasure_185.sh $PWD/solution.cpp\n\
+    It prints a single line 'SCORE: <n>' where n is the judge score (0-100). Record\
+    \ that number in the finding metadata under key 'score'. Each experiment arm should\
+    \ try a distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nOUTPUT FORMAT: Match the statement's Output section EXACTLY: the number\
+    \ of lines, the separators (spaces vs newlines), and the token order. A correct\
+    \ algorithm can score near zero purely from a format mismatch (for example printing\
+    \ one value per line when a single space-separated line is required, or emitting\
+    \ extra or blank lines). Re-read the Output section and conform to it precisely.\n\
+    TIME BUDGET: Respect the per-test time limit stated in the problem. A solution\
+    \ that exceeds the limit on a test case scores 0 for that case even if its answer\
+    \ is correct, so choose an algorithm and parameters (iteration counts, restarts)\
+    \ that comfortably finish within the limit on the largest inputs.\n\nPROBLEM STATEMENT:\n\
+    # Maximum Clique Challenge\n\n## Context\n\nYou are given an undirected graph\
+    \ G = (V, E) with |V| = N vertices and |E| = M edges.\nYou must select a subset\
+    \ of vertices S \u2286 V to form a **Clique**.\n\nA subset S is a valid clique\
+    \ if and only if:\n  for **every** pair of distinct vertices u, v \u2208 S, there\
+    \ **IS** an edge between them.\n  (i.e., {u, v} \u2208 E).\n\nThis is a heuristic\
+    \ optimization problem.\nYou are NOT required to find the theoretically optimal\
+    \ solution.\nInstead, you should try to **maximize** the size of the set S (denoted\
+    \ as |S|).\n\nLet:\n  K* = the maximum clique size (optimal solution).\n  K  =\
+    \ the size of the clique found by your solution.\n\nThe score is defined as:\n\
+    \  Score = (K / K*) * 100\n\nThus:\n- Score = 100.0 means you found a maximum\
+    \ clique.\n- Larger K yields a higher score.\n- Invalid solutions (where any two\
+    \ selected vertices are NOT connected by an edge) receive score = 0.\n\nThe value\
+    \ K* is known to the judge but not to the contestant.\n\n## Input Format\n\nThe\
+    \ first line contains two integers:\n  N M\nwhere:\n  2 \u2264 N \u2264 1,000\n\
+    \  1 \u2264 M \u2264 500,000\n\nThe next M lines each contain two integers:\n\
+    \  u v\nrepresenting an undirected edge {u, v},\nwith 1 \u2264 u, v \u2264 N and\
+    \ u \u2260 v.\n\nMultiple edges between the same pair of vertices may appear but\
+    \ imply the same constraint.\n\n## Output Format\n\nOutput exactly N lines.\n\n\
+    The i-th line must contain one integer x_i \u2208 {0, 1}:\n- 1 indicates that\
+    \ vertex i is included in the clique (i \u2208 S).\n- 0 indicates that vertex\
+    \ i is excluded from the clique (i \u2209 S).\n\nRequirements:\n- For **every**\
+    \ pair of vertices u, v where x_u = 1 and x_v = 1 (and u \u2260 v), it must be\
+    \ true that {u, v} \u2208 E.\n\n## Scoring\n\nLet:\n  K = \u03A3 x_i (Total number\
+    \ of vertices selected, i.e., sum of 1s in output)\n  K* = Optimal maximum clique\
+    \ size (hidden)\n\nIf the solution is invalid (i.e., there exists a pair u, v\
+    \ \u2208 S such that {u, v} \u2209 E):\n  Score = 0\n\nOtherwise:\n  Score = (K\
+    \ / K*) * 100\n\nHigher score is better.\n\n## Example\n\nInput:\n5 6\n1 2\n2\
+    \ 3\n3 1\n1 4\n2 5\n3 5\n\nOutput:\n1\n1\n1\n0\n0\n\nExplanation:\nThe edges include\
+    \ {1,2}, {2,3}, {3,1} which form a triangle (Clique of size 3).\nThe output selects\
+    \ vertices 1, 2, and 3 (S={1, 2, 3}).\n- Check pairs:\n  - {1,2} \u2208 E? Yes.\n\
+    \  - {2,3} \u2208 E? Yes.\n  - {1,3} \u2208 E? Yes.\nThis is a valid clique of\
+    \ size K=3.\nAssuming the optimal K* = 3, the Score = 3 / 3 * 100 = 100.0.\n\n\
+    (Note: Selecting {1, 2, 3, 5} would be invalid because {1, 5} \u2209 E.)\n\n##\
+    \ Constraints\n\n- 2 \u2264 N \u2264 1,000\n- 1 \u2264 M \u2264 500,000\n- Time\
+    \ Limit: 2.0s\n- Memory Limit: 512MB"
+  repo_path: /Users/toslali/frontier/gen_logs/frontier_185_nous3-s2_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/asr-frontier-mac/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: d6fc0171a40f3f860da8ac6e94f550cfbef91e71
+  nous_version: 0.5.0
+  started_at: '2026-10-01T07:32:24.935321+00:00'

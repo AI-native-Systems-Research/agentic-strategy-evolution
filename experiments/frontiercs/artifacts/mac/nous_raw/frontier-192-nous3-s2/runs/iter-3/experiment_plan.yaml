@@ -1,0 +1,26 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+setup:
+  - cmd: "# No build needed - judge compiles internally"
+    description: "No build step required"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "adaptive-sa-ils-run1"
+        cmd: "cp /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-3/inputs/solution_adaptive_sa_ils.cpp /Users/toslali/frontier/gen_logs/frontier_192_nous3-s2_ws/solution.cpp && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh /Users/toslali/frontier/gen_logs/frontier_192_nous3-s2_ws/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-3/results/h-main/run1.txt"
+      - name: "adaptive-sa-ils-run2"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh /Users/toslali/frontier/gen_logs/frontier_192_nous3-s2_ws/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-3/results/h-main/run2.txt"
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "fixed-restart-sa-ils-run1"
+        cmd: "cp /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-3/inputs/sa_ils_solution.cpp /Users/toslali/frontier/gen_logs/frontier_192_nous3-s2_ws/solution.cpp && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh /Users/toslali/frontier/gen_logs/frontier_192_nous3-s2_ws/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-3/results/h-control-negative/run1.txt"
+      - name: "fixed-restart-sa-ils-run2"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh /Users/toslali/frontier/gen_logs/frontier_192_nous3-s2_ws/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-3/results/h-control-negative/run2.txt"
+      - name: "fixed-restart-sa-ils-run3"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh /Users/toslali/frontier/gen_logs/frontier_192_nous3-s2_ws/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s2/runs/iter-3/results/h-control-negative/run3.txt"

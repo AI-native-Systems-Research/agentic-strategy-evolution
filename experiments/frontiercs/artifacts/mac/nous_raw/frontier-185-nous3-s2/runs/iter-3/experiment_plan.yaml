@@ -1,0 +1,17 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+setup: []
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "bnb-only-1950ms"
+        cmd: "git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-185-nous3-s2/runs/iter-3/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_185.sh $PWD/solution.cpp 2>&1 | tee /Users/toslali/frontier/gen_logs/nous_runs/frontier-185-nous3-s2/runs/iter-3/results/h-main/run.log && git checkout -- solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-185-nous3-s2/runs/iter-3/results/h-main/run.log"
+        inputs: []
+  - arm_id: "h-robustness"
+    conditions:
+      - name: "bnb-only-1000ms"
+        cmd: "git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-185-nous3-s2/runs/iter-3/patches/h-robustness.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_185.sh $PWD/solution.cpp 2>&1 | tee /Users/toslali/frontier/gen_logs/nous_runs/frontier-185-nous3-s2/runs/iter-3/results/h-robustness/run.log && git checkout -- solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-185-nous3-s2/runs/iter-3/results/h-robustness/run.log"
+        inputs: []

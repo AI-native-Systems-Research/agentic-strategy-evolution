@@ -1,0 +1,26 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Shifting 100ms from BnB to local search (1700ms BnB + 200ms local search vs 1800ms + 100ms) will maintain score 100, confirming the solution is robust to time allocation changes within the 2s budget.",
+      "observed": "Scores across 3 runs: 100, 100, 100. The time reallocation (BnB 1700ms, local search 200ms) achieves score 100 consistently, identical to the production configuration.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Score 100 maintained across all 3 runs with 1700ms BnB cutoff. The solution is robust to this time reallocation \u2014 BnB completes well within 1700ms on this test distribution, so the extra 100ms for local search is unused but harmless."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "The current production solution (BnB 1800ms + local search 100ms) will score 100, confirming iter-2 findings at full scope in iter-3.",
+      "observed": "Scores across 3 runs: 100, 100, 100. Production solution achieves score 100 consistently, confirming iter-2 findings.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Production solution stable at 100 across all 3 runs. This is the third consecutive iteration confirming score 100 under normal system load."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms achieved score 100 across all runs. h-main CONFIRMED: the 1700ms BnB cutoff maintains score 100, demonstrating robustness to time reallocation. h-control-negative CONFIRMED: production solution stable at 100 (3/3 runs), consistent with iter-2 findings (7/7 post-warmup). The solution is well within its performance envelope \u2014 BnB solves all instances before any timeout threshold in the 1700-1800ms range.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

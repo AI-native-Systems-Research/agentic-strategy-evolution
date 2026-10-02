@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 2 achieved a score of 95.21, up from 94.84 in iteration 1. The main hypothesis (SA improves over hill-climbing) was confirmed, but the mechanism was different than predicted: the gain came from expanding the search space to include per-item heuristic assignments, not from SA escaping local optima in ordering space. The gap-filling ablation was refuted \u2014 it contributed exactly 0 points.",
+  "key_points": [
+    "h-main CONFIRMED: Score 95.21 vs prediction >95.0 and baseline 94.84 \u2014 a 0.37-point improvement. The gain came from jointly optimizing item orderings AND per-item heuristic assignments via simulated annealing, not from SA's ability to escape ordering-space local optima.",
+    "h-ablation REFUTED: Removing gap filling had zero effect (95.21 = 95.21). The prediction was a 0.1\u20130.5 point contribution from gap filling. In practice, per-item heuristic selection already achieves near-optimal space utilization, leaving no residual rectangles large enough for any item type.",
+    "Key mechanistic insight: For M=8\u201312 item types, the ordering space is small enough that hill-climbing already finds near-optimal orderings (two SA-over-orderings-only runs matched hill-climbing at 94.84 exactly). The real lever is the per-item heuristic dimension \u2014 choosing which placement heuristic to use for each item type independently.",
+    "Surprise: Gap filling is completely redundant when per-item heuristic selection is optimized. This suggests future improvements should focus on richer placement strategies (more heuristic options, different packing algorithms) rather than post-hoc repair passes.",
+    "Score trajectory: iter-1 = 94.84, iter-2 = 95.21. The 0.37-point gain is modest; remaining headroom to 100 likely requires fundamentally different packing approaches (e.g., guillotine cuts, column generation, or MILP-based methods) rather than further tuning of the current maximal-rectangles framework."
+  ]
+}

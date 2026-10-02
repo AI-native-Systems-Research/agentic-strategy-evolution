@@ -1,0 +1,46 @@
+metadata:
+  iteration: 3
+  family: "oropt-local-search"
+  research_question: "Can or-opt (single-city relocation) with KNN candidate lists improve penalized TSP tour quality beyond 2-opt + ILS?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism (or-opt) added to existing local search framework, testing contribution of a new move type"
+
+arms:
+  - type: h-main
+    prediction: "Adding or-opt1 (single-city relocation with KNN candidates) to the local search pipeline will consistently improve tour quality, yielding a higher judge score than the 2-opt-only baseline. Expected improvement is small but directional (~0.04+ points) because or-opt explores a relocation neighborhood that 2-opt (segment reversal) cannot reach."
+    mechanism: "Or-opt1 removes a city from its current position and reinserts it at a better position near a KNN neighbor. This finds improvements where a city is poorly placed between its current tour neighbors but has a better fit between other nearby cities. 2-opt can only reverse segments — it cannot relocate a single city without also reversing everything between the old and new positions. Additionally, dist² early rejection speeds up 2-opt by avoiding sqrt for most non-improving candidates, giving slightly more time for productive search."
+    diagnostic: "If refuted (no improvement or regression): (1) Check if or-opt1 actually finds improvements — instrument the code to count accepted moves. If zero, the 2-opt-optimal tour is also or-opt1-optimal. (2) Check if or-opt1 time cost exceeds its benefit — the 8% budget for or-opt1 might steal time from more productive 2-opt passes. (3) Compare non-TLE runs specifically."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace solution.cpp with inputs/solution_v32.cpp which adds: (a) do_oropt1 function for single-city relocation using KNN candidates with memmove-based array updates, (b) dist² early rejection in do_2opt_candidate, (c) or-opt1 phase between 2-opt and window 2-opt, (d) or-opt1 in ILS recovery after 2-opt."
+        rationale: "Tests whether the or-opt1 relocation neighborhood adds value beyond 2-opt for penalized TSP."
+
+  - type: h-control-negative
+    prediction: "The v25 baseline (2-opt + ILS without or-opt) will score ~78.93, matching its established performance from iter-2. This provides the comparison point for measuring or-opt1's contribution."
+    mechanism: "Control condition — no or-opt, pure 2-opt + ILS as validated in iter-2."
+    diagnostic: "If baseline scores significantly differently from 78.93, investigate environmental factors (TLE from machine load per RP-5)."
+
+arm_selection_note: "Two arms (treatment + control) suffice for a tier-2 single-mechanism test. Or-opt2 (pair relocation) and or-opt3 (triple relocation) were explored during design but caused TLE on large N due to O(N) array shifts; they are excluded from the experiment. The efficient memmove implementation works for seg=1 but the total time for seg=2,3 pushes large test cases past the 2s limit."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    grid_cells_formula: "sqrt(N/2.5)"
+    knn_k: 15
+    budget_ms: 1900
+    time_2opt_pct: 0.50
+    time_oropt1_pct: 0.58
+    time_2opt_redo_pct: 0.65
+    time_window_pct: 0.75
+  unlocked_parameters_audit:
+    - name: N
+      default_value: "up to 200000 (set by judge)"
+      justification: "Test cases are set by the judge; we handle all N values"
+    - name: random_seed
+      default_value: 42
+      justification: "Fixed seed for ILS double-bridge; deterministic results"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 45
+      h-control-negative: 45
+    observation_method: "Judge wall-clock observed at 30-60s per call"

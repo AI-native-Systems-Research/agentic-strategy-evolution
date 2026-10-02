@@ -1,0 +1,9 @@
+{
+  "gate_type": "findings",
+  "summary": "The FM partitioning with greedy local search restarts (h-main) scored a mean of 85.2 out of 100 across three runs, confirming it substantially outperforms the trivial alternating baseline (h-control-negative) which scored 49.4. Both hypotheses were confirmed, with a 35.8-point gap demonstrating the FM mechanism is the active driver of performance.",
+  "key_points": [
+    "h-main confirmed: Three runs scored 87.01, 86.99, and 81.54 (mean 85.18). Two of three exceeded the predicted 85 threshold; the third (81.54) fell short likely due to RNG/timing variance affecting the number of restarts within the 0.90s budget.",
+    "h-control-negative confirmed: Trivial alternating assignment scored exactly 49.40, matching the ~50 prediction and establishing a clear lower bound.",
+    "Run-to-run variance of ~5.5 points in h-main (81.5 to 87.0) suggests the solution is sensitive to random seed and timing; a fixed seed, more aggressive time management, or a stronger algorithm (e.g., semidefinite relaxation rounding, simulated annealing with longer chains) could both raise the mean and reduce variance. Current best is 87.01 \u2014 there is likely 10+ points of headroom remaining."
+  ]
+}

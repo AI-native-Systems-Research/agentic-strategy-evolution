@@ -1,0 +1,317 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..6e79434 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,311 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++const int MAXN = 1001;
++int N, M;
++bitset<MAXN> adj[MAXN];
++int best_n = 0;
++int best_cl[MAXN];
++int cur_cl[MAXN], cur_n = 0;
++bool timed_out = false;
++
++auto t0 = chrono::steady_clock::now();
++
++inline int ms() {
++    return (int)chrono::duration_cast<chrono::milliseconds>(
++        chrono::steady_clock::now() - t0).count();
++}
++
++void mcq_bs(bitset<MAXN>& P_bs, int np) {
++    if (np == 0) {
++        if (cur_n > best_n) {
++            best_n = cur_n;
++            memcpy(best_cl, cur_cl, cur_n * sizeof(int));
++        }
++        return;
++    }
++    if (cur_n + np <= best_n) return;
++    if (ms() > 1700) { timed_out = true; return; }
++
++    int V[1000], nv = 0;
++    for (int u = P_bs._Find_first(); u < MAXN; u = P_bs._Find_next(u))
++        V[nv++] = u;
++
++    // Greedy coloring — fast for small candidate sets
++    int color[1000];
++    int max_color = 0;
++    for (int i = 0; i < nv; i++) {
++        uint64_t used[16] = {};
++        int vi = V[i];
++        for (int j = 0; j < i; j++) {
++            if (adj[vi].test(V[j])) {
++                int c = color[j];
++                used[c >> 6] |= 1ULL << (c & 63);
++            }
++        }
++        used[0] |= 1ULL;
++        int c = 0;
++        for (int w = 0; w < 16; w++) {
++            if (~used[w]) {
++                c = (w << 6) + __builtin_ctzll(~used[w]);
++                break;
++            }
++        }
++        color[i] = c;
++        if (c > max_color) max_color = c;
++    }
++
++    if (cur_n + max_color <= best_n) return;
++
++    // Sort by color ascending via counting sort (faster than std::sort for small n)
++    int sorted_v[1000]; // vertices in ascending color order
++    {
++        int cnt[1001] = {};
++        for (int i = 0; i < nv; i++) cnt[color[i]]++;
++        int pos[1001];
++        pos[0] = 0;
++        for (int c = 1; c <= max_color; c++) pos[c] = pos[c-1] + cnt[c-1];
++        for (int i = 0; i < nv; i++) {
++            sorted_v[pos[color[i]]++] = V[i];
++        }
++    }
++    // Need vertex_color lookup for pruning
++    int vertex_color[MAXN];
++    for (int i = 0; i < nv; i++) vertex_color[V[i]] = color[i];
++
++    // Process in reverse color order with incremental sub
++    bitset<MAXN> sub = P_bs;
++    for (int ii = nv - 1; ii >= 0; ii--) {
++        int v = sorted_v[ii];
++        if (cur_n + vertex_color[v] <= best_n) return;
++        if (ms() > 1700) { timed_out = true; return; }
++
++        sub.reset(v);
++        bitset<MAXN> newP = sub & adj[v];
++        int nn = newP.count();
++
++        cur_cl[cur_n++] = v;
++        mcq_bs(newP, nn);
++        cur_n--;
++    }
++}
++
++// Local search: try to improve current best clique
++void local_search(int time_limit_ms) {
++    if (best_n == 0) return;
++
++    // Build adjacency count to current clique for each non-clique vertex
++    bitset<MAXN> clique_bs;
++    for (int i = 0; i < best_n; i++) clique_bs.set(best_cl[i]);
++
++    mt19937 rng(12345);
++
++    // Current working clique
++    vector<int> cl(best_cl, best_cl + best_n);
++    bitset<MAXN> cl_bs = clique_bs;
++
++    while (ms() < time_limit_ms) {
++        bool improved = false;
++
++        // Try to add a vertex directly (clique extension)
++        for (int v = 1; v <= N && ms() < time_limit_ms; v++) {
++            if (cl_bs.test(v)) continue;
++            // Check if v is connected to all clique members
++            bitset<MAXN> inter = cl_bs & adj[v];
++            if ((int)inter.count() == (int)cl.size()) {
++                cl.push_back(v);
++                cl_bs.set(v);
++                improved = true;
++            }
++        }
++
++        if (improved) {
++            if ((int)cl.size() > best_n) {
++                best_n = cl.size();
++                for (int i = 0; i < best_n; i++) best_cl[i] = cl[i];
++            }
++            continue;
++        }
++
++        // Try swap: remove one vertex, try to add two
++        bool found_swap = false;
++        // Shuffle to randomize which swap we find
++        vector<int> cl_perm = cl;
++        shuffle(cl_perm.begin(), cl_perm.end(), rng);
++
++        for (int ci = 0; ci < (int)cl_perm.size() && !found_swap && ms() < time_limit_ms; ci++) {
++            int rem = cl_perm[ci];
++
++            // Build clique without rem
++            bitset<MAXN> cl_minus = cl_bs;
++            cl_minus.reset(rem);
++
++            // Find candidates: vertices connected to all of cl_minus but not currently in clique
++            // A vertex v is a candidate if adj[v] & cl_minus == cl_minus
++            vector<int> cands;
++            for (int v = 1; v <= N; v++) {
++                if (cl_bs.test(v) && v != rem) continue;
++                if (v == rem) continue;
++                bitset<MAXN> inter = cl_minus & adj[v];
++                if (inter == cl_minus) {
++                    cands.push_back(v);
++                }
++            }
++
++            if ((int)cands.size() >= 2) {
++                // Try to find two candidates that are also connected to each other
++                for (int i = 0; i < (int)cands.size() && !found_swap; i++) {
++                    for (int j = i + 1; j < (int)cands.size() && !found_swap; j++) {
++                        if (adj[cands[i]].test(cands[j])) {
++                            // Swap: remove rem, add cands[i] and cands[j]
++                            cl_bs.reset(rem);
++                            cl.erase(find(cl.begin(), cl.end(), rem));
++                            cl.push_back(cands[i]);
++                            cl.push_back(cands[j]);
++                            cl_bs.set(cands[i]);
++                            cl_bs.set(cands[j]);
++                            found_swap = true;
++                            improved = true;
++                        }
++                    }
++                }
++            }
++        }
++
++        if (improved) {
++            if ((int)cl.size() > best_n) {
++                best_n = cl.size();
++                for (int i = 0; i < best_n; i++) best_cl[i] = cl[i];
++            }
++            continue;
++        }
++
++        // No improvement found, try random perturbation
++        // Remove a random vertex and try to rebuild
++        if (cl.size() <= 1) break;
++        int ri = rng() % cl.size();
++        int rem = cl[ri];
++        cl_bs.reset(rem);
++        cl.erase(cl.begin() + ri);
++
++        // Greedily extend
++        vector<int> candidates;
++        for (int v = 1; v <= N; v++) {
++            if (cl_bs.test(v)) continue;
++            candidates.push_back(v);
++        }
++        shuffle(candidates.begin(), candidates.end(), rng);
++        for (int v : candidates) {
++            bitset<MAXN> inter = cl_bs & adj[v];
++            if ((int)inter.count() == (int)cl.size()) {
++                cl.push_back(v);
++                cl_bs.set(v);
++            }
++        }
++
++        if ((int)cl.size() > best_n) {
++            best_n = cl.size();
++            for (int i = 0; i < best_n; i++) best_cl[i] = cl[i];
++        }
++
++        // Reset to best known for next iteration
++        cl.assign(best_cl, best_cl + best_n);
++        cl_bs.reset();
++        for (int v : cl) cl_bs.set(v);
++    }
++}
++
++int main(){
++    ios::sync_with_stdio(false);
++    cin.tie(nullptr);
++    t0 = chrono::steady_clock::now();
++
++    cin >> N >> M;
++    for (int i = 0; i < M; i++) {
++        int u, v;
++        cin >> u >> v;
++        adj[u].set(v);
++        adj[v].set(u);
++    }
++
++    int deg[MAXN];
++    for (int i = 1; i <= N; i++) deg[i] = adj[i].count();
++
++    // Degeneracy ordering
++    vector<int> degen_order;
++    degen_order.reserve(N);
++    {
++        vector<bool> rem(N + 1, false);
++        int d[MAXN];
++        memcpy(d, deg, sizeof(int) * (N + 1));
++        for (int step = 0; step < N; step++) {
++            int mv = -1, md = N + 1;
++            for (int i = 1; i <= N; i++)
++                if (!rem[i] && d[i] < md) { md = d[i]; mv = i; }
++            degen_order.push_back(mv);
++            rem[mv] = true;
++            for (int u = adj[mv]._Find_first(); u < MAXN; u = adj[mv]._Find_next(u))
++                if (!rem[u]) d[u]--;
++        }
++    }
++
++    // Greedy initialization
++    {
++        mt19937 rng(42);
++        int perm[1000];
++        for (int i = 0; i < N; i++) perm[i] = i + 1;
++
++        auto try_greedy = [&](int p[], int n) {
++            vector<int> cl;
++            for (int i = 0; i < n; i++) {
++                int v = p[i];
++                bool ok = true;
++                for (int u : cl) if (!adj[v].test(u)) { ok = false; break; }
++                if (ok) cl.push_back(v);
++            }
++            if ((int)cl.size() > best_n) {
++                best_n = cl.size();
++                for (int i = 0; i < best_n; i++) best_cl[i] = cl[i];
++            }
++        };
++
++        sort(perm, perm + N, [&](int a, int b){ return deg[a] > deg[b]; });
++        try_greedy(perm, N);
++        for (int t = 0; t < 2000 && ms() < 100; t++) {
++            shuffle(perm, perm + N, rng);
++            try_greedy(perm, N);
++        }
++    }
++
++    // BnB with degeneracy ordering
++    timed_out = false;
++    {
++        bitset<MAXN> active;
++        for (int v : degen_order) active.set(v);
++
++        for (int i = N - 1; i >= 0; i--) {
++            if (ms() > 1700) { timed_out = true; break; }
++            int v = degen_order[i];
++            active.reset(v);
++
++            bitset<MAXN> cand = adj[v] & active;
++            int nc = cand.count();
++            if (nc + 1 <= best_n) continue;
++
++            cur_n = 0;
++            cur_cl[cur_n++] = v;
++            mcq_bs(cand, nc);
++        }
++    }
++
++    // If BnB timed out, try local search with remaining time
++    if (timed_out && ms() < 1900) {
++        local_search(1900);
++    }
++
++    bool in_cl[MAXN] = {};
++    for (int i = 0; i < best_n; i++) in_cl[best_cl[i]] = true;
++    for (int i = 1; i <= N; i++)
++        printf("%d\n", in_cl[i] ? 1 : 0);
++    return 0;
++}

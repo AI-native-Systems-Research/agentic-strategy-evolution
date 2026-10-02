@@ -1,0 +1,26 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Incremental gain tracking + 0.30s SA restarts will score \u226587.5 consistently and match or exceed iter-2's 87.54 mean, with lower variance due to deeper per-restart exploration.",
+      "observed": "Three runs scored 87.54, 87.55, 84.82 (mean 86.64, median 87.54). Two fast-machine runs matched iter-2 baseline (87.54-87.55). One slow-machine run dropped to 84.82. Incremental gain + long SA does NOT improve over iter-2's non-incremental SA (87.52-87.57), and does NOT reduce machine-speed variance.",
+      "status": "PARTIALLY_CONFIRMED",
+      "error_type": "magnitude",
+      "diagnostic_note": "h-main matches iter-2 baseline on fast machines but shows no improvement. The incremental gain speedup (more iterations/second) is offset by fewer restarts (3 vs 9). The deeper exploration per restart does not find better optima \u2014 suggesting the Max-Cut landscape has many near-equivalent local optima accessible via shallow search."
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Short SA (0.03s per restart, ~30 restarts) with incremental gain tracking will score lower and with higher variance than h-main, because shallow restarts cannot escape deep local optima.",
+      "observed": "Three runs scored 87.57, 87.57, 84.69 (mean 86.61, median 87.57). On fast-machine runs, h-ablation scored 87.57 \u2014 matching or slightly exceeding h-main (87.54-87.55). The slow-machine run (84.69) is comparable to h-main's slow run (84.82). Variance is NOT higher than h-main.",
+      "status": "REFUTED",
+      "error_type": "direction",
+      "diagnostic_note": "Short SA with many restarts performs at parity with long SA with few restarts. This refutes the depth-over-breadth hypothesis: for Max-Cut (n\u22641000), random restart diversity is at least as valuable as deep per-restart exploration. The 30 short restarts find the same quality optima as 3 long restarts."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The core finding is that restart budget allocation (depth vs breadth) does not significantly affect Max-Cut score when using incremental gain tracking. Both h-main (0.30s\u00d73 restarts) and h-ablation (0.03s\u00d730 restarts) score ~87.5 on fast machines, matching iter-2's non-incremental SA. The incremental gain optimization increases per-second iteration count (~5x) but does not translate to higher scores \u2014 the bottleneck is not iteration speed but the quality landscape. The dominant variance source remains judge machine speed (bimodal: ~84-85 vs ~87.5), not algorithmic configuration. Both arms' incremental-gain implementations are functionally correct (validated by matching iter-2 scores on fast runs), but neither exceeds the iter-2 ceiling.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

@@ -1,0 +1,17 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether an adaptive-budget Simulated Annealing + Iterated Local Search approach (capping total SA iterations at 1.5M and scaling restart count by graph size) eliminates the time-limit-exceeded (TLE) failures observed in iteration 2's fixed 12-restart SA+ILS, while maintaining or improving Max-Cut quality (target score \u2265 87.0 out of 100).",
+  "key_points": [
+    "Main arm: Adaptive SA+ILS with 1.5M total iteration budget, fewer restarts for large graphs (5 for n>600), 30 ILS perturbation cycles per restart, greedy/random initialization mix. Prediction: score \u2265 87.0 with no TLE-induced zeros.",
+    "Control arm: Iter-2's fixed 12-restart SA+ILS (\u22483M total iterations). Prediction: score variance \u2265 3 points due to TLE on large test cases, confirming that the fixed restart count is the root cause of inconsistency.",
+    "Confirmation criteria: If the adaptive arm scores \u2265 87.0 and the control arm scores lower or shows variance, the hypothesis that adaptive work scaling fixes TLE is confirmed. Refutation: if adaptive arm scores < 87.0 (budget too tight or fewer restarts hurt diversity) or if the control arm scores comparably well (TLE was not actually the bottleneck)."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

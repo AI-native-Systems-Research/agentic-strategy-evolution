@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "The main hypothesis was confirmed: a branch-and-bound solver with coloring bounds, augmented by a Dynamic Local Search (DLS) tabu fallback for hard dense instances, achieved a perfect score of 100 out of 100 on the Maximum Clique problem. The greedy-only control scored 33.76, confirming that naive approaches are far insufficient.",
+  "key_points": [
+    "h-main (BnB + DLS hybrid) scored 100 vs. predicted \u226590 \u2014 CONFIRMED. The solver finds optimal cliques across all test cases within the 2-second time limit.",
+    "h-control-negative (greedy by degree) scored 33.76 vs. predicted <50 \u2014 CONFIRMED. This validates that exhaustive or sophisticated search is essential for maximum clique.",
+    "Key insight: pure BnB with greedy coloring bound alone reaches ~88\u201390 on the hardest dense graphs; the DLS tabu search fallback is critical for closing the remaining gap to 100 on those cases.",
+    "No further iteration is needed \u2014 the solution already achieves the maximum possible score of 100."
+  ]
+}

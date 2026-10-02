@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether simulated annealing (SA) meaningfully improves rectangle packing quality over a greedy-only baseline for the ad placement optimization problem (#147). Two arms will run: a full greedy+SA algorithm and a greedy-only ablation, each measured once via the judge to produce a score from 0-100.",
+  "key_points": [
+    "Problem: Place n non-overlapping rectangles on a 10000\u00d710000 grid to maximize satisfaction (area match to targets while containing desired points). Score is continuous 0-100.",
+    "h-main (greedy+SA): Greedy expansion for ~2s then simulated annealing with 8 move types (boundary shifts, expand-to-limit, target-aware shrink/grow) for ~7s with linear cooling from T=0.01. Predicted score: above 80.",
+    "h-control-negative (greedy-only): Same greedy expansion but no SA refinement phase. Predicted score: below 70. If it scores close to h-main, SA is not the key driver and we should investigate other bottlenecks.",
+    "Confirmation criteria: h-main scores \u226580 AND h-main beats h-control by \u226510 points \u2192 SA is valuable. Refutation: h-main < 80 or gap < 5 points \u2192 SA move set or temperature schedule needs redesign.",
+    "Risk factors: 10s time limit must be respected (SA budget set to 9.3s with margin); output format must be exactly n lines of 'a b c d' with strict coordinate constraints (0\u2264a<c\u226410000, 0\u2264b<d\u226410000); any overlap or format error scores 0."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}
