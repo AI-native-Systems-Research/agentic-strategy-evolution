@@ -9,25 +9,35 @@ caveat.
 
 ## Algorithmic — best score @ <= $50 (our judge)
 
-| task | Nous | real Engram | Claude-agent | notes |
-|---|---|---|---|---|
-| p0  | **86** ($27) | 70.0 | ~26 | Claude's 73 needed ~$84; at $50 it's ~26 |
-| p5  | **83** ($46) | 49.0 | ~39 | |
-| p9  | **100** ($38) | 55.0 | 80 | capped rerun (killed at ~$50 wall-clock proxy); best cpp re-scored 80 on our judge |
-| p15 | **100** ($32) | 20.0 | 0 | gate |
-| p22 | **100** ($4.85) | 0.0 | 0 | gate |
+| task | Nous | AIDE | real Engram | Claude-agent | notes |
+|---|---|---|---|---|---|
+| p0  | **86** ($27) | 0 ($50.07) | 70.0 | ~26 | AIDE: 124 nodes all compile+run but score 0; Claude's 73 needed ~$84 |
+| p5  | **83** ($46) | 44 ($50.28) | 49.0 | ~39 | |
+| p9  | **100** ($38) | 95 ($50.16) | 55.0 | 80 | AIDE strongest here; Claude capped rerun re-scored 80 |
+| p15 | **100** ($32) | 0 ($50.41) | 20.0 | 0 | gate |
+| p22 | **100** ($4.85) | 0 ($50.04) | 0.0 | 0 | gate |
+
+AIDE = Weco AIDE (arXiv:2502.13138), unmodified tree search + thin Frontier adapter (C++17 prompts,
+go-judge scoring). Ran under the same rule ($50 or ceiling); each task hit the $50 cap. Scores are the
+best node re-scored on OUR judge (p5=44 and p9=95 reproduce on isolated re-eval; the go-judge shows
+~5pt downward variance under load on time-limited tasks, so p9 occasionally reads 90). Cost is from
+in-process token accounting ($15/M in, $75/M out), the same pricing as the other agents. cloudcast not
+run for AIDE (adapter is algorithmic-only).
 
 cloudcast (transfer-cost $, lower=better): Nous **$626** @ $9.89 (<=$50); real Engram ~$624 @ ~$52
 (slightly over; its best-at-$50 ~ same, found early); naive $1046. Tie at SOTA.
 
 ## Takeaways (iso-$50)
 - **Nous is best on every task at <= $50**, and on the gates (p15, p22) it's the only one that scores.
+- **Nous also reaches those scores far under budget** ($4.85-$46), while AIDE, Engram, and Claude burn
+  the full $50 and still fall short. Nous wins on both score and cost.
+- **AIDE** is the strongest single-task baseline on p9 (95) but scores 0 on p0 and both gates, so its
+  tree search helps only where incremental improvement has a gradient; it never cracks the gate tasks.
 - Capping at $50 barely changes Engram (it runs near $50/agent anyway): 70/49/55/20/0.
 - Capping HURTS Claude-agent a lot where its best came late: p0 73 -> ~26 at $50. For p9 the earlier
-  "98.5" was a leaked (cost-corrupted) run; a clean capped rerun (killed at the ~$50 wall-clock proxy)
-  reaches 80 on our judge, below Nous's 100.
-- Net: on the fair iso-$50 axis, **Nous dominates all five algorithmic tasks**; cloudcast is a tie
-  with Engram at SOTA. This is stronger and cleaner than the raw final-best table.
+  "98.5" was a leaked (cost-corrupted) run; a clean capped rerun reaches 80 on our judge, below Nous's 100.
+- Net: on the fair iso-$50 axis, **Nous dominates all five algorithmic tasks** against all three
+  baselines (AIDE, Engram, Claude); cloudcast is a tie with Engram at SOTA.
 
 ## Caveats
 - Claude-agent p0/p9 runs leaked (orphaned multiprocessing workers kept spending after kill), so their
