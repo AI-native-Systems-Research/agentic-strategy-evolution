@@ -24,6 +24,21 @@ best node re-scored on OUR judge (p5=44 and p9=95 reproduce on isolated re-eval;
 in-process token accounting ($15/M in, $75/M out), the same pricing as the other agents. cloudcast not
 run for AIDE (adapter is algorithmic-only).
 
+## New-class tasks (6->10 subset expansion) — best score @ <= $50 (our judge)
+
+Added to test whether Nous's win is class-specific. One task from each previously-untested class.
+AIDE run first (same $50-or-max rule, in-process cost accounting). Nous/Engram/Claude pending.
+
+| task | class | Nous | AIDE | Engram | Claude |
+|---|---|---|---|---|---|
+| p26  | dynamic programming | TBD | 30 ($50.33) | TBD | TBD |
+| p69  | strings             | TBD | 0 ($50.32)  | TBD | TBD |
+| p79  | math/number theory  | TBD | 0 ($50.54)  | TBD | TBD |
+| p170 | flow/matching       | TBD | 0 (cut ~$34; best was 0, matching its three sibling gate-fails that reached $50 at 0) | TBD | TBD |
+
+AIDE on the new classes: partial on DP (30), zero on strings/math/flow — same pattern as its original
+tasks (helps only where incremental search has a score gradient).
+
 cloudcast (transfer-cost $, lower=better): Nous **$626** @ $9.89 (<=$50); real Engram ~$624 @ ~$52
 (slightly over; its best-at-$50 ~ same, found early); naive $1046. Tie at SOTA.
 

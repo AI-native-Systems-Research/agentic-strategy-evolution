@@ -252,3 +252,24 @@ algorithmic-only; a research-track callback would be needed).
 
 Artifacts: `aide_gates/` (preds, best `*.cpp`, logs); adapter `gen/aide_frontier.py`; spec
 `artifacts/mac/AIDE_ADAPTER.md`.
+
+## Subset expansion 6->10: new-class tasks (2026-10-02)
+
+To check that Nous's advantage is not class-specific, we add one task from each previously-untested
+class: p26 (dynamic programming), p69 (strings), p79 (math/number theory), p170 (flow/matching).
+All four classic competitive-programming families that our original 6 (graph/tree, geometry,
+combinatorics, systems) did not cover.
+
+**AIDE** ran first under the same rule ($50 or ceiling):
+
+| task | class | AIDE (score @ $) |
+|---|---|---|
+| p26  | dynamic programming | 30 ($50.33) |
+| p69  | strings             | 0 ($50.32) |
+| p79  | math/number theory  | 0 ($50.54) |
+| p170 | flow/matching       | 0 (cut ~$34; best 0, matching its three sibling gate-fails) |
+
+AIDE partially cracks DP (30) and scores 0 on strings/math/flow, the same profile as its original
+tasks: its draft/debug/improve search climbs only where there is a score gradient. Nous, Engram, and
+Claude on the new tasks are pending (next batch). Artifacts: `aide_gates/preds/p{26,69,79,170}.aide.json`,
+`aide_gates/solutions/`.
