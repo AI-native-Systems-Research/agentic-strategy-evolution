@@ -2,10 +2,11 @@
 import glob, json, os, re, subprocess, time
 
 GATES = "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/aide_gates"
-TASKS = [0, 5, 9, 15, 22]
-NOUS = {0: 86, 5: 83, 9: 100, 15: 100, 22: 100}
-ENGRAM = {0: 70.0, 5: 49.0, 9: 55.0, 15: 20.0, 22: 0.0}
-CLAUDE = {0: "~26", 5: "~39", 9: 80, 15: 0, 22: 0}
+TASKS = [26, 69, 79, 170]  # new tasks (6->10): DP, string, number-theory, flow/matching
+CLASS = {26: "DP", 69: "string", 79: "math/NT", 170: "flow"}
+NOUS = {t: "-" for t in TASKS}      # baselines TBD on new tasks
+ENGRAM = {t: "-" for t in TASKS}
+CLAUDE = {t: "-" for t in TASKS}
 
 up = subprocess.run(["pgrep", "-f", "aide_run_par.py"], capture_output=True).returncode == 0 or \
      subprocess.run(["pgrep", "-f", "aide_frontier.py"], capture_output=True).returncode == 0
@@ -28,5 +29,5 @@ for p in TASKS:
         except Exception:
             pass
     live = f"s{step} best={best} ${cost}" if step else ("done" if final is not None else "pending")
-    print(f"p{p:<4} {live:26} {str(final):7} | {str(NOUS[p]):5} {str(ENGRAM[p]):7} {str(CLAUDE[p]):7}")
+    print(f"p{p:<4}[{CLASS[p]:7}] {live:26} {str(final):7} | {str(NOUS[p]):5} {str(ENGRAM[p]):7} {str(CLAUDE[p]):7}")
 print("(AIDE/Nous/Engram/Claude = best score on OUR judge @ <=$50; stop=$50 or ceiling)")

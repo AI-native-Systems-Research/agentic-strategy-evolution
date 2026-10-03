@@ -10,7 +10,7 @@ REPO = "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-l
 ADAPTER = f"{REPO}/experiments/frontiercs/gen/aide_frontier.py"
 PY = os.path.expanduser("~/frontier/aide-venv/bin/python")
 GATES = f"{REPO}/experiments/frontiercs/aide_gates"
-TASKS = [0, 5, 9, 15, 22]
+TASKS = [26, 69, 79, 170]
 POOL = 3
 
 os.makedirs(f"{GATES}/preds", exist_ok=True)

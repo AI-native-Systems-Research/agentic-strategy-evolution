@@ -1,0 +1,715 @@
+{
+  "pid": 79,
+  "agent": "aide",
+  "method": "AIDE (unmodified search) + Frontier adapter",
+  "model": "claude-opus-4-6",
+  "label": "aide",
+  "final_score": 0.0,
+  "elapsed_sec": 3225.7,
+  "final_cost_usd": 50.5392,
+  "tokens_in": 2232721,
+  "tokens_out": 227312,
+  "llm_calls": 115,
+  "stop_reason": "budget_$50",
+  "budget": 50.0,
+  "steps": 150,
+  "num_drafts": 5,
+  "tree_size": 115,
+  "n_good": 115,
+  "n_buggy": 0,
+  "nodes": [
+    {
+      "step": 0,
+      "stage": "draft",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 1,
+      "stage": "draft",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 2,
+      "stage": "draft",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 3,
+      "stage": "draft",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 4,
+      "stage": "draft",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 5,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 6,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 7,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 8,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 9,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 10,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 11,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 12,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 13,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 14,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 15,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 16,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 17,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 18,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 19,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 20,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 21,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 22,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 23,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 24,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 25,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 26,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 27,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 28,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 29,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 30,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 31,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 32,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 33,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 34,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 35,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 36,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 37,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 38,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 39,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 40,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 41,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 42,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 43,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 44,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 45,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 46,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 47,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 48,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 49,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 50,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 51,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 52,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 53,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 54,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 55,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 56,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 57,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 58,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 59,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 60,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 61,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 62,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 63,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 64,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 65,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 66,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 67,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 68,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 69,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 70,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 71,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 72,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 73,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 74,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 75,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 76,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 77,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 78,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 79,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 80,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 81,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 82,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 83,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 84,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 85,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 86,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 87,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 88,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 89,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 90,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 91,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 92,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 93,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 94,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 95,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 96,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 97,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 98,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 99,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 100,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 101,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 102,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 103,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 104,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 105,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 106,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 107,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 108,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 109,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 110,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 111,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 112,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 113,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    },
+    {
+      "step": 114,
+      "stage": "improve",
+      "is_buggy": false,
+      "score": 0.0
+    }
+  ],
+  "best_solution_path": "/Users/toslali/frontier/gen_logs/frontier_79_aide_aide/solution.cpp",
+  "aide_paper": "arXiv:2502.13138",
+  "aide_repo": "github.com/WecoAI/aideml"
+}
