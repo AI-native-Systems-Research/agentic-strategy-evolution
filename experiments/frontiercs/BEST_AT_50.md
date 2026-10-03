@@ -31,10 +31,17 @@ AIDE run first (same $50-or-max rule, in-process cost accounting). Nous/Engram/C
 
 | task | class | Nous | AIDE | Engram | Claude |
 |---|---|---|---|---|---|
-| p26  | dynamic programming | TBD | 30 ($50.33) | TBD | TBD |
-| p69  | strings             | TBD | 0 ($50.32)  | TBD | TBD |
-| p79  | math/number theory  | TBD | 0 ($50.54)  | TBD | TBD |
+| p26  | dynamic programming | PENDING* | 30 ($50.33) | TBD | TBD |
+| p69  | strings             | PENDING* | 0 ($50.32)  | TBD | TBD |
+| p79  | math/number theory  | PENDING* | 0 ($50.54)  | TBD | TBD |
 | p170 | flow/matching       | TBD | 0 (cut ~$34; best was 0, matching its three sibling gate-fails that reached $50 at 0) | TBD | TBD |
+
+*Nous on p26/p69/p79 attempted 2026-10-02 but BLOCKED by the claude Agent SDK streaming hang: every
+DESIGN turn connects to the bundled claude CLI then idles with zero streamed tokens (CPU ~0 for 9+ min),
+so no solution is produced. The gateway itself is healthy (direct POST /v1/messages returns HTTP 200 in
+~2s), so this is an SDK streaming-path issue, not the gateway, same intermittent hang that blocked the
+earlier Nous reruns. Campaigns are saved at ~/frontier/gen_logs/campaign_{26,69,79}.yaml (phase=DESIGN);
+retry with `nous resume <camp> --auto-approve --agent sdk` when the streaming condition clears.
 
 AIDE on the new classes: partial on DP (30), zero on strings/math/flow — same pattern as its original
 tasks (helps only where incremental search has a score gradient).
