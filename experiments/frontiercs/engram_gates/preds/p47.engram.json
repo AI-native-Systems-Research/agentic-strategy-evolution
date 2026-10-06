@@ -1,0 +1,26 @@
+{
+  "pid": 47,
+  "agent": "engram",
+  "method": "real Engram (mit-nms) agentic_handoff, cost-capped",
+  "final_score_at_50": 94.1584,
+  "best_overall": 94.6324,
+  "cost_at_kill": 56.00055,
+  "budget": 50,
+  "note": "killed at first 5-iter checkpoint >=\\$50; best_at_50 from score progression vs checkpoint costs",
+  "score_progression": [
+    17.8,
+    17.8,
+    94.16,
+    94.16,
+    94.16,
+    94.39,
+    94.39,
+    94.39,
+    94.39,
+    94.63
+  ],
+  "cost_checkpoints": [
+    22.89003,
+    56.00055
+  ]
+}
