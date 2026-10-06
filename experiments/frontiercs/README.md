@@ -5,6 +5,25 @@ wins. Branch: **`aiopslab`** (AI-native-Systems-Research/agentic-strategy-evolut
 
 ---
 
+## 0. Isolation / no-cheating protocol (MANDATORY for every run)
+
+Agents run with shell access on a shared filesystem that also holds the judge's **answer files**
+(`~/frontier/Frontier-CS/algorithmic/problems/<id>/testdata/*.ans`) and **prior solutions**
+(`~/frontier/gen_logs/nous_runs/*/**/solution.cpp`). A bash-enabled agent *could* read those and cheat.
+We do not yet hard-sandbox (no container), so isolation is enforced by **prompt-ban + mandatory audit**:
+
+1. **Prompt ban:** every agent prompt explicitly forbids reading/using testdata, answer files, or any
+   pre-existing solution (see claude_code_runner.py prompt; add the same to any new runner).
+2. **Mandatory audit after EVERY run** — grep the agent's full command/transcript log for forbidden access:
+   `grep -niE "testdata|\.ans\b|/problems/[0-9]+/testdata|nous_runs|gen_logs" <console-or-transcript>`
+   A run with any real hit is **rejected and re-done**. (Claude: transcript jsonl; Engram: console_output.log;
+   AIDE: it only generates code, lower risk, still spot-check.)
+3. **Independent re-score:** surprising/high scores (esp. on gate tasks) are re-scored on our go-judge from
+   the harvested solution, to confirm the number is real and not a judge artifact.
+
+Audited so far (2026-10-06): Engram re-runs p0/p5/p9/p15/p22 = CLEAN; p15/p22=100 independently re-scored
+on our judge = confirmed legit (not cheating). Claude runner has prompt-ban + built-in audit.
+
 ## 1. The rule (same for every agent)
 
 **$50 budget, or stop early at max score.** No plateau early-stop. Run each agent on each task until
@@ -123,6 +142,17 @@ Baselines (Engram/AIDE/Claude) use the direct chat API or raw CLI — only Nous 
 - [ ] **p47**: run AIDE; re-run Nous/Engram/Claude under $50 (existing data is nous3/cb10).
 - [ ] **llm_router, llm_sql, poc_generation**: run Nous, Engram, Claude (AIDE N/A). Research runner = `gen/frontier_research_gen.py`; verify poc_generation is CPU-feasible first.
 - [ ] CP6 variance (3× reruns of a subset); CP7 stronger-model (opus5).
+
+### Paper-writing notes (record these)
+- **Engram's paper/historical scores ARE reproducible — but at HIGHER cost than $50.** Our audit of
+  the original runs showed real LLM spend of $69–84 per algorithmic task, ~$624-transfer cloudcast,
+  and uncapped runs reaching $347. Under a *true $50 cap* Engram's scores drop (e.g. p5 49→41,
+  cloudcast strong→barely-beats-baseline). So the honest framing is: **the comparison is iso-cost
+  ($50) — Engram can match its published numbers given more budget; Nous reaches its scores within
+  (often well under) $50.** Mention this explicitly so we're not accused of under-running Engram.
+- **Gates are not Nous-exclusive:** properly-run Engram solves p15 and p22 to 100 (verified our judge).
+  Reframe away from "only Nous cracks the gates"; the real story is Nous = best-or-tied everywhere +
+  cheapest, clear outright wins on p0/p5/p9, and (at iso-$50) stronger on cloudcast.
 
 ---
 
