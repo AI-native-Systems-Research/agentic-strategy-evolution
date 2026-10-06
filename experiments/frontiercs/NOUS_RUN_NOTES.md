@@ -76,11 +76,18 @@ subagent requests is routinely 45–120s, with one 696s gap**. So the 90s watchd
 would have eventually returned. Medium effort did NOT help (same failure) — the blocker is the
 threshold vs. backend latency, not reasoning depth. No mid-stream silence, no backend errors.
 
-**MORNING NEXT STEP:** raise `turn_silence_threshold_seconds` from 90 to ~900 (15 min) in
-`frontier_gen_costbudget.py` (and/or the campaign spec) so slow-but-valid responses aren't aborted,
-then relaunch p26 (high, direct, auth-fixed) and confirm a turn actually completes (llm_metrics gets
-rows, cost > $0). Only then resume the full queue (p69, p170, research task; then Engram, Claude).
-The `NOUS_DESIGN_EFFORT` env hook is already added to the runner if we want to revisit effort later.
+**RESOLVED (2026-10-06):** `turn_silence_threshold_seconds` raised 90 -> **900** in
+`frontier_gen_costbudget.py`, and `defaults.yaml` max_turns restored to the Oct-1 values
+**80/120** (the 40/90 was a debug tweak). Combined with the auth fix (`env -u ANTHROPIC_AUTH_TOKEN`),
+this matches the configuration under which the original 6 campaigns completed, but with extra silence
+tolerance for the backend's 45-696s TTFB. Next action is to relaunch p26 (high, direct, auth-fixed)
+and confirm a turn completes (llm_metrics gets rows, cost > $0) before resuming the queue
+(p69, p170, a research task; then Engram, Claude). `NOUS_DESIGN_EFFORT` env hook remains available if
+we want to revisit effort later.
+
+Root-cause recap: the backend latency (litellm->Bedrock) was present even on Oct 1 (VM logs show
+TimeoutExpired on campaign_5/211). Our two drifts turned survivable slowness fatal: the 90s watchdog,
+and local runs inheriting ANTHROPIC_AUTH_TOKEN (VM/ssh runs don't, which is why they survived).
 
 ## max_turns note
 
