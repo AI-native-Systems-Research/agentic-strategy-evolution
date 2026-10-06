@@ -20,7 +20,7 @@ cumulative spend hits **$50** or the score maxes out, then report **(best score,
 | Agent | What it is | How it's run |
 |---|---|---|
 | **Nous** | Our scientific-loop harness (hypothesis → experiment → analyze), wrapping the Claude Agent SDK | `gen/frontier_gen_costbudget.py <pid> --agent nous` (see §5 for the full env) |
-| **Engram** | mit-nms/Engram **as-is** (`agentic_handoff`: sequential fresh-context agents + research journal/KB), + our small Frontier-CS patch | `engram_real/run_engram.sh <problem> <max_agents> <timeout_min>` |
+| **Engram** | mit-nms/Engram **as-is** (`agentic_handoff`: sequential fresh-context agents + research journal/KB), + our small Frontier-CS patch | **`gen/monitoring/engram_cost_cap.sh <alg_id> 50`** (NOT bare run_engram.sh — see cost warning below) |
 | **AIDE** | Weco aideml **as-is** (tree search: draft/debug/improve), + our small Frontier-CS adapter | `gen/aide_frontier.py <pid> --budget 50 --ceiling 99.5 --steps 80` |
 | **Claude** | **Real Claude Code CLI itself** — same model, given the problem + tools, iterates to $50/max. **(runner TBD — see §6)** | TBD (new raw-Claude-Code runner) |
 
@@ -80,7 +80,7 @@ Research (cloudcast metric = $ transfer cost, lower better):
 | poc_generation | **TODO** | **TODO** | N/A | |
 
 **Data-quality notes (read these — they're why the old docs looked confusing):**
-- **Costs:** Nous = exact (summed from `llm_metrics.jsonl`). AIDE = exact (in-process token accounting). **Engram = approximate** (~total/agents, runs ~$50/agent). **Claude (current numbers) = unreliable** (old runs leaked cost via orphaned workers) → shown as `~$50`.
+- **Costs:** Nous = exact (summed from `llm_metrics.jsonl`). AIDE = exact (in-process token accounting). **⚠ Engram costs in the tables are WRONG** — they were a `total/agents` approximation labeled `~$50`, but Engram's *actual* logged cost (its own `Total cost:` line) was **$83.6 (p0), $68.9 (p5), $347 (p47)** — it has no `$`-cap and burns ~$6–9/iteration. So the current Engram scores were achieved with **$69–347 of budget, not $50** → the whole Engram column must be re-run under `engram_cost_cap.sh` (see TODO). **Claude (current numbers) = unreliable** (old single_agent runs leaked; actual $100–207) → being replaced by raw Claude Code anyway.
 - **Durations:** AIDE = exact (`elapsed_sec`). Nous = only p9 (230m), p22 (19m), cloudcast (57m) retained; others `—`. Engram/Claude durations were not recorded.
 - **⚠ Claude column is the OLD method** (Engram `single_agent`), **not** raw Claude Code. It will be **replaced** by raw-Claude-Code reruns (see §6 TODO). Do not treat the current Claude numbers as final.
 - **⚠ p47** data is under non-$50 budgets (`nous3` for Nous, `cb10`=$10 for Engram/Claude) → **re-run under $50** for a clean row.
@@ -115,6 +115,7 @@ Baselines (Engram/AIDE/Claude) use the direct chat API or raw CLI — only Nous 
 
 - [ ] **Build the raw-Claude-Code runner** (Claude baseline): headless `claude -p "<problem + 'maximize the go-judge score; use bash to compile and run frontier eval'>"`, tools on, same gateway/model, **auth strip** (bundled CLI → same token conflict as Nous), track stream-json usage, **kill at $50**, harvest best solution+score.
 - [ ] **Rerun the Claude baseline (raw Claude Code) on ALL tasks** (p0,p5,p9,p15,p22,p47 + research) to replace the old Engram-single_agent numbers — needed for a consistent Claude column.
+- [ ] **⚠ Engram cost-cap rerun — ALL tasks.** The current Engram numbers used $69–347 (not $50) because Engram has no cost cap and we mislabeled cost. Re-run Engram on p0/p5/p9/p15/p22/p47 + research under `gen/monitoring/engram_cost_cap.sh <alg_id> 50`, which polls Engram's real `Total cost:` and kills at $50 (cost logs every 5 iters ≈ $30, so it stops at the first checkpoint ≥ $50 ≈ $60; report best score at the ≤$50 point from the per-iteration Score progression). Discovered 2026-10-06 after a p47 run hit $347.
 - [ ] **p47**: run AIDE; re-run Nous/Engram/Claude under $50 (existing data is nous3/cb10).
 - [ ] **llm_router, llm_sql, poc_generation**: run Nous, Engram, Claude (AIDE N/A). Research runner = `gen/frontier_research_gen.py`; verify poc_generation is CPU-feasible first.
 - [ ] CP6 variance (3× reruns of a subset); CP7 stronger-model (opus5).
