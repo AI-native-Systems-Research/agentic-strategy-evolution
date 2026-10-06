@@ -59,6 +59,73 @@ Order note: Engram FIRST (expensive pacing item), then Claude-agent reuses the s
 other agents score ~0; cloudcast and the easy task (p1) are ties. We keep the losses in (p44) too.
 
 ================================================================
+## SECTION 3 — FINAL 10-TASK PLAN (revised 2026-10-06, MLSys submission)   [branch: aiopslab]
+================================================================
+
+**Framing:** "10 representative Frontier-CS tasks" = algorithmic classes + ML-systems research tasks.
+Hard constraints in THIS environment: **no GPU**, **no interactive tasks** (skip any with
+`interactor.cc`: p69, p79, p211). Same model (Opus 4.6), **$50-or-max** rule, **our go-judge (0-100)**
+for algorithmic, **task-specific metric** for research.
+
+**The 10 tasks:**
+
+Algorithmic (6; 0-100 our judge):
+| task | class | note |
+|---|---|---|
+| p0  | geometry / 2D polyomino packing | |
+| p5  | graph / Hamiltonian path | |
+| p9  | tree-DP / matching | |
+| p15 | greedy / permutation (lexicographic) | gate — only Nous scores |
+| p22 | ad-hoc / trick | gate — only Nous scores |
+| p47 | 2D rectangular knapsack (+90 deg rotations) | EASY — all baselines ~95; honesty case, NOT a Nous win |
+
+Research (4; CPU-only, task-specific metric; **AIDE N/A** — adapter is algorithmic-only):
+| task | tag | note |
+|---|---|---|
+| cloudcast | ai (multi-cloud routing) | tie at SOTA (Nous $626 ~ Engram) |
+| llm_router | ai (LLM serving/routing) | NEW |
+| llm_sql | db (text-to-SQL) | NEW |
+| poc_generation | security (exploit PoC) | NEW — 10th, widens taxonomy to ai+db+security |
+
+**Status matrix (best score; cost). "cb10/nous3" = ran under an OLD budget, re-run under $50 for a clean row.**
+| task | Nous | AIDE | Engram | Claude |
+|---|---|---|---|---|
+| p0  | 86 ($27) | 0 ($50) | 70 | ~26 |
+| p5  | 83 ($46) | 44 ($50) | 49 | ~39 |
+| p9  | 100 ($38) | 95 ($50) | 55 | 80 |
+| p15 | 100 ($32) | 0 ($50) | 20 | 0 |
+| p22 | 100 ($4.85) | 0 ($50) | 0 | 0 |
+| p47 | ~96 (nous3,$15-16) | **TODO** | ~95 (cb10) | ~95 (cb10) |
+| cloudcast | $626 @ $9.89 | N/A | ~$624 | TBD |
+| llm_router | **TODO** | N/A | **TODO** | **TODO** |
+| llm_sql | **TODO** | N/A | **TODO** | **TODO** |
+| poc_generation | **TODO** | N/A | **TODO** | **TODO** |
+
+**p47 caveat:** existing data is under `cb10` ($10 budget) / `nous3`/`ctrl` variants, NOT the $50 rule.
+Scores are indicative (everyone ~95) but for a consistent row, re-run under $50 + re-score on our judge.
+Files: ~/frontier/gen_logs/nous_runs/frontier-47-{nous3-s1,nous3-s2,ctrl}; frontier_47_{engram,claude}-cb10-s*.history.json. AIDE p47 not run.
+
+**Remaining runs:** p47->AIDE (+optional $50 re-run of Nous/Engram/Claude); llm_router->{Nous,Engram,Claude};
+llm_sql->{Nous,Engram,Claude}; poc_generation->{Nous,Engram,Claude}.
+
+**CRITICAL run config — full recipe in `experiments/frontiercs/NOUS_RUN_NOTES.md`:**
+- Nous (`--agent sdk`) MUST strip the inherited fleet token, scoped to the child:
+  `env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=https://ete-litellm.ai-models.vpc.res.ibm.com
+   ANTHROPIC_API_KEY=$IBM_LITELLM_KEY OPENAI_BASE_URL=<same> OPENAI_API_KEY=$IBM_LITELLM_KEY ...`
+  Omitting this -> bundled CLI sends a conflicting Bearer header -> gateway 401 -> silent hang.
+- Silence watchdog is **900s** (`turn_silence_threshold_seconds` in frontier_gen_costbudget.py). Do NOT
+  lower it: backend TTFB on big subagent calls is 45-696s; a short threshold aborts valid slow responses
+  and fails every iteration (the Oct-5 incident). max_turns 80/120 (defaults.yaml). Model Opus 4.6.
+- `--cost-budget 50` is enforced for claude/engram paths but **NOT the nous path** -> for Nous, poll
+  cumulative cost from `nous_runs/<slug>/**/llm_metrics.jsonl` and kill at $50 (driver then harvests).
+- Baselines (claude/engram/aide) use the direct chat API, no auth-token issue.
+- **Research runner = `gen/frontier_research_gen.py`** (the algorithmic `frontier_gen_costbudget.py`
+  can't eval research). Research eval is CPU/docker: `frontier eval research <t> <sol.py> --backend docker`.
+  Confirmed no GPU/API dep for cloudcast/llm_router/llm_sql; verify poc_generation before long runs.
+
+**Still open:** CP6 variance (3x reruns of a subset), CP7 stronger-model (opus5).
+
+================================================================
 ## SECTION 2 — Agent details (for me: commands, paths, gotchas)
 ================================================================
 
