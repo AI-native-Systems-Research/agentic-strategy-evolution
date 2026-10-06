@@ -1,0 +1,6 @@
+{
+  "pid": 22, "agent": "engram", "method": "real Engram agentic_handoff, cost-capped $50",
+  "final_score_at_50": 100.0, "best_overall": 100.0, "cost_at_kill": 67.63,
+  "verified_on_our_judge": true, "solution_path": "/Users/toslali/engram_repo/results/handoff_fcs_alg_22_model_claude-opus-4-6_give_files_False_run4/FrontierCS/workspace/workspace_9b709284/experiments/exp_003/snapshot.cpp",
+  "note": "SOLVED to 100 (verified our go-judge) by exp ~3. Audit: no testdata/.ans access. CONTRADICTS 'gate only Nous solves' (historical Engram p22=0). Both gates (p15,p22) fall to properly-run Engram."
+}
