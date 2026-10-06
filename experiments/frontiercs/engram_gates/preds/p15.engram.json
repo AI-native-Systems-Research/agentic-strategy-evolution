@@ -1,0 +1,11 @@
+{
+  "pid": 15,
+  "agent": "engram",
+  "method": "real Engram agentic_handoff, cost-capped $50",
+  "final_score_at_50": 100.0,
+  "note": "SOLVED to 100 (verified on our go-judge) by experiment ~2 (iteration 1-2), cheaply (well under $50). CONTRADICTS prior 'gate only Nous solves' claim (historical Engram p15=20). No cheating: audit of console found no testdata/.ans access; score is judge partial-credit on Engram's own solution. Cost not checkpointed (killed after verifying 100; solved early so <$50).",
+  "best_overall": 100.0,
+  "solution_path": "/Users/toslali/engram_repo/results/handoff_fcs_alg_15_model_claude-opus-4-6_give_files_False_run3/FrontierCS/workspace/workspace_71480122/experiments/exp_002/snapshot.cpp",
+  "budget": 50,
+  "verified_on_our_judge": true
+}
