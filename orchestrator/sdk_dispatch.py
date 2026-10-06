@@ -51,6 +51,52 @@ class SDKTransientError(RuntimeError):
     """Runner raises this for retryable transport-level failures."""
 
 
+# Exception class-name substrings that mark a retryable/transient SDK failure.
+# Matched by *name* so we don't import SDK/transport error types here.
+_TRANSIENT_SIGNALS = (
+    "ConnectionError",
+    "ReadTimeout",
+    "WriteTimeout",
+    "RemoteProtocolError",
+    "ServerDisconnectedError",
+    "TimeoutError",
+)
+
+# Exit code the Agent SDK's ``claude`` child reports when the SDK SIGTERMs it
+# after the gateway drops the streaming response (128 + SIGTERM(15)). This is a
+# transient infra fault; every OTHER non-zero exit (bad request, usage error,
+# config/auth) is a real failure that must surface immediately, not be retried.
+_SIGTERM_EXIT_CODE = 143
+
+# Message fragments for the same 143 fault when the exception is wrapped (e.g.
+# the ProcessError inside an anyio ExceptionGroup) so its structured
+# ``exit_code`` is unreachable. Kept exit-code-143-specific on purpose: a bare
+# "message reader" banner is not exit-code-specific and would wrongly retry a
+# wrapped NON-143 failure, so it is deliberately excluded.
+_TRANSIENT_MESSAGE_FRAGMENTS = (
+    "exit code 143",
+    "exit code: 143",
+)
+
+
+def _is_transient_sdk_error(exc: BaseException) -> bool:
+    """True if ``exc`` escaping the SDK runner is a retryable transport fault.
+
+    ``ProcessError`` is the Agent SDK's base class for *any* non-zero ``claude``
+    exit, so it is classified by its structured ``exit_code``: only 143 (the SDK
+    killing its child on a gateway stream-drop) is transient; other exit codes
+    are genuine failures and must surface. Transport errors are matched by class
+    name, and a message-text fallback catches the wrapped-ProcessError case.
+    """
+    cls_name = type(exc).__name__
+    if "ProcessError" in cls_name:
+        return getattr(exc, "exit_code", None) == _SIGTERM_EXIT_CODE
+    if any(sig in cls_name for sig in _TRANSIENT_SIGNALS):
+        return True
+    msg = str(exc)
+    return any(frag in msg for frag in _TRANSIENT_MESSAGE_FRAGMENTS)
+
+
 def _load_methodology_preamble(methodology_dir: Path) -> str | None:
     """Load the static methodology text as a single cached system block.
 
@@ -561,17 +607,8 @@ def _default_sdk_runner_factory() -> SDKRunner:
         try:
             return anyio.run(_run)
         except Exception as exc:
-            cls_name = type(exc).__name__
-            transient_signals = (
-                "ConnectionError",
-                "ReadTimeout",
-                "WriteTimeout",
-                "RemoteProtocolError",
-                "ServerDisconnectedError",
-                "TimeoutError",
-            )
-            if any(sig in cls_name for sig in transient_signals):
-                raise SDKTransientError(f"{cls_name}: {exc}") from exc
+            if _is_transient_sdk_error(exc):
+                raise SDKTransientError(f"{type(exc).__name__}: {exc}") from exc
             raise
 
     return _runner
