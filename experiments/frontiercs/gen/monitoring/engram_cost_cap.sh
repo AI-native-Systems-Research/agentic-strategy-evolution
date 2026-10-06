@@ -33,7 +33,14 @@ for _ in $(seq 1 40); do
   RD=$(grep -oE "Results Directory: .*" "$LOG" 2>/dev/null | tail -1 | sed 's/Results Directory: //')
   [ -n "$RD" ] && break
 done
-CO="$RD/FrontierCS/logs/console_output.log"
+# dir layout differs: algorithmic -> <RD>/FrontierCS/logs/, research -> <RD>/<problem>/logs/.
+# Discover the console log robustly instead of hardcoding FrontierCS.
+CO=""
+for _ in $(seq 1 20); do
+  CO=$(find "$RD" -name console_output.log 2>/dev/null | head -1)
+  [ -n "$CO" ] && break
+  sleep 3
+done
 echo "[engram-cap] watching $CO"
 
 LOGDIR="$(dirname "$CO")"

@@ -1,0 +1,7 @@
+{
+  "task": "cloudcast", "agent": "engram", "method": "real Engram agentic_handoff, cost-capped",
+  "llm_cost_usd": 59.47, "budget": 50,
+  "best_score": 0.0010578737, "baseline_score": 0.0009552372,
+  "note": "At ~$50-ish LLM budget Engram barely beat baseline on cloudcast (0.00096->0.00106). This is MUCH weaker than the historical ~$624-transfer result, which used far more budget. Metric is normalized (higher=better; ~1/transfer_cost). Cost overshot to $59 because the cap path-bug (research dir layout) was fixed only after; recorded per decision that $59~$50 is close enough. At iso-$50, Nous cloudcast ($626 transfer @ $9.89) looks stronger than this capped Engram.",
+  "cost_cap_note": "research dir layout is <run>/<problem>/logs not <run>/FrontierCS/logs; cap wrapper fixed to discover console_output.log via find"
+}
