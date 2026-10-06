@@ -11,15 +11,21 @@ agents' solutions (`/tmp/best_at_50_engram.py`). Nous: originals already ran UND
 scores are the <=$50 value (and conservative — more budget could only raise them). Claude-agent: see
 caveat.
 
-## Algorithmic — best score @ <= $50 (our judge)
+## Algorithmic — best score @ <= $50 (our judge)   [CORRECTED 2026-10-06]
 
-| task | Nous | AIDE | real Engram | Claude-agent | notes |
+Engram column = **cost-capped re-runs** (the old numbers used $69–347, not $50 — see README). Score /
+LLM-$. Engram cost is the $ at cap-kill (fires at first 5-iter checkpoint >= $50, so ~$56–68).
+Claude column = **the OLD Engram-single_agent method (invalid/leaked)** — being replaced by raw
+Claude Code (`claude_code_runner.py`); treat as PENDING, do not cite.
+
+| task | Nous | AIDE | Engram (re-run) | Claude (PENDING rerun) | notes |
 |---|---|---|---|---|---|
-| p0  | **86** ($27) | 0 ($50.07) | 70.0 | ~26 | AIDE: 124 nodes all compile+run but score 0; Claude's 73 needed ~$84 |
-| p5  | **83** ($46) | 44 ($50.28) | 49.0 | ~39 | |
-| p9  | **100** ($38) | 95 ($50.16) | 55.0 | 80 | AIDE strongest here; Claude capped rerun re-scored 80 |
-| p15 | **100** ($32) | 0 ($50.41) | 20.0 | 0 | gate |
-| p22 | **100** ($4.85) | 0 ($50.04) | 0.0 | 0 | gate |
+| p0  | **86** / $27 | 0 / $50 | 68.5 / $66 | ~26 ⚠old | Nous best |
+| p5  | **83** / $46 | 44 / $50 | 41.0 / $58 | ~39 ⚠old | Nous best |
+| p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | 80 ⚠old | Nous best |
+| p15 | 100 / $32 | 0 / $50 | **100** / <$50 | 0 ⚠old | NOT a gate: Nous=Engram=100 (verified our judge) |
+| p22 | 100 / $4.85 | 0 / $50 | **100** / $68 | 0 ⚠old | NOT a gate: Nous=Engram=100 (verified) |
+| p47 | 95.5 / $51 | **96.8** / $50 | 94.2 / $56 | PENDING | easy task — all ~94–97 (honesty case) |
 
 AIDE = Weco AIDE (arXiv:2502.13138), unmodified tree search + thin Frontier adapter (C++17 prompts,
 go-judge scoring). Ran under the same rule ($50 or ceiling); each task hit the $50 cap. Scores are the
@@ -50,20 +56,25 @@ retry with `nous resume <camp> --auto-approve --agent sdk` when the streaming co
 AIDE on the new classes: partial on DP (30), zero on strings/math/flow — same pattern as its original
 tasks (helps only where incremental search has a score gradient).
 
-cloudcast (transfer-cost $, lower=better): Nous **$626** @ $9.89 (<=$50); real Engram ~$624 @ ~$52
-(slightly over; its best-at-$50 ~ same, found early); naive $1046. Tie at SOTA.
+cloudcast (transfer-cost $, lower=better): Nous **$626** @ $9.89 (<=$50); Engram **cost-capped ~$942**
+@ $59 (barely beats naive $1046 at ~$50 LLM budget — its historical ~$624 needed far more budget);
+naive $1046. **At iso-$50, Nous wins cloudcast** (the old "tie at SOTA" assumed Engram's over-budget run).
 
-## Takeaways (iso-$50)
-- **Nous is best on every task at <= $50**, and on the gates (p15, p22) it's the only one that scores.
-- **Nous also reaches those scores far under budget** ($4.85-$46), while AIDE, Engram, and Claude burn
-  the full $50 and still fall short. Nous wins on both score and cost.
-- **AIDE** is the strongest single-task baseline on p9 (95) but scores 0 on p0 and both gates, so its
-  tree search helps only where incremental improvement has a gradient; it never cracks the gate tasks.
-- Capping at $50 barely changes Engram (it runs near $50/agent anyway): 70/49/55/20/0.
-- Capping HURTS Claude-agent a lot where its best came late: p0 73 -> ~26 at $50. For p9 the earlier
-  "98.5" was a leaked (cost-corrupted) run; a clean capped rerun reaches 80 on our judge, below Nous's 100.
-- Net: on the fair iso-$50 axis, **Nous dominates all five algorithmic tasks** against all three
-  baselines (AIDE, Engram, Claude); cloudcast is a tie with Engram at SOTA.
+## Takeaways (iso-$50)   [CORRECTED 2026-10-06]
+- **Nous is best-or-tied on every task, and cheapest.** It reaches its scores far under budget
+  ($4.85–$46) while AIDE/Engram burn ~$50–68.
+- **Outright Nous wins: p0 (86 vs 68.5 vs 0), p5 (83 vs 41 vs 44), p9 (100 vs 67.8 vs 95), cloudcast
+  ($626 vs ~$942).**
+- **p15/p22 are NOT Nous-only gates.** Properly-run Engram solves both to 100 (verified on our judge,
+  audited clean). The gates separate agentic-tool agents (Nous, Engram) from tree-search (AIDE=0),
+  not Nous from Engram. (Earlier "only Nous scores" was from under-budgeted Engram runs.)
+- **p47 (easy):** everyone ~94–97 (AIDE 96.8 nominally top) — honesty case, no agent dominates.
+- **AIDE** helps only where incremental search has a gradient (p9=95, p47=96.8); 0 on p0 and both gates.
+- **Engram's cost was previously mislabeled** (~$50) but actually $69–347; under a true cap its scores
+  drop. Engram CAN match its published numbers given more budget — this is an iso-cost comparison.
+- **Claude column is PENDING** (raw-Claude-Code reruns) — the old numbers are the wrong method + leaked.
+- Net on the fair iso-$50 axis: **Nous leads p0/p5/p9/cloudcast and is cheapest; ties Engram on the
+  gates (p15/p22=100) and on the easy task (p47); AIDE trails except p9/p47.** (Claude pending.)
 
 ## Caveats
 - Claude-agent p0/p9 runs leaked (orphaned multiprocessing workers kept spending after kill), so their
