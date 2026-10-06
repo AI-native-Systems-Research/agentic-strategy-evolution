@@ -13,16 +13,18 @@
 # Usage: IBM_LITELLM_KEY=sk-... OPENAI_BASE_URL=https://ete-litellm.ai-models.vpc.res.ibm.com \
 #          engram_cost_cap.sh <alg_id> [budget_usd]
 set -uo pipefail
-ID="${1:?alg id}"; BUDGET="${2:-50}"
+ID="${1:?alg id or problem name}"; BUDGET="${2:-50}"
+# numeric -> algorithmic (fcs_alg_N); otherwise treat as a research problem name (cloudcast, llm_router..)
+case "$ID" in (''|*[!0-9]*) PROB="$ID";; (*) PROB="fcs_alg_${ID}";; esac
 REPO="$(cd "$(dirname "$0")/../../../.." && pwd)"
 K="${IBM_LITELLM_KEY:?set IBM_LITELLM_KEY}"
 U="${OPENAI_BASE_URL:-https://ete-litellm.ai-models.vpc.res.ibm.com}"
-LOG="/tmp/engram_p${ID}.log"
+LOG="/tmp/engram_${PROB}.log"
 
 OPENAI_BASE_URL="$U" OPENAI_API_KEY="$K" \
-  nohup bash "$REPO/experiments/frontiercs/engram_real/run_engram.sh" "fcs_alg_${ID}" 1 120 > "$LOG" 2>&1 &
+  nohup bash "$REPO/experiments/frontiercs/engram_real/run_engram.sh" "$PROB" 1 120 > "$LOG" 2>&1 &
 EPID=$!
-echo "[engram-cap] launched pid=$EPID task=fcs_alg_${ID} budget=\$$BUDGET log=$LOG"
+echo "[engram-cap] launched pid=$EPID task=$PROB budget=\$$BUDGET log=$LOG"
 
 # discover the run's results dir from its own stdout (robust vs guessing run0/run1)
 RD=""
@@ -40,7 +42,7 @@ while kill -0 "$EPID" 2>/dev/null; do
     echo "[engram-cap $(date +%H:%M)] cost=\$$cost"
     if python3 -c "import sys;sys.exit(0 if $cost>=$BUDGET else 1)"; then
       echo "[engram-cap $(date +%H:%M)] cost \$$cost >= \$$BUDGET -> KILL"
-      pkill -9 -f "handoff_example_usage.py --problem_name fcs_alg_${ID}" 2>/dev/null
+      pkill -9 -f "handoff_example_usage.py --problem_name ${PROB}" 2>/dev/null
       kill -9 "$EPID" 2>/dev/null
       break
     fi
