@@ -377,10 +377,12 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
         "run_id": run_slug,
         "max_iterations": nous_iters,
         "sandbox": "bypass",
-        # #205 live watchdog: default silence threshold is 600s, so an intermittent per-request
-        # SDK streaming stall blocks ~10min before auto-retry. Shorten to 90s so stalls recover fast
-        # and the campaign makes progress (observed: agent streams fine, one request wedges, retry clears).
-        "sdk_timeouts": {"turn_silence_threshold_seconds": 90},
+        # #205 live watchdog. This litellm->Bedrock backend has very slow time-to-first-byte on the
+        # large (~200KB) subagent requests: measured 45-696s via a logging proxy. A short threshold
+        # (we tried 90s) aborts those slow-but-valid responses and fails the turn after 11 retries.
+        # Set to 900s so legitimate slow responses (incl. the observed 696s gap) are tolerated; the
+        # original Oct-1 runs completed under the 600s default for the same reason.
+        "sdk_timeouts": {"turn_silence_threshold_seconds": 900},
         "target_system": {
             "name": f"frontier-cs::algorithmic::{pid}",
             "description": desc,
