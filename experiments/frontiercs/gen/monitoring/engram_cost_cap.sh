@@ -36,8 +36,12 @@ done
 CO="$RD/FrontierCS/logs/console_output.log"
 echo "[engram-cap] watching $CO"
 
+LOGDIR="$(dirname "$CO")"
 while kill -0 "$EPID" 2>/dev/null; do
-  cost=$(grep -ohE "Total cost: \\\$[0-9.]+" "$CO" "$LOG" 2>/dev/null | grep -oE "[0-9.]+" | sort -g | tail -1)
+  # Engram's LLM spend = "total_cost" in *_usage_stats.json (unambiguous). Do NOT grep the console
+  # "Total cost:" string: some research tasks (e.g. cloudcast) print a $-valued TASK metric that
+  # collides with it and would trigger a false kill.
+  cost=$(find "$LOGDIR" -name "*usage_stats.json" -exec grep -ohE '"total_cost"[: ]+[0-9.]+' {} \; 2>/dev/null | grep -oE '[0-9.]+' | sort -g | tail -1)
   if [ -n "$cost" ]; then
     echo "[engram-cap $(date +%H:%M)] cost=\$$cost"
     if python3 -c "import sys;sys.exit(0 if $cost>=$BUDGET else 1)"; then
