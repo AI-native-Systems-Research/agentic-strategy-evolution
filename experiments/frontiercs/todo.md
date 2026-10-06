@@ -1,5 +1,15 @@
 # Frontier-CS controlled comparison — TODO
 
+> **WHERE EVERYTHING LIVES** (branch: `aiopslab` on AI-native-Systems-Research/agentic-strategy-evolution)
+> All under `experiments/frontiercs/`:
+> - **Plan + status + run recipe:** `todo.md` SECTION 3 (the current 10-task plan, status matrix, remaining runs)
+> - **How to run Nous (auth + 900s threshold fixes, launch command):** `NOUS_RUN_NOTES.md`  ← read this before any Nous run
+> - **Results tables:** `BEST_AT_50.md` (iso-$50, our judge) · `RESULTS.md` (full writeup) · `REPRO.md` (repro steps)
+> - **Per-agent result JSONs:** `aide_gates/preds/` · `artifacts/preds/` (originals) · `nous_gates/preds/`
+> - **Runners:** `gen/frontier_gen_costbudget.py` (algorithmic) · `gen/frontier_research_gen.py` (research) · `gen/aide_frontier.py` (AIDE) · `gen/monitoring/`
+> - **Setup/handoff:** `SETUP_NOTES.md` · `RUN_ON_MAC.md` · `SESSION_HANDOFF.md`
+> - **Raw logs + nous_runs artifacts (NOT in repo, too large):** `~/frontier/gen_logs/` (and `~/frontier/gen_logs_b/`)
+
 ================================================================
 ## SECTION 1 — Simple summary (human-readable checkpoints)
 ================================================================
