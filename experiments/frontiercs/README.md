@@ -137,6 +137,13 @@ Baselines (Engram/AIDE/Claude) use the direct chat API or raw CLI — only Nous 
   cost from the CLI transcript (`CLAUDE_CONFIG_DIR/projects/**/*.jsonl`, per-turn usage incl cache),
   **kills at $50**, re-scores on our judge, and runs a **cheat audit** (greps transcript for
   testdata/.ans/gen_logs/nous_runs). Self-contained run folder `runs/p<pid>/claude/`.
+- [~] **IN PROGRESS (2026-10-06): Claude baseline (raw Claude Code) on all 7 tasks**, 2 at a time, $50 cap.
+  Command per task: `env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=<vpc> ANTHROPIC_API_KEY=<key>
+  OPENAI_BASE_URL=<vpc> OPENAI_API_KEY=<key> ./.venv/bin/python -u gen/claude_code_runner.py <pid>
+  --budget 50 --out-dir runs/p<pid>/claude`. Batches: p0,p5 → p9,p15 → p22,p47. cloudcast-Claude needs
+  a research measure.sh (claude_code_runner is algorithmic-only) — do last or adapt. WATCH: the bundled
+  CLI can stall on slow gateway TTFB (first p47 attempt hung); if a run shows no transcript progress /
+  no solution for ~10min, kill+relaunch. Audit each transcript (README §0) + re-score on our judge.
 - [ ] **Rerun the Claude baseline (raw Claude Code) on ALL tasks** (p0,p5,p9,p15,p22,p47 + research) to replace the old Engram-single_agent numbers — needed for a consistent Claude column.
 - [ ] **⚠ Engram cost-cap rerun — ALL tasks.** The current Engram numbers used $69–347 (not $50) because Engram has no cost cap and we mislabeled cost. Re-run Engram on p0/p5/p9/p15/p22/p47 + research under `gen/monitoring/engram_cost_cap.sh <alg_id> 50`, which polls Engram's real `Total cost:` and kills at $50 (cost logs every 5 iters ≈ $30, so it stops at the first checkpoint ≥ $50 ≈ $60; report best score at the ≤$50 point from the per-iteration Score progression). Discovered 2026-10-06 after a p47 run hit $347.
 - [ ] **p47**: run AIDE; re-run Nous/Engram/Claude under $50 (existing data is nous3/cb10).
