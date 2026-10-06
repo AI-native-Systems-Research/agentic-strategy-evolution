@@ -92,6 +92,31 @@ def main():
     for k in ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_AUTOUPDATER",
               "DISABLE_TELEMETRY", "DISABLE_ERROR_REPORTING"):
         env[k] = "1"
+    # Root cause of the CLI hang (diagnosed 2026-10-06, same bug as the Nous "SDK hang"): FRESH
+    # connections to the gateway are fast (curl: 3 trivial streaming probes 1.4-2.2s; 166KB req and
+    # max_tokens=64000 <5s), but the CLI reuses a keep-alive socket that the gateway/LB silently drops
+    # while local tools/compile run between turns. The next request reuses the dead socket and hangs
+    # with NO response (api_retry error "unknown", status null). A 900s timeout makes each dead socket
+    # cost 15 min before it is shed; a 60s timeout churns during the gateway's occasional genuine slow
+    # windows (one trivial probe hit 35s). Middle ground: a 90s first-byte timeout sheds a dead socket
+    # in ~90s so the retry dials a fresh (fast) connection, while still clearing the worst slow window
+    # observed (35s). Keep idle/API generous since a flowing stream is healthy. If this still churns
+    # while fresh curl is fast, the next lever is upgrading the bundled CLI (newer undici retry/keep-
+    # alive handling) -- but that also changes the Nous binary, so re-baseline Nous if we do it.
+    env.setdefault("CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS", "90000")
+    env.setdefault("API_TIMEOUT_MS", "300000")
+    env.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", "300000")
+    # THE key fix (verified 2026-10-06): the bundled CLI is a Bun binary; its HTTP connection pool
+    # reuses a keep-alive socket that the gateway/LB silently drops between turns (during local tool
+    # execution). The next request reuses the dead socket and the retries never recover, even though
+    # fresh curl connections stay fast -- every run wedged at ~turn 5. Disabling Bun's IO/connection
+    # pool forces a fresh connection per request and fixed it: p0 (wedged at t=5 across ~6 relaunches)
+    # crossed t=6+ with ZERO retries once this was set, while a pool-enabled control stayed stuck.
+    # MAX_RETRIES raised so a run survives the gateway's slow windows instead of dying at the default
+    # 10. (Likely also fixes the Nous "SDK hang" -- same Bun binary; apply there too.)
+    env.setdefault("BUN_FEATURE_FLAG_DISABLE_IO_POOL", "1")
+    env.setdefault("CLAUDE_CODE_MAX_RETRIES", "40")
+    env.setdefault("CLAUDE_CODE_CONNECT_TIMEOUT_MS", "20000")
     cmd = [CLI, "-p", prompt, "--output-format", "stream-json", "--verbose", "--model", args.model,
            "--permission-mode", "bypassPermissions", "--allowedTools", "Bash", "Read", "Write", "Edit",
            "--max-turns", str(args.max_turns)]
