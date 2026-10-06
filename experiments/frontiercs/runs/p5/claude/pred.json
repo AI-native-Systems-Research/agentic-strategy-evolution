@@ -1,0 +1,15 @@
+{
+  "pid": 5,
+  "agent": "claude-code",
+  "model": "claude-opus-4-6",
+  "final_score": 35.0,
+  "cost_est_cacheaware": 14.8099,
+  "cost_cli_total_usd": null,
+  "turns": 19,
+  "elapsed_sec": 2099.7,
+  "stop_reason": "gateway_stall_early",
+  "budget": 50.0,
+  "cheat_audit_hits": [],
+  "run_dir": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/p5/claude",
+  "note": "Stopped by bundled-CLI connection-pool stall at $14.8 (gateway bad window), NOT $50 budget or plateau. Score 35.0 is a LOWER BOUND; rerun for a clean $50 run."
+}

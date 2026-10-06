@@ -137,17 +137,53 @@ Baselines (Engram/AIDE/Claude) use the direct chat API or raw CLI — only Nous 
   cost from the CLI transcript (`CLAUDE_CONFIG_DIR/projects/**/*.jsonl`, per-turn usage incl cache),
   **kills at $50**, re-scores on our judge, and runs a **cheat audit** (greps transcript for
   testdata/.ans/gen_logs/nous_runs). Self-contained run folder `runs/p<pid>/claude/`.
-- [~] **IN PROGRESS (2026-10-06): Claude baseline (raw Claude Code) on all 7 tasks**, 2 at a time, $50 cap.
-  Command per task: `env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=<vpc> ANTHROPIC_API_KEY=<key>
-  OPENAI_BASE_URL=<vpc> OPENAI_API_KEY=<key> ./.venv/bin/python -u gen/claude_code_runner.py <pid>
-  --budget 50 --out-dir runs/p<pid>/claude`. Batches: p0,p5 → p9,p15 → p22,p47. cloudcast-Claude needs
-  a research measure.sh (claude_code_runner is algorithmic-only) — do last or adapt. WATCH: the bundled
-  CLI can stall on slow gateway TTFB (first p47 attempt hung); if a run shows no transcript progress /
-  no solution for ~10min, kill+relaunch. Audit each transcript (README §0) + re-score on our judge.
+- [~] **Claude baseline (raw Claude Code) on 7 tasks — PAUSED 2026-10-06 ~19:15, resume off-peak.**
+  Status: **p5 = 35.0 @ $14.8 (CLEAN audit) banked but LOWER BOUND** (stopped early by a gateway stall,
+  not $50/plateau; solution saved at runs/p5/claude/solution.score35.cost14_8.cpp — rerun for a clean
+  number). p0, p9, p15, p22, p47, cloudcast = STILL TODO.
+  - **Why paused:** the IBM litellm gateway hit a sustained ~70-min bad window the evening of 2026-10-06
+    where even a plain `curl` intermittently timed out (90s, 0 bytes). During bad windows the CLI cannot
+    complete a turn; runs just retry. This is gateway load/health, not our code. **Run off-peak.**
+  - **Root cause of the earlier wedging (FIXED, verified):** the bundled `claude` is a **Bun** binary
+    whose HTTP connection pool reuses a keep-alive socket the gateway silently drops between turns →
+    every run wedged ~turn 5. Fix baked into `claude_code_runner.py`: `BUN_FEATURE_FLAG_DISABLE_IO_POOL=1`
+    + `CLAUDE_CODE_MAX_RETRIES=40` + first-byte/idle/connect timeouts. p0 crossed its t=5 wall with ZERO
+    retries once set; a pool-enabled control stayed stuck. **Apply the same env to the Nous SDK path**
+    (same Bun binary) — this is very likely the real cure for the Nous "SDK hang".
+  - **Optional:** bundled CLI is Bun build 2.1.286; npm latest is 2.1.292 (marginal). Could try upgrading
+    + pointing `CLAUDE_CLI_PATH` at the newer binary (leaves the SDK-bundled one, so Nous unaffected).
+  - **MORNING LAUNCH (turnkey, runner has the fix baked in), 2 at a time:**
+    ```bash
+    cd <repo>/agentic-strategy-evolution
+    U=https://ete-litellm.ai-models.vpc.res.ibm.com; K=$IBM_LITELLM_KEY   # sk-MbgXqi3qu85vU9r2DYy9KA
+    caffeinate -dimsu &                      # keep mac awake while running
+    for p in 0 9; do                          # batch 1; then 15 22; then 47
+      env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=$U ANTHROPIC_API_KEY=$K \
+        OPENAI_BASE_URL=$U OPENAI_API_KEY=$K \
+        ./.venv/bin/python -u experiments/frontiercs/gen/claude_code_runner.py $p \
+        --budget 50 --out-dir experiments/frontiercs/runs/p$p/claude > /tmp/p${p}_claude.out 2>&1 &
+    done
+    ```
+    Then: on finish, `cat runs/p<pid>/claude/pred.json` has final_score + cost_est + cheat_audit_hits
+    (must be `[]`); the runner auto-re-scores on our judge. cloudcast-Claude still needs a research
+    measure.sh (runner is algorithmic-only) — adapt or do last. A healthy run shows turns climbing with
+    low retries; if a run sits at the same turn with retries creeping, the gateway is in a bad window —
+    wait, don't kill (MAX_RETRIES=40 survives it).
 - [ ] **Rerun the Claude baseline (raw Claude Code) on ALL tasks** (p0,p5,p9,p15,p22,p47 + research) to replace the old Engram-single_agent numbers — needed for a consistent Claude column.
 - [ ] **⚠ Engram cost-cap rerun — ALL tasks.** The current Engram numbers used $69–347 (not $50) because Engram has no cost cap and we mislabeled cost. Re-run Engram on p0/p5/p9/p15/p22/p47 + research under `gen/monitoring/engram_cost_cap.sh <alg_id> 50`, which polls Engram's real `Total cost:` and kills at $50 (cost logs every 5 iters ≈ $30, so it stops at the first checkpoint ≥ $50 ≈ $60; report best score at the ≤$50 point from the per-iteration Score progression). Discovered 2026-10-06 after a p47 run hit $347.
 - [ ] **p47**: run AIDE; re-run Nous/Engram/Claude under $50 (existing data is nous3/cb10).
-- [ ] **llm_router, llm_sql, poc_generation**: run Nous, Engram, Claude (AIDE N/A). Research runner = `gen/frontier_research_gen.py`; verify poc_generation is CPU-feasible first.
+- [ ] **More research tasks (CPU-only, offline — verified feasible 2026-10-06).** Add for tag diversity
+  (cloudcast=ai already done; pick ones in NEW tags to show Nous isn't class-specific):
+  - **grammar_fuzzing** (tag `pl`): `python:3.11-slim`, dind:false, 300s, `datasets: []`, deps via
+    `uv_project: resources`. Smallest/most-trivial (232K). Variants `grammar_fuzzing_sql_seed` + fuzzer.
+  - **llm_sql** (tag `db`): `datasets: []`, bundled CSVs (beer/BIRD/movies/PDMX, 69M), 1800s, uv deps. CPU.
+  - **llm_router** (tag `ai`): `datasets: []`, uv deps, `evaluator.py`+`run_evaluator.sh` (1.1M). CPU, but
+    duplicates cloudcast's `ai` tag → lower priority than the two above.
+  - **poc_generation** (tag `security`): CPU-feasibility NOT yet verified — check before committing.
+  **Recommended 2 to add next: grammar_fuzzing (pl) + llm_sql (db)** → research spans ai/db/pl.
+  Run Nous, Engram, Claude (AIDE N/A). Research runner = `gen/frontier_research_gen.py`; eval =
+  `frontier eval research <name> <sol.py> --backend docker`. Claude runner is algorithmic-only → needs a
+  research measure.sh variant (wrap `frontier eval research`).
 - [ ] CP6 variance (3× reruns of a subset); CP7 stronger-model (opus5).
 
 ### Paper-writing notes (record these)
