@@ -1,0 +1,25 @@
+{
+  "pid": 0,
+  "agent": "engram",
+  "method": "real Engram agentic_handoff, cost-capped $50",
+  "final_score_at_50": 68.5065,
+  "best_overall": 72.5808,
+  "cost_at_kill": 66.13596,
+  "budget": 50,
+  "score_progression": [
+    0.0,
+    0.0,
+    66.19,
+    67.23,
+    67.23,
+    67.97,
+    68.51,
+    72.58,
+    72.58,
+    72.58
+  ],
+  "cost_checkpoints": [
+    38.54646,
+    66.13596
+  ]
+}
