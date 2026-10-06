@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import glob, json, os, re, subprocess, time
 GL = os.path.expanduser("~/frontier/gen_logs")
-TASKS = [26, 69, 79]
-CLASS = {26: "DP", 69: "string", 79: "math/NT"}
-AIDE = {26: 30, 69: 0, 79: 0}  # AIDE @ <=$50 on these new tasks
+TASKS = [26, 69, 79, 170]
+CLASS = {26: "DP", 69: "string", 79: "math/NT", 170: "flow"}
+AIDE = {26: 30, 69: 0, 79: 0, 170: 0}  # AIDE @ <=$50 on these new tasks
 
 
 def cost(slug):
@@ -34,12 +34,14 @@ def prog(slug):
     return mx, best
 
 
-up = subprocess.run(["pgrep", "-f", "nous_run_new.py"], capture_output=True).returncode == 0
-done = os.path.exists("/tmp/nous_run_all.log") and "ALLDONE_NOUS" in open("/tmp/nous_run_all.log").read()
+up = subprocess.run(["pgrep", "-f", "frontier_gen_costbudget.py"], capture_output=True).returncode == 0
+done = (not up) and os.path.exists("/tmp/nous_rest_all.log") and "ALLDONE_NOUS_REST" in open("/tmp/nous_rest_all.log").read()
 print(f"=== [{time.strftime('%H:%M')}] NOUS new-tasks: {'RUNNING' if up else ('DONE' if done else 'STOPPED')} ===")
 print(f"{'task':14} {'iter':5} {'cost':8} {'best(our judge)':16} {'| AIDE@<=50'}")
 for p in TASKS:
-    slug = f"frontier-{p}-nous"
+    slug = f"frontier-{p}-nousNEWKEY"
     it, bs = prog(slug)
-    print(f"p{p:<3}[{CLASS[p]:7}] {it:<5} ${cost(slug):<7} {str(bs):16} | {AIDE[p]}")
+    els = glob.glob(f"{GL}/nous_runs/{slug}/runs/iter-*/inputs/executor_log.jsonl")
+    ev = max([sum(1 for _ in open(e, errors="ignore")) for e in els], default=0)
+    print(f"p{p:<3}[{CLASS[p]:7}] it{it} ev{ev} ${cost(slug)} best={bs} | AIDE {AIDE[p]}")
 print("(Nous best = max score.txt on our judge; stop at $50 or ceiling 100)")

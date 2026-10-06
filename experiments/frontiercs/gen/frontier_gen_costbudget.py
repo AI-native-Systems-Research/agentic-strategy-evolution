@@ -377,6 +377,10 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
         "run_id": run_slug,
         "max_iterations": nous_iters,
         "sandbox": "bypass",
+        # #205 live watchdog: default silence threshold is 600s, so an intermittent per-request
+        # SDK streaming stall blocks ~10min before auto-retry. Shorten to 90s so stalls recover fast
+        # and the campaign makes progress (observed: agent streams fine, one request wedges, retry clears).
+        "sdk_timeouts": {"turn_silence_threshold_seconds": 90},
         "target_system": {
             "name": f"frontier-cs::algorithmic::{pid}",
             "description": desc,
@@ -388,6 +392,16 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
         "models": {"design": model, "execute_analyze": model, "report": model},
         "prompts": {"methodology_layer": f"{NOUS_REPO}/prompts/methodology", "domain_adapter_layer": None},
     }
+    # Optional per-phase SDK reasoning effort (low|medium|high|xhigh|max), gated on env vars so the
+    # default path is unchanged. effort can only be set via the campaign spec (defaults.yaml is not
+    # consulted by _effort_for), so inject it here when requested.
+    _eff_d = os.environ.get("NOUS_DESIGN_EFFORT")
+    _eff_e = os.environ.get("NOUS_EXECUTE_EFFORT")
+    if _eff_d or _eff_e:
+        spec["sdk_options"] = {
+            "design": {"effort": _eff_d} if _eff_d else {},
+            "execute_analyze": {"effort": _eff_e} if _eff_e else {},
+        }
     camp = ws.parent / f"campaign_{pid}.yaml"
     camp.write_text(yaml.safe_dump(spec, sort_keys=False))
     env = dict(os.environ)
