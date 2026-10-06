@@ -22,7 +22,7 @@ cumulative spend hits **$50** or the score maxes out, then report **(best score,
 | **Nous** | Our scientific-loop harness (hypothesis → experiment → analyze), wrapping the Claude Agent SDK | `gen/frontier_gen_costbudget.py <pid> --agent nous` (see §5 for the full env) |
 | **Engram** | mit-nms/Engram **as-is** (`agentic_handoff`: sequential fresh-context agents + research journal/KB), + our small Frontier-CS patch | **`gen/monitoring/engram_cost_cap.sh <alg_id> 50`** (NOT bare run_engram.sh — see cost warning below) |
 | **AIDE** | Weco aideml **as-is** (tree search: draft/debug/improve), + our small Frontier-CS adapter | `gen/aide_frontier.py <pid> --budget 50 --ceiling 99.5 --steps 80` |
-| **Claude** | **Real Claude Code CLI itself** — same model, given the problem + tools, iterates to $50/max. **(runner TBD — see §6)** | TBD (new raw-Claude-Code runner) |
+| **Claude** | **Real Claude Code CLI itself** — plain `claude -p`, one session, opus-4-6, Bash/Read/Write/Edit + a measure.sh judge, iterates to $50/max. No Nous loop, no harness. | **`gen/claude_code_runner.py <pid> --budget 50 --out-dir runs/p<pid>/claude`** |
 
 Setups (where each agent lives):
 - **Nous**: `~/nous_repo` (= this repo checkout). Bin: `~/nous_repo/.venv/bin/nous`.
@@ -113,7 +113,11 @@ Baselines (Engram/AIDE/Claude) use the direct chat API or raw CLI — only Nous 
 
 ## 6. TODO / remaining work
 
-- [ ] **Build the raw-Claude-Code runner** (Claude baseline): headless `claude -p "<problem + 'maximize the go-judge score; use bash to compile and run frontier eval'>"`, tools on, same gateway/model, **auth strip** (bundled CLI → same token conflict as Nous), track stream-json usage, **kill at $50**, harvest best solution+score.
+- [x] **Build the raw-Claude-Code runner** (DONE 2026-10-06): `gen/claude_code_runner.py` — plain
+  `claude -p`, one session, opus-4-6, Bash/Read/Write/Edit + measure.sh judge, **auth strip**, live
+  cost from the CLI transcript (`CLAUDE_CONFIG_DIR/projects/**/*.jsonl`, per-turn usage incl cache),
+  **kills at $50**, re-scores on our judge, and runs a **cheat audit** (greps transcript for
+  testdata/.ans/gen_logs/nous_runs). Self-contained run folder `runs/p<pid>/claude/`.
 - [ ] **Rerun the Claude baseline (raw Claude Code) on ALL tasks** (p0,p5,p9,p15,p22,p47 + research) to replace the old Engram-single_agent numbers — needed for a consistent Claude column.
 - [ ] **⚠ Engram cost-cap rerun — ALL tasks.** The current Engram numbers used $69–347 (not $50) because Engram has no cost cap and we mislabeled cost. Re-run Engram on p0/p5/p9/p15/p22/p47 + research under `gen/monitoring/engram_cost_cap.sh <alg_id> 50`, which polls Engram's real `Total cost:` and kills at $50 (cost logs every 5 iters ≈ $30, so it stops at the first checkpoint ≥ $50 ≈ $60; report best score at the ≤$50 point from the per-iteration Score progression). Discovered 2026-10-06 after a p47 run hit $347.
 - [ ] **p47**: run AIDE; re-run Nous/Engram/Claude under $50 (existing data is nous3/cb10).
