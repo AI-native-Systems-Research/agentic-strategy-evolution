@@ -1,0 +1,3 @@
+# run artifacts: keep pred.json + solution.cpp, ignore bulky transcripts/configs
+*/*/cfg/
+*/*/stream.jsonl
