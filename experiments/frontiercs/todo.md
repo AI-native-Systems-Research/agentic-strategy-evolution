@@ -1,5 +1,8 @@
 # Frontier-CS controlled comparison — TODO
 
+> ⚠ **READ `README.md` FIRST** — it is the canonical source of truth (agents, rule, 10 tasks, clean
+> results, run commands, TODO). This `todo.md` is checkpoint history. If they disagree, README wins.
+>
 > **WHERE EVERYTHING LIVES** (branch: `aiopslab` on AI-native-Systems-Research/agentic-strategy-evolution)
 > All under `experiments/frontiercs/`:
 > - **Plan + status + run recipe:** `todo.md` SECTION 3 (the current 10-task plan, status matrix, remaining runs)

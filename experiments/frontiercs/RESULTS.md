@@ -1,3 +1,7 @@
+> ⚠ **SUPERSEDED — read `README.md` first** (canonical source of truth as of 2026-10-06).
+> This file is detailed/historical. The "Claude-agent" here is the OLD Engram-single_agent method,
+> being replaced by raw-Claude-Code reruns; the final task set + clean results live in README.md.
+
 # Frontier-CS (algorithmic): Nous vs Engram vs plain Claude
 
 Controlled methodology comparison for the MLSys submission. All agents use the SAME model

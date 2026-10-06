@@ -1,3 +1,7 @@
+> ⚠ **SUPERSEDED — read `README.md` first** (the canonical source of truth as of 2026-10-06).
+> This file is detailed/historical. In particular, the "Claude-agent" column here is the OLD
+> Engram-single_agent method and will be replaced by raw-Claude-Code reruns; p47 is not yet included.
+
 # Iso-cost comparison: best score achieved at <= $50 spend (our judge)
 
 Re-derived from existing per-step data (NO extra reruns), per the rule "stop at $50 or max score."
