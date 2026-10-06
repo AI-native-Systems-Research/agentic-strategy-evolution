@@ -569,8 +569,18 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 "RemoteProtocolError",
                 "ServerDisconnectedError",
                 "TimeoutError",
+                # [speed-debug] gateway long-stream drops surface as the SDK SIGTERMing the
+                # claude child -> ProcessError "exit code 143". That is a transient infra fault,
+                # not a permanent one, so retry it instead of failing the whole iteration.
+                "ProcessError",
             )
-            if any(sig in cls_name for sig in transient_signals):
+            msg = str(exc)
+            transient_msg = (
+                "exit code 143" in msg
+                or "exit code: 143" in msg
+                or "message reader" in msg
+            )
+            if any(sig in cls_name for sig in transient_signals) or transient_msg:
                 raise SDKTransientError(f"{cls_name}: {exc}") from exc
             raise
 
