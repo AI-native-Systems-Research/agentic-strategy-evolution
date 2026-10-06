@@ -1060,3 +1060,69 @@ class TestClaudeCliPathEnvVar:
         monkeypatch.setenv("CLAUDE_CLI_PATH", "")
         kwargs = self._run_default_runner(monkeypatch, tmp_path)
         assert "cli_path" not in kwargs
+
+
+# ─── Transient-vs-permanent classification of raw SDK exceptions (#315) ─────
+class _FakeProcessError(Exception):
+    """Mimics claude_agent_sdk ProcessError: a non-zero CLI exit carrying a
+    structured ``exit_code``. Named *ProcessError* so the classifier's
+    name-substring check sees it, without importing the SDK."""
+
+    def __init__(self, message: str, exit_code: int | None = None):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+class TestSDKTransientClassification:
+    """`_is_transient_sdk_error` decides whether a raw exception escaping the
+    SDK runner is a retryable/transient infra fault (-> SDKTransientError) or a
+    genuine permanent error (-> re-raised).
+
+    A gateway drop of the streaming response makes the Agent SDK SIGTERM its
+    `claude` child, surfacing as `ProcessError(exit_code=143)` / "Fatal error in
+    message reader". That is transient and must be retried. Every OTHER non-zero
+    `ProcessError` exit (bad request, usage, config) is permanent and must
+    surface immediately rather than burn retries. (#315)
+    """
+
+    def test_existing_network_signals_are_transient(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        assert _is_transient_sdk_error(ConnectionError("conn reset"))
+        assert _is_transient_sdk_error(TimeoutError("read timed out"))
+
+    def test_processerror_143_is_transient(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        assert _is_transient_sdk_error(_FakeProcessError("killed", exit_code=143))
+
+    def test_processerror_non_143_is_permanent(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        # The regression surface: ProcessError is the base class for EVERY
+        # non-zero exit, so non-143 exits must NOT be retried.
+        assert not _is_transient_sdk_error(_FakeProcessError("bad request", exit_code=1))
+        assert not _is_transient_sdk_error(_FakeProcessError("usage error", exit_code=2))
+        assert not _is_transient_sdk_error(_FakeProcessError("no code", exit_code=None))
+
+    def test_real_sdk_processerror_classified_by_exit_code(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        ProcessError = pytest.importorskip("claude_agent_sdk._errors").ProcessError
+        assert _is_transient_sdk_error(ProcessError("Command failed", exit_code=143))
+        assert not _is_transient_sdk_error(ProcessError("Command failed", exit_code=1))
+
+    def test_message_fallback_catches_wrapped_143(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        # If anyio wraps the ProcessError in an ExceptionGroup, neither the
+        # class name nor exit_code is reachable, but the exit-code-143 text does.
+        assert _is_transient_sdk_error(RuntimeError("unhandled errors: exit code 143"))
+
+    def test_message_fallback_does_not_overmatch_non_143(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        # A wrapped NON-143 failure that merely mentions the message-reader
+        # banner must stay permanent — the fallback is exit-code-143-specific.
+        assert not _is_transient_sdk_error(
+            RuntimeError("Fatal error in message reader: exit code 1")
+        )
+
+    def test_genuine_error_is_not_transient(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        assert not _is_transient_sdk_error(ValueError("bad bundle schema"))
+        assert not _is_transient_sdk_error(KeyError("missing field"))
