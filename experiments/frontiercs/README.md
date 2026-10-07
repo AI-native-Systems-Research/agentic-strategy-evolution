@@ -207,6 +207,45 @@ and appended to `trials.jsonl`; the best-scoring one is kept as `solution.best.c
 **After stop:** re-score on our judge, run the cheat audit (grep transcript for
 `testdata|.ans|gen_logs|nous_runs`; must be `[]`), write `pred.json`.
 
+### Gateway stall + the fresh-connection proxy (REQUIRED launch step, root-caused 2026-10-07)
+
+Symptom: every run froze at the first hard turn (`turns=3`, no solution written). Root cause: Claude
+Code runs opus-4-6 with **extended thinking** (`thinking:{"type":"adaptive"}` +
+`output_config:{"effort":"high"}`, inherited from `~/.claude/settings.json`). The IBM litellm->Bedrock
+gateway **buffers the thinking phase and emits no bytes until the first visible output**, so first-byte
+latency scales with think duration. On hard/heavy turns that latency **intermittently** crosses a ~60s
+idle/first-byte timeout on an intermediate hop, and the silent connection is killed before any byte
+arrives (`RemoteDisconnected` ~60s, or no byte at all). It is NOT a clean deterministic bug: replaying
+a *light* request with thinking on often returns in ~18s, but replaying the actual captured heavy
+request (130KB, 24 tools, real hard problem) timed out at 90s with zero bytes. The identical heavy
+request with `thinking` removed returns the first byte in ~10-40s and completes. Ruled out (direct curl
+always works): key, URL, auth (Bearer vs x-api-key), CLI binary (v131 vs v286), request size,
+streaming, prompt caching. The lever is think-duration vs the ~60s cut; disabling thinking keeps
+first-byte in the safe band so turns complete (verified: p0 ran normally once thinking was stripped).
+
+Fix = run through `gen/fresh_conn_proxy.py`, a tiny local reverse proxy that (1) opens a FRESH
+`Connection: close` socket to the gateway per request (no dead-socket reuse), (2) retries fast on a
+wedged attempt (first-byte cutoff 55s, up to 12 tries, re-dialing just before the gateway's ~60s cut),
+and (3) **strips the `thinking` field** so the baseline runs without extended thinking (the gateway
+cannot stream thinking; this is an infra limitation, not a Claude Code one).
+
+```bash
+# 1. start the proxy against the gateway (key/URL from env, never hardcoded)
+./.venv/bin/python experiments/frontiercs/gen/fresh_conn_proxy.py \
+  --port 8900 --upstream "$ANTHROPIC_BASE_URL" &
+# 2. point the runner's ANTHROPIC_BASE_URL at the proxy
+env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=http://127.0.0.1:8900 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  OPENAI_BASE_URL="$ANTHROPIC_BASE_URL" OPENAI_API_KEY=$ANTHROPIC_API_KEY \
+  ./.venv/bin/python -u experiments/frontiercs/gen/claude_code_runner.py <pid> \
+  --budget 50 --max-score 100 --out-dir experiments/frontiercs/runs/p<pid>/claude &
+```
+
+**Paper fairness note:** because of this gateway limitation the Claude baseline runs with extended
+thinking **disabled**. State this explicitly; it is a backend constraint (thinking cannot be streamed
+through this gateway), not a choice to weaken the baseline. `gen/repro_thinking_stall.py` is a
+self-contained reproduction to hand to the litellm admins (thinking-ON stalls >90s with zero bytes;
+thinking-OFF answers in seconds).
+
 ---
 
 ## 6. TODO / remaining work
