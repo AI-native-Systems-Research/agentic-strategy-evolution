@@ -97,6 +97,10 @@ def main():
         "below the ceiling there is always more to try: a better algorithm, a tighter heuristic, a "
         "parameter sweep, an edge-case fix. Never conclude the solution is 'good enough' or that you "
         "'cannot improve' — keep generating and testing new ideas. "
+        "PERSIST EVERY ATTEMPT: immediately after each `./measure.sh` run, copy the exact solution.cpp "
+        "you just scored into the `trials/` directory, named `trials/attempt_<N>_score_<SCORE>.cpp` "
+        "(N = 1,2,3... in order; SCORE = the number measure.sh printed). Create `trials/` if needed and "
+        "NEVER delete or overwrite earlier attempts. This is required so every score can be reproduced. "
         "RULES: solve it algorithmically; do NOT read, open, or use the judge's hidden test data or "
         "answer files anywhere on the system, and do NOT copy any pre-existing solution. "
         "Leave your best solution in solution.cpp.")
@@ -105,7 +109,8 @@ def main():
         f"Your current solution.cpp scores {{score}}/{args.max_score:g} on ./measure.sh, which is below "
         "the ceiling, so you are NOT finished. Do not stop. Try a genuinely different or improved "
         "approach now (new algorithm, stronger heuristic, parameter tuning, or fixing a weak case), "
-        "edit solution.cpp, and re-run ./measure.sh. Keep pushing the score up.")
+        "edit solution.cpp, and re-run ./measure.sh. Save each scored attempt to "
+        "`trials/attempt_<N>_score_<SCORE>.cpp` as before. Keep pushing the score up.")
 
     env = dict(os.environ)
     env["CLAUDE_CONFIG_DIR"] = str(cfg)
@@ -217,10 +222,32 @@ def main():
                 official = d["total_cost_usd"]
         except Exception:
             pass
-    # final reported solution/score = BEST across all trials (per "$50-or-max": best at <= budget)
-    final_score = best_score if best_score >= 0 else judge(args.pid, str(sol))
-    if best_path.exists():
-        shutil.copy(best_path, sol)
+    # EVIDENCE: independently re-judge every persisted attempt (agent-saved trials/attempt_*.cpp and
+    # our session snapshots) on our go-judge. We never trust the agent's self-reported score; the saved
+    # .cpp files are the evidence and this is their reproduction. final_score = best re-judged solution.
+    evidence = []
+    best_file = None
+    for cpp in sorted(trials_dir.glob("*.cpp")):
+        sc = judge(args.pid, str(cpp))
+        evidence.append({"file": cpp.name, "rejudged_score": sc})
+        if sc is not None and sc > best_score:
+            best_score = sc
+            best_file = cpp
+    # also re-judge the final solution.cpp
+    sc_final = judge(args.pid, str(sol))
+    evidence.append({"file": "solution.cpp", "rejudged_score": sc_final})
+    if sc_final is not None and sc_final > best_score:
+        best_score = sc_final
+        best_file = sol
+    (run / "trials_rejudged.json").write_text(json.dumps(evidence, indent=2))
+    final_score = best_score if best_score >= 0 else sc_final
+    # leave the best (independently re-judged) solution in solution.best.cpp and solution.cpp
+    if best_file is not None:
+        try:
+            shutil.copy(best_file, best_path)
+            shutil.copy(best_file, sol)
+        except Exception:
+            pass
     # cheating audit: grep transcript for forbidden access
     tx = ""
     for f in glob.glob(f"{cfg}/projects/**/*.jsonl", recursive=True):
@@ -228,7 +255,8 @@ def main():
     flags = sorted(set(re.findall(r"testdata|\.ans\b|gen_logs|nous_runs|/problems/\d+/testdata", tx)))
     pred = {"pid": args.pid, "agent": "claude-code", "model": args.model,
             "final_score": final_score, "cost_est_cacheaware": cost, "cost_cli_total_usd": official,
-            "turns": turns, "sessions": session, "trials": session,
+            "turns": turns, "sessions": session,
+            "trials_rejudged": len(evidence), "best_file": best_file.name if best_file else None,
             "elapsed_sec": round(time.time() - t0, 1), "stop_reason": stop,
             "budget": args.budget, "max_score": args.max_score,
             "cheat_audit_hits": flags, "run_dir": str(run)}
