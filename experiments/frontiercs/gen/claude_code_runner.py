@@ -2,12 +2,21 @@
 """Claude baseline = the plain Claude Code CLI attacking a Frontier-CS problem, single session.
 
 Design (see experiments/frontiercs/README.md):
-- No Nous loop, no Engram harness. One `claude -p` session, opus-4-6, with Bash/Read/Write/Edit tools
-  and a measure.sh that runs the official judge. The agent iterates to maximize the 0-100 score.
+- No Nous loop, no Engram harness. The plain `claude -p` CLI, opus-4-6, with Bash/Read/Write/Edit
+  tools and a measure.sh that runs the official judge. The agent iterates to maximize the 0-100 score.
+- Stopping rule = budget OR max score, nothing else. We run until cumulative cost >= $50 OR the judge
+  score reaches the ceiling (--max-score, default 100; gates are all-or-nothing but still top out at
+  100). The agent is NOT allowed to self/plateau-stop: when a `claude -p` session yields below the
+  ceiling with budget remaining, we RESUME it (`--continue`) with a push prompt and keep going. (A
+  safety valve stops only an agent that will not engage at all -- a session adding ~no cost -- which
+  is distinct from a plateau: an agent that keeps spending but can't improve runs on to the budget.)
 - Self-contained run folder (isolation + debug + persist): only statement.txt + measure.sh are placed
   in the agent's cwd. Everything (solution, transcript, cost, pred) stays in that folder.
+- Trial persistence: every scored solution is copied to trials/t<n>.score<s>.cpp and logged to
+  trials.jsonl; the best-scoring one is kept as solution.best.cpp and is what pred.json reports.
 - Live $50 cap: Claude Code writes a per-turn transcript jsonl (full usage incl cache) under
-  CLAUDE_CONFIG_DIR; we tail it, accumulate cost, and KILL the CLI the instant it crosses the budget.
+  CLAUDE_CONFIG_DIR; we tail it, accumulate cost (cumulative across resumed sessions), and KILL the
+  CLI the instant it crosses the budget.
 - Auth: it's the bundled CLI, so we strip the inherited ANTHROPIC_AUTH_TOKEN (else gateway 401/hang).
 - Audit: the transcript logs every bash command; we grep it for testdata/.ans/gen_logs to prove the
   run didn't cheat.
@@ -59,6 +68,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("pid", type=int)
     ap.add_argument("--budget", type=float, default=50.0)
+    ap.add_argument("--max-score", type=float, default=100.0,
+                    help="stop early only when the judge score reaches this ceiling")
     ap.add_argument("--model", default="claude-opus-4-6")
     ap.add_argument("--max-turns", type=int, default=200)
     ap.add_argument("--out-dir", required=True)
@@ -82,10 +93,19 @@ def main():
         "To check your score, run `./measure.sh` — it compiles solution.cpp, runs the OFFICIAL judge, "
         "and prints `SCORE: <0-100>` (higher is better; continuous partial credit). "
         "Iterate: try algorithms/optimizations and re-run ./measure.sh to maximize the score. "
-        "Keep working and trying new ideas until you genuinely cannot improve further. "
+        f"Do NOT stop until you reach SCORE: {args.max_score:g} (the ceiling). As long as the score is "
+        "below the ceiling there is always more to try: a better algorithm, a tighter heuristic, a "
+        "parameter sweep, an edge-case fix. Never conclude the solution is 'good enough' or that you "
+        "'cannot improve' — keep generating and testing new ideas. "
         "RULES: solve it algorithmically; do NOT read, open, or use the judge's hidden test data or "
         "answer files anywhere on the system, and do NOT copy any pre-existing solution. "
-        "Leave your best solution in solution.cpp when finished.")
+        "Leave your best solution in solution.cpp.")
+    # Continuation push used to resume the SAME session when the agent yields below the ceiling+budget.
+    cont_prompt = (
+        f"Your current solution.cpp scores {{score}}/{args.max_score:g} on ./measure.sh, which is below "
+        "the ceiling, so you are NOT finished. Do not stop. Try a genuinely different or improved "
+        "approach now (new algorithm, stronger heuristic, parameter tuning, or fixing a weak case), "
+        "edit solution.cpp, and re-run ./measure.sh. Keep pushing the score up.")
 
     env = dict(os.environ)
     env["CLAUDE_CONFIG_DIR"] = str(cfg)
@@ -117,28 +137,78 @@ def main():
     env.setdefault("BUN_FEATURE_FLAG_DISABLE_IO_POOL", "1")
     env.setdefault("CLAUDE_CODE_MAX_RETRIES", "40")
     env.setdefault("CLAUDE_CODE_CONNECT_TIMEOUT_MS", "20000")
-    cmd = [CLI, "-p", prompt, "--output-format", "stream-json", "--verbose", "--model", args.model,
-           "--permission-mode", "bypassPermissions", "--allowedTools", "Bash", "Read", "Write", "Edit",
-           "--max-turns", str(args.max_turns)]
+    base_flags = ["--output-format", "stream-json", "--verbose", "--model", args.model,
+                  "--permission-mode", "bypassPermissions",
+                  "--allowedTools", "Bash", "Read", "Write", "Edit",
+                  "--max-turns", str(args.max_turns)]
     t0 = time.time()
-    log = open(run / "stream.jsonl", "w")
-    proc = subprocess.Popen(cmd, cwd=str(run), env=env, stdin=subprocess.DEVNULL,
-                            stdout=log, stderr=subprocess.STDOUT)
-    print(f"[claude] pid={proc.pid} task=p{args.pid} budget=${args.budget} dir={run}", flush=True)
-    stop = "completed"
-    while proc.poll() is None:
-        time.sleep(10)
-        cost, turns = transcript_cost(cfg)
-        print(f"[claude {time.strftime('%H:%M')}] turns={turns} cost=${cost}", flush=True)
+    sol = run / "solution.cpp"
+    trials_dir = run / "trials"; trials_dir.mkdir(exist_ok=True)
+    trials_log = run / "trials.jsonl"
+    best_path = run / "solution.best.cpp"
+    best_score = -1.0
+    # Stopping rule (per README §1): run until cumulative cost >= budget OR score hits the ceiling
+    # (max_score, 100 for every algorithmic task incl. the all-or-nothing gates). The agent is NOT
+    # allowed to self/plateau-stop: when a `claude -p` session yields below the ceiling with budget
+    # left, we RESUME it (`--continue`) with a push prompt and keep going. `refuse` is a safety valve
+    # ONLY for an agent that will not engage at all (a session that adds ~no cost); it is deliberately
+    # distinct from a plateau (an agent that keeps spending but can't improve runs on to the budget).
+    stop = None; session = 0; refuse = 0; cost = 0.0; turns = 0
+    while True:
+        if best_score >= args.max_score:
+            stop = "max_score"; break
         if cost >= args.budget:
-            print(f"[claude] cost ${cost} >= ${args.budget} -> KILL", flush=True)
-            proc.terminate();
-            try: proc.wait(10)
-            except Exception: proc.kill()
-            stop = "budget"
-            break
-    cost, turns = transcript_cost(cfg)
-    # official cost from the CLI's own result message
+            stop = "budget"; break
+        if refuse >= 5:
+            stop = "agent_will_not_continue"; break
+        session += 1
+        cost_before = cost
+        if session == 1:
+            cmd = [CLI, "-p", prompt] + base_flags
+        else:
+            msg = cont_prompt.format(score=f"{best_score:g}" if best_score >= 0 else "0")
+            cmd = [CLI, "--continue", "-p", msg] + base_flags
+        with open(run / "stream.jsonl", "a") as log:
+            proc = subprocess.Popen(cmd, cwd=str(run), env=env, stdin=subprocess.DEVNULL,
+                                    stdout=log, stderr=subprocess.STDOUT)
+            print(f"[claude] session={session} pid={proc.pid} task=p{args.pid} "
+                  f"budget=${args.budget} best={best_score} dir={run}", flush=True)
+            killed_budget = False
+            while proc.poll() is None:
+                time.sleep(10)
+                cost, turns = transcript_cost(cfg)
+                print(f"[claude {time.strftime('%H:%M')}] s{session} turns={turns} "
+                      f"cost=${cost} best={best_score}", flush=True)
+                if cost >= args.budget:
+                    print(f"[claude] cost ${cost} >= ${args.budget} -> KILL", flush=True)
+                    proc.terminate()
+                    try: proc.wait(10)
+                    except Exception: proc.kill()
+                    killed_budget = True
+                    break
+        cost, turns = transcript_cost(cfg)
+        # score + persist this trial (every scored solution is kept for later reuse)
+        score = judge(args.pid, str(sol))
+        if score is not None:
+            dst = trials_dir / f"t{session}.score{score:g}.cpp"
+            try: shutil.copy(sol, dst)
+            except Exception: pass
+            with open(trials_log, "a") as tl:
+                tl.write(json.dumps({"session": session, "score": score, "cost_cumulative": cost,
+                                     "turns": turns, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")}) + "\n")
+            if score > best_score:
+                best_score = score
+                try: shutil.copy(sol, best_path)
+                except Exception: pass
+        print(f"[claude] session={session} ended score={score} best={best_score} cost=${cost}",
+              flush=True)
+        # refusal detection: a session that added negligible cost means the agent would not engage;
+        # this is NOT a plateau (a working-but-stuck agent still spends and runs to budget).
+        refuse = refuse + 1 if (cost - cost_before) < 0.05 else 0
+        if killed_budget:
+            stop = "budget"; break
+
+    # official cost from the CLI's own result messages (best-effort; cost_est is authoritative)
     official = None
     for ln in open(run / "stream.jsonl", errors="ignore"):
         try:
@@ -147,19 +217,24 @@ def main():
                 official = d["total_cost_usd"]
         except Exception:
             pass
-    score = judge(args.pid, str(run / "solution.cpp"))
+    # final reported solution/score = BEST across all trials (per "$50-or-max": best at <= budget)
+    final_score = best_score if best_score >= 0 else judge(args.pid, str(sol))
+    if best_path.exists():
+        shutil.copy(best_path, sol)
     # cheating audit: grep transcript for forbidden access
     tx = ""
     for f in glob.glob(f"{cfg}/projects/**/*.jsonl", recursive=True):
         tx += open(f, errors="ignore").read()
     flags = sorted(set(re.findall(r"testdata|\.ans\b|gen_logs|nous_runs|/problems/\d+/testdata", tx)))
     pred = {"pid": args.pid, "agent": "claude-code", "model": args.model,
-            "final_score": score, "cost_est_cacheaware": cost, "cost_cli_total_usd": official,
-            "turns": turns, "elapsed_sec": round(time.time() - t0, 1), "stop_reason": stop,
-            "budget": args.budget, "cheat_audit_hits": flags, "run_dir": str(run)}
+            "final_score": final_score, "cost_est_cacheaware": cost, "cost_cli_total_usd": official,
+            "turns": turns, "sessions": session, "trials": session,
+            "elapsed_sec": round(time.time() - t0, 1), "stop_reason": stop,
+            "budget": args.budget, "max_score": args.max_score,
+            "cheat_audit_hits": flags, "run_dir": str(run)}
     (run / "pred.json").write_text(json.dumps(pred, indent=2))
-    print(f"[claude] DONE score={score} cost_est=${cost} cli_cost=${official} stop={stop} "
-          f"audit={'CLEAN' if not flags else flags}", flush=True)
+    print(f"[claude] DONE best_score={final_score} cost_est=${cost} cli_cost=${official} "
+          f"sessions={session} stop={stop} audit={'CLEAN' if not flags else flags}", flush=True)
 
 
 if __name__ == "__main__":
