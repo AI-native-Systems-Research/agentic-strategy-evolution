@@ -72,7 +72,13 @@ def make_body(thinking):
         else:
             body.pop("thinking", None)
     else:
+        # Heavy, self-contained request (no external fixture needed): a large system block + a hard
+        # open-ended problem, so opus thinks long and first-byte latency is high -- the condition under
+        # which the gateway intermittently drops the connection. ~90KB, like a real Claude Code turn.
+        big_system = ("You are an expert competitive-programming and algorithms research assistant. "
+                      "Follow these guidelines exactly. ") + ("Guideline detail. " * 4000)
         body = {"model": MODEL, "max_tokens": 64000, "stream": True,
+                "system": [{"type": "text", "text": big_system}],
                 "messages": [{"role": "user", "content": PROMPT}]}
         if thinking:
             body["thinking"] = {"type": "adaptive"}
@@ -104,10 +110,17 @@ def probe(thinking):
             pass
 
 
-src = f"captured body {REQ_FILE} ({len(make_body(True))} bytes)" if REQ_FILE else "synthetic prompt"
+src = f"captured body {REQ_FILE} ({len(make_body(True))} bytes)" if REQ_FILE else f"self-contained heavy prompt ({len(make_body(True))} bytes)"
 print(f"gateway = {HOST}:{PORT}   model = {MODEL}   timeout = {TIMEOUT:.0f}s   tries = {TRIES}")
 print(f"request = {src}")
-print("identical streaming requests, differing only by the `thinking` field:\n")
+print("identical streaming requests, differing only by the `thinking` field.")
+print("A 'STALL' = no first byte within the timeout (the bug). Expect it intermittently under load.\n")
+stalls = {"ON": 0, "OFF": 0}
 for i in range(1, TRIES + 1):
-    print(f"  try {i}  thinking-ON  : {probe(True)}")
-    print(f"  try {i}  thinking-OFF : {probe(False)}")
+    for thk, name in ((True, "ON "), (False, "OFF")):
+        r = probe(thk)
+        if "STALL" in r or "NO BODY" in r:
+            stalls["ON" if thk else "OFF"] += 1
+        print(f"  try {i}  thinking-{name} : {r}")
+print(f"\nstalls: thinking-ON={stalls['ON']}/{TRIES}  thinking-OFF={stalls['OFF']}/{TRIES}  "
+      f"(run with a larger LLM_TRIES, or in a loop over time, to catch a bad gateway window)")
