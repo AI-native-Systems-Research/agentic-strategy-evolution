@@ -79,12 +79,35 @@ def main():
     cfg = run / "cfg"; cfg.mkdir(exist_ok=True)
     stmt_src = Path(FRONTIER) / "algorithmic" / "problems" / str(args.pid) / "statement.txt"
     shutil.copy(stmt_src, run / "statement.txt")
+    # ISOLATED judge: measure.sh does NOT touch the benchmark tree. It submits solution.cpp to the
+    # out-of-sandbox judge daemon (gen/judge_server.py) via a plain file drop and reads back the SCORE.
+    # The agent runs under sandbox-exec with ~/frontier reads DENIED, so it cannot see hidden testdata.
+    JUDGE_ROOT = os.environ.get("FCS_JUDGE_ROOT", "/tmp/fcs_judge")
+    for sub in ("inbox", "outbox", "done"):
+        Path(JUDGE_ROOT, sub).mkdir(parents=True, exist_ok=True)
     measure = run / "measure.sh"
     measure.write_text(
-        "#!/bin/bash\n# Official judge for this problem. Prints SCORE: <0-100>. Higher is better.\n"
-        f'out=$({FEVAL} eval algorithmic {args.pid} "{run}/solution.cpp" --json 2>/dev/null)\n'
-        'echo "$out" | python3 -c "import sys,re;t=sys.stdin.read();m=re.findall(r\'\\"score\\"\\s*:\\s*([0-9.]+)\',t);print(\'SCORE:\', m[-1] if m else \'ERR\')"\n')
+        "#!/bin/bash\n"
+        "# Submit solution.cpp to the official judge and print SCORE: <0-100> (higher is better).\n"
+        f'JR="{JUDGE_ROOT}"\n'
+        f'tok="p{args.pid}__$(date +%s%N)_$RANDOM"\n'
+        f'cp "{run}/solution.cpp" "$JR/inbox/$tok.cpp"\n'
+        'for i in $(seq 1 1200); do\n'
+        '  if [ -f "$JR/outbox/$tok.score" ]; then\n'
+        '    cat "$JR/outbox/$tok.score"; rm -f "$JR/outbox/$tok.score"; exit 0\n'
+        '  fi\n'
+        '  sleep 0.5\n'
+        'done\n'
+        'echo "SCORE: ERR (judge timeout)"\n')
     measure.chmod(0o755)
+    # sandbox profile: deny the agent ALL reads under ~/frontier (hidden testdata + answer files +
+    # prior solutions under gen_logs/nous_runs all live there). Everything else stays allowed.
+    sb_profile = run / "sandbox.sb"
+    frontier_root = os.path.realpath(os.path.expanduser("~/frontier"))
+    sb_profile.write_text("(version 1)\n(allow default)\n"
+                          f'(deny file-read* (subpath "{frontier_root}"))\n')
+    sandbox_prefix = ([] if os.environ.get("NOUS_FCS_NO_SANDBOX")
+                      else ["sandbox-exec", "-f", str(sb_profile)])
     (run / "solution.cpp").write_text("// write your C++17 solution here\n")
 
     prompt = (
@@ -169,10 +192,10 @@ def main():
         session += 1
         cost_before = cost
         if session == 1:
-            cmd = [CLI, "-p", prompt] + base_flags
+            cmd = sandbox_prefix + [CLI, "-p", prompt] + base_flags
         else:
             msg = cont_prompt.format(score=f"{best_score:g}" if best_score >= 0 else "0")
-            cmd = [CLI, "--continue", "-p", msg] + base_flags
+            cmd = sandbox_prefix + [CLI, "--continue", "-p", msg] + base_flags
         with open(run / "stream.jsonl", "a") as log:
             proc = subprocess.Popen(cmd, cwd=str(run), env=env, stdin=subprocess.DEVNULL,
                                     stdout=log, stderr=subprocess.STDOUT)
