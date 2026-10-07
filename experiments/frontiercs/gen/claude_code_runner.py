@@ -240,7 +240,7 @@ def main():
         best_score = sc_final
         best_file = sol
     (run / "trials_rejudged.json").write_text(json.dumps(evidence, indent=2))
-    final_score = best_score if best_score >= 0 else sc_final
+    reproduced_best = best_score if best_score >= 0 else sc_final
     # leave the best (independently re-judged) solution in solution.best.cpp and solution.cpp
     if best_file is not None:
         try:
@@ -248,13 +248,36 @@ def main():
             shutil.copy(best_file, sol)
         except Exception:
             pass
+    # What the AGENT CLAIMED (its own ./measure.sh SCORE outputs in the transcript). We do NOT credit a
+    # claim we cannot reproduce from a persisted artifact; if the agent claimed higher than we can
+    # reproduce, that reproducibility gap is itself a Claude-baseline limitation (Nous always leaves a
+    # reproducible artifact). We report the reproduced best; the gap is recorded for the paper.
+    claimed = []
+    for ln in open(run / "stream.jsonl", errors="ignore"):
+        try:
+            d = json.loads(ln)
+        except Exception:
+            continue
+        if d.get("type") == "user":
+            for c in (d.get("message", {}).get("content") or []):
+                if isinstance(c, dict) and c.get("type") == "tool_result":
+                    s = c.get("content"); s = s if isinstance(s, str) else json.dumps(s)
+                    claimed += [float(x) for x in re.findall(r"SCORE:\s*([0-9.]+)", s)]
+    agent_claimed_best = max(claimed) if claimed else None
+    repro_gap = (round(agent_claimed_best - reproduced_best, 3)
+                 if (agent_claimed_best is not None and reproduced_best is not None
+                     and agent_claimed_best > reproduced_best) else 0.0)
+    # final_score = the score we can REPRODUCE from a persisted artifact (the trusted number)
+    final_score = reproduced_best
     # cheating audit: grep transcript for forbidden access
     tx = ""
     for f in glob.glob(f"{cfg}/projects/**/*.jsonl", recursive=True):
         tx += open(f, errors="ignore").read()
     flags = sorted(set(re.findall(r"testdata|\.ans\b|gen_logs|nous_runs|/problems/\d+/testdata", tx)))
     pred = {"pid": args.pid, "agent": "claude-code", "model": args.model,
-            "final_score": final_score, "cost_est_cacheaware": cost, "cost_cli_total_usd": official,
+            "final_score": final_score, "reproduced_best": reproduced_best,
+            "agent_claimed_best": agent_claimed_best, "repro_gap": repro_gap,
+            "cost_est_cacheaware": cost, "cost_cli_total_usd": official,
             "turns": turns, "sessions": session,
             "trials_rejudged": len(evidence), "best_file": best_file.name if best_file else None,
             "elapsed_sec": round(time.time() - t0, 1), "stop_reason": stop,
