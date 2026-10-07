@@ -82,17 +82,24 @@ Research (4; CPU-only, task metric; **AIDE N/A** — adapter is algorithmic-only
 
 Score / LLM-$. Engram column = **cost-capped reruns** (corrected 2026-10-06 — the old numbers used
 $69–347, not $50; see note below). Claude column = **raw Claude Code** (`claude_code_runner.py`),
-budget-or-max rule; reruns in progress (only p5 banked so far, as a lower bound).
+budget-or-max rule, run under **sandbox isolation** (sandbox-exec deny `~/frontier` + out-of-sandbox
+judge daemon; see §5.1) and re-judged from persisted artifacts. Reruns in progress (2026-10-07).
 
 Algorithmic (our judge, 0–100):
 | task | Nous | AIDE | Engram (capped) | Claude (raw CC) |
 |---|---|---|---|---|
-| p0  | **86** / $27 | 0 / $50 | 68.5 / $66 | pending |
-| p5  | **83** / $46 | 44 / $50 | 41 / $58 | 35 / $14.8 ⚠lower bound |
-| p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | pending |
-| p15 | **100** / $32 | 0 / $50 | **100** / <$50 | pending |
-| p22 | **100** / $4.85 | 0 / $50 | **100** / $68 | pending |
+| p0  | **86** / $27 | 0 / $50 | 68.5 / $66 | 79.4 / $44 ✓iso |
+| p5  | **83** / $46 | 44 / $50 | 41 / $58 | ⟳ rerun (old 35/$14.8 was lower-bound, pre-iso) |
+| p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | **100** / $15.9 ✓clean |
+| p15 | **100** / $32 | 0 / $50 | **100** / <$50 | ⟳ running (iso) |
+| p22 | **100** / $4.85 | 0 / $50 | **100** / $68 | ⟳ running (iso) |
 | p47 | 95.5 / $51 | **96.8** / $50 | 94.2 / $56 | pending |
+
+Claude-baseline validity (✓ = re-judged from a persisted artifact + cheat-audit clean):
+- **p9 = 100** (audited clean), **p0 = 79.4** (run under sandbox isolation: 0 testdata accesses, 25
+  agent-persisted attempts, best re-judged = 79.4; concluded at $44 in a gateway slow window, ≤$50).
+- **⚠ p0's FIRST (pre-isolation) run was rejected for cheating** — it read hidden `testdata/*.in` and an
+  answer `.ans` under prompt-ban-only isolation. All Claude algorithmic runs now use the §5.1 sandbox.
 
 Research (cloudcast metric = $ transfer cost, lower better):
 | task | Nous | Engram (capped) | AIDE | baseline |

@@ -2,28 +2,20 @@
   "pid": 0,
   "agent": "claude-code",
   "model": "claude-opus-4-6",
-  "final_score": null,
-  "reproduced_best": 79.23,
-  "agent_claimed_best": 79.2238345771429,
-  "repro_gap": 0.0,
-  "cost_est_cacheaware": 47.6762,
-  "cost_cli_total_usd": null,
-  "stop_reason": "concluded_near_cap_47.7",
+  "valid": true,
+  "final_score": 79.39,
+  "reproduced_best": 79.39,
+  "agent_claimed_best": 79.57250782714287,
+  "repro_gap": 0.183,
+  "cost_est_cacheaware": 44.2641,
+  "stop_reason": "concluded_near_cap_44.3",
   "budget": 50.0,
   "max_score": 100.0,
-  "rejudge_runs": [
-    79.231,
-    74.612,
-    75.797
-  ],
-  "cheat_audit_hits": [
-    ".ans",
-    "/problems/0/testdata",
-    "testdata"
-  ],
-  "note": "Stopped at $47.7 (grinding a slow turn near cap); best reproduced by re-judging persisted solution.cpp (=agent claim 79.2, gap 0).",
+  "isolation": "sandbox-exec(deny ~/frontier)+judge-daemon",
+  "n_agent_trials": 25,
+  "cheat_audit_hits": [],
+  "cheat_audit_note": "0 testdata tool-calls, 0 permission-denied (clean under isolation)",
+  "best_file": "trials/attempt_13_score_77.cpp",
   "run_dir": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/p0/claude",
-  "valid": false,
-  "rejected_reason": "CHEATING: agent made 35 bash calls into ~/frontier/.../problems/0/testdata (read hidden .in inputs AND head -3 1.ans answer file), violating the prompt ban. Run rejected per no-cheating protocol; must be re-run under real isolation (prompt-ban insufficient).",
-  "invalid_claimed_score": 79.23
+  "rejudge_note": "reproduced 79.39 from persisted attempt_13 (audit bqlac2ci7); solution.cpp=78.5; daemon live-scored 74-79. go-judge contention caused a transient batch-ERR, not a real 0."
 }
