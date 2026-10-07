@@ -24,9 +24,11 @@ on) vs with `thinking` stripped. It also loops each variant LLM_TRIES times to s
 Usage (key is read from env, never hardcode it):
   export LLM_URL=https://ete-litellm.ai-models.vpc-int.res.ibm.com
   export LLM_KEY=sk-...            # your litellm key, sent as x-api-key
-  # optional, strongest repro: a real captured heavy request body (JSON of a /v1/messages POST)
-  export LLM_REQ_FILE=/path/to/captured_request.json
-  export LLM_TRIES=4               # attempts per variant (default 4)
+  export LLM_TRIES=20              # attempts per variant (default 4); use many to catch a bad window
+  python3 repro_thinking_stall.py
+  # STRONGEST repro: replay the bundled real Claude Code request (240KB, 95 msgs) sitting next to this
+  # script -- it induces a long think, which is what trips the gateway's ~60s cut:
+  export LLM_REQ_FILE="$(dirname "$0")/repro_fixture_request.json"
   python3 repro_thinking_stall.py
 """
 import http.client
