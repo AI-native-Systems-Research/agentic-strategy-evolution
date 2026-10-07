@@ -41,7 +41,7 @@ cumulative spend hits **$50** or the score maxes out, then report **(best score,
 | **Nous** | Our scientific-loop harness (hypothesis → experiment → analyze), wrapping the Claude Agent SDK | `gen/frontier_gen_costbudget.py <pid> --agent nous` (see §5 for the full env) |
 | **Engram** | mit-nms/Engram **as-is** (`agentic_handoff`: sequential fresh-context agents + research journal/KB), + our small Frontier-CS patch | **`gen/monitoring/engram_cost_cap.sh <alg_id> 50`** (NOT bare run_engram.sh — see cost warning below) |
 | **AIDE** | Weco aideml **as-is** (tree search: draft/debug/improve), + our small Frontier-CS adapter | `gen/aide_frontier.py <pid> --budget 50 --ceiling 99.5 --steps 80` |
-| **Claude** | **Real Claude Code CLI itself** — plain `claude -p`, one session, opus-4-6, Bash/Read/Write/Edit + a measure.sh judge, iterates to $50/max. No Nous loop, no harness. | **`gen/claude_code_runner.py <pid> --budget 50 --out-dir runs/p<pid>/claude`** |
+| **Claude** | **Real Claude Code CLI itself** — plain `claude -p`, opus-4-6, Bash/Read/Write/Edit + a measure.sh judge, iterates until **$50 or score 100** (resumes via `--continue`, never self/plateau-stops). No Nous loop, no harness. See §5.1 for exact flags/prompt/stopping. | **`gen/claude_code_runner.py <pid> --budget 50 --max-score 100 --out-dir runs/p<pid>/claude`** |
 
 Setups (where each agent lives):
 - **Nous**: `~/nous_repo` (= this repo checkout). Bin: `~/nous_repo/.venv/bin/nous`.
@@ -80,30 +80,48 @@ Research (4; CPU-only, task metric; **AIDE N/A** — adapter is algorithmic-only
 
 **$50-or-max rule, our judge (algorithmic) / task metric (research).**
 
-Algorithmic:
-| task | Nous | AIDE | Engram | Claude ⚠ |
+Score / LLM-$. Engram column = **cost-capped reruns** (corrected 2026-10-06 — the old numbers used
+$69–347, not $50; see note below). Claude column = **raw Claude Code** (`claude_code_runner.py`),
+budget-or-max rule; reruns in progress (only p5 banked so far, as a lower bound).
+
+Algorithmic (our judge, 0–100):
+| task | Nous | AIDE | Engram (capped) | Claude (raw CC) |
 |---|---|---|---|---|
-| p0  | 86 / $27 / — | 0 / $50.07 / 68m | 70 / ~$50 / — | ~26 / ~$50 / — |
-| p5  | 83 / $46 / — | 44 / $50.28 / 71m | 49 / ~$50 / — | ~39 / ~$50 / — |
-| p9  | 100 / $38 / 230m | 95 / $50.16 / 58m | 55 / ~$50 / — | 80 / ~$50 / — |
-| p15 | 100 / $32 / — | 0 / $50.41 / 49m | 20 / ~$50 / — | 0 / ~$50 / — |
-| p22 | 100 / $4.85 / 19m | 0 / $50.04 / 77m | 0 / ~$50 / — | 0 / ~$50 / — |
-| p47 | ~96 / $15–16 / — ⚠ | **TODO** | ~95 / — ⚠ | ~95 / — ⚠ |
+| p0  | **86** / $27 | 0 / $50 | 68.5 / $66 | pending |
+| p5  | **83** / $46 | 44 / $50 | 41 / $58 | 35 / $14.8 ⚠lower bound |
+| p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | pending |
+| p15 | **100** / $32 | 0 / $50 | **100** / <$50 | pending |
+| p22 | **100** / $4.85 | 0 / $50 | **100** / $68 | pending |
+| p47 | 95.5 / $51 | **96.8** / $50 | 94.2 / $56 | pending |
 
 Research (cloudcast metric = $ transfer cost, lower better):
-| task | Nous | Engram | AIDE | baseline |
+| task | Nous | Engram (capped) | AIDE | baseline |
 |---|---|---|---|---|
-| cloudcast | $626 / $9.89 / 57m | ~$624 / ~$52 / — | N/A | naive $1046 (tie at SOTA) |
+| cloudcast | **$626** / $9.89 | ~$942 / $59 | N/A | naive $1046 |
 | llm_router | **TODO** | **TODO** | N/A | |
 | llm_sql | **TODO** | **TODO** | N/A | |
 | poc_generation | **TODO** | **TODO** | N/A | |
 
-**Data-quality notes (read these — they're why the old docs looked confusing):**
-- **Costs:** Nous = exact (summed from `llm_metrics.jsonl`). AIDE = exact (in-process token accounting). **⚠ Engram costs in the tables are WRONG** — they were a `total/agents` approximation labeled `~$50`, but Engram's *actual* logged cost (its own `Total cost:` line) was **$83.6 (p0), $68.9 (p5), $347 (p47)** — it has no `$`-cap and burns ~$6–9/iteration. So the current Engram scores were achieved with **$69–347 of budget, not $50** → the whole Engram column must be re-run under `engram_cost_cap.sh` (see TODO). **Claude (current numbers) = unreliable** (old single_agent runs leaked; actual $100–207) → being replaced by raw Claude Code anyway.
-- **Durations:** AIDE = exact (`elapsed_sec`). Nous = only p9 (230m), p22 (19m), cloudcast (57m) retained; others `—`. Engram/Claude durations were not recorded.
-- **⚠ Claude column is the OLD method** (Engram `single_agent`), **not** raw Claude Code. It will be **replaced** by raw-Claude-Code reruns (see §6 TODO). Do not treat the current Claude numbers as final.
-- **⚠ p47** data is under non-$50 budgets (`nous3` for Nous, `cb10`=$10 for Engram/Claude) → **re-run under $50** for a clean row.
-- **Headline (honest):** Nous is best on every algorithmic task at ≤$50 and is the only agent that scores on the gates (p15, p22). On the easy task (p47) everyone ties ~95. cloudcast is a tie with Engram at SOTA.
+**Data-quality notes:**
+- **Costs:** Nous = exact (summed from `llm_metrics.jsonl`). AIDE = exact (in-process token accounting).
+  Engram = the $ at cost-cap kill (fires at the first 5-iter checkpoint ≥ $50, so ~$56–68). The earlier
+  Engram numbers were mislabeled `~$50` but actually cost **$69–347** (no built-in cap, ~$6–9/iter); the
+  capped reruns above are the corrected iso-cost figures. Claude = cache-aware estimate from the CLI
+  transcript (authoritative live number used for the $50 kill).
+- **Gates are NOT Nous-only.** Properly-run (capped) Engram also solves p15 and p22 to **100** (verified
+  on our judge, audited clean). The gates separate agentic-tool agents (Nous, Engram) from tree-search
+  (AIDE = 0), not Nous from Engram. The earlier "only Nous scores the gates" came from under-budgeted
+  Engram runs and is retired.
+- **Claude column = raw Claude Code** (`claude_code_runner.py`), replacing the old leaked
+  Engram-`single_agent` numbers. Only **p5 = 35 @ $14.8** is banked, and it is a **lower bound**
+  (stopped early by a gateway stall, not by $50 or the ceiling). p0/p9/p15/p22/p47 + research are in
+  progress; do not cite the Claude column until each has a clean `pred.json`.
+- **cloudcast at iso-$50:** Nous **$626** @ $9.89 beats capped Engram **~$942** @ $59 (Engram's historical
+  ~$624 needed far more budget). The old "tie at SOTA" assumed Engram's over-budget run.
+- **Headline (honest):** Nous is **best-or-tied on every task and cheapest** — it reaches its scores at
+  $4.85–$46 while AIDE/Engram burn $50–68. Outright Nous wins: **p0 (86 vs 68.5 vs 0), p5 (83 vs 41 vs
+  44), p9 (100 vs 67.8 vs 95), cloudcast ($626 vs ~$942)**. Ties Engram on the gates (p15/p22 = 100) and
+  on the easy task (p47 ~94–97). AIDE trails except p9/p47.
 
 ---
 
@@ -128,6 +146,67 @@ Two non-obvious musts (both learned the hard way, 2026-10-05/06):
 
 Baselines (Engram/AIDE/Claude) use the direct chat API or raw CLI — only Nous needs the token strip.
 
+**TODO for next Nous runs (user directive 2026-10-07): adopt the new CLI + SDK in Nous too.** The raw
+Claude baseline now uses CLI **2.1.292** (`npm i -g @anthropic-ai/claude-code@2.1.292`, wired via
+`CLAUDE_CLI_PATH=/opt/homebrew/bin/claude`) with `BUN_FEATURE_FLAG_DISABLE_IO_POOL=1` +
+`CLAUDE_CODE_MAX_RETRIES=40`, which fixed the connection-pool hang. For Nous: `pip install -U
+claude-agent-sdk` in `~/nous_repo/.venv` (refreshes its bundled `claude`, currently the older 2.1.286)
+and set the same env on the SDK child. **Re-baseline Nous paper numbers after upgrading** — do not mix
+pre/post-upgrade numbers in one comparison.
+
+---
+
+## 5.1 Claude baseline — exact setup (flags, config, prompt, stopping)
+
+The Claude baseline is the **plain bundled Claude Code CLI** (the same binary the Nous SDK spawns),
+run headless. Driver: `gen/claude_code_runner.py`. No Nous loop, no Engram journal — just the model +
+tools + the judge.
+
+**CLI invocation** (`claude_code_runner.py`):
+```
+claude -p "<prompt>" --output-format stream-json --verbose --model claude-opus-4-6 \
+  --permission-mode bypassPermissions --allowedTools Bash Read Write Edit --max-turns 200
+```
+Resumed sessions use `claude --continue -p "<push prompt>"` with the same flags.
+
+**Environment** (set by the runner; key/URL come from the shell, never hardcoded):
+- `env -u ANTHROPIC_AUTH_TOKEN` — strip the inherited fleet token, else two auth headers → gateway
+  401/silent hang.
+- `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` (+ `OPENAI_*` mirror) — the IBM litellm gateway + main key,
+  taken from the environment (laptop-direct = the `vpc-int` endpoint).
+- `BUN_FEATURE_FLAG_DISABLE_IO_POOL=1` + `CLAUDE_CODE_MAX_RETRIES=40` — **the connection-pool-hang fix**
+  (bundled `claude` is a Bun binary that reuses a keep-alive socket the gateway drops between turns;
+  disabling the IO pool forces a fresh connection per request).
+- Timeouts: first-byte 90s, idle 300s, API 300s, connect 20s. Telemetry/autoupdater disabled.
+- `CLAUDE_CONFIG_DIR=<run>/cfg` — isolates the per-turn transcript (and is git-ignored).
+
+**cwd (isolation):** only `statement.txt`, `measure.sh`, and a placeholder `solution.cpp` are placed in
+the agent's working dir. `measure.sh` compiles `solution.cpp`, runs the **official go-judge**, and
+prints `SCORE: <0-100>`.
+
+**Prompt (intent):** solve Frontier-CS algorithmic #pid; read `statement.txt`; write C++17 to
+`solution.cpp`; run `./measure.sh` to score; iterate to maximize. It is told **not to stop until it
+reaches the ceiling** (never "good enough" / "cannot improve"). Hard rules: solve algorithmically; do
+**not** read/use testdata or answer files; do **not** copy any pre-existing solution.
+
+**Stopping rule — budget OR max score, nothing else:**
+- The driver polls cache-aware cost from the transcript every 10s and **kills the instant cumulative
+  cost ≥ $50** (`stop_reason=budget`).
+- If the judge score reaches `--max-score` (100; gates are all-or-nothing but still top out at 100),
+  it stops (`stop_reason=max_score`).
+- If a `-p` session ends below the ceiling with budget remaining, the runner **resumes it
+  (`--continue`)** and pushes it to keep trying — the agent cannot self/plateau-stop.
+- Safety valve only: if a resumed session adds ~no cost (agent refuses to engage at all),
+  `stop_reason=agent_will_not_continue` (flagged; distinct from a plateau, which keeps spending and
+  runs on to budget).
+
+**Trial persistence:** every scored solution is copied to `runs/p<pid>/claude/trials/t<n>.score<s>.cpp`
+and appended to `trials.jsonl`; the best-scoring one is kept as `solution.best.cpp` and is what
+`pred.json` reports as `final_score` (best at ≤ budget, per the rule).
+
+**After stop:** re-score on our judge, run the cheat audit (grep transcript for
+`testdata|.ans|gen_logs|nous_runs`; must be `[]`), write `pred.json`.
+
 ---
 
 ## 6. TODO / remaining work
@@ -137,9 +216,11 @@ Baselines (Engram/AIDE/Claude) use the direct chat API or raw CLI — only Nous 
   cost from the CLI transcript (`CLAUDE_CONFIG_DIR/projects/**/*.jsonl`, per-turn usage incl cache),
   **kills at $50**, re-scores on our judge, and runs a **cheat audit** (greps transcript for
   testdata/.ans/gen_logs/nous_runs). Self-contained run folder `runs/p<pid>/claude/`.
-- [~] **Claude baseline (raw Claude Code) on 7 tasks — PAUSED 2026-10-06 ~19:15, resume off-peak.**
+- [~] **Claude baseline (raw Claude Code) on 7 tasks — reruns in progress (2026-10-07, off-peak).**
+  Stopping rule is now strictly **budget ($50) OR max score (100)** — the runner resumes the session
+  (`--continue`) whenever the agent yields below the ceiling with budget left, so no self/plateau-stop.
   Status: **p5 = 35.0 @ $14.8 (CLEAN audit) banked but LOWER BOUND** (stopped early by a gateway stall,
-  not $50/plateau; solution saved at runs/p5/claude/solution.score35.cost14_8.cpp — rerun for a clean
+  not $50/ceiling; solution saved at runs/p5/claude/solution.score35.cost14_8.cpp — rerun for a clean
   number). p0, p9, p15, p22, p47, cloudcast = STILL TODO.
   - **Why paused:** the IBM litellm gateway hit a sustained ~70-min bad window the evening of 2026-10-06
     where even a plain `curl` intermittently timed out (90s, 0 bytes). During bad windows the CLI cannot
@@ -152,23 +233,27 @@ Baselines (Engram/AIDE/Claude) use the direct chat API or raw CLI — only Nous 
     (same Bun binary) — this is very likely the real cure for the Nous "SDK hang".
   - **Optional:** bundled CLI is Bun build 2.1.286; npm latest is 2.1.292 (marginal). Could try upgrading
     + pointing `CLAUDE_CLI_PATH` at the newer binary (leaves the SDK-bundled one, so Nous unaffected).
-  - **MORNING LAUNCH (turnkey, runner has the fix baked in), 2 at a time:**
+  - **LAUNCH (turnkey, runner has the fix baked in), 2 at a time:**
     ```bash
     cd <repo>/agentic-strategy-evolution
-    U=https://ete-litellm.ai-models.vpc.res.ibm.com; K=$IBM_LITELLM_KEY   # sk-MbgXqi3qu85vU9r2DYy9KA
+    # Key + URL come from the environment — NEVER hardcode the key in a file. Set these env vars in your
+    # shell rc (the laptop-direct endpoint is vpc-int with the main litellm key):
+    U=$ANTHROPIC_BASE_URL; K=$ANTHROPIC_API_KEY   # e.g. U=https://ete-litellm.ai-models.vpc-int.res.ibm.com
     caffeinate -dimsu &                      # keep mac awake while running
     for p in 0 9; do                          # batch 1; then 15 22; then 47
       env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=$U ANTHROPIC_API_KEY=$K \
         OPENAI_BASE_URL=$U OPENAI_API_KEY=$K \
         ./.venv/bin/python -u experiments/frontiercs/gen/claude_code_runner.py $p \
-        --budget 50 --out-dir experiments/frontiercs/runs/p$p/claude > /tmp/p${p}_claude.out 2>&1 &
+        --budget 50 --max-score 100 --out-dir experiments/frontiercs/runs/p$p/claude \
+        > /tmp/p${p}_claude.out 2>&1 &
     done
     ```
-    Then: on finish, `cat runs/p<pid>/claude/pred.json` has final_score + cost_est + cheat_audit_hits
-    (must be `[]`); the runner auto-re-scores on our judge. cloudcast-Claude still needs a research
-    measure.sh (runner is algorithmic-only) — adapt or do last. A healthy run shows turns climbing with
-    low retries; if a run sits at the same turn with retries creeping, the gateway is in a bad window —
-    wait, don't kill (MAX_RETRIES=40 survives it).
+    Then: on finish, `cat runs/p<pid>/claude/pred.json` has final_score (best across trials) + cost_est +
+    sessions + stop_reason (`budget` | `max_score` | `agent_will_not_continue`) + cheat_audit_hits (must
+    be `[]`). All scored trials are kept under `runs/p<pid>/claude/trials/` + `trials.jsonl`; the best is
+    `solution.best.cpp`. cloudcast-Claude still needs a research measure.sh (runner is algorithmic-only) —
+    adapt or do last. A healthy run shows turns climbing with low retries; if a run sits at the same turn
+    with retries creeping, the gateway is in a bad window — wait, don't kill (MAX_RETRIES=40 survives it).
 - [ ] **Rerun the Claude baseline (raw Claude Code) on ALL tasks** (p0,p5,p9,p15,p22,p47 + research) to replace the old Engram-single_agent numbers — needed for a consistent Claude column.
 - [ ] **⚠ Engram cost-cap rerun — ALL tasks.** The current Engram numbers used $69–347 (not $50) because Engram has no cost cap and we mislabeled cost. Re-run Engram on p0/p5/p9/p15/p22/p47 + research under `gen/monitoring/engram_cost_cap.sh <alg_id> 50`, which polls Engram's real `Total cost:` and kills at $50 (cost logs every 5 iters ≈ $30, so it stops at the first checkpoint ≥ $50 ≈ $60; report best score at the ≤$50 point from the per-iteration Score progression). Discovered 2026-10-06 after a p47 run hit $347.
 - [ ] **p47**: run AIDE; re-run Nous/Engram/Claude under $50 (existing data is nous3/cb10).
