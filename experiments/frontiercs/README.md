@@ -275,6 +275,23 @@ thinking-OFF answers in seconds).
 
 ## 6. TODO / remaining work
 
+**STATUS 2026-10-08 — where we actually are:**
+- ✅ **Algorithmic (p0,p5,p9,p15,p22,p47): COMPLETE for all 4 agents** (Nous, AIDE, Engram-capped,
+  raw-Claude isolated). Table in §4 is current. Nous p0 resolved to **89.1 / $47** (clean $50 rerun,
+  patch-reproduced; preds `nous_gates/preds/p0.resume89.json` + `p0.freshvpc.json`).
+- ✅ **Claude baseline COMPLETE** (6 algorithmic + cloudcast), §5.1 sandbox-isolated, re-judged, cheat
+  audit clean. (Supersedes the [~] "in progress" item below, kept as historical.)
+- ✅ **Engram cost-capped reruns** done for algorithmic + cloudcast.
+- ⏭ **ACTUAL NEXT: research tasks beyond cloudcast.** `llm_router`, `llm_sql`, `poc_generation`
+  (+`grammar_fuzzing`) have **zero preds for any agent** — this is the real open work. Recommended first
+  two for tag diversity: **grammar_fuzzing (pl) + llm_sql (db)** (cloudcast already covers `ai`). Run
+  Nous, Engram, Claude (AIDE N/A). See the "More research tasks" item below for the exact how-to.
+- 🧷 **Stretch TODOs (nice-to-have, not blocking):**
+  - Re-confirm p5/p9/p15/p22/p47 Nous numbers with the new **patch-based** harvest (current values predate
+    it; no new runs, just re-judge stored patches) for cross-task consistency.
+  - Decide the p0 reporting convention: **89.1** (best reproduced solution, from an h-control-negative
+    arm) vs **87.9** (best excluding negative-control). Apply the same convention to every task's number.
+
 - [x] **Build the raw-Claude-Code runner** (DONE 2026-10-06): `gen/claude_code_runner.py` — plain
   `claude -p`, one session, opus-4-6, Bash/Read/Write/Edit + measure.sh judge, **auth strip**, live
   cost from the CLI transcript (`CLAUDE_CONFIG_DIR/projects/**/*.jsonl`, per-turn usage incl cache),
@@ -318,9 +335,12 @@ thinking-OFF answers in seconds).
     `solution.best.cpp`. cloudcast-Claude still needs a research measure.sh (runner is algorithmic-only) —
     adapt or do last. A healthy run shows turns climbing with low retries; if a run sits at the same turn
     with retries creeping, the gateway is in a bad window — wait, don't kill (MAX_RETRIES=40 survives it).
-- [ ] **Rerun the Claude baseline (raw Claude Code) on ALL tasks** (p0,p5,p9,p15,p22,p47 + research) to replace the old Engram-single_agent numbers — needed for a consistent Claude column.
-- [ ] **⚠ Engram cost-cap rerun — ALL tasks.** The current Engram numbers used $69–347 (not $50) because Engram has no cost cap and we mislabeled cost. Re-run Engram on p0/p5/p9/p15/p22/p47 + research under `gen/monitoring/engram_cost_cap.sh <alg_id> 50`, which polls Engram's real `Total cost:` and kills at $50 (cost logs every 5 iters ≈ $30, so it stops at the first checkpoint ≥ $50 ≈ $60; report best score at the ≤$50 point from the per-iteration Score progression). Discovered 2026-10-06 after a p47 run hit $347.
-- [ ] **p47**: run AIDE; re-run Nous/Engram/Claude under $50 (existing data is nous3/cb10).
+- [x] **Rerun the Claude baseline (raw Claude Code) on ALL algorithmic tasks** (p0,p5,p9,p15,p22,p47 +
+  cloudcast) — DONE 2026-10-08, §5.1 isolated + re-judged + cheat-audit clean. (Non-cloudcast research
+  tasks still pending as part of the research-tasks item below.)
+- [x] **⚠ Engram cost-cap rerun — algorithmic + cloudcast DONE** (research tasks pending with the item
+  above). The current Engram numbers used $69–347 (not $50) because Engram has no cost cap and we mislabeled cost. Re-run Engram on p0/p5/p9/p15/p22/p47 + research under `gen/monitoring/engram_cost_cap.sh <alg_id> 50`, which polls Engram's real `Total cost:` and kills at $50 (cost logs every 5 iters ≈ $30, so it stops at the first checkpoint ≥ $50 ≈ $60; report best score at the ≤$50 point from the per-iteration Score progression). Discovered 2026-10-06 after a p47 run hit $347.
+- [x] **p47**: DONE — AIDE 96.8, Nous 95.5, Engram 94.2, Claude 94.1 (all under $50; see §4).
 - [ ] **More research tasks (CPU-only, offline — verified feasible 2026-10-06).** Add for tag diversity
   (cloudcast=ai already done; pick ones in NEW tags to show Nous isn't class-specific):
   - **grammar_fuzzing** (tag `pl`): `python:3.11-slim`, dind:false, 300s, `datasets: []`, deps via
