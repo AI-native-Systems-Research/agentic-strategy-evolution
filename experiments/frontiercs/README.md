@@ -83,23 +83,28 @@ Research (4; CPU-only, task metric; **AIDE N/A** — adapter is algorithmic-only
 Score / LLM-$. Engram column = **cost-capped reruns** (corrected 2026-10-06 — the old numbers used
 $69–347, not $50; see note below). Claude column = **raw Claude Code** (`claude_code_runner.py`),
 budget-or-max rule, run under **sandbox isolation** (sandbox-exec deny `~/frontier` + out-of-sandbox
-judge daemon; see §5.1) and re-judged from persisted artifacts. Reruns in progress (2026-10-07).
+judge daemon; see §5.1) and re-judged from persisted artifacts. **Algorithmic column complete 2026-10-08;
+cloudcast (research) pending.**
 
 Algorithmic (our judge, 0–100):
 | task | Nous | AIDE | Engram (capped) | Claude (raw CC) |
 |---|---|---|---|---|
 | p0  | **86** / $27 | 0 / $50 | 68.5 / $66 | 79.4 / $44 ✓iso |
-| p5  | **83** / $46 | 44 / $50 | 41 / $58 | ⟳ rerun (old 35/$14.8 was lower-bound, pre-iso) |
-| p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | **100** / $15.9 ✓clean |
-| p15 | **100** / $32 | 0 / $50 | **100** / <$50 | ⟳ running (iso) |
-| p22 | **100** / $4.85 | 0 / $50 | **100** / $68 | ⟳ running (iso) |
-| p47 | 95.5 / $51 | **96.8** / $50 | 94.2 / $56 | pending |
+| p5  | **83** / $46 | 44 / $50 | 41 / $58 | 50.0 / $51 ✓iso |
+| p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | **100** / $15.9 ✓iso |
+| p15 | **100** / $32 | 0 / $50 | **100** / <$50 | **100** / $44.5 ✓iso |
+| p22 | **100** / $4.85 | 0 / $50 | **100** / $68 | 0 / $50 ✓iso |
+| p47 | 95.5 / $51 | **96.8** / $50 | 94.2 / $56 | 94.1 / $45 ✓iso |
 
-Claude-baseline validity (✓ = re-judged from a persisted artifact + cheat-audit clean):
-- **p9 = 100** (audited clean), **p0 = 79.4** (run under sandbox isolation: 0 testdata accesses, 25
-  agent-persisted attempts, best re-judged = 79.4; concluded at $44 in a gateway slow window, ≤$50).
+Claude-baseline validity — **algorithmic column COMPLETE (2026-10-08)**, all 6 run under §5.1 sandbox
+isolation, re-judged from persisted artifacts, cheat-audit **CLEAN** (0 testdata accesses):
+- Gates: Claude **cracks p15 (100)** but **fails p22 (0)** — the only algorithmic task it zeroes.
+  So the gates split 3 ways: Nous=Engram=100 on both; Claude 100/0; AIDE 0/0.
+- Headroom: p0 79.4 (vs Nous 86), p5 50.0 (beats AIDE 44 / Engram 41, below Nous 83), p9 100.
+- Easy: p47 94.1 (all agents ~94–97).
 - **⚠ p0's FIRST (pre-isolation) run was rejected for cheating** — it read hidden `testdata/*.in` and an
-  answer `.ans` under prompt-ban-only isolation. All Claude algorithmic runs now use the §5.1 sandbox.
+  answer `.ans` under prompt-ban-only isolation. That incident is why all Claude algorithmic runs now
+  use the §5.1 sandbox (sandbox-exec deny `~/frontier` + out-of-sandbox judge daemon).
 
 Research (cloudcast metric = $ transfer cost, lower better):
 | task | Nous | Engram (capped) | AIDE | baseline |
