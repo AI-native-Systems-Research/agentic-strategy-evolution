@@ -1,0 +1,48 @@
+{
+  "pid": "cloudcast",
+  "track": "research",
+  "agent": "claude-code",
+  "model": "claude-opus-4-6",
+  "metric": "total_cost ($) lower=better",
+  "valid": true,
+  "final_total_cost": 658.99,
+  "final_score": null,
+  "cost_est_cacheaware": 50.4937,
+  "stop_reason": "budget_50",
+  "best_file": "attempt_24_cost_658.99.py",
+  "n_trials": 27,
+  "cheat_audit_hits": [],
+  "rejudge_evidence": [
+    {
+      "file": "attempt_23_cost_658.99.py",
+      "rejudged_total_cost": 664.631364,
+      "score": 0.15023330541257368
+    },
+    {
+      "file": "attempt_24_cost_658.99.py",
+      "rejudged_total_cost": 658.991364,
+      "score": 0.151517134093894
+    },
+    {
+      "file": "attempt_25_cost_658.99.py",
+      "rejudged_total_cost": 658.991364,
+      "score": 0.151517134093894
+    },
+    {
+      "file": "attempt_26_cost_658.99.py",
+      "rejudged_total_cost": 659.148864,
+      "score": 0.1514809847495246
+    },
+    {
+      "file": "attempt_22_cost_693.53.py",
+      "rejudged_total_cost": 693.527364,
+      "score": 0.14398280785377376
+    },
+    {
+      "file": "attempt_19_cost_706.13.py",
+      "rejudged_total_cost": 707.923185,
+      "score": 0.14105900627301393
+    }
+  ],
+  "run_dir": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/cloudcast/claude"
+}
