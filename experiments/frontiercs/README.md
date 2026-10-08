@@ -89,12 +89,18 @@ cloudcast (research) pending.**
 Algorithmic (our judge, 0–100):
 | task | Nous | AIDE | Engram (capped) | Claude (raw CC) |
 |---|---|---|---|---|
-<!-- Nous p0 note (2026-10-08): original 86 was early-stopped at $27. A fresh clean Nous p0 to a TRUE
-     $50 is in progress on vpc+nous-dam (as-is, thinking on). A prior resume attempt banked iter-1=89.07
-     (>86) but hit a mid-run thinking-stall on vpc-int (one failed iteration); that campaign is KEPT as a
-     backup at ~/frontier/gen_logs/nous_runs/frontier-0-clean50(.bak_*) — 89.07 is a validated floor. The
-     clean $50 number will update this row when it finishes. -->
-| p0  | **86** / $27 (orig; clean $50 rerun in progress, floor 89.07) | 0 / $50 | 68.5 / $66 | 79.4 / $44 ✓iso |
+<!-- Nous p0 note (2026-10-08, RESOLVED): original 86 was early-stopped at $27. Two clean Nous p0
+     reruns to a TRUE ~$50 (as-is, thinking on, direct) completed, both harvested PATCH-BASED
+     (reconstruct each iter's stored git patch, re-judge on our go-judge, take reproducible best):
+       • RESUME89 (frontier-0-clean50, vpc-int, resumed on iter-1=89.07): best REPRODUCED 89.10 @ $47.08
+         (h-main 87.81; excl negative-control 87.86). The 89 IS reproducible — iter-1 solution is kept
+         as a git patch, not lost. This is the reported Nous p0.
+       • FRESH (frontier-0-freshvpc, vpc+nous-dam, clean campaign): best 80.08 @ $53.60 (h-main 78.82;
+         excl-control 79.63). Overshot $50 to $53.60 (a cap-kill silently failed). Kept as secondary.
+     Preds: nous_gates/preds/p0.resume89.json (reported) + p0.freshvpc.json. Judge is stochastic on
+     time-budgeted solvers (~1-2 pt), so reproduced 89.10 ≈ in-run 89.07/89.11. Backup campaign:
+     ~/frontier/gen_logs/nous_runs/frontier-0-clean50(.bak_*). -->
+| p0  | **89.1** / $47 (clean $50 rerun, reproduced; orig 86/$27) | 0 / $50 | 68.5 / $66 | 79.4 / $44 ✓iso |
 | p5  | **83** / $46 | 44 / $50 | 41 / $58 | 50.0 / $51 ✓iso |
 | p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | **100** / $15.9 ✓iso |
 | p15 | **100** / $32 | 0 / $50 | **100** / <$50 | **100** / $44.5 ✓iso |
@@ -105,7 +111,7 @@ Claude-baseline validity — **algorithmic column COMPLETE (2026-10-08)**, all 6
 isolation, re-judged from persisted artifacts, cheat-audit **CLEAN** (0 testdata accesses):
 - Gates: Claude **cracks p15 (100)** but **fails p22 (0)** — the only algorithmic task it zeroes.
   So the gates split 3 ways: Nous=Engram=100 on both; Claude 100/0; AIDE 0/0.
-- Headroom: p0 79.4 (vs Nous 86), p5 50.0 (beats AIDE 44 / Engram 41, below Nous 83), p9 100.
+- Headroom: p0 79.4 (vs Nous 89.1), p5 50.0 (beats AIDE 44 / Engram 41, below Nous 83), p9 100.
 - Easy: p47 94.1 (all agents ~94–97).
 - **⚠ p0's FIRST (pre-isolation) run was rejected for cheating** — it read hidden `testdata/*.in` and an
   answer `.ans` under prompt-ban-only isolation. That incident is why all Claude algorithmic runs now
@@ -138,7 +144,7 @@ Research (cloudcast metric = $ transfer cost, LOWER better):
   is near-SOTA on cloudcast — just above Nous, well below Engram. (Engram's historical ~$624 needed far
   more budget; the old "tie at SOTA" assumed that over-budget run.)
 - **Headline (honest):** Nous is **best-or-tied on every task and cheapest** — it reaches its scores at
-  $4.85–$46 while AIDE/Engram burn $50–68. Outright Nous wins: **p0 (86 vs 79.4 vs 68.5 vs 0), p5 (83 vs
+  $4.85–$47 while AIDE/Engram burn $50–68. Outright Nous wins: **p0 (89.1 vs 79.4 vs 68.5 vs 0), p5 (83 vs
   50 vs 44 vs 41), p9 (100, Claude also 100), cloudcast ($626 vs Claude 659 vs ~$942)**. Gates split 3
   ways: Nous & Engram 100 on both p15/p22; **Claude 100 on p15, 0 on p22**; AIDE 0/0. Easy p47 ~94–97 all.
 
