@@ -106,10 +106,10 @@ isolation, re-judged from persisted artifacts, cheat-audit **CLEAN** (0 testdata
   answer `.ans` under prompt-ban-only isolation. That incident is why all Claude algorithmic runs now
   use the §5.1 sandbox (sandbox-exec deny `~/frontier` + out-of-sandbox judge daemon).
 
-Research (cloudcast metric = $ transfer cost, lower better):
-| task | Nous | Engram (capped) | AIDE | baseline |
-|---|---|---|---|---|
-| cloudcast | **$626** / $9.89 | ~$942 / $59 | N/A | naive $1046 |
+Research (cloudcast metric = $ transfer cost, LOWER better):
+| task | Nous | Engram (capped) | Claude (isolated) | AIDE | baseline |
+|---|---|---|---|---|---|
+| cloudcast | **$626** / $9.89 | ~$942 / $59 | 659 / $50 ✓iso | N/A | naive $1046 |
 | llm_router | **TODO** | **TODO** | N/A | |
 | llm_sql | **TODO** | **TODO** | N/A | |
 | poc_generation | **TODO** | **TODO** | N/A | |
@@ -126,14 +126,16 @@ Research (cloudcast metric = $ transfer cost, lower better):
   Engram runs and is retired.
 - **Claude column = raw Claude Code** (`claude_code_runner.py`), replacing the old leaked
   Engram-`single_agent` numbers. Only **p5 = 35 @ $14.8** is banked, and it is a **lower bound**
-  (stopped early by a gateway stall, not by $50 or the ceiling). p0/p9/p15/p22/p47 + research are in
-  progress; do not cite the Claude column until each has a clean `pred.json`.
-- **cloudcast at iso-$50:** Nous **$626** @ $9.89 beats capped Engram **~$942** @ $59 (Engram's historical
-  ~$624 needed far more budget). The old "tie at SOTA" assumed Engram's over-budget run.
+  (stopped early by a gateway stall). **Superseded 2026-10-08:** the full Claude column (6 algorithmic +
+  cloudcast) is now complete under §5.1 sandbox isolation, re-judged, cheat-audit CLEAN.
+- **cloudcast (metric = total transfer $, LOWER better):** Nous **$626** @ $9.89, **Claude 659** @ $50
+  (isolated, re-judged from a persisted attempt), capped Engram **~$942** @ $59, naive $1046. So Claude
+  is near-SOTA on cloudcast — just above Nous, well below Engram. (Engram's historical ~$624 needed far
+  more budget; the old "tie at SOTA" assumed that over-budget run.)
 - **Headline (honest):** Nous is **best-or-tied on every task and cheapest** — it reaches its scores at
-  $4.85–$46 while AIDE/Engram burn $50–68. Outright Nous wins: **p0 (86 vs 68.5 vs 0), p5 (83 vs 41 vs
-  44), p9 (100 vs 67.8 vs 95), cloudcast ($626 vs ~$942)**. Ties Engram on the gates (p15/p22 = 100) and
-  on the easy task (p47 ~94–97). AIDE trails except p9/p47.
+  $4.85–$46 while AIDE/Engram burn $50–68. Outright Nous wins: **p0 (86 vs 79.4 vs 68.5 vs 0), p5 (83 vs
+  50 vs 44 vs 41), p9 (100, Claude also 100), cloudcast ($626 vs Claude 659 vs ~$942)**. Gates split 3
+  ways: Nous & Engram 100 on both p15/p22; **Claude 100 on p15, 0 on p22**; AIDE 0/0. Easy p47 ~94–97 all.
 
 ---
 
