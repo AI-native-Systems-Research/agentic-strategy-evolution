@@ -3,80 +3,81 @@
   "agent": "nous",
   "model": "claude-opus-4-6",
   "label": "freshvpc",
-  "final_score": 82.05,
-  "cost_usd": 49.94,
-  "stop_reason": "true_$50_cumulative (capped at $49.94)",
+  "final_score": 80.84,
+  "cost_usd": 53.6,
+  "stop_reason": "~$50 budget (overshot to $53.60; first cap-kill silently failed, run completed iters 14-17)",
   "n_candidates": 17,
   "best_file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution.cpp",
   "evidence": [
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution.cpp",
-      "score": 82.05237034857143
+      "score": 80.8416298157143
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_backup.cpp",
-      "score": 72.53378822285714
+      "score": 71.57122843285715
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_beam.cpp",
-      "score": 71.61214132571428
+      "score": 70.58361409571428
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_bitmap.cpp",
-      "score": 76.20012204428572
+      "score": 73.83358637857141
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_bitmap2.cpp",
-      "score": 75.71208211999999
+      "score": 74.52253041714285
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_contact.cpp",
-      "score": 74.18786227285713
+      "score": 76.32016427999999
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_diverse.cpp",
-      "score": 73.30862415714284
+      "score": 73.28682709142858
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_final.cpp",
-      "score": 74.41859643857146
+      "score": 76.48457634714286
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_hybrid.cpp",
-      "score": 74.54457772571428
+      "score": 75.54498079142856
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_partial.cpp",
-      "score": 72.56618901285711
+      "score": 71.38093564714283
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_sa_order.cpp",
-      "score": 71.57177295
+      "score": 71.56421755571427
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_split.cpp",
-      "score": 73.87346760428571
+      "score": 72.70239169857143
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_td2.cpp",
-      "score": 75.79541536857143
+      "score": 76.86346673428568
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_topdown.cpp",
-      "score": 76.8127991385714
+      "score": 74.59223790571427
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_v3.cpp",
-      "score": 77.18444848571427
+      "score": 71.63671694428571
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_waste.cpp",
-      "score": 77.03615496857142
+      "score": 74.66030011999999
     },
     {
       "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_widths.cpp",
-      "score": 73.81582666857142
+      "score": 71.64002513000001
     }
   ],
-  "note": "fresh clean Nous p0 (as-is, thinking on, direct vpc+nous-dam). Ran via cost-budget driver to iter-13/$42.27 where the driver's subprocess 4h safety timeout crashed it; then RESUMED the same campaign (nous resume) to a true cumulative $49.94 (iter-16). Harvested 17 persisted .cpp variants on our go-judge; best=solution.cpp=82.05."
+  "note": "fresh clean Nous p0 (as-is, thinking on, direct vpc+nous-dam). Driver 4h-timeout crashed it at iter-13/$42.27; resumed same campaign to budget. A first cap-kill at $49.94 silently failed, so the run completed through iter-17 at $53.60 before a confirmed kill. Harvested 17 persisted .cpp on go-judge. Reproduced-at-end best=solution.cpp=80.84 (iter-17 state). A transient peak of 82.05 was observed at the $49.94 checkpoint but the agent overwrote that solution.cpp in later iters, so it is not reproducible; per our trust-the-end-reproduction rule we report 80.84.",
+  "peak_observed_nonreproducible": 82.05
 }
