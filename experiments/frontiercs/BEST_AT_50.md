@@ -20,7 +20,7 @@ Claude column = **raw Claude Code under §5.1 sandbox isolation, re-judged, chea
 
 | task | Nous | AIDE | Engram (re-run) | Claude (isolated) | notes |
 |---|---|---|---|---|---|
-| p0  | **86** / $27 | 0 / $50 | 68.5 / $66 | 79.4 / $44 | Nous best; Claude 2nd |
+| p0  | **89.1** / $47 | 0 / $50 | 68.5 / $66 | 79.4 / $44 | Nous best (clean $50 rerun, patch-reproduced; orig 86/$27); Claude 2nd |
 | p5  | **83** / $46 | 44 / $50 | 41.0 / $58 | 50.0 / $51 | Nous best; Claude beats AIDE/Engram |
 | p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | **100** / $15.9 | Nous=Claude=100 |
 | p15 | 100 / $32 | 0 / $50 | **100** / <$50 | **100** / $44.5 | NOT a gate for tool-agents: Nous=Engram=Claude=100 |
