@@ -89,7 +89,12 @@ cloudcast (research) pending.**
 Algorithmic (our judge, 0–100):
 | task | Nous | AIDE | Engram (capped) | Claude (raw CC) |
 |---|---|---|---|---|
-| p0  | **86** / $27 | 0 / $50 | 68.5 / $66 | 79.4 / $44 ✓iso |
+<!-- Nous p0 note (2026-10-08): original 86 was early-stopped at $27. A fresh clean Nous p0 to a TRUE
+     $50 is in progress on vpc+nous-dam (as-is, thinking on). A prior resume attempt banked iter-1=89.07
+     (>86) but hit a mid-run thinking-stall on vpc-int (one failed iteration); that campaign is KEPT as a
+     backup at ~/frontier/gen_logs/nous_runs/frontier-0-clean50(.bak_*) — 89.07 is a validated floor. The
+     clean $50 number will update this row when it finishes. -->
+| p0  | **86** / $27 (orig; clean $50 rerun in progress, floor 89.07) | 0 / $50 | 68.5 / $66 | 79.4 / $44 ✓iso |
 | p5  | **83** / $46 | 44 / $50 | 41 / $58 | 50.0 / $51 ✓iso |
 | p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | **100** / $15.9 ✓iso |
 | p15 | **100** / $32 | 0 / $50 | **100** / <$50 | **100** / $44.5 ✓iso |
