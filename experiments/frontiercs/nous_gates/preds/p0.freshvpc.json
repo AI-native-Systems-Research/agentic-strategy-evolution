@@ -1,0 +1,82 @@
+{
+  "pid": 0,
+  "agent": "nous",
+  "model": "claude-opus-4-6",
+  "label": "freshvpc",
+  "final_score": 82.05,
+  "cost_usd": 49.94,
+  "stop_reason": "true_$50_cumulative (capped at $49.94)",
+  "n_candidates": 17,
+  "best_file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution.cpp",
+  "evidence": [
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution.cpp",
+      "score": 82.05237034857143
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_backup.cpp",
+      "score": 72.53378822285714
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_beam.cpp",
+      "score": 71.61214132571428
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_bitmap.cpp",
+      "score": 76.20012204428572
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_bitmap2.cpp",
+      "score": 75.71208211999999
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_contact.cpp",
+      "score": 74.18786227285713
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_diverse.cpp",
+      "score": 73.30862415714284
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_final.cpp",
+      "score": 74.41859643857146
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_hybrid.cpp",
+      "score": 74.54457772571428
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_partial.cpp",
+      "score": 72.56618901285711
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_sa_order.cpp",
+      "score": 71.57177295
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_split.cpp",
+      "score": 73.87346760428571
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_td2.cpp",
+      "score": 75.79541536857143
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_topdown.cpp",
+      "score": 76.8127991385714
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_v3.cpp",
+      "score": 77.18444848571427
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_waste.cpp",
+      "score": 77.03615496857142
+    },
+    {
+      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_widths.cpp",
+      "score": 73.81582666857142
+    }
+  ],
+  "note": "fresh clean Nous p0 (as-is, thinking on, direct vpc+nous-dam). Ran via cost-budget driver to iter-13/$42.27 where the driver's subprocess 4h safety timeout crashed it; then RESUMED the same campaign (nous resume) to a true cumulative $49.94 (iter-16). Harvested 17 persisted .cpp variants on our go-judge; best=solution.cpp=82.05."
+}
