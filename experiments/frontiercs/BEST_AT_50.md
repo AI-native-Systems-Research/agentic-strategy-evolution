@@ -15,17 +15,21 @@ caveat.
 
 Engram column = **cost-capped re-runs** (the old numbers used $69–347, not $50 — see README). Score /
 LLM-$. Engram cost is the $ at cap-kill (fires at first 5-iter checkpoint >= $50, so ~$56–68).
-Claude column = **the OLD Engram-single_agent method (invalid/leaked)** — being replaced by raw
-Claude Code (`claude_code_runner.py`); treat as PENDING, do not cite.
+Claude column = **raw Claude Code under §5.1 sandbox isolation, re-judged, cheat-audit CLEAN**
+(updated 2026-10-08; the old Engram-single_agent Claude numbers are retired).
 
-| task | Nous | AIDE | Engram (re-run) | Claude (PENDING rerun) | notes |
+| task | Nous | AIDE | Engram (re-run) | Claude (isolated) | notes |
 |---|---|---|---|---|---|
-| p0  | **86** / $27 | 0 / $50 | 68.5 / $66 | ~26 ⚠old | Nous best |
-| p5  | **83** / $46 | 44 / $50 | 41.0 / $58 | ~39 ⚠old | Nous best |
-| p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | 80 ⚠old | Nous best |
-| p15 | 100 / $32 | 0 / $50 | **100** / <$50 | 0 ⚠old | NOT a gate: Nous=Engram=100 (verified our judge) |
-| p22 | 100 / $4.85 | 0 / $50 | **100** / $68 | 0 ⚠old | NOT a gate: Nous=Engram=100 (verified) |
-| p47 | 95.5 / $51 | **96.8** / $50 | 94.2 / $56 | PENDING | easy task — all ~94–97 (honesty case) |
+| p0  | **86** / $27 | 0 / $50 | 68.5 / $66 | 79.4 / $44 | Nous best; Claude 2nd |
+| p5  | **83** / $46 | 44 / $50 | 41.0 / $58 | 50.0 / $51 | Nous best; Claude beats AIDE/Engram |
+| p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | **100** / $15.9 | Nous=Claude=100 |
+| p15 | 100 / $32 | 0 / $50 | **100** / <$50 | **100** / $44.5 | NOT a gate for tool-agents: Nous=Engram=Claude=100 |
+| p22 | 100 / $4.85 | 0 / $50 | **100** / $68 | 0 / $50 | gate: Nous=Engram=100; Claude=0; AIDE=0 |
+| p47 | 95.5 / $51 | **96.8** / $50 | 94.2 / $56 | 94.1 / $45 | easy task — all ~94–97 (honesty case) |
+
+cloudcast (research; total transfer $, LOWER better): Nous **$626**, Claude **659** (isolated, re-judged),
+capped Engram ~$942, naive $1046 — Claude near-SOTA (just above Nous, well below Engram). Gates split 3
+ways: p15 cracked by Nous/Engram/Claude (not AIDE); p22 cracked only by Nous/Engram.
 
 AIDE = Weco AIDE (arXiv:2502.13138), unmodified tree search + thin Frontier adapter (C++17 prompts,
 go-judge scoring). Ran under the same rule ($50 or ceiling); each task hit the $50 cap. Scores are the
