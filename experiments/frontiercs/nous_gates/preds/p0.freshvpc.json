@@ -3,81 +3,196 @@
   "agent": "nous",
   "model": "claude-opus-4-6",
   "label": "freshvpc",
-  "final_score": 80.84,
+  "final_score": 80.08,
   "cost_usd": 53.6,
-  "stop_reason": "~$50 budget (overshot to $53.60; first cap-kill silently failed, run completed iters 14-17)",
-  "n_candidates": 17,
-  "best_file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution.cpp",
+  "stop_reason": "true_$50_cumulative",
+  "n_candidates": 45,
+  "best_source": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-15/patches/h-control-negative.patch",
   "evidence": [
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution.cpp",
-      "score": 80.8416298157143
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-1/patches/h-control-negative.patch",
+      "score": 44.05566118000001
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_backup.cpp",
-      "score": 71.57122843285715
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-1/patches/h-main.patch",
+      "score": 70.24281889285714
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_beam.cpp",
-      "score": 70.58361409571428
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-10/patches/h-control-negative.patch",
+      "score": 74.66189414142858
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_bitmap.cpp",
-      "score": 73.83358637857141
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-10/patches/h-main.patch",
+      "score": 73.49755878285711
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_bitmap2.cpp",
-      "score": 74.52253041714285
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-11/patches/h-control-negative.patch",
+      "score": 76.82385523571428
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_contact.cpp",
-      "score": 76.32016427999999
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-11/patches/h-main.patch",
+      "score": 73.74164566428573
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_diverse.cpp",
-      "score": 73.28682709142858
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-12/patches/h-main.patch",
+      "score": 74.61116599428568
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_final.cpp",
-      "score": 76.48457634714286
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-13/patches/h-main.patch",
+      "score": 78.54116299285717
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_hybrid.cpp",
-      "score": 75.54498079142856
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-14/patches/h-control-negative.patch",
+      "score": 79.62288113714285
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_partial.cpp",
-      "score": 71.38093564714283
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-14/patches/h-main.patch",
+      "score": 78.81753707285715
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_sa_order.cpp",
-      "score": 71.56421755571427
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-15/patches/h-control-negative.patch",
+      "score": 80.08433460714286
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_split.cpp",
-      "score": 72.70239169857143
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-15/patches/h-main.patch",
+      "score": 77.98959663714288
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_td2.cpp",
-      "score": 76.86346673428568
+      "src": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-17/patches/h-main.patch",
+      "score": null,
+      "note": "patch did not reconstruct to a program"
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_topdown.cpp",
-      "score": 74.59223790571427
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-2/patches/h-ablation.patch",
+      "score": 69.97699775142856
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_v3.cpp",
-      "score": 71.63671694428571
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-2/patches/h-main.patch",
+      "score": 72.32664508857142
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_waste.cpp",
-      "score": 74.66030011999999
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-3/patches/h-control-negative.patch",
+      "score": 70.3456603085714
     },
     {
-      "file": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_widths.cpp",
-      "score": 71.64002513000001
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-3/patches/h-main.patch",
+      "score": 72.64539126571428
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-4/patches/h-control-negative.patch",
+      "score": 73.67111412857142
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-4/patches/h-main.patch",
+      "score": 73.46640562142855
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-5/patches/h-control-negative.patch",
+      "score": 72.5808265842857
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-5/patches/h-main.patch",
+      "score": 72.58649594857141
+    },
+    {
+      "src": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-6/patches/h-main.patch",
+      "score": null,
+      "note": "patch did not reconstruct to a program"
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-7/patches/h-control-negative.patch",
+      "score": 75.75436494999998
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-7/patches/h-main.patch",
+      "score": 74.59414594142856
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-8/patches/h-control-negative.patch",
+      "score": 76.78482706
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-8/patches/h-main.patch",
+      "score": 73.57902601285713
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-9/patches/h-control-negative.patch",
+      "score": 73.59086410428569
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/frontier-0-freshvpc/runs/iter-9/patches/h-main.patch",
+      "score": 73.42925741714285
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution.cpp",
+      "score": 79.63010667285715
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_backup.cpp",
+      "score": 73.70489689714283
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_beam.cpp",
+      "score": 70.47492314000002
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_bitmap.cpp",
+      "score": 72.69765256428572
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_bitmap2.cpp",
+      "score": 75.75728665142856
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_contact.cpp",
+      "score": 76.4085069385714
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_diverse.cpp",
+      "score": 72.20406668999998
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_final.cpp",
+      "score": 74.34838068571429
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_hybrid.cpp",
+      "score": 76.72226607857142
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_partial.cpp",
+      "score": 73.57877645857143
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_sa_order.cpp",
+      "score": 72.64716727714284
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_split.cpp",
+      "score": 76.03626241857143
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_td2.cpp",
+      "score": 76.83643796999998
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_topdown.cpp",
+      "score": 76.88114243999999
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_v3.cpp",
+      "score": 74.92869304
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_waste.cpp",
+      "score": 71.24168662
+    },
+    {
+      "src": "~/frontier/gen_logs/frontier_0_freshvpc_ws/solution_widths.cpp",
+      "score": 72.77902909714285
     }
   ],
-  "note": "fresh clean Nous p0 (as-is, thinking on, direct vpc+nous-dam). Driver 4h-timeout crashed it at iter-13/$42.27; resumed same campaign to budget. A first cap-kill at $49.94 silently failed, so the run completed through iter-17 at $53.60 before a confirmed kill. Harvested 17 persisted .cpp on go-judge. Reproduced-at-end best=solution.cpp=80.84 (iter-17 state). A transient peak of 82.05 was observed at the $49.94 checkpoint but the agent overwrote that solution.cpp in later iters, so it is not reproducible; per our trust-the-end-reproduction rule we report 80.84.",
-  "peak_observed_nonreproducible": 82.05
+  "note": "Patch-based reproduced-at-end harvest: each iteration's solution reconstructed from its stored git patch and re-judged on our go-judge; best taken. Judge is stochastic (randomized/time-budgeted solver), so reproduced scores vary ~1-2 pts from in-run scores.",
+  "best_h_main": 78.82,
+  "best_excluding_negative_control": 79.63
 }
