@@ -1,6 +1,36 @@
 {
-  "problem_id": "0",
+  "pid": 0,
   "agent": "nous",
-  "best_score": 86.24887360428576,
-  "solution": "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-0/runs/iter-2/inputs/h-main-v6-solution.cpp"
+  "task": "p0",
+  "runs_n": 3,
+  "runs": [
+    {
+      "label": "rr_orig",
+      "score": 86.5,
+      "cost_usd": 27,
+      "artifact": "experiments/frontiercs/engram_real/gates/solutions/p0.nous_rr.cpp",
+      "note": "re-judged 86.50 on go-judge"
+    },
+    {
+      "label": "freshvpc",
+      "score": 80.08,
+      "cost_usd": 53.6,
+      "artifact": "experiments/frontiercs/nous_gates/preds/p0.freshvpc.json"
+    },
+    {
+      "label": "resume89",
+      "score": 89.1,
+      "cost_usd": 47,
+      "artifact": "experiments/frontiercs/nous_gates/preds/p0.resume89.json"
+    }
+  ],
+  "variance": {
+    "n": 3,
+    "mean": 85.23,
+    "min": 80.08,
+    "max": 89.1,
+    "note": "configs differ slightly (orig early-stop / fresh clean-$50 / resume-on-89); all true runs re-judged on our go-judge"
+  },
+  "reported": 89.1,
+  "note": "p0 Nous variance sample (CP6). Reported headline uses best reproduced (89.1)."
 }
