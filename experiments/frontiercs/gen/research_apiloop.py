@@ -214,7 +214,8 @@ def run_engram(pid, stmt, sol, model, outdir, agents, rounds_per_agent, budget, 
         except Exception: pass
         no_imp = no_imp + 1 if (best_score is not None and best_score <= start_best) else 0
         ai += 1
-        if no_imp >= patience: stop = "patience"; break
+        # NOTE: no patience/plateau self-stop — the rule is budget OR max_score only. Keep spawning
+        # specialists (journal carries insights) until the cost budget or ceiling is hit.
     if best_code: Path(sol).write_text(best_code)
     return best_score, {"history": hist, "input_tokens": ti, "output_tokens": to,
                         "cost_usd_est": round(ti*R_IN+to*R_OUT, 4), "agents_run": ai, "stop_reason": stop}
