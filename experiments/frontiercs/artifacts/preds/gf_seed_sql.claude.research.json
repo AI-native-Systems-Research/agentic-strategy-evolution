@@ -1,0 +1,228 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "claude",
+  "label": "claude",
+  "model": "claude-opus-4-6",
+  "final_score": 55.35,
+  "best_score_inrun": 55.35,
+  "cost_usd_est": 30.9372,
+  "stop_reason": "budget",
+  "isolation": "api-loop: agent is a single LLM call per round with NO filesystem access; cannot read evaluator/ground-truth (isolated by construction)",
+  "cheat_audit_hits": [],
+  "elapsed_s": 2288.8,
+  "solution": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/research/gf_seed_sql/claude/solution.py",
+  "eval_raw": {
+    "score": 55.349840431417974,
+    "runs_successfully": 1.0,
+    "line_coverage": 96.5270684371808,
+    "branch_coverage": 85.71428571428571,
+    "lines_covered": 945,
+    "total_lines": 979,
+    "branches_covered": 240,
+    "total_branches": 280,
+    "successful_parses": 146,
+    "failed_parses": 152,
+    "total_statements": 298,
+    "coverage_score": 54.867912075172946,
+    "efficiency_bonus": 0.48192835624503116,
+    "elapsed_time": 0.00022912025451660156,
+    "time_budget": 60
+  },
+  "history": [
+    {
+      "round": 0,
+      "score": 55.349840431417974,
+      "status": "success",
+      "cost": 0.5963
+    },
+    {
+      "round": 1,
+      "score": 55.11713486785414,
+      "status": "success",
+      "cost": 1.2862
+    },
+    {
+      "round": 2,
+      "score": 20.437682339180718,
+      "status": "success",
+      "cost": 1.7308
+    },
+    {
+      "round": 3,
+      "score": 30.320161890830402,
+      "status": "success",
+      "cost": 2.1273
+    },
+    {
+      "round": 4,
+      "score": 30.395916793184366,
+      "status": "success",
+      "cost": 2.5064
+    },
+    {
+      "round": 5,
+      "score": 30.00655171582497,
+      "status": "success",
+      "cost": 3.0449
+    },
+    {
+      "round": 6,
+      "score": 27.074297342488066,
+      "status": "success",
+      "cost": 3.7437
+    },
+    {
+      "round": 7,
+      "score": 28.67933347895027,
+      "status": "success",
+      "cost": 4.7231
+    },
+    {
+      "round": 8,
+      "score": 29.210519929856893,
+      "status": "success",
+      "cost": 5.559
+    },
+    {
+      "round": 9,
+      "score": 29.332023487616922,
+      "status": "success",
+      "cost": 6.2062
+    },
+    {
+      "round": 10,
+      "score": 22.15264406472782,
+      "status": "success",
+      "cost": 7.128
+    },
+    {
+      "round": 11,
+      "score": 31.001106852620907,
+      "status": "success",
+      "cost": 7.9061
+    },
+    {
+      "round": 12,
+      "score": 29.53238267045357,
+      "status": "success",
+      "cost": 8.5784
+    },
+    {
+      "round": 13,
+      "score": 30.56227547030628,
+      "status": "success",
+      "cost": 9.4381
+    },
+    {
+      "round": 14,
+      "score": 24.171202495213535,
+      "status": "success",
+      "cost": 10.264
+    },
+    {
+      "round": 15,
+      "score": 29.289374871732416,
+      "status": "success",
+      "cost": 10.7945
+    },
+    {
+      "round": 16,
+      "score": 28.07115114029823,
+      "status": "success",
+      "cost": 11.6538
+    },
+    {
+      "round": 17,
+      "score": 30.70573579599668,
+      "status": "success",
+      "cost": 12.2174
+    },
+    {
+      "round": 18,
+      "score": 26.94186122483405,
+      "status": "success",
+      "cost": 12.7801
+    },
+    {
+      "round": 19,
+      "score": 29.028483895636633,
+      "status": "success",
+      "cost": 13.3811
+    },
+    {
+      "round": 20,
+      "score": 29.68477977769072,
+      "status": "success",
+      "cost": 14.1077
+    },
+    {
+      "round": 21,
+      "score": 29.070682049383294,
+      "status": "success",
+      "cost": 15.2882
+    },
+    {
+      "round": 22,
+      "score": 29.350786806576085,
+      "status": "success",
+      "cost": 16.0438
+    },
+    {
+      "round": 23,
+      "score": 33.468370020478005,
+      "status": "success",
+      "cost": 17.0375
+    },
+    {
+      "round": 24,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 25,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 26,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 27,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 28,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 29,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 30,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 31,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 32,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 33,
+      "score": null,
+      "status": "no_code"
+    }
+  ]
+}

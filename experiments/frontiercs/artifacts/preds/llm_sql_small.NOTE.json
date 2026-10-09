@@ -1,0 +1,8 @@
+{
+  "problem_id": "llm_sql/small",
+  "track": "research",
+  "status": "attempted_not_scored",
+  "final_score": 0.0,
+  "reason": "Hard runtime gate: evaluator forces score=0 when avg_runtime>1.0s/dataset (README's '10s' is inaccurate; evaluator.py line 160). Reference LLM solutions also exceed it (2.4-6.3s), so no agent scores >0; best observed was hit_rate~63% at ~6.7s = 0. Task excluded from the comparison as unsolvable under the enforced gate.",
+  "note": "Documented, not reported as a Nous-vs-baselines result."
+}

@@ -1,0 +1,105 @@
+{
+  "problem_id": "llm_router",
+  "track": "research",
+  "agent": "engram",
+  "label": "engram",
+  "model": "claude-opus-4-6",
+  "final_score": 52.12,
+  "best_score_inrun": 52.23,
+  "cost_usd_est": 3.0897,
+  "stop_reason": "patience",
+  "isolation": "api-loop: agent is a single LLM call per round with NO filesystem access; cannot read evaluator/ground-truth (isolated by construction)",
+  "cheat_audit_hits": [],
+  "elapsed_s": 209.8,
+  "solution": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/research/llm_router/engram/solution.py",
+  "eval_raw": {
+    "runs_successfully": 1.0,
+    "score_unbounded": 52.119443207465544,
+    "total_queries": 36132,
+    "score": 52.119443207465544,
+    "raw_score": 0.43270297686261755,
+    "accuracy": 0.5280084135945976,
+    "avg_cost": 0.0006353695782132004,
+    "oracle_raw_score": 0.8302141201704887,
+    "oracle_accuracy": 0.9007251190080815,
+    "oracle_avg_cost": 0.0004700733255839523,
+    "lambda": 150.0
+  },
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 47.231318420617576,
+      "status": "success",
+      "cost": 0.2166
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 0.0,
+      "status": "error",
+      "cost": 0.4972
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 52.22817767259356,
+      "status": "success",
+      "cost": 0.7234
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": null,
+      "status": "no_code"
+    }
+  ]
+}

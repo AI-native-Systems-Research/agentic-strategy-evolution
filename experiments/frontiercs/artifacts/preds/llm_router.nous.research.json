@@ -1,0 +1,69 @@
+{
+  "problem_id": "llm_router",
+  "track": "research",
+  "agent": "nous",
+  "label": "llm_router_iso",
+  "model": "claude-opus-4-6",
+  "final_score": 59.66,
+  "cost_usd": 51.35,
+  "n_clean_candidates": 13,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-8/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-1/patches/h-control-negative.patch",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-1/patches/h-main.patch",
+      "score": 56.6520677588836
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-2/patches/h-ablation.patch",
+      "score": 56.6520677588836
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-2/patches/h-main.patch",
+      "score": 57.26634804726598
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-3/patches/h-ablation.patch",
+      "score": 56.521658140527855
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-3/patches/h-main.patch",
+      "score": 57.48015214727064
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-4/patches/h-control-negative.patch",
+      "score": 58.30489980163919
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-4/patches/h-main.patch",
+      "score": 57.90232349067823
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-5/patches/h-main.patch",
+      "score": 58.81694874424679
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-6/patches/h-main.patch",
+      "score": 59.2835286894765
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-7/patches/h-main.patch",
+      "score": 59.61742907846488
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-llm-router-iso/runs/iter-8/patches/h-main.patch",
+      "score": 59.66381602522939
+    },
+    {
+      "src": "~/frontier/gen_logs/research_llm_router_iso_ws/solution.py",
+      "score": 59.61742907846488
+    }
+  ],
+  "elapsed_s": 13784.0
+}
