@@ -31,6 +31,22 @@ cloudcast (research; total transfer $, LOWER better): Nous **$626**, Claude **65
 capped Engram ~$942, naive $1046 — Claude near-SOTA (just above Nous, well below Engram). Gates split 3
 ways: p15 cracked by Nous/Engram/Claude (not AIDE); p22 cracked only by Nous/Engram.
 
+Research — score-metric (higher better; score / LLM-$), added 2026-10-09 (mirrors README §4):
+| task | Nous | Claude | Engram | notes |
+|---|---|---|---|---|
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | 55.4 / $30.9 | 59.1 / $3.9 | Nous best |
+| llm_router (cost-aware routing, ai)            | **59.7** / $51.4 | 55.1 / $18.2 | 52.1 / $3.1 | Nous best; trivial baseline=25.4 |
+
+> ⚠ Claude/Engram cells above are PROVISIONAL — being re-run to a TRUE $50 (the first runs stopped early:
+> budget was set to $30, round caps bound first, and Engram had a plateau-stop; all fixed per README §1).
+> Nous cells are final (sandboxed, isolated). This table + README §4 get the final api-loop numbers when
+> the $50 re-runs finish.
+>
+> **Isolation (README §0):** Nous (tool agent) ran under `sandbox-exec` + out-of-sandbox judge daemon +
+> exploit audit — the un-sandboxed first run gamed BOTH tasks (import-hook coverage 99.6; test-label
+> oracle 75.0) and was rejected. Claude/Engram (api-loop) are isolated by construction (no filesystem).
+> **llm_sql dropped:** evaluator hard-gates `avg_runtime>1.0s` (unsolvable; even references fail).
+
 AIDE = Weco AIDE (arXiv:2502.13138), unmodified tree search + thin Frontier adapter (C++17 prompts,
 go-judge scoring). Ran under the same rule ($50 or ceiling); each task hit the $50 cap. Scores are the
 best node re-scored on OUR judge (p5=44 and p9=95 reproduce on isolated re-eval; the go-judge shows
