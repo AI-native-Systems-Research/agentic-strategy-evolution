@@ -1,0 +1,118 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "engram",
+  "label": "engram",
+  "model": "claude-opus-4-6",
+  "final_score": 59.08,
+  "best_score_inrun": 59.08,
+  "cost_usd_est": 3.9337,
+  "stop_reason": "patience",
+  "isolation": "api-loop: agent is a single LLM call per round with NO filesystem access; cannot read evaluator/ground-truth (isolated by construction)",
+  "cheat_audit_hits": [],
+  "elapsed_s": 473.9,
+  "solution": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/research/gf_seed_sql/engram/solution.py",
+  "eval_raw": {
+    "score": 59.0840199913653,
+    "runs_successfully": 1.0,
+    "line_coverage": 91.21552604698671,
+    "branch_coverage": 76.07142857142857,
+    "lines_covered": 893,
+    "total_lines": 979,
+    "branches_covered": 213,
+    "total_branches": 280,
+    "successful_parses": 12,
+    "failed_parses": 34,
+    "total_statements": 46,
+    "coverage_score": 43.2287493829446,
+    "efficiency_bonus": 15.855270608420703,
+    "elapsed_time": 0.0001621246337890625,
+    "time_budget": 60
+  },
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 57.848312783522786,
+      "status": "success",
+      "cost": 0.3117
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 59.0840199913653,
+      "status": "success",
+      "cost": 0.5995
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 27.9330809751595,
+      "status": "success",
+      "cost": 0.8356
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 32.43513539877057,
+      "status": "success",
+      "cost": 1.1677
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 29.952230536888045,
+      "status": "success",
+      "cost": 1.8281
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 30.34532796483823,
+      "status": "success",
+      "cost": 2.2466
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 54.01260407573454,
+      "status": "success",
+      "cost": 2.5053
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 29.260986479226673,
+      "status": "success",
+      "cost": 2.7918
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 57.97056108387895,
+      "status": "success",
+      "cost": 3.0651
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": 30.61906625920684,
+      "status": "success",
+      "cost": 3.3283
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": 29.337479822827056,
+      "status": "success",
+      "cost": 3.5792
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": 30.07880999267254,
+      "status": "success",
+      "cost": 3.9191
+    }
+  ]
+}
