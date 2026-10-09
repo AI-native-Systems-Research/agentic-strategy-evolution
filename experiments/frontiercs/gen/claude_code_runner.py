@@ -168,6 +168,11 @@ def main():
     base_flags = ["--output-format", "stream-json", "--verbose", "--model", args.model,
                   "--permission-mode", "bypassPermissions",
                   "--allowedTools", "Bash", "Read", "Write", "Edit",
+                  # IBM LiteLLM converts ANY Bedrock request that merely *advertises* WebSearch to
+                  # NON-streaming, which then hits a hardcoded 600s timeout + 2 auto-retries (~30min of
+                  # churn, empty output). --allowedTools alone does NOT drop WebSearch from the request;
+                  # must explicitly disallow web tools so they're excluded and the request stays STREAMING.
+                  "--disallowedTools", "WebSearch", "WebFetch",
                   "--max-turns", str(args.max_turns)]
     t0 = time.time()
     sol = run / "solution.cpp"
