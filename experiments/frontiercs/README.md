@@ -167,6 +167,36 @@ Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
   (Claude, Engram) are isolated by construction (a single LLM call per round with no filesystem access),
   so they could never game these. Runners: `gen/research_apiloop.py` (Claude/Engram),
   `gen/nous_research_isolated.py` (Nous, sandboxed). AIDE N/A (algorithmic-only adapter).
+- **How to run (score-metric research, $50-or-max, 2 at a time across the two endpoints):**
+  ```bash
+  # one-time eval setup per task: build the local .evalvenv + materialize datasets
+  python3 -m venv <FR>/research/problems/<task>/.evalvenv && <...>/.evalvenv/bin/pip install coverage   # grammar_fuzzing
+  #   llm_router: pip install pandas; then bash <FR>/research/problems/llm_router/download_datasets.sh
+  # Claude / Engram (API-loop, isolated by construction) — run to a TRUE $50:
+  env -u ANTHROPIC_AUTH_TOKEN OPENAI_BASE_URL=$U OPENAI_API_KEY=$K .venv/bin/python -u \
+    experiments/frontiercs/gen/research_apiloop.py <task> --agent claude|engram \
+    --budget 50 --rounds 200 --agents 100 --rounds-per-agent 3 \
+    --out-dir experiments/frontiercs/runs/research/<slug>/<agent> --out <preds>/<slug>.<agent>.research.json
+  # Nous (SANDBOXED) — exploit-audited:
+  env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=$U ANTHROPIC_API_KEY=$K OPENAI_BASE_URL=$U OPENAI_API_KEY=$K \
+    .venv/bin/python -u experiments/frontiercs/gen/nous_research_isolated.py <task> --slug <slug>_iso --niters 8 \
+    --out <preds>/<slug>.nous.research.json
+  ```
+  Endpoints used: grammar_fuzzing api-loop on **vpc-int**, llm_router api-loop on **vpc**; Nous on the
+  opposite endpoint of each. $50 enforced by `--budget` (api-loop, in-loop) + `/tmp/iso_costcap.sh` (Nous).
+- **Verify / re-judge (IMPORTANT):** re-score a persisted solution with the problem's own evaluator,
+  **running from the problem dir** (solutions read `resources/…` via *relative* paths; wrong cwd →
+  llm_router silently falls back to a constant router ≈25.4). The eval is deterministic:
+  ```bash
+  cd <FR>/research/problems/<task> && .evalvenv/bin/python3 evaluator.py --solution <sol.py> --out /tmp/x.json
+  ```
+  Confirmed reproductions: gf Nous 86.9 / Claude 56.3 / Engram 63.8; llm_router Nous 59.7 / Claude 55.3 /
+  Engram 55.4. Sandbox-held check: grep the Nous run's `runs/iter-*/inputs/executor_log.jsonl` for
+  "Operation not permitted" (the agent tried to read the engine/datasets and was denied).
+- **Artifact paths:** preds `experiments/frontiercs/artifacts/preds/{gf_seed_sql,llm_router}.{nous,claude,engram}.research.json`
+  (+ `llm_sql_small.NOTE.json`); per-trial solutions `experiments/frontiercs/runs/research/<slug>/<agent>/trials/`;
+  Nous campaigns `~/frontier/gen_logs/nous_runs/research-<slug>-iso/` (patches under `runs/iter-*/patches/`);
+  local evaluators `~/frontier/Frontier-CS/research/problems/<task>/.evalvenv`.
 - **llm_sql dropped** (unsolvable under the enforced gate): the evaluator hard-forces score=0 when
   `avg_runtime > 1.0s`/dataset (README's "10s" is wrong, evaluator.py:160); even reference LLM solutions
   clock 2.4–6.3s. See `artifacts/preds/llm_sql_small.NOTE.json`. poc_generation still TODO.
