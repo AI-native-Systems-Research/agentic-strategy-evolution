@@ -55,6 +55,24 @@ each task until cumulative spend hits **$50** or the score maxes out, then repor
   / llm_router = score higher-better).
 - Same model everywhere: **claude-opus-4-6**. Uniform pricing for token accounting: **$15/M in, $75/M out**.
 
+### ⚠ STANDING FIX — disallow WebSearch on every Claude Code CLI run (LiteLLM gateway gotcha, 2026-10-09)
+
+The IBM LiteLLM gateway (confirmed by the LiteLLM team) converts **any Bedrock request that merely
+*advertises* the WebSearch tool** (even if never used) into a **non-streaming** request. Non-streaming
+requests hit a **hardcoded 600s timeout + 2 automatic retries**, so any turn >10 min never returns and
+churns ~30 min emitting only retry/system messages (empty output). This is the real cause of the
+"Claude Code stalls for an hour" symptom — not generic lag.
+
+**Rule:** every raw-Claude-Code run must pass `--disallowedTools WebSearch WebFetch` (NOT just
+`--allowedTools …` — that restricts what the agent may *invoke* but still advertises WebSearch in the
+request). Baked into `gen/claude_code_runner.py`. Verified 2026-10-09: with the flag, 7 turns completed
+in ~3 min vs ~60 min before; `grep WebSearch <transcript>.jsonl` returns nothing.
+
+(Fixed upstream in newer LiteLLM — only converts when WebSearch is actually *used*, and honors the 2h
+configured timeout — but IBM's deployed version isn't upgraded yet, so keep the flag. **TODO: apply the
+same disallow to the Nous SDK path** — `sdk_dispatch.py` sets no `disallowed_tools`, so long Nous turns
+can still hit this.)
+
 ---
 
 ## 2. The four agents (what each is + how to run it)
