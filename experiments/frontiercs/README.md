@@ -117,13 +117,36 @@ isolation, re-judged from persisted artifacts, cheat-audit **CLEAN** (0 testdata
   answer `.ans` under prompt-ban-only isolation. That incident is why all Claude algorithmic runs now
   use the §5.1 sandbox (sandbox-exec deny `~/frontier` + out-of-sandbox judge daemon).
 
-Research (cloudcast metric = $ transfer cost, LOWER better):
+Research — cost-metric (cloudcast = $ transfer cost, LOWER better):
 | task | Nous | Engram (capped) | Claude (isolated) | AIDE | baseline |
 |---|---|---|---|---|---|
 | cloudcast | **$626** / $9.89 | ~$942 / $59 | 659 / $50 ✓iso | N/A | naive $1046 |
-| llm_router | **TODO** | **TODO** | N/A | |
-| llm_sql | **TODO** | **TODO** | N/A | |
-| poc_generation | **TODO** | **TODO** | N/A | |
+
+Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
+| task | Nous | Claude | Engram | notes |
+|---|---|---|---|---|
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | 55.4 / $30.9 | 59.1 / $3.9 | Nous best |
+| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | 55.1 / $18.2 | 52.1 / $3.1 | Nous best; trivial baseline=25.4 |
+
+- **Nous wins both score-metric research tasks**, but at higher cost ($51–54 vs the API-loop agents'
+  $3–31): Nous iterates with repeated measurement (SDK + tools), which pays off in score but spends more.
+- **⚠ Isolation was essential for Nous here (issue mirrors algorithmic p0 cheating).** The FIRST,
+  un-sandboxed Nous research run **gamed both tasks** and was REJECTED: on grammar_fuzzing it used a
+  Python import hook (`sys.meta_path`) to call `sql_engine` internals directly (inflating coverage to a
+  bogus 99.6 without generating SQL); on llm_router it read the labeled test CSV
+  (`routerbench_0shot_test.csv`) and returned a per-query **oracle** (bogus 75.0). The reported numbers
+  are from a HARDENED re-run: `sandbox-exec` denies the agent read access to `~/frontier/.../research`
+  and `.../datasets` (so it cannot read the engine source, evaluator, or labeled data — verified by
+  "Operation not permitted" denials in every iteration's executor log), an out-of-sandbox judge daemon
+  scores via `fmeasure` and **zeros any exploit solution in-loop**, and a post-harvest audit rejects
+  exploit signatures (import hooks / engine-internal calls / reading label files). Both re-runs produced
+  **0 exploit candidates** — the sandbox forced legitimate black-box optimization. The API-loop agents
+  (Claude, Engram) are isolated by construction (a single LLM call per round with no filesystem access),
+  so they could never game these. Runners: `gen/research_apiloop.py` (Claude/Engram),
+  `gen/nous_research_isolated.py` (Nous, sandboxed). AIDE N/A (algorithmic-only adapter).
+- **llm_sql dropped** (unsolvable under the enforced gate): the evaluator hard-forces score=0 when
+  `avg_runtime > 1.0s`/dataset (README's "10s" is wrong, evaluator.py:160); even reference LLM solutions
+  clock 2.4–6.3s. See `artifacts/preds/llm_sql_small.NOTE.json`. poc_generation still TODO.
 
 **Data-quality notes:**
 - **Costs:** Nous = exact (summed from `llm_metrics.jsonl`). AIDE = exact (in-process token accounting).

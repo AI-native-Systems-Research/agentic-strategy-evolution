@@ -1,0 +1,29 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_seed_sql_iso",
+  "model": "claude-opus-4-6",
+  "final_score": 86.86,
+  "cost_usd": 53.65,
+  "n_clean_candidates": 3,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-gf-seed-sql-iso/runs/iter-5/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-seed-sql-iso/runs/iter-1/patches/h-main.patch",
+      "score": 80.68414394871215
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-seed-sql-iso/runs/iter-3/patches/h-main.patch",
+      "score": 86.10586714311225
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-seed-sql-iso/runs/iter-5/patches/h-main.patch",
+      "score": 86.85780662651288
+    }
+  ],
+  "elapsed_s": 11343.2
+}
