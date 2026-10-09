@@ -7,10 +7,26 @@ wins. Branch: **`aiopslab`** (AI-native-Systems-Research/agentic-strategy-evolut
 
 ## 0. Isolation / no-cheating protocol (MANDATORY for every run)
 
-Agents run with shell access on a shared filesystem that also holds the judge's **answer files**
-(`~/frontier/Frontier-CS/algorithmic/problems/<id>/testdata/*.ans`) and **prior solutions**
-(`~/frontier/gen_logs/nous_runs/*/**/solution.cpp`). A bash-enabled agent *could* read those and cheat.
-We do not yet hard-sandbox (no container), so isolation is enforced by **prompt-ban + mandatory audit**:
+**Every run must be isolated so the agent cannot cheat — no exceptions.** Two enforcement levels by
+agent type:
+
+- **Tool-using agents (Nous, raw Claude Code) → HARD SANDBOX.** A bash/tool agent on a shared filesystem
+  *will* find and exploit ground truth if it can read it. Proven twice: (a) algorithmic p0 read
+  `testdata/*.ans`; (b) research — un-sandboxed Nous gamed grammar_fuzzing with a `sys.meta_path` import
+  hook calling `sql_engine` internals (bogus 99.6) and gamed llm_router by reading the labeled test CSV
+  for a per-query oracle (bogus 75.0). Prompt-ban alone is INSUFFICIENT. Required: **`sandbox-exec`
+  denying read of the judge/answer/engine/dataset paths** (`~/frontier/Frontier-CS/research`,
+  `.../datasets`, algorithmic `testdata`, prior `solution.*`) + an **out-of-sandbox judge daemon** that
+  scores (so the agent measures via `fmeasure` without touching those paths) + a **post-harvest exploit
+  audit** (reject import-hooks / engine-internal calls / reading label files). Verify the sandbox held
+  by confirming "Operation not permitted" denials in the executor log. Runners:
+  `gen/nous_research_isolated.py`, algorithmic `judge_server.py` + sandbox.
+- **API-loop agents (research Claude/Engram via `research_apiloop.py`) → ISOLATED BY CONSTRUCTION.** Each
+  round is a single LLM API call that returns a complete solution from the README text only; the agent
+  process has **no filesystem access**, so it cannot read answers/engine/datasets. Nothing to sandbox.
+
+Legacy prompt-ban + audit (kept as a backstop for lower-risk cases; NOT sufficient on its own for tool
+agents):
 
 1. **Prompt ban:** every agent prompt explicitly forbids reading/using testdata, answer files, or any
    pre-existing solution (see claude_code_runner.py prompt; add the same to any new runner).
@@ -24,12 +40,19 @@ We do not yet hard-sandbox (no container), so isolation is enforced by **prompt-
 Audited so far (2026-10-06): Engram re-runs p0/p5/p9/p15/p22 = CLEAN; p15/p22=100 independently re-scored
 on our judge = confirmed legit (not cheating). Claude runner has prompt-ban + built-in audit.
 
-## 1. The rule (same for every agent)
+## 1. The rule (same for every agent) — NON-NEGOTIABLE
 
-**$50 budget, or stop early at max score.** No plateau early-stop. Run each agent on each task until
-cumulative spend hits **$50** or the score maxes out, then report **(best score, actual $ spent, wall-clock)**.
+**Every run goes until the $50 budget cap OR max score. NOTHING ELSE stops it.** Run each agent on
+each task until cumulative spend hits **$50** or the score maxes out, then report
+**(best score, actual $ spent, wall-clock)**.
+- **No other stopping condition.** No plateau/patience early-stop, no self-stop, and no secondary cap
+  (round/agent/iteration limits) that would bind *before* $50. If you set `--rounds`/`--agents`, set them
+  high enough that **the $50 budget is the binding limit**. (Lesson 2026-10-09: the first research
+  api-loop runs wrongly stopped at $3–31 because `--budget` was 30, `--rounds` bound first, and Engram
+  had a `patience` plateau-stop. All three are now removed; `research_apiloop.py` runs to budget only.)
 - Algorithmic tasks: scored on **our go-judge, 0–100** (continuous partial credit).
-- Research tasks: **task-specific metric** (e.g. cloudcast = $ transfer cost, lower is better).
+- Research tasks: **task-specific metric** (e.g. cloudcast = $ transfer cost lower-better; grammar_fuzzing
+  / llm_router = score higher-better).
 - Same model everywhere: **claude-opus-4-6**. Uniform pricing for token accounting: **$15/M in, $75/M out**.
 
 ---
