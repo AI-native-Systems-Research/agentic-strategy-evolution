@@ -148,8 +148,8 @@ Research — cost-metric (cloudcast = $ transfer cost, LOWER better):
 Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
 | task | Nous | Claude | Engram | notes |
 |---|---|---|---|---|
-| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | 55.4 / $30.9 | 59.1 / $3.9 | Nous best |
-| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | 55.1 / $18.2 | 52.1 / $3.1 | Nous best; trivial baseline=25.4 |
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | 56.3 / $50.7 | 63.8 / $50.1 | Nous best (all ran to true $50) |
+| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | 55.3 / ~$50 ⏳ | 52.2 / ~$50 ⏳ | Nous best; trivial baseline=25.4 (Claude/Engram re-running to $50) |
 
 - **Nous wins both score-metric research tasks**, but at higher cost ($51–54 vs the API-loop agents'
   $3–31): Nous iterates with repeated measurement (SDK + tools), which pays off in score but spends more.

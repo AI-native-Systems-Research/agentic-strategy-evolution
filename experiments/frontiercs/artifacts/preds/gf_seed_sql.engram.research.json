@@ -4,115 +4,755 @@
   "agent": "engram",
   "label": "engram",
   "model": "claude-opus-4-6",
-  "final_score": 59.08,
-  "best_score_inrun": 59.08,
-  "cost_usd_est": 3.9337,
-  "stop_reason": "patience",
+  "final_score": 63.76,
+  "best_score_inrun": 63.76,
+  "cost_usd_est": 50.1487,
+  "stop_reason": "budget",
   "isolation": "api-loop: agent is a single LLM call per round with NO filesystem access; cannot read evaluator/ground-truth (isolated by construction)",
   "cheat_audit_hits": [],
-  "elapsed_s": 473.9,
+  "elapsed_s": 8229.2,
   "solution": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/research/gf_seed_sql/engram/solution.py",
   "eval_raw": {
-    "score": 59.0840199913653,
+    "score": 63.75987485759737,
     "runs_successfully": 1.0,
-    "line_coverage": 91.21552604698671,
-    "branch_coverage": 76.07142857142857,
-    "lines_covered": 893,
+    "line_coverage": 95.19918283963229,
+    "branch_coverage": 82.5,
+    "lines_covered": 932,
     "total_lines": 979,
-    "branches_covered": 213,
+    "branches_covered": 231,
     "total_branches": 280,
-    "successful_parses": 12,
-    "failed_parses": 34,
-    "total_statements": 46,
-    "coverage_score": 43.2287493829446,
-    "efficiency_bonus": 15.855270608420703,
-    "elapsed_time": 0.0001621246337890625,
+    "successful_parses": 34,
+    "failed_parses": 29,
+    "total_statements": 63,
+    "coverage_score": 51.23355606617183,
+    "efficiency_bonus": 12.52631879142554,
+    "elapsed_time": 0.0014541149139404297,
     "time_budget": 60
   },
   "history": [
     {
       "agent": 0,
       "round": 0,
-      "score": 57.848312783522786,
+      "score": 56.11386245319138,
       "status": "success",
-      "cost": 0.3117
+      "cost": 0.2424
     },
     {
       "agent": 0,
       "round": 1,
-      "score": 59.0840199913653,
+      "score": 58.776998317806424,
       "status": "success",
-      "cost": 0.5995
+      "cost": 0.5665
     },
     {
       "agent": 0,
       "round": 2,
-      "score": 27.9330809751595,
+      "score": 22.372333822870647,
       "status": "success",
-      "cost": 0.8356
+      "cost": 0.9619
     },
     {
       "agent": 1,
       "round": 0,
-      "score": 32.43513539877057,
+      "score": 57.39886430762156,
       "status": "success",
-      "cost": 1.1677
+      "cost": 1.4901
     },
     {
       "agent": 1,
       "round": 1,
-      "score": 29.952230536888045,
+      "score": 19.8492021260641,
       "status": "success",
-      "cost": 1.8281
+      "cost": 1.9008
     },
     {
       "agent": 1,
       "round": 2,
-      "score": 30.34532796483823,
+      "score": 20.788041383848178,
       "status": "success",
-      "cost": 2.2466
+      "cost": 2.2989
     },
     {
       "agent": 2,
       "round": 0,
-      "score": 54.01260407573454,
+      "score": 57.734189990799095,
       "status": "success",
-      "cost": 2.5053
+      "cost": 2.8245
     },
     {
       "agent": 2,
       "round": 1,
-      "score": 29.260986479226673,
+      "score": 21.56989894214037,
       "status": "success",
-      "cost": 2.7918
+      "cost": 3.1453
     },
     {
       "agent": 2,
       "round": 2,
-      "score": 57.97056108387895,
+      "score": 18.161249662880532,
       "status": "success",
-      "cost": 3.0651
+      "cost": 3.5884
     },
     {
       "agent": 3,
       "round": 0,
-      "score": 30.61906625920684,
+      "score": 23.25318751877748,
       "status": "success",
-      "cost": 3.3283
+      "cost": 4.033
     },
     {
       "agent": 3,
       "round": 1,
-      "score": 29.337479822827056,
+      "score": 53.060648739646766,
       "status": "success",
-      "cost": 3.5792
+      "cost": 4.338
     },
     {
       "agent": 3,
       "round": 2,
-      "score": 30.07880999267254,
+      "score": 29.876962746626525,
       "status": "success",
-      "cost": 3.9191
+      "cost": 4.6731
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": 24.886780590713034,
+      "status": "success",
+      "cost": 5.024
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": 33.20343415196072,
+      "status": "success",
+      "cost": 5.2974
+    },
+    {
+      "agent": 4,
+      "round": 2,
+      "score": 24.05493192164183,
+      "status": "success",
+      "cost": 5.7147
+    },
+    {
+      "agent": 5,
+      "round": 0,
+      "score": 23.5059561172663,
+      "status": "success",
+      "cost": 6.2365
+    },
+    {
+      "agent": 5,
+      "round": 1,
+      "score": 63.75987485759737,
+      "status": "success",
+      "cost": 6.6259
+    },
+    {
+      "agent": 5,
+      "round": 2,
+      "score": 28.953908461185662,
+      "status": "success",
+      "cost": 7.1758
+    },
+    {
+      "agent": 6,
+      "round": 0,
+      "score": 30.502991053291957,
+      "status": "success",
+      "cost": 7.7628
+    },
+    {
+      "agent": 6,
+      "round": 1,
+      "score": 30.57723146737851,
+      "status": "success",
+      "cost": 8.341
+    },
+    {
+      "agent": 6,
+      "round": 2,
+      "score": 31.656184066158083,
+      "status": "success",
+      "cost": 8.7387
+    },
+    {
+      "agent": 7,
+      "round": 0,
+      "score": 31.238991207033443,
+      "status": "success",
+      "cost": 9.369
+    },
+    {
+      "agent": 7,
+      "round": 1,
+      "score": 34.225201938626164,
+      "status": "success",
+      "cost": 9.7416
+    },
+    {
+      "agent": 7,
+      "round": 2,
+      "score": 33.15126020117823,
+      "status": "success",
+      "cost": 10.0979
+    },
+    {
+      "agent": 8,
+      "round": 0,
+      "score": 29.866597495776404,
+      "status": "success",
+      "cost": 10.6329
+    },
+    {
+      "agent": 8,
+      "round": 1,
+      "score": 25.645489683354896,
+      "status": "success",
+      "cost": 11.177
+    },
+    {
+      "agent": 8,
+      "round": 2,
+      "score": 30.541730522094426,
+      "status": "success",
+      "cost": 11.4825
+    },
+    {
+      "agent": 9,
+      "round": 0,
+      "score": 31.973369053679104,
+      "status": "success",
+      "cost": 12.1155
+    },
+    {
+      "agent": 9,
+      "round": 1,
+      "score": 32.31213158622416,
+      "status": "success",
+      "cost": 12.5595
+    },
+    {
+      "agent": 9,
+      "round": 2,
+      "score": 30.761229495870396,
+      "status": "success",
+      "cost": 12.8743
+    },
+    {
+      "agent": 10,
+      "round": 0,
+      "score": 29.302974748879024,
+      "status": "success",
+      "cost": 13.2873
+    },
+    {
+      "agent": 10,
+      "round": 1,
+      "score": 31.865164470129866,
+      "status": "success",
+      "cost": 13.571
+    },
+    {
+      "agent": 10,
+      "round": 2,
+      "score": 27.98359228719858,
+      "status": "success",
+      "cost": 14.0672
+    },
+    {
+      "agent": 11,
+      "round": 0,
+      "score": 31.565011828548208,
+      "status": "success",
+      "cost": 14.442
+    },
+    {
+      "agent": 11,
+      "round": 1,
+      "score": 30.885919059435274,
+      "status": "success",
+      "cost": 14.8935
+    },
+    {
+      "agent": 11,
+      "round": 2,
+      "score": 31.330786247705692,
+      "status": "success",
+      "cost": 15.169
+    },
+    {
+      "agent": 12,
+      "round": 0,
+      "score": 61.615789001353264,
+      "status": "success",
+      "cost": 15.8874
+    },
+    {
+      "agent": 12,
+      "round": 1,
+      "score": 28.251229299059034,
+      "status": "success",
+      "cost": 16.9021
+    },
+    {
+      "agent": 12,
+      "round": 2,
+      "score": 29.442472182478507,
+      "status": "success",
+      "cost": 17.7675
+    },
+    {
+      "agent": 13,
+      "round": 0,
+      "score": 27.230988374168557,
+      "status": "success",
+      "cost": 18.4255
+    },
+    {
+      "agent": 13,
+      "round": 1,
+      "score": 28.75974329479451,
+      "status": "success",
+      "cost": 18.995
+    },
+    {
+      "agent": 13,
+      "round": 2,
+      "score": 54.67703018751833,
+      "status": "success",
+      "cost": 19.4865
+    },
+    {
+      "agent": 14,
+      "round": 0,
+      "score": 30.989771670853624,
+      "status": "success",
+      "cost": 20.0143
+    },
+    {
+      "agent": 14,
+      "round": 1,
+      "score": 35.27268886500671,
+      "status": "success",
+      "cost": 20.4354
+    },
+    {
+      "agent": 14,
+      "round": 2,
+      "score": 33.00513569766359,
+      "status": "success",
+      "cost": 20.9731
+    },
+    {
+      "agent": 15,
+      "round": 0,
+      "score": 28.42705247821747,
+      "status": "success",
+      "cost": 21.4361
+    },
+    {
+      "agent": 15,
+      "round": 1,
+      "score": 34.89758840485319,
+      "status": "success",
+      "cost": 22.0584
+    },
+    {
+      "agent": 15,
+      "round": 2,
+      "score": 0.0,
+      "status": "error",
+      "cost": 22.7238
+    },
+    {
+      "agent": 16,
+      "round": 0,
+      "score": 26.35587962323588,
+      "status": "success",
+      "cost": 23.4067
+    },
+    {
+      "agent": 16,
+      "round": 1,
+      "score": 30.329540731310278,
+      "status": "success",
+      "cost": 23.916
+    },
+    {
+      "agent": 16,
+      "round": 2,
+      "score": 34.36767143018842,
+      "status": "success",
+      "cost": 24.4121
+    },
+    {
+      "agent": 17,
+      "round": 0,
+      "score": 26.32408504934601,
+      "status": "success",
+      "cost": 24.9403
+    },
+    {
+      "agent": 17,
+      "round": 1,
+      "score": 29.806974664107802,
+      "status": "success",
+      "cost": 25.3368
+    },
+    {
+      "agent": 17,
+      "round": 2,
+      "score": 0.0,
+      "status": "error",
+      "cost": 25.8557
+    },
+    {
+      "agent": 18,
+      "round": 0,
+      "score": 30.714492375269337,
+      "status": "success",
+      "cost": 26.2403
+    },
+    {
+      "agent": 18,
+      "round": 1,
+      "score": 31.951234790013324,
+      "status": "success",
+      "cost": 26.8032
+    },
+    {
+      "agent": 18,
+      "round": 2,
+      "score": 32.14961511080738,
+      "status": "success",
+      "cost": 27.2996
+    },
+    {
+      "agent": 19,
+      "round": 0,
+      "score": 63.69343458196839,
+      "status": "success",
+      "cost": 27.919
+    },
+    {
+      "agent": 19,
+      "round": 1,
+      "score": 29.629044541902374,
+      "status": "success",
+      "cost": 28.7727
+    },
+    {
+      "agent": 19,
+      "round": 2,
+      "score": 38.1447210928652,
+      "status": "success",
+      "cost": 29.4179
+    },
+    {
+      "agent": 20,
+      "round": 0,
+      "score": 54.54954299261574,
+      "status": "success",
+      "cost": 29.744
+    },
+    {
+      "agent": 20,
+      "round": 1,
+      "score": 32.165698882489174,
+      "status": "success",
+      "cost": 30.0996
+    },
+    {
+      "agent": 20,
+      "round": 2,
+      "score": 29.64953113942676,
+      "status": "success",
+      "cost": 30.64
+    },
+    {
+      "agent": 21,
+      "round": 0,
+      "score": 31.56339393253603,
+      "status": "success",
+      "cost": 31.195
+    },
+    {
+      "agent": 21,
+      "round": 1,
+      "score": 28.600413834036555,
+      "status": "success",
+      "cost": 31.6088
+    },
+    {
+      "agent": 21,
+      "round": 2,
+      "score": 34.04907658644878,
+      "status": "success",
+      "cost": 31.8734
+    },
+    {
+      "agent": 22,
+      "round": 0,
+      "score": 28.953908461185662,
+      "status": "success",
+      "cost": 32.3855
+    },
+    {
+      "agent": 22,
+      "round": 1,
+      "score": 30.8631412944346,
+      "status": "success",
+      "cost": 32.6733
+    },
+    {
+      "agent": 22,
+      "round": 2,
+      "score": 26.871255580831367,
+      "status": "success",
+      "cost": 33.0
+    },
+    {
+      "agent": 23,
+      "round": 0,
+      "score": 28.91091408833725,
+      "status": "success",
+      "cost": 33.6238
+    },
+    {
+      "agent": 23,
+      "round": 1,
+      "score": 31.010316841754584,
+      "status": "success",
+      "cost": 34.0621
+    },
+    {
+      "agent": 23,
+      "round": 2,
+      "score": 34.78207267784454,
+      "status": "success",
+      "cost": 34.3978
+    },
+    {
+      "agent": 24,
+      "round": 0,
+      "score": 29.80570475746491,
+      "status": "success",
+      "cost": 34.9684
+    },
+    {
+      "agent": 24,
+      "round": 1,
+      "score": 27.38151449033965,
+      "status": "success",
+      "cost": 35.2552
+    },
+    {
+      "agent": 24,
+      "round": 2,
+      "score": 27.89536914476991,
+      "status": "success",
+      "cost": 35.574
+    },
+    {
+      "agent": 25,
+      "round": 0,
+      "score": 58.902386951162214,
+      "status": "success",
+      "cost": 36.0427
+    },
+    {
+      "agent": 25,
+      "round": 1,
+      "score": 53.04833541046316,
+      "status": "success",
+      "cost": 36.4355
+    },
+    {
+      "agent": 25,
+      "round": 2,
+      "score": 54.78337137536577,
+      "status": "success",
+      "cost": 36.9447
+    },
+    {
+      "agent": 26,
+      "round": 0,
+      "score": 28.86024608588773,
+      "status": "success",
+      "cost": 37.2677
+    },
+    {
+      "agent": 26,
+      "round": 1,
+      "score": 30.733859257168653,
+      "status": "success",
+      "cost": 37.5558
+    },
+    {
+      "agent": 26,
+      "round": 2,
+      "score": 28.60524248412476,
+      "status": "success",
+      "cost": 38.2412
+    },
+    {
+      "agent": 27,
+      "round": 0,
+      "score": 59.12571446600109,
+      "status": "success",
+      "cost": 38.6117
+    },
+    {
+      "agent": 27,
+      "round": 1,
+      "score": 28.643078359676927,
+      "status": "success",
+      "cost": 38.9716
+    },
+    {
+      "agent": 27,
+      "round": 2,
+      "score": 29.596937850856897,
+      "status": "success",
+      "cost": 39.3507
+    },
+    {
+      "agent": 28,
+      "round": 0,
+      "score": 62.1722283362338,
+      "status": "success",
+      "cost": 39.9999
+    },
+    {
+      "agent": 28,
+      "round": 1,
+      "score": 31.121853618757623,
+      "status": "success",
+      "cost": 40.7433
+    },
+    {
+      "agent": 28,
+      "round": 2,
+      "score": 31.12224478549414,
+      "status": "success",
+      "cost": 41.3359
+    },
+    {
+      "agent": 29,
+      "round": 0,
+      "score": 62.95325575787215,
+      "status": "success",
+      "cost": 41.985
+    },
+    {
+      "agent": 29,
+      "round": 1,
+      "score": 54.22596322905774,
+      "status": "success",
+      "cost": 42.4831
+    },
+    {
+      "agent": 29,
+      "round": 2,
+      "score": 28.691415343507764,
+      "status": "success",
+      "cost": 43.0403
+    },
+    {
+      "agent": 30,
+      "round": 0,
+      "score": 29.880101571092855,
+      "status": "success",
+      "cost": 43.5734
+    },
+    {
+      "agent": 30,
+      "round": 1,
+      "score": 32.746819144925865,
+      "status": "success",
+      "cost": 43.9853
+    },
+    {
+      "agent": 30,
+      "round": 2,
+      "score": 33.91680000406184,
+      "status": "success",
+      "cost": 44.3903
+    },
+    {
+      "agent": 31,
+      "round": 0,
+      "score": 32.32599808901328,
+      "status": "success",
+      "cost": 44.774
+    },
+    {
+      "agent": 31,
+      "round": 1,
+      "score": 29.93560791198913,
+      "status": "success",
+      "cost": 45.3998
+    },
+    {
+      "agent": 31,
+      "round": 2,
+      "score": 34.88700044004472,
+      "status": "success",
+      "cost": 45.862
+    },
+    {
+      "agent": 32,
+      "round": 0,
+      "score": 29.149278289017488,
+      "status": "success",
+      "cost": 46.3952
+    },
+    {
+      "agent": 32,
+      "round": 1,
+      "score": 26.12789438900048,
+      "status": "success",
+      "cost": 47.0084
+    },
+    {
+      "agent": 32,
+      "round": 2,
+      "score": 30.58632150541232,
+      "status": "success",
+      "cost": 47.507
+    },
+    {
+      "agent": 33,
+      "round": 0,
+      "score": 62.870010584068964,
+      "status": "success",
+      "cost": 48.1352
+    },
+    {
+      "agent": 33,
+      "round": 1,
+      "score": 30.22147631127035,
+      "status": "success",
+      "cost": 48.9335
+    },
+    {
+      "agent": 33,
+      "round": 2,
+      "score": 31.205397663271455,
+      "status": "success",
+      "cost": 49.6252
+    },
+    {
+      "agent": 34,
+      "round": 0,
+      "score": 29.226465612725047,
+      "status": "success",
+      "cost": 50.1487
     }
-  ]
+  ],
+  "best_at_50_rejudged": 63.76,
+  "best_trial": "experiments/frontiercs/runs/research/gf_seed_sql/engram/trials/attempt_16_score_63.76.py",
+  "note": "best-at-$50 = max reproduced score over all persisted trials (<=$50); run to budget (no self-stop)."
 }
