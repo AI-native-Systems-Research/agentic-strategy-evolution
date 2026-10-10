@@ -1,0 +1,34 @@
+{
+  "pid": 0,
+  "agent": "claude",
+  "task": "p0",
+  "runs_n": 3,
+  "runs": [
+    {
+      "label": "orig",
+      "score": 79.4,
+      "cost_usd": 44,
+      "artifact": "experiments/frontiercs/runs/p0/claude/solution.cpp"
+    },
+    {
+      "label": "rep1",
+      "score": 72.08,
+      "cost_usd": 53.84,
+      "artifact": "experiments/frontiercs/runs/p0/claude_rep1/solution.cpp"
+    },
+    {
+      "label": "rep2",
+      "score": 69.26,
+      "cost_usd": 54.55,
+      "artifact": "experiments/frontiercs/runs/p0/claude_rep2/solution.cpp"
+    }
+  ],
+  "variance": {
+    "n": 3,
+    "mean": 73.58,
+    "min": 69.26,
+    "max": 79.4
+  },
+  "isolation": "raw Claude Code CLI, sandbox-exec deny ~/frontier + repo artifacts/preds/engram_real/runs/gen; WebSearch/WebFetch disallowed (streaming). rep1/rep2 testdata-read attempts BLOCKED (2/4 sandbox denials), 0 repo-leak reads.",
+  "note": "p0 Claude variance sample (CP6), clean reruns 2026-10-09 after fixing WebSearch non-streaming + repo-artifact sandbox hole. best-at-$50 = max reproduced over solution.cpp+trials."
+}
