@@ -141,7 +141,15 @@ Algorithmic (our judge, 0–100):
      Preds: nous_gates/preds/p0.resume89.json (reported) + p0.freshvpc.json. Judge is stochastic on
      time-budgeted solvers (~1-2 pt), so reproduced 89.10 ≈ in-run 89.07/89.11. Backup campaign:
      ~/frontier/gen_logs/nous_runs/frontier-0-clean50(.bak_*). -->
-| p0  | **89.1** / $47 (clean $50 rerun, reproduced; orig 86/$27) | 0 / $50 | 68.5 / $66 | 79.4 / $44 ✓iso |
+<!-- p0 VARIANCE (CP6), n=3 each, 2026-10-09 — all re-judged on our go-judge:
+       Nous   {86.5, 80.1, 89.1} mean 85.2, range 80–89  (preds artifacts/preds/p0.nous.json)
+       Claude {79.4, 72.1, 69.3} mean 73.6, range 69–79  (preds artifacts/preds/p0.claude.variance.json)
+     Clean separation: Nous's WORST (80.1) > Claude's BEST (79.4), so the win is robust to run-to-run noise.
+     The 2 Claude reruns are clean: raw CLI with WebSearch/WebFetch disallowed (streaming — avoids the
+     LiteLLM 600s non-streaming timeout) + sandbox denying ~/frontier AND the repo's artifacts/engram_real/
+     nous_gates/runs/gen (prior solutions+preds). Their testdata-read attempts were BLOCKED (2/4 sandbox
+     denials), 0 repo-leak reads. (First attempt was discarded: WebSearch-stall + repo-artifact browsing.) -->
+| p0  | **89.1** / $47 (best; Nous n=3 mean 85.2 [80–89]) | 0 / $50 | 68.5 / $66 | 79.4 / $44 ✓iso (n=3 mean 73.6 [69–79]) |
 | p5  | **83** / $46 | 44 / $50 | 41 / $58 | 50.0 / $51 ✓iso |
 | p9  | **100** / $38 | 95 / $50 | 67.8 / $65 | **100** / $15.9 ✓iso |
 | p15 | **100** / $32 | 0 / $50 | **100** / <$50 | **100** / $44.5 ✓iso |
