@@ -1,0 +1,34 @@
+{
+  "pid": 0,
+  "agent": "engram",
+  "task": "p0",
+  "runs_n": 3,
+  "runs": [
+    {
+      "label": "orig",
+      "score": 68.5,
+      "cost_usd": 66,
+      "note": "existing capped rerun"
+    },
+    {
+      "label": "run1",
+      "score": 74.14,
+      "cost_usd": 50.98,
+      "artifact": "engram_repo .../give_files_False_run2 (best snapshot re-judged)"
+    },
+    {
+      "label": "run2",
+      "score": 71.43,
+      "cost_usd": 66.39,
+      "artifact": "engram_repo .../give_files_False_run3 (best snapshot re-judged)"
+    }
+  ],
+  "variance": {
+    "n": 3,
+    "mean": 71.36,
+    "min": 68.5,
+    "max": 74.14
+  },
+  "isolation": "real Engram (agentic_handoff) cost-capped $50 (overshoots to ~$66 at 5-iter checkpoint granularity). NOT hard-sandboxed (scoring baked into harness); agents emit code (no interactive shell), so cheat-vector = generated solution reading answers -> AUDITED: 0 testdata/.ans/artifact reads in any snapshot (both runs clean). best-at-$50 = max reproduced over snapshots on our go-judge.",
+  "note": "p0 Engram variance (CP6), 2026-10-10."
+}
