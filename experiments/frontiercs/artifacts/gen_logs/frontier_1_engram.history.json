@@ -1,0 +1,65 @@
+[
+  {
+    "agent": 0,
+    "round": 0,
+    "score": 22.169500000000003,
+    "status": "success",
+    "plan": "Branch and bound with LP relaxation upper bounds on the 2-constraint bounded knapsack with 12 item types, using greedy fractional relaxation for bounding and DFS with pruning."
+  },
+  {
+    "agent": 0,
+    "round": 1,
+    "score": 0,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 0,
+    "round": 2,
+    "score": 0,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 1,
+    "round": 0,
+    "score": 6.0275,
+    "status": "success",
+    "plan": "Branch-and-bound with Lagrangian relaxation bounding (binary search over \u03bb to get tight dual bound from combining the 2 constraints), with items sorted by efficiency and aggressive pruning, plus time-limited search."
+  },
+  {
+    "agent": 1,
+    "round": 1,
+    "score": 0,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 1,
+    "round": 2,
+    "score": 0,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 2,
+    "round": 0,
+    "score": 89.99499999999999,
+    "status": "success",
+    "plan": "Implement branch-and-bound with proper 2D Lagrangian relaxation bounding (binary search over lambda to get tight dual bound combining both constraints), seed with a strong greedy initial solution, handle high-quantity items by computing exact max-take at each node, sort items to maximize pruning, an"
+  },
+  {
+    "agent": 2,
+    "round": 1,
+    "score": 0,
+    "status": "success",
+    "plan": null
+  },
+  {
+    "agent": 2,
+    "round": 2,
+    "score": 98.31299999999999,
+    "status": "success",
+    "plan": null
+  }
+]

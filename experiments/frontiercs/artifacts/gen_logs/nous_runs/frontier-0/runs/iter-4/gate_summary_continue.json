@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After 4 iterations, the skyline packer with lookahead (K=n/4) reliably scores ~82-83 points. The latest v10 optimizations (unified time allocation, early termination, random restarts) did not produce a statistically significant improvement over v7 (+0.67 pts, p=0.72), but dramatically reduced run-to-run variance (std 0.11 vs 2.70). We are in diminishing-returns territory for greedy skyline packing; further gains require either faster inner-loop execution (to explore more widths) or a fundamentally different placement strategy.",
+  "key_points": [
+    "Best reliable score: ~82.7 (v10) or ~82.0 (v7), both within noise of each other. The iter-1\u2192iter-2 lookahead jump was +11 pts; every subsequent iteration has yielded <1 pt of mean improvement.",
+    "v10's key win is variance reduction (std 0.11 vs 2.70 for v7), meaning it reliably hits ~82.7 regardless of system load. This makes it the preferred deployment version even though the mean improvement is small.",
+    "Approaches that failed: coarse-to-fine width search (scored 68, K=1 doesn't predict K=n/4 quality), gap-filling (+0.5 pts, not significant), gravity compaction (overhead, no gain), extra orderings (diluted time budget).",
+    "The score ceiling for greedy skyline packing on this hardware appears to be ~83-86. The reference solution (identical algorithm) scores ~86 on faster machines, confirming the bottleneck is time budget utilization, not algorithmic design.",
+    "Highest-leverage next step: low-point (valley) targeting in the inner placement loop. Currently all skyline positions are evaluated; restricting to valleys + small margin could give ~6x speedup for large instances, enabling dramatically more width exploration within the 2s budget. This is the clearest remaining path to breaking the ~83 plateau without changing the fundamental algorithm."
+  ]
+}

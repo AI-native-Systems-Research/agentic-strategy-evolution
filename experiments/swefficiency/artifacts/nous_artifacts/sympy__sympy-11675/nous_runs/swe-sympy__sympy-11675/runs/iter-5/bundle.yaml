@@ -1,0 +1,58 @@
+metadata:
+  iteration: 5
+  family: "pqa-inner-loop-micro-optimizations"
+  research_question: "Can eliminating set-based period detection, unrolling the first PQa iteration, and using the Q_prev recurrence further reduce diop_DN runtime beyond iter-4's 190,335x campaign speedup?"
+  complexity_tier: 2
+  tier_justification: "iter 5, single mechanism (inner loop efficiency) + ablation to isolate Q_prev contribution"
+
+arms:
+  - type: h-main
+    prediction: "Combining set elimination (counter-based period bound), first-iteration unrolling, Q_prev recurrence (replacing P²/Q division), and early Q_i check will reduce direct warm-call time from ~0.116ms to ~0.078ms (~1.49x incremental speedup), yielding a campaign speedup of ~734,000x over the 57.3288s baseline. The harness mean will decrease from ~0.291ms to ~0.230ms (~1.27x) due to fixed fork+IPC overhead."
+    mechanism: "Three independent sources of overhead are eliminated from the 231-iteration PQa inner loop: (1) Set operations — 231 tuple allocations (heap alloc per iteration) plus set hash/lookup/insert are replaced by a C-level range iterator with integer comparison, saving ~28μs. (2) First-iteration unrolling removes the j counter and 230 j!=0 comparisons from the hot path, saving ~3μs. (3) The Q_prev recurrence Q_{i+1} = Q_{i-1} + a_i·(P_i - P_{i+1}) replaces Q_{i+1} = (D - P_{i+1}²)/Q_i — eliminating one integer square (P² ≈ 34-bit) and one integer division per iteration, replaced by two multiplications and one addition. CPython integer division is slower than multiplication even for machine-word-sized integers, saving ~10μs across 231 iterations."
+    diagnostic: "If the prediction is wrong, profile the inner loop to check: (a) whether CPython's range iterator overhead is higher than expected, (b) whether the Q_prev recurrence creates more intermediate objects than the P²/Q formula, (c) whether the fork overhead has changed. If h-main shows no improvement over h-ablation, the Q_prev recurrence may add assignment overhead that cancels the division savings."
+    code_changes:
+      - file: "sympy/solvers/diophantine.py"
+        intent: "In diop_DN's |N|>1 branch (line ~1177-1241), replace the set-based while-True PQa loop with: (a) a Q_prev variable initialized to (D-z²)/abs_m before the loop, (b) the first iteration unrolled before the for-range loop, (c) a for-range loop with max_period=4*isqrt(D) counter bound, (d) Q_i==±1 check moved to the top of the loop body (before a_i computation), (e) Q_prev recurrence Q_new = Q_prev + a_i*(P_i - P_new) replacing Q_i = (_D - P_i*P_i)//Q_i."
+        rationale: "Eliminates tuple+set overhead (231 per call), j counter overhead (231 checks), and replaces P²+division with multiply+add in the innermost loop that consumes 87% of per-call time."
+
+  - type: h-ablation
+    prediction: "Set elimination + first-iteration unrolling alone (without Q_prev recurrence) will reduce direct warm-call time from ~0.116ms to ~0.088ms (~1.32x incremental speedup), which is measurably slower than h-main's ~0.078ms. This isolates the Q_prev contribution as ~10μs (0.088ms - 0.078ms), confirming the Q_prev recurrence provides ~1.13x additional speedup on top of set elimination."
+    mechanism: "The set elimination removes 231 tuple allocations and set hash/lookup/insert operations. The unrolling removes the j counter and 230 unnecessary j!=0 checks. Without the Q_prev recurrence, the P²/Q formula is retained. The difference between h-ablation and h-main isolates the contribution of replacing division with multiplication in the Q update."
+    diagnostic: "If h-ablation equals or beats h-main, the Q_prev recurrence's extra variable assignments (Q_prev tracking) may offset the savings from avoiding division. Check whether the intermediate P_new, Q_new variables in the Q_prev path create more CPython object allocations than the P²/Q path."
+    code_changes:
+      - file: "sympy/solvers/diophantine.py"
+        intent: "In diop_DN's |N|>1 branch, apply the same set elimination, unrolling, and early Q_i check as h-main, but keep the original Q_i update formula: P_i = a_i * Q_i - P_i; Q_i = (_D - P_i * P_i) // Q_i. Do NOT introduce Q_prev tracking."
+        rationale: "Isolates the Q_prev recurrence's contribution by removing it while keeping all other optimizations identical to h-main."
+
+experiment_spec:
+  preflight_commands:
+    - "pip install mpmath pytest 2>/dev/null || true"
+    - "cd /testbed && sed -i 's/from collections import Mapping/from collections.abc import Mapping/' sympy/core/basic.py"
+    - "cd /testbed && sed -i 's/from collections import Callable/from collections.abc import Callable/' sympy/plotting/plot.py"
+    - "cd /testbed && sed -i 's/isinstance(googol, collections.Callable)/isinstance(googol, collections.abc.Callable)/' sympy/plotting/plot.py"
+    - "cd /testbed && sed -i 's/collections.Callable/collections.abc.Callable/' sympy/matrices/matrices.py"
+  verified_parameters:
+    D: 15591784605
+    N: -20
+    campaign_baseline_mean: 57.3288
+    workload_repeat: 5
+    workload_number: 1
+    max_period_formula: "4 * isqrt(D)"
+    cf_period_actual: 154
+    inner_loop_iterations_per_call: 231
+    z_values_per_call: 3
+  unlocked_parameters_audit:
+    - name: "max_period bound multiplier"
+      default_value: 4
+      justification: "4*isqrt(D) = 499,468 is 3243x the actual CF period of 154; generous safety margin with negligible cost since for-range exits early via break"
+    - name: "sqrt_mod brute-force threshold"
+      default_value: 100000
+      justification: "Inherited from iter-4; max abs_m in test suite is 27, well below threshold"
+    - name: "warm-up iterations before timing"
+      default_value: 10
+      justification: "Standard practice for CPython JIT-free benchmarking; 10 iterations ensure stable allocator/cache state"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 0.5
+      h-ablation: 0.5
+    observation_method: "Direct timing of diop_DN calls during design exploration; each arm's workload harness completes in <1s"

@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 established a baseline score of 55.45/100 using strip-based tour construction + 2-opt local search + carrot prime placement, confirming that geometric optimization (not the carrot penalty) drives ~95% of improvement. The identity tour scores exactly 0, validating the checker baseline. The score is near the top of the predicted 45-60 range, but significant room for improvement remains.",
+  "key_points": [
+    "Main arm scored 55.45 (predicted 45-60, confirmed). Control arm scored 0 (predicted 0, confirmed). Both hypotheses validated.",
+    "Geometric optimization (strip construction + 2-opt) is the dominant factor; the carrot/prime penalty affects only ~N/10 steps and contributes ~2-5% of total improvement. This was a key discovery that redirects optimization effort.",
+    "Time budget (2.5s) is the binding constraint for large N (up to 200K cities). 2-opt with adaptive window size 30-50 barely fits. Wider windows improve quality but risk timeout.",
+    "Test data includes both scattered cities (unique x, N=5K-40K) and grid-like layouts (shared x, N=200K). The algorithm must handle both distributions. Strip construction is suboptimal for grids.",
+    "Multiple alternative approaches were tried within iteration 1 (ILS/double-bridge, or-opt, edge caching, wider 2-opt windows) \u2014 none beat the base 2-opt approach, suggesting we're at a local optimum for this strategy class.",
+    "Next iteration should investigate: (1) nearest-neighbor construction as alternative to strip-based, (2) spatial-indexed 2-opt using grid/k-d tree for neighbor lookup instead of tour-order windows, (3) ablation to quantify carrot vs geometric contributions precisely, (4) optimizing the return-to-city-0 edge which is often the longest single edge in the tour."
+  ]
+}

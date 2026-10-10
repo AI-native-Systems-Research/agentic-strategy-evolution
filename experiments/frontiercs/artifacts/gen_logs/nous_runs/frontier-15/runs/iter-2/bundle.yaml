@@ -1,0 +1,105 @@
+metadata:
+  iteration: 2
+  family: "prefix-suffix-sort"
+  research_question: "Can the circular buffer rotation algorithm be improved by optimizing the endgame, and is Op2 (prefix restoration) essential?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (circular buffer rotation) + ablation of the prefix-restoration step"
+
+# Arms chosen:
+# - h-main: Optimized last-3-element endgame reduces worst-case ops from 2n+1 to 2n-2.
+#   Validated with BFS-derived sequences across n=5..1000.
+# - h-ablation: Remove Op2 (prefix restoration) to show the 2-op mechanism breaks
+#   without the invariant repair step. Tests mechanism necessity, not just sufficiency.
+#
+# Skipped arms:
+# - h-control-negative: iter-1 already confirmed score 0 for no-operation baseline;
+#   a second negative control would be redundant.
+# - h-dose-response: no continuous knob to sweep (algorithm is discrete/structural).
+# - h-robustness: all test cases are n=1000; no regime variation to test against.
+
+arms:
+  - type: h-main
+    prediction: >
+      The optimized algorithm with BFS-derived last-3-element endgame will achieve
+      score 100 on all 10 test cases, matching the iter-1 result. The optimization
+      reduces worst-case operations from 2n+1 to 2n-2 (1998 for n=1000) by replacing
+      the 5-op two-element endgame with case-specific 2-4 operation sequences for
+      the last 3 elements. Average operation count will decrease by ~1.4 ops compared
+      to the iter-1 algorithm.
+    mechanism: >
+      BFS exploration of the prefix-suffix swap group reveals that permutations of
+      3 elements at the tail of a sorted prefix can be resolved in 2-4 operations
+      (compared to the standard 2+5=7 worst-case of processing one element then
+      applying the 5-op endgame). The sequences exploit the full operation space
+      (x up to n-3, y up to n-2) rather than restricting to small x,y values.
+      Key patterns: [n-1,n,n-2] and [n,n-2,n-1] need only 2 ops each using
+      (cf,2)/(1,cf) and (cf,1)/(2,cf) respectively, where cf=n-3.
+    diagnostic: >
+      If score < 100: check that the last-3 special case sequences are applied
+      with correct cf value (should be n-3 when entering the endgame). Verify
+      the main loop terminates at targ=n-3 (not n-2). If operations exceed 2001:
+      trace which endgame configuration was encountered and its operation count.
+    code_changes:
+      - file: "solution.cpp"
+        intent: >
+          Modify the main sorting loop to terminate at targ=n-3 (instead of n-2).
+          Replace the 5-operation endgame block with a 6-way case dispatch on the
+          permutation of {n-2, n-1, n} at positions [n-3, n-2, n-1], applying the
+          BFS-optimal operation sequence for each case: [n-2,n,n-1]->4ops,
+          [n-1,n-2,n]->4ops, [n-1,n,n-2]->2ops, [n,n-2,n-1]->2ops,
+          [n,n-1,n-2]->3ops, [n-2,n-1,n]->0ops (already sorted).
+          Keep the n=3 and n=4 special cases unchanged.
+        rationale: >
+          BFS analysis proves these sequences are optimal for each configuration.
+          The optimization reduces worst-case from 2n+1 to 2n-2 without changing
+          the core circular buffer rotation mechanism.
+
+  - type: h-ablation
+    prediction: >
+      Removing Op2 (the prefix-restoration step) from the 2-op rotation scheme
+      will cause the algorithm to fail to produce a sorted permutation, resulting
+      in score 0 on all test cases. The sorted-prefix invariant breaks after the
+      first Op1-only placement, causing all subsequent element searches and
+      placements to operate on incorrect position assumptions.
+    mechanism: >
+      Op1 (apply(cf, l-d1)) rotates the buffer and moves the sorted prefix
+      [1..cf] from positions [0..cf-1] to positions [n-cf..n-1]. Without Op2
+      to restore the prefix to [0..cf-1], the algorithm's loop variable cf no
+      longer tracks the actual boundary of the sorted region. The linear scan
+      for element targ starting at position cf finds incorrect elements, and
+      the computed rotation distance d = j - cf is meaningless. The result is
+      a scrambled permutation, not the identity.
+    diagnostic: >
+      If score > 0: some test permutations may have elements already in place
+      such that Op1 is never needed and the ablation is vacuous. Check how many
+      elements were actually displaced by Op1 vs skipped. If most were skipped,
+      the test doesn't exercise the ablation effectively.
+    code_changes:
+      - file: "solution.cpp"
+        intent: >
+          In the main sorting loop (for targ=2 to n-2), keep Op1
+          (apply(cf, l-d1)) but REMOVE Op2 (apply(d2, cf)). The loop body
+          becomes: find element, compute d and d1, apply Op1 only, increment cf.
+          Keep the endgame block (it won't help since the prefix is already disrupted).
+        rationale: >
+          This isolates the contribution of Op2 to the algorithm's correctness.
+          Without prefix restoration, the sorted-prefix invariant breaks, and
+          the algorithm degenerates into a sequence of independent rotations
+          that do not converge to a sorted state.
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -std=c++17 -o solution solution.cpp"
+  verified_parameters:
+    n: 1000
+    num_test_cases: 10
+    time_limit_seconds: 1
+    max_operations: 4000
+    best_operations_benchmark: 2001
+  unlocked_parameters_audit:
+    - name: "compiler_optimization_level"
+      default_value: "-O2"
+      justification: "O2 is standard for competitive programming; O3 unlikely to change algorithmic op count"
+    - name: "cpp_standard"
+      default_value: "c++17"
+      justification: "Solution uses only basic STL; any C++11+ standard suffices"

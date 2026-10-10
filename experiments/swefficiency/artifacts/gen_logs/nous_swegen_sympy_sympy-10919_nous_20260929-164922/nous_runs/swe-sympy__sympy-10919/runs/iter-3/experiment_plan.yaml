@@ -1,0 +1,48 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+
+setup:
+  - cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && git restore --staged sympy/ntheory/partitions_.py 2>/dev/null; git checkout -- sympy/ntheory/partitions_.py; rm -f sympy/ntheory/_kloosterman.c sympy/ntheory/_kloosterman.so'"
+  - cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+
+arms:
+  - arm_id: "baseline"
+    conditions:
+      - name: "baseline-run1"
+        cmd: "docker cp /tmp/partitions_baseline.py swegen_sympy_sympy-10919_nous:/testbed/sympy/ntheory/partitions_.py && docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "results/baseline/run1.txt"
+      - name: "baseline-run2"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "results/baseline/run2.txt"
+      - name: "baseline-run3"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "results/baseline/run3.txt"
+
+  - arm_id: "h-main"
+    conditions:
+      - name: "hmain-setup-and-test"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && git restore --staged sympy/ntheory/partitions_.py 2>/dev/null; git checkout -- sympy/ntheory/partitions_.py; rm -f sympy/ntheory/_kloosterman.c sympy/ntheory/_kloosterman.so' && docker cp /tmp/partitions_hmain.py swegen_sympy_sympy-10919_nous:/testbed/sympy/ntheory/partitions_.py && docker cp /tmp/_kloosterman.c swegen_sympy_sympy-10919_nous:/testbed/sympy/ntheory/_kloosterman.c && docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed/sympy/ntheory && gcc -O3 -shared -fPIC -lm -o _kloosterman.so _kloosterman.c' && docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+      - name: "hmain-run1"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "results/h-main/run1.txt"
+      - name: "hmain-run2"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "results/h-main/run2.txt"
+      - name: "hmain-run3"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "results/h-main/run3.txt"
+
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "hablation-setup-and-test"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && git restore --staged sympy/ntheory/partitions_.py 2>/dev/null; git checkout -- sympy/ntheory/partitions_.py; rm -f sympy/ntheory/_kloosterman.c sympy/ntheory/_kloosterman.so' && docker cp /tmp/partitions_ablation.py swegen_sympy_sympy-10919_nous:/testbed/sympy/ntheory/partitions_.py && docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+      - name: "hablation-run1"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "results/h-ablation/run1.txt"
+      - name: "hablation-run2"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "results/h-ablation/run2.txt"
+      - name: "hablation-run3"
+        cmd: "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python /tmp/workload.py'"
+        output: "results/h-ablation/run3.txt"

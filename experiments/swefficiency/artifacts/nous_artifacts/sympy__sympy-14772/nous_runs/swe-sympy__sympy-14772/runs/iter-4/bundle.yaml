@@ -1,0 +1,98 @@
+metadata:
+  iteration: 4
+  family: "legendre-modpow-optimization"
+  research_question: "Does the confirmed three-arg pow optimization in _legendre produce consistent ~3,500-4,500x speedup at full production scale, and is the speedup mechanism-specific (absent when the same optimization class is applied outside the workload path)?"
+  complexity_tier: 1
+  tier_justification: "iter 4 — tier 1 confirmed in iters 1-3 with high confidence; definitive production run with mechanism-specificity control"
+
+arms:
+  - type: h-main
+    prediction: >
+      Replacing pow(a%p, (p-1)//2) % p with pow(a, (p-1)//2, p) in _legendre
+      will decrease workload mean from ~0.069s to ~0.000015-0.000022s, yielding
+      a speedup of ~3,500-4,500x (0.0743 / mean) consistently across all 5
+      seeds. All 38 covering tests will pass.
+    mechanism: >
+      Python's two-argument pow(base, exp) computes the full integer base^exp
+      using arbitrary-precision arithmetic, creating an intermediate of ~1.1
+      million bits (65535 * ~17 bits per digit of base). The three-argument
+      pow(base, exp, mod) delegates to CPython's C-level modular exponentiation
+      (square-and-multiply with mod reduction at each step), keeping all
+      intermediates bounded by mod (~17 bits). This is a complexity-class change
+      from O(n * 2^n) to O(n^2) where n = log2(p). The redundant a%p
+      pre-reduction is removed per RP-2. Code location:
+      sympy/crypto/crypto.py:2075.
+    diagnostic: >
+      If the prediction is wrong: (1) verify the workload calls the modified
+      code path by adding a print() sentinel and checking it appears in
+      subprocess stdout, (2) check if clear_cache() in the workload setup
+      interferes with function resolution, (3) verify the Python 3.6.13
+      runtime's three-arg pow uses C-level modular exponentiation by inspecting
+      Objects/longobject.c.
+    code_changes:
+      - file: "sympy/crypto/crypto.py"
+        intent: "On line 2075, change `sig = pow(a%p, (p - 1)//2) % p` to `sig = pow(a, (p - 1) // 2, p)` — use Python's native three-argument modular exponentiation and remove the redundant a%p pre-reduction."
+        rationale: "This is the sole hot path in the workload. The two-arg pow creates a ~1M-bit intermediate; three-arg pow keeps intermediates bounded by p. The a%p is redundant per RP-2 (confirmed in iter-2)."
+
+  - type: h-control-negative
+    prediction: >
+      Applying the same class of optimization (two-arg pow + mod to three-arg
+      pow) to encipher_gm at line 2221 — which is NOT in the workload's
+      execution path — will produce no measurable speedup (speedup approximately
+      1.0x, within +/-10% of baseline noise). All 38 covering tests will pass
+      because the change is mathematically equivalent.
+    mechanism: >
+      The workload calls only _legendre(87389, 131071). The encipher_gm
+      function (line 2200-2222) is not in the workload's call graph. Therefore,
+      optimizing pow(a, b) % N to pow(a, b, N) at line 2221 cannot affect the
+      timed computation. This validates mechanism specificity: the ~3,500-4,500x
+      speedup in h-main comes specifically from optimizing the _legendre code
+      path, not from any incidental side effect of modifying crypto.py (such as
+      module reload behavior or bytecode cache invalidation). The mathematical
+      equivalence holds because (x * pow(a, b)) % N == (x * pow(a, b, N)) % N
+      by the multiplicative property of modular arithmetic. Code location:
+      sympy/crypto/crypto.py:2221.
+    diagnostic: >
+      If the control-negative shows unexpected speedup: (1) check whether the
+      workload's import chain somehow triggers encipher_gm execution, (2) verify
+      no other code path is affected by the change, (3) check whether the
+      module-level bytecode compilation triggers a side effect that affects
+      _legendre performance.
+    code_changes:
+      - file: "sympy/crypto/crypto.py"
+        intent: "On line 2221, change `encode = lambda b: next(gen)**2*pow(a, b) % N` to `encode = lambda b: next(gen)**2*pow(a, b, N) % N` — apply three-arg pow to a code path NOT in the workload."
+        rationale: "This tests mechanism specificity. The encipher_gm function is not called by the workload, so this change should produce zero speedup. It validates that h-main's speedup comes from the _legendre code path specifically."
+
+# Arm selection rationale:
+# h-main: Applies the confirmed RP-1 + RP-2 optimization (three-arg pow, no
+#   pre-reduction) to _legendre — the sole hot path. Provides another
+#   independent 5-seed replication on top of the 10 seeds from iters 1-3.
+# h-control-negative: Validates mechanism specificity by applying the SAME CLASS
+#   of optimization to a different code path (encipher_gm) that is NOT in the
+#   workload. If this shows speedup, the h-main result would be suspect. This
+#   arm has not been tested in any prior iteration.
+# No h-ablation: already confirmed in iter-2 (RP-2).
+# No h-robustness: Jacobi algorithm already tested at full 5-seed scope in
+#   iter-3, confirming RP-3 (no measurable improvement beyond three-arg pow).
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    baseline_mean_seconds: 0.0743
+    workload_a: 87389
+    workload_p: 131071
+    test_suite: "sympy/crypto/tests/test_crypto.py"
+    python_executable: "/opt/miniconda3/envs/testbed/bin/python"
+  unlocked_parameters_audit:
+    - name: "timeit_number"
+      default_value: 1
+      justification: "Workload uses number=1 per timing iteration; a single _legendre call provides sufficient signal at both baseline (~70ms) and treatment (~15-22us) scales."
+    - name: "timeit_repeat"
+      default_value: 10
+      justification: "10 repetitions per seed yield tight variance for a ~3,500-4,500x effect; increasing count would not change conclusions."
+    - name: "multiprocessing_start_method"
+      default_value: "fork"
+      justification: "The workload harness uses fork on Linux; this does not affect the computation being measured."
+    - name: "PYTHONHASHSEED"
+      default_value: "random"
+      justification: "Hash seed affects dict/set ordering but not integer arithmetic in pow() or the Legendre symbol computation."

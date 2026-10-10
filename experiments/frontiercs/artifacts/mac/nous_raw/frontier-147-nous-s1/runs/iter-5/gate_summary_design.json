@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether reshaping the simulated annealing cooling schedule from pure exponential to a two-phase approach (linear exploration for 60% of time, then exponential convergence for 40%) improves the ad-placement optimization score beyond the ~91.5 baseline established in iteration 4. This targets the question of whether the SA landscape benefits more from sustained moderate-temperature exploration or from the rapid cooling that exponential schedules provide.",
+  "key_points": [
+    "Arm 1 (h-main): Two-phase cooling \u2014 linear T0=0.08\u2192T_mid=0.01 over first 60% of 4.8s, then exponential T_mid=0.01\u2192T1=0.0005 over remaining 40%. Prediction: scores higher than 91.5 because the midpoint temperature (~0.022) is ~3.7\u00d7 higher than pure exponential's midpoint (~0.006), enabling more escape from local optima.",
+    "Arm 2 (h-control-negative): Pure exponential cooling at 4.8s budget (replication of iter-4 best). Prediction: score ~91.5 \u00b1 0.53, consistent with prior measurements. Serves as the reference baseline.",
+    "Confirmation criterion: h-main scores meaningfully above 91.5 (the control mean). Refutation: h-main scores equal to or below control, indicating the exponential schedule's rapid early cooling is already well-suited to this optimization landscape. Both arms use identical RNG seeds and all other parameters, isolating the cooling shape as the sole variable.",
+    "Risk note: Each arm requires one ~60-75s judge call. The two-phase schedule's T_mid=0.01 and phase1_frac=0.6 are untested values chosen by geometric-mean and convention respectively \u2014 if h-main shows promise, a follow-up dose-response on these parameters would be warranted.",
+    "Prior context: Iterations 1-4 established that 4.8s time budget with T0=0.08, T1=0.0005 exponential cooling yields scores of ~91.5 (stdev 0.53). Greedy init quality (RP-3) doesn't affect final SA score. This is the first test of cooling schedule shape."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

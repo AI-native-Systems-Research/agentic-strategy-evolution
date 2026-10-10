@@ -1,0 +1,849 @@
+{
+  "problem_id": "15",
+  "agent": "engram",
+  "label": "engram",
+  "model": "claude-opus-4-6",
+  "final_score": 0,
+  "status": "success",
+  "solution": "/home/ubuntu/frontier/gen_logs/frontier_15_engram.solution.cpp",
+  "best_score": 0,
+  "method": "Engram-style (reimplementation)",
+  "agents_run": 40,
+  "rounds_per_agent": 3,
+  "code_generations": 118,
+  "cost_budget": 32.25,
+  "stop_reason": "cost_budget",
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a greedy algorithm that sorts the permutation by repeatedly placing the smallest unplaced element into its correct position, using at most a constant number of operations per element, leveraging the three-part swap operation to rotate desired elements into position."
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement careful greedy sorting placing elements 1..n one at a time, each requiring at most 2 block-interchange operations, with correct operation simulation, targeting ~2n total operations."
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Place elements 1..n greedily, each in at most 2 operations (first rotate element to end of array, then rotate it to correct position), with careful operation simulation, targeting ~2n total operations."
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement clean greedy sorting by placing elements 1..n in order, using at most 2 block-interchange operations per element, with extremely careful operation simulation and edge-case handling."
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Carefully implement greedy left-to-right placement where each element is placed using at most 2 block interchange operations, with thorough simulation testing, aiming for ~2n total operations to sort to identity."
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 4,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 5,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a clean greedy algorithm that places elements 1,2,...,n into position one at a time using at most 2 operations per element (first bring the target element to the suffix end, then rotate it into place), carefully verifying the operation simulation is correct, staying well within 4n operatio"
+    },
+    {
+      "agent": 5,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 5,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 6,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement clean greedy sort placing elements 1..n left-to-right, using at most 2 operations per element (move to last position, then rotate into correct position), with careful handling of the three-part split constraints and correct simulation."
+    },
+    {
+      "agent": 6,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 6,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 7,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Carefully implement the 3-part swap operation and use a greedy strategy placing elements left-to-right, using at most 2 operations per element, with correct index tracking after each operation."
+    },
+    {
+      "agent": 7,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 7,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 8,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement careful greedy sorting by placing elements left-to-right, using at most 2 block interchange operations per element (move target to last position, then move last position to target slot), with meticulous operation simulation and validation."
+    },
+    {
+      "agent": 8,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 8,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 9,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a clean greedy algorithm that places elements 1..n into position one at a time, using at most 2 operations per element (first rotate target to position n-1, then rotate it into place), with very careful simulation of the 3-part swap operation, verified step by step."
+    },
+    {
+      "agent": 9,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 9,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 10,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a clean greedy algorithm that places element k at position k-1 for k=1..n, using at most 2 operations per element (rotate target to make it the last element, then rotate to place it correctly), with carefully verified operation simulation and constraint checking."
+    },
+    {
+      "agent": 10,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 10,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 11,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy sort that places elements 1..n left-to-right using at most 2 operations each, with rigorous simulation of the 3-part swap operation and verification that the final array is sorted."
+    },
+    {
+      "agent": 11,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 11,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 12,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a clean greedy sort that places elements left-to-right using at most 2 operations each, with a carefully verified simulation of the [Suffix|Middle|Prefix] operation, plus a post-check that the array is sorted."
+    },
+    {
+      "agent": 12,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 12,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 13,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy approach that places elements 1,2,...,n one by one into their correct positions using at most 2 operations each (first bring the element to the last position using a swap, then bring it from the last position to its target), with meticulous operation simulation and validat"
+    },
+    {
+      "agent": 13,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 13,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 14,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a clean greedy sort that places elements left-to-right, using at most 2 operations per element (first bring to last position if needed, then bring to target), with careful operation simulation and validation."
+    },
+    {
+      "agent": 14,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 14,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 15,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy sort that places elements 1..n left-to-right, using at most 2 operations per element (first move target to a useful position, then move it to its final spot), with rigorous simulation of the [Suffix|Middle|Prefix] operation, and validation that the result is sorted."
+    },
+    {
+      "agent": 15,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 15,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 16,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a greedy sort that places elements 1,2,...,n into position one at a time, using at most 2 operations per element. For element k at position pos, first use an operation to move it to the end (suffix of size 1), then use another operation to move it from the end to position k-1. Carefully ve"
+    },
+    {
+      "agent": 16,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 16,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 17,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a correct greedy approach that places elements 1,2,...,n one at a time. For each element, use at most 2 operations: first bring it to the front or back, then move it into position. Verify correctness with simulation. The key is getting the operation simulation right."
+    },
+    {
+      "agent": 17,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 17,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 18,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy algorithm that places elements 1,2,...,n into position one at a time, using at most 2 operations per element (first rotate element to the end, then rotate end to target position), with thorough simulation verification. This should at least get a nonzero score, which no pre"
+    },
+    {
+      "agent": 18,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 18,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 19,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy approach that places elements 1,2,...,n into position one at a time, using at most 2 operations per element (first rotate target element to the last position, then rotate it from last position to its correct position), with careful validation of all constraints and correct"
+    },
+    {
+      "agent": 19,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 19,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 20,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy algorithm that places elements 1..n into position one at a time, using at most 2 operations per element (first bring element to position n-1 using one op, then bring it from position n-1 to its target using another op), with meticulous simulation and verification."
+    },
+    {
+      "agent": 20,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 20,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 21,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement correct greedy placement using at most 2 operations per element - first move target element to the suffix (last position) using one operation, then move it from the last position to its target using another operation, with careful simulation verified against the exact operation semantics ["
+    },
+    {
+      "agent": 21,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 21,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 22,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Carefully implement greedy placement of elements 1..n using the 3-part swap operation, with rigorous simulation and verification, placing each element with at most 2 operations (total \u2264 2n, well under 4n budget)."
+    },
+    {
+      "agent": 22,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 22,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 23,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a clean greedy approach that places elements 1..n into position one at a time, using at most 2 operations per element (first move element to position 0 by making it part of the suffix, then move it from position 0 to its target by making it part of the prefix), with careful operation simul"
+    },
+    {
+      "agent": 23,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 23,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 24,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement the operation correctly with careful simulation, then greedily place elements 1..n into position using at most 2 operations each (first bring element to last position, then bring last element to target position), carefully handling edge cases where x+y must be strictly less than n."
+    },
+    {
+      "agent": 24,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 24,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 25,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy algorithm that places elements 1,2,...,n into position one at a time, using at most 2 operations per element (first move target to last position, then move last position to target), with meticulous operation simulation verified step by step."
+    },
+    {
+      "agent": 25,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 25,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 26,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement careful greedy placement of elements 1..n using at most 2 operations each, with correct operation simulation and edge case handling, verified by assertion that the final array is sorted."
+    },
+    {
+      "agent": 26,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 26,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 27,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy algorithm that places elements 1..n in order, using at most 2 operations per element (first move target to end of array, then move from end to correct position), with rigorous simulation and validation of the block interchange operation [Suffix|Middle|Prefix]."
+    },
+    {
+      "agent": 27,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 27,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 28,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy approach that places elements 1..n one at a time, using at most 2 operations per element, with meticulous simulation of the [Suffix|Middle|Prefix] operation, and verify the result is sorted before outputting."
+    },
+    {
+      "agent": 28,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 28,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 29,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy approach that places elements 1,2,...,n into position one at a time using at most 2 operations each, with thoroughly verified operation simulation, ensuring every operation satisfies x>0, y>0, x+y<n."
+    },
+    {
+      "agent": 29,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 29,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 30,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Clean implementation of greedy placement - for each element to place at position `placed`, first move it to the last position (if not already there) using one operation, then move it from the last position to `placed` using another operation, carefully handling edge cases where x+y must be < n."
+    },
+    {
+      "agent": 30,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 30,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 31,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy approach that places elements 1,2,...,n into position one at a time, using at most 2 operations per element (first bring the target element to the last position using one operation, then bring it from the last position to its target using another operation), with meticulou"
+    },
+    {
+      "agent": 31,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 31,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 32,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a selection-sort style algorithm that places elements 1,2,...,n correctly using at most 2 operations per element (worst case 2n ops), carefully implementing the block swap operation [C|B|A] from [A|B|C], ensuring correctness by simulating each operation precisely on the array. This should "
+    },
+    {
+      "agent": 32,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 32,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 33,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a clean greedy algorithm that places elements 1,2,...,n into position one at a time, using at most 2 operations per element (first move target to end of array via one operation, then move it from end to correct position via another), with careful correct simulation of the [Suffix|Middle|Pr"
+    },
+    {
+      "agent": 33,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 33,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 34,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a correct greedy approach that places elements 1,2,...,n one at a time. For each element, find it, use at most 2 operations to move it to its correct position. First operation brings the element to position n-1 (last), second operation brings it from position n-1 to the target position. Ca"
+    },
+    {
+      "agent": 34,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 34,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 35,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "For each position 0 to n-3, find the target element and use at most 2 operations to place it: first bring it to position n-1 (if not already there), then use operation (placed+1, 1) to bring it from position n-1 to position placed. This uses at most 2n operations, well within the 4n budget. The key "
+    },
+    {
+      "agent": 35,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 35,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 36,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a clean selection-sort style algorithm that places elements 1,2,...,n one at a time using at most 2 operations each (bringing element to last position, then rotating it into place), with careful and verified operation simulation, aiming for ~2n operations which should give a non-zero score"
+    },
+    {
+      "agent": 36,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 36,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 37,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a correct greedy approach that places elements 1,2,...,n one by one, using at most 2 operations per element: first bring the target element to position n-1 (last), then use operation (placed, 1) to move it from position n-1 to position placed. Carefully verify the operation simulation is c"
+    },
+    {
+      "agent": 37,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 37,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 38,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a careful greedy approach that places elements 1..n one by one, using at most 2 operations each, with correctly simulated block interchange operations (swap prefix of length x with suffix of length y), aiming for ~n operations on average by skipping already-placed elements and using single"
+    },
+    {
+      "agent": 38,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 38,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null
+    },
+    {
+      "agent": 39,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement correct operation simulation (suffix + middle + prefix), then use a greedy approach placing elements 1..n one at a time with at most 2 operations each (first bring target to last position, then rotate it into place), carefully handling edge cases where x+y must be strictly less than n."
+    }
+  ],
+  "input_tokens": 745068,
+  "output_tokens": 283573,
+  "cost_usd_est": 32.444,
+  "journal": "/home/ubuntu/frontier/gen_logs/frontier_15_engram_engram/research_journal.md",
+  "seconds": 5407.1
+}

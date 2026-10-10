@@ -1,0 +1,23 @@
+{
+  "schema_version": "1",
+  "generated_at": "2026-09-30T02:37:57.894081+00:00",
+  "run_id": "swe-sympy__sympy-10919",
+  "iterations_completed": 5,
+  "campaign_design_lessons": [],
+  "target_system_asks": [],
+  "nous_asks": [],
+  "deployment_recommendation": {
+    "verdict": "deploy",
+    "top_candidate_id": "iter-4/h-main/0",
+    "score": 25.7,
+    "citations": [
+      {
+        "iteration": 4,
+        "arm_id": "h-main",
+        "evidence_snippet": "iter-4 arm_id=h-main speedup=25.700"
+      }
+    ],
+    "caveats": []
+  },
+  "notes": "retry_log.jsonl has 1 entry(ies) but the heuristics didn't classify any of them as a campaign design lesson, target-system ask, or nous ask. This is a heuristics gap \u2014 review retry_log.jsonl directly and consider adding a detector to orchestrator/meta_findings.py."
+}

@@ -1,0 +1,44 @@
+{
+  "problem_id": "0",
+  "agent": "claude",
+  "label": "claude",
+  "model": "claude-opus-4-6",
+  "final_score": 1.4893096857142856,
+  "status": "success",
+  "solution": "/home/ubuntu/frontier/gen_logs/frontier_0_claude.solution.cpp",
+  "best_score": 1.7875251200000002,
+  "rounds": 6,
+  "history": [
+    {
+      "round": 0,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 1,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 2,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 3,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 4,
+      "score": 0,
+      "status": "success"
+    },
+    {
+      "round": 5,
+      "score": 1.7875251200000002,
+      "status": "success"
+    }
+  ],
+  "seconds": 221.0
+}

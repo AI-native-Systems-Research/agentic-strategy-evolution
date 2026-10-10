@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether replacing the O(n\u00b2) all-pairs BFS distance precomputation with O(n) DFS-timestamp subtree membership checks produces identical score-100 results on the tree matching sort problem, while also ablating whether array-based adjacency lists (vs vectors) remain necessary for passing time limits even with the DFS improvement.",
+  "key_points": [
+    "h-main: DFS timestamps replace BFS distances for routing decisions (is element in subtree? replaces distance comparison). Prediction: score 100, identical round counts to iter-1's BFS solution, with lower memory (~2MB saved) and faster precomputation (O(n) vs O(n\u00b2)).",
+    "h-ablation: Same DFS-timestamp algorithm but using std::vector adjacency lists instead of flat arrays. Prediction: score \u226499.4, demonstrating that per-round DP cache efficiency from array adjacency is still needed even after eliminating the BFS bottleneck.",
+    "Confirmation criteria: h-main scores 100 confirms DFS timestamps are a valid equivalent optimization. h-ablation scoring <100 while h-main scores 100 confirms array adjacency is independently necessary. If h-ablation also scores 100, it means the BFS precomputation was the dominant bottleneck and vector overhead is tolerable.",
+    "Refutation criteria: If h-main scores <100, either the subtree membership check has a bug (routing decisions differ from BFS version) or the DFS approach introduces a subtle algorithmic difference. Diagnostic: compare per-test-case round counts against the iter-1 BFS baseline.",
+    "Risk is low: the mathematical equivalence (D[v][target] == D[u][target]-1 \u27fa target is in v's subtree when v is u's child) is well-established for trees. The main risk is implementation bugs (off-by-one in DFS timestamps, wrong parent/child identification for edge endpoints)."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

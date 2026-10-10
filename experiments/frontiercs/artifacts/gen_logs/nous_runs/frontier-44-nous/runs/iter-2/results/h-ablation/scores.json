@@ -1,0 +1,13 @@
+{
+  "arm": "h-ablation",
+  "algorithm": "Strip construction + spatial NN-list 2-opt (K=20) + window 2-opt + or-opt + carrot",
+  "runs": [
+    {"run": 1, "score": 61.316},
+    {"run": 2, "score": 66.729},
+    {"run": 3, "score": 70.634},
+    {"run": 4, "score": 66.109}
+  ],
+  "mean_score": 66.197,
+  "std_score": 3.82,
+  "notes": "High variance (3.8 std dev) due to strip construction producing worse initial tour — NN-list 2-opt is time-budgeted and does not converge before the time limit on large test cases"
+}

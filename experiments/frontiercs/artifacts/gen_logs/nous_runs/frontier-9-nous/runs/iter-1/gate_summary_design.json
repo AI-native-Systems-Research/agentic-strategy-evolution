@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a tree DP maximum-weight matching algorithm with next-step routing and depth-parity anti-oscillation coloring can efficiently sort permutations on trees using minimum matching-swap operations, targeting a judge score \u226590/100. The experiment compares this full algorithm (h-main) against a naive greedy baseline (h-control-negative) expected to score \u226410 due to oscillation and suboptimal matching.",
+  "key_points": [
+    "h-main implements three mechanisms: (1) all-pairs BFS to compute distances for next-step routing, (2) tree DP for optimal maximum-weight matching each round, and (3) alternating depth-parity edge coloring that gates type-1 swaps to prevent period-2 oscillation \u2014 a failure mode already observed in a prior v1 implementation (score=5).",
+    "h-control-negative (naive greedy without DP matching or anti-oscillation) is predicted to score \u226410; if it scores >50, it would suggest the test cases are too easy and the mechanisms aren't necessary, refuting the hypothesis that these components are essential.",
+    "Confirmation criteria: h-main scores \u226590/100, h-control-negative scores \u226410/100, and no test case produces a wrong-answer verdict. Refutation: h-main scores <70 (indicating the algorithm doesn't generalize across tree structures) or h-control-negative scores >50 (indicating the problem is trivially solvable). Key risk: bushy trees where all sibling edges share the same depth-parity color could bottleneck progress.",
+    "Parameters are fixed at iteration 1 defaults (root=vertex 1, type-2 weight=2, type-1 weight=1, max 6n rounds, -O2 compilation). Prior experimentation already showed centroid rooting (v6, score 90) performed worse than vertex-1 rooting, informing this design choice.",
+    "Each arm requires one judge call (~30-60s) via fmeasure_9.sh. The scoring is continuous 0-100 based on how close the solution's operation count is to optimal across all test cases."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

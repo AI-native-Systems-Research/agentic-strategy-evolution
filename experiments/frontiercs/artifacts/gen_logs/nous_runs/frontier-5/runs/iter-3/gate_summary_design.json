@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a 'break-and-extend' technique for very sparse directed graphs (avg degree < 4) can improve the overall judge score from 82 to 83 by specifically improving test 10's path length past the ~23,333 vertex threshold. The prior two iterations established a baseline of 82/100 using SCC-based ordering plus P\u00f3sa rotation, but test 10 (a sparse graph) stalls at ~21,000 vertices because rotation only works at the path tail.",
+  "key_points": [
+    "Main arm (h-main): Adds a new solveBreakExtend() function that truncates the path back to the nearest 'escape vertex' (one with an unvisited out-neighbor), redirects through it, and re-extends greedily \u2014 run as multi-restart (0.2s/attempt, ~15 attempts in 3.1s). Predicts score rises from 82\u219283, with test 10's k increasing from ~21,000 to ~25,000.",
+    "Control arm (h-control-negative): Runs the unchanged iter-2 solution to confirm the 82-point baseline still holds, isolating any score improvement to the break-and-extend mechanism specifically.",
+    "Confirmation criteria: Score of 83 on h-main AND 82 on h-control confirms the hypothesis. If h-main scores 82 or lower, break-and-extend failed to cross the test-10 threshold \u2014 diagnostics include checking the actual k value on test 10 and whether the avg_deg < 4 branching condition fires correctly. Regression on tests 1-9 would indicate the branching condition is misclassifying dense graphs as sparse.",
+    "Design is well-scoped: single new mechanism targeting a single test case, with clear pass/fail criteria and specified diagnostics. The 0.2s per-attempt budget was empirically tuned, and escape vertex search is bounded at 100 positions from the tail."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

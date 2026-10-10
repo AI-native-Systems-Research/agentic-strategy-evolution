@@ -1,0 +1,507 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..4f2c76e 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,501 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++struct Rect { int x, y, w, h; };
++struct ItemType {
++    string type;
++    int w, h;
++    long long v;
++    int limit;
++    double density;
++};
++struct Placement {
++    string type;
++    int x, y, rot;
++};
++
++int binW, binH;
++bool allowRotate;
++vector<ItemType> items;
++int M;
++long long bestProfit;
++vector<Placement> bestPlacements;
++
++long long heurBest[4];
++vector<int> heurBestPerm[4];
++
++void updateBest(long long profit, const vector<Placement> &pl) {
++    if (profit > bestProfit) { bestProfit = profit; bestPlacements = pl; }
++}
++
++chrono::steady_clock::time_point startTime;
++double elapsed() {
++    return chrono::duration<double>(chrono::steady_clock::now() - startTime).count();
++}
++
++struct MaxRectsPacker {
++    vector<Rect> freeRects;
++    void init() { freeRects.clear(); freeRects.push_back({0, 0, binW, binH}); }
++
++    // Save/restore state for branching
++    vector<Rect> save() { return freeRects; }
++    void restore(const vector<Rect> &s) { freeRects = s; }
++
++    Rect findPosition(int rw, int rh, int heuristic, int &bs1, int &bs2) {
++        Rect best = {-1,-1,rw,rh};
++        bs1 = bs2 = INT_MAX;
++        for (auto &fr : freeRects) {
++            if (rw > fr.w || rh > fr.h) continue;
++            int s1, s2;
++            switch(heuristic) {
++                case 0: s1=min(fr.w-rw,fr.h-rh); s2=max(fr.w-rw,fr.h-rh); break;
++                case 1: s1=fr.w*fr.h-rw*rh; s2=min(fr.w-rw,fr.h-rh); break;
++                case 2: s1=fr.y; s2=fr.x; break;
++                case 3: s1=max(fr.w-rw,fr.h-rh); s2=min(fr.w-rw,fr.h-rh); break;
++                default: s1=s2=INT_MAX;
++            }
++            if (s1<bs1||(s1==bs1&&s2<bs2)) { bs1=s1; bs2=s2; best={fr.x,fr.y,rw,rh}; }
++        }
++        return best;
++    }
++
++    Rect findBestPos(int idx, int h, int &outRot) {
++        auto &it = items[idx];
++        int s1a=INT_MAX,s2a=INT_MAX,s1b=INT_MAX,s2b=INT_MAX;
++        Rect ra = findPosition(it.w, it.h, h, s1a, s2a);
++        Rect rb = {-1,-1,0,0};
++        if (allowRotate && it.w!=it.h)
++            rb = findPosition(it.h, it.w, h, s1b, s2b);
++        if (ra.x>=0 && (rb.x<0 || s1a<s1b || (s1a==s1b && s2a<=s2b))) { outRot=0; return ra; }
++        if (rb.x>=0) { outRot=1; return rb; }
++        outRot=0; return {-1,-1,0,0};
++    }
++
++    void placeRect(Rect placed) {
++        int n = freeRects.size();
++        for (int i = n-1; i >= 0; i--) {
++            auto &fr = freeRects[i];
++            if (placed.x>=fr.x+fr.w||placed.x+placed.w<=fr.x||
++                placed.y>=fr.y+fr.h||placed.y+placed.h<=fr.y) continue;
++            Rect o = fr;
++            freeRects[i] = freeRects.back(); freeRects.pop_back();
++            if (placed.x > o.x) freeRects.push_back({o.x, o.y, placed.x-o.x, o.h});
++            if (placed.x+placed.w < o.x+o.w) freeRects.push_back({placed.x+placed.w, o.y, o.x+o.w-placed.x-placed.w, o.h});
++            if (placed.y > o.y) freeRects.push_back({o.x, o.y, o.w, placed.y-o.y});
++            if (placed.y+placed.h < o.y+o.h) freeRects.push_back({o.x, placed.y+placed.h, o.w, o.y+o.h-placed.y-placed.h});
++        }
++        n = freeRects.size();
++        for (int i = 0; i < n; i++) {
++            for (int j = i+1; j < n; ) {
++                auto &a=freeRects[i], &b=freeRects[j];
++                bool ab = a.x<=b.x && a.y<=b.y && a.x+a.w>=b.x+b.w && a.y+a.h>=b.y+b.h;
++                bool ba = b.x<=a.x && b.y<=a.y && b.x+b.w>=a.x+a.w && b.y+b.h>=a.y+a.h;
++                if (ab) { freeRects[j]=freeRects[--n]; freeRects.resize(n); }
++                else if (ba) { freeRects[i]=freeRects[--n]; freeRects.resize(n); j=i+1; }
++                else j++;
++            }
++        }
++    }
++};
++
++// Pack with ordering using a fixed heuristic
++long long packOrderedFull(const vector<int> &order, int heur) {
++    MaxRectsPacker pk; pk.init();
++    long long profit = 0;
++    vector<Placement> pl;
++    vector<int> used(M, 0);
++    for (int idx : order) {
++        auto &it = items[idx];
++        while (used[idx] < it.limit) {
++            int rot; Rect r = pk.findBestPos(idx, heur, rot);
++            if (r.x < 0) break;
++            pk.placeRect(r);
++            pl.push_back({it.type, r.x, r.y, rot});
++            profit += it.v; used[idx]++;
++        }
++    }
++    updateBest(profit, pl);
++    if (profit > heurBest[heur]) { heurBest[heur] = profit; heurBestPerm[heur] = order; }
++    return profit;
++}
++
++long long evalOrderedFast(const vector<int> &order, int heur) {
++    MaxRectsPacker pk; pk.init();
++    long long profit = 0;
++    vector<int> used(M, 0);
++    for (int idx : order) {
++        auto &it = items[idx];
++        while (used[idx] < it.limit) {
++            int rot; Rect r = pk.findBestPos(idx, heur, rot);
++            if (r.x < 0) break;
++            pk.placeRect(r);
++            profit += it.v; used[idx]++;
++        }
++    }
++    return profit;
++}
++
++// Pack with per-item-type heuristic selection: each item type gets its own heuristic
++long long packOrderedMultiHeur(const vector<int> &order, const vector<int> &heurPerItem) {
++    MaxRectsPacker pk; pk.init();
++    long long profit = 0;
++    vector<Placement> pl;
++    vector<int> used(M, 0);
++    for (int idx : order) {
++        auto &it = items[idx];
++        int h = heurPerItem[idx];
++        while (used[idx] < it.limit) {
++            int rot; Rect r = pk.findBestPos(idx, h, rot);
++            if (r.x < 0) break;
++            pk.placeRect(r);
++            pl.push_back({it.type, r.x, r.y, rot});
++            profit += it.v; used[idx]++;
++        }
++    }
++    updateBest(profit, pl);
++    return profit;
++}
++
++long long evalOrderedMultiHeurFast(const vector<int> &order, const vector<int> &heurPerItem) {
++    MaxRectsPacker pk; pk.init();
++    long long profit = 0;
++    vector<int> used(M, 0);
++    for (int idx : order) {
++        auto &it = items[idx];
++        int h = heurPerItem[idx];
++        while (used[idx] < it.limit) {
++            int rot; Rect r = pk.findBestPos(idx, h, rot);
++            if (r.x < 0) break;
++            pk.placeRect(r);
++            profit += it.v; used[idx]++;
++        }
++    }
++    return profit;
++}
++
++// Gap filling pass
++long long gapFill(MaxRectsPacker &pk, vector<Placement> &pl, vector<int> &used, int heur) {
++    long long extraProfit = 0;
++    vector<int> densOrder(M);
++    iota(densOrder.begin(), densOrder.end(), 0);
++    sort(densOrder.begin(), densOrder.end(), [](int a, int b) {
++        return items[a].density > items[b].density;
++    });
++    bool placed = true;
++    while (placed) {
++        placed = false;
++        for (int idx : densOrder) {
++            if (used[idx] >= items[idx].limit) continue;
++            int rot;
++            Rect r = pk.findBestPos(idx, heur, rot);
++            if (r.x < 0) continue;
++            pk.placeRect(r);
++            pl.push_back({items[idx].type, r.x, r.y, rot});
++            extraProfit += items[idx].v;
++            used[idx]++;
++            placed = true;
++        }
++    }
++    return extraProfit;
++}
++
++long long packWithGapFill(const vector<int> &order, int heur) {
++    MaxRectsPacker pk; pk.init();
++    long long profit = 0;
++    vector<Placement> pl;
++    vector<int> used(M, 0);
++    for (int idx : order) {
++        auto &it = items[idx];
++        while (used[idx] < it.limit) {
++            int rot; Rect r = pk.findBestPos(idx, heur, rot);
++            if (r.x < 0) break;
++            pk.placeRect(r);
++            pl.push_back({it.type, r.x, r.y, rot});
++            profit += it.v; used[idx]++;
++        }
++    }
++    profit += gapFill(pk, pl, used, heur);
++    updateBest(profit, pl);
++    if (profit > heurBest[heur]) { heurBest[heur] = profit; heurBestPerm[heur] = order; }
++    return profit;
++}
++
++void packGreedy(int heur, int mode) {
++    MaxRectsPacker pk; pk.init();
++    long long profit = 0;
++    vector<Placement> pl;
++    vector<int> used(M, 0);
++    while (true) {
++        double bestScore = -1e30;
++        Rect bestRect = {-1,-1,0,0};
++        int bestIdx = -1, bestRot = 0;
++        for (int i = 0; i < M; i++) {
++            if (used[i] >= items[i].limit) continue;
++            auto &it = items[i];
++            auto tryOri = [&](int rw, int rh, int rot) {
++                int s1, s2;
++                Rect r = pk.findPosition(rw, rh, heur, s1, s2);
++                if (r.x < 0) return;
++                double score;
++                switch(mode) {
++                    case 0: score=it.density; break;
++                    case 1: score=(double)it.v; break;
++                    case 2: score=it.density/(1.0+r.x+r.y); break;
++                    case 3: score=(double)it.v/(1.0+s1); break;
++                    case 4: score=it.density*min(rw,rh); break;
++                    default: score=it.density;
++                }
++                if (score > bestScore) { bestScore=score; bestRect=r; bestIdx=i; bestRot=rot; }
++            };
++            tryOri(it.w, it.h, 0);
++            if (allowRotate && it.w!=it.h) tryOri(it.h, it.w, 1);
++        }
++        if (bestIdx < 0) break;
++        pk.placeRect(bestRect);
++        pl.push_back({items[bestIdx].type, bestRect.x, bestRect.y, bestRot});
++        profit += items[bestIdx].v; used[bestIdx]++;
++    }
++    updateBest(profit, pl);
++}
++
++void hillClimb(int h, double timeLimit) {
++    vector<int> cur = heurBestPerm[h];
++    long long curVal = heurBest[h];
++    while (elapsed() < timeLimit) {
++        bool improved = false;
++        for (int i = 0; i < M && elapsed() < timeLimit; i++) {
++            for (int j = i+1; j < M; j++) {
++                swap(cur[i], cur[j]);
++                long long val = evalOrderedFast(cur, h);
++                if (val > curVal) { curVal = val; improved = true; packOrderedFull(cur, h); }
++                else swap(cur[i], cur[j]);
++            }
++        }
++        for (int i = 0; i < M && elapsed() < timeLimit; i++) {
++            int elem = cur[i];
++            cur.erase(cur.begin()+i);
++            bool found = false;
++            for (int j = 0; j < M; j++) {
++                if (j == i) continue;
++                cur.insert(cur.begin()+j, elem);
++                long long val = evalOrderedFast(cur, h);
++                if (val > curVal) { curVal = val; improved = true; found = true; packOrderedFull(cur, h); break; }
++                cur.erase(cur.begin()+j);
++            }
++            if (found) break;
++            cur.insert(cur.begin()+i, elem);
++        }
++        if (!improved) break;
++    }
++}
++
++// SA over joint ordering + per-item heuristic assignment
++void saJointSearch(double timeLimit, mt19937 &rng) {
++    // Start from best known
++    int bestH = 0;
++    for (int h = 1; h < 4; h++)
++        if (heurBest[h] > heurBest[bestH]) bestH = h;
++
++    vector<int> curOrd = heurBestPerm[bestH];
++    vector<int> curHeur(M, bestH);
++    long long curVal = evalOrderedMultiHeurFast(curOrd, curHeur);
++    long long bestVal = curVal;
++    vector<int> bestOrd = curOrd;
++    vector<int> bestHeur = curHeur;
++
++    double T0 = max(1.0, 0.05 * (double)bestProfit);
++    double T = T0;
++    int iter = 0;
++
++    while (elapsed() < timeLimit) {
++        vector<int> nextOrd = curOrd;
++        vector<int> nextHeur = curHeur;
++        int moveType = rng() % 12;
++
++        if (moveType < 4) {
++            // Swap ordering
++            int i = rng() % M, j = rng() % M;
++            if (i == j) j = (j + 1) % M;
++            swap(nextOrd[i], nextOrd[j]);
++        } else if (moveType < 7) {
++            // Insert
++            int i = rng() % M;
++            int elem = nextOrd[i];
++            nextOrd.erase(nextOrd.begin() + i);
++            int j = rng() % M;
++            nextOrd.insert(nextOrd.begin() + j, elem);
++        } else if (moveType < 9) {
++            // Reverse subsequence
++            int i = rng() % M, j = rng() % M;
++            if (i > j) swap(i, j);
++            if (j - i > 1) reverse(nextOrd.begin() + i, nextOrd.begin() + j + 1);
++        } else {
++            // Change heuristic for one item
++            int i = rng() % M;
++            nextHeur[nextOrd[i]] = rng() % 4;
++        }
++
++        long long newVal = evalOrderedMultiHeurFast(nextOrd, nextHeur);
++        double delta = (double)(newVal - curVal);
++
++        if (delta > 0 || (T > 0.01 && ((double)(rng() % 1000000) / 1000000.0) < exp(delta / T))) {
++            curOrd = nextOrd;
++            curHeur = nextHeur;
++            curVal = newVal;
++            if (curVal > bestVal) {
++                bestVal = curVal;
++                bestOrd = curOrd;
++                bestHeur = curHeur;
++                packOrderedMultiHeur(bestOrd, bestHeur);
++            }
++        }
++
++        T *= 0.9995;
++        iter++;
++        if (iter % 1000 == 0 && T < 0.5) {
++            T = T0 * 0.2;
++        }
++    }
++
++    // Final recording
++    packOrderedMultiHeur(bestOrd, bestHeur);
++}
++
++int main() {
++    startTime = chrono::steady_clock::now();
++    string input;
++    { ostringstream ss; ss << cin.rdbuf(); input = ss.str(); }
++
++    {
++        size_t p = input.find("\"W\"");
++        size_t c = input.find(':',p)+1;
++        while(input[c]==' '||input[c]=='\n'||input[c]=='\r'||input[c]=='\t') c++;
++        binW=0; while(input[c]>='0'&&input[c]<='9') binW=binW*10+input[c++]-'0';
++        p = input.find("\"H\"");
++        c = input.find(':',p)+1;
++        while(input[c]==' '||input[c]=='\n'||input[c]=='\r'||input[c]=='\t') c++;
++        binH=0; while(input[c]>='0'&&input[c]<='9') binH=binH*10+input[c++]-'0';
++        p = input.find("\"allow_rotate\"");
++        c = input.find(':',p)+1;
++        while(input[c]==' '||input[c]=='\n'||input[c]=='\r'||input[c]=='\t') c++;
++        allowRotate = (input[c]=='t');
++    }
++    {
++        size_t p = input.find("\"items\"");
++        p = input.find('[', p);
++        size_t arrEnd = input.rfind(']');
++        size_t pos = p+1;
++        while(true) {
++            size_t os = input.find('{', pos);
++            if (os==string::npos || os>arrEnd) break;
++            size_t oe = input.find('}', os);
++            ItemType it;
++            size_t tp = input.find("\"type\"", os);
++            tp = input.find('"', input.find(':',tp)+1)+1;
++            it.type=""; while(input[tp]!='"') it.type+=input[tp++];
++            size_t wp = input.find("\"w\"", os);
++            size_t c = input.find(':',wp)+1;
++            while(input[c]==' '||input[c]=='\n'||input[c]=='\r'||input[c]=='\t') c++;
++            it.w=0; while(input[c]>='0'&&input[c]<='9') it.w=it.w*10+input[c++]-'0';
++            size_t hp = input.find("\"h\"", os);
++            c = input.find(':',hp)+1;
++            while(input[c]==' '||input[c]=='\n'||input[c]=='\r'||input[c]=='\t') c++;
++            it.h=0; while(input[c]>='0'&&input[c]<='9') it.h=it.h*10+input[c++]-'0';
++            size_t vp = input.find("\"v\"", os);
++            c = input.find(':',vp)+1;
++            while(input[c]==' '||input[c]=='\n'||input[c]=='\r'||input[c]=='\t') c++;
++            it.v=0; while(input[c]>='0'&&input[c]<='9') it.v=it.v*10+input[c++]-'0';
++            size_t lp = input.find("\"limit\"", os);
++            c = input.find(':',lp)+1;
++            while(input[c]==' '||input[c]=='\n'||input[c]=='\r'||input[c]=='\t') c++;
++            it.limit=0; while(input[c]>='0'&&input[c]<='9') it.limit=it.limit*10+input[c++]-'0';
++            it.density = (double)it.v / ((double)it.w * it.h);
++            items.push_back(it);
++            pos = oe+1;
++        }
++    }
++
++    M = items.size();
++    bestProfit = 0;
++    for (int h = 0; h < 4; h++) { heurBest[h]=0; heurBestPerm[h].resize(M); iota(heurBestPerm[h].begin(),heurBestPerm[h].end(),0); }
++
++    auto mkOrd = [](auto cmp) {
++        vector<int> o(M); iota(o.begin(),o.end(),0);
++        sort(o.begin(),o.end(),cmp); return o;
++    };
++    vector<vector<int>> sorts = {
++        mkOrd([](int a,int b){return items[a].density>items[b].density;}),
++        mkOrd([](int a,int b){return items[a].v>items[b].v;}),
++        mkOrd([](int a,int b){return (long long)items[a].w*items[a].h>(long long)items[b].w*items[b].h;}),
++        mkOrd([](int a,int b){return (long long)items[a].w*items[a].h<(long long)items[b].w*items[b].h;}),
++        mkOrd([](int a,int b){return max(items[a].w,items[a].h)>max(items[b].w,items[b].h);}),
++        mkOrd([](int a,int b){return items[a].h>items[b].h;}),
++        mkOrd([](int a,int b){return items[a].w>items[b].w;}),
++        mkOrd([](int a,int b){return items[a].v*(long long)items[a].limit>items[b].v*(long long)items[b].limit;}),
++        mkOrd([](int a,int b){return items[a].w+items[a].h>items[b].w+items[b].h;}),
++    };
++
++    // Phase 1: Initial sorted orderings
++    for (auto &ord : sorts)
++        for (int h = 0; h < 4; h++)
++            packOrderedFull(ord, h);
++
++    // Phase 2: Greedy packing
++    for (int mode = 0; mode < 5; mode++)
++        for (int h = 0; h < 4; h++)
++            packGreedy(h, mode);
++
++    // Phase 3: Permutation exhaustion for small M
++    if (M <= 8) {
++        vector<int> perm(M);
++        iota(perm.begin(), perm.end(), 0);
++        do {
++            if (elapsed() > 0.12) break;
++            for (int h = 0; h < 4; h++)
++                packOrderedFull(perm, h);
++        } while (next_permutation(perm.begin(), perm.end()));
++    }
++
++    // Phase 4: Hill climbing (proven from iter-1)
++    {
++        double hcEnd = min(elapsed() + 0.25, 0.40);
++        double timePerH = (hcEnd - elapsed()) / 4.0;
++        for (int h = 0; h < 4; h++)
++            hillClimb(h, elapsed() + timePerH);
++    }
++
++    // Phase 5: SA over joint ordering + per-item heuristic
++    {
++        mt19937 rng(12345);
++        saJointSearch(0.80, rng);
++    }
++
++    // Phase 6: Gap fill on all best orderings
++    for (int h = 0; h < 4; h++) {
++        packWithGapFill(heurBestPerm[h], h);
++    }
++
++    // Phase 7: Random perturbation restarts with gap fill
++    {
++        mt19937 rng(42);
++        while (elapsed() < 0.88) {
++            int h = rng() % 4;
++            vector<int> perm = heurBestPerm[h];
++            int nSwaps = 1 + rng() % 3;
++            for (int s = 0; s < nSwaps; s++) {
++                int i = rng() % M, j = rng() % M;
++                swap(perm[i], perm[j]);
++            }
++            for (int hh = 0; hh < 4; hh++)
++                packWithGapFill(perm, hh);
++        }
++    }
++
++    printf("{\"placements\":[");
++    for (int i = 0; i < (int)bestPlacements.size(); i++) {
++        if (i) printf(",");
++        printf("{\"type\":\"%s\",\"x\":%d,\"y\":%d,\"rot\":%d}",
++            bestPlacements[i].type.c_str(), bestPlacements[i].x, bestPlacements[i].y, bestPlacements[i].rot);
++    }
++    printf("]}\n");
++}

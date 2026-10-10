@@ -1,0 +1,48 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..a330b24 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,42 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++const int MAXN = 1001;
++bitset<MAXN> adj[MAXN];
++int N, M;
++
++int main(){
++    ios::sync_with_stdio(false);
++    cin.tie(nullptr);
++
++    cin >> N >> M;
++    for (int i = 0; i < M; i++) {
++        int u, v; cin >> u >> v;
++        adj[u].set(v); adj[v].set(u);
++    }
++
++    int degree[MAXN] = {};
++    for (int i = 1; i <= N; i++) degree[i] = (int)adj[i].count();
++
++    // Sort vertices by degree descending
++    int sv[MAXN];
++    for (int i = 0; i < N; i++) sv[i] = i + 1;
++    sort(sv, sv + N, [&](int a, int b){ return degree[a] > degree[b]; });
++
++    // Greedy clique: add vertex if adjacent to all current members
++    int clique[MAXN], csz = 0;
++    for (int i = 0; i < N; i++) {
++        int v = sv[i];
++        bool ok = true;
++        for (int k = 0; k < csz; k++) {
++            if (!adj[v][clique[k]]) { ok = false; break; }
++        }
++        if (ok) clique[csz++] = v;
++    }
++
++    // Output
++    bool inc[MAXN] = {};
++    for (int i = 0; i < csz; i++) inc[clique[i]] = true;
++    for (int i = 1; i <= N; i++) cout << inc[i] << "\n";
++    return 0;
++}

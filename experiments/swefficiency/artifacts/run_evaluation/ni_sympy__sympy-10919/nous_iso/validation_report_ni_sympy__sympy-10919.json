@@ -1,0 +1,12 @@
+{
+    "sympy__sympy-10919": {
+        "perf_report": {
+            "before_mean": 1.2998932522954418,
+            "before_sd": 0.02243180447887209,
+            "after_mean": 0.04686674989789026,
+            "after_sd": 0.002219212879051343,
+            "improvement": 27.735937634411414
+        },
+        "correctness_report": null
+    }
+}

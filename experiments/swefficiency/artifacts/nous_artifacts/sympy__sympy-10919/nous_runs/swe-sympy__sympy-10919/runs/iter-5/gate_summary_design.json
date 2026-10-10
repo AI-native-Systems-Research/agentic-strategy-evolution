@@ -1,0 +1,17 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether three targeted optimizations to the mpf_cos bottleneck in the Hardy-Ramanujan-Rademacher npartitions implementation can push speedup beyond the 25.7x achieved in iteration 4 (baseline 1.3901s). The main arm combines analytical q=2 evaluation, angle pre-reduction mod 2\u03c0, and mpf_shift doubling; an ablation arm isolates the q=2 fix alone to quantify each component's contribution.",
+  "key_points": [
+    "Profiling of iter-4 code shows mpf_cos consuming ~40% of remaining hot-path time (~18ms of ~45ms per call), with 1328 calls total. Three independent inefficiencies are targeted: (1) the q=2 term unnecessarily computes cos(-n\u03c0) at 3728-bit precision when the answer is exactly (-1)^n, (2) all remaining calls pass angles ~10^6 radians forcing expensive mod_pi2 reduction, and (3) the h/j-h symmetry doubling uses two mpf_add calls instead of a single mpf_shift.",
+    "h-main arm predicts speedup >29x by combining all three fixes plus local variable caching; h-ablation arm predicts 27-29x with only the analytical q=2 fix. If ablation matches h-main, the angle pre-reduction and mpf_shift contribute negligibly. If h-main significantly exceeds ablation, the angle pre-reduction is validated as a substantial independent contributor (~7ms savings).",
+    "Risk is low: all changes are in the high-precision arithmetic path of partitions_.py, correctness is gated by the existing pytest suite (test_partitions.py), and the optimizations are mathematically exact (analytical q=2) or precision-preserving (angle reduction keeps full mpf precision). The unlocked parameters (M, initial_prec, float_prec_threshold, cache size, precision margin) are documented and unchanged from prior iterations."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

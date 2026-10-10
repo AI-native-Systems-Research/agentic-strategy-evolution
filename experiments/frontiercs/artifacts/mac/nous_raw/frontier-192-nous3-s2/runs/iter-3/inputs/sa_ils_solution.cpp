@@ -1,0 +1,143 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n, m;
+    cin >> n >> m;
+
+    vector<vector<int>> adj(n + 1);
+    for(int i = 0; i < m; i++){
+        int u, v;
+        cin >> u >> v;
+        adj[u].push_back(v);
+        adj[v].push_back(u);
+    }
+
+    if(m == 0){
+        for(int i = 1; i <= n; i++){
+            if(i > 1) cout << ' ';
+            cout << 0;
+        }
+        cout << '\n';
+        return 0;
+    }
+
+    mt19937 rng(31415);
+
+    auto flip_vertex = [](vector<int>& side, vector<int>& gain,
+                          vector<vector<int>>& adj, int& cut, int v) {
+        side[v] ^= 1;
+        cut += gain[v];
+        gain[v] = -gain[v];
+        for(int w : adj[v]){
+            if(side[v] == side[w]) gain[w] += 2;
+            else gain[w] -= 2;
+        }
+    };
+
+    auto calc_state = [&](vector<int>& side, vector<int>& gain, int& cut) {
+        fill(gain.begin(), gain.end(), 0);
+        cut = 0;
+        for(int u = 1; u <= n; u++){
+            for(int v : adj[u]){
+                if(side[u] == side[v]) gain[u]++;
+                else gain[u]--;
+            }
+        }
+        for(int u = 1; u <= n; u++){
+            for(int v : adj[u]){
+                if(side[u] != side[v]) cut++;
+            }
+        }
+        cut /= 2;
+    };
+
+    auto greedy_improve = [&](vector<int>& side, vector<int>& gain, int& cut) {
+        bool improved = true;
+        while(improved){
+            improved = false;
+            for(int v = 1; v <= n; v++){
+                if(gain[v] > 0){
+                    flip_vertex(side, gain, adj, cut, v);
+                    improved = true;
+                }
+            }
+        }
+    };
+
+    int global_best_cut = -1;
+    vector<int> global_best_side;
+    uniform_real_distribution<double> unif(0.0, 1.0);
+
+    // 12 restarts (safe for TLE) with more perturbation
+    for(int restart = 0; restart < 12; restart++){
+        vector<int> side(n + 1, 0);
+        vector<int> gain(n + 1, 0);
+        int cut = 0;
+
+        if(restart < 6) {
+            vector<int> order(n);
+            iota(order.begin(), order.end(), 1);
+            shuffle(order.begin(), order.end(), rng);
+            for(int i = 1; i <= n; i++) side[i] = 0;
+            for(int v : order){
+                int in0 = 0, in1 = 0;
+                for(int w : adj[v]){
+                    if(side[w] == 0) in0++;
+                    else in1++;
+                }
+                side[v] = (in0 >= in1) ? 1 : 0;
+            }
+        } else {
+            for(int i = 1; i <= n; i++) side[i] = rng() % 2;
+        }
+
+        calc_state(side, gain, cut);
+        greedy_improve(side, gain, cut);
+        int best_cut = cut;
+        vector<int> best_side = side;
+
+        double T = 3.0, T_min = 0.001, alpha = 0.99997;
+        while(T > T_min){
+            int v = (rng() % n) + 1;
+            int g = gain[v];
+            if(g > 0 || unif(rng) < exp((double)g / T)){
+                flip_vertex(side, gain, adj, cut, v);
+                if(cut > best_cut){ best_cut = cut; best_side = side; }
+            }
+            T *= alpha;
+        }
+
+        side = best_side; calc_state(side, gain, cut);
+        greedy_improve(side, gain, cut);
+        if(cut > best_cut){ best_cut = cut; best_side = side; }
+
+        // 12 cheap perturbation + greedy cycles (more diversity)
+        for(int p = 0; p < 12; p++){
+            side = best_side; calc_state(side, gain, cut);
+            int k = max(1, n / (20 + p * 2));  // varying perturbation strength
+            for(int j = 0; j < k; j++){
+                int v = (rng() % n) + 1;
+                flip_vertex(side, gain, adj, cut, v);
+            }
+            greedy_improve(side, gain, cut);
+            if(cut > best_cut){ best_cut = cut; best_side = side; }
+        }
+
+        if(best_cut > global_best_cut){
+            global_best_cut = best_cut;
+            global_best_side = best_side;
+        }
+    }
+
+    for(int i = 1; i <= n; i++){
+        if(i > 1) cout << ' ';
+        cout << global_best_side[i];
+    }
+    cout << '\n';
+
+    return 0;
+}

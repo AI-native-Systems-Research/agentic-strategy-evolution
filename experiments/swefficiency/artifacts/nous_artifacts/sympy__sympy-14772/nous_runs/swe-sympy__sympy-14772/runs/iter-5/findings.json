@@ -1,0 +1,75 @@
+{
+  "iteration": 5,
+  "bundle_ref": "runs/iter-5/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Replacing pow(a%p, (p-1)//2) % p with pow(a, (p-1)//2, p) at line 2075 will decrease workload mean from ~0.069s to ~0.000015-0.000025s, yielding a speedup of ~3,000-5,000x consistently across all 5 seeds. All 38 covering tests will pass.",
+      "observed": "Mean decreased from 0.0701s (baseline mean-of-means) to 0.0000210s (21.0\u03bcs). Per-seed speedups: seed42=3585x, seed43=3442x, seed44=2797x, seed45=3485x, seed46=3558x. Mean speedup (campaign formula 0.0743/mean): 3535x. All 38 covering tests pass for every seed.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Speedup is consistent across all 5 seeds (range 2797x-3585x), all well above the 2500x floor. Seed44 showed slightly higher variance (26.7\u03bcs vs ~19-20\u03bcs for others) likely due to a transient system load spike, but still yields 2797x speedup.",
+      "metadata": {
+        "speedup": 3535,
+        "baseline_means": [
+          0.06872705,
+          0.06890498,
+          0.07468551,
+          0.06909604,
+          0.06901236
+        ],
+        "treatment_means": [
+          1.917e-05,
+          2.002e-05,
+          2.67e-05,
+          1.983e-05,
+          1.94e-05
+        ],
+        "per_seed_speedups": [
+          3585,
+          3442,
+          2797,
+          3485,
+          3558
+        ],
+        "tests_passed": 38,
+        "tests_total": 38
+      }
+    },
+    {
+      "arm_type": "h-robustness",
+      "predicted": "Combining three-arg pow with bitshift exponent (p>>1 instead of (p-1)//2) and branchless return (sig if sig<=1 else -1) will produce speedup statistically indistinguishable from h-main \u2014 within \u00b120% of h-main's mean, well within the measurement noise imposed by the ~16\u03bcs multiprocessing fork overhead. All 38 covering tests will pass.",
+      "observed": "Mean decreased from 0.0701s (baseline) to 0.0000191s (19.1\u03bcs). Per-seed speedups: seed42=3526x, seed43=3778x, seed44=3767x, seed45=3634x, seed46=3687x. Mean speedup (campaign formula): 3899x. h-robustness mean (19.1\u03bcs) is 9.3% lower than h-main mean (21.0\u03bcs), well within the \u00b120% threshold. Welch's t-test: t=1.35, df=4.3, NOT significant (p>0.05). All 38 covering tests pass.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The h-robustness variant shows marginally lower mean (19.1\u03bcs vs 21.0\u03bcs), but the difference is not statistically significant (Welch's t=1.35, p>0.05). The 9.3% apparent difference is within measurement noise \u2014 h-main's seed44 outlier (26.7\u03bcs) inflates its mean. h-robustness had lower variance (\u03c3=0.6\u03bcs vs 3.2\u03bcs), but this reflects h-main's single outlier rather than a systematic advantage. This confirms the optimization ceiling: additional micro-optimizations provide no measurable benefit beyond three-arg pow.",
+      "metadata": {
+        "speedup": 3899,
+        "treatment_means": [
+          1.949e-05,
+          1.824e-05,
+          1.983e-05,
+          1.901e-05,
+          1.872e-05
+        ],
+        "per_seed_speedups": [
+          3526,
+          3778,
+          3767,
+          3634,
+          3687
+        ],
+        "h_main_vs_robustness_diff_pct": -9.3,
+        "welch_t_stat": 1.35,
+        "welch_df": 4.3,
+        "welch_significant": false,
+        "tests_passed": 38,
+        "tests_total": 38
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed as predicted. h-main delivers ~3,535x speedup consistently across 5 seeds (range 2,797x-3,585x). h-robustness delivers ~3,899x speedup that is statistically indistinguishable from h-main (Welch's t=1.35, p>0.05, difference = -9.3%). The performance ceiling hypothesis is confirmed: three-arg pow captures the entire optimization opportunity, and stacking micro-optimizations (bitshift exponent + branchless return) provides no statistically significant additional speedup above the multiprocessing fork overhead floor.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

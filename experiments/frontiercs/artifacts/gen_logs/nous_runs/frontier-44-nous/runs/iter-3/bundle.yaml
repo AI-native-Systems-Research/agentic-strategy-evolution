@@ -1,0 +1,49 @@
+metadata:
+  iteration: 3
+  family: "multi-start-oropt-cycling-fix"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #44?"
+  complexity_tier: 2
+  tier_justification: "iter 3, single mechanism (tour optimization) + multi-technique ablation: multi-start vs single-start with or-opt and cycling detection"
+
+arms:
+  - type: h-main
+    prediction: "Multi-start NN construction + NN-list 2-opt with cycling detection + linked-list or-opt will score higher than the iter-2 baseline of 76.3 on the judge, improving on the 6 currently-failing test cases (especially TC4 N=1000 and TC6 N=15000) while maintaining 100% on the 14 already-perfect test cases."
+    mechanism: "Three improvements combine: (1) Multi-start construction (for small N) explores different local optima — each NN start from a different city produces a different initial tour that 2-opt optimizes to a different local minimum; for TC4 (N=1000, 2-opt converges in 11ms) we can try 100+ starts in the time budget. (2) Cycling detection breaks the infinite 2-opt cycling observed on TC6 (exactly 3388 non-improving swaps per pass after pass 38), saving ~1500ms. (3) Or-opt via linked list performs O(1) city relocations that 2-opt cannot discover (different neighborhood), using NN-list for candidate selection."
+    diagnostic: "If the prediction is wrong, check: (a) whether multi-start finds distinct local optima or converges to the same one, (b) whether cycling detection fires correctly on grid test cases, (c) whether or-opt makes improvements after 2-opt convergence. Per-test-case scoring reveals which cases changed."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the stub with a multi-start NN construction + 2-opt algorithm that adapts its strategy based on N: multi-start for N<=5000, limited multi-start for N<=50000, single-start for large N. Add 2-opt cycling detection (break when per-pass cost stops decreasing). Add linked-list or-opt after 2-opt convergence. Keep window 2-opt and carrot optimization."
+        rationale: "Tests whether combining multiple construction starts with cycling detection and or-opt can push score above 76.3 by improving the 6 failing test cases."
+
+  - type: h-control-negative
+    prediction: "The exact iter-2 algorithm (NN + NN-list 2-opt K=20 + window 2-opt + carrot) will score approximately 76.3 ± 0.5, consistent with iter-2 findings. This arm confirms that the judge scoring is stable and provides a variance baseline."
+    mechanism: "Identical algorithm to iter-2 h-main. Any score variation is due to judge timing variability (time-dependent 2-opt convergence produces ±0.5 variance)."
+    diagnostic: "If score differs from 76.3 by more than 1.0, the judge environment may have changed. Check timing of large test cases."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Copy the exact iter-2 winning solution (proto_v10.cpp content) as-is into solution.cpp."
+        rationale: "Provides stable baseline for comparison."
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -std=c++17 -o solution solution.cpp"
+  verified_parameters:
+    K_NN: 20
+    W_nn_large: 45
+    time_limit_ms: 2500
+    safety_margin_ms: 2350
+  unlocked_parameters_audit:
+    - name: K_NN
+      default_value: 20
+      justification: "Tested K=15,20,25,30 during exploration; K=20 optimal (K=30 wastes precompute time, K=15 misses moves)"
+    - name: W_nn
+      default_value: "45 (N>80K), 60 (N>20K), 100 (N>5K), 150 (N>500), N-1 (N<=500)"
+      justification: "Tiered NN window from iter-2, validated for grid (800x250) coverage"
+    - name: compiler_flags
+      default_value: "-O2 -std=c++17"
+      justification: "Standard optimization level; -O3 not tested but unlikely to matter vs algorithmic changes"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 60
+      h-control-negative: 60
+    observation_method: "fmeasure_44.sh runs 20 test cases sequentially, each up to 2.5s"

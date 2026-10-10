@@ -1,0 +1,39 @@
+[
+  {
+    "id": "RP-4",
+    "statement": "In diop_DN's |N|>1 branch, replacing sympy's number-theory utility functions (divisors via factorint, sqrt_mod via CRT, divisible) with pure-integer implementations (trial division for divisors, brute-force enumeration for sqrt_mod) and converting D, N, sD to Python int at branch entry achieves 1.43x direct warm-call speedup (0.172ms to 0.120ms) and 2.68x harness speedup (0.808ms to 0.301ms) over iter-3's optimized code. Combined with RP-1 (hoisting), RP-2 (integer arithmetic), and RP-3 (inlined PQa), the total campaign speedup is 190,335x (harness) or 478,538x (direct) over the 57.3288s baseline for the tested workload (D=15591784605, N=-20).",
+    "confidence": "high",
+    "regime": "D non-square, |N|>1, small moduli (abs_m <= 100000 for all divisors of N). The harness speedup (2.68x) exceeds the direct warm speedup (1.43x) because forked-process measurement amplifies cold-start savings from eliminating sympy module imports.",
+    "evidence": [
+      "iteration-4-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "Three sources of improvement: (1) Pure-integer divisors (trial division while d*d <= absN) eliminates factorint's prime factorization dispatch \u2014 saving ~4.3\u03bcs per call for N=20. (2) Pure-integer sqrt_mod (brute-force for x in range(abs_m)) eliminates CRT-based modular arithmetic \u2014 saving ~12.9\u03bcs per call for abs_m=20. (3) Converting D, N, sD to Python int at the |N|>1 branch entry eliminates sympy Integer.__mul__, __floordiv__, __mod__ dispatch on all 234 PQa inner-loop iterations. Function call count drops from 387 to 249 per invocation (36% reduction).",
+    "applicability_bounds": "Applies when sympy number-theory utilities are overkill for small inputs. The brute-force sqrt_mod is O(abs_m), so only efficient for small moduli (threshold 100000). For larger moduli, sympy's CRT-based algorithm is superior. The int() conversion is always beneficial when inputs are sympy Integer objects, but only measurable when the inner loop has enough iterations to accumulate dispatch overhead.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "At 0.120ms per warm call (478,538x campaign speedup), the diop_DN optimization for the tested workload (D=15591784605, N=-20) is approaching Python's bytecode execution floor for this algorithm. The 234-step PQa inner loop accounts for ~87% of per-call time at ~0.5\u03bcs per iteration. Further speedups within pure Python are limited to <1.5x without algorithmic changes (e.g., reducing the number of PQa iterations via direct Pell equation methods).",
+    "confidence": "medium",
+    "regime": "D=15591784605, N=-20, Python 3.11, pure Python without C extensions.",
+    "evidence": [
+      "iteration-4-h-main",
+      "iteration-3-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "The inner loop performs 234 iterations of: one integer division, two integer multiplications, two subtractions, one set lookup, and one set add. At ~0.5\u03bcs per iteration, this is near Python's per-bytecode-instruction cost. The remaining overhead outside the inner loop (divisor computation, sqrt_mod, result collection) has been reduced to <15% of per-call time. Micro-optimizations (variable renaming, eliminating the j counter) would save at most a few bytecode instructions per iteration.",
+    "applicability_bounds": "This bound is specific to the current workload parameters. Different D/N values produce different PQa period lengths, so the absolute time varies, but the per-iteration cost floor remains ~0.5\u03bcs in CPython 3.11.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

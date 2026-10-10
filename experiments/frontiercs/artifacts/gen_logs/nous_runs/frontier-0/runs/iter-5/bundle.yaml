@@ -1,0 +1,56 @@
+metadata:
+  iteration: 5
+  family: "skyline-speed-diversity"
+  research_question: "Does combining per-call pack() speed optimizations (precomputed maxHiP1, orientation-level skip) with increased ordering diversity (5 orderings) and targeted culprit repair produce a consistently higher judge score than the v10 baseline?"
+  complexity_tier: 2
+  tier_justification: "iter 5 — single mechanism (greedy skyline packer) with multi-knob improvements (speed optimization + ordering diversity + culprit repair). Tier 1 was used for iters 1-4; escalating to tier 2 to test composite improvements."
+
+arms:
+  - type: h-main
+    prediction: "v12 will achieve a higher mean score than v10 across 3 seeds. The improvement direction will be positive in at least 2 of 3 paired comparisons. The mechanism combines faster pack() calls (enabling more width exploration) with increased ordering diversity and targeted culprit repair. Design probes showed paired improvements of +6.29 and +3.84 points in back-to-back comparisons."
+    mechanism: "Four synergistic improvements: (1) Precomputing maxHiP1 in the Trans struct eliminates O(tw) recomputation per orientation evaluation, saving ~7M operations per pack() call for large instances — translating to ~15ms faster per call. (2) Orientation-level skip avoids entering the inner position loop for orientations whose theoretical minimum height exceeds the current best. (3) Two additional orderings (orderDecDim, orderAscK) provide more diversity in Phase 2, increasing the probability of finding a lower-height packing at the best width. (4) Culprit repair identifies pieces at the height boundary and repacks with them deferred, directly targeting the rows that determine the packing's total height."
+    diagnostic: "If v12 does NOT outperform v10: (a) Check if the precomputed maxHiP1 actually differs from the inner-loop computation in v10 — the optimization might be compiled away by the optimizer. (b) Check if culprit repair and additional orderings consume too much Phase 2/3 time, reducing Phase 1 width exploration. (c) Measure per-pack() wall time for both solutions to quantify the speed difference."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace solution.cpp with the v12 solution from inputs/h-main-solution.cpp. This is a copy operation — the v12 code is already written and validated."
+        rationale: "v12 adds precomputed maxHiP1 (Trans struct field), orientation-level skip, 5 orderings (was 3), and culprit repair to the v10 baseline. These changes were validated during design: v12 compiles, produces valid output, and scored 82.72-86.54 in probe runs."
+  - type: h-control-negative
+    prediction: "v10 will score in the range 79-86, consistent with iter-4 measurements (mean 82.71) but with potentially higher variance due to current system load conditions. The mean should be similar to iter-4."
+    mechanism: "v10 is the established iter-4 baseline with unified time allocation, position-level early termination, 3 orderings, and random restart. It lacks v12's speed optimizations and quality improvements, so it explores fewer widths per time budget and has less ordering diversity."
+    diagnostic: "If v10 scores outside 79-86 range, system load may be extreme. Check stderr for TLE or other error conditions."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace solution.cpp with the v10 solution from inputs/h-control-negative-solution.cpp. This is a copy operation."
+        rationale: "v10 is the unmodified iter-4 h-main solution, serving as the control baseline."
+
+# Arms rationale: Two arms (h-main + h-control-negative) provide a clean
+# treatment-vs-control comparison. An ablation arm was considered (e.g.,
+# v10 + maxHiP1 only) but rejected because each judge call takes ~60-75s
+# and adding more arms would extend experiment time beyond the practical
+# budget. The composite improvement can be decomposed in a future iteration
+# if the h-main is confirmed.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 2
+    memory_limit_mb: 256
+    n_test_cases: 70
+    judge_command: "bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp"
+  unlocked_parameters_audit:
+    - name: "compiler_flags"
+      default_value: "-O2 -std=c++17"
+      justification: "Judge compiles with g++ -O2 -std=c++17 internally; not controllable."
+    - name: "lookahead_K"
+      default_value: "n/4"
+      justification: "K=n/4 established in iter-2 as dominant quality factor (RP-4). No change in v12."
+    - name: "width_factor"
+      default_value: "variable by totalCells"
+      justification: "Factor table identical in v10 and v12; inherited from reference solution."
+    - name: "time_budget_ms"
+      default_value: 1980
+      justification: "20ms safety margin for I/O, identical in both arms."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      judge_per_arm: 70
+    observation_method: "Manual timing of judge calls during design exploration"

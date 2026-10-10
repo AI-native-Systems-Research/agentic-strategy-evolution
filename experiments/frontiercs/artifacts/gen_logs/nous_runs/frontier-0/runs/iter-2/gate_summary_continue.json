@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Over two iterations, we improved the polyomino packing score from ~72 (iter-1 baseline skyline packer) to ~83 (iter-2 enhanced packer with lookahead), surpassing the reference solution (~80). Lookahead accounts for ~63% of the improvement; secondary features (roughness tiebreaker, column compaction, multi-ordering) contribute the remaining ~37%. The algorithm is near the limit of greedy placement strategies, and further gains likely require fundamentally different approaches.",
+  "key_points": [
+    "Iter-2 h-main scored 82.86 avg (79.88\u201386.16) across 3 runs, an 11-point improvement over iter-1 baseline (71.76) and ~3 points above the reference solution (~80). Lookahead (evaluating future piece fits) is the dominant mechanism, contributing 6.94 of the 11.10-point gain.",
+    "Iter-2 h-ablation (lookahead disabled) scored 75.92 avg (74.75\u201377.21), confirming that secondary improvements alone add ~4 points. The clean separation between all h-main scores > all h-ablation scores validates the experimental design.",
+    "Score variance is higher than desired for h-main (range 6.28 vs predicted <2), driven by system load affecting the time-managed width sweep on large test cases (n > 2000). The hybrid time strategy (phase 1: width exploration, phase 2: multi-ordering at best width) helps but doesn't fully eliminate this.",
+    "Remaining unknowns: (1) Can gap-filling (placing small pieces in holes below the skyline) add 2-5 points? (2) Would beam search (maintaining top-K partial packings) reduce variance and improve average? (3) Which specific test cases contribute most to score loss \u2014 are there a few hard instances dominating?",
+    "Recommended iter-3 direction: Profile per-test-case scores to identify where the biggest gaps are, then implement grid-based gap filling for small pieces (likely the highest ROI given many 1-3 cell pieces in the input distribution). Beam search is higher-risk but could push scores toward 90+."
+  ]
+}

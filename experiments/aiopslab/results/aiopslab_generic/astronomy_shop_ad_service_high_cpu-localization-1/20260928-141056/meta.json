@@ -1,0 +1,7 @@
+{
+  "problem_id": "astronomy_shop_ad_service_high_cpu-localization-1",
+  "model": "claude-opus-4-6",
+  "label": "aiopslab_generic",
+  "max_steps": 30,
+  "final_state": "[ERROR] Docker command execution failed: "
+}

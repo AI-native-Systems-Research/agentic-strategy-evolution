@@ -1,0 +1,61 @@
+metadata:
+  iteration: 4
+  family: "time-allocation-ordering-diversity"
+  research_question: "Does combining unified time allocation (removing the 60/40 phase split), position-level early termination, fast I/O, and random-restart ordering diversity produce a measurable improvement over the v7 baseline for polyomino packing?"
+  complexity_tier: 2
+  tier_justification: "iter 4, single mechanism family (time allocation + ordering diversity); tier 1 confirmed skyline baseline (iter-1), tier 2 confirmed lookahead dominance (iter-2), tier 2 refuted gap-filling (iter-3). This is another tier 2: one treatment vs one control testing a composite optimization."
+
+arms:
+  - type: h-main
+    prediction: "v10 (unified sweep + early termination + fast I/O + random restart) will achieve a marginally higher mean score than v7 across 3 seeds (+1-3 points average). The improvement comes from: (a) unified allocation lets the primary sweep explore more widths instead of reserving 40% for alt orderings, (b) early termination makes each pack() call ~10-20% faster, enabling 1-3 extra widths in the sweep, (c) random restart uses idle time for ordering diversity at the best width. The effect will be more pronounced in paired comparison than in absolute scores, since system-load variance (~6 pts per RP-3) dominates single measurements."
+    mechanism: "The v7 baseline reserves 40% of the 2s time budget for Phase 2 (alt orderings at bestWidth ±3). For big instances (totalCells > 7000), each pack call takes ~200-500ms, so this 40% reservation costs 2-4 width-sweep opportunities. v10 eliminates this reservation, giving the primary sweep access to 66% more time (1980ms vs ~1188ms). Additionally, position-level early termination (h-main-solution.cpp:185-199) skips expensive deltaSum and roughDelta computation for positions where max(maxH, y0 + maxHiP1) > bestScore2, reducing per-position cost by ~40% when the skyline has high variance. Fast I/O (h-main-solution.cpp:10-24) saves ~30ms vs scanf on n=10000. The random restart phase (h-main-solution.cpp:397-418) uses mt19937 to shuffle orderings and tries them at bestWidth ±1 in whatever time remains after the primary sweep and fixed alt orderings."
+    diagnostic: "If v10 scores LOWER than v7: (1) Check if the removed alt-ordering phase was more valuable than the extra width-sweep widths for certain test-case sizes. The 60/40 split may be optimal for medium instances (n=300-1000) where the width sweep converges quickly and alt orderings provide genuine diversity. (2) Check if random restart orderings are harming small instances by adding overhead for no benefit (the lookahead already provides ordering robustness). (3) Check if early termination has a correctness bug (skipping positions that would have been better)."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the v7 solution with v10: add FastIO struct, replace the 60/40 phase split with unified width sweep, add position-level early termination in the inner placement loop, and add a random restart phase using mt19937-shuffled orderings at bestWidth ±1"
+        rationale: "Tests whether making pack() faster (early termination) and allocating all time to width sweep (unified allocation) improves the score. The random restart adds ordering diversity without taking time from the primary sweep."
+
+  - type: h-control-negative
+    prediction: "v7 will score in the range 79-86 (mean ~83), consistent with iter-2 and iter-3 measurements. The control establishes a stable baseline against which the paired comparison can detect v10's marginal improvement."
+    mechanism: "v7 is the mature baseline with skyline + lookahead (K=n/4) + roughness + column compaction + 60/40 time split. Its performance is well-characterized across iterations: iter-2 h-main mean 82.86, iter-3 h-control mean 82.87."
+    diagnostic: "If v7 scores outside the 79-86 range: system load anomaly. Re-run."
+
+arm_rationale: >
+  Two arms only (h-main + h-control-negative). The experiment tests a composite
+  optimization (unified allocation + early termination + random restart) against
+  the well-established v7 baseline. An ablation arm (testing each component
+  separately) would require 3 additional arms and ~5 more judge runs per seed,
+  which is excessive given the ~6-point noise floor. Iter-2 already established
+  that ablations are informative (lookahead = 63%); here we test the full
+  composite because the individual components (fast I/O, early termination)
+  are micro-optimizations whose isolated effects are below the noise floor.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    time_limit_seconds: 2
+    memory_limit_mb: 256
+    n_cases: 70
+    n_range: "100-10000"
+    k_range: "1-10"
+  unlocked_parameters_audit:
+    - name: maxLookahead
+      default_value: "n/4"
+      justification: "Same in both v7 and v10; isolating the time-allocation mechanism, not the lookahead."
+    - name: width_factor
+      default_value: "varies by totalCells (0.4, 0.5, 0.27, 0.08, 0.01)"
+      justification: "Same in both solutions; controls the center of the width sweep, not the mechanism under test."
+    - name: bigInstance_threshold
+      default_value: "totalCells > 7000"
+      justification: "Same in both solutions; determines when dynamic lookahead adaptation activates."
+    - name: roughness_tiebreaker
+      default_value: "enabled (sum of abs height differences)"
+      justification: "Same in both solutions; secondary tiebreaker, not the mechanism under test."
+    - name: column_compaction
+      default_value: "enabled (remove unused columns)"
+      justification: "Same in both solutions; post-processing step, not the mechanism under test."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 75
+      h-control-negative: 75
+    observation_method: "Back-to-back judge runs during design probes averaged ~60-75s each"

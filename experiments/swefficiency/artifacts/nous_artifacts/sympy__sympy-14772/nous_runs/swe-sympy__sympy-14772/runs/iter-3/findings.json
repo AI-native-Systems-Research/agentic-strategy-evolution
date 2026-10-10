@@ -1,0 +1,68 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Replacing pow(a%p, (p-1)//2) % p with pow(a, (p-1)//2, p) in _legendre will decrease workload mean from ~0.069s to ~0.000020s, yielding a speedup of ~3,300-4,100x consistently across all 5 seeds. All 38 covering tests will pass.",
+      "observed": "Mean runtime across 5 seeds: 19.07\u03bcs (range: 17.75-22.40\u03bcs). Speedup across seeds: 4174x, 3900x, 3318x, 4045x, 4186x (mean: 3924x, range: 3318-4186x). All 38 covering tests pass. The effect is a complexity-class change from O(2^n * n) to O(n^2) where n = log2(p).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null,
+      "metadata": {
+        "speedup": 3924,
+        "per_seed_speedups": {
+          "seed42": 4174,
+          "seed43": 3900,
+          "seed44": 3318,
+          "seed45": 4045,
+          "seed46": 4186
+        },
+        "per_seed_means_seconds": {
+          "seed42": 1.78e-05,
+          "seed43": 1.91e-05,
+          "seed44": 2.24e-05,
+          "seed45": 1.84e-05,
+          "seed46": 1.78e-05
+        },
+        "mean_seconds": 1.907e-05,
+        "tests_passed": 38,
+        "tests_total": 38
+      }
+    },
+    {
+      "arm_type": "h-robustness",
+      "predicted": "Replacing the Euler-criterion body with a Jacobi-symbol / quadratic-reciprocity algorithm will produce speedup comparable to h-main (~3,000-4,000x) but not significantly higher, because the ~16\u03bcs workload harness overhead dominates both variants' per-call computation times. All 38 covering tests will pass.",
+      "observed": "Mean runtime across 5 seeds: 18.07\u03bcs (range: 15.82-20.17\u03bcs). Speedup across seeds: 3726x, 3683x, 4608x, 4696x, 4058x (mean: 4155x, range: 3683-4696x). All 38 covering tests pass. The Jacobi algorithm's mean is 5.2% lower than h-main's (18.07\u03bcs vs 19.07\u03bcs), but this difference is not statistically significant (Welch's t=0.80, df=8, p>>0.05). Both arms' speedup ranges completely overlap.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The Jacobi algorithm is marginally faster per-call (~3.9\u03bcs vs ~6.6\u03bcs in prior microbenchmarks), but the workload-level improvement is swamped by the ~16\u03bcs harness overhead. The 5.2% mean improvement is within measurement noise, confirming the prediction that harness overhead dominates.",
+      "metadata": {
+        "speedup": 4155,
+        "per_seed_speedups": {
+          "seed42": 3726,
+          "seed43": 3683,
+          "seed44": 4608,
+          "seed45": 4696,
+          "seed46": 4058
+        },
+        "per_seed_means_seconds": {
+          "seed42": 1.99e-05,
+          "seed43": 2.02e-05,
+          "seed44": 1.61e-05,
+          "seed45": 1.58e-05,
+          "seed46": 1.83e-05
+        },
+        "mean_seconds": 1.807e-05,
+        "tests_passed": 38,
+        "tests_total": 38
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed as predicted. h-main delivers consistent ~3,300-4,200x speedup across 5 seeds, replicating the iter-1 (1 seed) and iter-2 (3 seeds) findings with higher statistical confidence. h-robustness (Jacobi algorithm) delivers comparable speedup (~3,700-4,700x), confirming that the noise floor has been reached and further algorithmic improvement is not measurable in this workload harness. The difference between h-main and h-robustness means (5.2%) is not statistically significant (t=0.80, p>>0.05).",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "conftest.py.bak"
+  ]
+}

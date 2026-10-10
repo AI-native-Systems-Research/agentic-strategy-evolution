@@ -1,0 +1,12 @@
+{
+  "arm": "h-ablation",
+  "description": "Precomputed coprimes only (no gmpy2 _d)",
+  "runs": [
+    {"run": 1, "mean": 0.01904, "std": 0.00513},
+    {"run": 2, "mean": 0.01843, "std": 0.00426},
+    {"run": 3, "mean": 0.01803, "std": 0.00451}
+  ],
+  "aggregate_mean": 0.0185,
+  "tests_pass": true,
+  "speedup_over_baseline": 1.30
+}

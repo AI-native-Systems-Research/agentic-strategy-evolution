@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Both experimental arms confirmed their predictions. The main optimization (h-main) achieved an 8.02x speedup over the 1.3901s reference baseline, reducing runtime to 0.1734s while producing bit-identical results and passing all tests. The ablation arm (h-ablation) confirmed that the algorithmic optimizations alone provide 6.44x speedup, with NumPy vectorization contributing an additional 1.24x factor.",
+  "key_points": [
+    "h-main CONFIRMED: 0.1734s mean (8.02x speedup vs 1.3901s reference). Three combined optimizations \u2014 small-int inner sum (eliminates ~2.9M big-int multiplies), h/j-h symmetry (halves mpf_cos calls from 18055 to ~9028), and NumPy vectorization for j>50 \u2014 all compound as predicted.",
+    "h-ablation CONFIRMED: 0.2157s mean (6.44x speedup), consistently slower than h-main (0.2157 vs 0.1734). This decomposes the contribution: algorithmic optimizations dominate (6.44x), NumPy adds a meaningful 1.24x on top.",
+    "Correctness fully verified: both arms produce bit-identical outputs (SHA256 match) to the original implementation for npartitions(10^6), and the covering test (test_partitions.py) passes for both arms.",
+    "Note: 4 unrelated worktree files are modified (basic.py, function.py, egyptian_fraction.py, plot.py) \u2014 these should be reviewed to ensure only the intended ntheory/partitions changes are committed.",
+    "Recommendation: APPROVE h-main for deployment. The 8.02x speedup is robust across 10 fork-isolated repetitions (std 0.0035s), correctness is proven, and the optimization is well-decomposed with clear causal attribution from the ablation."
+  ]
+}

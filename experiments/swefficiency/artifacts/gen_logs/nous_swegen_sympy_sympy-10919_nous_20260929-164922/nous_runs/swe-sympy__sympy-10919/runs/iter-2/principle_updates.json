@@ -1,0 +1,40 @@
+[
+  {
+    "id": "RP-3",
+    "statement": "Precomputing coprime lists and Dedekind sums into flat tuple arrays per j eliminates Python function-dispatch overhead from lru_cache lookups and math.gcd checks, reducing _a's per-iteration cost by ~37% (15.2ms to 9.6ms) in npartitions(10^6). The j=2 self-pairing edge case must be handled separately to avoid correctness errors.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 1000, where M >= 6 outer iterations and coprime density is high enough for the overhead to dominate",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The lru_cache decorator adds Python function-call overhead (~0.001ms per lookup) even on cache hits. With 9028 cache hits per npartitions invocation, this totals ~9ms. Precomputing all (h, D) pairs into a flat list per j replaces cache lookups with direct tuple iteration, which is ~3x faster in CPython due to eliminated frame allocation and dict lookup. The math.gcd calls (14641 per invocation) add another ~3ms, also eliminated by precomputation.",
+    "applicability_bounds": "Applies when the same coprime h values are accessed repeatedly across outer iterations with warm lru_cache. For a single npartitions call with cold cache, the precomputation cost is similar to the original lazy computation. Benefit grows with repeated calls (workload runs 10 times).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-4",
+    "statement": "gmpy2's C-level MPFR cosh/sinh/sqrt/div operations are ~2x faster than mpmath's pure-Python mpf_cosh_sinh/mpf_div/mpf_sqrt at precisions up to 1000 bits, but ~0.7x slower at precisions above 1000 bits. A precision-based dispatch threshold at 1000 bits optimally partitions the HRR loop for npartitions(10^6), with 239 of 243 iterations using the faster gmpy2 path. Requires 50 guard bits for correctness.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 1000, where _d function contributes >20% of runtime and most iterations have prec <= 1000",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "mpmath's mpf_* functions operate on 4-tuples (sign, mantissa, exponent, bitcount) in pure Python, requiring tuple unpacking, integer arithmetic, and re-packing at each step. gmpy2's MPFR type wraps GMP/MPFR C library calls (cosh, sinh, sqrt, div) that operate on native C structures. At low precision (<1000 bits), the C dispatch overhead is small relative to the computation. At high precision (>1000 bits), mpmath's binary splitting algorithms for cosh_sinh become competitive because the asymptotic complexity dominates over dispatch overhead.",
+    "applicability_bounds": "The 1000-bit threshold is specific to the _d function's mix of operations (cosh_sinh + div + sqrt). Other functions with different operation mixes may have different crossover points. The 50 guard bits compensate for intermediate rounding differences between gmpy2 and mpmath.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

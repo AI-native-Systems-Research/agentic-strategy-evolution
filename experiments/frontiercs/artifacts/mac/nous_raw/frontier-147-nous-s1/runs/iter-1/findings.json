@@ -1,0 +1,26 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "SA with coordinated moves and adaptive step sizes will score above 85 on the judge.",
+      "observed": "Score = 89.53. The key improvement was not coordinated moves (which were too expensive) but computing max-expansion bounds per edge to propose valid SA moves within available space. This eliminates wasted moves on collisions.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Coordinated neighbor moves were dropped \u2014 O(N) adjacent search per SA step reduced iteration count and hurt score. Instead, precomputing max expansion bounds per direction made each SA move valid by construction, dramatically improving acceptance rate."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "Greedy-only (no SA) will score in the range 15-30.",
+      "observed": "Score = 20.25. Greedy expansion with 2000 iterations of single-cell expansion, no SA phase.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main scored 89.5 (above 85 baseline), h-control-negative scored 20.2 (within predicted 15-30 range). SA is the dominant mechanism for score improvement. The key algorithmic insight was that computing per-edge expansion bounds (O(N) per edge but guaranteeing valid proposals) yields better SA performance than random step + collision check.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

@@ -1,0 +1,55 @@
+metadata:
+  iteration: 3
+  family: "npartitions-loop-overhead-elimination"
+  research_question: "Can inlining the HRR loop body, precomputing per-iteration constants, and pushing the float-precision cos summation to a C helper reduce npartitions(10^6) runtime by ~20% beyond iter-2's optimizations?"
+  complexity_tier: 3
+  tier_justification: "iter 3 — tier 1 confirmed in iter-1 (algorithm), tier 2 confirmed in iter-2 (algorithm+ablation), escalating to multi-mechanism (Python overhead elimination + C helper for float path)"
+
+arms:
+  - type: h-main
+    prediction: "The combined optimization (C float-path helper + inlined loop + precomputed constants + as_mantissa_exp conversion + local attribute caching) will decrease workload_mean_runtime by approximately 20% compared to the iter-2 baseline, consistently across seeds. The C float-path helper contributes roughly 30-40% of the total improvement, with the remaining 60-70% from Python-level optimizations."
+    mechanism: "Six sources of overhead remain after iter-2. (1) Python-level cos loop for the float path (p<=53, j=128..243): 116 iterations with math.cos in a Python for-loop incur ~2.1ms of interpreter overhead (tuple unpacking, attribute lookups, loop dispatch). A compiled C function eliminates all Python overhead, reducing this to 0.33ms. (2) _a function call overhead: 243 calls per invocation at ~0.1us Python function-call cost. (3) Redundant mpfr division: each of 2479 gmpy2 cos calls recomputes pi*val/(12*j) instead of precomputing factor=pi/(12*j). (4) Redundant sqrt computation: gmpy2.sqrt(_gb) recomputed each _d iteration instead of once. (5) Expensive mpfr-to-mpf conversion via multiply-by-2^wp creates a temporary large mpfr; as_mantissa_exp extracts mantissa/exponent directly. (6) Module-level attribute lookups (gmpy2.cos, math.cos etc.) in the hot loop add ~0.05us per lookup."
+    diagnostic: "If no speedup: profile to check whether C helper is actually being called (verify ctypes loading). If C path fails: check gcc compilation and .so loading. If correctness fails for h-main but not h-ablation: the C float-path cos values differ from Python math.cos (check angle computation for integer overflow in D+neg24n*h). If speedup is smaller than expected: Python interpreter overhead may be less than profiled (measure with timeit, not cProfile which adds overhead)."
+    code_changes:
+      - file: "sympy/ntheory/_kloosterman.c"
+        intent: "Create a new C file containing kloosterman_sum_float() that computes sum of cos(factor*(D[i]+neg24n*h[i])) for i=0..count-1 using hardware double cos, returning result*2. Compile with gcc -O3 -shared -fPIC -lm."
+        rationale: "Eliminates Python interpreter overhead from the float-path cos loop. The C function performs the same computation as the Python loop but without per-iteration interpreter dispatch, tuple unpacking, or attribute lookup overhead. Measured 5x speedup on float path in isolation."
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "Rewrite npartitions to inline _a and _d computations into the main loop body. Add C helper loading via ctypes at module level. Precompute factor=pi/(12*j) per j, _gc=sqrt(_gb) and _d_base_denom once. Use as_mantissa_exp() for mpfr-to-mpf conversion. Store frequently-used functions (gmpy2.cos, math.cos, mpf_add, etc.) as local variables before the loop. Extend _precompute_coprimes to also create ctypes long arrays (h_vals, D_vals) for each j."
+        rationale: "Inlining eliminates function call overhead and enables sharing gmpy2 context between _a and _d. Precomputed factor avoids one mpfr division per cos call. Precomputed _gc avoids redundant sqrt per _d iteration. as_mantissa_exp avoids creating temporary mpfr(2^wp). Local variable caching avoids module-level dict lookups in the hot loop."
+
+  - type: h-ablation
+    prediction: "Applying only the pure-Python optimizations (inlining + precomputed constants + as_mantissa_exp + local refs) WITHOUT the C float-path helper will decrease workload_mean_runtime by approximately 12-15% compared to baseline, less than h-main's ~20%. The difference quantifies the C helper's contribution."
+    mechanism: "The pure-Python optimizations target all six overhead sources except the float-path loop itself. They save ~1.5ms from: eliminated function calls, precomputed division factor (0.57ms), precomputed _d constants (0.3ms), faster mpfr-to-mpf conversion (0.2ms), and local attribute caching (0.2ms). The float path remains in Python at ~2.1ms instead of ~0.33ms in C."
+    diagnostic: "If h-ablation matches h-main: the C helper contributes nothing, and all gains are from Python-level changes. If h-ablation shows no speedup: the profiler may have overestimated Python overhead (cProfile adds per-call instrumentation that inflates apparent overhead)."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "Same inlining, constant precomputation, as_mantissa_exp, and local variable optimizations as h-main, but keep the Python math.cos loop for the float path. Do not load or use the C helper. Do not create ctypes arrays in _precompute_coprimes."
+        rationale: "Isolates the contribution of the pure-Python optimizations from the C helper. If this arm shows most of the speedup, the C helper adds implementation complexity for marginal gain."
+
+# Arm selection rationale:
+# h-main tests the full combined optimization (C helper + Python-level improvements).
+# h-ablation isolates the C helper's contribution by removing only that component.
+# This is tier 3: multi-mechanism (algorithmic constant precomputation + implementation-level C helper).
+# No h-control-negative: the baseline IS the control (unchanged iter-2 code).
+# No h-dose-response: the optimization is binary (apply or not), not a continuous knob.
+
+experiment_spec:
+  preflight_commands:
+    - "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -m pytest -q sympy/ntheory/tests/test_partitions.py'"
+  verified_parameters:
+    M_factor: 0.24
+    gmpy2_d_prec_cutoff: 1000
+    gmpy2_guard_bits: 50
+    float_path_threshold: 53
+    c_compiler_flags: "-O3 -shared -fPIC -lm"
+  unlocked_parameters_audit:
+    - name: "gmpy2_a_working_precision_extra"
+      default_value: 10
+      justification: "Extra bits for _a gmpy2 cos summation (wp = prec + 10). Provides rounding safety for up to ~1000 cos additions. Not changed from iter-2."
+    - name: "dynamic_precision_offset"
+      default_value: 50
+      justification: "The offset p=bitcount(|d|)+50 in dynamic precision reduction unchanged from original. Provides safety margin for sum accuracy."
+    - name: "coprime_cache_scope"
+      default_value: "module_level"
+      justification: "Cache persists across calls. For repeated calls with same n, coprime data is reused. First call pays ~6ms build cost."

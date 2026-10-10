@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether replacing Python's two-argument pow (which computes a massive intermediate integer) with three-argument modular pow in the _legendre function eliminates the dominant bottleneck in the crypto workload, predicted to yield ~4000x speedup from a one-line change on line 2075 of sympy/crypto/crypto.py.",
+  "key_points": [
+    "The workload calls _legendre with a=87389, p=131071. The current code computes pow(87389, 65535) \u2014 a ~1.1 million-bit integer \u2014 then reduces mod p. Three-arg pow(a, exp, p) keeps all intermediates under 17 bits via modular square-and-multiply in C, changing the algorithmic complexity class.",
+    "Single experiment arm (h-main): change `sig = pow(a%p, (p - 1)//2) % p` to `sig = pow(a % p, (p - 1) // 2, p)` on line 2075 of sympy/crypto/crypto.py. No other files are modified.",
+    "Confirmation criteria: workload mean drops from 0.0743s to near-zero (predicted ~0.00002s based on probe), yielding speedup \u226b 100x, while `pytest -q sympy/crypto/tests/test_crypto.py` stays fully green. Refutation: if the workload doesn't actually exercise this code path, or if the speedup is negligible (<2x).",
+    "Risk is minimal \u2014 this is a semantically identical transformation (pow(b, e) % m \u2261 pow(b, e, m) for positive integers) and the mechanism (avoiding huge intermediate integers) is well-understood. The only concern is verifying the test suite remains green."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

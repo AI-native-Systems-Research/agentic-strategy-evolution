@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, the best validated score is 69.5 from simulated annealing with random city swaps. A grid-guided 2-opt + Or-opt algorithm scoring ~78.85 was discovered during iter-2 exploration but was saved only as a patch, not as the main arm result. The core finding is that random 2-opt contributes zero improvement \u2014 all SA gains come from swap moves \u2014 and the 69.5 plateau cannot be broken by incremental post-processing (reversed tour + greedy edge-fix added only ~0.01 points).",
+  "key_points": [
+    "Iter-1 SA with NN construction + random swaps reliably scores 69.5 (\u00b10.01). 2-opt moves contribute nothing; 100% swap SA matches 40% swap + 60% 2-opt exactly.",
+    "A fundamentally different algorithm (grid-guided 2-opt with penalty-aware exact delta, Or-opt relocation, O(1) position lookups) scored 78.85 mean across 3 runs \u2014 a +9.35 point jump. This code exists in cumulative.patch but was NOT the iter-2 h-main submission, so iter-3 should start from this stronger baseline.",
+    "Post-SA optimizations (reversed-tour direction check, greedy edge-fix targeting worst penalized edges) yielded only +0.008 points over baseline \u2014 within measurement noise and not practically meaningful.",
+    "The next iteration should: (1) adopt the 78.85-scoring grid-guided algorithm as the starting point, (2) tune its parameters (neighborhood size, iteration count, Or-opt segment lengths), (3) explore LK-style moves or strip-based construction to push past 79, and (4) investigate penalty-aware scheduling (ensuring prime cities land on steps divisible by 10).",
+    "Key unknowns: whether the 78.85 algorithm has room for parameter tuning within the 2-second limit, whether penalty-aware city placement at multiples-of-10 steps can yield meaningful savings, and whether divide-and-conquer construction (spatial partitioning + sub-problem merging) could produce a better starting tour than grid-NN."
+  ]
+}

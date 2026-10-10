@@ -1,0 +1,58 @@
+{
+  "permissions": {
+    "allowOnly": [
+      "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1",
+      "/Users/toslali/frontier/gen_logs/frontier_192_nous3-s1_ws"
+    ],
+    "allow": [
+      "Bash(cargo:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(git:*)",
+      "Bash(go:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(ls:*)",
+      "Bash(make:*)",
+      "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(pip:*)",
+      "Bash(pytest:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(rg:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)"
+    ],
+    "deny": [
+      "Bash(curl http://*)",
+      "Bash(curl https://*)",
+      "Bash(wget http://*)",
+      "Bash(wget https://*)",
+      "Bash(rm -rf /*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/asr-frontier-mac/bin/nous-execute-stop"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/asr-frontier-mac/bin/nous-plan-enforcer"
+          }
+        ]
+      }
+    ]
+  }
+}

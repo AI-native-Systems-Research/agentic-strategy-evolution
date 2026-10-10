@@ -1,0 +1,85 @@
+metadata:
+  iteration: 3
+  family: "legendre-modpow-optimization"
+  research_question: "Can the confirmed three-arg pow optimization deliver consistent ~3,300-4,100x speedup at full scope (5 seeds), and does a Jacobi/quadratic-reciprocity algorithm yield additional measurable improvement?"
+  complexity_tier: 2
+  tier_justification: "iter 3 — tier 1 confirmed in iter-1, tier 2 ablation confirmed in iter-2, now tier 2 with robustness test of an alternative algorithm"
+
+arms:
+  - type: h-main
+    prediction: "Replacing pow(a%p, (p-1)//2) % p with pow(a, (p-1)//2, p) in _legendre will decrease workload mean from ~0.069s to ~0.000020s, yielding a speedup of ~3,300-4,100x (0.0743 / mean) consistently across all 5 seeds. All 38 covering tests will pass."
+    mechanism: >
+      Python's two-argument pow(base, exp) computes the full integer base^exp
+      before taking mod. For a=87389, p=131071, this creates an intermediate
+      integer of ~1.1 million bits (65535 * ~17 bits). The three-argument
+      pow(base, exp, mod) performs modular exponentiation in C using
+      square-and-multiply with mod reduction at each step, keeping all
+      intermediates below p (~17 bits). The redundant a%p pre-reduction is
+      removed per RP-2 for code simplicity with no performance impact.
+      Code location: sympy/crypto/crypto.py:2075.
+    diagnostic: >
+      If the prediction is wrong: (1) verify the workload calls the modified
+      code path by checking import resolution, (2) check if clear_cache() in
+      the workload setup interacts with the change, (3) verify the Python
+      version's three-arg pow uses C-level modular exponentiation.
+    code_changes:
+      - file: "sympy/crypto/crypto.py"
+        intent: "On line 2075, change `sig = pow(a%p, (p - 1)//2) % p` to `sig = pow(a, (p - 1) // 2, p)` — use Python's native three-argument modular exponentiation and remove the redundant a%p pre-reduction."
+        rationale: "This is the sole hot path in the workload. The two-arg pow creates a ~1M-bit intermediate; three-arg pow keeps intermediates bounded by p. The a%p is redundant (RP-2)."
+
+  - type: h-robustness
+    prediction: "Replacing the Euler-criterion body with a Jacobi-symbol / quadratic-reciprocity algorithm will produce speedup comparable to h-main (~3,000-4,000x) but not significantly higher, because the ~16μs workload harness overhead dominates both variants' per-call computation times (~4μs for Jacobi vs ~7μs for three-arg pow). All 38 covering tests will pass."
+    mechanism: >
+      The Jacobi algorithm computes the Legendre symbol using only the law of
+      quadratic reciprocity: repeated extraction of factors of 2 (bit shifts),
+      swaps of numerator/denominator, and modular reductions on small integers.
+      This is a GCD-like O(log^2 p) algorithm with no modular exponentiation.
+      In microbenchmarks, per-call time is ~1.7x faster than three-arg pow
+      (3.9μs vs 6.6μs amortized; 4.1μs vs 6.9μs single-call). However, the
+      workload harness (multiprocessing fork + timeit with number=1) adds ~16μs
+      overhead, so the ~3μs per-call improvement is swamped by harness noise.
+      Probe: 5 workload runs with Jacobi averaged 23.8μs vs 22.6μs for pow3
+      (difference -1.2μs, within measurement noise).
+      Code location: sympy/crypto/crypto.py:2054-2081.
+    diagnostic: >
+      If Jacobi shows significantly different speedup from h-main: (1) check
+      if the Python-level loop overhead of the Jacobi algorithm varies more
+      across seeds than the C-level pow call, (2) check if fork-based
+      measurement is biased toward or against either variant, (3) verify
+      correctness of the Jacobi implementation for all test cases.
+    code_changes:
+      - file: "sympy/crypto/crypto.py"
+        intent: "Replace the body of _legendre (lines 2075-2081) with a Jacobi-symbol algorithm using quadratic reciprocity. The new body: reduce a mod p, handle a==0 as 0, then loop: extract factors of 2 using bit shifts (flipping result sign when n%8 in {3,5}), swap a and n (flipping sign when both are 3 mod 4), reduce a mod n. Return result when a==0 and n==1, else 0."
+        rationale: "Tests whether eliminating modular exponentiation entirely (replacing with a GCD-like algorithm) produces measurable improvement beyond three-arg pow. The algorithm is O(log^2 p) vs O(log p * log p) for modular exponentiation, but uses Python-level loops vs C-level computation."
+
+# Arm selection rationale:
+# h-main: Applies the confirmed RP-1 + RP-2 optimization (three-arg pow, no
+#   pre-reduction). Cleanest, simplest fix with decisive ~3,300-4,100x speedup.
+#   Iter-3 runs 5 seeds for full-scope statistical confidence.
+# h-robustness: Tests whether an entirely different algorithm (Jacobi / quadratic
+#   reciprocity) can beat three-arg pow. Microbenchmarks show ~1.7x per-call
+#   advantage, but the workload harness overhead makes this negligible. This arm
+#   establishes that the measurement noise floor has been reached and the three-arg
+#   pow optimization is effectively optimal for this workload.
+# No h-ablation: already completed in iter-2, confirmed RP-2.
+# No h-control-negative: effect is ~3,900x from a complexity-class change; no
+#   diagnostic value in a control regime.
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    baseline_mean_seconds: 0.0743
+    workload_a: 87389
+    workload_p: 131071
+    test_suite: "sympy/crypto/tests/test_crypto.py"
+    python_executable: "/opt/miniconda3/envs/testbed/bin/python"
+  unlocked_parameters_audit:
+    - name: "timeit_number"
+      default_value: 1
+      justification: "Workload uses number=1 per timing iteration; a single _legendre call is sufficient signal at both baseline (~70ms) and treatment (~20μs) scales."
+    - name: "timeit_repeat"
+      default_value: 10
+      justification: "10 repetitions per seed provide tight variance for a 3,300-4,100x effect; increasing repeat count would not change conclusions."
+    - name: "multiprocessing_start_method"
+      default_value: "fork"
+      justification: "The workload harness uses fork on Linux; this does not affect the computation being measured."

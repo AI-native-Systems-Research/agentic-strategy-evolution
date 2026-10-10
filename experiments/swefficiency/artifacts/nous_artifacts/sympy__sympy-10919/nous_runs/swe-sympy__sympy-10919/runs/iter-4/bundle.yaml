@@ -1,0 +1,92 @@
+metadata:
+  iteration: 4
+  family: "hrr-memoize-inline"
+  research_question: "How can we further reduce npartitions(10^6) runtime beyond iter-3's Dedekind sum + float64 optimizations (22.1x local), by memoizing overlapping Dedekind subproblems and eliminating the precomputation pass?"
+  complexity_tier: 2
+  tier_justification: "iter 4, single mechanism (memoization + loop restructuring) with ablation to isolate memoization from inlining"
+
+arms:
+  - type: h-main
+    prediction: "Memoizing _dedekind_sum with @lru_cache and eliminating the separate precomputation pass (computing T values inline) will yield a consistently higher speedup over the 1.3901s reference baseline than the iter-3 code, by reducing the 15ms precomputation overhead for float-path T values."
+    mechanism: >
+      The recursive _dedekind_sum(h,j) reduces via _dedekind_sum(j%h, h),
+      producing overlapping subproblems analogous to the Euclidean algorithm.
+      Across all 9,027 top-level _T(h,j) calls in npartitions(10^6), the
+      recursion generates 37,715 total _dedekind_sum calls but only 10,230
+      unique (h,j) pairs — 73% are redundant. Adding @lru_cache(maxsize=None)
+      converts these to O(1) dict lookups, saving ~5ms of computation.
+      Eliminating the precomputation loop saves an additional ~10ms by avoiding
+      upfront T computation for the 7,700 coprime pairs in the float path
+      (j=94..243), which is dominated by Python loop overhead. Instead,
+      T/j values are computed inline during the float path using cached
+      _dedekind_sum results, which share subproblems with the mpf path
+      (j=3..93) processed earlier. Local variable caching of builtins
+      reduces per-iteration attribute lookup cost in the 150-iteration
+      float path.
+    diagnostic: "If speedup is lower than predicted, profile to check whether lru_cache dict overhead offsets recursion savings (unlikely given 73% hit rate), or whether the inline T computation re-introduces overhead that precomputation avoided."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: >
+          (1) Add from functools import lru_cache.
+          (2) Add @lru_cache(maxsize=None) decorator to _dedekind_sum.
+          (3) Remove standalone _T, _a, and _a_float functions.
+          (4) In npartitions(), compute T values inline during the main loop:
+              - For the mpf path (p > 64): call _dedekind_sum per coprime h,
+                compute T as integer, proceed with fixed-point cos.
+              - For the float path (p <= 64): call _dedekind_sum per coprime h,
+                convert to float for T/j, compute cos in float64.
+          (5) Cache frequently-used builtins as local variables.
+        rationale: >
+          Profiling shows precomputation (Dedekind + coprime iteration) at
+          21ms — half the total runtime. Of this, 15ms is spent on the float
+          path (j=94..243, 7700 coprime pairs), dominated by Python loop
+          overhead. Eliminating the precomputation loop and computing inline
+          avoids this upfront cost. The lru_cache ensures subproblems are
+          shared across sequential q iterations.
+
+  - type: h-ablation
+    prediction: "Adding only @lru_cache to _dedekind_sum (keeping separate _a, _a_float, _T functions and the iter-3 loop structure) will yield a speedup over iter-3 baseline, but less than h-main, confirming that the inline restructuring provides additional benefit."
+    mechanism: >
+      Memoization alone eliminates 73% of _dedekind_sum recursive calls,
+      saving ~5ms from the computation. However, the separate _a_float()
+      function still iterates all coprime h for each q value, calling
+      _T() → _dedekind_sum() per h. With memoization, these calls are
+      fast (cache hits), but the per-call Python function overhead of
+      _T() (tuple unpack + arithmetic + return) and _a_float() (function
+      setup + gcd per h) adds ~3ms compared to the inlined approach.
+    diagnostic: "If speedup matches h-main, the inline restructuring overhead is negligible."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: >
+          Add from functools import lru_cache and @lru_cache(maxsize=None)
+          decorator to _dedekind_sum. No other changes — keep _T, _a,
+          _a_float, and npartitions exactly as in iter-3.
+        rationale: >
+          Isolates the memoization contribution from loop restructuring.
+
+# Arm selection rationale:
+# h-main tests the full optimization (memoization + inline computation + no precomputation).
+# h-ablation tests memoization alone, isolating the loop restructuring contribution.
+# No h-control-negative: memoization is deterministic — there's no regime where
+# caching pure functions fails. No dose-response: memoization is binary (on/off).
+
+experiment_spec:
+  preflight_commands:
+    - "git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/patches/py311-compat.patch || true"
+  verified_parameters:
+    n: 1000000
+    baseline_mean_reference: 1.3901
+    workload_repetitions: 10
+  unlocked_parameters_audit:
+    - name: M
+      default_value: "max(6, int(0.24*n**0.5 + 4)) = 244"
+      justification: "Standard HRR convergence criterion; not a tunable for performance optimization."
+    - name: initial_prec
+      default_value: "int(pbits*1.1 + 100) = 4148"
+      justification: "Determined by n; provides sufficient precision for exact integer result."
+    - name: float_prec_threshold
+      default_value: 64
+      justification: "Float64 has 53-bit mantissa; threshold of 64 gives sufficient accuracy. Unchanged from iter-3."
+    - name: lru_cache_maxsize
+      default_value: "None (unbounded)"
+      justification: "For n=10^6, cache holds ~10230 entries. Memory overhead negligible (<1MB)."

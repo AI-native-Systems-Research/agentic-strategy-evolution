@@ -1,0 +1,28 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Multi-restart SA with randomized greedy initialization will score higher than single-run SA on the judge, due to exploring multiple basins of attraction via shuffled greedy ordering.",
+      "observed": "h-main scores: 84.14, 86.01, 83.43 (mean 84.53). h-ablation scores: 83.73, 82.94, 86.36 (mean 84.34). Mean difference +0.19 points, well within judge variance of \u00b12 points. No consistent directional advantage \u2014 h-ablation's best run (86.36) exceeded all h-main runs.",
+      "status": "REFUTED",
+      "error_type": "magnitude",
+      "diagnostic_note": "The multi-restart mechanism does not reliably improve over single-run SA. Likely causes: (1) SA is powerful enough to escape the initial greedy configuration \u2014 the greedy ordering doesn't constrain the SA's exploration much. (2) Splitting 9s into 3x3s gives each SA run less time to converge, roughly offsetting the diversity benefit. (3) The greedy step size change (sqrt(ratio)*5 vs *3) may produce lower-quality initializations, further reducing any restart benefit."
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Single-run SA will score lower than multi-restart SA because it can only explore one basin of attraction.",
+      "observed": "h-ablation mean 84.34 vs h-main mean 84.53 \u2014 effectively identical within noise. Single-run SA is not meaningfully worse than multi-restart.",
+      "status": "REFUTED",
+      "error_type": "magnitude",
+      "diagnostic_note": "The ablation confirms that the restart mechanism provides no measurable benefit. A single long SA run (7s) performs as well as best-of-3 shorter runs (2.5s each). This suggests SA convergence time matters more than starting-point diversity for this problem."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms predicted multi-restart > single-run. Observed difference is +0.19 (0.2%), far below the 1-point threshold and within judge variance. The multi-restart hypothesis is refuted: splitting SA time across restarts does not compensate for the diversity introduced by shuffled greedy orderings. The SA moves (especially expand-to-limit and target-aware moves 6 & 7) are effective enough at escaping the initial greedy layout that starting-point diversity has negligible value.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "solution_hmain.cpp"
+  ]
+}

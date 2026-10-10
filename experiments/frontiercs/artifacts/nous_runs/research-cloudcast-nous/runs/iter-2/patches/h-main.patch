@@ -1,0 +1,213 @@
+diff --git a/solution.py b/solution.py
+index 16384ed..02f3f8d 100644
+--- a/solution.py
++++ b/solution.py
+@@ -5,6 +5,8 @@ class Solution:
+     def solve(self, spec_path: str = None) -> dict:
+         return {"code": r"""
+ import networkx as nx
++from collections import deque
++import heapq
+ 
+ 
+ class BroadCastTopology:
+@@ -28,14 +30,194 @@ class BroadCastTopology:
+ 
+ 
+ def search_algorithm(src, dsts, G, num_partitions):
++    # Directed Steiner arborescence via Dreyfus-Wagner exact DP.
++    # Finds the minimum-cost directed tree from src to all destinations.
++
++    # Remove edges into src and self-loops
+     h = G.copy()
+     h.remove_edges_from(list(h.in_edges(src)) + list(nx.selfloop_edges(h)))
++
++    # Filter edges with no cost
++    bad_edges = [(u, v) for u, v, d in h.edges(data=True) if d.get('cost') is None]
++    h.remove_edges_from(bad_edges)
++
++    nodes = list(h.nodes())
++    node_idx = {n: i for i, n in enumerate(nodes)}
++    n = len(nodes)
++
++    terminals = list(dsts)
++    k = len(terminals)
++    src_idx = node_idx[src]
++
++    # Precompute single-source directed shortest paths from every node (cost-weighted)
++    # dist[i][j] = min cost from nodes[i] to nodes[j] using directed edges
++    INF = float('inf')
++
++    # Use Dijkstra from each node
++    dist = [[INF] * n for _ in range(n)]
++    next_hop = [[None] * n for _ in range(n)]  # for path reconstruction
++
++    for i in range(n):
++        u = nodes[i]
++        dist[i][i] = 0
++        # Dijkstra from u
++        heap = [(0, i)]
++        visited = [False] * n
++        d = [INF] * n
++        pred = [None] * n
++        d[i] = 0
++        while heap:
++            cost_so_far, vi = heapq.heappop(heap)
++            if visited[vi]:
++                continue
++            visited[vi] = True
++            d[vi] = cost_so_far
++            for _, w, edata in h.edges(nodes[vi], data=True):
++                wi = node_idx[w]
++                new_cost = cost_so_far + edata['cost']
++                if new_cost < d[wi]:
++                    d[wi] = new_cost
++                    pred[wi] = vi
++                    heapq.heappush(heap, (new_cost, wi))
++        dist[i] = d
++
++        # Build next_hop for path reconstruction
++        for j in range(n):
++            if pred[j] is not None:
++                # Trace back to find the first hop from i
++                cur = j
++                while pred[cur] != i and pred[cur] is not None:
++                    cur = pred[cur]
++                next_hop[i][j] = cur if pred[cur] == i else None
++            elif i == j:
++                next_hop[i][j] = i
++
++    # Dreyfus-Wagner DP
++    # dp[S][v] = min cost of a directed Steiner tree rooted at v that reaches all terminals in subset S
++    # S is a bitmask over terminals (k bits)
++    full_mask = (1 << k) - 1
++    dp = [[INF] * n for _ in range(1 << k)]
++    parent = [[None] * n for _ in range(1 << k)]  # (type, data) for reconstruction
++
++    # Base cases: single terminal subsets
++    for t_idx in range(k):
++        mask = 1 << t_idx
++        t_node_idx = node_idx[terminals[t_idx]]
++        for v in range(n):
++            dp[mask][v] = dist[v][t_node_idx]
++            parent[mask][v] = ('leaf', t_idx)
++
++    # Fill DP
++    for S in range(1, 1 << k):
++        if S & (S - 1) == 0:
++            # Single-element set, already initialized
++            pass
++        else:
++            # Try all subset splits S = S1 | S2 where S1, S2 non-empty proper subsets
++            sub = (S - 1) & S
++            while sub > 0:
++                comp = S ^ sub
++                if sub < comp:
++                    # Only consider sub < comp to avoid double counting
++                    for v in range(n):
++                        val = dp[sub][v] + dp[comp][v]
++                        if val < dp[S][v]:
++                            dp[S][v] = val
++                            parent[S][v] = ('split', sub, comp)
++                sub = (sub - 1) & S
++
++        # Relax using shortest paths: dp[S][v] = min over u: dp[S][u] + dist[v][u]
++        # This is equivalent to Dijkstra relaxation on the Steiner states
++        for v in range(n):
++            for u in range(n):
++                if u != v and dist[v][u] < INF:
++                    val = dist[v][u] + dp[S][u]
++                    if val < dp[S][v]:
++                        dp[S][v] = val
++                        parent[S][v] = ('edge', u)
++
++    # Optimal cost from src
++    opt_cost = dp[full_mask][src_idx]
++
++    # Reconstruct tree edges
++    tree_edges = set()  # set of (u_idx, v_idx)
++
++    def reconstruct(S, v_idx):
++        info = parent[S][v_idx]
++        if info is None:
++            return
++        if info[0] == 'leaf':
++            # Path from v to terminal
++            t_idx = info[1]
++            t_node_idx = node_idx[terminals[t_idx]]
++            add_path(v_idx, t_node_idx)
++        elif info[0] == 'split':
++            _, s1, s2 = info
++            reconstruct(s1, v_idx)
++            reconstruct(s2, v_idx)
++        elif info[0] == 'edge':
++            u_idx = info[1]
++            add_path(v_idx, u_idx)
++            reconstruct(S, u_idx)
++
++    def add_path(from_idx, to_idx):
++        if from_idx == to_idx:
++            return
++        cur = from_idx
++        while cur != to_idx:
++            nxt = next_hop[cur][to_idx]
++            if nxt is None:
++                break
++            tree_edges.add((cur, nxt))
++            cur = nxt
++
++    reconstruct(full_mask, src_idx)
++
++    # Build adjacency from tree_edges
++    children = [[] for _ in range(n)]
++    for u, v in tree_edges:
++        children[u].append(v)
++
++    # BFS from src to find paths to each destination
+     bc = BroadCastTopology(src, dsts, num_partitions)
++
++    # BFS on tree to find path from src to each dst
++    bfs_parent = [None] * n
++    bfs_visited = [False] * n
++    bfs_visited[src_idx] = True
++    queue = deque([src_idx])
++    while queue:
++        vi = queue.popleft()
++        for wi in children[vi]:
++            if not bfs_visited[wi]:
++                bfs_visited[wi] = True
++                bfs_parent[wi] = vi
++                queue.append(wi)
++
+     for dst in dsts:
+-        path = nx.dijkstra_path(h, src, dst, weight="cost")
+-        for i in range(len(path) - 1):
+-            s, t = path[i], path[i + 1]
+-            for j in range(bc.num_partitions):
+-                bc.append_dst_partition_path(dst, j, [s, t, G[s][t]])
++        dst_idx = node_idx[dst]
++        if not bfs_visited[dst_idx]:
++            # Fallback: use direct shortest path
++            path = nx.dijkstra_path(h, src, dst, weight='cost')
++            for i in range(len(path) - 1):
++                u, v = path[i], path[i + 1]
++                for j in range(num_partitions):
++                    bc.append_dst_partition_path(dst, j, [u, v, dict(G[u][v])])
++            continue
++
++        # Trace path from dst back to src
++        path_indices = []
++        cur = dst_idx
++        while cur is not None:
++            path_indices.append(cur)
++            cur = bfs_parent[cur]
++        path_indices.reverse()
++
++        for i in range(len(path_indices) - 1):
++            u_idx, v_idx = path_indices[i], path_indices[i + 1]
++            u, v = nodes[u_idx], nodes[v_idx]
++            for j in range(num_partitions):
++                bc.append_dst_partition_path(dst, j, [u, v, dict(G[u][v])])
++
+     return bc
+ """}

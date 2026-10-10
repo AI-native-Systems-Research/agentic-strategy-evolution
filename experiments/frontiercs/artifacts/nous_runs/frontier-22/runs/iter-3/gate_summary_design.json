@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "This is a final confirmation run for an algorithm that already scored 100/100 (the maximum) in both iteration 1 and iteration 2. The algorithm builds a tree decomposition of a cactus graph (tree + leaf ring) using L/R leaf-tracking bags of size \u2264 4, satisfying all problem constraints. The sole experiment arm re-runs the unchanged solution to verify the perfect score holds.",
+  "key_points": [
+    "What we're testing: Whether the L/R leaf-tracking tree decomposition algorithm continues to achieve the maximum score of 100 on the judge, confirming no regressions or environment changes.",
+    "Single arm (h-main): Submit the existing solution.cpp unchanged and run the judge script once; expected output is 'SCORE: 100'.",
+    "Confirmation criterion: Score = 100 confirms the algorithm is optimal and the campaign can close. Any score < 100 would indicate a judge environment change or a latent bug, triggering investigation.",
+    "Risk assessment: Very low \u2014 the same code scored 100 in two independent prior iterations. No new algorithmic variants are needed since we are already at the score ceiling.",
+    "Recommendation: Approve this final confirmation pass, then close the campaign if score = 100 is reproduced."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

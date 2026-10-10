@@ -1,0 +1,61 @@
+metadata:
+  iteration: 2
+  family: "directed-steiner-arborescence"
+  research_question: "Can a directed Steiner arborescence (exact DP) improve broadcast cost over the undirected Steiner tree approximation, by accounting for asymmetric directed edge costs?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — iter-1 confirmed Steiner > Dijkstra (tier 1); now testing directed vs undirected Steiner (single mechanism + ablation)"
+
+arms:
+  # Arms chosen: h-main tests directed Steiner (the improvement); h-control-negative validates
+  # the mechanism by showing undirected Steiner scores lower due to ignoring asymmetry.
+  # No dose-response or robustness needed since this is a deterministic optimization
+  # (no randomness across seeds — the graph and configs are fixed).
+
+  - type: h-main
+    prediction: "Directed Steiner arborescence will produce a higher score than both the Dijkstra baseline (0.0955) and the undirected Steiner approach (~0.154), because it accounts for asymmetric edge costs in the directed graph. The improvement will be most pronounced on inter-cloud configs (inter_agz, inter_gaz2) where cross-provider edge asymmetry is highest."
+    mechanism: "Edge costs are asymmetric: 3708/4970 directed edges have different forward/reverse costs (ratio up to 7.3x). The undirected Steiner tree minimizes cost on min(forward, reverse) edge weights, but the actual routing from src must follow directed edges. For edges where the cheap direction opposes the routing direction, the directed cost exceeds the undirected cost (e.g., intra_aws: undirected tree $0.12 but directed routing $0.19). The Dreyfus-Wagner DP on the directed graph finds the exact minimum-cost arborescence, avoiding this mismatch."
+    diagnostic: "If directed Steiner does NOT improve over undirected: (1) check that the DP reconstruction produces valid directed paths, (2) verify that the evaluator actually uses the directed edge data we provide, (3) examine whether the undirected Steiner tree happened to select edges where forward and reverse costs coincide."
+    code_changes:
+      - file: "solution.py"
+        intent: "Replace the Dijkstra SPT search_algorithm with a Dreyfus-Wagner exact DP that computes the minimum-cost directed Steiner arborescence from src to all destinations. Precompute all-pairs directed shortest paths, then run DP over terminal subsets with directed edge relaxation. Reconstruct the optimal tree and route all partitions along directed tree paths."
+        rationale: "The directed DP accounts for edge cost asymmetry, finding the true optimal directed tree rather than an undirected approximation."
+
+  - type: h-control-negative
+    prediction: "Undirected Steiner tree will score ~0.154 (probe: 0.1539), lower than directed Steiner (~0.159) but higher than Dijkstra baseline (0.0955). The gap between undirected and directed Steiner validates that asymmetry-aware optimization provides the improvement."
+    mechanism: "The undirected Steiner tree uses nx.algorithms.approximation.steiner_tree on a symmetrized graph (min of forward/reverse costs per edge pair). This is the Kou et al. 2-approximation. It finds a near-optimal undirected tree but incurs a directed-routing penalty when edges are traversed against their cheap direction."
+    diagnostic: "If undirected Steiner matches directed: edge asymmetry doesn't matter for this graph (check per-config costs). If undirected Steiner scores much lower than expected: check BFS-based directed path reconstruction for bugs."
+    code_changes:
+      - file: "solution.py"
+        intent: "Replace search_algorithm with a clean undirected Steiner tree implementation: build undirected graph H from G taking min(forward, reverse) cost per edge pair, compute steiner_tree(H, terminals, weight='cost'), BFS from src to get directed paths, look up correct directed edge data from G."
+        rationale: "Clean reimplementation of iter-1 approach to establish a fair comparison point for the directed optimization."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    num_vms: 2
+    data_vol: 300
+    num_partitions: 10
+    num_configs: 5
+    graph_nodes: 71
+    graph_edges: 4970
+    asymmetric_edge_count: 3708
+    max_asymmetry_ratio: 7.3
+  unlocked_parameters_audit:
+    - name: instance_cost_per_hour
+      default_value: 0.54
+      justification: "Fixed by evaluator (simulator.py:17), not a tunable parameter"
+    - name: partition_count
+      default_value: 10
+      justification: "Fixed per config file, not controllable by the algorithm"
+    - name: cost_csv_profile
+      default_value: "resources/profiles/cost.csv"
+      justification: "Fixed input data, defines the graph edge costs"
+    - name: throughput_csv_profile
+      default_value: "resources/profiles/throughput.csv"
+      justification: "Fixed input data, defines the graph edge throughputs"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      directed-steiner: 30
+      undirected-steiner-clean: 15
+      baseline: 10
+    observation_method: "Manual probe runs on Apple Silicon laptop"

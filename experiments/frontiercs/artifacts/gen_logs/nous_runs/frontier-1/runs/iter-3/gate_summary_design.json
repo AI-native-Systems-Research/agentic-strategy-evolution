@@ -1,0 +1,17 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether an amortized wall-time guard (chrono::steady_clock checked every 512 branch-and-bound nodes, 700ms threshold) combined with fast I/O can reliably achieve a perfect score of 100/100 on the treasure-packing knapsack problem, addressing Docker timing failures that caused iter-2's solution to score 100 only 70% of the time.",
+  "key_points": [
+    "Problem: The existing B&B solver scores 100 locally but sometimes exceeds Docker's 1s wall-time limit. Iter-2 used clock() (CPU time, not wall time) and achieved 100 in only 7/10 runs. A prior iter-3 attempt using per-node chrono checks doubled runtime (~21ms\u219240ms) due to syscall overhead.",
+    "Experiment (single arm, h-main): Modify solution.cpp with 4 targeted changes \u2014 (1) record start_time via chrono::steady_clock at main() entry, (2) check elapsed time only every 512 B&B nodes (amortized overhead <0.1ms total vs ~100% for per-node), (3) bail out of B&B if >700ms elapsed, (4) only run post-B&B local search if B&B timed out and <800ms elapsed. Then measure score via the judge script (20 test cases, ~30-45s).",
+    "Confirmation: Score of 100 confirms the amortized wall-time guard eliminates Docker timing failures. Score of 95 suggests 700ms threshold is too generous (try 500ms). Score \u226490 suggests a bug in the guard propagation or a regression in solution quality \u2014 would require local debugging against all 20 test cases."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

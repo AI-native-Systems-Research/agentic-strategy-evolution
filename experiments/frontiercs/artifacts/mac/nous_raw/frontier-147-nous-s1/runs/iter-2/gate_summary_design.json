@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a faster, more aggressive multi-cell greedy initialization (expanding rectangles by up to half their current dimension per step using max-expansion bounds) improves the starting configuration for simulated annealing compared to the single-cell pixel-by-pixel expansion used in iteration 1. This isolates the effect of initialization quality on final score for the rectangle ad-placement optimization problem (AHC001).",
+  "key_points": [
+    "h-main: Multi-cell greedy init (0.12s budget, bounds-aware large-step expansion) + SA (T0=0.05, T1=0.001, ~2.73s). Predicted to score higher than iter-1 baseline (~88-90) because rectangles start closer to target areas, giving SA a better starting point and slightly more time budget.",
+    "h-ablation: Single-cell greedy init (0.15s, pixel-by-pixel expansion) + identical SA (~2.70s). Expected to score near iter-1 levels (~88-90). Serves as the control to isolate whether init quality or SA duration drives score differences.",
+    "Confirmation criterion: h-main scoring meaningfully higher (\u22652 points) than h-ablation confirms that init quality matters. If both score similarly, it means SA dominates regardless of starting point, and future iterations should focus on SA move design rather than initialization strategy.",
+    "Risk check: Both arms use the same SA parameters (T0=0.05, T1=0.001), same random seed, and same valid-by-construction move structure, so any score difference is attributable solely to the initialization method. The iter-1 result already established that SA is essential (greedy-only scored 20.2 vs ~88-90 with SA).",
+    "Design is clean and minimal \u2014 two arms, one variable changed (init method), same SA. Approve recommended."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

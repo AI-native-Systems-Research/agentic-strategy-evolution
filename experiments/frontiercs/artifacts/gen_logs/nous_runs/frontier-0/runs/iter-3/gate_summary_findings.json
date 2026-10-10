@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "The gap-filling enhancement (v8) showed a mean improvement of only +0.50 points over the v7 baseline (83.37 vs 82.87), which is statistically indistinguishable from zero (paired t=0.226, p>>0.05). The v7 baseline remains stable at ~83 points across iterations, confirming it is near the performance ceiling (~86) for this algorithm family. System-load variance (~5-6 points range per run) continues to dominate over any algorithmic improvement from gap-filling.",
+  "key_points": [
+    "h-main (v8 gap-filling): scores 81.24, 86.33, 82.53 (mean 83.37). h-control-negative (v7 baseline): scores 79.92, 82.45, 86.23 (mean 82.87). Mean paired difference: +0.50 points, not significant.",
+    "Prediction was partially confirmed: the 0-2 point improvement range was correct (observed +0.50), and the prediction correctly anticipated that variance (~5 points) would swamp the effect.",
+    "v7 baseline is confirmed stable: mean 82.87 matches iter-2 mean (82.86) exactly, all scores within predicted 79-86 range.",
+    "Three iterations of experimentation have established that the skyline-packing approach with time-managed width sweep is near its ceiling (~83 mean, ~86 peak). Bitmap gap-filling adds complexity without reliable gain.",
+    "Further improvement requires either a fundamentally different packing strategy (e.g., bottom-left with backtracking, NFDH with local search) with >3-point expected gain, or reducing the ~5-point run-to-run variance caused by system-load sensitivity in the time-managed width sweep."
+  ]
+}

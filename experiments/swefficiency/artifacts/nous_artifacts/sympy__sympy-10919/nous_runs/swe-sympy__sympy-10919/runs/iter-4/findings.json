@@ -1,0 +1,72 @@
+{
+  "iteration": 4,
+  "bundle_ref": "runs/iter-4/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Memoizing _dedekind_sum with @lru_cache and eliminating the separate precomputation pass (computing T values inline) will yield a consistently higher speedup over the 1.3901s reference baseline than the iter-3 code.",
+      "observed": "h-main achieved mean 0.0541s across 8 workload runs (original 3: 0.0534, 0.0532, 0.0543; verification 5: 0.0536, 0.0551, 0.0563, 0.0554, 0.0513), yielding 25.7x speedup vs the 1.3901s reference baseline. This is 13.9% faster than the iter-3 local baseline (0.0628s mean). All covering tests pass (1 passed). Results are bit-identical for all n tested.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Speedup over iter-3 baseline confirmed at 13.9% across 8 runs (two independent sessions). The memoization eliminates 73% of redundant _dedekind_sum calls. The inline restructuring eliminates the precomputation loop overhead. Both contributions confirmed by ablation comparison (h-main 4.4% faster than h-ablation across 8 runs each).",
+      "metadata": {
+        "speedup": 25.7,
+        "mean_seconds": 0.0541,
+        "std_seconds": 0.0016,
+        "runs": [
+          0.0534,
+          0.0532,
+          0.0543,
+          0.0536,
+          0.0551,
+          0.0563,
+          0.0554,
+          0.0513
+        ],
+        "reference_baseline": 1.3901,
+        "local_iter3_baseline_mean": 0.0628,
+        "speedup_vs_local_baseline": 1.16,
+        "tests_pass": true,
+        "bit_identical": true
+      }
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Adding only @lru_cache to _dedekind_sum (keeping separate functions and iter-3 loop structure) will yield a speedup over iter-3 baseline, but less than h-main.",
+      "observed": "h-ablation achieved mean 0.0566s across 8 workload runs (original 3: 0.0569, 0.0559, 0.0567; verification 5: 0.0560, 0.0563, 0.0580, 0.0567, 0.0561), yielding 24.6x speedup vs the 1.3901s reference baseline. This is 9.9% faster than iter-3 baseline and 4.4% slower than h-main. All tests pass. Results bit-identical.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Ablation confirms that memoization alone accounts for ~71% of the total improvement over iter-3 (9.9% out of 13.9%), while the inline restructuring (eliminating precomputation + local var caching) provides the remaining ~29% (additional 4.4%). The h-main vs h-ablation distributions show consistent separation: h-main's 8-run mean (0.0541) is below h-ablation's 8-run mean (0.0566), with minimal overlap.",
+      "metadata": {
+        "speedup": 24.6,
+        "mean_seconds": 0.0566,
+        "std_seconds": 0.0007,
+        "runs": [
+          0.0569,
+          0.0559,
+          0.0567,
+          0.056,
+          0.0563,
+          0.058,
+          0.0567,
+          0.0561
+        ],
+        "reference_baseline": 1.3901,
+        "local_iter3_baseline_mean": 0.0628,
+        "speedup_vs_local_baseline": 1.11,
+        "tests_pass": true,
+        "memoization_only_contribution": "9.9% over iter-3",
+        "inline_additional_contribution": "4.4% over memoization-only"
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed across 8 runs per arm (3 original + 5 independent verification). h-main (25.7x) outperforms h-ablation (24.6x) which outperforms iter-3 baseline (22.1x). The total 13.9% improvement over iter-3 decomposes: memoization contributes ~9.9% (eliminating 73% redundant _dedekind_sum calls), and inline restructuring contributes ~4.4% (eliminating precomputation loop overhead + function call reduction). Distributions show consistent separation between arms.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "sympy/core/basic.py",
+    "sympy/core/function.py",
+    "sympy/ntheory/egyptian_fraction.py",
+    "sympy/plotting/plot.py"
+  ]
+}

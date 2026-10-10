@@ -1,0 +1,14 @@
+{
+  "problem_id": "cloudcast",
+  "track": "research",
+  "agent": "nous",
+  "label": "nous",
+  "model": "claude-opus-4-6",
+  "final_score": 0.1595320722671864,
+  "total_cost": 625.833204,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/nous_runs/research-cloudcast-nous/best_solution.py",
+  "cost_usd_actual": 9.89,
+  "nous_minutes": 37.1,
+  "note": "harvested from ws/solution.py (iter-1 Steiner 0.134, iter-2 directed-Steiner-arborescence 0.1595); iter-3 design turn hung and was killed after harvest"
+}

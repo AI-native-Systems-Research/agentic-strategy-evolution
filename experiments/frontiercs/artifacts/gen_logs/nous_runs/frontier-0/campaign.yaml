@@ -1,0 +1,79 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #0?'
+run_id: frontier-0
+max_iterations: 5
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::0
+  description: "You are solving Frontier-CS algorithmic problem #0. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /home/ubuntu/frontier/gen_logs/fmeasure_0.sh $PWD/solution.cpp\nIt prints\
+    \ a single line 'SCORE: <n>' where n is the judge score (0-100). Record that number\
+    \ in the finding metadata under key 'score'. Each experiment arm should try a\
+    \ distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nPROBLEM STATEMENT:\n# Pack the Polyominoes (Reflections Allowed)\n\n\
+    ## Problem\nYou are given a set of n polyominoes placed on a unit square grid.\
+    \ Each polyomino consists of between 1 and 10 unit cells, connected edge-to-edge\
+    \ (4-connectivity). Your task is to place all polyominoes\u2014allowing **rotations,\
+    \ reflections, and translations**\u2014into an axis-aligned rectangle of the grid\
+    \ with no overlaps and no cells outside the rectangle, minimizing the rectangle\u2019\
+    s area.\n\nA placement specifies, for every polyomino, an integer translation,\
+    \ an optional reflection, and a rotation by a multiple of 90\xB0, such that:\n\
+    \n- every cell lands on integer grid coordinates,\n- no two placed cells overlap,\n\
+    - all placed cells lie within a single axis-aligned rectangle of width W and height\
+    \ H.\n\nThe objective is to minimize A = W \xD7 H. In case of ties on area, prefer\
+    \ smaller H, then smaller W.\n\n---\n\n## Input Format\n- Line 1: integer n (100\
+    \ <= n <= 10^4) \u2014 number of polyominoes.  \n- For each polyomino i = 1 \u2026\
+    \ n:\n  - One line: integer k\u1D62 (1 \u2264 k\u1D62 \u2264 10) \u2014 number\
+    \ of cells.\n  - Next k\u1D62 lines: two integers x\u1D62\u2C7C, y\u1D62\u2C7C\
+    \ \u2014 cell coordinates in the polyomino\u2019s local frame.  \n    These coordinates\
+    \ define a 4-connected polyomino.\n\nNotes:\n- Coordinates may be negative.\n\
+    - Shapes may have internal holes.\n- Shapes are defined by structure; initial\
+    \ placement does not matter.\n\n---\n\n## Output Format\n- Line 1: two integers\
+    \ W and H \u2014 width and height of the chosen rectangle.\n- Then n lines \u2014\
+    \ one per polyomino i, each containing:\n$$X_i\\ Y_i\\ R_i\\ F_i$$\n\nWhere:\n\
+    - (X\u1D62, Y\u1D62): integer translation  \n- R\u1D62 \u2208 {0,1,2,3}: number\
+    \ of 90\xB0 clockwise rotations  \n- F\u1D62 \u2208 {0,1}: reflection flag (**1\
+    \ = reflect across the y-axis before rotation**, 0 = no reflection)\n\nAll transformed\
+    \ cells must satisfy:\n0 \u2264 x\u1D62\u2C7C\u2032 < W, 0 \u2264 y\u1D62\u2C7C\
+    \u2032 < H\n\n---\n\n## Rules\n1. All cells occupy unit squares with integer coordinates.\
+    \  \n2. **Allowed transforms: reflection (optional) \u2192 rotation (0\xB0, 90\xB0\
+    , 180\xB0, 270\xB0) \u2192 translation (in that order).**  \n3. Distinct polyomino\
+    \ cells must not overlap.  \n4. Every cell must lie inside [0, W) \xD7 [0, H).\
+    \  \n5. Scoring: Minimize A = W \xD7 H.\n\n---\n\n## Constraints\n- 100 \u2264\
+    \ n \u2264 10000\n- 1 \u2264 k\u1D62 \u2264 10  \n\n---\n\n## Validation\nA solution\
+    \ is valid if:\n- All rules are satisfied.  \n- The judge verifies non-overlap\
+    \ and bounding-box compliance.\n\n---\n\n## Scoring (for heuristic / leaderboard\
+    \ contests)\n- Per test case: score = 1e5*\u03A3k\u1D62/A\n- Any invalid test\
+    \ case \u2192 entire submission rejected\n\n---\n\n## Example\n\nInput\n```\n\
+    3\n1\n0 0\n3\n0 0\n1 0\n0 1\n4\n0 0\n1 0\n0 1\n1 1\n```\n\nOutput\n```\n3 3\n\
+    2 0 0 0\n2 2 2 0\n0 0 0 0\n```\n\nThis places the monomino at (0,0), rotates the\
+    \ triomino by 90\xB0 (R=1), and fits all shapes into a 3\xD73 rectangle. (Reflections\
+    \ are allowed, but not used in this example: F=0.)\n\n---\n\n## Generation\n\n\
+    Let $S$ be the set of all pieces from size 1-10. Each piece is chosen uniformly\
+    \ at random with replacement from $S$. \n\n$n$ is chosen as $10^p$, where $p \\\
+    sim U(2, 4)$.\n"
+  repo_path: /home/ubuntu/frontier/gen_logs/frontier_0_nous_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /home/ubuntu/nous_repo/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: 1a9acdccb87388cdad4c23430d0269fb4aec7e1b
+  nous_version: 0.5.0
+  started_at: '2026-09-30T12:22:54.194536+00:00'

@@ -1,0 +1,61 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Replacing the O(j) inner loop with Dedekind sum O(log j), combined with h/j-h cosine symmetry and a float64 fast path for low-precision outer-loop terms, will yield > 15x end-to-end speedup over the 1.3901s reference baseline, producing bit-identical results.",
+      "observed": "h-main achieved mean 0.0611s across 3 runs (0.0614, 0.0606, 0.0612), yielding 22.8x speedup vs the 1.3901s reference baseline. Results are bit-identical (verified: npartitions(10^6) = 1108-digit number matching baseline exactly). All covering tests pass.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Speedup exceeded prediction (22.8x > 15x). The Dedekind sum O(log j) is even more efficient than predicted, likely due to excellent branch prediction in the GCD-like recursion.",
+      "metadata": {
+        "speedup": 22.8,
+        "mean_seconds": 0.0611,
+        "std_seconds": 0.0004,
+        "runs": [
+          0.0614,
+          0.0606,
+          0.0612
+        ],
+        "reference_baseline": 1.3901,
+        "local_baseline_mean": 1.0095,
+        "speedup_vs_local_baseline": 16.5,
+        "tests_pass": true,
+        "bit_identical": true
+      }
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Dedekind sum + symmetry alone (without float64 path) will yield > 8x speedup over the reference baseline, less than h-main's > 15x.",
+      "observed": "h-ablation achieved mean 0.1349s across 3 runs (0.1358, 0.1329, 0.1359), yielding 10.3x speedup vs the 1.3901s reference baseline. Less than h-main's 22.8x as predicted. All covering tests pass.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Ablation confirms the float64 fast path provides 2.21x additional speedup (0.1349s / 0.0611s). Without float64, the remaining mpf_cos calls at low precision (6,612 calls) dominate the residual runtime.",
+      "metadata": {
+        "speedup": 10.3,
+        "mean_seconds": 0.1349,
+        "std_seconds": 0.0017,
+        "runs": [
+          0.1358,
+          0.1329,
+          0.1359
+        ],
+        "reference_baseline": 1.3901,
+        "local_baseline_mean": 1.0095,
+        "speedup_vs_local_baseline": 7.5,
+        "tests_pass": true,
+        "float64_path_contribution": "2.21x"
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main achieved 22.8x (predicted > 15x) and h-ablation achieved 10.3x (predicted > 8x). The float64 fast path contributes 2.21x additional speedup, isolating its contribution as intended by the ablation design. The Dedekind sum O(log j) replacement of the O(j) inner loop is the dominant optimization, accounting for ~10x of the total speedup. The remaining ~2.2x comes from eliminating mpf overhead via float64 for 73% of the outer-loop terms.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "sympy/core/basic.py",
+    "sympy/core/function.py",
+    "sympy/ntheory/egyptian_fraction.py",
+    "sympy/plotting/plot.py"
+  ]
+}

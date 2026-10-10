@@ -1,0 +1,12 @@
+{
+  "gate_type": "findings",
+  "summary": "Iteration 4's hypothesis is CONFIRMED. Replacing sympy's divisors(), sqrt_mod(), and Integer dispatch with pure-Python-int implementations reduced the workload harness mean from 0.808ms (iter-3) to 0.301ms, a 2.68x incremental speedup matching the predicted 2.65x. The cumulative campaign speedup over the 57.3288s baseline is 190,335x, with all 41 covering tests passing.",
+  "key_points": [
+    "Predicted harness mean ~0.31ms vs observed 0.301ms; predicted incremental speedup 2.65x vs observed 2.68x \u2014 very close match.",
+    "Campaign speedup: 190,335x (harness-based, from 57.3288s baseline to 0.000301s). Direct warm-call speedup is 478,538x but the harness measurement (which forks per trial, reflecting realistic cold-start) is the canonical metric.",
+    "Three optimizations validated: (1) trial-division divisors() replaces sympy's factorint pipeline, (2) brute-force sqrt_mod() replaces CRT-based modular arithmetic, (3) converting to Python int at function entry eliminates sympy Integer dispatch across 234 PQa loop iterations. Function call count dropped 36% (387\u2192249).",
+    "The harness speedup (2.68x) exceeds direct warm-call speedup (1.43x) because the forked-process harness amplifies cold-start import savings \u2014 eliminating sympy utility imports matters more per-fork than per-warm-call.",
+    "Correctness fully verified: 41 tests pass (1 expected XFAIL), all 3 solution tuples are mathematically correct (x\u00b2 - D\u00b7y\u00b2 = N), and results are identical to the original implementation.",
+    "At 0.301ms per harness invocation, further speedups face diminishing returns \u2014 most remaining time is likely Python startup and minimal sympy imports rather than the diophantine solver itself."
+  ]
+}

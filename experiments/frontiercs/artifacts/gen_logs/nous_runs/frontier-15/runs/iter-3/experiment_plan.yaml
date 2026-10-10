@@ -1,0 +1,21 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+setup:
+  - cmd: "cp inputs/solution_k4endgame.cpp solution.cpp"
+    description: "Copy pre-validated k=4 endgame solution to worktree"
+  - cmd: "g++ -O2 -std=c++17 -o solution solution.cpp"
+    description: "Build the solution"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "judge-measurement"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_15.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-3/results/h-main/judge_output.txt"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-3/inputs/solution_k4endgame.cpp"
+      - name: "per-case-analysis"
+        cmd: "for i in 1..10; do ./solution < testdata/$i.in > per_case_$i.txt; done"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-3/results/h-main/per_case.json"
+        inputs:
+          - "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-15/runs/iter-3/inputs/solution_k4endgame.cpp"

@@ -1,0 +1,65 @@
+diff --git a/sympy/ntheory/partitions_.py b/sympy/ntheory/partitions_.py
+index 1d6408bf7..4a41ffb5c 100644
+--- a/sympy/ntheory/partitions_.py
++++ b/sympy/ntheory/partitions_.py
+@@ -58,12 +58,7 @@ def _precompute_coprimes(M):
+ def _a(n, j, prec, coprime_data):
+     """Compute the inner sum in the HRR formula using precomputed coprime data.
+ 
+-    Optimizations over iteration 1:
+-    1. Precomputed coprime lists eliminate math.gcd and lru_cache dispatch
+-    2. Memoized Dedekind sum values stored in tuples for direct access
+-    3. gmpy2 MPFR cos for high precision (C-level, replaces pure Python)
+-    4. Float path with hardware cos when precision <= 53 bits
+-    5. Kloosterman symmetry D(j-h,j)=-D(h,j) halves iterations
++    Ablation: coprime precomputation only (no gmpy2 _d optimization).
+     """
+     if j == 1:
+         return fone
+@@ -150,45 +145,15 @@ def npartitions(n, verbose=False):
+     prec = p = int(pbits*1.1 + 100)
+     s = fzero
+     M = max(6, int(0.24*n**0.5 + 4))
+-
+-    # mpmath constants for high-precision _d (prec > 1000)
+     sq23pi = mpf_mul(mpf_sqrt(from_rational(2, 3, p), p), mpf_pi(p), p)
+     sqrt8 = mpf_sqrt(from_int(8), p)
+ 
+-    # gmpy2 constants for low-precision _d (prec <= 1000)
+-    _guard = 50
+-    gmpy2.get_context().precision = p + _guard
+-    _gpi = gmpy2.const_pi()
+-    _gsq23pi = gmpy2.sqrt(gmpy2.mpfr(2) / gmpy2.mpfr(3)) * _gpi
+-    _gsqrt8 = gmpy2.sqrt(gmpy2.mpfr(8))
+-    _gb = gmpy2.mpfr(n) - gmpy2.mpfr(1) / gmpy2.mpfr(24)
+-
+     # Precompute coprime data for _a
+     coprime_data = _precompute_coprimes(M)
+ 
+     for q in range(1, M):
+         a = _a(n, q, p, coprime_data)
+-
+-        if p <= 1000:
+-            # gmpy2 _d: C-level MPFR is ~2x faster than mpmath at low precision
+-            wp = p + _guard
+-            ctx = gmpy2.get_context()
+-            ctx.precision = wp
+-            j_mpfr = gmpy2.mpfr(q)
+-            a_d = _gsq23pi / j_mpfr
+-            c_d = gmpy2.sqrt(_gb)
+-            ac = a_d * c_d
+-            ch_d = gmpy2.cosh(ac)
+-            sh_d = gmpy2.sinh(ac)
+-            D_d = gmpy2.sqrt(j_mpfr) / (_gsqrt8 * _gb * _gpi)
+-            E_d = a_d * ch_d - sh_d / c_d
+-            result_d = D_d * E_d
+-            man = int(result_d * gmpy2.mpfr(1 << wp))
+-            d = from_man_exp(man, -wp, p, rnd)
+-        else:
+-            # High precision: mpmath is faster at >1000 bits
+-            d = _d(n, q, p, sq23pi, sqrt8)
+-
++        d = _d(n, q, p, sq23pi, sqrt8)
+         s = mpf_add(s, mpf_mul(a, d), prec)
+         if verbose:
+             print(step, q, of, M, to_str(a, 10), to_str(d, 10))

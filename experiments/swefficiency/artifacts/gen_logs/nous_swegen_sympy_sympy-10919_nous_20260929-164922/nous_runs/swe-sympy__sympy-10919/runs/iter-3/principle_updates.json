@@ -1,0 +1,40 @@
+[
+  {
+    "id": "RP-5",
+    "statement": "Inlining the _a and _d function bodies into the npartitions main loop, combined with precomputed division factor (pi/(12*j)), as_mantissa_exp() for mpfr-to-mpf conversion, and local attribute caching of gmpy2/mpmath functions, reduces npartitions(10^6) warm-cache runtime by ~17% (13.9ms to 11.6ms). These pure-Python optimizations account for ~93% of the total improvement, with a compiled C float-path helper adding only ~7% additional benefit. cProfile overestimates per-call Python loop overhead by ~3x due to instrumentation cost.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 1000, where the HRR loop with M=max(6, int(0.24*sqrt(n)+4)) iterations dominates and coprime/Dedekind caches are warm",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "Function call overhead in CPython (~0.1\u03bcs per call \u00d7 243 _a calls + 243 _d calls) is eliminated by inlining. Precomputing factor=pi/(12*j) saves one mpfr division per gmpy2.cos call (0.23\u03bcs \u00d7 2479 = 0.57ms). as_mantissa_exp() avoids creating a temporary mpfr(2^wp) and large multiplication, saving ~0.5\u03bcs per conversion \u00d7 365 conversions. Local attribute caching avoids module-level dict lookups (gmpy2.cos, math.cos, mpf_add, etc.) at ~0.02\u03bcs per lookup \u00d7 ~7000 lookups. The C float-path helper eliminates Python loop overhead for 116 hardware-float iterations but the per-iteration Python overhead is only ~0.01\u03bcs (not ~0.015\u03bcs as estimated by cProfile), so the benefit is marginal (~0.17ms).",
+    "applicability_bounds": "The inlining benefit scales with M (more outer iterations = more function calls saved). For small n (n < 100), M < 6 and the overhead is negligible. The C helper benefit is limited to iterations with prec <= 53; for workloads where most iterations have higher precision (very large n), its contribution is even smaller.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-6",
+    "statement": "cProfile-based profiling overestimates CPython function-call and loop overhead by approximately 3x due to per-call instrumentation cost (~0.05\u03bcs added per function call/return). For micro-optimization decisions in tight loops (the HRR inner sum with 2479-6549 cos calls), timeit-based A/B comparison gives more accurate marginal cost estimates than cProfile's reported tottime.",
+    "confidence": "high",
+    "regime": "Any CPython hot loop where per-call overhead is <0.1\u03bcs and total function calls exceed ~1000",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "cProfile hooks into Python's frame evaluation to record per-call timing. Each hook (enter/exit) adds ~0.025\u03bcs. For a function called 2479 times (gmpy2.cos), this adds ~0.12ms of apparent overhead. When the actual function body takes 1.9\u03bcs, the 0.05\u03bcs hook is 2.6% overhead. But when attributing the 0.05\u03bcs to 'Python loop overhead' (as the designer did for the float path), it inflates the estimated loop cost by ~3x: measured loop overhead of 2.1ms included ~0.7ms of cProfile instrumentation, actual overhead was ~1.4ms.",
+    "applicability_bounds": "This principle applies to cProfile instrumentation overhead, not to other profiling tools (py-spy, scalene) which use sampling rather than instrumentation. For functions with body time >> 0.1\u03bcs, cProfile's overhead is negligible.",
+    "superseded_by": null,
+    "category": "methodology",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

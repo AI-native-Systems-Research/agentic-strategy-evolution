@@ -1,0 +1,21 @@
+{
+  "pid": 5,
+  "agent": "claude-code",
+  "model": "claude-opus-4-6",
+  "final_score": 49.999999999999986,
+  "reproduced_best": 49.999999999999986,
+  "agent_claimed_best": 49.999999999999986,
+  "repro_gap": 0.0,
+  "cost_est_cacheaware": 50.6998,
+  "cost_cli_total_usd": null,
+  "turns": 176,
+  "sessions": 1,
+  "trials_rejudged": 31,
+  "best_file": null,
+  "elapsed_sec": 6068.9,
+  "stop_reason": "budget",
+  "budget": 50.0,
+  "max_score": 100.0,
+  "cheat_audit_hits": [],
+  "run_dir": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/p5/claude"
+}

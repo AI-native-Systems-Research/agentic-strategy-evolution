@@ -1,0 +1,10 @@
+{
+  "arm": "discovery",
+  "description": "Grid-guided 2-opt (penalty-aware exact delta) + Or-opt + continuous SA with pos[] tracking — discovered during iter-2 exploration (saved as h-ablation.patch)",
+  "scores": [78.837, 78.883, 78.827],
+  "mean": 78.849,
+  "median": 78.837,
+  "min": 78.827,
+  "max": 78.883,
+  "stdev": 0.030
+}

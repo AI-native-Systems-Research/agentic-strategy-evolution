@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "After 3 iterations, the skyline packer (v7) reliably scores ~83 (mean 82.87, range 79-86) out of 100, matching the human reference solution. Attempted improvements \u2014 gap-filling, gravity compaction, extra orderings \u2014 all produced effects smaller than the \u00b15-point run-to-run variance caused by system load affecting the time-managed width sweep. The dominant bottleneck is now speed, not placement quality: faster packing \u2192 more widths explored \u2192 less variance and higher average scores.",
+  "key_points": [
+    "Baseline is stable: v7 skyline packer averages 82.9 across 9 measured runs (iters 2-3), with stdev ~3.2 driven by system load, not algorithm differences.",
+    "Gap-filling (v8) showed +0.50 mean paired improvement over v7 \u2014 statistically insignificant (t=0.226, df=2) and within the predicted 0-2 point range. It does not reliably improve scores.",
+    "All placement-quality improvements tried (gap-filling, gravity compaction, extra orderings, combinations) were swamped by load-induced variance in the width sweep. The algorithm explores 3-15 widths depending on system speed; missing the optimal width costs ~5 points.",
+    "Next iteration should target speed optimization: (a) low-point targeting to reduce x-position search from O(W) to O(valleys), enabling ~6x more width exploration, or (b) adaptive width search (golden section / binary) to find the optimal width in fewer iterations, reducing load sensitivity.",
+    "Alternative high-impact direction: a fundamentally different packing approach (e.g., NFDH strip packing or integer programming for small instances) could break through the ~86-point ceiling where the skyline approach plateaus."
+  ]
+}

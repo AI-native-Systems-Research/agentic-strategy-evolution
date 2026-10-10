@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether an enhanced MaxRects packer with four specific improvements (contact-point heuristic, bin transposition, pairwise-swap local search on item orderings, and 6-strategy randomized search) can exceed the iteration-1 baseline score of 88.78, with a target of 93+. One experiment arm will implement the full algorithm in solution.cpp and measure the judge score across 15 hidden test cases.",
+  "key_points": [
+    "Iteration 1 achieved 88.78 using basic MaxRects + Skyline with density-weighted random ordering; this iteration adds four mechanisms to reduce packing fragmentation: contact-point placement scoring, bin transposition (packing in H\u00d7W then translating coordinates), local search via pairwise type-order swaps, and an expanded set of 4 placement methods (BSSF, BAF, BL, CP).",
+    "The single arm runs 96 deterministic packing configurations (4 methods \u00d7 6 orderings \u00d7 2 rotation choices \u00d7 2 bin orientations), then a pairwise-swap local search phase (~250ms budget), then randomized ordering exploration (~830ms budget), all within the 1-second time limit per test case.",
+    "Confirmation: judge score \u2265 93 (\u22655-point improvement over 88.78). Refutation: score \u2264 89 would indicate the new mechanisms don't help or introduce regressions. Key risk is TLE on large inputs \u2014 if the 96 deterministic runs plus local search exceed 1s, some test cases will score 0, which should be diagnosable from a score drop well below 88.",
+    "Parameters are conservative: free-rect cap at 500 prevents quadratic blowup, time budgets leave ~170ms margin, and the algorithm falls back to the best deterministic solution if random search finds nothing better.",
+    "Design is sound for approval: the mechanisms are independent and additive, the code changes are confined to solution.cpp, and the measurement command is a single judge invocation that reports a 0\u2013100 score."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

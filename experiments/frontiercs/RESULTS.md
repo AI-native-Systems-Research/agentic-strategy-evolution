@@ -1,0 +1,279 @@
+> ⚠ **SUPERSEDED — read `README.md` first** (canonical source of truth as of 2026-10-06).
+> This file is detailed/historical. The "Claude-agent" here is the OLD Engram-single_agent method,
+> being replaced by raw-Claude-Code reruns; the final task set + clean results live in README.md.
+
+# Frontier-CS (algorithmic): Nous vs Engram vs plain Claude
+
+Controlled methodology comparison for the MLSys submission. All agents use the SAME model
+(`claude-opus-4-6` via litellm), the SAME problems, and the SAME judge scorer
+(`frontier eval algorithmic`, continuous 0-100 partial credit, higher is better; ~±5 run-to-run
+variance, so finals are re-evaluated 3×).
+
+## Methods
+- **plain Claude** — driver-controlled iterative refinement: harness runs the judge, feeds the score
+  back to a pure code-gen model call, keeps the best. Strong "use the model iteratively" baseline.
+- **Engram-style** — faithful reimplementation of mit-nms/Engram: sequential fresh-context agents +
+  on-disk Research Journal/Knowledgebase (persist *reasoning* across handoffs) + Struggle Protocol.
+- **Nous** — native scientific-experimentation campaign (hypothesis bundles → controlled experiment
+  arms → analysis → compounding principles), each arm scored by the judge.
+- Curie — attempted; spike hit a blocker (see the Mac-side notes). Not included yet.
+
+## Combined result — 7 tasks (4 seeded + 3 randomly drawn, seed=42)
+
+All three agents, same model/judge. Scores re-evaluated (judge ±5 noise). The 3 "random" tasks
+(211, 44, 9) were drawn with `random.seed(42)` from the 110 valid default-type problems, excluding
+the first 4 — a pre-committed, non-cherry-picked selection.
+
+| Task | Nous | Engram | Claude | note |
+|---|---|---|---|---|
+| p0  | **86**  | 55 | 1.5 | Nous |
+| p1  | **100** | ~90 | 97 | ~tie (ceiling) |
+| p5  | **83**  | 39 | 41 | Nous (2×) |
+| p15 | **100** | 0  | 0  | Nous only cracks the gate |
+| p211| **87**  | 61 | 62 | Nous |
+| p44 | 71      | **78** | 31 | **Engram > Nous** (honest loss) |
+| p9  | **100** | 5  | 5  | Nous (both baselines stuck at 5) |
+
+**Tally: Nous best on 5/7, tie at ceiling on p1, loses p44 to Engram.** Nous never loses to plain
+Claude. Engram beats Nous once (p44) — a problem where sequential-agent memory suffices and Nous's
+extra machinery doesn't pay off. This asymmetric, non-cherry-picked result (random draw, includes a
+Nous loss) is the honest controlled-comparison evidence: **the scientific loop helps most on hard,
+open-ended problems, and isn't universally dominant.** Nous iters capped at 3 here (early-stop);
+Engram cost-matched to Nous's per-task $; Claude run with plateau early-stop.
+
+## Headline results (first 4 tasks; best score achieved per method, with cost)
+
+| Problem | Type | Nous | Engram | Claude |
+|---|---|---|---|---|
+| **0** — polyomino packing | hard, big headroom (human ref ~76) | **86** ($27) | 55 ($2) | 1.5 ($0.8) |
+| **5** — Hamiltonian-path ratio | mid, headroom | **83** ($46) | 39 ($5) | 41 ($1.4) |
+| **15** — lexicographically-smallest permutation | hard correctness gate | **100** ($32) | 0 | 0 |
+| **1** — treasure/knapsack (clamped) | easy, saturates ceiling 100 | **100** ($46) | ~90 ($2) | 96.8 ($0.8) |
+
+**Ordering on the discriminating problems: Claude ≲ Engram ≪ Nous.** Nous wins every problem with
+real headroom (0, 5, 15), often by 2× or more; only Nous cracks the p15 correctness gate (100 vs 0
+for both baselines). On the saturated easy problem (1) all three are near the ceiling.
+
+## Cost-matching: is it the methodology, or just more compute?
+
+We re-ran Claude and Engram with a **cost budget equal to Nous's per-task spend** (~$27-46) and the
+same early-stop rule Nous uses (stop at ceiling, on plateau, or at budget). Result:
+
+We ran two matched conditions: a light "converge" pass and a **full Nous-equal-budget** pass
+(spend up to Nous's per-task $, early-stop on ceiling/plateau).
+
+| Problem | Nous ($) | Engram (best; full-budget behavior) | Claude (best; full-budget behavior) |
+|---|---|---|---|
+| p5  | **83** ($46) | **39** — plateaued $5.3 (spending more didn't help) | **41** — plateaued $1.4 |
+| p0  | **86** ($27) | **55** (fixed $2); full-budget run *plateaued at 22.5*, $5 | **1.5**; full-budget run *plateaued at 1.4*, $11 |
+| p15 | **100** ($32) | **0 at the FULL $32 budget** (ran to cost_budget, gate never cracked) | **0** (fixed/cost-matched; Engram already proved 0 at full $32) |
+
+Both baselines **plateau far below Nous** on p0/p5 — once they stop improving, extra budget just
+regenerates the same solution (verified: p5 plateaued at $1.4-5.3, not $46). And on the p15 gate,
+**Engram spent Nous's entire $32 and still scored 0.** Two failure modes surfaced as findings:
+score-only feedback can't tell an agent *why* an output is invalid (p0 packing), and Engram's
+journal can anchor later agents on a failing approach (p0 memory-propagation; high run-to-run
+variance, e.g. p0 fixed 55 vs full-budget 22.5).
+
+**Conclusion:** extra budget bought the baselines *marginal* gains on p5 (both land ~40, still half
+of Nous's 83) and **nothing** on p0 or p15. The gap to Nous is **structural — it comes from
+controlled experimentation, not from spending more tokens.** Neither baseline cracks the p15 gate at
+any budget; Nous does.
+
+## Cost/time context
+Nous is the most expensive by far (p0 $27/185min, p5 $46/237min, p15 $32/242min; huge output-token
+counts from multi-arm reasoning). Claude ~$0.8-1.4/task, Engram ~$2-5/task. The value proposition is
+not efficiency — it is **solving hard, open-ended problems the base agent (and simpler agentic
+memory) cannot**, when the compute is justified.
+
+## Caveats (pilot)
+- 4 tasks; scale to ~5-6 spanning difficulty for camera-ready, with a pre-stated selection rule and
+  2-3 seeds/task (single cost-matched runs showed real variance, e.g. p0).
+- Nous runs used early-stop too (p0 after iter-4; p15 at ceiling; p5 hit the 4h wall at iter-3).
+- All raw artifacts (per-agent solutions, journals/knowledgebases, `llm_metrics.jsonl`, per-round
+  histories) persisted under `experiments/frontiercs/artifacts/`.
+
+Runners: `gen/frontier_gen.py` (`--agent claude|nous|engram`), `gen/frontier_gen_costbudget.py`
+(adds `--cost-budget` + early-stop + retry-backoff). Setup: `SETUP_NOTES.md`, `RUN_ON_MAC.md`.
+
+## New tasks (2026-10-01, local Mac): +1 algorithmic, +1 research-track
+
+Broadens task-type coverage: a hard algorithmic problem and the first research-track problem. Same
+model (`claude-opus-4-6`), same three agents, same protocol (Claude plateau-stop, Engram cost-matched
+to Nous's $ spend, Nous 3 iters). Run locally (direct litellm, no VM tunnel). Research runner:
+`gen/frontier_research_gen.py` (solution = `.py`, scored by the problem's own local evaluator).
+
+### p22 — algorithmic ("A+B Problem": Halin-graph tree reconstruction, treewidth-3; score 0-100)
+
+| Agent | score (re-eval 3x) | our $ spend | notes |
+|---|---|---|---|
+| **Nous** | **100** | $4.85 | solved it; 3 iters, 17.7 min |
+| Engram | 0 | $4.93 | 7 fresh agents, cost-matched, all Halin tree-decomposition attempts failed |
+| Claude | 0 | $0.84 | 6 rounds, never scores |
+
+**A gate task only Nous cracks (like p15).** Claude and Engram both score 0; Engram spent Nous's full
+matched budget across 7 journal-sharing agents and still got 0. Nous's deterministic 100 confirmed on
+3 re-evals. Cost-matching does not close the gap.
+
+### cloudcast — research track (multi-cloud broadcast routing; metric = total transfer-cost $, lower is better)
+
+Score reported by the judge is `100/(1+total_cost)`, so the discriminating metric is **total_cost ($),
+lower = better**. Deterministic local evaluator (no judge noise). Naive dijkstra baseline = $1046.
+
+cloudcast is **Engram's own published benchmark**. The fair comparator is therefore the **real
+Engram** (their actual code, `mit-nms/Engram`, run on the same model Opus 4.6 via litellm), not our
+reimplementation. Running it changes the result:
+
+| Agent | transfer-cost $ (lower=better) | our $ spend | notes |
+|---|---|---|---|
+| **Nous** | **$626** | $9.89 | directed Steiner arborescence (iter-2) |
+| **real Engram** (as-is) | **~$624** | ~$52 | their code, Opus 4.6; ties Nous at SOTA |
+| human SOTA (their paper) | $626 | — | reference |
+| Engram paper (o3 / gpt-5.2) | $622-662 | — | their reported range |
+| evolutionary baselines (OpenEvolve/FunSearch/EoH) | $640-696 | — | their paper |
+| Claude (chat-loop) | $1107 | $2.0 | plateaus, worse than naive |
+| naive dijkstra | $1046 | — | reference anchor |
+
+**On cloudcast, Nous and real Engram are tied at the state of the art** ($626 vs ~$624, both at the
+human-expert level), and both find the solver-backed (Steiner/MILP) design that the evolutionary
+baselines miss ($640-696). This is **not** a Nous win; it is a tie between the two
+experimentation-driven agents, with Nous reaching it at ~5x lower $ (~$10 vs ~$52) — a cost-efficiency
+difference, not a quality one. The honest Nous advantage lives on the **algorithmic gate tasks**
+(p15, p22, p9) where the baselines score ~0 and only Nous solves, not on cloudcast.
+
+Footnote (do not headline): our earlier *reimplemented* Engram scored only $1077 here under
+scalar-score feedback; that number **understated Engram** and is superseded by the real-Engram ~$624.
+It stands only as evidence that memory-over-scalar-feedback (our reimpl) is far weaker than Engram's
+real tool-enabled agent.
+
+Infra note: the Nous SDK design turn froze once per campaign (p22 iter-1 on first launch, cloudcast
+iter-3) — a shared-litellm connection stall. p22 was relaunched clean; cloudcast had already completed
+iters 1-2 so its best solution was harvested (deterministic re-eval, no loss) and the dead iter-3
+killed.
+
+Artifacts: `artifacts/preds/{p22,cloudcast}.*.json`, `artifacts/nous_runs/{frontier-22,research-cloudcast-nous}/`
+(findings, patches, best solution, `llm_metrics.jsonl`), `artifacts/gen_logs/newtasks/` (agent logs +
+Engram journal/knowledgebase).
+
+## Real Engram (as-is) vs Nous — gate/headroom subset (2026-10-01)
+
+The Engram rows above use our *reimplementation*. The fair comparator is the **real Engram**
+(`mit-nms/Engram` @5295858, run on the same model Opus 4.6 via litellm; setup + patch in
+`engram_real/`). We ran it on the discriminating subset under the agreed rule (stop at ceiling /
+plateau / ~$50) and **re-scored its best candidate on OUR judge** (same `frontier eval` used for Nous
+and Claude), so the numbers are directly comparable.
+
+| Task | Nous (score, $) | real Engram (score, $) | note |
+|---|---|---|---|
+| p0  | **86** ($27) | 74.8 ($84) | Nous higher, 3x cheaper |
+| p5  | **83** ($46) | 49.0 ($69) | Nous higher |
+| p9  | **100** ($38) | 55.0 (~$45*) | Nous higher |
+| p15 | **100** ($32) | 20.0 (~$70*) | gate — Nous solves, Engram partial |
+| p22 | **100** ($4.85) | 0.0 (~$55*) | gate — Nous solves, Engram fails |
+
+\* p9/p15/p22 killed mid-agent (plateau/stuck), so usage was not finalized; cost estimated from agent
+count at real Engram's ~$25-30/agent. p0/p5 costs are exact.
+
+**Nous beats real Engram on every task in this subset, and at lower cost** (Engram ~$45-84/task vs
+Nous ~$5-46). Two honest refinements over the reimpl story: (1) real Engram is clearly stronger than
+our reimpl and than Claude — e.g. p9 55 (our judge) vs reimpl/Claude 5, p0 75 vs reimpl 56 — so it is
+*not* stuck at 0 on headroom tasks; (2) but it still does not reach Nous on any of them, and on the
+hardest gate (p22, Halin-graph tree decomposition) it scores 0 while Nous solves it (100). The Nous
+advantage is a genuine quality gap on hard/gate tasks, now shown against the real system, not a
+reimplementation artifact.
+
+Caveats: Engram's own internal score disagreed with our judge on p9 (its log said 5, our judge says
+55) — we report OUR judge uniformly across all agents. Engram's per-agent cost (~$25-30, from 5M-token
+prompts) makes a strict $50 cap impractical (1-2 agents); p0/p5 overshot to $69-84. Artifacts +
+per-task best solutions + logs: `engram_real/gates/`.
+
+## Three-way, tool-enabled, same model (Opus 4.6), same judge — gate/headroom subset
+
+The **Claude baseline is now a Claude *agent*** (Engram's `single_agent` method: one agent with the
+same shell + judge tools as Engram, but no handoff / journal / knowledgebase — a pure "tools + model,
+no methodology" control). The old chat-completions Claude loop is **dropped**. All three re-scored on
+OUR judge (best candidate).
+
+| Task | Nous | real Engram | Claude-agent | type |
+|---|---|---|---|---|
+| p0  | **86** | 74.8 | 73.3 | headroom |
+| p5  | **83** | 49.0 | 44.0 | headroom |
+| p9  | **100** | 55.0 | 98.5 | NOT a gate (tooled agent nearly solves) |
+| p15 | **100** | 20.0 | 0 | gate — only Nous |
+| p22 | **100** | 0.0 | 0 | gate — only Nous |
+
+**Refined, honest story:**
+- **True gates = p15, p22**: only Nous solves (100); real Engram gets partial/zero (20/0), Claude-agent
+  0. This is the strongest evidence.
+- **p9 is NOT a discriminator**: a tool-enabled single Claude agent nearly solves it (98.5) — the old
+  chat-loop Claude scored 5 there, so that gap was *tools*, not methodology. Dropping the chat-loop
+  baseline was the right call.
+- **Headroom (p0, p5)**: Nous highest (86/83), with real Engram and Claude-agent clustered lower
+  (~73-75 / ~44-49). Nous's lead here is real but modest.
+- Net: Nous is best on all 5, but the *decisive* "only Nous can" claim rests on the gates (p15, p22),
+  not p9.
+
+**COST — read with caution (do NOT use as iso-$50).** The Claude-agent runs exposed a harness
+cost-control problem: `single_agent` writes usage only late/periodically, catches SIGTERM (finishes
+the current experiment), and spawns `multiprocessing` workers that **orphan and keep calling the LLM**
+if only the parent is killed. Before we fixed the watchdog to tree-kill + wall-clock proxy, p0/p5/p9
+leaked to **$201 / $106 / $207**. After the fix, p15 finished clean at **$37.75**. So Claude-agent
+costs here are upper bounds, not controlled $50 figures. Nous (controlled, $5-46) and the clean p15
+point are the trustworthy cost anchors; the leaked figures are flagged. (Finding for the paper:
+tool-enabled agents are expensive and hard to budget-cap on this harness.)
+
+Artifacts: `claude_agent_gates/` (preds, best `*.cpp`, logs). Patch adds the `single_agent` fcs
+C++/research prompt selection (`engram_opus_patch.diff`).
+
+## AIDE (4th baseline) vs Nous — algorithmic subset (2026-10-02)
+
+**AIDE** = Weco AIDE (arXiv:2502.13138), MIT. We run AIDE's tree search (draft/debug/improve,
+greedy-best + stochastic debug) **unmodified**; a ~200-line adapter teaches it two things: write
+C++17 (override the operator prompts) and score each node with the Frontier-CS go-judge (override
+`parse_exec_result` + exec callback) instead of AIDE's LLM stdout-reviewer. Same model
+(`claude-opus-4-6`), same rule (**run to $50 or score ceiling**). We added token-level cost
+accounting (wrap `backend_openai.query`; $15/M in, $75/M out, same pricing as the other agents), so
+AIDE's cost is measured, not guessed. Every task ran to the $50 cap.
+
+| task | Nous (score @ $) | AIDE (score @ $) | real Engram | Claude-agent |
+|---|---|---|---|---|
+| p0  | **86** ($27)   | 0  ($50.07) | 70.0 | ~26 |
+| p5  | **83** ($46)   | 44 ($50.28) | 49.0 | ~39 |
+| p9  | **100** ($38)  | 95 ($50.16) | 55.0 | 80 |
+| p15 | **100** ($32)  | 0  ($50.41) | 20.0 | 0 |
+| p22 | **100** ($4.85)| 0  ($50.04) | 0.0  | 0 |
+
+(AIDE scores = best node re-scored on OUR judge; p5=44 and p9=95 reproduce on isolated re-eval. The
+go-judge shows ~5pt downward variance under load on time-limited tasks, so p9 occasionally reads 90.)
+
+**Reading.** AIDE is the strongest single-task baseline on **p9 (95)**, beating Engram (55) and
+Claude (80), just under Nous (100). But it scores **0 on p0** (its 124 nodes all compile and run yet
+the judge returns 0 — a format/validity wall its score-only search can't climb) and **0 on both
+gates (p15, p22)**. So AIDE's tree search helps where incremental improvement has a gradient and
+fails exactly where Nous's hypothesis-driven loop is decisive. **Nous wins all 5 on score AND spends
+far less** ($4.85-$46 vs AIDE's full $50 every time). cloudcast was not run for AIDE (the adapter is
+algorithmic-only; a research-track callback would be needed).
+
+Artifacts: `aide_gates/` (preds, best `*.cpp`, logs); adapter `gen/aide_frontier.py`; spec
+`artifacts/mac/AIDE_ADAPTER.md`.
+
+## Subset expansion 6->10: new-class tasks (2026-10-02)
+
+To check that Nous's advantage is not class-specific, we add one task from each previously-untested
+class: p26 (dynamic programming), p69 (strings), p79 (math/number theory), p170 (flow/matching).
+All four classic competitive-programming families that our original 6 (graph/tree, geometry,
+combinatorics, systems) did not cover.
+
+**AIDE** ran first under the same rule ($50 or ceiling):
+
+| task | class | AIDE (score @ $) |
+|---|---|---|
+| p26  | dynamic programming | 30 ($50.33) |
+| p69  | strings             | 0 ($50.32) |
+| p79  | math/number theory  | 0 ($50.54) |
+| p170 | flow/matching       | 0 (cut ~$34; best 0, matching its three sibling gate-fails) |
+
+AIDE partially cracks DP (30) and scores 0 on strings/math/flow, the same profile as its original
+tasks: its draft/debug/improve search climbs only where there is a score gradient. Nous, Engram, and
+Claude on the new tasks are pending (next batch). Artifacts: `aide_gates/preds/p{26,69,79,170}.aide.json`,
+`aide_gates/solutions/`.

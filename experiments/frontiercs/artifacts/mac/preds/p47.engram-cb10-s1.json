@@ -1,0 +1,258 @@
+{
+  "problem_id": "47",
+  "agent": "engram",
+  "label": "engram-cb10-s1",
+  "model": "claude-opus-4-6",
+  "final_score": 95.83447333333334,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_47_engram-cb10-s1.solution.cpp",
+  "best_score": 95.83447333333334,
+  "method": "Engram-style (reimplementation)",
+  "agents": 6,
+  "rounds_per_agent": 4,
+  "code_generations": 12,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 94.40329333333331,
+      "status": "success",
+      "plan": "Implement a skyline-based bottom-left packing algorithm with multiple orderings (by value density, area, dimensions) and try many random permutations of items (with repetition based on limits), keeping the best solution. Use a maximal rectangles approach for better space utilization. For each attemp",
+      "cum_cost": 0.4989,
+      "best_score": 94.40329333333331
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 94.17039999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.8548,
+      "best_score": 94.40329333333331
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.2232,
+      "best_score": 94.40329333333331
+    },
+    {
+      "agent": 0,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.5735,
+      "best_score": 94.40329333333331
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 94.41989999999998,
+      "status": "success",
+      "plan": "Improve the existing maximal-rectangles greedy packer by adding (1) a smarter item-selection loop that considers all items at each step and picks the best value-density-fit combination, (2) more placement heuristics including best-fit variants, (3) random restarts with shuffled orderings using remai",
+      "cum_cost": 2.1472,
+      "best_score": 94.41989999999998
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.6978,
+      "best_score": 94.41989999999998
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.1213,
+      "best_score": 94.41989999999998
+    },
+    {
+      "agent": 1,
+      "round": 3,
+      "score": null,
+      "status": "error",
+      "plan": null,
+      "cum_cost": 3.5675,
+      "best_score": 94.41989999999998
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": null,
+      "status": "parse_error",
+      "plan": "Improve the existing best solution by adding a strip-packing layer that tries to fill the bin with horizontal/vertical strips of high-density items, better free-rectangle pruning (limit count to avoid slowdown), and a more aggressive smart greedy that evaluates value-per-placement-opportunity more c",
+      "cum_cost": 4.3696,
+      "best_score": 94.41989999999998
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 95.03309999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.8768,
+      "best_score": 95.03309999999999
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 95.18665999999999,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.4358,
+      "best_score": 95.18665999999999
+    },
+    {
+      "agent": 2,
+      "round": 3,
+      "score": 95.83447333333334,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.1272,
+      "best_score": 95.83447333333334
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": null,
+      "status": "parse_error",
+      "plan": "Improve the existing best solution by adding a more sophisticated local search phase that removes low-value-density placed items and tries to repack freed space with higher-value items, plus better guillotine-cut strip packing with more combinations, and improved free-rectangle management to handle ",
+      "cum_cost": 6.9949,
+      "best_score": 95.83447333333334
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.6422,
+      "best_score": 95.83447333333334
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": null,
+      "status": "parse_error",
+      "plan": null,
+      "cum_cost": 8.3512,
+      "best_score": 95.83447333333334
+    },
+    {
+      "agent": 3,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.6635,
+      "best_score": 95.83447333333334
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": null,
+      "status": "parse_error",
+      "plan": "Improve the existing best solution by adding a more sophisticated local search phase that removes low-value-density items from the best solution found so far and attempts to repack the freed space with higher-value items, plus add column-generation style strip packing where we try all combinations o",
+      "cum_cost": 9.5159,
+      "best_score": 95.83447333333334
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": null,
+      "status": "parse_error",
+      "plan": null,
+      "cum_cost": 10.242,
+      "best_score": 95.83447333333334
+    }
+  ],
+  "input_tokens": 128844,
+  "output_tokens": 111318,
+  "cost_usd_est": 10.2815,
+  "journal": "/Users/toslali/frontier/gen_logs/frontier_47_engram-cb10-s1_engram/research_journal.md",
+  "trajectory": [
+    {
+      "cum_cost": 0.4989,
+      "best_score": 94.40329333333331
+    },
+    {
+      "cum_cost": 0.8548,
+      "best_score": 94.40329333333331
+    },
+    {
+      "cum_cost": 1.2232,
+      "best_score": 94.40329333333331
+    },
+    {
+      "cum_cost": 1.5735,
+      "best_score": 94.40329333333331
+    },
+    {
+      "cum_cost": 2.1472,
+      "best_score": 94.41989999999998
+    },
+    {
+      "cum_cost": 2.6978,
+      "best_score": 94.41989999999998
+    },
+    {
+      "cum_cost": 3.1213,
+      "best_score": 94.41989999999998
+    },
+    {
+      "cum_cost": 3.5675,
+      "best_score": 94.41989999999998
+    },
+    {
+      "cum_cost": 4.3696,
+      "best_score": 94.41989999999998
+    },
+    {
+      "cum_cost": 4.8768,
+      "best_score": 95.03309999999999
+    },
+    {
+      "cum_cost": 5.4358,
+      "best_score": 95.18665999999999
+    },
+    {
+      "cum_cost": 6.1272,
+      "best_score": 95.83447333333334
+    },
+    {
+      "cum_cost": 6.9949,
+      "best_score": 95.83447333333334
+    },
+    {
+      "cum_cost": 7.6422,
+      "best_score": 95.83447333333334
+    },
+    {
+      "cum_cost": 8.3512,
+      "best_score": 95.83447333333334
+    },
+    {
+      "cum_cost": 8.6635,
+      "best_score": 95.83447333333334
+    },
+    {
+      "cum_cost": 9.5159,
+      "best_score": 95.83447333333334
+    },
+    {
+      "cum_cost": 10.242,
+      "best_score": 95.83447333333334
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 1227.6
+}

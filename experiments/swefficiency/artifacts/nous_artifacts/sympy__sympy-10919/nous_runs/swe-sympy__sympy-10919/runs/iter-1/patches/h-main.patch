@@ -1,0 +1,57 @@
+diff --git a/sympy/ntheory/partitions_.py b/sympy/ntheory/partitions_.py
+index 3e029014b..3f7b4c7c0 100644
+--- a/sympy/ntheory/partitions_.py
++++ b/sympy/ntheory/partitions_.py
+@@ -4,7 +4,7 @@
+     from_man_exp, from_int, from_rational,
+     fone, fhalf, bitcount, to_int, to_str, mpf_mul, mpf_div, mpf_sub,
+     mpf_add, mpf_sqrt, mpf_pi, mpf_cosh_sinh, pi_fixed, mpf_cos)
+-from sympy.core.numbers import igcd
++from math import gcd
+ import math
+ from sympy.core.compatibility import range
+ 
+@@ -15,23 +15,31 @@ def _a(n, j, prec):
+         return fone
+     s = fzero
+     pi = pi_fixed(prec)
++    # Hoist loop-invariant big-integer constants outside h-loop
++    one = 1 << prec
++    half = one >> 1
++    # Precompute fractional-part lookup table: frac_table[r] = (r * one) // j
++    # for r in 0..j-1. Since h,k > 0 and h*k*one//j's fractional part depends
++    # only on (h*k) % j, we can replace per-iteration big-int division with
++    # a single table lookup.
++    frac_table = [0] * j
++    if j >= 3:
++        for r in range(j):
++            frac_table[r] = (r * one) // j
++    # Precompute half_sum = half * j*(j-1)//2 to factor out the per-iteration
++    # half subtraction (one big-int op after the loop instead of j-1 inside)
++    half_sum = half * (j * (j - 1) // 2)
++    # Precompute 2*n*one
++    n2one = 2 * n * one
+     for h in range(1, j):
+-        if igcd(h, j) != 1:
++        if gcd(h, j) != 1:
+             continue
+-        # & with mask to compute fractional part of fixed-point number
+-        one = 1 << prec
+-        onemask = one - 1
+-        half = one >> 1
+         g = 0
+         if j >= 3:
+             for k in range(1, j):
+-                t = h*k*one//j
+-                if t > 0:
+-                    frac = t & onemask
+-                else:
+-                    frac = -((-t) & onemask)
+-                g += k*(frac - half)
+-        g = ((g - 2*h*n*one)*pi//j) >> prec
++                g += k * frac_table[(h * k) % j]
++            g -= half_sum
++        g = ((g - h * n2one) * pi // j) >> prec
+         s = mpf_add(s, mpf_cos(from_man_exp(g, -prec), prec), prec)
+     return s
+ 

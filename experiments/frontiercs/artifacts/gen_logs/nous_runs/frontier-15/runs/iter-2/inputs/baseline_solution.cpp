@@ -1,0 +1,118 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+    vector<int> p(n);
+    for (int i = 0; i < n; i++) cin >> p[i];
+
+    vector<pair<int,int>> ops;
+
+    // Apply operation: [prefix x | middle | suffix y] -> [suffix | middle | prefix]
+    auto apply = [&](int x, int y) {
+        vector<int> q(n);
+        // suffix -> front
+        for (int i = 0; i < y; i++) q[i] = p[n - y + i];
+        // middle stays
+        int m = n - x - y;
+        for (int i = 0; i < m; i++) q[y + i] = p[x + i];
+        // prefix -> end
+        for (int i = 0; i < x; i++) q[n - x + i] = p[i];
+        p = q;
+        ops.emplace_back(x, y);
+    };
+
+    auto is_sorted = [&]() {
+        for (int i = 0; i < n; i++) if (p[i] != i + 1) return false;
+        return true;
+    };
+
+    if (is_sorted()) {
+        cout << 0 << "\n";
+        return 0;
+    }
+
+    if (n == 3) {
+        // Only operation is (1,1): [a,b,c] -> [c,b,a]
+        if (p[2] < p[0]) apply(1, 1);
+        cout << ops.size() << "\n";
+        for (auto& op : ops) cout << op.first << " " << op.second << "\n";
+        return 0;
+    }
+
+    // n >= 4
+
+    // Step 1: Place element 1 at position 0
+    {
+        int pos = -1;
+        for (int i = 0; i < n; i++) if (p[i] == 1) { pos = i; break; }
+
+        if (pos == 1) {
+            // Special: can't do apply(1, n-1) since x+y=n
+            // Two ops: move 1 to position n-1 then to position 0
+            apply(2, 1);  // [p[n-1], p[2..n-2], p[0], p[1]=1]
+            apply(1, 1);  // [1, p[2..n-2], p[0], p[n-1]]
+        } else if (pos >= 2) {
+            // Single op: suffix starting at pos brings 1 to front
+            apply(1, n - pos);  // x=1, y=n-pos, x+y=n-pos+1 < n since pos >= 2
+        }
+        // pos == 0: already in place, do nothing
+    }
+
+    // Step 2: For each element k+1 (targ), place it at position k (=cf)
+    // Invariant: p[0..cf-1] = [1, 2, ..., cf]
+    int cf = 1;
+
+    for (int targ = 2; targ <= n - 2; targ++) {
+        // Find position of element targ
+        int j = -1;
+        for (int i = cf; i < n; i++) {
+            if (p[i] == targ) { j = i; break; }
+        }
+
+        if (j == cf) {
+            // Already at the correct position
+            cf++;
+            continue;
+        }
+
+        int l = n - cf;  // length of unfixed buffer
+        int d = j - cf;  // rotation amount needed (1 <= d <= l-1)
+
+        // Find d1, d2 with d1 + d2 ≡ d (mod l), both in [1, l-1]
+        int d1, d2;
+        if (d >= 2) {
+            d1 = 1;
+            d2 = d - 1;
+        } else {
+            // d == 1, l >= 3 (since targ <= n-2 means l >= 3)
+            d1 = 2;
+            d2 = l - 1;  // d1 + d2 = l + 1 ≡ 1 mod l
+        }
+
+        // Op1: rotate buffer left by d1, sorted prefix goes to end
+        apply(cf, l - d1);
+        // Op2: rotate buffer left by d2, sorted prefix comes back to front
+        apply(d2, cf);
+
+        cf++;
+    }
+
+    // Step 3: Handle last 2 elements (positions n-2 and n-1)
+    if (!is_sorted()) {
+        // Must be [1, ..., n-2, n, n-1] — apply 5-op sequence to fix
+        apply(1, 1);
+        apply(1, 2);
+        apply(1, 1);
+        apply(2, 1);
+        apply(1, 1);
+    }
+
+    cout << ops.size() << "\n";
+    for (auto& op : ops) cout << op.first << " " << op.second << "\n";
+    return 0;
+}

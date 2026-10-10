@@ -1,0 +1,114 @@
+metadata:
+  iteration: 4
+  bundle_ref: "runs/iter-4/bundle.yaml"
+  mode: real
+
+setup:
+  - cmd: "git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/patches/h-main.patch"
+    description: "Apply the h-main patch (early-exit + write() + pragma + 256-node guard + LS2 removal)"
+  - cmd: "g++ -O2 -pipe -static -s -std=gnu++17 -o solution solution.cpp"
+    description: "Build the patched solution"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "optimized-bnb-v4-run01"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 1 of 20"
+      - name: "optimized-bnb-v4-run02"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 2 of 20"
+      - name: "optimized-bnb-v4-run03"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 3 of 20"
+      - name: "optimized-bnb-v4-run04"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 4 of 20"
+      - name: "optimized-bnb-v4-run05"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 5 of 20"
+      - name: "optimized-bnb-v4-run06"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 6 of 20"
+      - name: "optimized-bnb-v4-run07"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 7 of 20"
+      - name: "optimized-bnb-v4-run08"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 8 of 20"
+      - name: "optimized-bnb-v4-run09"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 9 of 20"
+      - name: "optimized-bnb-v4-run10"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 10 of 20"
+      - name: "optimized-bnb-v4-run11"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 11 of 20"
+      - name: "optimized-bnb-v4-run12"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 12 of 20"
+      - name: "optimized-bnb-v4-run13"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 13 of 20"
+      - name: "optimized-bnb-v4-run14"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 14 of 20"
+      - name: "optimized-bnb-v4-run15"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 15 of 20"
+      - name: "optimized-bnb-v4-run16"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 16 of 20"
+      - name: "optimized-bnb-v4-run17"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 17 of 20"
+      - name: "optimized-bnb-v4-run18"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 18 of 20"
+      - name: "optimized-bnb-v4-run19"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 19 of 20"
+      - name: "optimized-bnb-v4-run20"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_1.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-1/runs/iter-4/results/h-main/score.txt"
+        inputs: []
+        description: "Judge run 20 of 20"

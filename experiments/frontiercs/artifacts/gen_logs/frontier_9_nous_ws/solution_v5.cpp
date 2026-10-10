@@ -1,0 +1,143 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+const int MAXN = 1005;
+int n, P[MAXN];
+vector<pair<int,int>> adj[MAXN];
+int eu[MAXN], ev[MAXN];
+int D[MAXN][MAXN];
+
+int par_node[MAXN], depth_node[MAXN];
+vector<int> ch[MAXN];
+int edge_of[MAXN];
+int edge_color[MAXN];
+int deg[MAXN];
+
+int EW[MAXN];
+int dp0[MAXN], dp1[MAXN], best_ch[MAXN];
+bool prev_used[MAXN];
+
+void bfs(int src) {
+    memset(D[src], -1, sizeof(D[src]));
+    D[src][src] = 0;
+    queue<int> q; q.push(src);
+    while (!q.empty()) {
+        int u = q.front(); q.pop();
+        for (auto& [v, _] : adj[u])
+            if (D[src][v] == -1) { D[src][v] = D[src][u] + 1; q.push(v); }
+    }
+}
+
+void root_tree(int root) {
+    par_node[root] = 0; depth_node[root] = 0;
+    queue<int> q; q.push(root);
+    vector<bool> vis(n + 1, false); vis[root] = true;
+    while (!q.empty()) {
+        int u = q.front(); q.pop();
+        ch[u].clear();
+        for (auto& [v, idx] : adj[u]) {
+            if (!vis[v]) {
+                vis[v] = true; par_node[v] = u;
+                depth_node[v] = depth_node[u] + 1;
+                ch[u].push_back(v); edge_of[v] = idx;
+                edge_color[idx] = depth_node[v] % 2;
+                q.push(v);
+            }
+        }
+    }
+}
+
+void compute_dp(int u) {
+    dp0[u] = 0; dp1[u] = -1; best_ch[u] = -1;
+    int sum = 0;
+    for (int c : ch[u]) { compute_dp(c); sum += max(dp0[c], dp1[c]); }
+    dp0[u] = sum;
+    for (int c : ch[u]) {
+        int w = EW[edge_of[c]];
+        if (w <= 0) continue;
+        int val = sum - max(dp0[c], dp1[c]) + dp0[c] + w;
+        if (val > dp1[u]) { dp1[u] = val; best_ch[u] = c; }
+    }
+}
+
+void extract(int u, bool use1, vector<int>& matching) {
+    if (use1 && best_ch[u] != -1) {
+        int c = best_ch[u];
+        matching.push_back(edge_of[c]);
+        extract(c, false, matching);
+        for (int cc : ch[u]) {
+            if (cc == c) continue;
+            extract(cc, dp1[cc] > dp0[cc], matching);
+        }
+    } else {
+        for (int cc : ch[u])
+            extract(cc, dp1[cc] > dp0[cc], matching);
+    }
+}
+
+void solve() {
+    scanf("%d", &n);
+    for (int i = 1; i <= n; i++) { scanf("%d", &P[i]); adj[i].clear(); deg[i] = 0; }
+    for (int i = 1; i < n; i++) {
+        scanf("%d%d", &eu[i], &ev[i]);
+        adj[eu[i]].push_back({ev[i], i});
+        adj[ev[i]].push_back({eu[i], i});
+        deg[eu[i]]++; deg[ev[i]]++;
+    }
+    for (int i = 1; i <= n; i++) bfs(i);
+    root_tree(1);
+
+    vector<vector<int>> all_ops;
+    memset(prev_used, 0, sizeof(prev_used));
+
+    for (int round = 0; round < 6 * n; round++) {
+        bool sorted = true;
+        for (int i = 1; i <= n; i++) if (P[i] != i) { sorted = false; break; }
+        if (sorted) break;
+
+        int color = round % 2;
+        for (int idx = 1; idx < n; idx++) {
+            int u = eu[idx], v = ev[idx];
+            int a = P[u], b = P[v];
+            bool aw = (a != u) && (D[v][a] == D[u][a] - 1);
+            bool bw = (b != v) && (D[u][b] == D[v][b] - 1);
+            int type = (aw ? 1 : 0) + (bw ? 1 : 0);
+            if (type == 2) {
+                EW[idx] = 2; // always allow type-2
+            } else if (type == 1) {
+                // For edges near high-degree vertices: use exclude-previous
+                // For path-like edges: use alternating
+                if (max(deg[u], deg[v]) > 2) {
+                    EW[idx] = prev_used[idx] ? 0 : 1;
+                } else {
+                    EW[idx] = (edge_color[idx] == color) ? 1 : 0;
+                }
+            } else {
+                EW[idx] = 0;
+            }
+        }
+
+        compute_dp(1);
+        vector<int> matching;
+        extract(1, dp1[1] > dp0[1], matching);
+
+        if (matching.empty()) continue;
+
+        memset(prev_used, 0, sizeof(prev_used));
+        for (int idx : matching) { swap(P[eu[idx]], P[ev[idx]]); prev_used[idx] = true; }
+        all_ops.push_back(matching);
+    }
+
+    printf("%d\n", (int)all_ops.size());
+    for (auto& op : all_ops) {
+        printf("%d", (int)op.size());
+        for (int idx : op) printf(" %d", idx);
+        printf("\n");
+    }
+}
+
+int main() {
+    int T; scanf("%d", &T);
+    while (T--) solve();
+    return 0;
+}

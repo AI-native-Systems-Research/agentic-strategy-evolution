@@ -1,0 +1,19 @@
+{
+  "last_entered_phase": "EXECUTE_ANALYZE",
+  "iteration": 3,
+  "run_id": "frontier-5",
+  "family": null,
+  "timestamp": "2026-09-30T16:21:28.282122+00:00",
+  "config_ref": null,
+  "work_dir": "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-5",
+  "repo_path": "/home/ubuntu/frontier/gen_logs/frontier_5_nous_ws",
+  "reproducibility_metadata": {
+    "captured_at": "2026-09-30T12:23:54Z",
+    "repo_commit": "a35252fa3730dd427d6e9bb70bc261992ba6a08f",
+    "repo_dirty": false,
+    "language_versions": {
+      "node": "v20.20.2"
+    }
+  },
+  "max_iterations": 5
+}

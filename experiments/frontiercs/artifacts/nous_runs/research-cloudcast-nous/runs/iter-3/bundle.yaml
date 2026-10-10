@@ -1,0 +1,54 @@
+metadata:
+  iteration: 3
+  family: "throughput-aware-steiner"
+  research_question: "Can throughput-aware tiebreaking in directed Steiner arborescence reduce total broadcast cost beyond pure cost optimization?"
+  complexity_tier: 2
+  tier_justification: "iter 3 — single mechanism (directed Steiner) + two variants (cost-only vs throughput-aware tiebreaking), building on iter-1 (Steiner > Dijkstra) and iter-2 (directed > undirected)"
+
+arms:
+  - type: h-main
+    prediction: "Directed Steiner arborescence with throughput-aware tiebreaking (weight = cost + ε/throughput) will achieve the highest score (~0.1601), outperforming both Dijkstra baseline and cost-only Steiner, because the tiebreaker selects higher-throughput edges among cost-equivalent alternatives, reducing transfer time and instance cost without increasing egress."
+    mechanism: "Edge costs in the graph are discrete (min gap $0.0005). Many edges share the same cost but differ in throughput (0.33–67.3 Gbps range). The cost-only DP breaks ties arbitrarily. Adding ε/throughput to the edge weight causes the DP to prefer high-throughput edges when costs are tied. Higher throughput edges → less bandwidth contention → lower transfer time → lower instance cost. Egress remains at the theoretical optimum ($618) because ε is too small to cross any cost boundary."
+    diagnostic: "If score does not improve over cost-only Steiner, the optimal tree has no cost-tied edges (all edges are uniquely cheapest), meaning throughput tiebreaking has no effect. Check by comparing tree edge sets between h-main and h-ablation."
+    code_changes:
+      - file: "solution.py"
+        intent: "Implement Dreyfus-Wagner directed Steiner DP with modified edge weight: cost + 1e-9/throughput. Includes all-pairs shortest path precomputation, subset DP with merge and Dijkstra relaxation, tree reconstruction via parent pointers, and BFS path extraction."
+        rationale: "The throughput-aware weight breaks cost ties in favor of high-throughput edges, reducing transfer time without changing egress cost. The Dreyfus-Wagner DP finds the exact optimal directed Steiner arborescence."
+
+  - type: h-control-negative
+    prediction: "Per-destination Dijkstra shortest paths will score ~0.095, far below directed Steiner, because Dijkstra routes each destination independently without exploiting edge sharing across destinations. The score gap is largest on inter-cloud configs where edge sharing opportunities are greatest."
+    mechanism: "Dijkstra computes the shortest path from src to each destination independently. When multiple destinations share intermediate nodes, Dijkstra doesn't exploit this — each destination's path is computed without regard to others. The Steiner tree minimizes the total unique edge cost across all destinations, which can be 35-45% lower than the sum of individual shortest paths (observed: inter_agz shared tree cost $0.535 vs Dijkstra sum $1.04)."
+    diagnostic: "If Dijkstra scores unexpectedly close to Steiner, check if the graph has low edge sharing potential (all shortest paths are disjoint). Compare per-config edge sets."
+    code_changes:
+      - file: "solution.py"
+        intent: "Implement simple per-destination Dijkstra routing: for each destination, find the shortest-cost directed path from src, route all partitions along it."
+        rationale: "Baseline without Steiner optimization shows the value of tree-based edge sharing."
+
+  - type: h-ablation
+    prediction: "Cost-only directed Steiner (no throughput tiebreaking) will score ~0.1595, slightly below h-main (~0.1601), because arbitrary tie-breaking among cost-equivalent edges may select low-throughput edges that increase transfer time and instance cost."
+    mechanism: "Without the throughput penalty, the DP breaks cost ties by heap ordering (effectively arbitrary). Low-throughput edges (some as low as 0.33 Gbps) may be selected over high-throughput alternatives (up to 67 Gbps) when costs are equal. The equal bandwidth sharing rule (flow = limit / num_edges) amplifies this: at congested nodes, each outgoing edge gets the same share regardless of its throughput capacity, so low-throughput edges waste bandwidth allocation."
+    diagnostic: "If h-ablation scores the same as h-main, the cost-only DP coincidentally selected high-throughput edges. Verify by comparing the tree structures."
+    code_changes:
+      - file: "solution.py"
+        intent: "Implement Dreyfus-Wagner directed Steiner DP with edge weight = cost only (no throughput term). Same algorithm as h-main but without the ε/throughput tiebreaker."
+        rationale: "Ablation of the throughput-aware component isolates the contribution of tiebreaking to total cost reduction."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    num_configs: 5
+    data_vol: 300
+    num_partitions: 10
+    num_vms: 2
+    cost_per_instance_hr: 0.54
+    epsilon_tiebreak: 1e-9
+  unlocked_parameters_audit:
+    - name: "epsilon_tiebreak"
+      default_value: 1e-9
+      justification: "Sweep from 1e-12 to 5e-2 showed identical scores; any positive value produces the same tiebreaking tree."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      h-main: 120
+      h-control-negative: 30
+      h-ablation: 120
+    observation_method: "Manual timing of fmeasure_cloudcast.sh runs during design probes"

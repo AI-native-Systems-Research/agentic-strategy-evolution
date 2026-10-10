@@ -1,0 +1,397 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "claude",
+  "label": "claude",
+  "model": "claude-opus-4-6",
+  "final_score": 56.3,
+  "best_score_inrun": 33.41,
+  "cost_usd_est": 50.7495,
+  "stop_reason": "budget",
+  "isolation": "api-loop: agent is a single LLM call per round with NO filesystem access; cannot read evaluator/ground-truth (isolated by construction)",
+  "cheat_audit_hits": [],
+  "elapsed_s": 4048.1,
+  "solution": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/research/gf_seed_sql/claude/solution.py",
+  "eval_raw": {
+    "score": 33.4102250585021,
+    "runs_successfully": 1.0,
+    "line_coverage": 53.93258426966292,
+    "branch_coverage": 87.5,
+    "lines_covered": 528,
+    "total_lines": 979,
+    "branches_covered": 245,
+    "total_branches": 280,
+    "successful_parses": 27,
+    "failed_parses": 39,
+    "total_statements": 66,
+    "coverage_score": 21.394176894657768,
+    "efficiency_bonus": 12.01604816384433,
+    "elapsed_time": 2.569614887237549,
+    "time_budget": 60
+  },
+  "history": [
+    {
+      "round": 0,
+      "score": 24.20385744570946,
+      "status": "success",
+      "cost": 0.4166
+    },
+    {
+      "round": 1,
+      "score": 31.298146742712476,
+      "status": "success",
+      "cost": 0.7476
+    },
+    {
+      "round": 2,
+      "score": 32.768559537442336,
+      "status": "success",
+      "cost": 1.0786
+    },
+    {
+      "round": 3,
+      "score": 32.24815103570385,
+      "status": "success",
+      "cost": 1.4582
+    },
+    {
+      "round": 4,
+      "score": 29.979150349522794,
+      "status": "success",
+      "cost": 1.7968
+    },
+    {
+      "round": 5,
+      "score": 30.69386048270221,
+      "status": "success",
+      "cost": 2.1666
+    },
+    {
+      "round": 6,
+      "score": 30.625585719775117,
+      "status": "success",
+      "cost": 2.5735
+    },
+    {
+      "round": 7,
+      "score": 29.20331119220627,
+      "status": "success",
+      "cost": 2.9367
+    },
+    {
+      "round": 8,
+      "score": 24.391006407881278,
+      "status": "success",
+      "cost": 3.6835
+    },
+    {
+      "round": 9,
+      "score": 23.074216714048887,
+      "status": "success",
+      "cost": 4.2165
+    },
+    {
+      "round": 10,
+      "score": 18.237901370811333,
+      "status": "success",
+      "cost": 4.8884
+    },
+    {
+      "round": 11,
+      "score": 29.00484209651048,
+      "status": "success",
+      "cost": 5.3284
+    },
+    {
+      "round": 12,
+      "score": 22.681961143382956,
+      "status": "success",
+      "cost": 6.4956
+    },
+    {
+      "round": 13,
+      "score": 28.861765129374078,
+      "status": "success",
+      "cost": 7.2787
+    },
+    {
+      "round": 14,
+      "score": 30.44236482481115,
+      "status": "success",
+      "cost": 8.1715
+    },
+    {
+      "round": 15,
+      "score": 31.489397346434195,
+      "status": "success",
+      "cost": 8.7347
+    },
+    {
+      "round": 16,
+      "score": 30.954414051695743,
+      "status": "success",
+      "cost": 9.3231
+    },
+    {
+      "round": 17,
+      "score": 33.4102250585021,
+      "status": "success",
+      "cost": 9.975
+    },
+    {
+      "round": 18,
+      "score": 32.020110866410086,
+      "status": "success",
+      "cost": 10.8689
+    },
+    {
+      "round": 19,
+      "score": 31.741040371557496,
+      "status": "success",
+      "cost": 11.8401
+    },
+    {
+      "round": 20,
+      "score": 31.212690377366023,
+      "status": "success",
+      "cost": 12.813
+    },
+    {
+      "round": 21,
+      "score": 31.589066291354044,
+      "status": "success",
+      "cost": 13.8809
+    },
+    {
+      "round": 22,
+      "score": 32.0712124837978,
+      "status": "success",
+      "cost": 14.8142
+    },
+    {
+      "round": 23,
+      "score": 31.7691900975996,
+      "status": "success",
+      "cost": 15.7335
+    },
+    {
+      "round": 24,
+      "score": 31.487083122447366,
+      "status": "success",
+      "cost": 16.6854
+    },
+    {
+      "round": 25,
+      "score": 31.018410018622134,
+      "status": "success",
+      "cost": 17.6648
+    },
+    {
+      "round": 26,
+      "score": 31.568709350515306,
+      "status": "success",
+      "cost": 18.613
+    },
+    {
+      "round": 27,
+      "score": 32.5937613291254,
+      "status": "success",
+      "cost": 19.6279
+    },
+    {
+      "round": 28,
+      "score": 31.146808165570782,
+      "status": "success",
+      "cost": 20.5871
+    },
+    {
+      "round": 29,
+      "score": 32.76714336792138,
+      "status": "success",
+      "cost": 21.4005
+    },
+    {
+      "round": 30,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 31,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 32,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 33,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 34,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 35,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 36,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 37,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 38,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 39,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 40,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 41,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 42,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 43,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 44,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 45,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 46,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 47,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 48,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 49,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 50,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 51,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 52,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 53,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 54,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 55,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 56,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 57,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 58,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 59,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 60,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 61,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 62,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 63,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 64,
+      "score": null,
+      "status": "no_code"
+    },
+    {
+      "round": 65,
+      "score": null,
+      "status": "no_code"
+    }
+  ],
+  "best_at_50_rejudged": 56.3,
+  "best_trial": "experiments/frontiercs/runs/research/gf_seed_sql/claude/trials/attempt_0_score_56.30.py",
+  "note": "best-at-$50 = max reproduced score over all persisted trials (<=$50); run to budget (no self-stop)."
+}

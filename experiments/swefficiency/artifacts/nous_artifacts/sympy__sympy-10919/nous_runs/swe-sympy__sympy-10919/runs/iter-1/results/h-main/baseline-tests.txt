@@ -1,0 +1,21 @@
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../../../opt/miniconda3/lib/python3.11/site-packages/mpmath/ctx_mp.py:35
+  /opt/miniconda3/lib/python3.11/site-packages/mpmath/ctx_mp.py:35: DeprecationWarning: mpnumeric is deprecated
+    warnings.warn(f"{name} is deprecated", DeprecationWarning)
+
+sympy/core/function.py:1712
+  /testbed/.nous-experiments/iter-1-4227fd23/sympy/core/function.py:1712: DeprecationWarning: invalid escape sequence '\s'
+    """
+
+../../../opt/miniconda3/lib/python3.11/site-packages/mpmath/rational.py:4
+../../../opt/miniconda3/lib/python3.11/site-packages/mpmath/rational.py:4
+  /opt/miniconda3/lib/python3.11/site-packages/mpmath/rational.py:4: DeprecationWarning: the rational private module is deprecated
+    warnings.warn("the rational private module is deprecated",
+
+sympy/ntheory/tests/test_partitions.py: 174 warnings
+  /opt/miniconda3/lib/python3.11/site-packages/mpmath/libmp/libintmath.py:75: DeprecationWarning: bitcount function is deprecated
+    warnings.warn("bitcount function is deprecated",
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 178 warnings in 0.09s

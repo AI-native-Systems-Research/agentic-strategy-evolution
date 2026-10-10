@@ -1,0 +1,14 @@
+You are optimizing the RUNTIME PERFORMANCE of the Python library 'sympy' (repo sympy/sympy).
+The source is at /testbed. Edit only library SOURCE under /testbed, never test files.
+
+MEASURE runtime of the fixed workload (lower is faster):
+    bash /tmp/measure.sh
+It prints 'Mean:' seconds. The clean baseline mean is 55.8603s; your goal is a genuine speedup.
+
+CORRECTNESS GATE (must stay green):
+    bash /tmp/test.sh
+Do NOT edit /tmp/workload.py or any test files. A speedup that breaks any covering test is worthless.
+
+METHOD: measure the baseline, find what the workload exercises, hypothesize an optimization, edit
+the source, re-measure, and confirm the covering tests still pass. Iterate a few times. When done,
+leave your best correct optimization in place in /testbed.

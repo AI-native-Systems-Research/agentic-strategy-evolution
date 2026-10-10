@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "Iteration 3 tests whether combining a compiled C helper for the float-path cosine loop with Python-level optimizations (inlining, constant precomputation, faster mpfr-to-mpf conversion, local variable caching) can yield ~20% runtime reduction for npartitions beyond what iterations 1-2 achieved. A two-arm experiment isolates the C helper's contribution from the pure-Python improvements.",
+  "key_points": [
+    "h-main applies all six optimizations including a new C shared library (kloosterman_sum_float) loaded via ctypes to replace the Python math.cos loop for the float path (~116 iterations per j). Predicted ~20% speedup over iter-2 baseline.",
+    "h-ablation applies the same five Python-level optimizations (inlined _a/_d, precomputed pi/(12*j) factor, precomputed sqrt, as_mantissa_exp conversion, local attribute caching) but keeps the float-path cos loop in Python. Predicted ~12-15% speedup. The gap between h-main and h-ablation quantifies the C helper's value.",
+    "Confirmation criteria: h-main shows \u226518% mean runtime reduction vs iter-2 baseline on workload.py, h-ablation shows 10-15%, and the difference (5-8pp) is attributable to the C helper. Both arms must pass sympy/ntheory/tests/test_partitions.py.",
+    "Refutation signals: if h-ablation matches h-main, the C helper adds complexity for no gain and should be dropped; if neither arm shows meaningful speedup, cProfile-based overhead estimates from iter-2 were inflated by instrumentation artifacts.",
+    "Risk: the C compilation step (gcc -O3 -shared -fPIC -lm) must succeed inside the Docker container and the .so must load correctly via ctypes. A fallback Python path should be included to avoid correctness failures if compilation fails."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

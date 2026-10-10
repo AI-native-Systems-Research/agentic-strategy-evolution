@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether deeper simulated annealing restarts (0.30s each, ~3 restarts) outperform many shallow restarts (0.03s each, ~30 restarts) for Max-Cut, both using incremental gain tracking for O(degree) per flip. The previous iteration scored 87.5; this iteration aims to match or exceed that by exploring the depth-vs-breadth tradeoff in SA restart budgets.",
+  "key_points": [
+    "h-main: 3 long SA restarts (0.30s each) with incremental gain array, linear cooling T0=3.0\u2192Tf=0.001, post-SA greedy cleanup, 0.90s total budget. Predicted score \u226587.5 with low variance.",
+    "h-ablation: ~30 short SA restarts (0.03s each) with identical incremental gain machinery. Predicted to score lower than h-main due to insufficient depth per restart, testing whether diversity of starts compensates for shallow exploration.",
+    "Confirmation: h-main \u226587.5 and h-main > h-ablation supports depth-over-breadth. Refutation: h-ablation \u2265 h-main would indicate the landscape favors many shallow optima and restart diversity matters more than per-restart depth.",
+    "Key implementation details: xorshift128+ RNG, gain array updated in O(degree) on accepted flips, batch time checks every 512 iterations to minimize clock overhead, output is space-separated 0/1 on a single line.",
+    "Risk factors: judge machine speed variance could affect restart counts; if the machine is slower than expected, h-main's 3-restart strategy is more robust since each restart completes meaningful work regardless."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

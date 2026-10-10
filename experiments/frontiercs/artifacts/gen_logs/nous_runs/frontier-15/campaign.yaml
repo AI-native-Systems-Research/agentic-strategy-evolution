@@ -1,0 +1,58 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #15?'
+run_id: frontier-15
+max_iterations: 5
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::15
+  description: "You are solving Frontier-CS algorithmic problem #15. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /home/ubuntu/frontier/gen_logs/fmeasure_15.sh $PWD/solution.cpp\nIt\
+    \ prints a single line 'SCORE: <n>' where n is the judge score (0-100). Record\
+    \ that number in the finding metadata under key 'score'. Each experiment arm should\
+    \ try a distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nPROBLEM STATEMENT:\nProblem Statement\n\nYou are given a sequence p\
+    \ of length n, which is a permutation of the numbers 1, 2, ..., n.\n\nYour goal\
+    \ is to make the permutation lexicographically as small as possible by performing\
+    \ a specific operation at most 4n times, and then minimize the number of operations\
+    \ needed to reach that. \nMore specifically, you must do operations to get the\
+    \ lexicographically smallest permutation that's possible after 4n operations,\
+    \ and then you will be scored based on the number of operations needed to reach\
+    \ it.\nYour final score will be calculated as the average of 100 * clamp((4 *\
+    \ n - your_operations)/(4 * n - best_operations), 0, 1) across all cases\n\nThe\
+    \ Operation\n\nYou can cut the sequence into three consecutive non-empty parts\
+    \ and swap the first part with the last part.\n\nFormally, you select two integers\
+    \ x and y that represent the lengths of the prefix and suffix, respectively. These\
+    \ integers must satisfy:\n\n    x > 0\n\n    y > 0\n\n    x + y < n\n\nThis splits\
+    \ the sequence into [Prefix | Middle | Suffix]. The operation transforms the sequence\
+    \ to [Suffix | Middle | Prefix].\n\nInput\n\nThe first line contains an integer\
+    \ n, the length of the permutation.\nThe second line contains n space-separated\
+    \ integers, p_1, p_2, ..., p_n.\n\nOutput\n\nOn the first line, print an integer\
+    \ m, the total number of operations you performed.\nOn the following m lines,\
+    \ print the two integers x and y you chose for each operation, separated by a\
+    \ space.\n\nConstraints\n\n    3 <= n <= 1000\n\n    The input sequence p is guaranteed\
+    \ to be a valid permutation."
+  repo_path: /home/ubuntu/frontier/gen_logs/frontier_15_nous_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /home/ubuntu/nous_repo/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: a35252fa3730dd427d6e9bb70bc261992ba6a08f
+  nous_version: 0.5.0
+  started_at: '2026-09-30T12:23:54.171266+00:00'

@@ -1,0 +1,176 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "Skyline-based 2D greedy packing with multi-width sweep produces approximately 2x the packing density score compared to naive 1D strip packing for random polyominoes (k=1-10, n=100-10000), achieving ~72 vs ~35 on the judge metric.",
+      "confidence": "high",
+      "regime": "Random polyomino sets with k in [1,10], n in [100,10000], 2-second time limit per test case. Pieces sorted by decreasing size. ~160 candidate widths swept around sqrt(totalCells * factor).",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The skyline algorithm maintains a per-column height array and places each piece at the (orientation, x-position) that minimizes max height. By exploiting vertical gaps in the skyline, it packs pieces into irregular spaces that strip packing leaves empty. The multi-width sweep finds the near-optimal rectangle width W that minimizes W*H, converging to a near-square shape.",
+      "applicability_bounds": "Holds for the greedy single-pass placement order (largest pieces first). Does not account for lookahead, roughness tiebreaking, or column compaction \u2014 these features in the reference solution add ~7 more points (reference scores ~79). The time management sensitivity means scores may vary by ~5 points depending on machine speed.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Transform parameter recovery (X, Y, R, F) is the critical correctness challenge for polyomino packing solutions \u2014 the reflect\u2192rotate\u2192translate order must exactly match the checker's convention, or the solution scores 0 on all test cases.",
+      "confidence": "high",
+      "regime": "Any solution to the polyomino packing problem. The checker applies: reflect (negate x if F=1) \u2192 rotate (R clockwise 90\u00b0 rotations) \u2192 translate (add X, Y).",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The checker at chk.cc:109-124 applies transforms in a specific order. Many LLM-generated solutions in the solutions directory score 0, likely due to incorrect transform recovery. Both our solutions carefully computed X = placement_x - orig_minx, Y = placement_y - orig_miny after normalizing the reflected-and-rotated cells to origin.",
+      "applicability_bounds": "Universal for this problem's checker. The formula X = pl.x - t.orig_minx, Y = pl.y - t.orig_miny works when orig_minx/orig_miny are captured before normalization during orientation generation.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "The skyline packer's score is sensitive to time-managed width sweep budget \u2014 system load variations cause score ranges of 5+ points for v7 (std 2.70, range 5.16 in iter-4). This variance is the dominant source of noise for the v7 algorithm. However, unified time allocation (v10) reduces this variance to negligible levels (std 0.11, range 0.21). Reducing variance is achievable through algorithmic design, not just faster hardware.",
+      "confidence": "high",
+      "regime": "Skyline packing with lookahead (K=n/4), time-managed width sweep, 2s time limit, n=100-10000",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative",
+        "iteration-4-h-main",
+        "iteration-4-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "v7's 60/40 time split makes the width-sweep count a function of system load. v10's unified allocation with early termination makes pack() call duration more predictable, stabilizing the number of widths explored within the fixed time budget.",
+      "applicability_bounds": "The 5+ point variance applies specifically to v7's 60/40 split. The 0.21 point variance applies to v10's unified allocation. Other time-split ratios or non-time-managed algorithms may show different variance profiles.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-4",
+      "statement": "Dynamic lookahead (examining K = n/4 candidate pieces) is the dominant improvement mechanism for greedy skyline packing, contributing ~63% of total score improvement (6.94 of 11.10 points over the iter-1 baseline). The mechanism allows the greedy packer to escape locally suboptimal choices by selecting the best-fitting piece from a window rather than the fixed-order next piece.",
+      "confidence": "high",
+      "regime": "Random polyominoes (k=1-10, n=100-10000), 2-second time limit, greedy skyline placement",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "At each step, the packer examines min(n/4, remaining) candidate pieces and selects the one whose best orientation minimizes global height. This avoids placing large pieces in suboptimal positions and matches small pieces to skyline gaps. The window is dynamically adjusted for large instances to stay within the 2s time limit.",
+      "applicability_bounds": "Holds for the specific polyomino packing problem with random inputs (k=1-10). The 63% contribution figure is for the combined baseline of roughness + compaction + multi-ordering; the absolute lookahead contribution depends on what other improvements are present. May not hold for structured (non-random) inputs where piece ordering matters less.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "Secondary packing improvements (roughness tiebreaker, column compaction, multi-ordering with hybrid time strategy) contribute ~4 points over the iter-1 skyline baseline (~76 vs ~72), independent of lookahead. These are complementary but not individually dominant.",
+      "confidence": "high",
+      "regime": "Random polyominoes (k=1-10, n=100-10000), 2-second time limit",
+      "evidence": [
+        "iteration-2-h-ablation",
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Roughness tiebreaker keeps skyline smooth for future placements. Column compaction removes empty columns to reduce effective width. Multi-ordering tries 3 strategies (ascending-min-dim, descending-cell-count, descending-max-dim) to capture different packing opportunities. Hybrid time strategy allocates 60% to width sweep and 40% to alternative orderings.",
+      "applicability_bounds": "The ~4 point improvement is measured against the iter-1 skyline packer (no roughness, no compaction, single ordering). The absolute contribution may vary with different baseline implementations.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "Bitmap-based gap-filling during skyline packing produces no statistically detectable improvement over the v7 baseline (mean paired difference +0.50 points, t=0.226, p>>0.05). The effect size (0-2 points predicted, 0.50 observed) is an order of magnitude smaller than the system-load variance (~6 points range). Gap-filling is not a viable optimization path for this problem at the current algorithm maturity.",
+      "confidence": "medium",
+      "regime": "Skyline greedy packing with dynamic lookahead (K=n/4), roughness tiebreaker, column compaction, 3 orderings, hybrid time strategy, 2s time limit, random polyominoes k=1-10, n=100-10000.",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Gap-filling maintains a 2D bitmap alongside the skyline array and scans for lower placement positions in internal gaps. While theoretically sound (internal gaps exist below the skyline due to non-rectangular pieces), the practical benefit is negligible because: (1) the skyline profile already approximates the optimal placement height for most pieces, (2) the bitmap allocation and scan add per-pack-call overhead that may reduce the number of width-sweep iterations under the time budget, and (3) the time-managed width sweep's sensitivity to system load creates variance (~6 points) that overwhelms any sub-1-point algorithmic improvement.",
+      "applicability_bounds": "Applies to the specific gap-filling strategy tested (integrated bitmap scan after scoring-loop candidate selection). Does not rule out other gap-filling approaches (e.g., separate gap-filling passes, or BL-bitmap for small instances only). Also does not apply if the time budget were significantly larger (>2s), which would reduce the load-variance dominance.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "Unified time allocation (removing the 60/40 phase split) with position-level early termination reduces the skyline packer's run-to-run score variance by ~25x (std 0.11 vs 2.70) without statistically significant change in mean score. The mechanism stabilizes the width-sweep's exploration count, making the algorithm less sensitive to system load fluctuations.",
+      "confidence": "high",
+      "regime": "Skyline packing with lookahead (K=n/4), time-managed width sweep, 2s time limit, n=100-10000",
+      "evidence": [
+        "iteration-4-h-main",
+        "iteration-4-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "v7's 60/40 split reserves 40% of the time budget for Phase 2 (alt orderings at bestWidth \u00b13). Under variable system load, Phase 1's width-sweep count fluctuates: fewer widths explored when load is high, more when low. This creates ~5 point score swings. v10 eliminates Phase 2's time reservation, giving the primary sweep a deterministic number of width evaluations (since early termination makes each pack() call more predictable in duration). The result is highly stable scores (82.6-82.8 range vs 79.9-85.1 for v7).",
+      "applicability_bounds": "Applies when time management is the primary source of variance. Does not apply to algorithms without time-managed width sweeps. The variance reduction trades potential upside (v7 can score 85+ on favorable runs) for reliability (v10 never drops below 82.6).",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-8",
+      "statement": "Incremental inner-loop optimizations to the greedy skyline packer (precomputed orientation metadata, orientation-level skip, additional fixed orderings, culprit repair) produce no statistically detectable improvement over the v10 baseline at the current hardware-limited score plateau (~83). The greedy skyline approach has reached diminishing returns where constant-factor speedups don't translate to measurable score gains.",
+      "confidence": "medium",
+      "regime": "Polyomino packing with skyline greedy, K=n/4 lookahead, 2s time limit, 70 test cases with n=100-10000",
+      "evidence": [
+        "iteration-5-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "The composite v12 improvements save ~14ms per pack() call (less than one additional width exploration) and add two orderings + culprit repair to Phase 2/3. The speed savings are too small to enable meaningful additional width exploration, and the quality improvements from extra orderings and culprit repair are offset by reduced random restart time. The net effect is indistinguishable from zero (paired t=-0.787, p>>0.05).",
+      "applicability_bounds": "Applies to constant-factor inner-loop optimizations of the greedy skyline packer. Does NOT apply to fundamentally different algorithms (local search, constraint programming) or to optimizations that provide order-of-magnitude speedups (e.g., reducing position search from O(W) to O(1) via valley-only targeting).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3-update",
+      "statement": "UPDATE to RP-3: v10's load-induced variance is NOT always negligible. Under heavy system load, v10 shows std=1.30 and range=2.59 (compared to iter-4's std=0.11 and range=0.21). The unified time allocation reduces variance relative to v7's 60/40 split, but doesn't eliminate it under extreme load conditions.",
+      "confidence": "high",
+      "regime": "v10 skyline packer under variable system load",
+      "evidence": [
+        "iteration-5-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "Under heavy system load, pack() calls take longer, reducing the number of widths explored in the time budget. The variation in pack() call time (due to CPU contention) translates to variation in the number of widths tried, which varies the quality of the best width found.",
+      "applicability_bounds": "RP-3's original observation (std=0.11) was under moderate load. Under heavy load, variance increases 10x+. The unified allocation still helps vs the 60/40 split, but absolute variance depends on load conditions.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

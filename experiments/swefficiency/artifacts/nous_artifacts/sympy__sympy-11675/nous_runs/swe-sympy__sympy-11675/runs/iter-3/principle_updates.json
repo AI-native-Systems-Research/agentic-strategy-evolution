@@ -1,0 +1,20 @@
+[
+  {
+    "id": "RP-3",
+    "statement": "In diop_DN's |N|>1 branch, inlining PQa arithmetic with set-based period detection (replacing the separate length() call and PQa generator) achieves 2.29x incremental speedup over iter-2's integer-arithmetic optimization, reducing per-call time from 0.393ms to 0.171ms. Combined with RP-1 (hoisting) and RP-2 (integer arithmetic), the total speedup is 334,595x over the campaign baseline (57.3288s \u2192 0.000171s) for the tested workload (D=15591784605, N=-20). The three sub-optimizations are: (a) eliminating redundant CF computation (465 iterations saved), (b) removing generator protocol overhead (no tuple creation per step), (c) scalar G/B tracking (no list.append calls).",
+    "confidence": "high",
+    "regime": "diop_DN with large D (not a perfect square), |N| > 1, and moderate number of divisor-square factors. The 2.29x incremental gain is specific to workloads where length()'s CF computation is a significant fraction of runtime (~41% in the iter-2 optimized code). For workloads with very short CF periods, the gain would be smaller because length() overhead is proportionally smaller.",
+    "evidence": [
+      "iteration-3-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "The original algorithm (even after iter-2's integer arithmetic) calls length(z, abs(m), D) to compute the CF period length, then iterates PQa for up to that many steps. Both functions iterate the same continued fraction expansion. Inlining PQa's arithmetic directly into the diop_DN loop and detecting the period via a set of (P_i, Q_i) pairs eliminates the redundant computation. Additional gains come from removing the Python generator protocol (no next() calls, no generator frame suspension/resumption, no 6-tuple creation per step), and from replacing G[] and B[] arrays with scalar variables (eliminating ~484 list.append calls). The A_i recurrence, computed by PQa but never used by diop_DN, is also eliminated.",
+    "applicability_bounds": "Applies to diop_DN's |N|>1 branch (line 1135+). The negative-Q integer formula (a_i = -((P_i + sD) // (-Q_i)) - 1 for Q_i < 0) is critical for correctness with small D. The optimization is at Python's per-call overhead floor (~0.17ms) \u2014 further gains would require C extensions or algorithmic changes to avoid PQa entirely.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

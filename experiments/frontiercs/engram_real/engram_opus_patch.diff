@@ -1,0 +1,100 @@
+diff --git a/Architect/main.py b/Architect/main.py
+index df60d6d..995300a 100644
+--- a/Architect/main.py
++++ b/Architect/main.py
+@@ -141,7 +141,7 @@ def setup_directories(results_dir: str, task_name: str) -> tuple[str, str]:
+ @click.option(
+     "--model",
+     required=False,
+-    type=click.Choice(["gpt-4o", "o1", "o3-mini", "o4-mini", "gpt-4.1", "o3", "gpt-5.1", "gpt-5", "gpt-5.2", "gpt-5.2-high", "gpt-5.2-xhigh"], case_sensitive=False),
++    type=click.Choice(["gpt-4o", "o1", "o3-mini", "o4-mini", "gpt-4.1", "o3", "gpt-5.1", "gpt-5", "gpt-5.2", "gpt-5.2-high", "gpt-5.2-xhigh", "claude-opus-4-6"], case_sensitive=False),
+     help="Which LLM model to use (not required for openevolve)",
+ )
+ @click.option(
+diff --git a/Architect/pricing_table.py b/Architect/pricing_table.py
+index 0ba581d..4a24237 100644
+--- a/Architect/pricing_table.py
++++ b/Architect/pricing_table.py
+@@ -15,6 +15,7 @@ PRICING: Dict[str, Dict[str, float]] = {
+     "gpt-5.2": {"input": 1.75, "output": 14.00},
+     "o3": {"input": 2.00, "output": 8.00},
+     "o4-mini": {"input": 1.10, "output": 4.40},
++    "claude-opus-4-6": {"input": 15.00, "output": 75.00},
+ }
+ 
+ DEFAULT_PRICING = {"input": 2.00, "output": 10.00}  # fallback for unknown models
+diff --git a/SystemBench/ADRS/adrs_evaluator.py b/SystemBench/ADRS/adrs_evaluator.py
+index 0463e93..7116c0e 100644
+--- a/SystemBench/ADRS/adrs_evaluator.py
++++ b/SystemBench/ADRS/adrs_evaluator.py
+@@ -221,8 +221,12 @@ based on performance metrics and returns a combined score.
+         Raises:
+             TimeoutError: If evaluation exceeds the timeout threshold
+         """
++        # Use a 'fork' context so the nested _evaluate_wrapper need not be picklable.
++        # macOS defaults to 'spawn' (Python 3.8+), which can't pickle the local function;
++        # 'fork' inherits process memory and avoids the pickle entirely (Linux behavior).
++        _mp = multiprocessing.get_context("fork")
+         # Create a queue to receive results from the subprocess
+-        result_queue = multiprocessing.Queue()
++        result_queue = _mp.Queue()
+ 
+         # Pass adrs_env_path and evaluator_file as arguments since nested functions can't access self in multiprocessing
+         adrs_env_path = self.adrs_env_path
+@@ -271,8 +275,8 @@ based on performance metrics and returns a combined score.
+                 }
+                 queue.put(("error", error_data))
+ 
+-        # Start the evaluation in a separate process
+-        process = multiprocessing.Process(target=_evaluate_wrapper, args=(program_path, adrs_env_path, evaluator_file_name, result_queue))
++        # Start the evaluation in a separate process (fork context; see above)
++        process = _mp.Process(target=_evaluate_wrapper, args=(program_path, adrs_env_path, evaluator_file_name, result_queue))
+         process.start()
+ 
+         # Wait for the process to complete, with timeout
+diff --git a/SystemBench/FrontierCS/evaluator.py b/SystemBench/FrontierCS/evaluator.py
+new file mode 100644
+index 0000000..f0487c4
+--- /dev/null
++++ b/SystemBench/FrontierCS/evaluator.py
+@@ -0,0 +1,22 @@
++"""Auto-discovery shim for Architect/task.py.
++
++task.load_task_from_paths() looks for an ``evaluator.py``/``evaluate.py`` in the
++evaluator directory and instantiates the first Evaluator subclass it finds with
++NO constructor args. Frontier-CS ships ``frontier_cs_evaluator.py`` whose
++``FrontierCSEvaluator`` requires ``track`` and ``problem_id``. examples/_common.py
++exports those as the env vars ``FCS_TRACK`` / ``FCS_PROBLEM_ID`` for fcs_alg_* /
++fcs_res_* problems; this thin subclass reads them so the no-arg instantiation works.
++"""
++import os
++
++from SystemBench.FrontierCS.frontier_cs_evaluator import FrontierCSEvaluator
++
++
++class Evaluator(FrontierCSEvaluator):
++    # Sorts before "FrontierCSEvaluator" so task.py's getmembers scan picks this one.
++    def __init__(self, **kwargs):
++        super().__init__(
++            track=os.environ["FCS_TRACK"],
++            problem_id=os.environ["FCS_PROBLEM_ID"],
++            **kwargs,
++        )
+diff --git a/examples/single_agent_example_usage.py b/examples/single_agent_example_usage.py
+index 8d3ddeb..647d4fc 100644
+--- a/examples/single_agent_example_usage.py
++++ b/examples/single_agent_example_usage.py
+@@ -51,6 +51,13 @@ def run_single_agent_optimization(
+ 
+     # Single-agent system prompt (no handoff, no summary, no journal/kb)
+     system_prompt_path = prompts_dir / "system_prompt_single_agent.txt"
++    # Frontier-CS needs track-specific task instructions (C++ for algorithmic);
++    # the generic single-agent prompt is Python/ADRS-flavored and would mis-steer.
++    # Single-agent code still provides NO handoff/journal/kb (the ablation holds).
++    if problem_name.startswith("fcs_alg_"):
++        system_prompt_path = prompts_dir / "handoff_system_prompt_algorithms.txt"
++    elif problem_name.startswith("fcs_res_"):
++        system_prompt_path = prompts_dir / "handoff_system_prompt_research.txt"
+ 
+ 
+     results_base = get_results_base_dir(base_dir)

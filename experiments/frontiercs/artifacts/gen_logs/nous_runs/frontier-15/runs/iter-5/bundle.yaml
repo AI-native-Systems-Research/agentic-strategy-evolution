@@ -1,0 +1,68 @@
+metadata:
+  iteration: 5
+  family: "prefix-suffix-sort"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for algorithmic problem #15?"
+  complexity_tier: 1
+  tier_justification: "iter 5 — confirmation run. Score 100 (the ceiling) was established in iter-3 and refined through iter-4. No prior tier has been refuted; tier 1 is the lowest sufficient tier for confirming a solved problem."
+
+# Arms chosen:
+# - h-main: Confirm the k=5 BFS-optimal endgame solution achieves score 100.
+#   This is the definitive algorithm established across iterations 1–4.
+#   The solution is deterministic on fixed test inputs, so results should
+#   match iter-4 exactly.
+#
+# Skipped arms and rationale:
+# - h-ablation: Already confirmed in iter-2 that Op2 is essential (RP-3). No value in repeating.
+# - h-control-negative: Score ceiling (100) is algebraic (RP-4), not empirical. A control-negative
+#   would need to show the effect vanishes, but the algebraic ceiling makes this uninformative.
+# - h-dose-response: The natural dose variable (endgame size k=2..5) produces identical
+#   scores (100) for all values — the dose-response curve is flat at the ceiling.
+# - h-robustness: All 10 test cases have n=1000; no regime variation exists in the test data.
+#   The algorithm's correctness for smaller n was verified in iter-4 (200 random permutations).
+# - h-tradeoff: No tradeoff dimension exists — the algorithm is pure computation with
+#   negligible runtime and memory.
+
+arms:
+  - type: h-main
+    prediction: >
+      The k=5 BFS-optimal endgame solution will achieve score 100 on all 10 test cases,
+      with per-case operation counts identical to iter-4: [1987, 1987, 1983, 1987, 1990,
+      1984, 1982, 1990, 1987, 1983], average 1986.0, maximum 1990. The score ceiling
+      of 100 is algebraically guaranteed for any algorithm using ≤ 2001 operations per
+      case (RP-4), and the k=5 algorithm's worst-case bound of 1995 (RP-1) provides
+      substantial margin. This confirms the problem is definitively solved.
+    mechanism: >
+      The circular buffer rotation sort places elements 1 through n-5 sequentially using
+      2 operations per displaced element: Op1 (buffer rotation via prefix-suffix swap)
+      positions the target, and Op2 (prefix restoration) maintains the sorted-prefix
+      invariant. The last 5 elements are handled by a 119-case BFS-optimal dispatch
+      table computed at reference n=11 (RP-5). The buffer state after each 2-op
+      placement is deterministic and independent of the decomposition (d1, d2) choice —
+      all valid decompositions produce identical results. This means the algorithm is
+      optimally efficient within the circular buffer framework: no per-step choice can
+      reduce the total operation count.
+    diagnostic: >
+      If score < 100: check that solution.cpp is the k=5 version (should have 119
+      else-if branches in the endgame section). If operations differ from iter-4:
+      verify the test data hasn't changed (all cases should be n=1000). If the judge
+      script fails: verify build succeeds with g++ -O2 -std=c++17.
+
+experiment_spec:
+  preflight_commands:
+    - "g++ -O2 -std=c++17 -o solution solution.cpp"
+  verified_parameters:
+    n: 1000
+    num_test_cases: 10
+    max_operations: 4000
+    best_operations_benchmark: 2001
+    worst_case_k5_endgame: 1995
+  unlocked_parameters_audit:
+    - name: "compiler_optimization_level"
+      default_value: "-O2"
+      justification: "O2 is standard for competitive programming; optimization level does not affect algorithmic operation count"
+    - name: "cpp_standard"
+      default_value: "c++17"
+      justification: "Solution uses only basic STL features; any C++11+ standard suffices"
+    - name: "endgame_size_k"
+      default_value: 5
+      justification: "k=5 proven optimal via BFS at n=11 in iter-4; k=6 intractable (12! ≈ 480M states). Score is already at ceiling regardless of k choice."

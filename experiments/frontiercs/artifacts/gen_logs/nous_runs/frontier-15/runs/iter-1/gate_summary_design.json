@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a circular-buffer rotation sort algorithm can optimally solve problem #15 (prefix-suffix swap sorting) in \u22642n+1 operations, achieving a perfect score of 100, versus a no-operation baseline that should score 0. This validates that the specific algorithmic mechanism\u2014not a trivial problem property\u2014drives the score.",
+  "key_points": [
+    "h-main: A 3-phase algorithm places elements 1..n into sorted order using at most 2n+1 operations (\u22642001 for n=1000, well under the 4n=4000 limit). It exploits the prefix-suffix swap as a circular rotation on the unsorted buffer. Probe data on 50 random permutations averaged 1985 ops. Prediction: score = 100 on all test cases.",
+    "h-control-negative: Outputs 0 operations, leaving the permutation unsorted. The checker requires a fully sorted result, so this should score 0. If it scores >0, something is wrong with our understanding of the judge.",
+    "Confirmation criteria: h-main scores 100 (or very close) AND h-control scores 0. Refutation: h-main scores <100 would indicate the algorithm doesn't always produce a fully sorted permutation or uses too many ops; h-control scoring >0 would indicate the judge doesn't require sorting.",
+    "The scoring formula is 100 \u00d7 clamp((4n \u2212 our_ops) / (4n \u2212 best_ops), 0, 1). With best_ops likely \u22482001 and our algorithm at \u22482001, we expect near-perfect scores. The key risk is edge cases (element already in place, last-2-element endgame) which the code handles with explicit special cases.",
+    "Each arm requires one judge call (~30-60s). Total experiment time: ~2 minutes. No unlocked parameters affect the algorithmic outcome; compiler flags and C++ standard are standard choices."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 3 confirmed that inlining functions, precomputing constants, and adding a C float-path helper together reduce workload runtime from ~21ms to ~13.5ms (37% improvement on workload metric, 18% on warm-cache). The cumulative speedup from the original baseline is now ~98x (1.29s \u2192 13ms). The C helper contributed only 7% of the improvement \u2014 93% came from pure-Python optimizations (inlining, precomputed division factors, as_mantissa_exp conversion, local attribute caching).",
+  "key_points": [
+    "Both arms (full optimization and pure-Python ablation) confirmed directionally: h-main=13.45ms, h-ablation=13.70ms, baseline=21.39ms on the workload metric. All covering tests pass.",
+    "Key surprise: the C float-path helper contributed only 6.8% of the warm-cache improvement (0.17ms of 2.48ms), not the predicted 30-40%. cProfile had inflated per-call overhead estimates by ~3x due to instrumentation cost, leading to overestimation of the Python loop bottleneck.",
+    "Remaining runtime (~11.4ms warm-cache) is now dominated by irreducible MPFR computation: gmpy2.cos accounts for ~41% (~4.7ms), gmpy2 cosh/sinh ~12% (~1.4ms), and mpf accumulation ~7% (~0.8ms). Python interpreter overhead has been reduced from ~45% to ~30%.",
+    "Next iteration options: (1) Explore Cython compilation of the entire npartitions loop to eliminate remaining Python overhead (~3.4ms), (2) Investigate pentagonal number recursion as an alternative algorithm for this n range, (3) Test whether reducing the HRR convergence threshold (currently 1e-8) allows fewer outer loop iterations without sacrificing correctness.",
+    "Diminishing returns are setting in: iter-1 gave 54.5x, iter-2 gave 1.6x, iter-3 gave 1.2x. The remaining ~11ms is 53% irreducible math library computation. Further gains likely require either a fundamentally different algorithm or compiled code for the full loop body."
+  ]
+}

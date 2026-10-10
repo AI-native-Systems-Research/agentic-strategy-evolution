@@ -1,0 +1,134 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "In diop_DN's general-case branch (D>0, non-square, |N|>1), the length(z, abs(m), D) call at line 1181 is loop-invariant and dominates runtime when called inside the inner PQa iteration loop. Hoisting it before the loop reduces calls from O(sum_of_period_lengths) to O(num_z_values), yielding a 44x measured speedup (42.7s to 0.97s) for the tested workload (D=15591784605, N=-20), or 59x vs campaign baseline.",
+      "confidence": "high",
+      "regime": "diop_DN with large D (not a perfect square), |N| > 1, and moderate number of divisor-square factors. The speedup magnitude scales with the sum of continued-fraction period lengths across (z, m) pairs.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "length() delegates to continued_fraction_periodic() which uses symbolic sqrt(D), making each call ~0.335s for large D. Inside the inner loop it is called on every iteration j, but its arguments (z, abs(m), D) are outer-loop variables. Hoisting moves the computation from O(sum_periods) to O(num_z_values). For D=15591784605, there are 3 (z,m) pairs with period lengths summing to ~231, so 228 redundant calls are eliminated.",
+      "applicability_bounds": "Applies whenever diop_DN reaches the general case (line 1135). The absolute time saved depends on period lengths and D magnitude. For small D or |N|=1, a different code path is taken and this optimization is irrelevant.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "In PQa() and length(), replacing symbolic sqrt(D) with integer_nthroot(D,2)[0] and using pure integer arithmetic eliminates all sympy symbolic engine overhead (~3.5M function calls per diop_DN invocation). Combined with iter-1's loop-invariant hoisting (RP-1), this achieves a 49,519x speedup over the campaign baseline (57.3288s \u2192 0.00116s) for the tested workload (D=15591784605, N=-20). The integer replacement is exact for non-perfect-square D when Q > 0 in PQa, and when using truncation-toward-zero semantics (matching Python's int() behavior) in length().",
+      "confidence": "high",
+      "regime": "diop_DN with large D (not a perfect square), |N| > 1. PQa's integer formula requires Q > 0 (guaranteed by all call sites in diop_DN). length()'s integer formula requires sign-aware truncation-toward-zero for negative CF quotients. The speedup magnitude scales with the number of PQa iterations and length() calls.",
+      "evidence": [
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "PQa (diophantine.py:1294) computed floor((P_i + sqrt(D))/Q_i) using sympy's symbolic sqrt and floor on every inner-loop iteration, triggering the full symbolic algebra engine (evalf, cache, simplify). Replacing with (P_i + isqrt_D) // Q_i eliminates all symbolic calls. length() (diophantine.py:1469-1499) delegated to continued_fraction_periodic() which used symbolic sqrt(d) for its CF iteration. Replacing with an inline integer-only period counter eliminates another layer of symbolic overhead. The two changes compound multiplicatively: hoisting reduced call count (RP-1), integer arithmetic reduced per-call cost (RP-2), yielding ~830x on top of ~60x.",
+      "applicability_bounds": "Applies whenever PQa or length are called with non-perfect-square D. For perfect-square D, length() falls back to the original symbolic path. The truncation-toward-zero handling in length() is critical for correctness when P + isqrt(D) < 0; the simpler (P + isqrt_D) // Q formula fails in those cases. The isqrt after normalization (d *= q\u00b2) must be recomputed via integer_nthroot, not scaled as isqrt_old * |q|.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "In diop_DN's |N|>1 branch, inlining PQa arithmetic with set-based period detection (replacing the separate length() call and PQa generator) achieves 2.29x incremental speedup over iter-2's integer-arithmetic optimization, reducing per-call time from 0.393ms to 0.171ms. Combined with RP-1 (hoisting) and RP-2 (integer arithmetic), the total speedup is 334,595x over the campaign baseline (57.3288s \u2192 0.000171s) for the tested workload (D=15591784605, N=-20). The three sub-optimizations are: (a) eliminating redundant CF computation (465 iterations saved), (b) removing generator protocol overhead (no tuple creation per step), (c) scalar G/B tracking (no list.append calls).",
+      "confidence": "high",
+      "regime": "diop_DN with large D (not a perfect square), |N| > 1, and moderate number of divisor-square factors. The 2.29x incremental gain is specific to workloads where length()'s CF computation is a significant fraction of runtime (~41% in the iter-2 optimized code). For workloads with very short CF periods, the gain would be smaller because length() overhead is proportionally smaller.",
+      "evidence": [
+        "iteration-3-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "The original algorithm (even after iter-2's integer arithmetic) calls length(z, abs(m), D) to compute the CF period length, then iterates PQa for up to that many steps. Both functions iterate the same continued fraction expansion. Inlining PQa's arithmetic directly into the diop_DN loop and detecting the period via a set of (P_i, Q_i) pairs eliminates the redundant computation. Additional gains come from removing the Python generator protocol (no next() calls, no generator frame suspension/resumption, no 6-tuple creation per step), and from replacing G[] and B[] arrays with scalar variables (eliminating ~484 list.append calls). The A_i recurrence, computed by PQa but never used by diop_DN, is also eliminated.",
+      "applicability_bounds": "Applies to diop_DN's |N|>1 branch (line 1135+). The negative-Q integer formula (a_i = -((P_i + sD) // (-Q_i)) - 1 for Q_i < 0) is critical for correctness with small D. The optimization is at Python's per-call overhead floor (~0.17ms) \u2014 further gains would require C extensions or algorithmic changes to avoid PQa entirely.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "In diop_DN's |N|>1 branch, replacing sympy's number-theory utility functions (divisors via factorint, sqrt_mod via CRT, divisible) with pure-integer implementations (trial division for divisors, brute-force enumeration for sqrt_mod) and converting D, N, sD to Python int at branch entry achieves 1.43x direct warm-call speedup (0.172ms to 0.120ms) and 2.68x harness speedup (0.808ms to 0.301ms) over iter-3's optimized code. Combined with RP-1 (hoisting), RP-2 (integer arithmetic), and RP-3 (inlined PQa), the total campaign speedup is 190,335x (harness) or 478,538x (direct) over the 57.3288s baseline for the tested workload (D=15591784605, N=-20).",
+      "confidence": "high",
+      "regime": "D non-square, |N|>1, small moduli (abs_m <= 100000 for all divisors of N). The harness speedup (2.68x) exceeds the direct warm speedup (1.43x) because forked-process measurement amplifies cold-start savings from eliminating sympy module imports.",
+      "evidence": [
+        "iteration-4-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "Three sources of improvement: (1) Pure-integer divisors (trial division while d*d <= absN) eliminates factorint's prime factorization dispatch \u2014 saving ~4.3\u03bcs per call for N=20. (2) Pure-integer sqrt_mod (brute-force for x in range(abs_m)) eliminates CRT-based modular arithmetic \u2014 saving ~12.9\u03bcs per call for abs_m=20. (3) Converting D, N, sD to Python int at the |N|>1 branch entry eliminates sympy Integer.__mul__, __floordiv__, __mod__ dispatch on all 234 PQa inner-loop iterations. Function call count drops from 387 to 249 per invocation (36% reduction).",
+      "applicability_bounds": "Applies when sympy number-theory utilities are overkill for small inputs. The brute-force sqrt_mod is O(abs_m), so only efficient for small moduli (threshold 100000). For larger moduli, sympy's CRT-based algorithm is superior. The int() conversion is always beneficial when inputs are sympy Integer objects, but only measurable when the inner loop has enough iterations to accumulate dispatch overhead.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "At 0.120ms per warm call (478,538x campaign speedup), the diop_DN optimization for the tested workload (D=15591784605, N=-20) is approaching Python's bytecode execution floor for this algorithm. The 234-step PQa inner loop accounts for ~87% of per-call time at ~0.5\u03bcs per iteration. Further speedups within pure Python are limited to <1.5x without algorithmic changes (e.g., reducing the number of PQa iterations via direct Pell equation methods).",
+      "confidence": "medium",
+      "regime": "D=15591784605, N=-20, Python 3.11, pure Python without C extensions.",
+      "evidence": [
+        "iteration-4-h-main",
+        "iteration-3-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "The inner loop performs 234 iterations of: one integer division, two integer multiplications, two subtractions, one set lookup, and one set add. At ~0.5\u03bcs per iteration, this is near Python's per-bytecode-instruction cost. The remaining overhead outside the inner loop (divisor computation, sqrt_mod, result collection) has been reduced to <15% of per-call time. Micro-optimizations (variable renaming, eliminating the j counter) would save at most a few bytecode instructions per iteration.",
+      "applicability_bounds": "This bound is specific to the current workload parameters. Different D/N values produce different PQa period lengths, so the absolute time varies, but the per-iteration cost floor remains ~0.5\u03bcs in CPython 3.11.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "In diop_DN's |N|>1 PQa inner loop, replacing set-based period detection with a counter-based for-range bound and unrolling the first iteration achieves 1.43x incremental speedup over iter-4 (122.9\u03bcs \u2192 86.0\u03bcs direct). Adding the Q_prev recurrence Q_{i+1} = Q_{i-1} + a_i\u00b7(P_i - P_{i+1}) yields 1.54x total (122.9\u03bcs \u2192 79.8\u03bcs). Set elimination is the dominant contributor (1.43x), while Q_prev adds 1.08x. Combined campaign speedup: 719,000x (direct) / 240,000x (harness) over the 57.3288s baseline.",
+      "confidence": "high",
+      "regime": "diop_DN with D>0, non-square D, |N|>1, where all z values find solutions via Q_i==\u00b11 (set period detection never triggers). Most effective when inner loop iteration count is >100.",
+      "evidence": [
+        "iteration-5-h-main",
+        "iteration-5-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "Three independent overhead sources are eliminated: (1) CPython tuple allocation for (P_i, Q_i) + set hash computation + set insertion/lookup cost ~0.16\u03bcs/iteration \u00d7 231 iterations = 37\u03bcs. This dominates because set operations require heap allocation per tuple and hash computation per insert/lookup. (2) The j counter and j!=0 check add ~0.01\u03bcs/iteration overhead (branch prediction and integer comparison). (3) The P\u00b2/Q formula computes P_{i+1}\u00b2 and divides by Q_i; the Q_prev recurrence replaces this with two multiplications and one addition, saving ~0.03\u03bcs/iteration \u00d7 231 = 6.2\u03bcs. Integer division is slightly slower than multiplication in CPython even for machine-word-sized integers.",
+      "applicability_bounds": "Applies to PQa-based Pell equation solvers using Python. The Q_prev recurrence requires Q_0 | (D - P_0\u00b2) and Q_i \u2260 0 (guaranteed for non-square D). The counter bound must be sufficient to cover the CF period (4\u00b7isqrt(D) is generous). If the set IS the exit condition (no solution found via Q_i==\u00b11), the counter bound provides correct termination but may iterate longer than the set-based approach for extremely long periods.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5-update",
+      "statement": "Updated: At 79.8\u03bcs per warm call (719,000x campaign speedup), the diop_DN optimization for the tested workload (D=15591784605, N=-20) has reached CPython's bytecode execution floor for this algorithm. The 231-iteration PQa inner loop accounts for ~92% of per-call time at ~0.32\u03bcs per iteration (6 multiplications/additions + 2 comparisons + 7 assignments per step). Further speedups within pure Python are limited to <1.1x without algorithmic changes or C extensions. The set elimination (1.43x) was the last significant micro-optimization opportunity; the Q_prev recurrence (1.08x) provided marginal gains.",
+      "confidence": "high",
+      "regime": "diop_DN with D=15591784605, N=-20, using pure Python (CPython 3.11)",
+      "evidence": [
+        "iteration-5-h-main",
+        "iteration-5-h-ablation",
+        "iteration-4-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "Per-iteration cost at 0.32\u03bcs/iteration consists of: (a) a_i computation (1 addition + 1 division or 1 addition + 1 division + 1 negation), (b) B_i and G_i convergent updates (2 multiplications + 2 additions), (c) Q_i == \u00b11 check (2 comparisons), (d) P_new/Q_new computation via Q_prev recurrence (2 multiplications + 1 subtraction + 1 addition), (e) variable assignments (7 STORE_FAST operations). Each operation costs ~15-40ns in CPython due to bytecode dispatch + integer object creation overhead.",
+      "applicability_bounds": "CPython 3.11 on this specific workload. PyPy or Cython could potentially achieve 5-10x further improvement via JIT compilation of the inner loop. Algorithmic changes (reducing PQa iterations via direct Pell solution methods) could help but would require significant algorithmic redesign.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

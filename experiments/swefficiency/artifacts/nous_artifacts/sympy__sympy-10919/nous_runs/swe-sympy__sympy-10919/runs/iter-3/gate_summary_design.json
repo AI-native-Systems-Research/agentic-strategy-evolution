@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether replacing the O(j) inner summation loop in the Hardy-Ramanujan-Rademacher partition function with an O(log j) Dedekind sum computation \u2014 combined with cosine symmetry halving and a float64 fast path for low-precision terms \u2014 can achieve >15x speedup on npartitions(10^6) (baseline 1.3901s) while producing bit-identical results.",
+  "key_points": [
+    "The main arm (h-main) combines three optimizations: (1) Dedekind sum replaces 2.9M Python inner-loop iterations with ~9000 O(log j) calls, (2) cos(h) = cos(j-h) symmetry halves ~18K mpf_cos calls to ~9K, (3) float64 fast path eliminates mpf overhead for 73% of remaining cos calls where precision \u226464 bits. Predicted speedup: >15x.",
+    "The ablation arm removes only the float64 fast path, keeping Dedekind sum + symmetry. Predicted speedup: >8x. If ablation matches h-main, float64 contributes nothing and the algorithmic change alone is sufficient.",
+    "Confirmation criteria: h-main achieves >15x speedup (mean < 0.093s) with all sympy/ntheory/tests/test_partitions.py tests passing; h-ablation achieves >8x but measurably less than h-main. Refutation: if speedup is <8x for h-main, the Dedekind sum recursion overhead or remaining mpf_cos costs dominate more than profiling suggested.",
+    "The Dedekind sum identity T(h,j) = j\u00b2\u00b7s(h,j) + j\u00b2(j-1)/4 is mathematically proven, so correctness risk is low; the main risk is whether Python-level recursion depth (~log j \u2248 12 on average) introduces enough overhead to erode the theoretical gains.",
+    "All changes are confined to sympy/ntheory/partitions_.py; no test files or workload files are modified. math.gcd replaces igcd for additional minor speedup."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

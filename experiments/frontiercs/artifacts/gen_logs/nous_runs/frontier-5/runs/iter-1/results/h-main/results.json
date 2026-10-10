@@ -1,0 +1,18 @@
+{
+  "arm": "h-main",
+  "score": 72,
+  "seed": 42,
+  "algorithm": "warnsdorff_greedy_posa_rotation_v6",
+  "per_test": [
+    {"test": 1, "n": 5, "k": 5, "pnt": 10, "coverage": 1.0},
+    {"test": 2, "n": 20, "k": 20, "pnt": 10, "coverage": 1.0},
+    {"test": 3, "n": 60, "k": 60, "pnt": 10, "coverage": 1.0},
+    {"test": 4, "n": 500, "k": 223, "pnt": 1, "coverage": 0.446},
+    {"test": 5, "n": 1000, "k": 1000, "pnt": 10, "coverage": 1.0},
+    {"test": 6, "n": 2000, "k": 2000, "pnt": 10, "coverage": 1.0},
+    {"test": 7, "n": 4000, "k": 4000, "pnt": 10, "coverage": 1.0},
+    {"test": 8, "n": 9000, "k": 3309, "pnt": 1, "coverage": 0.368},
+    {"test": 9, "n": 8000, "k": 8000, "pnt": 10, "coverage": 1.0},
+    {"test": 10, "n": 100000, "k": 4966, "pnt": 0, "coverage": 0.050}
+  ]
+}

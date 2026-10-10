@@ -1,0 +1,35 @@
+research_question: How can we reduce the runtime of the workload for astropy/astropy
+  without changing its behavior, while keeping the covering tests green?
+run_id: swe-astropy__astropy-16295
+max_iterations: 1
+target_system:
+  name: swefficiency::astropy__astropy-16295
+  description: "A prebuilt Docker container named 'swegen_astropy_astropy-16295_nous'\
+    \ holds a Python library checked out at /testbed (conda env 'testbed'). ALL work\
+    \ MUST happen inside that container via:\n  docker exec swegen_astropy_astropy-16295_nous\
+    \ bash -lc \"cd /testbed && source /opt/miniconda3/etc/profile.d/conda.sh && conda\
+    \ activate testbed && <CMD>\"\nMeasure runtime with: python /tmp/workload.py (prints\
+    \ Mean/Std). Do NOT edit /tmp/workload.py or any test files. Optimize only library\
+    \ SOURCE under /testbed. Correctness gate: these covering tests MUST pass: astropy/coordinates/tests/accuracy/test_ecliptic.py\
+    \ astropy/coordinates/tests/test_sky_coord_velocities.py astropy/coordinates/tests/accuracy/test_altaz_icrs.py\
+    \ astropy/coordinates/tests/test_solar_system.py astropy/coordinates/tests/test_distance.py\
+    \ astropy/coordinates/tests/test_arrays.py astropy/coordinates/tests/test_api_ape5.py\
+    \ astropy/coordinates/tests/test_celestial_transformations.py astropy/coordinates/tests/test_intermediate_transformations.py\
+    \ astropy/coordinates/tests/test_earth.py astropy/coordinates/tests/test_sites.py\
+    \ astropy/coordinates/tests/test_angles.py astropy/coordinates/tests/test_sky_coord.py\
+    \ (run: python -m pytest -q <files>). Your /testbed edits in the container are\
+    \ collected as the patch; there is no separate submission."
+  repo_path: /home/ubuntu/nous_swe/gen_logs/nous_swegen_astropy_astropy-16295_nous/workspace
+  live_target: true
+  observable_metrics:
+  - workload_mean_runtime
+  - test_pass_count
+  controllable_knobs:
+  - source_code_edits
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /home/ubuntu/nous_repo/prompts/methodology
+  domain_adapter_layer: null

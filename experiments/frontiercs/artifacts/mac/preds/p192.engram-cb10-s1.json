@@ -1,0 +1,869 @@
+{
+  "problem_id": "192",
+  "agent": "engram",
+  "label": "engram-cb10-s1",
+  "model": "claude-opus-4-6",
+  "final_score": 0,
+  "status": "success",
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_192_engram-cb10-s1.solution.cpp",
+  "best_score": 0,
+  "method": "Engram-style (reimplementation)",
+  "agents": 18,
+  "rounds_per_agent": 4,
+  "code_generations": 64,
+  "history": [
+    {
+      "agent": 0,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Implement a high-quality Max-Cut heuristic using multiple random restarts with greedy local search (flip any vertex that increases the cut), combined with simulated annealing to escape local optima, all within the time budget for n\u22641000, m\u226420000.",
+      "cum_cost": 0.1278,
+      "best_score": 0
+    },
+    {
+      "agent": 0,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.2638,
+      "best_score": 0
+    },
+    {
+      "agent": 0,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.3866,
+      "best_score": 0
+    },
+    {
+      "agent": 0,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.5079,
+      "best_score": 0
+    },
+    {
+      "agent": 1,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "The existing solution looks algorithmically sound but scored 0, likely due to a subtle bug or format issue. I'll carefully review and fix it \u2014 the gain update logic after flipping looks correct, but I'll add a verification step and ensure output format is exactly right. I'll also increase SA iterati",
+      "cum_cost": 0.7041,
+      "best_score": 0
+    },
+    {
+      "agent": 1,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.8208,
+      "best_score": 0
+    },
+    {
+      "agent": 1,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 0.9321,
+      "best_score": 0
+    },
+    {
+      "agent": 1,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.0386,
+      "best_score": 0
+    },
+    {
+      "agent": 2,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Rewrite with a clean, robust multi-restart local search + SA, ensuring correct output format and no bugs in gain computation, with careful timing.",
+      "cum_cost": 1.2527,
+      "best_score": 0
+    },
+    {
+      "agent": 2,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.354,
+      "best_score": 0
+    },
+    {
+      "agent": 2,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.4751,
+      "best_score": 0
+    },
+    {
+      "agent": 2,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.5918,
+      "best_score": 0
+    },
+    {
+      "agent": 3,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Submit a clean, robust implementation with greedy initialization + aggressive multi-restart local search + SA, ensuring correct output format and no edge-case crashes, to establish a non-zero baseline score.",
+      "cum_cost": 1.8074,
+      "best_score": 0
+    },
+    {
+      "agent": 3,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 1.922,
+      "best_score": 0
+    },
+    {
+      "agent": 3,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.0495,
+      "best_score": 0
+    },
+    {
+      "agent": 3,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.1586,
+      "best_score": 0
+    },
+    {
+      "agent": 4,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "The existing solution looks algorithmically correct but scored 0 for all prior agents, suggesting a subtle bug or output issue. I'll carefully rewrite with a clean multi-restart local search + SA approach, ensuring correct output format (space-separated 0/1 values on a single line with newline), and",
+      "cum_cost": 2.3824,
+      "best_score": 0
+    },
+    {
+      "agent": 4,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.5026,
+      "best_score": 0
+    },
+    {
+      "agent": 4,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.6104,
+      "best_score": 0
+    },
+    {
+      "agent": 4,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 2.72,
+      "best_score": 0
+    },
+    {
+      "agent": 5,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "The existing solution looks algorithmically correct for Max-Cut with local search + SA. Since all previous agents scored 0, I suspect the issue is subtle - perhaps the output format needs exactly one newline at the end, or there's an edge case. I'll keep the same strong algorithm (multi-restart loca",
+      "cum_cost": 2.9563,
+      "best_score": 0
+    },
+    {
+      "agent": 5,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.0705,
+      "best_score": 0
+    },
+    {
+      "agent": 5,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.1778,
+      "best_score": 0
+    },
+    {
+      "agent": 5,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.2794,
+      "best_score": 0
+    },
+    {
+      "agent": 6,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Submit a clean, well-tested multi-restart local search + simulated annealing Max-Cut solver with careful output formatting, ensuring the code is definitely correct by double-checking gain computations and output format.",
+      "cum_cost": 3.5422,
+      "best_score": 0
+    },
+    {
+      "agent": 6,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.6805,
+      "best_score": 0
+    },
+    {
+      "agent": 6,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.7922,
+      "best_score": 0
+    },
+    {
+      "agent": 6,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 3.9045,
+      "best_score": 0
+    },
+    {
+      "agent": 7,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Fix the critical bug in the gain update logic (neighbor gain signs are inverted), keep the multi-restart local search + simulated annealing approach which is algorithmically sound for Max-Cut.",
+      "cum_cost": 4.1646,
+      "best_score": 0
+    },
+    {
+      "agent": 7,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.2804,
+      "best_score": 0
+    },
+    {
+      "agent": 7,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.379,
+      "best_score": 0
+    },
+    {
+      "agent": 7,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.4944,
+      "best_score": 0
+    },
+    {
+      "agent": 8,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Write a clean multi-restart greedy local search + simulated annealing Max-Cut solver with verified gain updates, ensuring correct output format (space-separated 0/1 values on exactly one line).",
+      "cum_cost": 4.7584,
+      "best_score": 0
+    },
+    {
+      "agent": 8,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.888,
+      "best_score": 0
+    },
+    {
+      "agent": 8,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 4.9995,
+      "best_score": 0
+    },
+    {
+      "agent": 8,
+      "round": 3,
+      "score": null,
+      "status": "error",
+      "plan": null,
+      "cum_cost": 5.1347,
+      "best_score": 0
+    },
+    {
+      "agent": 9,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "The existing solution looks algorithmically correct but all previous agents scored 0, which is bizarre. Looking at the code carefully, the output format seems correct (space-separated 0/1 values). I'll strengthen the algorithm with more aggressive SA, longer local search, and multiple restarts while",
+      "cum_cost": 5.4383,
+      "best_score": 0
+    },
+    {
+      "agent": 9,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.5773,
+      "best_score": 0
+    },
+    {
+      "agent": 9,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.7029,
+      "best_score": 0
+    },
+    {
+      "agent": 9,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 5.8243,
+      "best_score": 0
+    },
+    {
+      "agent": 10,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Fix the inverted gain update signs for neighbors after flipping a vertex - when u and v become same-side, u's gain should increase by 2 (not decrease), and vice versa. This bug caused the local search to diverge, producing worse solutions than random.",
+      "cum_cost": 6.1335,
+      "best_score": 0
+    },
+    {
+      "agent": 10,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.2557,
+      "best_score": 0
+    },
+    {
+      "agent": 10,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.3788,
+      "best_score": 0
+    },
+    {
+      "agent": 10,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.4974,
+      "best_score": 0
+    },
+    {
+      "agent": 11,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "Fix the inverted gain update signs for neighbors after flipping a vertex, and implement aggressive multi-restart SA with correct gain tracking.",
+      "cum_cost": 6.8455,
+      "best_score": 0
+    },
+    {
+      "agent": 11,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 6.9693,
+      "best_score": 0
+    },
+    {
+      "agent": 11,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.0724,
+      "best_score": 0
+    },
+    {
+      "agent": 11,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.1753,
+      "best_score": 0
+    },
+    {
+      "agent": 12,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "The existing code looks algorithmically correct for Max-Cut with proper gain tracking, greedy local search, and SA. The output format also appears correct (space-separated 0/1 values). The issue that caused score 0 for all previous agents is mysterious - let me carefully verify the logic and ensure ",
+      "cum_cost": 7.5112,
+      "best_score": 0
+    },
+    {
+      "agent": 12,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.6373,
+      "best_score": 0
+    },
+    {
+      "agent": 12,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.7541,
+      "best_score": 0
+    },
+    {
+      "agent": 12,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 7.8586,
+      "best_score": 0
+    },
+    {
+      "agent": 13,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "The existing code looks algorithmically correct for Max-Cut with proper output format. The issue that caused 0 scores for all prior agents is likely that the code compiles and runs but the output format has a subtle issue, OR the gain tracking has a bug. Let me carefully verify the algorithm, fix an",
+      "cum_cost": 8.1795,
+      "best_score": 0
+    },
+    {
+      "agent": 13,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.2969,
+      "best_score": 0
+    },
+    {
+      "agent": 13,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.3988,
+      "best_score": 0
+    },
+    {
+      "agent": 13,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.4989,
+      "best_score": 0
+    },
+    {
+      "agent": 14,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "The existing code looks algorithmically correct for Max-Cut with proper output format. The issue might be that previous agents' code had bugs or wasn't actually submitted correctly. I'll clean up the solution, ensure robust multi-restart SA with proper gain tracking, and make sure output format is e",
+      "cum_cost": 8.8161,
+      "best_score": 0
+    },
+    {
+      "agent": 14,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 8.9368,
+      "best_score": 0
+    },
+    {
+      "agent": 14,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.0408,
+      "best_score": 0
+    },
+    {
+      "agent": 14,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.144,
+      "best_score": 0
+    },
+    {
+      "agent": 15,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "The existing code looks algorithmically correct for Max-Cut with proper output format. The issue causing score 0 for all prior agents is mysterious - let me carefully re-examine the code. I notice the output format matches the problem spec (space-separated 0/1 on one line). The algorithm looks corre",
+      "cum_cost": 9.4614,
+      "best_score": 0
+    },
+    {
+      "agent": 15,
+      "round": 1,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.5823,
+      "best_score": 0
+    },
+    {
+      "agent": 15,
+      "round": 2,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.6805,
+      "best_score": 0
+    },
+    {
+      "agent": 15,
+      "round": 3,
+      "score": 0,
+      "status": "success",
+      "plan": null,
+      "cum_cost": 9.7842,
+      "best_score": 0
+    },
+    {
+      "agent": 16,
+      "round": 0,
+      "score": 0,
+      "status": "success",
+      "plan": "The existing code looks algorithmically correct but I suspect the score of 0 might be due to the output format or a subtle bug. Let me carefully re-examine the code, ensure correctness, and also make the solver more aggressive with more restarts, longer SA phases, and proper time management. The cod",
+      "cum_cost": 10.1201,
+      "best_score": 0
+    }
+  ],
+  "input_tokens": 192338,
+  "output_tokens": 96989,
+  "cost_usd_est": 10.1592,
+  "journal": "/Users/toslali/frontier/gen_logs/frontier_192_engram-cb10-s1_engram/research_journal.md",
+  "trajectory": [
+    {
+      "cum_cost": 0.1278,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 0.2638,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 0.3866,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 0.5079,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 0.7041,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 0.8208,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 0.9321,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 1.0386,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 1.2527,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 1.354,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 1.4751,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 1.5918,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 1.8074,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 1.922,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.0495,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.1586,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.3824,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.5026,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.6104,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.72,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 2.9563,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 3.0705,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 3.1778,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 3.2794,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 3.5422,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 3.6805,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 3.7922,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 3.9045,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 4.1646,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 4.2804,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 4.379,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 4.4944,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 4.7584,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 4.888,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 4.9995,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 5.1347,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 5.4383,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 5.5773,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 5.7029,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 5.8243,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 6.1335,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 6.2557,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 6.3788,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 6.4974,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 6.8455,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 6.9693,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 7.0724,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 7.1753,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 7.5112,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 7.6373,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 7.7541,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 7.8586,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 8.1795,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 8.2969,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 8.3988,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 8.4989,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 8.8161,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 8.9368,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 9.0408,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 9.144,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 9.4614,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 9.5823,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 9.6805,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 9.7842,
+      "best_score": 0
+    },
+    {
+      "cum_cost": 10.1201,
+      "best_score": 0
+    }
+  ],
+  "cost_budget_usd": 10.0,
+  "seconds": 2000.0
+}

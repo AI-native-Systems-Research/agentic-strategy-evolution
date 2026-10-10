@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether adding a lookahead window (scanning the next K candidate pieces instead of placing them in fixed order) to a skyline-based greedy polyomino packer significantly improves packing density. This is iteration 2, building on the confirmed iter-1 finding that skyline packing beats strip packing (~73 vs ~60 score). Two arms will run: the full enhanced packer (h-main, predicted ~85) and an ablation with lookahead disabled (h-ablation, predicted ~76), isolating lookahead's contribution.",
+  "key_points": [
+    "h-main: Full enhanced packer with lookahead window K=n/4, roughness tiebreaker, column compaction, 3 piece orderings, and hybrid two-phase time strategy. Predicted score ~85 (probed 84.9\u201386.2), a ~12-point gain over iter-1 baseline (~73).",
+    "h-ablation: Same packer but with lookahead window forced to 1 (no lookahead). Predicted score ~76 (probed 71.3\u201381.7, high variance). The ~9-point gap between arms would confirm lookahead as the dominant mechanism.",
+    "Confirmation criteria: h-main \u2265 83 AND h-main \u2212 h-ablation \u2265 5 points confirms the lookahead hypothesis. If h-ablation scores \u2265 82, lookahead is not the key driver and secondary improvements (roughness, compaction, multi-ordering) deserve their own ablation study.",
+    "Risk factors to watch: time management on large instances (n up to 6472), validity of column compaction (cells must stay in [0,W)\u00d7[0,H)), and whether the dynamic lookahead shrinks too aggressively under load \u2014 all have explicit diagnostics in the plan.",
+    "The design cleanly isolates one mechanism (lookahead) via a single toggle (window size), with all other code paths identical between arms, making attribution straightforward."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

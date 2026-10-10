@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "We are confirming that a Branch-and-Bound (BnB) maximum clique solver with degeneracy ordering achieves a perfect score of 100 on problem #185 (N\u22641000, M\u2264500K), replicating the iter-2 result at full scope. A second arm tests timing robustness by halving the time budget from 1950ms to 1000ms.",
+  "key_points": [
+    "h-main: BnB with degeneracy ordering, greedy coloring bound (bitset color classes), and greedy warm-starts, using a 1950ms budget. Predicted score: 100. This confirms the iter-2 winning algorithm in real mode.",
+    "h-robustness: Identical algorithm but with a 1000ms time budget. Predicted score: 100. If it drops below 100, we learn which test instances are timing-critical and how thin the safety margin is.",
+    "Confirmation criteria: h-main scoring 100 validates the algorithm for deployment. If h-main scores <100, we need to investigate dense-subgraph instances and potentially reintroduce the DLS (Dynamic Local Search) fallback from iter-1. If h-robustness also scores 100, the timing margin is comfortable (\u22652\u00d7 headroom).",
+    "Key design choices: degeneracy ordering (highest core number first) for early pruning, greedy coloring upper bound for branch cutting, per-vertex greedy warm-starts (top-100 by core number), and time-check every 2048 BnB calls to stay within budget."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

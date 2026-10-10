@@ -1,0 +1,59 @@
+[
+  {
+    "id": "RP-4",
+    "statement": "NN construction + spatial NN-list 2-opt (K=20) scores 76.3 on Frontier-CS problem 44, a 20.9-point improvement over strip + window 2-opt (55.4). The spatial NN-list is the dominant improvement (~11 points), with NN construction adding ~10 points over strip construction. The algorithm converges deterministically within the 2.5s time budget.",
+    "confidence": "high",
+    "regime": "Frontier-CS problem 44, N up to 200K, 2.5s time limit, 20 test cases",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Spatial NN-list 2-opt precomputes K=20 nearest neighbors per city using dual x-sorted and y-sorted windows, then uses these as candidate edges for 2-opt swaps. This finds cross-tour improvements that window-based 2-opt misses (window=25-30 for N=200K only checks tour-order neighbors). NN construction produces a locally-connected initial tour that is close to the 2-opt local optimum, enabling deterministic convergence within the time budget. Strip construction produces a tour with long inter-strip edges that requires more 2-opt iterations to fix.",
+    "applicability_bounds": "Tested with K=20, W_nn=40-150 depending on N. Higher K may help marginally but precompute cost scales linearly. The 76.3 score leaves room for improvement \u2014 approaches like 3-opt, Lin-Kernighan moves, or multi-start NN construction could push higher.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "NN construction provides both quality and stability advantages over strip construction: the 2-opt-converged tour is ~10 points better (76.3 vs 66.2 mean), and convergence is deterministic (std=0.0 vs std=3.8). The construction heuristic determines not just initial tour quality but also whether 2-opt can converge within the time budget.",
+    "confidence": "high",
+    "regime": "Frontier-CS problem 44, spatial NN-list 2-opt with K=20, 2.5s time limit",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-ablation"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "NN construction from city 0 greedily visits the nearest unvisited neighbor, producing a tour where consecutive cities are spatially close. This tour has fewer crossing edges and shorter inter-step distances, so the NN-list 2-opt converges before the time limit. Strip construction sorts cities by y into horizontal bands and traverses them serpentine-style, creating long inter-strip edges. These require more 2-opt passes to eliminate, and the time budget runs out before full convergence on large test cases (N=100K-200K), explaining the high score variance.",
+    "applicability_bounds": "The stability advantage is specific to time-budgeted optimization. With unlimited time, both construction methods would converge to the same 2-opt local optimum. The ~10 point quality gap may shrink with more time or larger NN 2-opt windows.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "The 2-opt local optimum for strip-based tours is robust within window-based search, but spatial NN-list 2-opt escapes this local optimum by checking geometrically nearby cities regardless of tour order. NN-list 2-opt with K=20 achieves 76.3 (from NN construction) vs 55.4 for window-based 2-opt, confirming that the iter-1 ceiling was a search limitation, not a true local optimum.",
+    "confidence": "high",
+    "regime": "Frontier-CS problem 44, N up to 200K, 2.5s time limit",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Window-based 2-opt checks edges within a fixed tour-order window (25-300 depending on N). For N=200K with window=25, this only checks 0.01% of possible edge pairs. Spatial NN-list 2-opt checks edges involving the K=20 nearest spatial neighbors of each city, finding improving swaps between geometrically close cities that are far apart in tour order. This is a fundamentally different search strategy that explores a much larger neighborhood in the same time.",
+    "applicability_bounds": "The 76.3 score may itself be a local optimum of the NN-list 2-opt. 3-opt or Lin-Kernighan style moves could potentially escape it. Also, the K=20 NN list may miss beneficial swaps with cities beyond the 20th nearest neighbor.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

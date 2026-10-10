@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether a branch-and-bound (BnB) maximum clique solver with degeneracy ordering and greedy coloring bounds can achieve near-perfect scores (\u226590/100) on the Maximum Clique problem (N\u22641000, M\u2264500K), compared to a greedy-only baseline expected to score below 50.",
+  "key_points": [
+    "Arm 1 (h-main): BnB solver using bitset adjacency (O(N/64) intersections), degeneracy vertex ordering, greedy coloring upper bound, and color-class branching. Predicted score \u226590, based on a probe run that achieved 100.",
+    "Arm 2 (h-control-negative): Greedy clique builder that sorts vertices by degree and greedily adds compatible ones. Predicted score <50, establishing that exhaustive search is necessary for hard instances.",
+    "Confirmation criteria: BnB scores \u226590 and significantly outperforms greedy (\u226540-point gap). Refutation: if BnB scores <90 (suggesting timeouts on dense graphs or pruning issues) or greedy matches BnB (suggesting test cases are trivially easy).",
+    "Risk factors: Dense graphs (N=1000, M~500K) could cause BnB to exceed the 2s time limit; diagnostic would check per-case timing. Output format is N lines of 0/1 \u2014 must be exact to avoid score=0.",
+    "Each arm runs the judge exactly once via the provided measurement script; the score (0-100, continuous) is recorded as the primary metric."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

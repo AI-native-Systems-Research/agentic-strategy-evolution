@@ -1,0 +1,56 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+  mode: real
+
+setup:
+  - cmd: "pip install mpmath pytest -q"
+    description: "Install dependencies"
+  - cmd: "git checkout -- ."
+    description: "Reset worktree to clean state"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline"
+        cmd: >
+          cd /testbed/.nous-experiments/iter-1-8d97f29f &&
+          git checkout -- . &&
+          python -c "
+          with open('sympy/core/basic.py','r') as f: c=f.read()
+          c=c.replace('from collections import Mapping','from collections.abc import Mapping')
+          with open('sympy/core/basic.py','w') as f: f.write(c)
+          with open('sympy/plotting/plot.py','r') as f: c=f.read()
+          c=c.replace('from collections import Callable','from collections.abc import Callable')
+          with open('sympy/plotting/plot.py','w') as f: f.write(c)
+          with open('sympy/matrices/matrices.py','r') as f: c=f.read()
+          c=c.replace('collections.Callable','collections.abc.Callable')
+          with open('sympy/matrices/matrices.py','w') as f: f.write(c)
+          " &&
+          PYTHONPATH=$PWD python /tmp/workload.py
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-1/results/h-main/baseline.txt"
+
+      - name: "treatment"
+        cmd: >
+          cd /testbed/.nous-experiments/iter-1-8d97f29f &&
+          git checkout -- . &&
+          git apply /tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-1/patches/h-main.patch &&
+          PYTHONPATH=$PWD python /tmp/workload.py
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-1/results/h-main/treatment.txt"
+
+      - name: "treatment-tests"
+        cmd: >
+          cd /testbed/.nous-experiments/iter-1-8d97f29f &&
+          PYTHONPATH=$PWD python -m pytest -q sympy/solvers/tests/test_diophantine.py
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-1/results/h-main/test_results.txt"
+
+      - name: "correctness-check"
+        cmd: >
+          cd /testbed/.nous-experiments/iter-1-8d97f29f &&
+          PYTHONPATH=$PWD python -c "
+          from sympy.solvers.diophantine import diop_DN;
+          result = sorted(diop_DN(15591784605, -20));
+          print('Result:', result);
+          print('Num solutions:', len(result))
+          "
+        output: "/tmp/nous_runs/swe-sympy__sympy-11675/runs/iter-1/results/h-main/correctness.txt"

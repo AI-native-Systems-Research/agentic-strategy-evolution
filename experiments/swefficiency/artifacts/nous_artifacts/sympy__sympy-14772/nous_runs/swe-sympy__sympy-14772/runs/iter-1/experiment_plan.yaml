@@ -1,0 +1,46 @@
+metadata:
+  iteration: 1
+  bundle_ref: "runs/iter-1/bundle.yaml"
+  mode: real
+
+setup:
+  - cmd: "echo 'No build step needed — pure Python library'"
+    description: "No build required"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "baseline-run1"
+        cmd: "cd /testbed/.nous-experiments/iter-1-6275d102 && git checkout -- . && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/baseline-run1.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/baseline-run1.txt"
+        description: "Baseline measurement run 1 (10 repetitions via workload.py)"
+
+      - name: "baseline-run2"
+        cmd: "cd /testbed/.nous-experiments/iter-1-6275d102 && git checkout -- . && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/baseline-run2.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/baseline-run2.txt"
+        description: "Baseline measurement run 2 (10 repetitions via workload.py)"
+
+      - name: "baseline-run3"
+        cmd: "cd /testbed/.nous-experiments/iter-1-6275d102 && git checkout -- . && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/baseline-run3.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/baseline-run3.txt"
+        description: "Baseline measurement run 3 (10 repetitions via workload.py)"
+
+      - name: "treatment-run1"
+        cmd: "cd /testbed/.nous-experiments/iter-1-6275d102 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/patches/h-main.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/treatment-run1.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/treatment-run1.txt"
+        description: "Treatment measurement run 1 (3-arg pow applied)"
+
+      - name: "treatment-run2"
+        cmd: "cd /testbed/.nous-experiments/iter-1-6275d102 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/patches/h-main.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/treatment-run2.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/treatment-run2.txt"
+        description: "Treatment measurement run 2 (3-arg pow applied)"
+
+      - name: "treatment-run3"
+        cmd: "cd /testbed/.nous-experiments/iter-1-6275d102 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/patches/h-main.patch && PYTHONPATH=$PWD /opt/miniconda3/envs/testbed/bin/python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/treatment-run3.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/treatment-run3.txt"
+        description: "Treatment measurement run 3 (3-arg pow applied)"
+
+      - name: "treatment-tests"
+        cmd: "cd /testbed/.nous-experiments/iter-1-6275d102 && git checkout -- . && git apply /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/patches/h-main.patch && /opt/miniconda3/envs/testbed/bin/python -m pytest -q sympy/crypto/tests/test_crypto.py --noconftest > /tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/treatment-tests.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-14772/runs/iter-1/results/h-main/treatment-tests.txt"
+        description: "Run covering tests with treatment applied"

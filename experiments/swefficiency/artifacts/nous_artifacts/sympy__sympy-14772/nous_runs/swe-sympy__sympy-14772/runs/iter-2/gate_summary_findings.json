@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed. Replacing `pow(a%p, (p-1)//2) % p` with three-argument `pow(a%p, (p-1)//2, p)` in the `_legendre` function yields a ~4,068\u00d7 speedup (from 0.0743s baseline to 0.000018s), and the ablation shows that the `a%p` pre-reduction is irrelevant to performance. All 38 covering tests pass for both variants.",
+  "key_points": [
+    "h-main CONFIRMED: Three-arg pow avoids constructing a ~1.1M-bit intermediate integer, reducing runtime from ~69ms to ~18\u03bcs \u2014 a 4,068\u00d7 speedup vs the campaign baseline of 0.0743s. Consistent with iter-1's 3,906\u00d7 finding.",
+    "h-ablation CONFIRMED: Dropping the `a%p` pre-reduction (using `pow(a, (p-1)//2, p)` instead of `pow(a%p, (p-1)//2, p)`) produces an indistinguishable 3,968\u00d7 speedup \u2014 the 2.5% difference is within measurement noise. Either form is correct and fast.",
+    "All 38 tests in sympy/crypto/tests/test_crypto.py pass for both variants. The fix is a single-line change with no risk of regression.",
+    "The optimization is ready to commit. The simpler form without `a%p` is slightly preferred for code clarity since Python's three-arg pow handles modular reduction internally."
+  ]
+}

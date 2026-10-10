@@ -1,0 +1,43 @@
+metadata:
+  iteration: 2
+  family: "sa-gapfill-maxrects"
+  research_question: "Can simulated annealing over item orderings plus a residual gap-filling pass push the 2D knapsack score beyond iter-1's 94.84?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — tier 1 confirmed in iter-1 (MaxRects + ordering search works), escalating to tier 2 with ablation to test SA + gap filling components"
+
+arms:
+  - type: h-main
+    prediction: "Simulated annealing over item orderings combined with a residual gap-filling pass will achieve a score above 95.0, improving over iter-1's 94.84 hill-climbing approach. SA escapes local optima that hill-climbing cannot, and gap filling captures residual value from unused free rectangles."
+    mechanism: "Hill-climbing stops at the first local optimum — any swap/insert that doesn't immediately improve is rejected. SA accepts worse moves with probability exp(Δ/T), allowing exploration of the ordering space beyond local optima. The gap-filling pass iterates over remaining free rectangles after the primary ordered pack and greedily places additional copies of any item type (by value density), capturing value the sequential approach leaves on the table."
+    diagnostic: "If score <= 94.84: (1) check if SA temperature schedule is appropriate — T₀ too low means it degenerates to hill-climbing, T₀ too high means too much random walking; (2) check if gap filling is actually finding placements — if free rectangles are too small for any item, gap filling is a no-op; (3) check time allocation — SA needs enough iterations to converge."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace the entire solution with an enhanced MaxRects algorithm featuring: (a) simulated annealing over item orderings with swap/insert/reverse-subsequence neighborhoods, temperature schedule T₀=0.1*bestProfit, α=0.995; (b) gap-filling pass after each ordered pack that tries to place remaining item copies into free rectangles by value density; (c) 4 MaxRects heuristics (BSSF, BAF, BL, BLSF); (d) better time management allocating most time to SA search."
+        rationale: "SA addresses the local-optima limitation of hill-climbing identified in iter-1. Gap filling addresses the sequential-processing limitation of ordered packing where value is left in free rectangles."
+
+  - type: h-ablation
+    prediction: "SA without gap filling will score above 95.0 but below h-main, demonstrating that gap filling provides independent value. The gap between h-main and h-ablation should be 0.1-0.5 points."
+    mechanism: "This isolates the SA component. If SA alone matches h-main, gap filling is redundant (free rectangles are already well-utilized by the ordering). If SA alone scores lower, gap filling captures residual value that ordering optimization alone cannot."
+    diagnostic: "If h-ablation >= h-main: gap filling is not contributing — the ordered pack already fills space efficiently. Focus future work on ordering search quality instead."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Same as h-main but with the gap-filling pass disabled (skip the post-pack greedy fill loop). All other components (SA, 4 heuristics, time management) remain identical."
+        rationale: "Ablation: removing gap filling tests whether it provides independent value beyond what SA ordering search achieves."
+
+experiment_spec:
+  verified_parameters:
+    time_budget_seconds: 0.88
+    heuristics: ["BSSF", "BAF", "BL", "BLSF"]
+    sa_initial_temp_fraction: 0.1
+    sa_cooling_factor: 0.995
+    sorting_strategies: 9
+  unlocked_parameters_audit:
+    - name: "sa_initial_temp_fraction"
+      default_value: 0.1
+      justification: "Starting temperature at 10% of best profit allows accepting moderate regressions early while converging to improvements"
+    - name: "sa_cooling_factor"
+      default_value: 0.995
+      justification: "Standard SA cooling rate; with ~1000 iterations in 0.65s, this cools T to ~0.7% of initial by end"
+    - name: "sa_restart_count"
+      default_value: 4
+      justification: "One restart per heuristic type, maximizing diversity of starting points"

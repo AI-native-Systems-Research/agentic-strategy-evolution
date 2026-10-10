@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "The hypothesis was decisively confirmed: replacing `pow(a%p, (p-1)//2) % p` with the three-argument form `pow(a%p, (p-1)//2, p)` in the `_legendre` function yields a ~3,906x speedup on the benchmark workload (from 0.0743s to 0.000019s), with all 38 covering tests passing.",
+  "key_points": [
+    "Root cause: the two-argument `pow` constructs a ~1.1 million-bit intermediate integer before taking the modulus, while the three-argument `pow` performs modular exponentiation directly, reducing complexity from O(exp \u00d7 log(base)\u00b2) to O(log(exp) \u00d7 log(p)\u00b2).",
+    "Treatment mean: 0.000019s across 3 independent measurement batches (each 10 reps), vs baseline mean of 0.0708s \u2014 a consistent and reproducible ~3,900x speedup against both the measured and campaign baselines.",
+    "All 38 tests in sympy/crypto/tests/test_crypto.py pass with the one-line change applied; no correctness regressions detected.",
+    "The change is minimal (single line edit) and the effect is unambiguous \u2014 this is ready to approve and commit."
+  ]
+}

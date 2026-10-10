@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "The hypothesis that multi-start simulated annealing (SA) with greedy local search would vastly outperform the baseline on Max-Cut is confirmed. The SA solution scored 84.62 out of 100, up from 0 (unimplemented stub) and far above the ~51 expected from random assignment. This falls slightly below the predicted \u226585 threshold and the designer's probe score of 87.28, likely due to per-test-case variance.",
+  "key_points": [
+    "SA treatment scored 84.62 vs 0 (stub baseline) and ~51 (random baseline) \u2014 a massive improvement confirming the directional hypothesis.",
+    "The score of 84.62 is slightly below the designer's earlier probe of 87.28 and the predicted \u226585, suggesting room for further tuning (e.g., more restarts, longer annealing schedule, or switching to a stronger local search like Kernighan-Lin style moves).",
+    "The algorithm uses 20 random restarts with greedy + SA (T=3.0, alpha=0.99997) and a post-SA greedy refinement pass; the ~2.7-point gap to the probe suggests gains may come from better time allocation, adaptive perturbation sizes, or a dedicated 1-flip local search hill climb.",
+    "No format or correctness issues were observed; the solution compiles, runs within time limits, and produces valid output on all test cases."
+  ]
+}

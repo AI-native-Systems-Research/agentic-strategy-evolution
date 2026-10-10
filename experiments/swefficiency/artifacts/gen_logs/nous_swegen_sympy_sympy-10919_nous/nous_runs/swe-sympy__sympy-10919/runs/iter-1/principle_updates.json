@@ -1,0 +1,18 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "The _a function in the HRR partition formula can be accelerated ~49x by replacing the O(j) inner summation loop with O(log j) Dedekind sum computation via reciprocity, combined with Kloosterman symmetry (halving coprime iterations), direct cos_sin_basecase (bypassing mpf_cos), and a hardware-float fast path for low working precision.",
+    "confidence": "high",
+    "regime": "npartitions(n) for n >= 10^4 where M = 0.24*sqrt(n)+4 >> 6 and dynamic precision reduction causes most terms to use prec <= 53",
+    "evidence": ["iteration-1-h-main"],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The inner k-loop in _a computes a Generalized Kloosterman sum equivalent to j*s(h,j) where s is the Dedekind sum. The reciprocity law s(h,k)+s(k,h)=(h^2+k^2+1)/(12hk)-1/4 enables O(log k) computation analogous to the Euclidean GCD algorithm. Kloosterman symmetry D(j-h,j)=-D(h,j) implies cos(angle(j-h))=cos(angle(h)), halving the coprime iteration range. For n=10^6 (M=244), the original performs ~2.9M big-integer ops; the optimized version performs ~36K Dedekind sums (each O(8) steps) plus ~18K cos evaluations (half of which use hardware float).",
+    "applicability_bounds": "Applies to the specific HRR implementation in sympy.ntheory.partitions_. The speedup scales with sqrt(n) since M grows as sqrt(n). For small n (< 100), the overhead of lru_cache and function call setup may reduce the benefit, but the absolute time is already negligible.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

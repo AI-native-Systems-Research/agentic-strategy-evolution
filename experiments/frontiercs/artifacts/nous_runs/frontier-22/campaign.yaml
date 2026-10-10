@@ -1,0 +1,99 @@
+research_question: 'What algorithm maximizes the Frontier-CS judge score for algorithmic
+  problem #22?'
+run_id: frontier-22
+max_iterations: 3
+sandbox: bypass
+target_system:
+  name: frontier-cs::algorithmic::22
+  description: "You are solving Frontier-CS algorithmic problem #22. Scoring is CONTINUOUS\
+    \ partial credit from 0 to 100 (higher is better); MAXIMIZE it. Your working directory\
+    \ is a git worktree containing 'solution.cpp' (a C++17 stub). Edit solution.cpp\
+    \ with your algorithm, then compile-check and measure.\n\nMEASURE the objective\
+    \ (the judge score) with this ONE command (do not run the judge any other way):\n\
+    \    bash /Users/toslali/frontier/gen_logs/fmeasure_22.sh $PWD/solution.cpp\n\
+    It prints a single line 'SCORE: <n>' where n is the judge score (0-100). Record\
+    \ that number in the finding metadata under key 'score'. Each experiment arm should\
+    \ try a distinct algorithmic strategy (different heuristic, exact method, or optimization)\
+    \ and report its measured score. The judge call takes ~30-60s; call it once per\
+    \ arm.\n\nPROBLEM STATEMENT:\nProblem C. A+B Problem\nInput file: standard input\n\
+    Output file: standard output\nTime limit: 2 seconds\nMemory limit: 1024 mebibytes\n\
+    \nIn the era of constructives and ad-hocs, what could be more sacrilegious than\
+    \ combining two query problems\ninto one?\n\nKOI City consists of N intersections\
+    \ and N \u2212 1 two-way roads. You can travel between two different\nintersections\
+    \ using only the given roads. In other words, the city\u2019s road network forms\
+    \ a tree structure.\nRoads are on a two-dimensional plane, and two roads do not\
+    \ intersect at locations other than the endpoints.\nEach road has an non-negative\
+    \ integer weight. This weight represents the time it takes to use the road.\n\n\
+    KOI City was a small town until a few decades ago but began to expand rapidly\
+    \ as people arrived. In the\nmidst of rapid expansion, the mayor had numbered\
+    \ the intersections between 1 and N for administrative\nconvenience. The number\
+    \ system satisfies the following properties.\n\n\u2022 Intersection 1 is the center\
+    \ of the city and is incident to at least 2 roads.\n\n\u2022 The numbers assigned\
+    \ to intersections form one of the pre-orders of the tree rooted at intersection\
+    \ 1:\nfor any subtree, the number of its root is the least number in that subtree.\n\
+    \n\u2022 For each intersection, consider the lowest-numbered intersection among\
+    \ all adjacent (directly\nconnected by road) intersections. When you list all\
+    \ adjacent intersections in a counterclockwise\norder starting from this intersection,\
+    \ the numbers go in increasing order.\n\nWith a large influx of people to KOI\
+    \ City, the traffic congestion problem has intensified. To solve this\nproblem,\
+    \ the mayor connected the outermost cities with the outer ring road. Let {v1,\
+    \ v2, . . . , vk} be the\nincreasing sequence of numbers of all the intersections\
+    \ incident to exactly one road. For each 1 \u2264 i \u2264 k,\nthe mayor builds\
+    \ a two-way road between intersection vi and intersection v(i mod k)+1. The weight\
+    \ of each\nroad is a nonnegative integer wi. Due to the nature of the numbering\
+    \ system, you can observe that the\nouter ring road can be added in a two-dimensional\
+    \ plane in a way such that two roads do not intersect at\nany location except\
+    \ at the endpoint.\n\nHowever, resolving traffic congestion only reduces commute\
+    \ times, making it easier for capitalists to\nexploit workers. Workers would not\
+    \ fall for the capitalists\u2019 disgusting plot \u2014 they want to go back to\
+    \ the\ngood old days when they could apply heavy-light and centroid decomposition\
+    \ in KOI City! The workers\nsuccessfully carried out the socialist revolution\
+    \ and overthrew the capitalist regime. Now they want to\nrebuild the structure\
+    \ of the existing KOI city by creating a new tree, which satisfies the following:\n\
+    \n\u2022 Let K be the number of vertices in the new tree; K \u2264 4N should hold.\
+    \ From now on, we will label\nvertices of the new tree as 1, 2, . . . ,K.\n\n\u2022\
+    \ For each vertex i of the new tree, there is a corresponding set Xi which is\
+    \ a subset of {1, 2, . . . , N}.\n\n\u2022 For all roads (u, v) in the KOI City\
+    \ (both tree and outer ring roads), there exists a set Xi where\n{u, v} \u2286\
+    \ Xi.\n\n\u2022 For all 1 \u2264 j \u2264 N , let Sj be the set of vertices 1\
+    \ \u2264 i \u2264 K such that j \u2208 Xi. Then Sj must be\nnon-empty, and should\
+    \ be a revolutionary set on the new tree.\n\n\u2022 For all 1 \u2264 i \u2264\
+    \ K, it is true that |Xi| \u2264 4.\n\nFor a tree T and a set S which is a subset\
+    \ of vertices of T , the set S is revolutionary on T if for all\nvertices u, v\
+    \ \u2208 S it is connected under S. Two vertices (u, v) are connected under S\
+    \ if there exists a path\nin T that only passes through the vertices in S.\n\n\
+    For example, consider the following tree and the set S = {1, 2, 3, 4, 5, 6}.\n\
+    \nIn this case, (1, 2), (3, 5) and (4, 6) are connected under S, while (1, 6)\
+    \ and (2, 7) are not connected\nunder S.\n\nInput\nThe first line contains the\
+    \ number of intersections N in the KOI City (4 \u2264 N \u2264 100 000).\n\nEach\
+    \ of the next N \u2212 1 lines contains a single integer pi. This indicates that\
+    \ there is a two-way road\nconnecting intersection pi and intersection i+ 1 (1\
+    \ \u2264 pi \u2264 i). Note that these are not outer ring roads.\n\nOutput\nOn\
+    \ the first line, print the number of vertices in the new tree K. Your answer\
+    \ should satisfy 1 \u2264 K \u2264 4N .\n\nThen print K lines. On i-th of these\
+    \ lines, print |Xi|+1 space-separated integers. The first integer should\nbe the\
+    \ size of set Xi. The next |Xi| integers should be elements of Xi in any order.\n\
+    \nIn each of the next K \u2212 1 lines, print two space-separated integers a and\
+    \ b, denoting that there exists an\nedge connecting a and b in the new tree.\n\
+    \nIt can be proved that the answer always exists.\n\nExample\nstandard input standard\
+    \ output\n\n4\n1\n1\n1\n\n1\n4 1 2 3 4"
+  repo_path: /Users/toslali/frontier/gen_logs/frontier_22_nous_ws
+  observable_metrics:
+  - score
+  controllable_knobs:
+  - solution_cpp
+objective:
+  weights:
+    score: 1.0
+models:
+  design: claude-opus-4-6
+  execute_analyze: claude-opus-4-6
+  report: claude-opus-4-6
+prompts:
+  methodology_layer: /Users/toslali/nous_repo/prompts/methodology
+  domain_adapter_layer: null
+runtime:
+  target_repo: null
+  target_commit: 18e1a668b9c9c7ffd4077ffb5eef68d7a7310ce1
+  nous_version: 0.5.0
+  started_at: '2026-10-01T15:22:50.546021+00:00'

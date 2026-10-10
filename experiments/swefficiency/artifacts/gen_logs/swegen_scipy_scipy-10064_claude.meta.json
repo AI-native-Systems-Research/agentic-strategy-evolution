@@ -1,0 +1,10 @@
+{
+  "instance_id": "scipy__scipy-10064",
+  "agent": "claude",
+  "label": "claude",
+  "model": "claude-opus-4-6",
+  "baseline_out": "Mean: 0.24413640838902212\nStd Dev: 0.013485485324762472\n",
+  "agent_seconds": 585.0,
+  "agent_rc": 0,
+  "patch_bytes": 1428
+}

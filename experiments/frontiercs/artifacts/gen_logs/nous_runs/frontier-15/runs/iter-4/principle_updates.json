@@ -1,0 +1,43 @@
+[
+  {
+    "id": "RP-1",
+    "action": "revise",
+    "statement": "The prefix-suffix swap operation [A|B|C] -> [C|B|A] can sort any permutation of length n >= 7 in at most 2n-5 operations by treating the unsorted region as a circular buffer and composing two operations per element, with a BFS-optimal endgame for the last 5 elements (119 precomputed sequences, each <=5 ops). For n=6, the 2n-4 bound applies (k=4 endgame). For n=5, the 2n-2 bound applies; for n=4, the 2n+1 bound applies.",
+    "confidence": "high",
+    "regime": "n >= 7, any valid permutation",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main",
+      "iteration-3-h-main",
+      "iteration-4-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "The core 2-op-per-element mechanism places elements 2 through n-5 using Op1 (buffer rotation) + Op2 (prefix restoration). The last 5 elements are handled by a 119-way case dispatch: 9 configs need 2 ops, 33 need 3, 73 need 4, and 4 need 5 ops. BFS at n=11 (chosen for clean small/large op separation: small={1,2,3,4}, large={n-5,...,n-2}={6,...,9} with no overlap) proves these are optimal among interesting operations. Path generalization verified at n=20,50,100,500,1000. Going from k=4 to k=5: saves 2 main-loop ops, costs at most 1 extra endgame op, netting 1 op worst-case improvement.",
+    "applicability_bounds": "Applicable to problem 15 and any prefix-suffix swap sorting problem with n >= 7. The 2n-5 bound is verified but not proven tight (observed max 1990 < 1995 in 10 judge cases for n=1000). For n<=6, fallback algorithms with looser bounds apply.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "action": "add",
+    "statement": "For BFS-based endgame precomputation in prefix-suffix swap sorting, the reference n must be chosen so that 'small' operation values {1,...,k-1} and 'n-dependent' values {n-k,...,n-2} do not overlap. At n=2k, the sets overlap at value k, causing sequences to fail generalization. The minimum safe n is 2k+1 (e.g., n=11 for k=5).",
+    "confidence": "high",
+    "regime": "Any k >= 3 where BFS endgame is computed at a small n and generalized to large n",
+    "evidence": [
+      "iteration-4-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "When BFS is computed at n=2k (e.g., n=10 for k=5), operation value k is simultaneously 'small' (literal) and 'large' (n-k). The path tracer may use k as n-dependent, mapping it to n-k at target n (e.g., 5 maps to 995 at n=1000). This changes the operation's effect (prefix of 5 vs prefix of 995), breaking the sequence. At n=2k+1, the gap at value k eliminates the ambiguity.",
+    "applicability_bounds": "Specific to the BFS endgame generalization technique. Does not apply if BFS is run at the actual target n (which is intractable for large n).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

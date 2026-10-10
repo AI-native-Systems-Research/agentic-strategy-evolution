@@ -1,0 +1,7 @@
+{
+  "total_cost": 52.186155,
+  "total_prompt_tokens": 3164892,
+  "total_completion_tokens": 62837,
+  "total_tokens": 3227729,
+  "model": "claude-opus-4-6"
+}

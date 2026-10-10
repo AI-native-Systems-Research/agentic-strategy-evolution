@@ -1,0 +1,10 @@
+{
+  "arm": "h-main",
+  "description": "Iter-1 SA (40% swap + 60% boundary 2-opt) + reversed-tour direction check + greedy edge-fix post-pass",
+  "scores": [69.5055, 69.5025, 69.5025],
+  "mean": 69.504,
+  "median": 69.5025,
+  "min": 69.5025,
+  "max": 69.5055,
+  "stdev": 0.002
+}

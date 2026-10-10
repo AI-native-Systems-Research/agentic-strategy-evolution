@@ -1,0 +1,88 @@
+metadata:
+  iteration: 2
+  family: "hrr-inner-sum-advanced"
+  research_question: "Can we achieve >5x speedup over the 1.3901s reference baseline by combining small-integer inner-loop arithmetic, h/j-h cosine symmetry halving, and NumPy batch vectorization in the HRR partition formula's _a() function?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — single mechanism (inner sum optimization) with ablation to isolate NumPy contribution; builds on iter-1's confirmed frac_table approach (RP-1)"
+
+arms:
+  - type: h-main
+    prediction: "Combining small-int inner sum, h/j-h symmetry halving, and NumPy vectorization will achieve speedup consistently greater than 5x over the 1.3901s reference baseline across all seeds, and consistently faster than the h-ablation arm (pure Python without NumPy)."
+    mechanism: >
+      Three optimizations compound: (1) The inner k-loop replaces O(euler_totient(j)*j) big-integer
+      multiplications (k * frac_table[...], where frac_table entries are ~4148-bit numbers) with
+      O(euler_totient(j)*j) small-integer operations (k * ((h*k) % j), all values < j^2 < 59049),
+      plus one big-int multiply per coprime h (T * one // j). The algebraic identity
+      sum_k(k * floor(r_k * 2^prec / j)) ≈ (sum_k(k * r_k)) * 2^prec / j holds to within ~15 bits
+      of 4148-bit precision, verified experimentally to produce bit-identical final results.
+      (2) The symmetry cos(angle(h)) = cos(angle(j-h)) (because angle(j-h) = -(angle(h) + 2nπ)
+      and n is integer) halves the cosine evaluations from ~18,055 to ~9,028.
+      (3) NumPy 2D array broadcasting computes all coprime h's T-values simultaneously for j > 50,
+      eliminating ~1.46M Python loop iterations with C-level array operations.
+    diagnostic: >
+      If speedup < 5x: profile to identify which optimization underperforms. Check (a) whether numpy
+      array creation overhead dominates for small j (adjust threshold), (b) whether the symmetry
+      correctly halves cos calls (count mpf_cos invocations), (c) whether the small-int approximation
+      introduces detectable error at high precision (compare g values bit-by-bit). If results differ:
+      the small-int identity may not hold at extreme precision — check error magnitude vs precision.
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: >
+          Add 'import numpy as np' at module top. Rewrite _a() function to: (1) special-case j==2
+          (only h=1 self-paired), (2) compute coprime h values only up to (j-1)//2 using math.gcd,
+          (3) for j > 50 use NumPy 2D batch: create arrays of coprime h values and k=1..j-1, compute
+          residues = (hs[:, None] * ks[None, :]) % j, then Ts = (residues * ks[None, :]).sum(axis=1)
+          to get all T values in one vectorized operation, (4) for j <= 50 use Python loop:
+          T = sum(k * ((h*k) % j) for k in range(1,j)), (5) compute g = T * one // j - half_sum
+          then g = ((g - h * n2one) * pi // j) >> prec, (6) add mpf_cos result twice to sum s
+          (once for h, once for j-h via symmetry). Remove frac_table precomputation entirely.
+        rationale: >
+          Profiling shows _a() self-time is 0.561s (58% of total), dominated by big-int
+          multiply k*frac_table[r] in the inner loop. Replacing with small-int T accumulation
+          eliminates per-iteration big-int work. Symmetry halving removes 9,027 mpf_cos calls
+          (0.137s). NumPy batching removes ~1.46M Python loop iterations for late outer-loop
+          terms where precision is low but loop count is high.
+
+  - type: h-ablation
+    prediction: "Without NumPy vectorization (pure Python small-int sum + symmetry only), speedup over the reference baseline will be consistently lower than h-main but still greater than 4x, confirming that NumPy contributes meaningful additional performance beyond the algorithmic optimizations."
+    mechanism: >
+      Same small-int inner sum and h/j-h symmetry as h-main, but the inner k-loop uses a Python
+      for-loop for all j values (no NumPy 2D array batching). The Python loop iterates ~1.46M times
+      across all outer q iterations (half the original ~2.9M due to symmetry). Each iteration does
+      small-int arithmetic (multiply + modulo + add), which is ~10-100x faster than the original
+      big-int arithmetic but still subject to CPython's per-iteration overhead of ~100-150ns.
+      Without NumPy, the late outer-loop iterations (q>50, low precision) dominate runtime because
+      they have many loop iterations despite cheap per-iteration cost.
+    diagnostic: >
+      If h-ablation matches h-main: NumPy overhead (array creation, type conversion) cancels its
+      vectorization benefit. Check if numpy array creation time exceeds the Python loop savings.
+      If h-ablation is much slower than predicted: the Python loop overhead is worse than expected
+      at this scale; profile to confirm loop iteration count.
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: >
+          Rewrite _a() function with small-int inner sum and h/j-h symmetry (same as h-main
+          optimizations 1 and 2) but WITHOUT numpy. Use Python for-loop for all j values:
+          T = 0; for k in range(1, j): T += k * ((h*k) % j). No numpy import added.
+          Loop only over coprime h values up to (j-1)//2, add each cos_val twice.
+        rationale: >
+          Isolates the contribution of the algorithmic optimizations (small-int arithmetic +
+          symmetry) from the implementation optimization (NumPy vectorization). Probed at 0.212s
+          vs h-main's 0.147s, confirming NumPy provides ~1.4x additional speedup.
+
+experiment_spec:
+  preflight_commands:
+    - "pip install numpy mpmath pytest -q"
+  verified_parameters:
+    baseline_mean_reference: 1.3901
+    numpy_threshold: 50
+  unlocked_parameters_audit:
+    - name: "outer_loop_M"
+      default_value: "max(6, int(0.24*n**0.5 + 4))"
+      justification: "M=244 for n=10^6 is the standard HRR convergence bound; modifying it risks incorrect integer results"
+    - name: "precision_margin"
+      default_value: 50
+      justification: "The 50-bit margin in p = bitcount(d) + 50 ensures numerical stability; reducing risks incorrect final integer"
+    - name: "numpy_threshold"
+      default_value: 50
+      justification: "Threshold j>50 for numpy use balances array creation overhead vs vectorization benefit; tuned by sweep over [5, 10, 15, 20, 30, 50, 70, 100]"

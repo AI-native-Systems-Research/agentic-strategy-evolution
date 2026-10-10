@@ -1,0 +1,37 @@
+{
+  "total_runs": 20,
+  "scores": [
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    95,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    95,
+    100,
+    100,
+    95,
+    100,
+    100
+  ],
+  "at_100": 17,
+  "at_95": 3,
+  "reliability_pct": 85.0,
+  "mean_score": 99.25,
+  "min_score": 95,
+  "max_score": 100,
+  "iter4_comparison": {
+    "iter4_at_100": "16/20 (80%)",
+    "iter4_mean": 99.0,
+    "improvement_reliability_pp": 5,
+    "improvement_mean": 0.25
+  }
+}

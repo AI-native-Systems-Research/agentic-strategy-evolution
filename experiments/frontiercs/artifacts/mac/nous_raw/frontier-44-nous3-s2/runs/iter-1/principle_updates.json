@@ -1,0 +1,56 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "For TSP variant problem #44 with N up to 200K and 2-second time limit, grid-based nearest-neighbor construction accounts for ~93% of the final score (64.5 out of 69.5). SA optimization with random swap + 2-opt adds only ~5 points.",
+    "confidence": "high",
+    "regime": "N up to 200K, 2-second time limit, cities sorted by x-coordinate",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "For N=200K, random SA evaluates O(10M) moves in 1.7s. With O(N^2) = 4*10^10 possible swap pairs, coverage is <0.1%. Most random moves don't improve the tour. Construction quality determines the starting point, and SA can only make local refinements.",
+    "applicability_bounds": "Applies when N is large (>10K) and time limit is tight (2s). For small N (<1000), SA has much better coverage and construction matters less.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "The penalty structure (10% surcharge on every 10th step when source is non-prime) contributes at most ~1% to total tour cost. Prime scheduling post-pass captures most available savings but adds <1 point to score.",
+    "confidence": "high",
+    "regime": "N up to 200K with ~18K primes and ~N/10 penalty positions",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "With N/10 penalty positions and 10% surcharge per position, max penalty contribution is 10% * 10% = 1% of tour cost. Primes cover ~90% of penalty positions at max N, leaving limited room for optimization.",
+    "applicability_bounds": "Specific to this problem's penalty structure. Different penalty rates or prime densities would change the calculus.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "2-opt with boundary-only delta approximation (ignoring internal penalty changes from segment reversal) provides comparable optimization to exact range recompute, while enabling ~10x more iterations per second.",
+    "confidence": "medium",
+    "regime": "TSP with sparse step-based penalties, segment lengths 2-200",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Boundary-only delta is O(1) per evaluation vs O(segment_length) for exact recompute. Since penalties affect only 10% of steps, the approximation error is small. Periodic full recompute corrects drift.",
+    "applicability_bounds": "Works when penalties are sparse (every 10th step). Would fail for dense penalty structures.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

@@ -1,0 +1,45 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Two-phase grid-guided 2-opt SA will score consistently above 71.0, a directional improvement over iter-2's 69.5 baseline.",
+      "observed": "h-main scores 72.19 mean across 7 runs (72.198, 72.169, 72.203, 67.177*, 72.198, 72.185, 72.177, 72.159; *machine-load outlier excluded). However, the iter-2 baseline (h-control-negative) scores 78.55 mean across 10 runs (78.49, 78.84, 78.85, 78.81, 78.78, 78.79, 73.76*, 73.81*, 78.86, 78.81; *timing outliers). The bundle's premise that iter-2 scored 69.5 was incorrect \u2014 iter-2's best solution (from iter-2 h-ablation, the grid-guided 2-opt + Or-opt + penalty-aware delta + prime scheduling solution) scores ~78.8. h-main (72.2) REGRESSES by ~6.6 points from the actual iter-2 baseline (~78.8).",
+      "status": "REFUTED",
+      "error_type": "regime",
+      "diagnostic_note": "The bundle designer incorrectly assumed iter-2 scored 69.5. Iter-2's h-ablation patch contains the grid-guided 2-opt + Or-opt + penalty-aware delta + prime scheduling solution that scores ~78.8. The iter-3 h-main approach (two-phase stale/exact pos[] 2-opt without Or-opt, penalty-aware delta, or prime scheduling) is a simpler algorithm that scores lower. The critical missing components are: (1) penalty-aware exact delta computation, (2) Or-opt city relocation, (3) prime scheduling post-pass. These components from the iter-2 solution contribute ~6.6 points.",
+      "metadata": {
+        "h_main_mean": 72.19,
+        "h_main_runs": [
+          72.198,
+          72.169,
+          72.203,
+          72.198,
+          72.185,
+          72.177,
+          72.159
+        ],
+        "h_control_mean": 78.55,
+        "h_control_runs": [
+          78.492,
+          78.841,
+          78.848,
+          78.812,
+          78.783,
+          78.791,
+          73.764,
+          73.807,
+          78.863,
+          78.813
+        ],
+        "h_control_mean_excl_outliers": 78.78,
+        "regression_points": -6.6
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "h-main REFUTED: the two-phase grid-guided 2-opt SA (72.2) regresses ~6.6 points from the actual iter-2 best solution (78.8). The bundle's baseline assumption (iter-2 = 69.5) was wrong \u2014 it referenced the iter-1 score, not the iter-2 cumulative best. The iter-2 h-ablation solution combines grid-guided 2-opt with penalty-aware exact delta, Or-opt, pos[] tracking, and prime scheduling \u2014 all of which the iter-3 h-main approach omits. The iter-2 cumulative solution remains the best at ~78.8.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

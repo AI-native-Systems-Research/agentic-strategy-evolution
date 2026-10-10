@@ -1,0 +1,12 @@
+{
+  "n": 1000,
+  "trials": 100,
+  "seed": 42,
+  "mean_ops": 1983.8,
+  "min_ops": 1971,
+  "max_ops": 1995,
+  "std_ops": 4.9,
+  "above_2n_minus_2": 0,
+  "theoretical_worst_case": 1998,
+  "baseline_worst_case": 2001
+}

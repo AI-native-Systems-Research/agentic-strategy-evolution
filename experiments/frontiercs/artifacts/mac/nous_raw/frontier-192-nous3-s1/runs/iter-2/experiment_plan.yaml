@@ -1,0 +1,35 @@
+metadata:
+  iteration: 2
+  bundle_ref: "runs/iter-2/bundle.yaml"
+setup:
+  - cmd: "# No explicit build step needed — frontier eval compiles C++17 internally"
+    description: "Build is handled by the judge"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "linear-cooling-sa-seed1"
+        cmd: "git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/results/h-main/seed1.txt"
+        inputs: []
+      - name: "linear-cooling-sa-seed2"
+        cmd: "git checkout -- solution.cpp && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/results/h-main/seed2.txt"
+        inputs: []
+      - name: "linear-cooling-sa-seed3"
+        cmd: "git checkout -- solution.cpp && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/patches/h-main.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/results/h-main/seed3.txt"
+        inputs: []
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "geometric-cooling-sa-seed1"
+        cmd: "git checkout -- solution.cpp && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/patches/h-ablation.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/results/h-ablation/seed1.txt"
+        inputs: []
+      - name: "geometric-cooling-sa-seed2"
+        cmd: "git checkout -- solution.cpp && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/patches/h-ablation.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/results/h-ablation/seed2.txt"
+        inputs: []
+      - name: "geometric-cooling-sa-seed3"
+        cmd: "git checkout -- solution.cpp && git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/patches/h-ablation.patch && bash /Users/toslali/frontier/gen_logs/fmeasure_192.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-192-nous3-s1/runs/iter-2/results/h-ablation/seed3.txt"
+        inputs: []

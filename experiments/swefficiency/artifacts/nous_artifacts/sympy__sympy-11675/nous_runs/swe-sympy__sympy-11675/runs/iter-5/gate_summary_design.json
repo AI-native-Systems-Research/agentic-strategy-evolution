@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether three micro-optimizations to the PQa inner loop in diop_DN can further reduce runtime beyond the already massive ~190,000x campaign speedup achieved in iteration 4. The main arm combines set elimination, first-iteration unrolling, and a Q_prev recurrence (replacing integer division with multiplication), while an ablation arm omits the Q_prev recurrence to isolate its contribution.",
+  "key_points": [
+    "h-main predicts reducing per-call time from ~0.116ms to ~0.078ms (1.49x incremental) by eliminating set/tuple overhead (231 allocations/iteration), unrolling the first PQa iteration, and replacing P\u00b2/Q integer division with a Q_prev multiplication recurrence across the 231-iteration inner loop.",
+    "h-ablation applies set elimination and unrolling but retains the original P\u00b2/Q division formula, predicting ~0.088ms per call \u2014 the gap between h-main and h-ablation (expected ~10\u03bcs) isolates whether replacing division with multiplication actually helps at CPython's integer sizes (~34-bit P values).",
+    "Confirmation criteria: h-main should show measurably lower harness mean than h-ablation (expected ~0.230ms vs ~0.250ms wall time); if they are equal or h-ablation wins, the Q_prev recurrence's extra variable tracking overhead cancels division savings and should be dropped.",
+    "Risk is low: the campaign is already at ~190,000x speedup from prior iterations (sqrt_mod rewrite, equivalence-class dedup, PQa caching); these are incremental micro-optimizations targeting the last ~13% of per-call time. All arms must pass the pytest correctness gate on test_diophantine.py.",
+    "The max_period safety bound of 4*isqrt(D) = 499,468 is 3,243x larger than the actual CF period of 154, ensuring the for-range replacement for the set-based while-True loop cannot silently truncate valid solutions."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

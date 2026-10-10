@@ -1,0 +1,57 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Strip-based serpentine construction with 2-opt local search and carrot-aware prime placement scores ~55.45 on Frontier-CS problem 44, near the top of the 45-60 predicted range, demonstrating that geometric tour optimization combined with penalty avoidance is effective for this TSP variant.",
+    "confidence": "high",
+    "regime": "Frontier-CS problem 44 (Traveling Santa with Carrot Constraint), N up to 200K, 2.5s time limit, 20 test cases",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-1-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Strip construction groups cities into horizontal bands (sqrt(N*H/W) strips) and visits them in serpentine order, reducing expected step distance from ~H/3 (x-sorted baseline) to ~max(W,H)/sqrt(N). 2-opt with adaptive window (30 for large N, up to N for small N) eliminates crossing edges, running until 2.1s. Carrot optimization swaps prime-numbered cities to penalty positions (indices 9, 19, 29, ...) to avoid the 10% penalty multiplier on those steps.",
+    "applicability_bounds": "Holds for the current test data mix (20 test cases, N from 10 to 200K). Score of 55.45 leaves room for improvement \u2014 theoretical maximum is 100 but practically limited by the scoring curve (s_full = N^0.6, tau=1.25). 2-opt window sizes are time-constrained.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "The 2-opt local optimum for strip-based tours is robust: ILS with double-bridge perturbation, or-opt with linked lists, edge-distance caching, and wide-first 2-opt all either matched or degraded the baseline 55.45 score, suggesting the 2-opt basin is well-converged within the 2.5s time budget.",
+    "confidence": "high",
+    "regime": "Frontier-CS problem 44, N up to 200K, 2.5s time limit",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "ILS: double-bridge perturbation + re-optimize consumed time without finding better basins (~55.46). Or-opt: linked-list city relocation consumed 900ms leaving insufficient 2-opt time (55.4->52.6). Edge caching: precomputing ddist introduced a subtle buffer overrun bug at tour boundary (55.4->43.4/50.4). Wide-first 2-opt: wider initial window more expensive per pass, fewer total passes (55.4->55.3).",
+    "applicability_bounds": "This robustness may break with fundamentally different construction methods (nearest-neighbor, Christofides) that start in different basins, or with LK-style moves that can escape 2-opt local optima. Significant improvement beyond ~55 likely requires a fundamentally different approach.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "The carrot constraint (10% penalty on every 10th step) contributes only ~1-5% of total penalized cost. Geometric tour optimization dominates score improvement.",
+    "confidence": "medium",
+    "regime": "N >= 10, penalty positions at indices 9, 19, 29, ...",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Approximately N/10 steps are penalty positions. Even if all are penalized, the 10% surcharge on N/10 steps adds only 1% to total cost. After geometric optimization reduces edge lengths, the absolute penalty savings from carrot swaps are small. Not directly measured via ablation in iter-1.",
+    "applicability_bounds": "Estimated from the penalty structure; iter-2 should test geometry-only vs carrot-only to confirm quantitatively.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

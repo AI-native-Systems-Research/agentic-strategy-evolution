@@ -1,0 +1,10 @@
+{
+  "instance_id": "numpy__numpy-27830",
+  "agent": "claude",
+  "label": "claude",
+  "model": "claude-opus-4-6",
+  "baseline_out": "Mean: 0.42240756153027176\nStd Dev: 0.011234105988644542\n",
+  "agent_seconds": 772.0,
+  "agent_rc": 0,
+  "patch_bytes": 4070
+}

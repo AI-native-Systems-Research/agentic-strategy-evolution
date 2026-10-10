@@ -1,0 +1,18 @@
+{
+  "gate_type": "design",
+  "summary": "This is iteration 5 (final) of a campaign confirming that replacing Python's two-arg pow with three-arg pow in sympy's `_legendre` function eliminates a massive intermediate integer computation, yielding ~3,000-5,000x speedup. We run two arms: the canonical fix for a definitive 5-seed measurement, and a 'kitchen sink' micro-optimization variant to determine if any further headroom exists beyond three-arg pow.",
+  "key_points": [
+    "h-main: Change line 2075 of sympy/crypto/crypto.py from `pow(a%p, (p-1)//2) % p` to `pow(a, (p-1)//2, p)`. Prior iterations consistently show ~3,500x speedup (baseline 0.0743s \u2192 ~0.00002s). This arm provides the final confirmatory measurement.",
+    "h-robustness: Stack all micro-optimizations (three-arg pow + bitshift `p>>1` + branchless return `sig if sig<=1 else -1`). Predicted to be statistically indistinguishable from h-main because the ~16\u03bcs multiprocessing fork overhead dwarfs any sub-microsecond savings from bitshift/branchless tricks.",
+    "Confirmation criteria: h-main speedup \u22653,000x with all 38 tests passing. Refutation of ceiling hypothesis: h-robustness measurably exceeds h-main by >20%. Both arms must pass the pytest correctness gate on sympy/crypto/tests/test_crypto.py.",
+    "Risk is minimal \u2014 this is the 5th iteration; the mechanism (avoiding a ~1.1M-bit intermediate integer) is thoroughly validated through ablation, alternative-algorithm, and negative-control arms in iterations 1-4."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

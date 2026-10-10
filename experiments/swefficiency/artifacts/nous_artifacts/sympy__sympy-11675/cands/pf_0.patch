@@ -1,0 +1,283 @@
+diff --git a/sympy/core/basic.py b/sympy/core/basic.py
+index 627630fea..92677698c 100644
+--- a/sympy/core/basic.py
++++ b/sympy/core/basic.py
+@@ -1,6 +1,6 @@
+ """Base class for all the objects in SymPy"""
+ from __future__ import print_function, division
+-from collections import Mapping
++from collections.abc import Mapping
+ 
+ from .assumptions import BasicMeta, ManagedProperties
+ from .cache import cacheit
+diff --git a/sympy/matrices/matrices.py b/sympy/matrices/matrices.py
+index 2fd4efa8c..5bcf26ac0 100644
+--- a/sympy/matrices/matrices.py
++++ b/sympy/matrices/matrices.py
+@@ -386,7 +386,7 @@ def _handle_creation_inputs(cls, *args, **kwargs):
+             cols = as_int(args[1])
+ 
+             # Matrix(2, 2, lambda i, j: i+j)
+-            if len(args) == 3 and isinstance(args[2], collections.Callable):
++            if len(args) == 3 and isinstance(args[2], collections.abc.Callable):
+                 op = args[2]
+                 flat_list = []
+                 for i in range(rows):
+diff --git a/sympy/plotting/plot.py b/sympy/plotting/plot.py
+index b1ead153e..f3dc7f60f 100644
+--- a/sympy/plotting/plot.py
++++ b/sympy/plotting/plot.py
+@@ -25,7 +25,7 @@
+ from __future__ import print_function, division
+ 
+ import inspect
+-from collections import Callable
++from collections.abc import Callable
+ import warnings
+ import sys
+ 
+diff --git a/sympy/solvers/diophantine.py b/sympy/solvers/diophantine.py
+index 0960e35a7..5f21d32d8 100644
+--- a/sympy/solvers/diophantine.py
++++ b/sympy/solvers/diophantine.py
+@@ -1134,52 +1134,111 @@ def diop_DN(D, N, t=symbols("t", integer=True)):
+ 
+             else:
+ 
+-                fs = []
+                 sol = []
+-                div = divisors(N)
+-
+-                for d in div:
+-                    if divisible(N, d**2):
++                # Convert to Python int for pure-integer arithmetic
++                _D = int(D)
++                _N = int(N)
++                _sD = int(sD)
++                # Pure-integer divisor computation: find d where d^2 | N
++                # Replaces sympy's divisors() + divisible() calls
++                absN = -_N if _N < 0 else _N
++                fs = []
++                d = 1
++                while d * d <= absN:
++                    if absN % (d * d) == 0:
+                         fs.append(d)
++                    d += 1
+ 
+                 for f in fs:
+-                    m = N // f**2
+-
+-                    zs = sqrt_mod(D, abs(m), all_roots=True)
+-                    zs = [i for i in zs if i <= abs(m) // 2 ]
+-
+-                    if abs(m) != 2:
+-                        zs = zs + [-i for i in zs if i]  # omit dupl 0
++                    m = _N // (f * f)
++                    abs_m = -m if m < 0 else m
++
++                    # Pure-integer sqrt_mod: find all x where x^2 ≡ D (mod abs_m)
++                    # Brute-force for small moduli; fallback to sympy for large
++                    half_m = abs_m >> 1
++                    if abs_m <= 100000:
++                        D_mod = _D % abs_m
++                        zs = []
++                        for x in range(abs_m):
++                            if (x * x) % abs_m == D_mod:
++                                if x <= half_m:
++                                    zs.append(x)
++                                    if abs_m != 2 and x != 0:
++                                        zs.append(-x)
++                    else:
++                        zs_raw = sqrt_mod(D, abs_m, all_roots=True)
++                        zs = []
++                        for x in zs_raw:
++                            if x <= half_m:
++                                zs.append(x)
++                                if abs_m != 2 and x != 0:
++                                    zs.append(-x)
++
++                    dn1_cache = None  # lazy cache for diop_DN(D, -1)
++                    # Upper bound on CF period length: 4*sqrt(D) is generous
++                    _max_period = _sD << 2
+ 
+                     for z in zs:
+ 
+-                        pqa = PQa(z, abs(m), D)
+-                        j = 0
+-                        G = []
+-                        B = []
+-
+-                        for i in pqa:
+-
+-                            a = i[2]
+-                            G.append(i[5])
+-                            B.append(i[4])
+-
+-                            if j != 0 and abs(i[1]) == 1:
+-                                r = G[j-1]
+-                                s = B[j-1]
++                        # Inline PQa iteration with counter-based period bound
++                        # and Q_prev recurrence (avoids P^2 computation and
++                        # division in the inner loop).
++                        B_1, B_2 = 0, 1
++                        G_1, G_2 = abs_m, -z
++                        P_i = z
++                        Q_i = abs_m
++                        # Q_{-1} = (D - P_0^2) / Q_0, needed for Q_prev recurrence
++                        Q_prev = (_D - z * z) // abs_m
++
++                        # Unroll first iteration (j==0): Q_i check is skipped
++                        # since the solution never appears at j==0.
++                        if Q_i > 0:
++                            a_i = (P_i + _sD) // Q_i
++                        else:
++                            a_i = -((P_i + _sD) // (-Q_i)) - 1
++                        B_2, B_1 = B_1, a_i * B_1 + B_2
++                        G_2, G_1 = G_1, a_i * G_1 + G_2
++                        P_new = a_i * Q_i - P_i
++                        Q_new = Q_prev + a_i * (P_i - P_new)
++                        Q_prev = Q_i
++                        Q_i = Q_new
++                        P_i = P_new
++
++                        # Main loop (j >= 1): check Q_i first to avoid
++                        # unnecessary arithmetic on the exit iteration.
++                        for _ in range(_max_period):
++                            if Q_i == 1 or Q_i == -1:
++                                r = G_1
++                                s = B_1
++
++                                if r * r - _D * s * s == m:
++                                    sol.append((f * r, f * s))
++
++                                else:
++                                    if dn1_cache is None:
++                                        dn1_cache = diop_DN(D, -1)
++                                    if dn1_cache:
++                                        a0 = dn1_cache[0]
++                                        sol.append((f * (r * a0[0] + a0[1] * s * D), f * (r * a0[1] + s * a0[0])))
+ 
+-                                if r**2 - D*s**2 == m:
+-                                    sol.append((f*r, f*s))
++                                break
+ 
+-                                elif diop_DN(D, -1) != []:
+-                                    a = diop_DN(D, -1)
+-                                    sol.append((f*(r*a[0][0] + a[0][1]*s*D), f*(r*a[0][1] + s*a[0][0])))
++                            # Integer floor((P_i + sqrt(D))/Q_i)
++                            if Q_i > 0:
++                                a_i = (P_i + _sD) // Q_i
++                            else:
++                                a_i = -((P_i + _sD) // (-Q_i)) - 1
+ 
+-                                break
++                            B_2, B_1 = B_1, a_i * B_1 + B_2
++                            G_2, G_1 = G_1, a_i * G_1 + G_2
+ 
+-                            j = j + 1
+-                            if j == length(z, abs(m), D):
+-                                break
++                            # Q_prev recurrence: Q_{i+1} = Q_{i-1} + a_i*(P_i - P_{i+1})
++                            # Avoids computing P_{i+1}^2 and dividing by Q_i.
++                            P_new = a_i * Q_i - P_i
++                            Q_new = Q_prev + a_i * (P_i - P_new)
++                            Q_prev = Q_i
++                            Q_i = Q_new
++                            P_i = P_new
+ 
+                 return sol
+ 
+@@ -1289,9 +1348,11 @@ def PQa(P_0, Q_0, D):
+     P_i = P_0
+     Q_i = Q_0
+ 
++    sqD = integer_nthroot(D, 2)[0]
++
+     while(1):
+ 
+-        a_i = floor((P_i + sqrt(D))/Q_i)
++        a_i = (P_i + sqD) // Q_i
+         A_i = a_i*A_i_1 + A_i_2
+         B_i = a_i*B_i_1 + B_i_2
+         G_i = a_i*G_i_1 + G_i_2
+@@ -1303,7 +1364,7 @@ def PQa(P_0, Q_0, D):
+         G_i_1, G_i_2 = G_i, G_i_1
+ 
+         P_i = a_i*Q_i - P_i
+-        Q_i = (D - P_i**2)/Q_i
++        Q_i = (D - P_i**2) // Q_i
+ 
+ 
+ def diop_bf_DN(D, N, t=symbols("t", integer=True)):
+@@ -1466,14 +1527,63 @@ def length(P, Q, D):
+     ========
+     sympy.ntheory.continued_fraction.continued_fraction_periodic
+     """
+-    from sympy.ntheory.continued_fraction import continued_fraction_periodic
+-    v = continued_fraction_periodic(P, Q, D)
+-    if type(v[-1]) is list:
+-        rpt = len(v[-1])
+-        nonrpt = len(v) - 1
+-    else:
+-        rpt = 0
+-        nonrpt = len(v)
++    # Fast integer-only computation (avoids symbolic sqrt overhead).
++    # Falls back to symbolic path for perfect-square D or zero D.
++    sd, is_perfect = integer_nthroot(D, 2)
++    if D == 0 or is_perfect:
++        from sympy.ntheory.continued_fraction import continued_fraction_periodic
++        v = continued_fraction_periodic(P, Q, D)
++        if type(v[-1]) is list:
++            rpt = len(v[-1])
++            nonrpt = len(v) - 1
++        else:
++            rpt = 0
++            nonrpt = len(v)
++        return rpt + nonrpt
++
++    p, q, d = P, Q, D
++    if q == 0:
++        raise ValueError("The denominator is zero.")
++
++    # Normalize so that (d - p**2) % q == 0
++    if (d - p**2) % q:
++        d *= q * q
++        p *= abs(q)
++        q *= abs(q)
++        sd = integer_nthroot(d, 2)[0]
++
++    terms = 0
++    pq = {}
++
++    while (p, q) not in pq:
++        pq[(p, q)] = terms
++        # Compute int((p + sqrt(d)) / q) using truncation-toward-zero
++        num = p + sd
++        if q > 0:
++            if num >= 0:
++                a = num // q
++            else:
++                abs_num = -num
++                a = -(abs_num // q)
++                if abs_num % q == 0:
++                    pass  # a is exact
++                # else truncation toward zero is already correct
++        else:
++            q_abs = -q
++            if num >= 0:
++                a = -(num // q_abs)
++            else:
++                abs_num = -num
++                a = abs_num // q_abs
++                if abs_num % q_abs == 0:
++                    pass  # a is exact
++        terms += 1
++        p = a * q - p
++        q = (d - p * p) // q
++
++    i = pq[(p, q)]
++    rpt = terms - i
++    nonrpt = i
+     return rpt + nonrpt
+ 
+ 

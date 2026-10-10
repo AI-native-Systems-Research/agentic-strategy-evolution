@@ -1,0 +1,73 @@
+diff --git a/sympy/ntheory/partitions_.py b/sympy/ntheory/partitions_.py
+index 3e029014b..74b6800c8 100644
+--- a/sympy/ntheory/partitions_.py
++++ b/sympy/ntheory/partitions_.py
+@@ -4,8 +4,8 @@
+     from_man_exp, from_int, from_rational,
+     fone, fhalf, bitcount, to_int, to_str, mpf_mul, mpf_div, mpf_sub,
+     mpf_add, mpf_sqrt, mpf_pi, mpf_cosh_sinh, pi_fixed, mpf_cos)
+-from sympy.core.numbers import igcd
+ import math
++from math import gcd
+ from sympy.core.compatibility import range
+ 
+ 
+@@ -13,26 +13,40 @@ def _a(n, j, prec):
+     """Compute the inner sum in the HRR formula."""
+     if j == 1:
+         return fone
+-    s = fzero
+-    pi = pi_fixed(prec)
+-    for h in range(1, j):
+-        if igcd(h, j) != 1:
+-            continue
+-        # & with mask to compute fractional part of fixed-point number
++    if j == 2:
++        # Only h=1 is coprime to 2, and j-h=1=h, so it's self-paired (add once)
+         one = 1 << prec
+-        onemask = one - 1
++        pi = pi_fixed(prec)
+         half = one >> 1
+-        g = 0
+-        if j >= 3:
+-            for k in range(1, j):
+-                t = h*k*one//j
+-                if t > 0:
+-                    frac = t & onemask
+-                else:
+-                    frac = -((-t) & onemask)
+-                g += k*(frac - half)
+-        g = ((g - 2*h*n*one)*pi//j) >> prec
+-        s = mpf_add(s, mpf_cos(from_man_exp(g, -prec), prec), prec)
++        n2one = 2 * n * one
++        T = 1
++        half_sum_big = half
++        g = T * one // j - half_sum_big
++        g = ((g - 1 * n2one) * pi // j) >> prec
++        return mpf_cos(from_man_exp(g, -prec), prec)
++
++    s = fzero
++    one = 1 << prec
++    pi = pi_fixed(prec)
++    n2one = 2 * n * one
++    half = one >> 1
++    half_sum_big = half * (j - 1) * j // 2
++
++    # Compute coprime h values only up to (j-1)//2
++    half_j = (j - 1) // 2
++    coprimes = [h for h in range(1, half_j + 1) if gcd(h, j) == 1]
++
++    # Pure Python loop for all j values (no NumPy)
++    for h in coprimes:
++        T = 0
++        for k in range(1, j):
++            T += k * ((h * k) % j)
++        g = T * one // j - half_sum_big
++        g = ((g - h * n2one) * pi // j) >> prec
++        cos_val = mpf_cos(from_man_exp(g, -prec), prec)
++        s = mpf_add(s, cos_val, prec)
++        s = mpf_add(s, cos_val, prec)
++
+     return s
+ 
+ 

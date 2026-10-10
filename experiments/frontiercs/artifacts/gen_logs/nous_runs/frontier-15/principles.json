@@ -1,0 +1,124 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "action": "revise",
+      "statement": "The prefix-suffix swap operation [A|B|C] -> [C|B|A] can sort any permutation of length n >= 7 in at most 2n-5 operations by treating the unsorted region as a circular buffer and composing two operations per element, with a BFS-optimal endgame for the last 5 elements (119 precomputed sequences, each <=5 ops). For n=6, the 2n-4 bound applies (k=4 endgame). For n=5, the 2n-2 bound applies; for n=4, the 2n+1 bound applies.",
+      "confidence": "high",
+      "regime": "n >= 7, any valid permutation",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-3-h-main",
+        "iteration-4-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "The core 2-op-per-element mechanism places elements 2 through n-5 using Op1 (buffer rotation) + Op2 (prefix restoration). The last 5 elements are handled by a 119-way case dispatch: 9 configs need 2 ops, 33 need 3, 73 need 4, and 4 need 5 ops. BFS at n=11 (chosen for clean small/large op separation: small={1,2,3,4}, large={n-5,...,n-2}={6,...,9} with no overlap) proves these are optimal among interesting operations. Path generalization verified at n=20,50,100,500,1000. Going from k=4 to k=5: saves 2 main-loop ops, costs at most 1 extra endgame op, netting 1 op worst-case improvement.",
+      "applicability_bounds": "Applicable to problem 15 and any prefix-suffix swap sorting problem with n >= 7. The 2n-5 bound is verified but not proven tight (observed max 1990 < 1995 in 10 judge cases for n=1000). For n<=6, fallback algorithms with looser bounds apply.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "For d=1 (element one position from target) in a buffer of length l \u2265 3, the decomposition d1=2, d2=l-1 achieves d1+d2 = l+1 \u2261 1 (mod l), resolving the edge case where no direct (d1, d-d1) split has both values in [1, l-1].",
+      "confidence": "high",
+      "regime": "buffer length l \u2265 3, rotation distance d=1",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "When d=1, the natural split d1=1, d2=0 fails because d2=0 is invalid. The modular arithmetic decomposition d1=2, d2=l-1 sums to l+1 \u2261 1 (mod l), keeping both in the valid range [1, l-1] for l \u2265 3.",
+      "applicability_bounds": "Only needed when d=1 and l \u2265 3. For l=2 (impossible in the main loop since it processes up to n-2), a different endgame is required.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": false,
+      "derivation_type": "algebraic"
+    },
+    {
+      "id": "RP-3",
+      "action": "add",
+      "statement": "The prefix-restoration step (Op2) is essential to the circular buffer rotation algorithm. Removing it destroys the sorted-prefix invariant, causing the algorithm to produce unsorted output (score 0) even though the buffer rotation step (Op1) correctly positions each target element temporarily.",
+      "confidence": "high",
+      "regime": "n \u2265 5, any permutation requiring at least one Op1 application",
+      "evidence": [
+        "iteration-2-h-ablation"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Op1 (apply(cf, l-d1)) rotates the buffer to bring the target element to position cf, but simultaneously moves the sorted prefix [1..cf] from positions [0..cf-1] to [n-cf..n-1]. Without Op2 (apply(d2, cf)) to restore the prefix, the loop variable cf becomes inconsistent with the array state: cf increments (assuming the prefix grew) but the prefix is actually at the array's end. Subsequent searches for element cf+1 starting at position cf find wrong elements.",
+      "applicability_bounds": "This principle is about mechanism necessity, not optimality. The 2-op scheme (Op1+Op2) cannot be reduced to 1-op-per-element.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "action": "revise",
+      "statement": "The score ceiling for problem 15 is 100, achievable by any algorithm that sorts in <=2n+1 operations. The checker clamps the ratio to [0,1], making scores above 100 impossible. The circular buffer rotation sort achieves this ceiling with all tested endgame sizes (k=2,3,4,5), confirmed across iterations 3, 4, and 5.",
+      "confidence": "high",
+      "regime": "Problem 15, any n>=3",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-3-h-main",
+        "iteration-4-h-main",
+        "iteration-5-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "The checker computes ratio = clamp((4n - ops)/(4n - (2n+1)), 0, 1). For ops <= 2n+1: ratio >= 1.0, clamped to 1.0, score = 100. The k=5 endgame uses at most 1995 < 2001 operations, guaranteeing maximum score. No algorithmic improvement can increase the score beyond 100.",
+      "applicability_bounds": "Specific to the checker's scoring formula with best_operations = 2n+1. If the checker's benchmark were tightened, the ceiling could change.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": false,
+      "derivation_type": "algebraic"
+    },
+    {
+      "id": "RP-5",
+      "action": "add",
+      "statement": "For BFS-based endgame precomputation in prefix-suffix swap sorting, the reference n must be chosen so that 'small' operation values {1,...,k-1} and 'n-dependent' values {n-k,...,n-2} do not overlap. At n=2k, the sets overlap at value k, causing sequences to fail generalization. The minimum safe n is 2k+1 (e.g., n=11 for k=5).",
+      "confidence": "high",
+      "regime": "Any k >= 3 where BFS endgame is computed at a small n and generalized to large n",
+      "evidence": [
+        "iteration-4-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "When BFS is computed at n=2k (e.g., n=10 for k=5), operation value k is simultaneously 'small' (literal) and 'large' (n-k). The path tracer may use k as n-dependent, mapping it to n-k at target n (e.g., 5 maps to 995 at n=1000). This changes the operation's effect (prefix of 5 vs prefix of 995), breaking the sequence. At n=2k+1, the gap at value k eliminates the ambiguity.",
+      "applicability_bounds": "Specific to the BFS endgame generalization technique. Does not apply if BFS is run at the actual target n (which is intractable for large n).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "action": "add",
+      "statement": "In the circular buffer rotation sort, the buffer state after each 2-op element placement (Op1+Op2) is deterministic and independent of the decomposition (d1, d2) choice. All valid decompositions satisfying d1+d2 \u2261 d (mod l) produce identical buffer permutations. No per-step lookahead or adaptive decomposition can reduce the operation count within this framework.",
+      "confidence": "high",
+      "regime": "Any buffer length l >= 3, any rotation distance d",
+      "evidence": [
+        "iteration-5-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "After Op1 (rotation by d1) and Op2 (prefix restoration with d2), the new buffer is always the original buffer with the target element removed, left-rotated so that B[(d+1) mod l] is first. The proof: Op2 places the sorted prefix back at positions [0..cf], with the target at position cf. The remaining buffer elements follow in the order rotated_buffer[d2+1..l-1] ++ rotated_buffer[0..d2-1] = B[(d+1) mod l], B[(d+2) mod l], ..., B[(d-1+l) mod l]. This sequence is independent of d1.",
+      "applicability_bounds": "Applies only to the sorted-prefix circular buffer approach. Alternative sorting paradigms (cycle sort, block transposition) are not constrained by this result.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": false,
+      "derivation_type": "algebraic"
+    }
+  ]
+}

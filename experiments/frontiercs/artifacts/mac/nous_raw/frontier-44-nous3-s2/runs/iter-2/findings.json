@@ -1,0 +1,44 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Iter-1 SA with reversed-tour direction check and greedy edge-fix post-pass will score at least as high as iter-1's 69.5, with a small improvement from targeting the worst edges after SA convergence.",
+      "observed": "h-main scores 69.504 mean (3 runs: 69.506, 69.503, 69.503). The reversed-tour check and greedy edge-fix add ~0.008 points over iter-1's 69.496. The improvement is within run-to-run noise. The bundle's prediction is technically confirmed (score >= 69.5) but the improvement is negligible.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The directional prediction is weakly confirmed: h-main (69.504) > h-ablation (69.496). But the ~0.008 point difference is within noise. The reversed-tour direction check and greedy edge-fix do not meaningfully improve the SA plateau. The previous executor also discovered a fundamentally better algorithm (grid-guided 2-opt + Or-opt with penalty-aware delta) scoring ~78.85, saved as h-ablation.patch and cumulative.patch.",
+      "metadata": {
+        "scores": [
+          69.5055,
+          69.5025,
+          69.5025
+        ],
+        "mean": 69.504,
+        "stdev": 0.002
+      }
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "Pure iter-1 code (no post-SA optimization) will score ~69.5, establishing the baseline that the post-SA additions improve upon.",
+      "observed": "h-ablation (iter-1 code) scores 69.496 mean (3 runs: 69.495, 69.497, 69.496). Confirms iter-1's SA plateau at ~69.5.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The ablation confirms iter-1's consistent score of ~69.5. The difference between h-main (69.504) and h-ablation (69.496) is negligible (~0.008 points), confirming that the post-SA additions (reversed-tour + greedy edge-fix) provide no practical benefit.",
+      "metadata": {
+        "scores": [
+          69.4945,
+          69.497,
+          69.496
+        ],
+        "mean": 69.496,
+        "stdev": 0.001
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both bundle arms confirmed but with negligible practical difference (0.008 points). The key iter-2 discovery is the grid-guided SA algorithm (h-ablation.patch / cumulative.patch) scoring 78.85 mean \u2014 a +9.35 point improvement over iter-1's 69.5. This algorithm uses grid-guided 2-opt with penalty-aware exact delta computation, Or-opt city relocation, pos[] array for O(1) position lookups, and prime scheduling. It was discovered during the previous executor's exploration and verified in 3 runs (78.837, 78.883, 78.827). The cumulative patch preserves this best-known solution.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

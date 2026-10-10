@@ -1,0 +1,11 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed. The main algorithm (nearest-neighbor construction + spatial 2-opt, K=20) scored 76.3, a 20.9-point improvement over iteration 1's 55.4 baseline. The ablation (strip construction + same 2-opt) scored mean 66.2, confirming that NN construction is the superior starting heuristic and contributes both quality and stability.",
+  "key_points": [
+    "h-main scored 76.319 (predicted 70-80, confirmed) with zero variance across 3 runs \u2014 the NN-constructed tour converges reliably within the time budget.",
+    "h-ablation scored mean 66.2 (predicted 65-75, confirmed) but with high variance (std=3.82, range 61.3\u201370.6), showing strip construction leaves the optimizer still improving when time expires on large inputs.",
+    "The 10.1-point gap between h-main and h-ablation is larger than the ~5 points expected from prototyping, partly because K=20 neighbor lists cost more precompute time that hurts strip construction disproportionately.",
+    "Surprise finding: NN construction's main advantage isn't just a better initial tour \u2014 it's convergence stability. The 2-opt local optimum is close enough to the NN start that the time budget is irrelevant, making the algorithm robust without tuning.",
+    "Current best score is 76.3; further gains likely require more powerful local search (e.g., Or-opt, 3-opt, Lin-Kernighan moves) or explicit optimization of the carrot penalty (scheduling prime cities at steps divisible by 10)."
+  ]
+}

@@ -1,0 +1,115 @@
+diff --git a/sympy/solvers/diophantine.py b/sympy/solvers/diophantine.py
+index 0960e35a7..329aa4318 100644
+--- a/sympy/solvers/diophantine.py
++++ b/sympy/solvers/diophantine.py
+@@ -1157,6 +1157,7 @@ def diop_DN(D, N, t=symbols("t", integer=True)):
+                         j = 0
+                         G = []
+                         B = []
++                        l = length(z, abs(m), D)
+ 
+                         for i in pqa:
+ 
+@@ -1178,7 +1179,7 @@ def diop_DN(D, N, t=symbols("t", integer=True)):
+                                 break
+ 
+                             j = j + 1
+-                            if j == length(z, abs(m), D):
++                            if j == l:
+                                 break
+ 
+                 return sol
+@@ -1289,9 +1290,11 @@ def PQa(P_0, Q_0, D):
+     P_i = P_0
+     Q_i = Q_0
+ 
++    sqD = integer_nthroot(D, 2)[0]
++
+     while(1):
+ 
+-        a_i = floor((P_i + sqrt(D))/Q_i)
++        a_i = (P_i + sqD) // Q_i
+         A_i = a_i*A_i_1 + A_i_2
+         B_i = a_i*B_i_1 + B_i_2
+         G_i = a_i*G_i_1 + G_i_2
+@@ -1303,7 +1306,7 @@ def PQa(P_0, Q_0, D):
+         G_i_1, G_i_2 = G_i, G_i_1
+ 
+         P_i = a_i*Q_i - P_i
+-        Q_i = (D - P_i**2)/Q_i
++        Q_i = (D - P_i**2) // Q_i
+ 
+ 
+ def diop_bf_DN(D, N, t=symbols("t", integer=True)):
+@@ -1466,14 +1469,63 @@ def length(P, Q, D):
+     ========
+     sympy.ntheory.continued_fraction.continued_fraction_periodic
+     """
+-    from sympy.ntheory.continued_fraction import continued_fraction_periodic
+-    v = continued_fraction_periodic(P, Q, D)
+-    if type(v[-1]) is list:
+-        rpt = len(v[-1])
+-        nonrpt = len(v) - 1
+-    else:
+-        rpt = 0
+-        nonrpt = len(v)
++    # Fast integer-only computation (avoids symbolic sqrt overhead).
++    # Falls back to symbolic path for perfect-square D or zero D.
++    sd, is_perfect = integer_nthroot(D, 2)
++    if D == 0 or is_perfect:
++        from sympy.ntheory.continued_fraction import continued_fraction_periodic
++        v = continued_fraction_periodic(P, Q, D)
++        if type(v[-1]) is list:
++            rpt = len(v[-1])
++            nonrpt = len(v) - 1
++        else:
++            rpt = 0
++            nonrpt = len(v)
++        return rpt + nonrpt
++
++    p, q, d = P, Q, D
++    if q == 0:
++        raise ValueError("The denominator is zero.")
++
++    # Normalize so that (d - p**2) % q == 0
++    if (d - p**2) % q:
++        d *= q * q
++        p *= abs(q)
++        q *= abs(q)
++        sd = integer_nthroot(d, 2)[0]
++
++    terms = 0
++    pq = {}
++
++    while (p, q) not in pq:
++        pq[(p, q)] = terms
++        # Compute int((p + sqrt(d)) / q) using truncation-toward-zero
++        num = p + sd
++        if q > 0:
++            if num >= 0:
++                a = num // q
++            else:
++                abs_num = -num
++                a = -(abs_num // q)
++                if abs_num % q == 0:
++                    pass  # a is exact
++                # else truncation toward zero is already correct
++        else:
++            q_abs = -q
++            if num >= 0:
++                a = -(num // q_abs)
++            else:
++                abs_num = -num
++                a = abs_num // q_abs
++                if abs_num % q_abs == 0:
++                    pass  # a is exact
++        terms += 1
++        p = a * q - p
++        q = (d - p * p) // q
++
++    i = pq[(p, q)]
++    rpt = terms - i
++    nonrpt = i
+     return rpt + nonrpt
+ 
+ 

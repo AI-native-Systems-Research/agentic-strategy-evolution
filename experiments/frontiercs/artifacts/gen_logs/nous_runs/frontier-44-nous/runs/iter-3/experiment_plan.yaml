@@ -1,0 +1,33 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+  mode: real
+
+setup:
+  - cmd: "g++ -O2 -std=c++17 -o solution solution.cpp"
+    description: "Build the system"
+
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "h-main-run1"
+        cmd: "git checkout -- solution.cpp && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-3/patches/h-main.patch && g++ -O2 -std=c++17 -o solution solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-3/results/h-main/run1.txt"
+      - name: "h-main-run2"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-3/results/h-main/run2.txt"
+      - name: "h-main-run3"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-3/results/h-main/run3.txt"
+
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "h-control-negative-run1"
+        cmd: "git checkout -- solution.cpp && git apply /home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-3/patches/h-control-negative.patch && g++ -O2 -std=c++17 -o solution solution.cpp && bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-3/results/h-control-negative/run1.txt"
+      - name: "h-control-negative-run2"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-3/results/h-control-negative/run2.txt"
+      - name: "h-control-negative-run3"
+        cmd: "bash /home/ubuntu/frontier/gen_logs/fmeasure_44.sh $PWD/solution.cpp"
+        output: "/home/ubuntu/frontier/gen_logs/nous_runs/frontier-44-nous/runs/iter-3/results/h-control-negative/run3.txt"

@@ -1,0 +1,121 @@
+diff --git a/solution.cpp b/solution.cpp
+index 7072b24..f3a3e23 100644
+--- a/solution.cpp
++++ b/solution.cpp
+@@ -1,3 +1,115 @@
+ #include <bits/stdc++.h>
+ using namespace std;
+-int main(){return 0;}
++
++int main(){
++    int N;
++    scanf("%d", &N);
++
++    vector<vector<int>> ch(N+1);
++    for(int i=2;i<=N;i++){
++        int p; scanf("%d",&p);
++        ch[p].push_back(i);
++    }
++
++    vector<int> L(N+1), R(N+1);
++    vector<bool> leaf(N+1, false);
++    for(int u=1;u<=N;u++) if(ch[u].empty()) leaf[u]=true;
++
++    // Iterative postorder to compute L, R
++    {
++        stack<pair<int,int>> stk;
++        stk.push({1,0});
++        while(!stk.empty()){
++            auto &[u,idx]=stk.top();
++            if(idx<(int)ch[u].size()){
++                int c=ch[u][idx]; idx++;
++                stk.push({c,0});
++            } else {
++                stk.pop();
++                if(leaf[u]){ L[u]=R[u]=u; }
++                else { L[u]=L[ch[u][0]]; R[u]=R[ch[u].back()]; }
++            }
++        }
++    }
++
++    // Build bags and edges
++    // For internal node u with children c_1..c_m:
++    //   S_i = {u, R[u], L[c_i], R[c_i]}   (spine)
++    //   H_i = {u, c_i, L[c_i], R[c_i]}    (covers tree edge u-c_i)
++    //   Lnk_i = {u, R[u], R[c_i], L[c_{i+1}]}  (covers ring edge)
++    // Topology: S_i--H_i, S_i--Lnk_i--S_{i+1}, H_i--entry[c_i]
++
++    struct Bag { int el[4]; int sz; };
++    auto make_bag=[](int a, int b, int c, int d) -> Bag {
++        int arr[4]={a,b,c,d};
++        sort(arr,arr+4);
++        int sz=unique(arr,arr+4)-arr;
++        Bag bag; bag.sz=sz;
++        for(int i=0;i<sz;i++) bag.el[i]=arr[i];
++        return bag;
++    };
++
++    vector<Bag> bags;
++    vector<pair<int,int>> edges;
++    vector<int> entry(N+1, -1);
++
++    bags.reserve(3*N);
++    edges.reserve(3*N);
++
++    // Iterative postorder
++    {
++        stack<pair<int,int>> stk;
++        stk.push({1,0});
++        vector<int> post;
++        post.reserve(N);
++        while(!stk.empty()){
++            auto &[u,idx]=stk.top();
++            if(idx<(int)ch[u].size()){
++                int c=ch[u][idx]; idx++;
++                stk.push({c,0});
++            } else {
++                stk.pop();
++                post.push_back(u);
++            }
++        }
++
++        for(int u : post){
++            if(leaf[u]) continue;
++            int m=ch[u].size();
++            vector<int> Si(m), Hi(m), Li(m-1);
++
++            for(int i=0;i<m;i++){
++                int ci=ch[u][i];
++                bags.push_back(make_bag(u, R[u], L[ci], R[ci]));
++                Si[i]=bags.size()-1;
++                bags.push_back(make_bag(u, ci, L[ci], R[ci]));
++                Hi[i]=bags.size()-1;
++                edges.push_back({Si[i], Hi[i]});
++            }
++            for(int i=0;i<m-1;i++){
++                int ci=ch[u][i], ci1=ch[u][i+1];
++                bags.push_back(make_bag(u, R[u], R[ci], L[ci1]));
++                Li[i]=bags.size()-1;
++                edges.push_back({Si[i], Li[i]});
++                edges.push_back({Li[i], Si[i+1]});
++            }
++            for(int i=0;i<m;i++){
++                int ci=ch[u][i];
++                if(!leaf[ci]) edges.push_back({Hi[i], entry[ci]});
++            }
++            entry[u]=Si[0];
++        }
++    }
++
++    int K=bags.size();
++    printf("%d\n",K);
++    for(int i=0;i<K;i++){
++        printf("%d",bags[i].sz);
++        for(int j=0;j<bags[i].sz;j++) printf(" %d",bags[i].el[j]);
++        printf("\n");
++    }
++    for(auto &[a,b]:edges){
++        printf("%d %d\n",a+1,b+1);
++    }
++    return 0;
++}

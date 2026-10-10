@@ -1,0 +1,43 @@
+metadata:
+  iteration: 2
+  family: "tsp-knn-2opt-ils"
+  research_question: "What algorithm maximizes the Frontier-CS judge score for problem #44 (penalized TSP with carrot constraint)?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — iter-1 confirmed grid NN + basic 2-opt at 78.4; now testing multi-knob optimization (finer grid, candidate-list 2-opt with KNN, ILS perturbation)"
+
+arms:
+  - type: h-main
+    prediction: "Candidate-list 2-opt with K=15 KNN, finer grid G=sqrt(N/2.5), and ILS with double-bridge perturbation will consistently score above iter-1's 78.43, achieving score >= 79. The improvement comes from three sources: (1) finer grid enables better NN construction and neighbor lookup, (2) candidate-list 2-opt with DLB enables local search for ALL N values (iter-1 skipped N>10K), (3) ILS escapes 2-opt local optima via non-decomposable 4-opt perturbation."
+    mechanism: "Grid NN at G=sqrt(N/2.5) has ~2.5 cities per cell, reducing NN lookup radius vs G=sqrt(N/4) with ~4 cities/cell. K=15 nearest neighbors precomputed using squared distances avoid sqrt in build phase. Candidate-list 2-opt processes O(N*K) candidates per pass with DLB pruning — convergence in 3-10 passes. Zero-sqrt edge updates (interior edges reverse order, boundary edges precomputed) eliminate O(segment) eucl calls per accepted move. Double-bridge perturbation (swap two middle segments of a 4-cut) creates moves unreachable by 2-opt, enabling escape from local optima. ILS keeps the best tour seen, reverting failed perturbations."
+    diagnostic: "If score < 78.43, check for TLE on largest test cases (N=200K). If score = 78.43 (no improvement), the 2-opt candidate list may not be finding improvements beyond window-based 2-opt — check that KNN are correctly built and pos[] is maintained. If score is unstable between runs, ILS perturbation is consuming too much recovery time on large N."
+    code_changes:
+      - file: "solution.cpp"
+        intent: "Replace iter-1's grid NN + window 2-opt (N<=10K only) with the full algorithm: (1) finer grid G=sqrt(N/2.5), (2) KNN build with K=15 using dist² and grid expanding-ring search, (3) candidate-list 2-opt with DLB and zero-sqrt edge updates, (4) window 2-opt secondary phase, (5) ILS with double-bridge perturbation and best-tour tracking. The validated implementation is in inputs/solution_v25.cpp."
+        rationale: "The key improvements over iter-1 are enabling 2-opt for ALL N sizes (not just N<=10K), finer spatial resolution for better neighbor lookup, and ILS for escaping local optima. Validated at 78.93 across 4 consecutive runs."
+
+experiment_spec:
+  preflight_commands: []
+  verified_parameters:
+    grid_resolution_divisor: 2.5
+    knn_k: 15
+    time_budget_ms: 1900
+    ils_rng_seed: 42
+    candidate_2opt_budget_pct: 0.65
+    window_2opt_budget_pct: 0.80
+    ils_min_remaining_ms: 200
+  unlocked_parameters_audit:
+    - name: "grid_resolution_divisor"
+      default_value: 4.0
+      justification: "Changed to 2.5 — finer grid (sqrt(N/2.5) vs sqrt(N/4)) improves NN quality and KNN precision. Validated: 78.93 vs 78.85 with divisor=4."
+    - name: "knn_k"
+      default_value: 5
+      justification: "Increased to 15 — more candidates per city in 2-opt. K=5 scored 78.63, K=10 scored 78.72, K=15 scored 78.75. Diminishing returns past K=15 (K=20 scored 78.73)."
+    - name: "2opt_window_size"
+      default_value: 200
+      justification: "Adaptive: min(N-1, max(20, min(300, 4M/N))). Window-based 2-opt is secondary to candidate-list 2-opt; wide window helps on small N, narrow on large N."
+    - name: "ils_perturbation_type"
+      default_value: "double_bridge"
+      justification: "Double-bridge (4-cut segment swap) is the standard ILS perturbation for TSP. Creates non-decomposable 4-opt moves. More effective than random segment reversal."
+    - name: "2opt_delta_type"
+      default_value: "euclidean_only"
+      justification: "Penalty-aware delta (v3, 78.56) was slower than Euclidean-only (v12, 78.75) because penalty is ~1% of cost. Speed advantage of ignoring penalty enables more 2-opt iterations."

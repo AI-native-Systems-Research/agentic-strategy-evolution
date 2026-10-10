@@ -1,0 +1,10 @@
+{
+  "gate_type": "findings",
+  "summary": "Both hypotheses confirmed. Switching from geometric-cooling to linear-cooling simulated annealing for the Max-Cut problem improved the judge score from 86.56 to 87.54 (a ~1 point gain), with very low variance across seeds (std 0.03 in both arms).",
+  "key_points": [
+    "h-main (linear-cooling SA, T0=3.0, 0.10s per restart) scored 87.54 mean across 3 seeds (87.52, 87.57, 87.52), confirming the prediction of 87+.",
+    "h-ablation (geometric-cooling SA, T=2.0, cooling=0.9995) scored 86.56 mean (86.60, 86.54, 86.55), matching the predicted ~86.7 baseline and confirming a 0.98-point gap.",
+    "The mechanism is validated: geometric cooling exhausts useful exploration after ~0.5ms, wasting most of the time budget, while linear cooling distributes temperature reductions evenly across the full restart window.",
+    "Score of 87.54 out of 100 means ~87.5% of edges are being cut on average; further improvement may require fundamentally different approaches (e.g., SDP relaxation, longer/smarter restarts, or Kernighan-Lin local search) to close the remaining ~12.5 point gap."
+  ]
+}

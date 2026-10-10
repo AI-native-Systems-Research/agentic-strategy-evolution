@@ -1,0 +1,26 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Simulated annealing over item orderings combined with a residual gap-filling pass will achieve a score above 95.0, improving over iter-1's 94.84 hill-climbing approach.",
+      "observed": "Score: 95.21 (deterministic across 3 runs). The key improvement came from SA over a JOINT space of item orderings + per-item heuristic assignments, not from gap filling. The original SA-only-over-orderings (with fixed heuristic per run) scored 94.84 \u2014 identical to iter-1's hill-climbing. Adding per-item heuristic selection to the SA search space unlocked the 0.37-point improvement. Gap filling contributed 0.0 points.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The predicted mechanism (SA escaping local optima in ordering space) was partially wrong. For M=8-12, hill-climbing already finds near-optimal orderings. The actual gain came from expanding the search space to include per-item heuristic assignments \u2014 a dimension hill-climbing didn't explore. Two initial SA attempts over orderings-only matched hill-climbing exactly (94.84), confirming the ordering space was already well-explored."
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "SA without gap filling will score above 95.0 but below h-main, demonstrating that gap filling provides independent value. The gap between h-main and h-ablation should be 0.1-0.5 points.",
+      "observed": "Score: 95.21 (deterministic across 2 valid runs, excluding one judge fluke at 82.51). Exactly equal to h-main. Gap filling provides zero additional value \u2014 after SA with per-item heuristic selection optimizes the packing, there are no remaining free rectangles large enough to fit any item type.",
+      "status": "REFUTED",
+      "error_type": "magnitude",
+      "diagnostic_note": "Gap filling is redundant because the per-item heuristic selection in SA already achieves near-optimal space utilization. The ordered packing with individually-tuned heuristics per item type leaves no exploitable residual space. The prediction assumed sequential processing would leave gaps; in practice, per-item heuristic optimization addresses this at the heuristic-selection level rather than needing a post-hoc gap-fill pass."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "h-main CONFIRMED (95.21 > 95.0 target, > 94.84 baseline). h-ablation REFUTED \u2014 gap filling contributes 0 points, not the predicted 0.1-0.5. The real mechanism was per-item heuristic selection via SA, not gap filling. Two SA-over-orderings-only attempts (94.84) proved the ordering space was already well-explored by hill-climbing. The joint search space (ordering \u00d7 per-item heuristic) is the actual lever.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

@@ -1,0 +1,6 @@
+Seed 0: 0.1233ms per call (0.0616s total for 500 calls)
+Seed 1: 0.1173ms per call (0.0587s total for 500 calls)
+Seed 2: 0.1189ms per call (0.0594s total for 500 calls)
+Mean: 0.1198ms, StdDev: 0.0031ms
+Campaign speedup (direct): 478412x
+Campaign speedup (harness): 190461x

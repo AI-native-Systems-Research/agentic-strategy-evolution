@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether reducing the branch-and-bound (B&B) solver's ternary search iterations from 20\u219212 and adding an 800ms time guard eliminates intermittent score drops (85-95 range) caused by Docker timing variability, while maintaining the perfect score of 100. An ablation arm removes B&B entirely to quantify its contribution over greedy+local-search alone.",
+  "key_points": [
+    "H-main: Optimized B&B (12 ternary iterations + 800ms clock() time guard). Predicted score: 100. The ternary precision at 12 iterations (~2e-6) is still far tighter than needed for integer LP bounds, giving ~40% fewer bound evaluations per node. The time guard ensures that if B&B runs too long in Docker, we gracefully fall back to the greedy+LS result.",
+    "H-ablation: B&B removed, keeping only 23-variant greedy heuristics + local search. Predicted score: ~85. This isolates B&B's contribution \u2014 iter-1 data showed 11/20 test cases are suboptimal without B&B.",
+    "Confirmation criteria: H-main scores 100 (or very close) \u2192 time guard + reduced iterations solves the reliability problem. H-ablation scores significantly below 100 (expected ~85) \u2192 B&B is necessary. If H-main still drops below 95, we'd diagnose whether the time guard triggered (Docker is slower than expected) or whether 12 ternary iterations loosened bounds enough to blow up the B&B tree.",
+    "Risk check: The design is well-scoped \u2014 only 2 arms, each requiring a single judge call (~45s). The code changes are minimal (change a constant, add 3 lines for time guard; comment out 2 lines for ablation). No new algorithmic mechanisms are introduced.",
+    "Context from iter-1: The full B&B solver scored 100 in most runs but occasionally dropped to 85-95, likely due to Docker timing variability causing TLE on some test cases. Greedy-only (no B&B, no local search) scored 0 because it couldn't beat the NSA baseline."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

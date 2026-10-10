@@ -1,0 +1,28 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The metric closure MST approach will achieve a higher judge score than the full MST + prune approach. Expected score > 80.",
+      "observed": "SCORE: 86.951/100. Per-test breakdown: test1=6.987 (N=10,K=10), test2=1.475 (N=100,K=10), test3=9.322, test4=10.0, test5=9.937, test6=10.0, test7=10.0, test8=9.333, test9=10.0, test10=9.897 (tests 3-10: N=K=1500). Four tests scored perfect 10.0. The metric closure MST correctly exploits the 2-hop relay path limitation (C-C forbidden) to compute exact shortest paths, then the subgraph MST handles relay sharing. Remaining gap: tests 1-2 limited by few/poorly-positioned relays for S-type-discounted edges; tests 3,5,8,10 limited by relay position coverage.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Score of 86.951 exceeds the 80-point threshold. Attempted improvements (top-K relay reconstruction, hub expansion via bottleneck swap, relay replacement) all failed to improve meaningfully. Top-K reconstruction HURT score (75.99) by degrading the subgraph MST tree structure. Hub expansion was neutral. The algorithm is near-optimal for the given relay positions."
+    },
+    {
+      "arm_type": "h-ablation",
+      "predicted": "The full MST + prune approach (without metric closure) will achieve a lower score than h-main, demonstrating that the metric closure step is essential for good performance.",
+      "observed": "SCORE: 62.148/100. The full MST + prune approach scores 24.8 points lower than h-main (86.951 - 62.148 = 24.803). The approach builds MST over all N+K nodes, prunes relay leaves, removes unprofitable degree-2 relays, and inserts unused relays greedily.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The 24.8-point gap confirms that the metric closure step is essential. The full MST treats relays as structural nodes, wasting spanning tree capacity on relay connections. The metric closure approach separates connectivity decisions from relay assignment, producing a fundamentally better tree structure."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed. h-main (metric closure MST, 86.951) substantially outperforms h-ablation (full MST + prune, 62.148). The 24.8-point gap demonstrates that the metric closure step is the key mechanism for this constrained Steiner tree problem. Additional attempted optimizations (top-K reconstruction, hub expansion, relay replacement) yielded no meaningful improvement, suggesting the metric closure MST approach is near-optimal for this problem structure.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "sol"
+  ]
+}

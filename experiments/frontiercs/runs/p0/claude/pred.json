@@ -1,0 +1,21 @@
+{
+  "pid": 0,
+  "agent": "claude-code",
+  "model": "claude-opus-4-6",
+  "valid": true,
+  "final_score": 79.39,
+  "reproduced_best": 79.39,
+  "agent_claimed_best": 79.57250782714287,
+  "repro_gap": 0.183,
+  "cost_est_cacheaware": 44.2641,
+  "stop_reason": "concluded_near_cap_44.3",
+  "budget": 50.0,
+  "max_score": 100.0,
+  "isolation": "sandbox-exec(deny ~/frontier)+judge-daemon",
+  "n_agent_trials": 25,
+  "cheat_audit_hits": [],
+  "cheat_audit_note": "0 testdata tool-calls, 0 permission-denied (clean under isolation)",
+  "best_file": "trials/attempt_13_score_77.cpp",
+  "run_dir": "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/p0/claude",
+  "rejudge_note": "reproduced 79.39 from persisted attempt_13 (audit bqlac2ci7); solution.cpp=78.5; daemon live-scored 74-79. go-judge contention caused a transient batch-ERR, not a real 0."
+}

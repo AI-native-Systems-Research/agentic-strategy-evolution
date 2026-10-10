@@ -1,0 +1,39 @@
+metadata:
+  iteration: 1
+  family: "npartitions-dedekind-optimization"
+  research_question: "Can replacing the O(j) inner loop in the HRR formula's _a function with an O(log j) Dedekind sum computation, combined with Kloosterman symmetry and direct cos evaluation, significantly reduce npartitions runtime while preserving correctness?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (algorithmic replacement of inner sum computation in _a)"
+
+# Arms note: Only h-main is included because this is a tier-1 iter-1 experiment
+# testing a single, well-characterized algorithmic optimization. The treatment is
+# a pure code change (no knobs to vary), and the correctness gate (test_partitions.py)
+# serves as the negative control — if the algorithm is wrong, tests fail.
+
+arms:
+  - type: h-main
+    prediction: "Replacing the O(j) inner k-loop with O(log j) Dedekind sum computation, halving coprime iterations via Kloosterman symmetry, and using direct cos_sin_basecase will decrease workload_mean_runtime consistently across repeated measurements, with the magnitude of speedup being large (order of magnitude) due to eliminating ~2.9M big-integer operations in favor of ~100K small-integer operations."
+    mechanism: "The original _a function computes a Generalized Kloosterman sum via explicit summation: for each coprime h, it iterates k=1..j-1 doing big-integer multiply (h*k*one//j), bitmask, and accumulation — O(j) big-number ops per h. The Dedekind sum s(h,j) encodes the same mathematical quantity and can be computed in O(log j) via the reciprocity relation s(h,k)+s(k,h)=(h²+k²+1)/(12hk)-1/4, analogous to the Euclidean GCD algorithm. Additionally, D(j-h,j)=-D(h,j) implies cos(angle(j-h))=cos(angle(h)), halving the coprime range. Direct cos_sin_basecase avoids mpf_cos overhead. For n=10^6, M=244, the original does ~2.9M big-int ops; the optimized version does ~36K Dedekind sums (each O(log 244)≈8 steps) plus ~36K cos evaluations."
+    diagnostic: "If the prediction is wrong (no speedup or incorrect results): (1) Check if Dedekind sum formula D(h,k)=12k*s(h,k) matches the original inner-loop sum — verify for small j by comparing outputs. (2) Check if cos_sin_basecase range reduction is correct — the quadrant selection via modular arithmetic may introduce off-by-one errors. (3) Check if the float path (prec<=53) introduces rounding errors that compound across the HRR series."
+    code_changes:
+      - file: "sympy/ntheory/partitions_.py"
+        intent: "Replace the _a function's O(j) inner k-loop with an O(log j) memoized Dedekind sum computation using reciprocity, add Kloosterman symmetry to halve coprime iterations, replace mpf_cos with direct cos_sin_basecase and manual range reduction, add a float fast-path for prec<=53, and replace igcd with math.gcd"
+        rationale: "The _a function consumes 80% of npartitions runtime. The inner k-loop performs O(j) big-integer arithmetic operations per coprime h. The Dedekind sum reciprocity reduces this to O(log j) small-integer operations, and Kloosterman symmetry halves the number of coprime iterations. Direct cos evaluation avoids mpf_cos overhead. Together these eliminate the dominant bottleneck."
+
+experiment_spec:
+  preflight_commands:
+    - "docker exec swegen_sympy_sympy-10919_nous bash -lc 'cd /testbed && git checkout HEAD -- sympy/ntheory/partitions_.py'"
+  verified_parameters:
+    workload_n: 1000000
+    workload_repeat: 10
+    M_for_n1e6: 244
+  unlocked_parameters_audit:
+    - name: "prec_multiplier"
+      default_value: 1.1
+      justification: "The 1.1x precision margin in npartitions is a correctness guard, not a performance knob; changing it risks incorrect results."
+    - name: "prec_offset"
+      default_value: 100
+      justification: "The +100 bits offset ensures convergence of the HRR series; reducing it could produce wrong answers for large n."
+    - name: "M_formula_coefficient"
+      default_value: 0.24
+      justification: "The coefficient 0.24 in M=0.24*sqrt(n)+4 determines number of HRR terms; it is tuned for correctness, not performance."

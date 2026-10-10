@@ -1,0 +1,10 @@
+{
+  "instance_id": "astropy__astropy-16295",
+  "agent": "claude",
+  "label": "plain_claude",
+  "model": "claude-opus-4-6",
+  "baseline_out": "Mean: 0.0001505752230059443\nStd Dev: 9.028440303176156e-06\n",
+  "agent_seconds": 235.8,
+  "agent_rc": 0,
+  "patch_bytes": 1813
+}

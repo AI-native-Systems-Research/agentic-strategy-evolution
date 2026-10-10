@@ -1,0 +1,8 @@
+Let me probe some algorithmic improvements before designing the bundle.87.3 — nice improvement. Let me push further with more restarts and an additional strategy.KL is too expensive. Let me try more restarts with optimized SA + perturbation.Let me try one more promising variant — tabu search, which is known to be effective for Max-Cut.The judge has significant timing variance — solutions near the TLE boundary score inconsistently. Let me build a faster solution that fits comfortably within time limits.Consistent 87.21! Now let me try 15 restarts to see if we get more quality while staying stable.Good exploration. The best consistent approach is fast3 (12 restarts + 12 perturbation = 87.27 consistent). Now let me write the design artifacts.Now write the handoff:Now validate:Validation passes. Here's the summary:
+
+**Iter-2 design for Max-Cut #192 — SA+ILS with TLE fix.**
+
+- **Key insight:** Iter-1's score variance (83.9–87.3) was caused by TLE on large test cases, not algorithm quality. Reducing restarts from 20→12 and adding 12 cheap ILS perturbation+greedy cycles gives a **consistent 87.27** (verified identical across repeated runs).
+- **h-main:** SA+ILS (12 restarts, 12 perturbation cycles) — validated solution at `inputs/sa_ils_solution.cpp`
+- **h-control-negative:** Iter-1 SA-only (20 restarts, no perturbation) — demonstrates TLE inconsistency
+- Dead ends: KL (O(n²) TLE), tabu (O(n) per step too slow), reheating (too much total work), 15+ restarts (TLE)

@@ -1,0 +1,25 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Steiner tree routing will produce a higher score than the Dijkstra baseline because it minimizes total unique edge cost. Probe confirms: score 0.154 vs baseline 0.0955.",
+      "observed": "Baseline score = 0.0955, Steiner tree score = 0.1341. Steiner tree produces a 40.4% higher score (lower total cost). The directional prediction is confirmed: Steiner tree routing outperforms per-destination Dijkstra shortest-path routing.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Treatment score (0.1341) is slightly lower than the designer's probe (0.154), likely due to different probe conditions vs the full evaluator run. The directional effect is strongly confirmed.",
+      "metadata": {
+        "baseline_score": 0.09552371980292827,
+        "treatment_score": 0.13412715074696938,
+        "score_improvement_pct": 40.4
+      }
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "The directional prediction (Steiner > Dijkstra) is confirmed. The magnitude (0.1341 vs predicted 0.154) is slightly lower than the designer's probe estimate, suggesting the probe may have used a simplified cost calculation. The core mechanism \u2014 Steiner tree reduces total unique edge cost by sharing relay paths \u2014 is validated.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "__pycache__/"
+  ]
+}

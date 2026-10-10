@@ -1,0 +1,19 @@
+{
+  "gate_type": "design",
+  "summary": "We are testing whether memoizing the Dedekind sum function (which has 73% redundant calls) and eliminating the separate precomputation loop (by computing T values inline) can further reduce npartitions(10^6) runtime beyond the iter-3 baseline of ~22x speedup over the 1.3901s reference. Two arms isolate the contributions of memoization vs. loop restructuring.",
+  "key_points": [
+    "h-main applies both @lru_cache on _dedekind_sum AND removes the precomputation pass, computing T values inline during the main summation loop. Predicted to save ~15ms total (5ms from cache hits on 27k redundant Dedekind calls + 10ms from eliminating the 7,700-pair precomputation loop for the float path).",
+    "h-ablation applies only @lru_cache to _dedekind_sum with no structural changes, keeping iter-3's _T/_a/_a_float functions and loop structure intact. This isolates memoization's ~5ms contribution from the inline restructuring's ~10ms contribution.",
+    "Confirmation: h-main yields measurably higher speedup than h-ablation, and both yield higher speedup than iter-3. Refutation: if h-main \u2248 h-ablation, inline restructuring provides no benefit; if neither improves over iter-3, the 15ms precomputation cost is not a meaningful bottleneck at this scale.",
+    "Risk is low: memoizing a pure function is correctness-safe, and the covering test (test_partitions.py) will verify the exact integer output. The lru_cache holds ~10k entries (<1MB), so memory is not a concern.",
+    "The design is clean \u2014 two arms, one mechanism each, with a clear ablation structure. No tunable hyperparameters are being varied; the only decision is binary (cache on/off, inline on/off)."
+  ],
+  "campaign_spec_diff": {
+    "locked_parameters_violations": [],
+    "locked_workload_violations": [],
+    "depth_overrides_present": false,
+    "invalidated_checks_declared": [],
+    "workload_changes_from_canonical_declared": false
+  },
+  "auto_approved": true
+}

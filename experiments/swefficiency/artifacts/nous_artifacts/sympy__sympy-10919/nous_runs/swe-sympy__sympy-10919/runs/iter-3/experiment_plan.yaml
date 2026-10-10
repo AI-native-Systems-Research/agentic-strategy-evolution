@@ -1,0 +1,46 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+  mode: real
+  reference_baseline_mean: 1.3901
+
+setup:
+  - cmd: "git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-1/patches/py311-compat.patch || true"
+    description: "Apply Python 3.11 compatibility patches"
+
+arms:
+  - arm_id: "baseline"
+    conditions:
+      - name: "baseline-run1"
+        cmd: "cd /testbed/.nous-experiments/iter-3-f2f4ae62 && PYTHONPATH=$PWD python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run1.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run1.txt"
+      - name: "baseline-run2"
+        cmd: "cd /testbed/.nous-experiments/iter-3-f2f4ae62 && PYTHONPATH=$PWD python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run2.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run2.txt"
+      - name: "baseline-run3"
+        cmd: "cd /testbed/.nous-experiments/iter-3-f2f4ae62 && PYTHONPATH=$PWD python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run3.txt 2>&1"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/baseline/run3.txt"
+
+  - arm_id: "h-main"
+    conditions:
+      - name: "h-main-run1"
+        cmd: "cd /testbed/.nous-experiments/iter-3-f2f4ae62 && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run1.txt 2>&1; git checkout -- sympy/ntheory/partitions_.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run1.txt"
+      - name: "h-main-run2"
+        cmd: "cd /testbed/.nous-experiments/iter-3-f2f4ae62 && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run2.txt 2>&1; git checkout -- sympy/ntheory/partitions_.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run2.txt"
+      - name: "h-main-run3"
+        cmd: "cd /testbed/.nous-experiments/iter-3-f2f4ae62 && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/patches/h-main.patch && PYTHONPATH=$PWD python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run3.txt 2>&1; git checkout -- sympy/ntheory/partitions_.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-main/run3.txt"
+
+  - arm_id: "h-ablation"
+    conditions:
+      - name: "h-ablation-run1"
+        cmd: "cd /testbed/.nous-experiments/iter-3-f2f4ae62 && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/patches/h-ablation.patch && PYTHONPATH=$PWD python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run1.txt 2>&1; git checkout -- sympy/ntheory/partitions_.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run1.txt"
+      - name: "h-ablation-run2"
+        cmd: "cd /testbed/.nous-experiments/iter-3-f2f4ae62 && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/patches/h-ablation.patch && PYTHONPATH=$PWD python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run2.txt 2>&1; git checkout -- sympy/ntheory/partitions_.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run2.txt"
+      - name: "h-ablation-run3"
+        cmd: "cd /testbed/.nous-experiments/iter-3-f2f4ae62 && git apply /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/patches/h-ablation.patch && PYTHONPATH=$PWD python /tmp/workload.py > /tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run3.txt 2>&1; git checkout -- sympy/ntheory/partitions_.py"
+        output: "/tmp/nous_runs/swe-sympy__sympy-10919/runs/iter-3/results/h-ablation/run3.txt"

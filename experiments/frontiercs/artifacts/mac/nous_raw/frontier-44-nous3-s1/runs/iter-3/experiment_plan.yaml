@@ -1,0 +1,31 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+setup:
+  - cmd: "# No build needed — judge compiles C++17 with -O2"
+    description: "Build handled by judge"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "oropt1-run1"
+        cmd: "cp /Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/inputs/solution_v32.cpp /Users/toslali/frontier/gen_logs/frontier_44_nous3-s1_ws/solution.cpp && bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh /Users/toslali/frontier/gen_logs/frontier_44_nous3-s1_ws/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/results/h-main/run1.txt"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/inputs/solution_v32.cpp"
+      - name: "oropt1-run2"
+        cmd: "cp /Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/inputs/solution_v32.cpp /Users/toslali/frontier/gen_logs/frontier_44_nous3-s1_ws/solution.cpp && bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh /Users/toslali/frontier/gen_logs/frontier_44_nous3-s1_ws/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/results/h-main/run2.txt"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/inputs/solution_v32.cpp"
+  - arm_id: "h-control-negative"
+    conditions:
+      - name: "baseline-run1"
+        cmd: "cp /Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/inputs/solution_v25.cpp /Users/toslali/frontier/gen_logs/frontier_44_nous3-s1_ws/solution.cpp && bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh /Users/toslali/frontier/gen_logs/frontier_44_nous3-s1_ws/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/results/h-control-negative/run1.txt"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/inputs/solution_v25.cpp"
+      - name: "baseline-run2"
+        cmd: "cp /Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/inputs/solution_v25.cpp /Users/toslali/frontier/gen_logs/frontier_44_nous3-s1_ws/solution.cpp && bash /Users/toslali/frontier/gen_logs/fmeasure_44.sh /Users/toslali/frontier/gen_logs/frontier_44_nous3-s1_ws/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/results/h-control-negative/run2.txt"
+        inputs:
+          - "/Users/toslali/frontier/gen_logs/nous_runs/frontier-44-nous3-s1/runs/iter-3/inputs/solution_v25.cpp"

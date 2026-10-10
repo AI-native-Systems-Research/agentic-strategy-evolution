@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "In the cloudcast broadcast problem, Steiner tree routing outperforms per-destination Dijkstra shortest-path routing because shared edges across destinations are free (partition sets are unions of IDs). Minimizing the total unique edge weight via Steiner tree reduces egress cost, the dominant cost component (~99% of total).",
+    "confidence": "high",
+    "regime": "Multi-destination broadcast with partition-set-based egress cost accounting (simulator.py:119). Holds when egress cost dominates instance cost.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "simulator.py:119 accumulates partition IDs as a Python set per edge. When all destinations use partitions {0..num_partitions-1}, sharing an edge across destinations doesn't increase its partition count. Total egress = num_partitions \u00d7 partition_size \u00d7 \u03a3(unique_edge_costs). Steiner tree minimizes this sum by finding the minimum-weight tree connecting source to all destinations through shared relay nodes.",
+    "applicability_bounds": "Applies when egress cost dominates. If instance cost becomes significant (many relay nodes increasing transfer time), a congestion-aware Steiner variant may be needed.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Instance cost from relay nodes in the Steiner tree partially offsets egress savings. The treatment score (0.1341) was lower than the probe estimate (0.154), suggesting transfer-time-induced instance cost is non-negligible when relay paths create bandwidth bottlenecks.",
+    "confidence": "medium",
+    "regime": "Steiner tree routing with bandwidth-constrained relay nodes.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Relay nodes in the Steiner tree concentrate traffic, reducing per-edge bandwidth (simulator.py:126-160 equal-split enforcement). Longer transfer times increase instance cost (simulator.py:203-223).",
+    "applicability_bounds": "Matters when the Steiner tree has high-degree relay nodes in bandwidth-constrained providers (e.g., AWS 5Gbps egress).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

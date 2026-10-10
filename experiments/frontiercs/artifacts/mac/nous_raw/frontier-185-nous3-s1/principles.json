@@ -1,0 +1,82 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "For max clique on graphs with N <= 1000, BBMC-style bitset coloring (independent-set extraction via bitset AND/complement) is dramatically faster than pairwise O(n^2) sequential greedy coloring, enabling the BnB to solve instances that otherwise timeout.",
+      "confidence": "high",
+      "regime": "Undirected graphs, N <= 1000, M <= 500000, 2-second time limit",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Pairwise coloring checks each vertex against all previously colored vertices (O(n^2) comparisons). BBMC coloring extracts independent sets using Q &= ~adj[v] which processes 64 vertices per word operation, reducing the constant factor by ~64x for MAXN=1001.",
+      "applicability_bounds": "Applies when candidate sets are large (>100 vertices). For small candidate sets the overhead of bitset operations may not pay off vs simple array checks.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Greedy clique construction with 5000 random restarts achieves ~92% of optimal on the test distribution, but BnB with BBMC coloring achieves 100%.",
+      "confidence": "high",
+      "regime": "Max clique problem #185 test distribution, N <= 1000",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Greedy restarts sample many random vertex orderings, finding cliques reachable by greedy extension. BnB exhaustively searches the space (pruned by coloring bounds), finding cliques that require non-greedy vertex selections.",
+      "applicability_bounds": "The 92% figure is specific to this test distribution. On adversarial graphs (e.g., Keller graphs), greedy could perform much worse.",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-3",
+      "statement": "On the problem-185 test distribution with N<=1000, BnB with greedy coloring bound completes well within 1700ms under normal system load, achieving score 100 regardless of whether the BnB cutoff is set to 1700ms or 1800ms. The solution is robust to time allocation changes within a 300ms window.",
+      "confidence": "high",
+      "regime": "N <= 1000, M <= 500000, 2s time limit, normal system load",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-2-h-control-negative",
+        "iteration-3-h-main",
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "BnB with degeneracy ordering and greedy coloring bound prunes the search tree efficiently enough that instances in this distribution are solved in well under 1700ms. The 1700-1800ms cutoff range is deep in the safe zone, not near the boundary.",
+      "applicability_bounds": "Holds for N<=1000 graphs in the problem-185 test distribution. May not hold for denser or larger graphs, or under heavy system load (iter-1 showed score drops under load).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "Swap-based local search (1-remove/2-add + random perturbation) provides defensive value against BnB timeout but is not necessary for score 100 under normal conditions on the problem-185 test distribution.",
+      "confidence": "high",
+      "regime": "problem-185 test distribution, BnB timeout at 1800ms, local search budget 100ms",
+      "evidence": [
+        "iteration-2-h-main: 7/7 post-warmup runs scored 100",
+        "iteration-2-h-control-negative: 5/5 runs scored 100 without local search"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Local search activates only when BnB sets timed_out=true (solution.cpp:308). Under normal load, BnB completes within 1800ms, so local search never runs. Its value is as insurance: when system load causes BnB to timeout, local search can recover using the remaining ~100ms budget.",
+      "applicability_bounds": "The defensive value becomes critical under system load. The 100ms local search budget is tight \u2014 if both BnB and local search are starved for time, scores may still drop.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

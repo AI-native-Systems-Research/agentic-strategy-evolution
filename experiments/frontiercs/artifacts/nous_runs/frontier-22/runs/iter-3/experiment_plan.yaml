@@ -1,0 +1,14 @@
+metadata:
+  iteration: 3
+  bundle_ref: "runs/iter-3/bundle.yaml"
+  mode: real
+setup:
+  - cmd: "git apply /Users/toslali/frontier/gen_logs/nous_runs/frontier-22/runs/iter-1/patches/h-main.patch"
+    description: "Apply the L/R leaf-tracking tree decomposition solution from iter-1"
+arms:
+  - arm_id: "h-main"
+    conditions:
+      - name: "confirm-score-100"
+        cmd: "bash /Users/toslali/frontier/gen_logs/fmeasure_22.sh $PWD/solution.cpp"
+        output: "/Users/toslali/frontier/gen_logs/nous_runs/frontier-22/runs/iter-3/results/h-main/seed1/output.txt"
+        inputs: []
