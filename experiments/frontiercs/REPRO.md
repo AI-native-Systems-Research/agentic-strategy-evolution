@@ -1,102 +1,45 @@
-# Reproducing any datapoint in the Frontier-CS table
+# Reproducing a Frontier-CS datapoint
 
-Everything needed to reproduce a cell of `RESULTS.md` is in this repo. Setup: follow
-`SETUP_NOTES.md` (VM/judge) or `RUN_ON_MAC.md` (local). Model = `claude-opus-4-6` via litellm
-(`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` + token). All runners live in `gen/`.
+`README.md` is the source of truth (golden rules §0, exact env §5/§5.1). This file is the short recipe.
+Setup: `SETUP_NOTES.md` (judge + Frontier-CS). Keys/URLs come from `~/.zshrc`, never from the repo.
 
-## 0. Environment
-- Install Frontier-CS + build the judge (`SETUP_NOTES.md`).
-- `cd ~/frontier/Frontier-CS`; export litellm creds; Nous installed at `~/nous_repo` (its own venv),
-  `claude` CLI + Node on PATH.
-- Runners: `gen/frontier_gen.py` (claude/nous/engram), `gen/frontier_gen_costbudget.py`
-  (adds `--cost-budget` + early-stop + 429 retry). Harvesters: `gen/harvest/harvest<pid>.sh`.
-  Batch drivers (exact commands we ran): `gen/drivers/*.sh`.
+Golden rules: every agent as-is (Nous, real Engram, real AIDE, Claude Code agent); $50 cap
+(tokens × $15/$75, cache-aware); sandboxed, no web, judge daemon, exploit audit + re-judge.
 
-## 1. Which tasks (reproducible draw)
-```
-python3 gen/select_tasks.py --seed 42 --n 3 --exclude 0 1 5 15   # -> 211, 44, 9
-python3 gen/select_tasks.py --seed 43 --n 1 --exclude 0 1 5 9 15 44 47 147 185 192 211  # -> 22
-```
-First-4 tasks (0,1,5,15) were hand-seeded (0=hard packing, 1=easy knapsack, 5=Hamiltonian,
-15=perm gate). Mac batch (47,147,185,192) in `artifacts/mac/RESULTS_newtasks.md`.
+## Algorithmic (`<p>` = problem id; judge daemon `gen/judge_server.py --root /tmp/fcs_judge` running)
 
-## 2. Reproduce a single cell  (`<p>` = problem id)
-
-**Nous** (iters: 5 for p0/1/5/15, 3 for p211/44/9):
-```
-python3 gen/frontier_gen.py <p> --agent nous --nous-iters <N> --out preds/p<p>.nous.json
-bash gen/harvest/harvest<p>.sh      # re-evals every persisted arm, writes best to preds/p<p>.nous.json
-```
-(Nous deliverable = best *correct* arm, harvested from `nous_runs/frontier-<p>*/runs/iter-*/inputs/*solution*.cpp`.)
-
-**plain Claude** (driver loop, plateau early-stop):
-```
-python3 gen/frontier_gen.py <p> --agent claude --rounds 6    --out preds/p<p>.claude.json   # first batch
-python3 gen/frontier_gen_costbudget.py <p> --agent claude --rounds 30 --out preds/p<p>.claude.json  # plateau-stop
+```bash
+# Nous (as-is, sandboxed, token-capped)
+python3 -u gen/nous_cap_launch.py <p> ...                     # see README §5
+# Claude Code agent
+python3 -u gen/claude_code_runner.py <p> --budget 50 --max-score 100 --out-dir runs/p<p>/claude
+# Engram (real mit-nms/Engram, cost-capped)
+bash gen/monitoring/engram_cost_cap.sh <alg_id> 50
+# AIDE (real Weco aideml + adapter)
+python3 gen/aide_frontier.py <p> --budget 50 --ceiling 99.5 --steps 80
 ```
 
-**Claude cost-matched** (to Nous's per-task $):
-```
-python3 gen/frontier_gen_costbudget.py <p> --agent claude --rounds 200 --cost-budget <NOUS_$> --out preds/p<p>.claude_cm.json
+## Research (score-metric: grammar_fuzzing, llm_router)
+
+```bash
+# Nous on vpc
+env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=$FCS_VPC_URL ANTHROPIC_API_KEY=$FCS_VPC_KEY \
+  OPENAI_BASE_URL=$FCS_VPC_URL OPENAI_API_KEY=$FCS_VPC_KEY \
+  python3 -u gen/nous_research_cap.py <task> --slug <slug> --model <model> --budget 50 --niters 30 \
+  --out artifacts/preds/<name>.nous.<tag>.json --logdir ~/frontier/gen_logs
+# Claude Code agent on vpc-int
+env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY=$OPENAI_API_KEY \
+  python3 -u gen/claude_code_research_runner.py <task> --slug <slug> --model <model> --budget 50 \
+  --out-dir runs/<dir>/claude_<tag> --out artifacts/preds/<name>.claude.<tag>.json
 ```
 
-**Engram-style** (fixed 3 agents × 3 rounds):
-```
-python3 gen/frontier_gen.py <p> --agent engram --out preds/p<p>.engram.json
-```
+cloudcast: Claude via `gen/claude_research_runner.py`; Engram via `engram_cost_cap.sh`.
 
-**Engram cost-matched** (to Nous's per-task $, cap 40 agents, early-stop):
-```
-python3 gen/frontier_gen_costbudget.py <p> --agent engram --agents 40 --cost-budget <NOUS_$> --out preds/p<p>.engram.json
+## Re-judge a persisted solution
+
+```bash
+cd ~/frontier/Frontier-CS/research/problems/<task> && .evalvenv/bin/python3 evaluator.py --solution <sol.py> --out /tmp/x.json
 ```
 
-**Score / re-eval any solution (×3 for the ±5 judge noise):**
-```
-./.venv/bin/frontier eval algorithmic <p> <solution.cpp> --json   # read "score"
-```
-
-## 3. Per-task Nous cost (budgets used for cost-matching)
-p0 $27 · p1 $46 · p5 $46 · p15 $32 · p211 $36 · p44 $29 · p9 $38
-(derived via `~/nous_repo/.venv/bin/nous cost nous_runs/frontier-<p>*`).
-
-## 4. Exact batch commands we ran
-See `gen/drivers/`: `base3_seq.sh` (Claude+Engram on 211/44/9), `cm_engram_seq.sh` /
-`cm_claude_seq.sh` (cost-matched converge pass), `cmfull_seq.sh` (full Nous-equal-budget pass).
-
-## 5. Artifacts (every run's raw data)
-`artifacts/preds/p<p>.<agent>.json` (score, cost, tokens, solution path, per-round history),
-`artifacts/gen_logs/` (agent logs, Nous `nous_runs/` campaigns incl. per-arm solutions,
-`llm_metrics.jsonl` with real $/tokens, Engram journals/knowledgebase, per-round histories).
-So any table cell = re-run the command above, or re-score the persisted `solution.cpp`.
-
-## New tasks (2026-10-01): p22 (algorithmic) + cloudcast (research)
-
-Draw: `python3 gen/select_tasks.py --seed 43 --n 1 --exclude 0 1 5 9 15 44 47 147 185 192 211` -> 22.
-cloudcast = the first research-track problem (Engram's own benchmark).
-
-**p22** (algorithmic, same runners as above; Nous $4.85 -> Engram cost-budget 4.85):
-```
-python3 gen/frontier_gen.py 22 --agent nous --nous-iters 3 --out preds/p22.nous.json           # -> 100
-python3 gen/frontier_gen.py 22 --agent claude --rounds 6 --out preds/p22.claude.json            # -> 0
-python3 gen/frontier_gen_costbudget.py 22 --agent engram --agents 40 --cost-budget 4.85 --out preds/p22.engram.json  # -> 0
-./.venv/bin/frontier eval algorithmic 22 <sol.cpp> --json    # re-eval best 3x
-```
-
-**cloudcast** (research track; metric = total_cost $, lower is better; score = 100/(1+cost)).
-Local eval, no Docker/GPU: build the per-problem venv once, then use `gen/frontier_research_gen.py`:
-```
-python3 -m venv research/problems/cloudcast/.evalvenv
-research/problems/cloudcast/.evalvenv/bin/pip install 'networkx>=3.0' 'numpy>=1.24' colorama 'pandas>=1.5' graphviz
-python3 gen/frontier_research_gen.py cloudcast --agent nous   --nous-iters 3 --out preds/cloudcast.nous.json          # -> cost $626
-python3 gen/frontier_research_gen.py cloudcast --agent claude --rounds 6 --out preds/cloudcast.claude.json            # -> cost $1107
-python3 gen/frontier_research_gen.py cloudcast --agent engram --agents 40 --cost-budget 9.89 --out preds/cloudcast.engram.json  # -> cost $1077
-# re-score any solution.py (deterministic): research/problems/cloudcast/.evalvenv/bin/python3 \
-#   research/problems/cloudcast/evaluator.py --solution <sol.py> --spec research/problems/cloudcast/resources/submission_spec.json --out /tmp/r.json
-```
-Nous per-task $ (budgets used for cost-matching): p22 $4.85 · cloudcast $9.89 (via `nous cost nous_runs/<run_id>`).
-Artifacts for both under `artifacts/{preds,nous_runs,gen_logs/newtasks}/`.
-
-## Caveat
-Scores have ~±5 run-to-run judge noise, and agent generations are stochastic (no fixed LLM seed), so
-exact numbers vary run-to-run; the *regime* (headroom → Nous wins; saturated → tie) reproduces.
-Nous persists all arms, so re-scoring the saved winning solution reproduces a cell deterministically.
+Nous research solutions: `~/frontier/gen_logs/research_<slug>_measured_<ts>/` (every measured file,
+named with its in-loop score) and `nous_runs/research-<slug>/runs/iter-*/inputs/*.py`.

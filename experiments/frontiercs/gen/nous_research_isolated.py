@@ -95,9 +95,11 @@ def reconstruct(patch):
     return "\n".join(res) + "\n"
 
 # ---- out-of-sandbox scoring daemon (thread) ----
-def start_daemon(pid, root, stop_evt):
+def start_daemon(pid, root, stop_evt, archive):
     inbox = Path(root)/"inbox"; outbox = Path(root)/"outbox"
     inbox.mkdir(parents=True, exist_ok=True); outbox.mkdir(parents=True, exist_ok=True)
+    # Nous deletes arm worktrees and its patches miss untracked files, so keep every measured solution here.
+    archive = Path(archive); archive.mkdir(parents=True, exist_ok=True)
     pd = probdir(pid)
     def score_file(f):
         try:  # reject gaming IN-LOOP so the agent gets 0 feedback for exploits and pursues legit solutions
@@ -121,11 +123,20 @@ def start_daemon(pid, root, stop_evt):
                 tok = Path(f).stem
                 try: s = score_file(f)
                 except Exception: s = 0.0
+                try:
+                    n = len(list(archive.glob("*.py")))
+                    Path(archive/f"m{n:04d}_{time.strftime('%H%M%S')}_score{s:.2f}.py").write_text(Path(f).read_text(errors="ignore"))
+                except OSError: pass
                 (outbox/f"{tok}.score").write_text(f"SCORE: {s}\n")
                 try: os.unlink(f)
                 except OSError: pass
             time.sleep(1)
     t = threading.Thread(target=loop, daemon=True); t.start(); return t
+
+def _top_measured(d, k):
+    def sc(p):
+        m = re.search(r"_score([0-9.]+)\.py$", p); return float(m.group(1)) if m else -1.0
+    return sorted(glob.glob(str(Path(d)/"*.py")), key=sc, reverse=True)[:k]
 
 def main():
     import yaml
@@ -139,7 +150,9 @@ def main():
     (ws/"solution.py").write_text(seed_for(pid))
     subprocess.run("git init -q && git add -A && git -c user.email=x@x -c user.name=x commit -q -m seed", shell=True, cwd=str(ws))
     # daemon
-    djroot = f"/tmp/fcs_rjudge2/{a.slug}"; stop = threading.Event(); start_daemon(pid, djroot, stop)
+    djroot = f"/tmp/fcs_rjudge2/{a.slug}"; stop = threading.Event()
+    measured = Path(a.logdir)/f"research_{a.slug}_measured_{time.strftime('%Y%m%d_%H%M%S')}"
+    start_daemon(pid, djroot, stop, measured)
     # sandbox profile
     prof = Path(a.logdir)/f"sandbox_{a.slug}.sb"
     prof.write_text('(version 1)\n(allow default)\n'
@@ -192,8 +205,9 @@ def main():
     best = -1.0; bestsrc = None; ev = []; rejected = []
     seen = set()
     cand_sources = [(p, reconstruct(p)) for p in patches if not p.endswith("cumulative.patch")]
-    # also the final ws solution.py
-    if (ws/"solution.py").exists(): cand_sources.append((str(ws/"solution.py"), (ws/"solution.py").read_text()))
+    extra = (sorted(glob.glob(str(camp_dir)+"/runs/iter-*/inputs/*.py")) + _top_measured(measured, 10)
+             + [str(ws/"solution.py")])
+    cand_sources += [(p, Path(p).read_text(errors="ignore")) for p in extra if Path(p).exists()]
     for src, code in cand_sources:
         if not code.strip() or code in seen: continue
         seen.add(code)

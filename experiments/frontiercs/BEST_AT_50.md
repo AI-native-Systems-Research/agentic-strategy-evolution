@@ -32,27 +32,23 @@ cloudcast (research; total transfer $, LOWER better): Nous **$626**, Claude **65
 capped Engram ~$942, naive $1046 — Claude near-SOTA (just above Nous, well below Engram). Gates split 3
 ways: p15 cracked by Nous/Engram/Claude (not AIDE); p22 cracked only by Nous/Engram.
 
-Research — score-metric (higher better; score / LLM-$), added 2026-10-09 (mirrors README §4):
+Research — score-metric (higher better; score / LLM-$), opus-4-6 (mirrors README §4):
 
-> **⚠ Claude/Engram columns INVALID (api-loop, not the agent).** Produced by the deprecated
-> `research_apiloop.py` (chat loop, no tools) — not the Claude Code agent Nous wraps. Re-run with
-> `claude_code_research_runner.py` (sandboxed agent) before use. Nous columns (sandboxed agent) valid.
-
-| task | Nous | Claude (api-loop ⚠) | Engram (api-loop ⚠) | notes |
+| task | Nous | Claude (agent) | Engram (real) | notes |
 |---|---|---|---|---|
-| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | 56.3 / $50.7 | 63.8 / $50.1 | Nous = sandboxed agent @ $50 |
-| llm_router (cost-aware routing, ai)            | **59.7** / $51.4 | 55.3 / $50.1 | 55.4 / $50.0 | Nous valid; Claude/Engram pending agent re-run |
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | TBD | TBD | api-loop baselines removed 2026-10-12; agent re-runs queued |
+| llm_router (cost-aware routing, ai)            | **59.7** / $51.4 | TBD | TBD | trivial baseline=25.4, oracle≈90 |
 
-> FINAL — all three agents ran to a true $50 on both tasks; best-at-$50 = max reproduced over all ≤$50
-> trials. llm_router trivial baseline=25.4, oracle≈90. **Re-judge note:** llm_router solutions read
-> `resources/reference_data.csv` (a provided calibration split, NOT the test labels) via a RELATIVE path,
-> so re-judging MUST run with cwd=the problem dir or the solution silently falls back to a constant
-> router (~25.4); the eval is deterministic. Nous's router reads no files at all (pure query heuristic).
->
-> **Isolation (README §0):** Nous (tool agent) ran under `sandbox-exec` + out-of-sandbox judge daemon +
-> exploit audit — the un-sandboxed first run gamed BOTH tasks (import-hook coverage 99.6; test-label
-> oracle 75.0) and was rejected. ⚠ Claude/Engram research numbers used the deprecated api-loop (not the
-> agent) and are invalid pending re-run with the sandboxed agent (`claude_code_research_runner.py`).
+Model scaling, grammar_fuzzing/seed/sql (Nous vs Claude agent, iso-$50, re-judged clean best):
+
+| model | Nous | Claude (agent) |
+|---|---|---|
+| aws/claude-sonnet-4-5 | **59.56** / $56.2 | running |
+| aws/claude-opus-5 | running | queued |
+
+> llm_router re-judge must run with cwd = the problem dir (solutions read `resources/reference_data.csv`
+> via a relative path; wrong cwd silently falls back to a constant router ~25.4). Nous research runs are
+> sandboxed + judge daemon + exploit audit (the first un-sandboxed run gamed both tasks and was rejected).
 > **llm_sql dropped:** evaluator hard-gates `avg_runtime>1.0s` (unsolvable; even references fail).
 
 AIDE = Weco AIDE (arXiv:2502.13138), unmodified tree search + thin Frontier adapter (C++17 prompts,

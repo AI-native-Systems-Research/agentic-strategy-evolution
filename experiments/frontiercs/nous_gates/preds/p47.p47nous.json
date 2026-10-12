@@ -1,0 +1,56 @@
+{
+  "problem_id": "47",
+  "agent": "nous",
+  "label": "p47nous",
+  "model": "claude-opus-4-6",
+  "candidates": [
+    {
+      "path": "/Users/toslali/frontier/gen_logs/frontier_47_p47nous_ws/.nous-experiments/iter-7-9c637f61/solution.cpp",
+      "score": 94.82985333333335,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-p47nous/runs/iter-6/inputs/h-control-negative-solution.cpp",
+      "score": 95.37049333333331,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-p47nous/runs/iter-6/inputs/baseline_solution.cpp",
+      "score": 95.02828,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-p47nous/runs/iter-6/inputs/h-main-solution.cpp",
+      "score": 95.41716666666666,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-p47nous/runs/iter-1/inputs/h-control-negative-solution.cpp",
+      "score": 0.7410866666666667,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-p47nous/runs/iter-1/inputs/h-main-solution.cpp",
+      "score": 94.60122666666668,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-p47nous/runs/iter-7/inputs/baseline_solution.cpp",
+      "score": 95.39434666666666,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/nous_runs/frontier-47-p47nous/runs/iter-7/inputs/treatment_solution.cpp",
+      "score": 95.51069999999999,
+      "status": "success"
+    },
+    {
+      "path": "/Users/toslali/frontier/gen_logs/frontier_47_p47nous_ws/solution.cpp",
+      "score": 95.51290666666665,
+      "status": "success"
+    }
+  ],
+  "final_score": 95.51290666666665,
+  "solution": "/Users/toslali/frontier/gen_logs/frontier_47_p47nous_ws/solution.cpp",
+  "seconds": 12748.3
+}
