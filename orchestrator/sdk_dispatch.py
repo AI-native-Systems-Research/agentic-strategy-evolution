@@ -445,6 +445,12 @@ def _default_sdk_runner_factory() -> SDKRunner:
             import os as _os
             _cli_path: str | None = _os.environ.get("CLAUDE_CLI_PATH") or None
 
+            # Advertising WebSearch/WebFetch forces the Bedrock request
+            # non-streaming (hardcoded 600s timeout + 2 retries ~= 30min
+            # churn on long turns). Nous never needs them, so disable them
+            # to keep every turn on the streaming path.
+            _disallowed = ["WebSearch", "WebFetch"]
+
             if permission_mode:
                 options = ClaudeAgentOptions(
                     model=model,
@@ -454,6 +460,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     settings=str(settings_path) if settings_path else None,
                     permission_mode=permission_mode,  # type: ignore[arg-type]
                     effort=effort,
+                    disallowed_tools=_disallowed,
                     **({"cli_path": _cli_path} if _cli_path else {}),
                 )
             else:
@@ -464,6 +471,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     system_prompt=system_prompt,
                     settings=str(settings_path) if settings_path else None,
                     effort=effort,
+                    disallowed_tools=_disallowed,
                     **({"cli_path": _cli_path} if _cli_path else {}),
                 )
             text_chunks: list[str] = []
