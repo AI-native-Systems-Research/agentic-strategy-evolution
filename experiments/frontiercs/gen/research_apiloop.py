@@ -33,11 +33,14 @@ def statement(pid):
 def evaluate(pid, sol_path, timeout=600):
     """Run the problem's local evaluator; return (score, status, raw). score higher=better; 0 on error."""
     pd = probdir(pid)
+    # The evaluator runs with cwd=pd, so the --solution path MUST be absolute; a relative --out-dir
+    # (e.g. runs/gf/claude_s45) would otherwise resolve against pd and fail with "No such file".
+    sol_abs = str(Path(sol_path).resolve())
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
         out = tf.name
     try:
         subprocess.run(f"{shlex.quote(str(evalpy(pid)))} {shlex.quote(str(pd/'evaluator.py'))} "
-                       f"--solution {shlex.quote(str(sol_path))} --out {shlex.quote(out)}",
+                       f"--solution {shlex.quote(sol_abs)} --out {shlex.quote(out)}",
                        shell=True, cwd=str(pd), capture_output=True, text=True, timeout=timeout)
         try: data = json.loads(Path(out).read_text())
         except Exception: return 0.0, "parse_error", {}
@@ -228,7 +231,8 @@ def main():
     ap.add_argument("--model", default="claude-opus-4-6")
     ap.add_argument("--budget", type=float, default=30.0)
     ap.add_argument("--max-score", type=float, default=100.0)
-    ap.add_argument("--rounds", type=int, default=12)
+    ap.add_argument("--rounds", type=int, default=200,
+                    help="high by default so the $50 budget (or max-score) is the binding stop, not rounds")
     ap.add_argument("--agents", type=int, default=8)
     ap.add_argument("--rounds-per-agent", type=int, default=3)
     ap.add_argument("--out", required=True)
