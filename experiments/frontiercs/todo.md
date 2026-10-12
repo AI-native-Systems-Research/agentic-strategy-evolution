@@ -181,9 +181,22 @@ llm_sql->{Nous,Engram,Claude}; poc_generation->{Nous,Engram,Claude}.
 - Branch: AIDE work is on frontier-mac; real-Engram + reruns on aiopslab. Unify.
 
 ### Variance + stronger-model checks (todo 7, 8)
-- Subset: pick 1–3 tasks spanning regimes (e.g. a gate like p15/p22 + a headroom like p0 or cloudcast).
-- Variance: 3 runs/variant total (2 extra) on the subset; report mean ± spread (judge ±5 noise +
-  agent stochasticity). Nous ceilings (100) are deterministic; the discriminating/headroom ones vary.
+- **STATUS 2026-10-12:**
+  - ✅ **VARIANCE p0 DONE (n=3, 3 agents)** — Nous {86.5,80.1,89.1} mean 85.2; Claude {79.4,72.1,69.3}
+    mean 73.6; Engram {68.5,74.1,71.4} mean 71.4. Nous min (80.1) > every baseline max → win robust to
+    noise. AIDE skipped (p0=0 → ~0 variance, no info; assumed not measured). Preds p0.{nous,claude.
+    variance,engram.variance}.json. Why p0: (a) not a gate, (b) clean continuous separation, (c) it is
+    time-budgeted + randomized so it actually EXHIBITS run-to-run spread (makes the study non-trivial;
+    caveat: that spread mixes solver + agent stochasticity = the realistic end-to-end variance).
+  - ⏭ **SCALING target = p5** (Nous vs Claude only; Claude = raw base model so Nous−Claude per tier
+    isolates the harness lift; Engram/AIDE are different harnesses/paradigms = confounds). p5 chosen over
+    p0 for scaling: bigger Nous–Claude gap (83 vs 50 = 33 pts) → more dynamic range to see the effect.
+    Tiers: Sonnet → Opus-4.6 (have) → Opus-5, same family so capability is the only variable.
+  - 🧷 **DEFERRED (if time/budget):** add p5 to the variance study, and p0 to the scaling study, for
+    cross-task robustness of both claims.
+- (superseded) Earlier plan: variance subset = p0 + p5, all 4 agents, 24 runs. Trimmed to p0 / 3 agents
+  (AIDE no-info) done; p5 deferred.
+- (older note) Subset originally "1–3 tasks spanning regimes"; superseded by the p0+p5 decision above.
 - Stronger model: rerun all variants on opus5 (`aws/claude-opus-5`). Needs the model added to the
   Engram `--model` allowlist + pricing (extend engram_opus_patch.diff) and AIDE routing; Nous just
   takes --model. Same $50/plateau rule; report how the gaps shift with a stronger base model.
