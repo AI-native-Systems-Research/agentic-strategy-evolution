@@ -4,8 +4,9 @@
 Engram's agents already run isolated (file tools rooted at their workspace, shell inside a Docker
 container). Scoring goes through the same out-of-process judge daemon as the Nous/Claude arms
 (local problem evaluator, exploit solutions scored 0, every measured solution archived), via the
-FCS_JUDGE_ROOT hook in ~/engram_repo/SystemBench/FrontierCS/evaluator.py. Cost = Engram's own
-total_cost (opus-4-6 list price $15/$75); killed at the first poll >= budget.
+FCS_JUDGE_ROOT hook in ~/engram_repo/SystemBench/FrontierCS/evaluator.py. Cost is metered per LLM
+response by a local pass-through proxy (token_meter_proxy.py, same $15/$75 cache-aware ruler as
+Nous/Claude), because Engram itself only logs cost every 5 iterations; killed at the first poll >= budget.
 
 Usage:
   engram_research_cap.py grammar_fuzzing/seed/sql --slug gf_e46 --out artifacts/preds/gf_seed_sql.engram.o46.json
@@ -14,6 +15,7 @@ import argparse, glob, json, os, re, signal, subprocess, threading, time
 from pathlib import Path
 
 import nous_research_isolated as N
+import token_meter_proxy as TM
 
 ENGRAM = Path(os.path.expanduser("~/engram_repo"))
 
@@ -39,7 +41,8 @@ def main():
     measured = Path(a.logdir) / f"research_{a.slug}_measured_{time.strftime('%Y%m%d_%H%M%S')}"
     stop = threading.Event(); N.start_daemon(pid, root, stop, measured)
     log = Path(a.logdir) / f"engram_{a.slug}.log"
-    env = dict(os.environ, FCS_JUDGE_ROOT=root, OPENAI_API_BASE=os.environ["OPENAI_BASE_URL"])
+    _, meter, proxy = TM.start(os.environ["OPENAI_BASE_URL"])
+    env = dict(os.environ, FCS_JUDGE_ROOT=root, OPENAI_BASE_URL=proxy, OPENAI_API_BASE=proxy)
     cmd = (f"cd {ENGRAM} && source .venv/bin/activate && exec python -u examples/handoff_example_usage.py "
            f"--problem_name fcs_res_{pid} --model claude-opus-4-6 --max_agents {a.max_agents} "
            f"--agent_timeout {a.agent_timeout} --num_runs 1")
@@ -47,16 +50,17 @@ def main():
     lf = open(log, "w")
     p = subprocess.Popen(["bash", "-c", cmd], env=env, stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
     print(f"[ecap] engram pid={p.pid} task={pid} budget=${a.budget} log={log} measured={measured}", flush=True)
-    rd, cost, capped = None, 0.0, False
+    rd, cost, ecost, capped = None, 0.0, 0.0, False
     while p.poll() is None:
         time.sleep(20)
         if rd is None:
             m = re.findall(r"Results Directory: (.*)", log.read_text(errors="ignore"))
             rd = m[-1].strip() if m else None
         if rd:
-            cost = engram_cost(rd)
+            ecost = engram_cost(rd)
+        cost = meter.cost
         n = len(list(measured.glob("*.py")))
-        print(f"[ecap {time.strftime('%H:%M:%S')}] cost=${cost:.2f} measured={n}", flush=True)
+        print(f"[ecap {time.strftime('%H:%M:%S')}] cost=${cost:.2f} (calls={meter.calls}; engram-logged ${ecost:.2f}) measured={n}", flush=True)
         if cost >= a.budget:
             capped = True
             print(f"[ecap] cost ${cost:.2f} >= ${a.budget} -> kill", flush=True)
@@ -64,7 +68,8 @@ def main():
             if p.poll() is None: os.killpg(p.pid, signal.SIGKILL)
             break
     p.wait(); stop.set()
-    if rd: cost = max(cost, engram_cost(rd))
+    cost = meter.cost
+    if rd: ecost = engram_cost(rd)
     best, bestsrc, ev, rejected = -1.0, None, [], []
     for f in N._top_measured(measured, 10):
         sc, hits = N.judge_clean(pid, Path(f).read_text(errors="ignore"))
@@ -74,7 +79,8 @@ def main():
         if sc > best: best, bestsrc = sc, tag
     pred = {"problem_id": pid, "track": "research", "agent": "engram", "label": a.slug,
             "model": "claude-opus-4-6", "method": "real Engram agentic_handoff (as-is)",
-            "final_score": round(best, 2) if best >= 0 else None, "cost_usd": round(cost, 2),
+            "final_score": round(best, 2) if best >= 0 else None, "cost_usd_tokenbased": round(cost, 2), "llm_calls": meter.calls,
+            "cost_engram_logged": round(ecost, 2),
             "cost_capped": capped, "n_measured": len(list(measured.glob("*.py"))),
             "n_clean_candidates": len(ev), "n_rejected_exploits": len(rejected), "best_source": bestsrc,
             "clean_evidence": ev, "rejected_exploit_candidates": rejected,
