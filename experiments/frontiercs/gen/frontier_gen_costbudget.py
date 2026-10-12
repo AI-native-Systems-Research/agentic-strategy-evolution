@@ -347,15 +347,27 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
     sh("git init -q && git add -A && git -c user.email=x@x -c user.name=x commit -q -m seed", cwd=str(ws))
     # Clean measure wrapper: the executor runs ONE simple command that prints just "SCORE: <n>",
     # instead of orchestrating `frontier eval` + JSON parsing itself (which is slow/error-prone).
+    # ISOLATION: the agent runs under sandbox-exec with reads of the benchmark tree (~/frontier/
+    # Frontier-CS, which holds testdata/*.ans answer files) DENIED. So scoring canNOT call `frontier
+    # eval` in-process (it needs testdata). Instead fmeasure drops solution.cpp to the OUT-OF-SANDBOX
+    # judge daemon (gen/judge_server.py, started separately) and reads back the score — identical to
+    # the Claude baseline's measure.sh. This closes the gap where algorithmic Nous (sandbox:bypass)
+    # could `ls .../testdata/` and read answers.
+    JUDGE_ROOT = os.environ.get("FCS_JUDGE_ROOT", "/tmp/fcs_judge")
     fmeasure = ws.parent / f"fmeasure_{pid}.sh"
     fmeasure.write_text(
         "#!/bin/bash\n"
-        "# Usage: fmeasure.sh <solution.cpp> -> prints 'SCORE: <n>' (judge score 0-100, higher is better)\n"
-        f"cd {FRONTIER} || exit 2\n"
-        'export PATH="$HOME/.local/bin:$PATH"\n'
-        f'out=$({FEVAL} eval algorithmic {pid} "$1" --json 2>/dev/null)\n'
-        "s=$(printf '%s' \"$out\" | python3 -c \"import sys,re;t=sys.stdin.read();m=re.findall(r'\\\"score\\\"\\s*:\\s*([0-9.]+)',t);print(m[-1] if m else 'ERR')\")\n"
-        'echo "SCORE: $s"\n')
+        "# Usage: fmeasure.sh <solution.cpp> -> prints 'SCORE: <n>' via the out-of-sandbox judge daemon.\n"
+        f'JR="{JUDGE_ROOT}"\n'
+        f'tok="p{pid}__$(date +%s%N)_$RANDOM"\n'
+        'cp "$1" "$JR/inbox/$tok.cpp"\n'
+        'for i in $(seq 1 1200); do\n'
+        '  if [ -f "$JR/outbox/$tok.score" ]; then\n'
+        '    cat "$JR/outbox/$tok.score"; rm -f "$JR/outbox/$tok.score"; exit 0\n'
+        '  fi\n'
+        '  sleep 0.5\n'
+        'done\n'
+        'echo "SCORE: ERR (judge timeout)"\n')
     fmeasure.chmod(0o755)
     desc = (
         f"You are solving Frontier-CS algorithmic problem #{pid}. Scoring is CONTINUOUS partial "
@@ -409,8 +421,18 @@ def run_nous(pid, stmt, ws, model, logdir, nous_iters, label):
     env = dict(os.environ)
     env["NOUS_CAMPAIGN_PARENT"] = str(ws.parent / "nous_runs")
     log = Path(logdir) / f"frontier_{pid}_{label}.nous.log"
-    cmd = [NOUS_BIN, "run", str(camp), "--auto-approve", "--agent", "sdk", "--sandbox", "bypass",
-           "--max-iterations", str(nous_iters), "--timeout", "2400"]
+    # OS-level isolation (matches the Claude baseline): deny the agent reads of the benchmark tree
+    # (statements + hidden testdata + .ans answers). SBPL last-match-wins: allow default, then deny
+    # the Frontier-CS subpath. Scoring is unaffected because fmeasure.sh routes through the
+    # out-of-sandbox judge daemon. Writes/git/worktrees (under logdir, not Frontier-CS) stay allowed.
+    sb_profile = ws.parent / f"nous_sandbox_{pid}.sb"
+    fcs_tree = os.path.realpath(FRONTIER)
+    sb_profile.write_text("(version 1)\n(allow default)\n"
+                          f'(deny file-read* (subpath "{fcs_tree}"))\n')
+    sandbox_prefix = ([] if os.environ.get("NOUS_FCS_NO_SANDBOX")
+                      else ["sandbox-exec", "-f", str(sb_profile)])
+    cmd = sandbox_prefix + [NOUS_BIN, "run", str(camp), "--auto-approve", "--agent", "sdk",
+           "--sandbox", "bypass", "--max-iterations", str(nous_iters), "--timeout", "2400"]
     with open(log, "w") as lf:
         subprocess.run(cmd, cwd=NOUS_REPO, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True, timeout=14400)
     # harvest candidate solutions from every place Nous persists an arm:
