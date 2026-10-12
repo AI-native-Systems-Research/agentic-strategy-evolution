@@ -1,0 +1,4 @@
+(version 1)
+(allow default)
+(deny file-read* (subpath "/Users/toslali/frontier/Frontier-CS/research"))
+(deny file-read* (subpath "/Users/toslali/frontier/Frontier-CS/datasets"))
