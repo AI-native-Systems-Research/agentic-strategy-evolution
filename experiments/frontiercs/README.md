@@ -51,6 +51,17 @@ pass-through that reads `usage` from every response and prices it with the same 
 ruler as Nous/Claude; the run is killed within one call of $50. Engram's own logged cost is kept in
 the pred as `cost_engram_logged` for reference.
 
+**Sandbox hardening (2026-10-12):** the research sandboxes only denied `Frontier-CS/research` and
+`datasets`, so other runs' solutions (`~/frontier/gen_logs`, repo `runs/`/`artifacts/`, SDK transcripts
+in `~/.claude/projects`) were readable. Claude research runner now denies `~/frontier`, the whole
+`_nous_paper` tree, `~/engram_repo`, and `~/.claude/projects`, re-allowing only its own run dir and the
+CLI venv (tested: denied paths blocked, CLI + python + /tmp handshake work). The first Claude Opus-5 gf
+attempt (weak sandbox, $12.88, it only listed `~/frontier/Frontier-CS/`) was discarded and restarted;
+kept at `runs/gf/claude_o5.aborted_weak_sandbox/`. Audit of Nous gf s45/o5 transcripts: only directory
+listings of `~/frontier/gen_logs` / `~/frontier` and Nous's own code; no other run's files opened.
+TODO before the next Nous research run: apply the same hardening to `nous_research_isolated.py`
+(must re-allow its own ws, campaign dir, and the Nous repo) and smoke-test it.
+
 Audit after every run: grep the agent transcript for `testdata|\.ans\b|nous_runs|gen_logs` (algorithmic)
 or exploit signatures (research); any real hit rejects the run.
 

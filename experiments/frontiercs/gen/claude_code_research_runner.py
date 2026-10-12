@@ -145,9 +145,14 @@ def main():
 
     # sandbox: deny the benchmark research tree + datasets; allow the agent's own run dir + /tmp
     sb = run/"sandbox.sb"
+    # Deny the benchmark, every other run's solutions/logs/transcripts, and other agents' repos;
+    # re-allow only this run dir and the CLI's venv (SBPL: last match wins).
+    home = os.path.expanduser("~"); paper = os.path.realpath(Path(__file__).resolve().parents[4])
+    deny = [f"{home}/frontier", paper, f"{home}/engram_repo", f"{home}/.claude/projects"]
+    allow = [str(run), os.path.realpath(Path(CLI).parent.parent)]
     sb.write_text("(version 1)\n(allow default)\n"
-                  f'(deny file-read* (subpath "{FR_ROOT}/research"))\n'
-                  f'(deny file-read* (subpath "{FR_ROOT}/datasets"))\n')
+                  + "".join(f'(deny file-read* (subpath "{os.path.realpath(d)}"))\n' for d in deny)
+                  + "".join(f'(allow file-read* (subpath "{a_}"))\n' for a_ in allow))
     sandbox_prefix = ([] if os.environ.get("NOUS_FCS_NO_SANDBOX") else ["sandbox-exec", "-f", str(sb)])
 
     # fmeasure: inbox/outbox handshake (no direct ~/frontier access)
