@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Generalized research-track runner (API-loop agents: claude, engram) for ANY local-eval research
+"""DEPRECATED (2026-10-12) — DO NOT USE AS A BASELINE. This is a chat api-loop (one LLM call per round,
+NO tools), which is NOT the Claude Code agent Nous wraps. The correct Claude/Engram research baseline is
+the sandboxed AGENT: gen/claude_code_research_runner.py. Any research pred produced by this file
+(gf_seed_sql.*, gf_fuzzer_sql.*, llm_router.*, cloudcast.*) is invalid pending an agent re-run. See
+README.md §0. Kept only for reference.
+
+Generalized research-track runner (API-loop agents: claude, engram) for ANY local-eval research
 problem — grammar_fuzzing, llm_sql, cloudcast, etc. The objective and solution API come from the
 problem README (passed in the prompt); scoring runs the problem's own local evaluator and parses the
 JSON "score" (higher is better for every research task). No cloudcast-specific assumptions.
