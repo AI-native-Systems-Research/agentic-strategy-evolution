@@ -304,6 +304,23 @@ Resumed sessions use `claude --continue -p "<push prompt>"` with the same flags.
   401/silent hang.
 - `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` (+ `OPENAI_*` mirror) — the IBM litellm gateway + main key,
   taken from the environment (laptop-direct = the `vpc-int` endpoint).
+
+### Endpoints / secrets — two gateways for "2 at a time" (NEVER commit keys)
+
+We run two agents in parallel by splitting across two IBM LiteLLM gateways. **Keys live only in
+`~/.zshrc` (local, git-ignored by being outside the repo) — never in-repo, never in committed scripts.**
+Reference them by env-var name:
+
+| endpoint | URL | env vars (values in ~/.zshrc) |
+|---|---|---|
+| **vpc-int** (default) | `https://ete-litellm.ai-models.vpc-int.res.ibm.com` | `OPENAI_BASE_URL` / `OPENAI_API_KEY` (+ `ANTHROPIC_*`) |
+| **vpc** (2nd) | `https://ete-litellm.ai-models.vpc.res.ibm.com` | `FCS_VPC_URL` / `FCS_VPC_KEY` |
+
+So a parallel pair of runs uses `U=$OPENAI_BASE_URL K=$OPENAI_API_KEY` for one and
+`U=$FCS_VPC_URL K=$FCS_VPC_KEY` for the other (each run: `env -u ANTHROPIC_AUTH_TOKEN
+OPENAI_BASE_URL=$U OPENAI_API_KEY=$K …`). If `FCS_VPC_*` is unset, `source ~/.zshrc` or re-add it
+(the vpc/nous-dam key). vpc-int historically slower/stall-prone; vpc faster but has had 502 windows —
+both recover via the runners' retry/backoff.
 - `BUN_FEATURE_FLAG_DISABLE_IO_POOL=1` + `CLAUDE_CODE_MAX_RETRIES=40` — **the connection-pool-hang fix**
   (bundled `claude` is a Bun binary that reuses a keep-alive socket the gateway drops between turns;
   disabling the IO pool forces a fresh connection per request).
