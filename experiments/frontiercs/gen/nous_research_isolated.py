@@ -22,6 +22,8 @@ Usage:
 import argparse, glob, json, os, re, shlex, subprocess, tempfile, threading, time
 from pathlib import Path
 
+import judge_sandbox as J
+
 FRONTIER = os.environ.get("FRONTIER_DIR", os.path.expanduser("~/frontier/Frontier-CS"))
 NOUS_REPO = os.path.expanduser("~/nous_repo"); NOUS_BIN = f"{NOUS_REPO}/.venv/bin/nous"
 FR_ROOT = os.path.expanduser("~/frontier/Frontier-CS")
@@ -64,24 +66,7 @@ def judge_clean(pid, code, timeout=600):
     """Judge a solution ONLY if it has no exploit signatures; return (score, hits)."""
     hits = exploit_hits(code)
     if hits: return None, hits
-    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as tf:
-        tf.write(code); sp = tf.name
-    pd = probdir(pid)
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as of: out = of.name
-    try:
-        subprocess.run(f"{shlex.quote(str(evalpy(pid)))} {shlex.quote(str(pd/'evaluator.py'))} "
-                       f"--solution {shlex.quote(sp)} --out {shlex.quote(out)}",
-                       shell=True, cwd=str(pd), capture_output=True, text=True, timeout=timeout)
-        try: data = json.loads(Path(out).read_text())
-        except Exception: return 0.0, []
-    except subprocess.TimeoutExpired:
-        return 0.0, []
-    finally:
-        for f in (sp, out):
-            try: os.unlink(f)
-            except OSError: pass
-    if data.get("error") or data.get("runs_successfully", 0.0) != 1.0: return 0.0, []
-    return float(data.get("score", 0.0)), []
+    return J.score(evalpy(pid), probdir(pid), code, timeout), []
 
 def reconstruct(patch):
     lines = Path(patch).read_text(errors="ignore").splitlines()
@@ -102,21 +87,10 @@ def start_daemon(pid, root, stop_evt, archive):
     archive = Path(archive); archive.mkdir(parents=True, exist_ok=True)
     pd = probdir(pid)
     def score_file(f):
-        try:  # reject gaming IN-LOOP so the agent gets 0 feedback for exploits and pursues legit solutions
-            if exploit_hits(Path(f).read_text(errors="ignore")): return 0.0
-        except Exception: pass
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as of: out = of.name
-        try:
-            subprocess.run(f"{shlex.quote(str(evalpy(pid)))} {shlex.quote(str(pd/'evaluator.py'))} "
-                           f"--solution {shlex.quote(str(f))} --out {shlex.quote(out)}",
-                           shell=True, cwd=str(pd), capture_output=True, text=True, timeout=600)
-            d = json.loads(Path(out).read_text())
-            s = d.get("score", 0.0) if (not d.get("error") and d.get("runs_successfully", 0.0) == 1.0) else 0.0
-        except Exception: s = 0.0
-        finally:
-            try: os.unlink(out)
-            except OSError: pass
-        return s
+        code = Path(f).read_text(errors="ignore")
+        # reject gaming IN-LOOP so the agent gets 0 feedback for exploits and pursues legit solutions
+        if exploit_hits(code): return 0.0
+        return J.score(evalpy(pid), pd, code)
     def loop():
         while not stop_evt.is_set():
             for f in sorted(glob.glob(str(inbox/"*.py"))):
@@ -155,9 +129,18 @@ def main():
     start_daemon(pid, djroot, stop, measured)
     # sandbox profile
     prof = Path(a.logdir)/f"sandbox_{a.slug}.sb"
+    # Deny the benchmark, other runs' artifacts/transcripts, experiment results and other agents' repos;
+    # re-allow only this run's workspace, campaign dir, scripts and transcripts (SBPL: last match wins).
+    home = os.path.expanduser("~"); rr = os.path.realpath
+    run_slug = re.sub(r"[^A-Za-z0-9]+", "-", f"research-{a.slug}").strip("-")
+    deny = [f"{home}/frontier", rr(Path(__file__).resolve().parents[1]), f"{home}/engram_repo", f"{home}/.claude/projects"]
+    allow = [rr(ws), rr(ws.parent/"nous_runs"/run_slug), rr(ws.parent/f"fmeasure_{a.slug}.sh"),
+             rr(ws.parent/f"campaign_{a.slug}.yaml"), rr(prof)]
+    proj_key = re.sub(r"[^A-Za-z0-9]", "-", rr(ws))
     prof.write_text('(version 1)\n(allow default)\n'
-                    f'(deny file-read* (subpath "{FR_ROOT}/research"))\n'
-                    f'(deny file-read* (subpath "{FR_ROOT}/datasets"))\n')
+                    + "".join(f'(deny file-read* (subpath "{rr(d)}"))\n' for d in deny)
+                    + "".join(f'(allow file-read* (subpath "{p_}"))\n' for p_ in allow)
+                    + f'(allow file-read* (regex #"^{re.escape(rr(home))}/\\.claude/projects/{re.escape(proj_key)}"))\n')
     # fmeasure: inbox/outbox handshake (no direct ~/frontier access)
     fm = ws.parent/f"fmeasure_{a.slug}.sh"
     fm.write_text("#!/bin/bash\n"

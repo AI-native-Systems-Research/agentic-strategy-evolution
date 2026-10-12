@@ -1,0 +1,40 @@
+"""Run a research-task evaluator so the judged solution cannot leak anything back to the agent.
+
+The official Frontier-CS runner scores inside Docker; we score on the host, so the solution would
+otherwise run with full file access and could copy engine source / data into a place the agent can
+read (e.g. /tmp). Here every evaluation runs under sandbox-exec with no network and no file writes
+except a private scratch dir that is deleted afterwards. Only the score leaves.
+"""
+import json, os, re, shlex, shutil, subprocess, tempfile
+from pathlib import Path
+
+
+def evaluate(evalpy, problem_dir, solution_code, timeout=600):
+    """Return the evaluator's JSON dict (or {} on failure)."""
+    priv = Path(tempfile.mkdtemp(prefix="fcsj_"))
+    try:
+        sol = priv / "solution.py"; sol.write_text(solution_code)
+        out = priv / "out.json"
+        prof = priv / "judge.sb"
+        rp = os.path.realpath(priv)
+        prof.write_text("(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n"
+                        f'(allow file-write* (subpath "{rp}"))\n'
+                        # coverage.py writes .coverage* next to the evaluator (agents cannot read that dir)
+                        f'(allow file-write* (regex #"^{re.escape(os.path.realpath(problem_dir))}/\\.coverage"))\n'
+                        '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (regex #"^/dev/tty"))\n')
+        env = dict(os.environ, TMPDIR=rp, HOME=rp, PYTHONDONTWRITEBYTECODE="1", MPLCONFIGDIR=rp)
+        cmd = (f"sandbox-exec -f {shlex.quote(str(prof))} {shlex.quote(str(evalpy))} "
+               f"{shlex.quote(str(Path(problem_dir)/'evaluator.py'))} --solution {shlex.quote(str(sol))} --out {shlex.quote(str(out))}")
+        try:
+            subprocess.run(cmd, shell=True, cwd=str(problem_dir), env=env, capture_output=True, text=True, timeout=timeout)
+            return json.loads(out.read_text())
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            return {}
+    finally:
+        shutil.rmtree(priv, ignore_errors=True)
+
+
+def score(evalpy, problem_dir, solution_code, timeout=600):
+    d = evaluate(evalpy, problem_dir, solution_code, timeout)
+    if not d or d.get("error") or d.get("runs_successfully", 0.0) != 1.0: return 0.0
+    return float(d.get("score", 0.0))

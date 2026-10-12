@@ -1,0 +1,157 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_o5",
+  "model": "aws/claude-opus-5",
+  "final_score": 87.14,
+  "cost_usd": 12.75,
+  "n_clean_candidates": 22,
+  "n_rejected_exploits": 7,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-1/inputs/solution_main.py",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-1/inputs/score_harness.py",
+      "exploits": [
+        "import machinery to reach internals"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-1/inputs/solution_ablation_noerr_SIBLINGIMPORT_FAILED.py",
+      "exploits": [
+        "import machinery to reach internals"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-1/inputs/solution_control_dup_SIBLINGIMPORT_FAILED.py",
+      "exploits": [
+        "import machinery to reach internals"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/build_variants.py",
+      "exploits": [
+        "import machinery to reach internals"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/decompose.py",
+      "exploits": [
+        "import machinery to reach internals"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/mkcases.py",
+      "exploits": [
+        "import machinery to reach internals"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/setcheck.py",
+      "exploits": [
+        "import machinery to reach internals"
+      ]
+    }
+  ],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-1/inputs/solution_ablation_noerr.py",
+      "score": 85.70357607944052
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-1/inputs/solution_baseline.py",
+      "score": 36.67687542683891
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-1/inputs/solution_control_dup.py",
+      "score": 81.47925224419413
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-1/inputs/solution_main.py",
+      "score": 87.13929971256617
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/collect.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/opt2.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/optimize.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/predict.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/profile_cases.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/solution_drop_e00.py",
+      "score": 87.06359986067514
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/solution_drop_valid_eof.py",
+      "score": 86.78329200713753
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/solution_incumbent.py",
+      "score": 87.13929971256617
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/solution_k0.py",
+      "score": 85.70357607944052
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/solution_k12.py",
+      "score": 86.7553938116867
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/solution_k4.py",
+      "score": 86.54210191554336
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/solution_k8.py",
+      "score": 86.59524805216896
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-2/inputs/solution_pad19.py",
+      "score": 86.81749004207137
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-3/inputs/gen_corpus.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-3/inputs/optimize_cover.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-3/inputs/profile_corpus.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5/runs/iter-3/inputs/union_probe.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5_ws/solution.py",
+      "score": 36.67687542683891
+    }
+  ],
+  "elapsed_s": 4459.0,
+  "cost_usd_tokenbased": 50.01,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": false,
+  "cost_note": "stopped by live-cost watchdog at $50.01 (metrics lagged at $38.97)"
+}
