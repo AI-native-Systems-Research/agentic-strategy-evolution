@@ -54,10 +54,10 @@ index 0463e93..7116c0e 100644
          # Wait for the process to complete, with timeout
 diff --git a/SystemBench/FrontierCS/evaluator.py b/SystemBench/FrontierCS/evaluator.py
 new file mode 100644
-index 0000000..f0487c4
+index 0000000..c29d7aa
 --- /dev/null
 +++ b/SystemBench/FrontierCS/evaluator.py
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,65 @@
 +"""Auto-discovery shim for Architect/task.py.
 +
 +task.load_task_from_paths() looks for an ``evaluator.py``/``evaluate.py`` in the
@@ -66,8 +66,15 @@ index 0000000..f0487c4
 +``FrontierCSEvaluator`` requires ``track`` and ``problem_id``. examples/_common.py
 +exports those as the env vars ``FCS_TRACK`` / ``FCS_PROBLEM_ID`` for fcs_alg_* /
 +fcs_res_* problems; this thin subclass reads them so the no-arg instantiation works.
++
++If ``FCS_JUDGE_ROOT`` is set (research track), scoring goes through the same out-of-process judge
++daemon used for the Nous/Claude arms (inbox/outbox handshake, local problem evaluator), because the
++Frontier-CS docker research backend does not run on this host.
 +"""
 +import os
++import time
++import uuid
++from pathlib import Path
 +
 +from SystemBench.FrontierCS.frontier_cs_evaluator import FrontierCSEvaluator
 +
@@ -80,6 +87,42 @@ index 0000000..f0487c4
 +            problem_id=os.environ["FCS_PROBLEM_ID"],
 +            **kwargs,
 +        )
++
++    def run_simulation(self, design_config, scenario):
++        root = os.environ.get("FCS_JUDGE_ROOT")
++        if not root or self.track != "research":
++            return super().run_simulation(design_config, scenario)
++        code = None
++        for cb in getattr(design_config, "code_blocks", []) or []:
++            if cb.name == self.target_name:
++                code = str(cb.implementation)
++                break
++        if code is None:
++            return {"success": False, "score": 0.0, "metrics": {"combined_score": 0.0, "runs_successfully": 0.0},
++                    "info": {}, "error": f"No implementation found for {self.target_name}",
++                    "error_type": "missing_code", "sim_dir": None}
++        tok = f"e{uuid.uuid4().hex[:12]}"
++        inbox, outbox = Path(root) / "inbox", Path(root) / "outbox"
++        tmp = inbox / f".{tok}.tmp"
++        tmp.write_text(code)
++        tmp.rename(inbox / f"{tok}.py")
++        t0 = time.time()
++        res = outbox / f"{tok}.score"
++        while not res.exists() and time.time() - t0 < 900:
++            time.sleep(1)
++        score = 0.0
++        if res.exists():
++            try: score = float(res.read_text().split(":", 1)[1])
++            except (ValueError, IndexError): score = 0.0
++            res.unlink()
++        ok = score > 0
++        return {"success": ok, "score": score,
++                "metrics": {"combined_score": score, "score_unbounded": score,
++                            "duration_seconds": time.time() - t0, "runs_successfully": 1.0 if ok else 0.0},
++                "info": {"track": self.track, "problem_id": str(self.problem_id)},
++                "error": "" if ok else "score 0 (invalid solution, exploit, or evaluator error)",
++                "error_type": "" if ok else "evaluation_failed", "sim_dir": None,
++                "stdout": f"SCORE: {score}", "stderr": ""}
 diff --git a/examples/single_agent_example_usage.py b/examples/single_agent_example_usage.py
 index 8d3ddeb..647d4fc 100644
 --- a/examples/single_agent_example_usage.py
