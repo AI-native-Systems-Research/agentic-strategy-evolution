@@ -140,7 +140,9 @@ def main():
     prof.write_text('(version 1)\n(allow default)\n'
                     + "".join(f'(deny file-read* (subpath "{rr(d)}"))\n' for d in deny)
                     + "".join(f'(allow file-read* (subpath "{p_}"))\n' for p_ in allow)
-                    + f'(allow file-read* (regex #"^{re.escape(rr(home))}/\\.claude/projects/{re.escape(proj_key)}"))\n')
+                    + f'(allow file-read* (regex #"^{re.escape(rr(home))}/\\.claude/projects/{re.escape(proj_key)}"))\n'
+                    # git worktree add must stat parent dirs; metadata only (no file contents)
+                    + '(allow file-read-metadata)\n')
     # fmeasure: inbox/outbox handshake (no direct ~/frontier access)
     fm = ws.parent/f"fmeasure_{a.slug}.sh"
     fm.write_text("#!/bin/bash\n"
