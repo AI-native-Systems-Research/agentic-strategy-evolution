@@ -67,9 +67,8 @@ each task until cumulative spend hits **$50** or the score maxes out, then repor
 **(best score, actual $ spent, wall-clock)**.
 - **No other stopping condition.** No plateau/patience early-stop, no self-stop, and no secondary cap
   (round/agent/iteration limits) that would bind *before* $50. If you set `--rounds`/`--agents`, set them
-  high enough that **the $50 budget is the binding limit**. (Lesson 2026-10-09: the first research
-  api-loop runs wrongly stopped at $3–31 because `--budget` was 30, `--rounds` bound first, and Engram
-  had a `patience` plateau-stop. All three are now removed; `research_apiloop.py` runs to budget only.)
+  high enough that **the $50 budget is the binding limit** (set `--rounds`/`--niters`/`--max-turns` high;
+  a secondary cap binding before $50 under-runs the agent and breaks iso-cost).
 - **Cost ruler (iso-cost):** cost = **tokens × fixed $15/$75 per M (cache-aware), model-independent**,
   identical for every variant and tier (see §0 invariant 2). Never use the SDK/provider model-aware cost.
 - Algorithmic tasks: scored on **our go-judge, 0–100** (continuous partial credit).
@@ -203,10 +202,10 @@ Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
 > Nous wraps. The Nous numbers (agent, sandboxed) are valid. **To-do: re-run Claude/Engram with
 > `gen/claude_code_research_runner.py` (sandboxed agent) and replace these.**
 
-| task | Nous | Claude (api-loop ⚠invalid) | Engram (api-loop ⚠invalid) | notes |
+| task | Nous (sandboxed agent) | Claude | Engram | notes |
 |---|---|---|---|---|
-| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | 56.3 / $50.7 | 63.8 / $50.1 | Nous = sandboxed agent @ true $50 |
-| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | 55.3 / $50.1 | 55.4 / $50.0 | Nous valid; trivial baseline=25.4; oracle≈90 |
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | TBD (agent re-run) | TBD (agent re-run) | Nous valid @ true $50 |
+| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | TBD (agent re-run) | TBD (agent re-run) | Nous valid; trivial baseline=25.4; oracle≈90 |
 
 - **Nous (sandboxed agent) wins both** on the (to-be-redone) comparison; cost higher ($51–54) because it
   iterates with repeated measurement via tools.
@@ -225,23 +224,23 @@ Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
   `gen/claude_code_research_runner.py` (Claude, sandboxed agent). AIDE N/A (algorithmic-only adapter).
   **⚠ The earlier Claude/Engram research numbers used the deprecated `gen/research_apiloop.py` chat
   loop (NOT the agent) and are invalid pending agent re-runs (§0).**
-- **How to run (score-metric research, $50-or-max, 2 at a time across the two endpoints):**
+- **How to run (score-metric research, $50-or-max, 2 at a time across the two endpoints).** Both arms
+  are the sandboxed agent, token-capped $15/$75:
   ```bash
   # one-time eval setup per task: build the local .evalvenv + materialize datasets
   python3 -m venv <FR>/research/problems/<task>/.evalvenv && <...>/.evalvenv/bin/pip install coverage   # grammar_fuzzing
   #   llm_router: pip install pandas; then bash <FR>/research/problems/llm_router/download_datasets.sh
-  # Claude / Engram (API-loop, isolated by construction) — run to a TRUE $50:
-  env -u ANTHROPIC_AUTH_TOKEN OPENAI_BASE_URL=$U OPENAI_API_KEY=$K .venv/bin/python -u \
-    experiments/frontiercs/gen/research_apiloop.py <task> --agent claude|engram \
-    --budget 50 --rounds 200 --agents 100 --rounds-per-agent 3 \
-    --out-dir experiments/frontiercs/runs/research/<slug>/<agent> --out <preds>/<slug>.<agent>.research.json
-  # Nous (SANDBOXED) — exploit-audited:
-  env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=$U ANTHROPIC_API_KEY=$K OPENAI_BASE_URL=$U OPENAI_API_KEY=$K \
-    .venv/bin/python -u experiments/frontiercs/gen/nous_research_isolated.py <task> --slug <slug>_iso --niters 8 \
-    --out <preds>/<slug>.nous.research.json
+  # Claude (SANDBOXED AGENT) on vpc-int:
+  env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=$VPCINT ANTHROPIC_API_KEY=$VPCINT_KEY \
+    python3 -u experiments/frontiercs/gen/claude_code_research_runner.py <task> --slug <slug> \
+    --model <model> --budget 50 --out-dir experiments/frontiercs/runs/<slug>/claude --out <preds>/<slug>.claude.json
+  # Nous (SANDBOXED AGENT) on vpc:
+  env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL=$VPC ANTHROPIC_API_KEY=$VPC_KEY OPENAI_BASE_URL=$VPC OPENAI_API_KEY=$VPC_KEY \
+    python3 -u experiments/frontiercs/gen/nous_research_cap.py <task> --slug <slug> \
+    --model <model> --budget 50 --niters 30 --out <preds>/<slug>.nous.json --logdir ~/frontier/gen_logs
   ```
-  Endpoints used: grammar_fuzzing api-loop on **vpc-int**, llm_router api-loop on **vpc**; Nous on the
-  opposite endpoint of each. $50 enforced by `--budget` (api-loop, in-loop) + `/tmp/iso_costcap.sh` (Nous).
+  Run Nous and Claude on OPPOSITE endpoints (vpc / vpc-int). $50 is enforced by the launchers' own
+  token-based cap (tokens × $15/$75), identical for both.
 - **Verify / re-judge (IMPORTANT):** re-score a persisted solution with the problem's own evaluator,
   **running from the problem dir** (solutions read `resources/…` via *relative* paths; wrong cwd →
   llm_router silently falls back to a constant router ≈25.4). The eval is deterministic:
