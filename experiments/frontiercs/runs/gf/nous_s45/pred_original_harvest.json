@@ -1,0 +1,61 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_s45",
+  "model": "aws/claude-sonnet-4-5",
+  "final_score": 39.98,
+  "cost_usd": 11.16,
+  "n_clean_candidates": 9,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-dose-response-60.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-ablation.patch",
+      "score": 38.44895731882319
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-dose-response-15.patch",
+      "score": 39.27467502766808
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-dose-response-30.patch",
+      "score": 38.91259247993789
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-dose-response-60.patch",
+      "score": 39.98234889725008
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-main.patch",
+      "score": 39.18165417217959
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-3/patches/h-ablation.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-3/patches/h-dose-response.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-3/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_s45_ws/solution.py",
+      "score": 36.67687542683891
+    }
+  ],
+  "elapsed_s": 5163.5,
+  "cost_usd_tokenbased": 56.2,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true
+}

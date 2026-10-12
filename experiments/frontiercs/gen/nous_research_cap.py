@@ -3,7 +3,7 @@
 
 Why a separate file: nous_research_isolated.py is iteration-capped and reports the SDK's model-aware
 ``cost_usd``. For the iso-cost model-scaling study we need the Nous research arm to count dollars the
-SAME way as the Claude research arm (research_apiloop.py), which is ``tokens x fixed $15/$75`` regardless
+SAME way as the Claude research arm (claude_code_research_runner.py), which is ``tokens x fixed $15/$75`` regardless
 of model. Using the SDK's cost would give Nous ~5x more Sonnet tokens than Claude for the same $50
 (Sonnet lists at $3/$15, Opus at $15/$75; the fix only matters at the Sonnet tier — Opus already lands
 on $15/$75, so this wrapper is a no-op there). This wrapper does NOT modify the isolated runner; it just:
@@ -27,7 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ISO = HERE / "nous_research_isolated.py"
 
-# SAME fixed rates as research_apiloop.py / claude_code_runner.py (Anthropic list, cache-aware).
+# SAME fixed rates as claude_code_research_runner.py / claude_code_runner.py (Anthropic list, cache-aware).
 R_IN, R_OUT, R_CW, R_CR = 15/1e6, 75/1e6, 18.75/1e6, 1.5/1e6
 
 

@@ -5,60 +5,34 @@ wins. Branch: **`aiopslab`** (AI-native-Systems-Research/agentic-strategy-evolut
 
 ---
 
-## 0. Invariants (MANDATORY for every run) — single source of truth
+## 0. Golden rules (MANDATORY for every run)
 
-Four rules hold for EVERY task and EVERY variant. No per-track exceptions, no shortcuts.
+1. **Every agent runs as-is.** Nous as-is, real Engram (mit-nms) as-is, real AIDE (Weco aideml) as-is,
+   and Claude = the **Claude Code agent** (`claude -p` with tools). No reimplementations, no chat/api
+   loops. (The old api-loop runner and our Engram reimplementation were removed 2026-10-12, along with
+   every pred they produced.)
+2. **Iso-cost: $50 cap for every run.** Stop at $50 OR max score, nothing else (§1). Cost = tokens ×
+   fixed $15/$75 per M (cache-aware), model-independent, computed the same way for every agent.
+3. **No cheating.** Every agent runs sandboxed: `sandbox-exec` denies reads of judge, answer, engine,
+   dataset, and prior-solution paths; web tools are disallowed; scoring goes through an out-of-sandbox
+   judge daemon; every harvested solution is exploit-audited and independently re-judged.
+4. **Docs stay current.** This README is the single source of truth; update it with every result.
 
-1. **Every variant is the SAME off-the-shelf agent (Claude Code: `claude -p` / Agent SDK), differing
-   only by harness.** Baselines = Nous, Claude, Engram, AIDE — all tool-using agents. There is NO
-   "chat api-loop" baseline. (`gen/research_apiloop.py` is **DEPRECATED**; the Claude baseline is the
-   agent, `gen/claude_code_runner.py` for algorithmic and `gen/claude_code_research_runner.py` for
-   research.)
-2. **Iso-cost = ONE ruler.** Stop at **$50 OR max score**, nothing else (§1). Cost = **tokens × FIXED
-   $15/$75 per M (cache-aware), model-INDEPENDENT**, computed identically for every variant and tier.
-   Do NOT trust the SDK/provider model-aware cost (it prices Sonnet ~5× cheaper than Opus → would hand
-   one arm more tokens for the same "$50"). The cap launchers compute this token-cost themselves.
-3. **Every variant runs under a HARD SANDBOX with validated no-cheating.** A tool agent on a shared
-   filesystem *will* exploit ground truth if it can read it (proven: algorithmic p0 read `testdata/*.ans`;
-   un-sandboxed Nous gamed grammar_fuzzing via a `sys.meta_path` import hook → bogus 99.6, and gamed
-   llm_router by reading the labeled test CSV → bogus 75.0). Required for ALL variants:
-   **`sandbox-exec` denying read** of judge/answer/engine/dataset/prior-solution paths
-   (`~/frontier/Frontier-CS/research`, `.../datasets`, algorithmic `testdata`, prior `solution.*`)
-   + an **out-of-sandbox judge daemon** (agent measures via `fmeasure`, never touching those paths)
-   + a **post-harvest exploit audit** (reject import-hooks / engine-internal calls / label-file reads).
-   Validate the sandbox held: confirm "Operation not permitted" denials in the executor log, and
-   independently re-judge the harvested solution.
-4. **Everything documented + kept current.** This README is the single source of truth; results tables
-   (`BEST_AT_50.md`) and runners stay in sync. Stale/invalid data is flagged, not left to mislead.
+**Canonical runners:**
 
-**Canonical runners (all = sandboxed agent, token-capped $15/$75, cheat-audited):**
+| track | Nous | Claude (agent) | Engram | AIDE |
+|---|---|---|---|---|
+| algorithmic | `gen/nous_cap_launch.py` | `gen/claude_code_runner.py` | `gen/monitoring/engram_cost_cap.sh` | `gen/aide_frontier.py` |
+| research | `gen/nous_research_cap.py` | `gen/claude_code_research_runner.py` (cloudcast: `gen/claude_research_runner.py`) | `gen/monitoring/engram_cost_cap.sh` | N/A |
 
-| track | Nous | Claude baseline |
-|---|---|---|
-| algorithmic | `gen/nous_cap_launch.py` (sandbox-exec + `judge_server.py` daemon) | `gen/claude_code_runner.py` |
-| research | `gen/nous_research_cap.py` (wraps `gen/nous_research_isolated.py`) | `gen/claude_code_research_runner.py` |
+**Nous harvest (fixed 2026-10-12):** Nous deletes arm worktrees after each iteration and its patches
+miss untracked files, so the research judge daemon now archives every measured solution to
+`~/frontier/gen_logs/research_<slug>_measured_<ts>/`, and the harvester re-judges those plus
+`runs/iter-*/inputs/*.py`. (gf Sonnet run lost its best code this way; recovered from the Agent SDK
+transcript and re-judged: 59.56, not the originally harvested 39.98.)
 
-**⚠ DEPRECATED / INVALID:** `gen/research_apiloop.py` is a chat api-loop (single LLM call per round, no
-tools) — it is NOT the agent and must not be used as a baseline. All research Claude/Engram preds
-produced by it (`gf_seed_sql.*`, `gf_fuzzer_sql.*`, `llm_router.*`, `cloudcast.*claude/engram*`) are
-**INVALID pending re-run with the agent runner** (`claude_code_research_runner.py`). The old framing
-"API-loop agents are isolated by construction" is retired — isolation is now the hard sandbox for every
-variant.
-
-Legacy prompt-ban + audit (kept as a backstop for lower-risk cases; NOT sufficient on its own for tool
-agents):
-
-1. **Prompt ban:** every agent prompt explicitly forbids reading/using testdata, answer files, or any
-   pre-existing solution (see claude_code_runner.py prompt; add the same to any new runner).
-2. **Mandatory audit after EVERY run** — grep the agent's full command/transcript log for forbidden access:
-   `grep -niE "testdata|\.ans\b|/problems/[0-9]+/testdata|nous_runs|gen_logs" <console-or-transcript>`
-   A run with any real hit is **rejected and re-done**. (Claude: transcript jsonl; Engram: console_output.log;
-   AIDE: it only generates code, lower risk, still spot-check.)
-3. **Independent re-score:** surprising/high scores (esp. on gate tasks) are re-scored on our go-judge from
-   the harvested solution, to confirm the number is real and not a judge artifact.
-
-Audited so far (2026-10-06): Engram re-runs p0/p5/p9/p15/p22 = CLEAN; p15/p22=100 independently re-scored
-on our judge = confirmed legit (not cheating). Claude runner has prompt-ban + built-in audit.
+Audit after every run: grep the agent transcript for `testdata|\.ans\b|nous_runs|gen_logs` (algorithmic)
+or exploit signatures (research); any real hit rejects the run.
 
 ## 1. The rule (same for every agent) — NON-NEGOTIABLE
 
@@ -74,7 +48,7 @@ each task until cumulative spend hits **$50** or the score maxes out, then repor
 - Algorithmic tasks: scored on **our go-judge, 0–100** (continuous partial credit).
 - Research tasks: **task-specific metric** (e.g. cloudcast = $ transfer cost lower-better; grammar_fuzzing
   / llm_router = score higher-better).
-- Same model everywhere: **claude-opus-4-6**. Uniform pricing for token accounting: **$15/M in, $75/M out**.
+- Main comparison model: **claude-opus-4-6** (model-scaling study adds aws/claude-sonnet-4-5 and aws/claude-opus-5). Uniform pricing for token accounting: **$15/M in, $75/M out**.
 
 ### ⚠ STANDING FIX — disallow WebSearch on every Claude Code CLI run (LiteLLM gateway gotcha, 2026-10-09)
 
@@ -100,7 +74,7 @@ can still hit this.)
 
 | Agent | What it is | How it's run |
 |---|---|---|
-| **Nous** | Our scientific-loop harness (hypothesis → experiment → analyze), wrapping the Claude Agent SDK | `gen/frontier_gen_costbudget.py <pid> --agent nous` (see §5 for the full env) |
+| **Nous** | Our scientific-loop harness (hypothesis → experiment → analyze), wrapping the Claude Agent SDK | `gen/nous_cap_launch.py <pid>` (algorithmic; drives `frontier_gen_costbudget.py --agent nous`) / `gen/nous_research_cap.py` (research) |
 | **Engram** | mit-nms/Engram **as-is** (`agentic_handoff`: sequential fresh-context agents + research journal/KB), + our small Frontier-CS patch | **`gen/monitoring/engram_cost_cap.sh <alg_id> 50`** (NOT bare run_engram.sh — see cost warning below) |
 | **AIDE** | Weco aideml **as-is** (tree search: draft/debug/improve), + our small Frontier-CS adapter | `gen/aide_frontier.py <pid> --budget 50 --ceiling 99.5 --steps 80` |
 | **Claude** | **Real Claude Code CLI itself** — plain `claude -p`, opus-4-6, Bash/Read/Write/Edit + a measure.sh judge, iterates until **$50 or score 100** (resumes via `--continue`, never self/plateau-stops). No Nous loop, no harness. See §5.1 for exact flags/prompt/stopping. | **`gen/claude_code_runner.py <pid> --budget 50 --max-score 100 --out-dir runs/p<pid>/claude`** |
@@ -195,20 +169,25 @@ Research — cost-metric (cloudcast = $ transfer cost, LOWER better):
 |---|---|---|---|---|---|
 | cloudcast | **$626** / $9.89 | ~$942 / $59 | 659 / $50 ✓iso | N/A | naive $1046 |
 
-Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
+Research — score-metric (higher better; score / LLM-$), opus-4-6:
 
-> **⚠ Claude/Engram columns below are INVALID (api-loop, not the agent) — see §0.** They were produced
-> by the deprecated `gen/research_apiloop.py` (chat loop, no tools), which is NOT the Claude Code agent
-> Nous wraps. The Nous numbers (agent, sandboxed) are valid. **To-do: re-run Claude/Engram with
-> `gen/claude_code_research_runner.py` (sandboxed agent) and replace these.**
-
-| task | Nous (sandboxed agent) | Claude | Engram | notes |
+| task | Nous | Claude (agent) | Engram (real) | notes |
 |---|---|---|---|---|
-| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | TBD (agent re-run) | TBD (agent re-run) | Nous valid @ true $50 |
-| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | TBD (agent re-run) | TBD (agent re-run) | Nous valid; trivial baseline=25.4; oracle≈90 |
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | TBD (re-run queued) | TBD (re-run queued) | old api-loop baselines removed |
+| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | TBD (re-run queued) | TBD (re-run queued) | trivial baseline=25.4; oracle≈90 |
 
-- **Nous (sandboxed agent) wins both** on the (to-be-redone) comparison; cost higher ($51–54) because it
-  iterates with repeated measurement via tools.
+Model-scaling study — grammar_fuzzing/seed/sql, Nous vs Claude agent, iso-$50 (re-judged clean best):
+
+| model | Nous | Claude (agent) | status |
+|---|---|---|---|
+| aws/claude-sonnet-4-5 | **59.56** / $56.2 | running (best 53.9 @ ~$11) | Nous done; Claude running |
+| aws/claude-opus-5 | running | queued | Nous launched 2026-10-12 16:50 (vpc) |
+
+Nous Sonnet note: cost overshot to $56.20 (one large metrics jump from $43.89 past the cap). Best =
+iter-5 `h-dose-37` (59.56; iter-5 `h-main` 59.51), recovered from the Agent SDK transcript, re-judged
+twice, 0 exploits. Files: `runs/gf/nous_s45/recovered_iter5/`; original harvest kept at
+`runs/gf/nous_s45/pred_original_harvest.json`.
+
 - **⚠ Isolation was essential for Nous here (issue mirrors algorithmic p0 cheating).** The FIRST,
   un-sandboxed Nous research run **gamed both tasks** and was REJECTED: on grammar_fuzzing it used a
   Python import hook (`sys.meta_path`) to call `sql_engine` internals directly (inflating coverage to a
@@ -222,8 +201,6 @@ Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
   **0 exploit candidates** — the sandbox forced legitimate black-box optimization. Runners:
   `gen/nous_research_cap.py` → `gen/nous_research_isolated.py` (Nous, sandboxed agent),
   `gen/claude_code_research_runner.py` (Claude, sandboxed agent). AIDE N/A (algorithmic-only adapter).
-  **⚠ The earlier Claude/Engram research numbers used the deprecated `gen/research_apiloop.py` chat
-  loop (NOT the agent) and are invalid pending agent re-runs (§0).**
 - **How to run (score-metric research, $50-or-max, 2 at a time across the two endpoints).** Both arms
   are the sandboxed agent, token-capped $15/$75:
   ```bash
@@ -247,10 +224,9 @@ Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
   ```bash
   cd <FR>/research/problems/<task> && .evalvenv/bin/python3 evaluator.py --solution <sol.py> --out /tmp/x.json
   ```
-  Confirmed reproductions: gf Nous 86.9 / Claude 56.3 / Engram 63.8; llm_router Nous 59.7 / Claude 55.3 /
-  Engram 55.4. Sandbox-held check: grep the Nous run's `runs/iter-*/inputs/executor_log.jsonl` for
+  Confirmed reproductions: gf Nous 86.9; llm_router Nous 59.7. Sandbox-held check: grep the Nous run's `runs/iter-*/inputs/executor_log.jsonl` for
   "Operation not permitted" (the agent tried to read the engine/datasets and was denied).
-- **Artifact paths:** preds `experiments/frontiercs/artifacts/preds/{gf_seed_sql,llm_router}.{nous,claude,engram}.research.json`
+- **Artifact paths:** preds `experiments/frontiercs/artifacts/preds/{gf_seed_sql,llm_router}.nous.research.json`, scaling preds `gf_seed_sql.{nous,claude}.{s45,o5}.json`
   (+ `llm_sql_small.NOTE.json`); per-trial solutions `experiments/frontiercs/runs/research/<slug>/<agent>/trials/`;
   Nous campaigns `~/frontier/gen_logs/nous_runs/research-<slug>-iso/` (patches under `runs/iter-*/patches/`);
   local evaluators `~/frontier/Frontier-CS/research/problems/<task>/.evalvenv`.
@@ -425,6 +401,14 @@ thinking-OFF answers in seconds).
 
 ## 6. TODO / remaining work
 
+**CURRENT PLAN (2026-10-12):**
+1. gf model scaling: finish Claude Sonnet (running), then Opus-5 pair (Nous running on vpc; Claude on vpc-int next).
+2. Research baselines on opus-4-6: Claude agent + real Engram on grammar_fuzzing and llm_router
+   (replacing the removed api-loop numbers).
+3. Keep this README + BEST_AT_50.md current; commit + push to `aiopslab` after each result.
+
+(Older status notes below are history.)
+
 **STATUS 2026-10-08 — where we actually are:**
 - ✅ **Algorithmic (p0,p5,p9,p15,p22,p47): COMPLETE for all 4 agents** (Nous, AIDE, Engram-capped,
   raw-Claude isolated). Table in §4 is current. Nous p0 resolved to **89.1 / $47** (clean $50 rerun,
@@ -500,7 +484,7 @@ thinking-OFF answers in seconds).
     duplicates cloudcast's `ai` tag → lower priority than the two above.
   - **poc_generation** (tag `security`): CPU-feasibility NOT yet verified — check before committing.
   **Recommended 2 to add next: grammar_fuzzing (pl) + llm_sql (db)** → research spans ai/db/pl.
-  Run Nous, Engram, Claude (AIDE N/A). Research runner = `gen/frontier_research_gen.py`; eval =
+  Run Nous, Engram, Claude (AIDE N/A). Research runners = §0 table; eval =
   `frontier eval research <name> <sol.py> --backend docker`. Claude runner is algorithmic-only → needs a
   research measure.sh variant (wrap `frontier eval research`).
 - [ ] CP6 variance (3× reruns of a subset); CP7 stronger-model (opus5).
@@ -520,7 +504,7 @@ thinking-OFF answers in seconds).
 
 ## 7. Where everything lives
 
-- **Runners:** `gen/frontier_gen_costbudget.py` (algorithmic: nous/claude-chat/engram-style), `gen/frontier_research_gen.py` (research), `gen/aide_frontier.py` (AIDE), `gen/monitoring/`.
+- **Runners:** see the §0 canonical-runner table (all as-is agents). Monitoring helpers: `gen/monitoring/`.
 - **Per-agent result JSONs:** `aide_gates/preds/`, `artifacts/preds/` (originals), `nous_gates/preds/`.
 - **Raw logs + per-iteration artifacts (NOT in repo — too large):** `~/frontier/gen_logs/` (and `~/frontier/gen_logs_b/`). Nous per-run: `~/frontier/gen_logs/nous_runs/<slug>/runs/iter-*/` (inputs/solution.cpp, results/score.txt, design_log.md, executor_log.jsonl, llm_metrics.jsonl).
 - **Detailed/historical docs:** `NOUS_RUN_NOTES.md` (Nous run recipe + fix history), `todo.md` (checkpoint history), `BEST_AT_50.md` / `RESULTS.md` (older detailed writeups — superseded by this file for the headline numbers).
