@@ -5,7 +5,7 @@ otherwise run with full file access and could copy engine source / data into a p
 read (e.g. /tmp). Here every evaluation runs under sandbox-exec with no network and no file writes
 except a private scratch dir that is deleted afterwards. Only the score leaves.
 """
-import json, os, re, shlex, shutil, subprocess, tempfile
+import json, os, shlex, shutil, subprocess, tempfile
 from pathlib import Path
 
 
@@ -14,19 +14,24 @@ def evaluate(evalpy, problem_dir, solution_code, timeout=600):
     priv = Path(tempfile.mkdtemp(prefix="fcsj_"))
     try:
         sol = priv / "solution.py"; sol.write_text(solution_code)
+        # private working copy of the problem dir: small files copied, dirs symlinked (read-only via sandbox),
+        # so evaluator side files (.coverage, output_program.py, results.json) stay private and runs never collide
+        work = priv / "problem"; work.mkdir()
+        for e in Path(problem_dir).iterdir():
+            if e.name in (".evalvenv", "__pycache__") or e.name.startswith(".coverage"): continue
+            if e.is_dir(): (work / e.name).symlink_to(e.resolve())
+            else: shutil.copy2(e, work / e.name)
         out = priv / "out.json"
         prof = priv / "judge.sb"
         rp = os.path.realpath(priv)
         prof.write_text("(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n"
                         f'(allow file-write* (subpath "{rp}"))\n'
-                        # coverage.py writes .coverage* next to the evaluator (agents cannot read that dir)
-                        f'(allow file-write* (regex #"^{re.escape(os.path.realpath(problem_dir))}/\\.coverage"))\n'
                         '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (regex #"^/dev/tty"))\n')
         env = dict(os.environ, TMPDIR=rp, HOME=rp, PYTHONDONTWRITEBYTECODE="1", MPLCONFIGDIR=rp)
         cmd = (f"sandbox-exec -f {shlex.quote(str(prof))} {shlex.quote(str(evalpy))} "
-               f"{shlex.quote(str(Path(problem_dir)/'evaluator.py'))} --solution {shlex.quote(str(sol))} --out {shlex.quote(str(out))}")
+               f"{shlex.quote(str(work/'evaluator.py'))} --solution {shlex.quote(str(sol))} --out {shlex.quote(str(out))}")
         try:
-            subprocess.run(cmd, shell=True, cwd=str(problem_dir), env=env, capture_output=True, text=True, timeout=timeout)
+            subprocess.run(cmd, shell=True, cwd=str(work), env=env, capture_output=True, text=True, timeout=timeout)
             return json.loads(out.read_text())
         except (subprocess.TimeoutExpired, OSError, ValueError):
             return {}

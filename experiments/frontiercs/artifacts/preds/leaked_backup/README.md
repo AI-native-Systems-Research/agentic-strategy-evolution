@@ -13,3 +13,13 @@ that judged "solutions" had dumped there (see README §0 "Judge side channel").
 
 All four are being re-run with the sandboxed judge (gen/judge_sandbox.py). The /tmp dumps were moved
 to ~/frontier/_quarantine_tmp_20261012/.
+
+## cloudcast (added 2026-10-12)
+
+| result | value | evidence |
+|---|---|---|
+| Nous cloudcast.nous.json (Oct 1, before any sandbox) | $626 | 82 /tmp probe/eval-dump uses (probe_costs*.py, cloudcast_eval.json, milp_*.json) |
+| Claude runs/cloudcast/claude (pred.json kept in place) | $659 | judged solution wrote per-scenario test configs to /tmp/cloudcast_debug.txt; agent read it 11x |
+
+Both queued for re-run on the sandboxed judge (gen/nous_research_cap.py / gen/claude_code_research_runner.py,
+task `cloudcast`; total_cost reproduces under the sandbox: attempt_26 = $659.15).
