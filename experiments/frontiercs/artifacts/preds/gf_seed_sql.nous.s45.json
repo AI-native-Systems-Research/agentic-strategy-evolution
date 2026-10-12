@@ -1,0 +1,135 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_s45",
+  "model": "aws/claude-sonnet-4-5",
+  "final_score": 59.56,
+  "cost_usd": 11.16,
+  "n_clean_candidates": 27,
+  "n_rejected_exploits": 0,
+  "best_source": "experiments/frontiercs/runs/gf/nous_s45/recovered_iter5/h-dose-37-solution.py",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-ablation.patch",
+      "score": 38.44895731882319
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-dose-response-15.patch",
+      "score": 39.27467502766808
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-dose-response-30.patch",
+      "score": 38.91259247993789
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-dose-response-60.patch",
+      "score": 39.98234889725008
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-1/patches/h-main.patch",
+      "score": 39.18165417217959
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-3/patches/h-ablation.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-3/patches/h-dose-response.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-3/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_s45_ws/solution.py",
+      "score": 36.67687542683891
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-2/inputs/h-control-negative.py",
+      "score": 30.3
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-2/inputs/h-dose-response-12.py",
+      "score": 44.24
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-2/inputs/h-dose-response-18.py",
+      "score": 47.82
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-2/inputs/h-dose-response-24.py",
+      "score": 51.3
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-2/inputs/h-main.py",
+      "score": 51.84
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-4/inputs/h-dose-30.py",
+      "score": 55.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-4/inputs/h-dose-32.py",
+      "score": 54.92
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-4/inputs/h-dose-35.py",
+      "score": 58.25
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-4/inputs/h-dose-38.py",
+      "score": 57.5
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-4/inputs/h-main-33.py",
+      "score": 58.12
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45/runs/iter-4/inputs/h-robustness-33.py",
+      "score": 50.18
+    },
+    {
+      "src": "experiments/frontiercs/runs/gf/nous_s45/recovered_iter5/h-ablation-solution.py",
+      "score": 55.72
+    },
+    {
+      "src": "experiments/frontiercs/runs/gf/nous_s45/recovered_iter5/h-dose-34-solution.py",
+      "score": 58.13
+    },
+    {
+      "src": "experiments/frontiercs/runs/gf/nous_s45/recovered_iter5/h-dose-35-solution.py",
+      "score": 58.25
+    },
+    {
+      "src": "experiments/frontiercs/runs/gf/nous_s45/recovered_iter5/h-dose-36-solution.py",
+      "score": 58.59
+    },
+    {
+      "src": "experiments/frontiercs/runs/gf/nous_s45/recovered_iter5/h-dose-37-solution.py",
+      "score": 59.56
+    },
+    {
+      "src": "experiments/frontiercs/runs/gf/nous_s45/recovered_iter5/h-main-solution.py",
+      "score": 59.51
+    },
+    {
+      "src": "experiments/frontiercs/runs/gf/nous_s45/recovered_iter5/h-super-additivity-solution.py",
+      "score": 56.74
+    }
+  ],
+  "elapsed_s": 5163.5,
+  "cost_usd_tokenbased": 56.2,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true,
+  "harvest_fix_note": "Original harvest only reconstructed patches/*.patch -> 39.98. From iter-2 on Nous stored code in runs/iter-N/inputs/*.py (iter-2,4) or untracked worktree files deleted at cleanup (iter-5). iter-5 code recovered verbatim from Agent SDK transcript ~/.claude/projects/...iter-5-e03bb04c/1747da49....jsonl (full Write inputs, no edits). All candidates re-judged with judge_clean (exploit audit + real evaluator, out of sandbox) on 2026-10-12; top-2 judged twice, identical. Original pred saved at runs/gf/nous_s45/pred_original_harvest.json.",
+  "original_harvest_final_score": 39.98
+}

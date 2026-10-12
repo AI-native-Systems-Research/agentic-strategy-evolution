@@ -1,0 +1,326 @@
+class Solution:
+    def solve(self, spec_path=None):
+        code = r'''
+import networkx as nx
+from collections import defaultdict
+import time
+
+class BroadCastTopology:
+    def __init__(self, src, dsts, num_partitions):
+        self.src = src
+        self.dsts = dsts
+        self.num_partitions = int(num_partitions)
+        self.paths = {dst: {str(i): None for i in range(self.num_partitions)} for dst in dsts}
+
+    def append_dst_partition_path(self, dst, partition, path):
+        partition = str(partition)
+        if self.paths[dst][partition] is None:
+            self.paths[dst][partition] = []
+        self.paths[dst][partition].append(path)
+
+    def set_dst_partition_paths(self, dst, partition, paths):
+        partition = str(partition)
+        self.paths[dst][partition] = paths
+
+    def set_num_partitions(self, num_partitions):
+        self.num_partitions = num_partitions
+
+def _provider(node):
+    return node.split(":")[0] if ":" in node else ""
+
+def _remove_cycles(path):
+    seen = {}
+    result = []
+    for n in path:
+        if n in seen:
+            result = result[:seen[n]]
+        seen[n] = len(result)
+        result.append(n)
+    return result
+
+def search_algorithm(src, dsts, G, num_partitions):
+    bc_topology = BroadCastTopology(src, dsts, num_partitions)
+    t0 = time.time()
+    TL = 55
+
+    egress_limits = {"aws": 5, "gcp": 7, "azure": 16}
+    ingress_limits = {"aws": 10, "gcp": 16, "azure": 16}
+    n_vm = 2
+    r_instance = 0.54
+    s_part_unit = 1.0 / num_partitions  # normalized
+
+    def compute_cost(dst_paths):
+        if not dst_paths or any(d not in dst_paths for d in dsts):
+            return float('inf')
+
+        all_edges = set()
+        all_nodes = set()
+        for d in dsts:
+            path = dst_paths[d]
+            for i in range(len(path) - 1):
+                all_edges.add((path[i], path[i+1]))
+                all_nodes.add(path[i])
+                all_nodes.add(path[i+1])
+
+        # data_vol cancels in ranking, use 300
+        dv = 300
+        sp = dv / num_partitions
+        egress = sum(num_partitions * sp * G[u][v].get("cost", 0) for u, v in all_edges)
+
+        node_out = defaultdict(int)
+        node_in = defaultdict(int)
+        for u, v in all_edges:
+            node_out[u] += 1
+            node_in[v] += 1
+
+        max_time = 0
+        for u, v in all_edges:
+            et = G[u][v].get("throughput", 1.0)
+            el = egress_limits.get(_provider(u), 5) * n_vm
+            il = ingress_limits.get(_provider(v), 10) * n_vm
+            af = min(et, el / max(node_out[u], 1), il / max(node_in[v], 1))
+            te = num_partitions * sp * 8 / max(af, 0.001)
+            max_time = max(max_time, te)
+
+        instance = len(all_nodes) * n_vm * (r_instance / 3600) * max_time
+        return egress + instance
+
+    def build_greedy_steiner(weight_fn):
+        try:
+            src_l, src_p = nx.single_source_dijkstra(G, src, weight=weight_fn)
+        except:
+            return None
+        s_nodes = {src}
+        s_edges = set()
+        remain = [d for d in dsts if d in src_l]
+        cache = {(src, d): (src_l[d], src_p[d]) for d in remain}
+
+        while remain:
+            bd, bp, bc = None, None, float('inf')
+            for d in remain:
+                for sn in list(s_nodes):
+                    k = (sn, d)
+                    if k not in cache:
+                        try:
+                            l, p = nx.single_source_dijkstra(G, sn, target=d, weight=weight_fn)
+                            cache[k] = (l, p)
+                        except:
+                            cache[k] = (float('inf'), None)
+                    l, p = cache[k]
+                    if l < bc:
+                        bc, bp, bd = l, p, d
+            if bd is None or bp is None:
+                break
+            remain.remove(bd)
+            for i in range(len(bp) - 1):
+                s_edges.add((bp[i], bp[i+1]))
+                s_nodes.add(bp[i])
+                s_nodes.add(bp[i+1])
+            for nn in set(bp):
+                for d in remain:
+                    k = (nn, d)
+                    if k not in cache:
+                        try:
+                            l, p = nx.single_source_dijkstra(G, nn, target=d, weight=weight_fn)
+                            cache[k] = (l, p)
+                        except:
+                            cache[k] = (float('inf'), None)
+
+        sub = nx.DiGraph()
+        for u, v in s_edges:
+            sub.add_edge(u, v, **G[u][v])
+        dp = {}
+        for d in dsts:
+            try:
+                dp[d] = nx.dijkstra_path(sub, src, d, weight="cost")
+            except:
+                if d in src_p:
+                    dp[d] = src_p[d]
+        return dp if len(dp) >= len(dsts) else None
+
+    def build_spt(weight_fn):
+        try:
+            _, paths = nx.single_source_dijkstra(G, src, weight=weight_fn)
+        except:
+            return None
+        dp = {d: paths[d] for d in dsts if d in paths}
+        return dp if len(dp) == len(dsts) else None
+
+    # Weight functions
+    wfs = ["cost"]
+    for a in [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]:
+        wfs.append(lambda u, v, d, a=a: d.get("cost", 0) + a / max(d.get("throughput", 1.0), 0.001))
+    for p in [1.05, 1.1, 1.2, 1.5, 2.0, 3.0]:
+        wfs.append(lambda u, v, d, p=p: d.get("cost", 0) * (p if _provider(u) != _provider(v) else 1.0))
+    for h in [0.0005, 0.001, 0.005, 0.01, 0.05]:
+        wfs.append(lambda u, v, d, h=h: d.get("cost", 0) + h)
+    for a in [0.01, 0.1, 0.5, 1.0]:
+        wfs.append(lambda u, v, d, a=a: d.get("cost", 0) * (1 + a / max(d.get("throughput", 1.0), 0.001)))
+
+    # Generate candidates
+    candidates = []
+    for wf in wfs:
+        if time.time() - t0 > TL * 0.2:
+            break
+        for builder in [build_spt, build_greedy_steiner]:
+            result = builder(wf)
+            if result:
+                candidates.append(result)
+
+    best_cost = float('inf')
+    best_paths = None
+    for cand in candidates:
+        cost = compute_cost(cand)
+        if cost < best_cost:
+            best_cost = cost
+            best_paths = cand
+    if best_paths is None:
+        best_paths = build_spt("cost") or {}
+
+    # --- Local search: k-shortest + edge-sharing bonus ---
+    for rnd in range(20):
+        if time.time() - t0 > TL * 0.45:
+            break
+        improved = False
+        for dst in dsts:
+            if time.time() - t0 > TL * 0.45:
+                break
+            cur_cost = compute_cost(best_paths)
+
+            # Collect edges used by OTHER destinations (for sharing bonus)
+            other_edges = set()
+            other_nodes = set()
+            for d2 in dsts:
+                if d2 == dst:
+                    continue
+                p2 = best_paths.get(d2)
+                if p2:
+                    for i in range(len(p2) - 1):
+                        other_edges.add((p2[i], p2[i+1]))
+                        other_nodes.add(p2[i])
+                        other_nodes.add(p2[i+1])
+
+            # Weight that favors edges already used by other dsts
+            # Sharing an edge doesn't increase node count but does increase fan-out
+            def sharing_weight(u, v, d):
+                c = d.get("cost", 0)
+                if (u, v) in other_edges:
+                    return c * 0.1  # heavily favor shared edges
+                if u in other_nodes:
+                    return c * 0.5  # some bonus for shared nodes
+                return c
+
+            try:
+                share_path = nx.dijkstra_path(G, src, dst, weight=sharing_weight)
+                test = dict(best_paths)
+                test[dst] = share_path
+                c = compute_cost(test)
+                if c < cur_cost - 0.001:
+                    best_paths = test
+                    cur_cost = c
+                    improved = True
+            except:
+                pass
+
+            # k-shortest
+            alts = []
+            try:
+                for p in nx.shortest_simple_paths(G, src, dst, weight="cost"):
+                    alts.append(p)
+                    if len(alts) >= 20:
+                        break
+            except:
+                pass
+            for alt in alts:
+                test = dict(best_paths)
+                test[dst] = alt
+                c = compute_cost(test)
+                if c < cur_cost - 0.001:
+                    best_paths = test
+                    cur_cost = c
+                    improved = True
+        if not improved:
+            break
+
+    # --- Phase 2: reroute through tree nodes ---
+    all_nodes = set()
+    for d in dsts:
+        if d in best_paths:
+            for n in best_paths[d]:
+                all_nodes.add(n)
+
+    sp_cache = {}
+    for n in all_nodes:
+        if time.time() - t0 > TL * 0.6:
+            break
+        try:
+            sp_cache[n] = nx.single_source_dijkstra_path(G, n, weight="cost")
+        except:
+            sp_cache[n] = {}
+
+    for rnd in range(10):
+        if time.time() - t0 > TL * 0.8:
+            break
+        improved = False
+        for dst in dsts:
+            if time.time() - t0 > TL * 0.8:
+                break
+            cur_cost = compute_cost(best_paths)
+            for mid in all_nodes:
+                if mid == src or mid == dst:
+                    continue
+                p1 = sp_cache.get(src, {}).get(mid)
+                p2 = sp_cache.get(mid, {}).get(dst)
+                if not p1 or not p2:
+                    continue
+                combined = _remove_cycles(p1 + p2[1:])
+                if len(combined) < 2 or combined[0] != src or combined[-1] != dst:
+                    continue
+                if not all(G.has_edge(combined[i], combined[i+1]) for i in range(len(combined)-1)):
+                    continue
+                test = dict(best_paths)
+                test[dst] = combined
+                c = compute_cost(test)
+                if c < cur_cost - 0.001:
+                    best_paths = test
+                    cur_cost = c
+                    improved = True
+        if not improved:
+            break
+
+    # --- Phase 3: shortcutting ---
+    for dst in dsts:
+        if time.time() - t0 > TL * 0.9:
+            break
+        path = best_paths.get(dst)
+        if path is None or len(path) <= 2:
+            continue
+        cur_cost = compute_cost(best_paths)
+        for i in range(len(path) - 2):
+            for j in range(i + 2, len(path)):
+                if G.has_edge(path[i], path[j]):
+                    shortcut = path[:i+1] + path[j:]
+                    test = dict(best_paths)
+                    test[dst] = shortcut
+                    c = compute_cost(test)
+                    if c < cur_cost - 0.001:
+                        best_paths = test
+                        cur_cost = c
+                        path = best_paths[dst]
+                        break
+
+    # --- Build topology ---
+    for dst in dsts:
+        path = best_paths.get(dst)
+        if path is None:
+            continue
+        edges = []
+        for i in range(len(path) - 1):
+            if G.has_edge(path[i], path[i+1]):
+                edges.append([path[i], path[i+1], G[path[i]][path[i+1]]])
+        for p in range(num_partitions):
+            bc_topology.set_dst_partition_paths(dst, p, list(edges))
+
+    return bc_topology
+'''
+        return {"code": code}

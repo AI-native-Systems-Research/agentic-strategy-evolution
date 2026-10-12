@@ -9,8 +9,8 @@
 > - **How to run Nous (auth + 900s threshold fixes, launch command):** `NOUS_RUN_NOTES.md`  ← read this before any Nous run
 > - **Results tables:** `BEST_AT_50.md` (iso-$50, our judge) · `RESULTS.md` (full writeup) · `REPRO.md` (repro steps)
 > - **Per-agent result JSONs:** `aide_gates/preds/` · `artifacts/preds/` (originals) · `nous_gates/preds/`
-> - **Runners:** `gen/frontier_gen_costbudget.py` (algorithmic) · `gen/frontier_research_gen.py` (research) · `gen/aide_frontier.py` (AIDE) · `gen/monitoring/`
-> - **Setup/handoff:** `SETUP_NOTES.md` · `RUN_ON_MAC.md` · `SESSION_HANDOFF.md`
+> - **Runners:** see README §0 canonical-runner table (all as-is agents; api-loop/reimpl runners removed 2026-10-12)
+> - **Setup/handoff:** `SETUP_NOTES.md` · `SESSION_HANDOFF.md`
 > - **Raw logs + nous_runs artifacts (NOT in repo, too large):** `~/frontier/gen_logs/` (and `~/frontier/gen_logs_b/`)
 
 ================================================================
@@ -132,7 +132,7 @@ llm_sql->{Nous,Engram,Claude}; poc_generation->{Nous,Engram,Claude}.
 - `--cost-budget 50` is enforced for claude/engram paths but **NOT the nous path** -> for Nous, poll
   cumulative cost from `nous_runs/<slug>/**/llm_metrics.jsonl` and kill at $50 (driver then harvests).
 - Baselines (claude/engram/aide) use the direct chat API, no auth-token issue.
-- **Research runner = `gen/frontier_research_gen.py`** (the algorithmic `frontier_gen_costbudget.py`
+- **(removed 2026-10-12) Research runner was `gen/frontier_research_gen.py`** (the algorithmic `frontier_gen_costbudget.py`
   can't eval research). Research eval is CPU/docker: `frontier eval research <t> <sol.py> --backend docker`.
   Confirmed no GPU/API dep for cloudcast/llm_router/llm_sql; verify poc_generation before long runs.
 
@@ -160,8 +160,7 @@ llm_sql->{Nous,Engram,Claude}; poc_generation->{Nous,Engram,Claude}.
   (determine_provider→openai, query user-slot relocation, extract_code C++-aware). Spec:
   artifacts/mac/AIDE_ADAPTER.md. Smoke proof: artifacts/mac/aide_raw/p44-smoke/, preds/p44.aide-smoke.json.
   TODO add token-cost accounting (wrap aide.backend.query) — it doesn't surface usage.
-- **Nous** = run_campaign via ~/nous_repo (symlink to this repo). Runners: gen/frontier_gen.py,
-  gen/frontier_gen_costbudget.py; research gen/frontier_research_gen.py.
+- **Nous** = run_campaign via ~/nous_repo (symlink to this repo). Runners: see README §0.
 
 ### Nous rerun classification (under the rule)
 - DONE (hit ceiling 100): p1, p9, p15, p22.
