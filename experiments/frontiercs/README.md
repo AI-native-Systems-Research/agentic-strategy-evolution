@@ -51,6 +51,19 @@ pass-through that reads `usage` from every response and prices it with the same 
 ruler as Nous/Claude; the run is killed within one call of $50. Engram's own logged cost is kept in
 the pred as `cost_engram_logged` for reference.
 
+**Judge side channel (found + closed 2026-10-12):** our local research judge (used because the
+official Docker backend fails on this Mac) ran each solution on the host with full file access. A
+"solution" could copy the engine source / data into `/tmp`, and the agent then read `/tmp`. Every Nous
+research run did this (transcript evidence in `artifacts/preds/leaked_backup/README.md`); the Claude
+gf Sonnet run did not (it only used `/tmp` for the scoring handshake). Fix: `gen/judge_sandbox.py`
+runs every evaluation under sandbox-exec with no network and no writes except a private scratch dir
+(+ `.coverage*` next to the evaluator), deleted afterwards; all research daemons/harvesters use it
+(tested: scores reproduce exactly, leak + evaluator-tamper attempts blocked). Old dumps moved to
+`~/frontier/_quarantine_tmp_20261012/`. Leaked Nous preds kept as backups in
+`artifacts/preds/leaked_backup/` and all four are being re-run. The Nous agent sandbox now matches
+Claude's (deny `~/frontier`, `experiments/frontiercs`, `~/engram_repo`, `~/.claude/projects`; re-allow
+only its own workspace, campaign dir, scripts, and transcripts).
+
 **Sandbox hardening (2026-10-12):** the research sandboxes only denied `Frontier-CS/research` and
 `datasets`, so other runs' solutions (`~/frontier/gen_logs`, repo `runs/`/`artifacts/`, SDK transcripts
 in `~/.claude/projects`) were readable. Claude research runner now denies `~/frontier`, the whole
@@ -59,8 +72,6 @@ CLI venv (tested: denied paths blocked, CLI + python + /tmp handshake work). The
 attempt (weak sandbox, $12.88, it only listed `~/frontier/Frontier-CS/`) was discarded and restarted;
 kept at `runs/gf/claude_o5.aborted_weak_sandbox/`. Audit of Nous gf s45/o5 transcripts: only directory
 listings of `~/frontier/gen_logs` / `~/frontier` and Nous's own code; no other run's files opened.
-TODO before the next Nous research run: apply the same hardening to `nous_research_isolated.py`
-(must re-allow its own ws, campaign dir, and the Nous repo) and smoke-test it.
 
 Audit after every run: grep the agent transcript for `testdata|\.ans\b|nous_runs|gen_logs` (algorithmic)
 or exploit signatures (research); any real hit rejects the run.
@@ -204,15 +215,15 @@ Research — score-metric (higher better; score / LLM-$), opus-4-6:
 
 | task | Nous | Claude (agent) | Engram (real) | notes |
 |---|---|---|---|---|
-| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | TBD (re-run queued) | TBD (re-run queued) | old api-loop baselines removed |
-| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | TBD (re-run queued) | TBD (re-run queued) | trivial baseline=25.4; oracle≈90 |
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | re-run queued (old 86.9 leaked) | queued | queued | all re-run on sandboxed judge |
+| llm_router (cost-aware routing, ai) | re-run queued (old 59.7 leaked) | queued | queued | trivial baseline=25.4; oracle≈90 |
 
 Model-scaling study — grammar_fuzzing/seed/sql, Nous vs Claude agent, iso-$50 (re-judged clean best):
 
 | model | Nous | Claude (agent) | status |
 |---|---|---|---|
-| aws/claude-sonnet-4-5 | **59.56** / $56.2 | 53.95 / $50.5 | done; both audited clean |
-| aws/claude-opus-5 | running | running | Nous (vpc) 16:50, Claude (vpc-int) 17:25 |
+| aws/claude-sonnet-4-5 | re-run queued (old 59.56 leaked) | 53.95 / $50.5 | Claude clean (no /tmp use) |
+| aws/claude-opus-5 | re-run queued (old 87.14 leaked) | queued | first pair on the sandboxed judge |
 
 Nous Sonnet note: cost overshot to $56.20 (one large metrics jump from $43.89 past the cap). Best =
 iter-5 `h-dose-37` (59.56; iter-5 `h-main` 59.51), recovered from the Agent SDK transcript, re-judged
@@ -433,9 +444,10 @@ thinking-OFF answers in seconds).
 ## 6. TODO / remaining work
 
 **CURRENT PLAN (2026-10-12):**
-1. gf model scaling: finish Claude Sonnet (running), then Opus-5 pair (Nous running on vpc; Claude on vpc-int next).
-2. Research baselines on opus-4-6: Claude agent + real Engram on grammar_fuzzing and llm_router
-   (replacing the removed api-loop numbers).
+Queue (2 at a time; vpc = Nous/Engram, vpc-int = Claude), all on the sandboxed judge:
+1. gf Opus-5: Nous + Claude.  2. gf Sonnet-4.5: Nous re-run (Claude done) + gf opus-4-6 Claude.
+3. gf opus-4-6 Nous + llm_router opus-4-6 Claude.  4. llm_router opus-4-6 Nous.
+5. Engram (real) gf + llm_router, opus-4-6.  6. Audit cloudcast Nous/Claude for the side channel.
 3. Keep this README + BEST_AT_50.md current; commit + push to `aiopslab` after each result.
 
 (Older status notes below are history.)
