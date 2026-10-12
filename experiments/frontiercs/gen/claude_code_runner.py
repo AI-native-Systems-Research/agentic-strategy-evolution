@@ -100,12 +100,22 @@ def main():
         'done\n'
         'echo "SCORE: ERR (judge timeout)"\n')
     measure.chmod(0o755)
-    # sandbox profile: deny the agent ALL reads under ~/frontier (hidden testdata + answer files +
-    # prior solutions under gen_logs/nous_runs all live there). Everything else stays allowed.
+    # sandbox profile: deny the agent reads of (a) ~/frontier (hidden testdata + answer files + prior
+    # solutions under gen_logs/nous_runs), AND (b) the repo's OWN prior-results dirs — artifacts/,
+    # engram_real/gates/solutions/, nous_gates|aide_gates/preds, sibling runs/ (other agents' solutions),
+    # and gen/ (runner internals). Without (b) the agent can just read past solutions + preds (scores)
+    # sitting in the working tree (observed 2026-10-09: both p0 reps browsed artifacts/preds +
+    # gen_logs/nous_runs). We RE-ALLOW the agent's own run dir last (SBPL = last match wins).
     sb_profile = run / "sandbox.sb"
     frontier_root = os.path.realpath(os.path.expanduser("~/frontier"))
-    sb_profile.write_text("(version 1)\n(allow default)\n"
-                          f'(deny file-read* (subpath "{frontier_root}"))\n')
+    fcs = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # experiments/frontiercs
+    run_real = os.path.realpath(str(run))
+    denies = [frontier_root] + [os.path.join(fcs, d) for d in
+              ("artifacts", "engram_real", "nous_gates", "aide_gates", "runs", "gen")]
+    lines = ["(version 1)", "(allow default)"]
+    lines += [f'(deny file-read* (subpath "{p}"))' for p in denies]
+    lines.append(f'(allow file-read* (subpath "{run_real}"))')  # agent's own run dir (solution.cpp, measure.sh)
+    sb_profile.write_text("\n".join(lines) + "\n")
     sandbox_prefix = ([] if os.environ.get("NOUS_FCS_NO_SANDBOX")
                       else ["sandbox-exec", "-f", str(sb_profile)])
     (run / "solution.cpp").write_text("// write your C++17 solution here\n")
