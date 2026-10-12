@@ -1,0 +1,8 @@
+(version 1)
+(allow default)
+(deny file-read* (subpath "/Users/toslali/frontier"))
+(deny file-read* (subpath "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper"))
+(deny file-read* (subpath "/Users/toslali/engram_repo"))
+(deny file-read* (subpath "/Users/toslali/.claude/projects"))
+(allow file-read* (subpath "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/experiments/frontiercs/runs/gf/claude_o5"))
+(allow file-read* (subpath "/Users/toslali/Desktop/work/ibm/projects/llm-inference/study/inference-llmd/ai-native-method/_nous_paper/agentic-strategy-evolution/.venv/lib/python3.11/site-packages/claude_agent_sdk"))
