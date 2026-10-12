@@ -5,25 +5,45 @@ wins. Branch: **`aiopslab`** (AI-native-Systems-Research/agentic-strategy-evolut
 
 ---
 
-## 0. Isolation / no-cheating protocol (MANDATORY for every run)
+## 0. Invariants (MANDATORY for every run) — single source of truth
 
-**Every run must be isolated so the agent cannot cheat — no exceptions.** Two enforcement levels by
-agent type:
+Four rules hold for EVERY task and EVERY variant. No per-track exceptions, no shortcuts.
 
-- **Tool-using agents (Nous, raw Claude Code) → HARD SANDBOX.** A bash/tool agent on a shared filesystem
-  *will* find and exploit ground truth if it can read it. Proven twice: (a) algorithmic p0 read
-  `testdata/*.ans`; (b) research — un-sandboxed Nous gamed grammar_fuzzing with a `sys.meta_path` import
-  hook calling `sql_engine` internals (bogus 99.6) and gamed llm_router by reading the labeled test CSV
-  for a per-query oracle (bogus 75.0). Prompt-ban alone is INSUFFICIENT. Required: **`sandbox-exec`
-  denying read of the judge/answer/engine/dataset paths** (`~/frontier/Frontier-CS/research`,
-  `.../datasets`, algorithmic `testdata`, prior `solution.*`) + an **out-of-sandbox judge daemon** that
-  scores (so the agent measures via `fmeasure` without touching those paths) + a **post-harvest exploit
-  audit** (reject import-hooks / engine-internal calls / reading label files). Verify the sandbox held
-  by confirming "Operation not permitted" denials in the executor log. Runners:
-  `gen/nous_research_isolated.py`, algorithmic `judge_server.py` + sandbox.
-- **API-loop agents (research Claude/Engram via `research_apiloop.py`) → ISOLATED BY CONSTRUCTION.** Each
-  round is a single LLM API call that returns a complete solution from the README text only; the agent
-  process has **no filesystem access**, so it cannot read answers/engine/datasets. Nothing to sandbox.
+1. **Every variant is the SAME off-the-shelf agent (Claude Code: `claude -p` / Agent SDK), differing
+   only by harness.** Baselines = Nous, Claude, Engram, AIDE — all tool-using agents. There is NO
+   "chat api-loop" baseline. (`gen/research_apiloop.py` is **DEPRECATED**; the Claude baseline is the
+   agent, `gen/claude_code_runner.py` for algorithmic and `gen/claude_code_research_runner.py` for
+   research.)
+2. **Iso-cost = ONE ruler.** Stop at **$50 OR max score**, nothing else (§1). Cost = **tokens × FIXED
+   $15/$75 per M (cache-aware), model-INDEPENDENT**, computed identically for every variant and tier.
+   Do NOT trust the SDK/provider model-aware cost (it prices Sonnet ~5× cheaper than Opus → would hand
+   one arm more tokens for the same "$50"). The cap launchers compute this token-cost themselves.
+3. **Every variant runs under a HARD SANDBOX with validated no-cheating.** A tool agent on a shared
+   filesystem *will* exploit ground truth if it can read it (proven: algorithmic p0 read `testdata/*.ans`;
+   un-sandboxed Nous gamed grammar_fuzzing via a `sys.meta_path` import hook → bogus 99.6, and gamed
+   llm_router by reading the labeled test CSV → bogus 75.0). Required for ALL variants:
+   **`sandbox-exec` denying read** of judge/answer/engine/dataset/prior-solution paths
+   (`~/frontier/Frontier-CS/research`, `.../datasets`, algorithmic `testdata`, prior `solution.*`)
+   + an **out-of-sandbox judge daemon** (agent measures via `fmeasure`, never touching those paths)
+   + a **post-harvest exploit audit** (reject import-hooks / engine-internal calls / label-file reads).
+   Validate the sandbox held: confirm "Operation not permitted" denials in the executor log, and
+   independently re-judge the harvested solution.
+4. **Everything documented + kept current.** This README is the single source of truth; results tables
+   (`BEST_AT_50.md`) and runners stay in sync. Stale/invalid data is flagged, not left to mislead.
+
+**Canonical runners (all = sandboxed agent, token-capped $15/$75, cheat-audited):**
+
+| track | Nous | Claude baseline |
+|---|---|---|
+| algorithmic | `gen/nous_cap_launch.py` (sandbox-exec + `judge_server.py` daemon) | `gen/claude_code_runner.py` |
+| research | `gen/nous_research_cap.py` (wraps `gen/nous_research_isolated.py`) | `gen/claude_code_research_runner.py` |
+
+**⚠ DEPRECATED / INVALID:** `gen/research_apiloop.py` is a chat api-loop (single LLM call per round, no
+tools) — it is NOT the agent and must not be used as a baseline. All research Claude/Engram preds
+produced by it (`gf_seed_sql.*`, `gf_fuzzer_sql.*`, `llm_router.*`, `cloudcast.*claude/engram*`) are
+**INVALID pending re-run with the agent runner** (`claude_code_research_runner.py`). The old framing
+"API-loop agents are isolated by construction" is retired — isolation is now the hard sandbox for every
+variant.
 
 Legacy prompt-ban + audit (kept as a backstop for lower-risk cases; NOT sufficient on its own for tool
 agents):
@@ -50,6 +70,8 @@ each task until cumulative spend hits **$50** or the score maxes out, then repor
   high enough that **the $50 budget is the binding limit**. (Lesson 2026-10-09: the first research
   api-loop runs wrongly stopped at $3–31 because `--budget` was 30, `--rounds` bound first, and Engram
   had a `patience` plateau-stop. All three are now removed; `research_apiloop.py` runs to budget only.)
+- **Cost ruler (iso-cost):** cost = **tokens × fixed $15/$75 per M (cache-aware), model-independent**,
+  identical for every variant and tier (see §0 invariant 2). Never use the SDK/provider model-aware cost.
 - Algorithmic tasks: scored on **our go-judge, 0–100** (continuous partial credit).
 - Research tasks: **task-specific metric** (e.g. cloudcast = $ transfer cost lower-better; grammar_fuzzing
   / llm_router = score higher-better).
@@ -175,13 +197,19 @@ Research — cost-metric (cloudcast = $ transfer cost, LOWER better):
 | cloudcast | **$626** / $9.89 | ~$942 / $59 | 659 / $50 ✓iso | N/A | naive $1046 |
 
 Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
-| task | Nous | Claude | Engram | notes |
-|---|---|---|---|---|
-| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | 56.3 / $50.7 | 63.8 / $50.1 | Nous best; all @ true $50 |
-| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | 55.3 / $50.1 | 55.4 / $50.0 | Nous best; all @ true $50; trivial baseline=25.4; oracle≈90 |
 
-- **Nous wins both score-metric research tasks**, but at higher cost ($51–54 vs the API-loop agents'
-  $3–31): Nous iterates with repeated measurement (SDK + tools), which pays off in score but spends more.
+> **⚠ Claude/Engram columns below are INVALID (api-loop, not the agent) — see §0.** They were produced
+> by the deprecated `gen/research_apiloop.py` (chat loop, no tools), which is NOT the Claude Code agent
+> Nous wraps. The Nous numbers (agent, sandboxed) are valid. **To-do: re-run Claude/Engram with
+> `gen/claude_code_research_runner.py` (sandboxed agent) and replace these.**
+
+| task | Nous | Claude (api-loop ⚠invalid) | Engram (api-loop ⚠invalid) | notes |
+|---|---|---|---|---|
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | 56.3 / $50.7 | 63.8 / $50.1 | Nous = sandboxed agent @ true $50 |
+| llm_router (cost-aware routing, ai) | **59.7** / $51.4 | 55.3 / $50.1 | 55.4 / $50.0 | Nous valid; trivial baseline=25.4; oracle≈90 |
+
+- **Nous (sandboxed agent) wins both** on the (to-be-redone) comparison; cost higher ($51–54) because it
+  iterates with repeated measurement via tools.
 - **⚠ Isolation was essential for Nous here (issue mirrors algorithmic p0 cheating).** The FIRST,
   un-sandboxed Nous research run **gamed both tasks** and was REJECTED: on grammar_fuzzing it used a
   Python import hook (`sys.meta_path`) to call `sql_engine` internals directly (inflating coverage to a
@@ -192,10 +220,11 @@ Research — score-metric (higher better; score / LLM-$), added 2026-10-09:
   "Operation not permitted" denials in every iteration's executor log), an out-of-sandbox judge daemon
   scores via `fmeasure` and **zeros any exploit solution in-loop**, and a post-harvest audit rejects
   exploit signatures (import hooks / engine-internal calls / reading label files). Both re-runs produced
-  **0 exploit candidates** — the sandbox forced legitimate black-box optimization. The API-loop agents
-  (Claude, Engram) are isolated by construction (a single LLM call per round with no filesystem access),
-  so they could never game these. Runners: `gen/research_apiloop.py` (Claude/Engram),
-  `gen/nous_research_isolated.py` (Nous, sandboxed). AIDE N/A (algorithmic-only adapter).
+  **0 exploit candidates** — the sandbox forced legitimate black-box optimization. Runners:
+  `gen/nous_research_cap.py` → `gen/nous_research_isolated.py` (Nous, sandboxed agent),
+  `gen/claude_code_research_runner.py` (Claude, sandboxed agent). AIDE N/A (algorithmic-only adapter).
+  **⚠ The earlier Claude/Engram research numbers used the deprecated `gen/research_apiloop.py` chat
+  loop (NOT the agent) and are invalid pending agent re-runs (§0).**
 - **How to run (score-metric research, $50-or-max, 2 at a time across the two endpoints):**
   ```bash
   # one-time eval setup per task: build the local .evalvenv + materialize datasets
