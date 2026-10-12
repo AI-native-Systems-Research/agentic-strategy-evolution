@@ -209,7 +209,7 @@ isolation, re-judged from persisted artifacts, cheat-audit **CLEAN** (0 testdata
 Research — cost-metric (cloudcast = $ transfer cost, LOWER better):
 | task | Nous | Engram (capped) | Claude (isolated) | AIDE | baseline |
 |---|---|---|---|---|---|
-| cloudcast | **$626** / $9.89 | ~$942 / $59 | 659 / $50 ✓iso | N/A | naive $1046 |
+| cloudcast | re-run queued (old $626 leaked) | ~$942 / $59 | re-run queued (old 659 leaked) | N/A | naive $1046 |
 
 Research — score-metric (higher better; score / LLM-$), opus-4-6:
 
@@ -447,7 +447,7 @@ thinking-OFF answers in seconds).
 Queue (2 at a time; vpc = Nous/Engram, vpc-int = Claude), all on the sandboxed judge:
 1. gf Opus-5: Nous + Claude.  2. gf Sonnet-4.5: Nous re-run (Claude done) + gf opus-4-6 Claude.
 3. gf opus-4-6 Nous + llm_router opus-4-6 Claude.  4. llm_router opus-4-6 Nous.
-5. Engram (real) gf + llm_router, opus-4-6.  6. Audit cloudcast Nous/Claude for the side channel.
+5. Engram (real) gf + llm_router, opus-4-6.  6. cloudcast Nous + Claude re-run (both used the side channel).
 3. Keep this README + BEST_AT_50.md current; commit + push to `aiopslab` after each result.
 
 (Older status notes below are history.)
