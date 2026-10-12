@@ -1,6 +1,7 @@
-> ⚠ **SUPERSEDED — read `README.md` first** (the canonical source of truth as of 2026-10-06).
-> This file is detailed/historical. In particular, the "Claude-agent" column here is the OLD
-> Engram-single_agent method and will be replaced by raw-Claude-Code reruns; p47 is not yet included.
+> ⚠ **README.md is canonical** (wins conflicts). This file = the iso-cost tables, kept in sync.
+> STATUS 2026-10-12: Claude column = **raw Claude Code, isolated, re-judged** (not the old
+> Engram-single_agent); p47 included; research score-metric table + p0 variance (n=3) added below.
+> The "Takeaways/Caveats" prose lower down is older context — trust the tables + README §4.
 
 # Iso-cost comparison: best score achieved at <= $50 spend (our judge)
 
@@ -81,11 +82,15 @@ cloudcast (transfer-cost $, lower=better): Nous **$626** @ $9.89 (<=$50); Engram
 @ $59 (barely beats naive $1046 at ~$50 LLM budget — its historical ~$624 needed far more budget);
 naive $1046. **At iso-$50, Nous wins cloudcast** (the old "tie at SOTA" assumed Engram's over-budget run).
 
-## Takeaways (iso-$50)   [CORRECTED 2026-10-06]
-- **Nous is best-or-tied on every task, and cheapest.** It reaches its scores far under budget
-  ($4.85–$46) while AIDE/Engram burn ~$50–68.
-- **Outright Nous wins: p0 (86 vs 68.5 vs 0), p5 (83 vs 41 vs 44), p9 (100 vs 67.8 vs 95), cloudcast
-  ($626 vs ~$942).**
+## Takeaways (iso-$50)   [UPDATED 2026-10-12]
+- **Nous is best-or-tied on 8/9 tasks, and cheapest where it wins** ($4.85–$47 vs baselines' $50–68).
+- **Outright Nous wins: p0 (89.1 vs Claude 79.4 vs Engram 68.5 vs AIDE 0), p5 (83 vs 50 vs 41 vs 44),
+  cloudcast ($626 vs 659 vs ~$942), grammar_fuzzing (86.9 vs 56.3 vs 63.8), llm_router (59.7 vs 55.3 vs
+  55.4).** p9 tie (Nous=Claude=100); p47 saturated tie (~94–97, AIDE 96.8 nominally top).
+- **p0 variance n=3:** Nous 85.2 [80–89] > Claude 73.6 [69–79] > Engram 71.4 [68–74] — Nous min > every
+  baseline max, so the win is robust to run-to-run noise.
+- **Isolation held:** tool agents (Nous; Claude on p0) attempted to read answers / game the metric; all
+  blocked via sandbox + judge daemon + exploit audit (README §0). Reported numbers are clean re-runs.
 - **p15/p22 are NOT Nous-only gates.** Properly-run Engram solves both to 100 (verified on our judge,
   audited clean). The gates separate agentic-tool agents (Nous, Engram) from tree-search (AIDE=0),
   not Nous from Engram. (Earlier "only Nous scores" was from under-budgeted Engram runs.)
