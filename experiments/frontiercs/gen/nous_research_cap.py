@@ -70,6 +70,12 @@ def kill_inner_nous(slug):
     pat = rf"nous run .*campaign_{re.escape(slug)}\.yaml"
     subprocess.run(["pkill", "-f", pat]); time.sleep(5)
     subprocess.run(["pkill", "-9", "-f", pat])
+    # SDK `claude` children survive their parent; kill any still working in this run's workspace
+    pids = subprocess.run(["pgrep", "-f", "_bundled/claude"], capture_output=True, text=True).stdout.split()
+    for pid in pids:
+        cwd = subprocess.run(["lsof", "-p", pid, "-a", "-d", "cwd", "-Fn"], capture_output=True, text=True).stdout
+        if f"research_{slug}_ws" in cwd:
+            subprocess.run(["kill", "-9", pid])
 
 
 def main():
@@ -106,6 +112,7 @@ def main():
             print(f"[rcap] cost ${cost:.2f} >= ${a.budget} -> kill inner `nous run` (runner harvests)", flush=True)
             kill_inner_nous(a.slug); killed = True
     rc = proc.wait()
+    kill_inner_nous(a.slug)  # reap any orphaned SDK children
     final_cost = max(token_cost(camp_dir), live_cost(logdir, a.slug, t0))
     print(f"[rcap] runner exited rc={rc}; capped={killed}; token-cost=${final_cost:.2f}", flush=True)
     try:
