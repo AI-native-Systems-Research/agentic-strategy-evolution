@@ -23,6 +23,8 @@ Usage:
 import argparse, glob, json, os, re, shlex, shutil, subprocess, tempfile, threading, time
 from pathlib import Path
 
+import judge_sandbox as J
+
 FRONTIER = os.environ.get("FRONTIER_DIR", os.path.expanduser("~/frontier/Frontier-CS"))
 FR_ROOT = FRONTIER
 CLI = os.environ.get("CLAUDE_CLI_PATH", os.path.expanduser(
@@ -70,19 +72,7 @@ def judge_clean(pid, sol_path, timeout=600):
     except Exception: return None, ["unreadable"]
     hits = exploit_hits(code)
     if hits: return None, hits
-    pd = probdir(pid)
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as of: out = of.name
-    try:
-        subprocess.run(f"{shlex.quote(str(evalpy(pid)))} {shlex.quote(str(pd/'evaluator.py'))} "
-                       f"--solution {shlex.quote(str(Path(sol_path).resolve()))} --out {shlex.quote(out)}",
-                       shell=True, cwd=str(pd), capture_output=True, text=True, timeout=timeout)
-        d = json.loads(Path(out).read_text())
-        s = float(d.get("score", 0.0)) if (not d.get("error") and d.get("runs_successfully", 0.0) == 1.0) else 0.0
-    except Exception: s = 0.0
-    finally:
-        try: os.unlink(out)
-        except OSError: pass
-    return s, []
+    return J.score(evalpy(pid), probdir(pid), code, timeout), []
 
 
 def start_daemon(pid, root, stop_evt, archive):
@@ -92,20 +82,9 @@ def start_daemon(pid, root, stop_evt, archive):
     archive = Path(archive); archive.mkdir(parents=True, exist_ok=True)
     pd = probdir(pid)
     def score_file(f):
-        try:
-            if exploit_hits(Path(f).read_text(errors="ignore")): return 0.0
-        except Exception: pass
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as of: out = of.name
-        try:
-            subprocess.run(f"{shlex.quote(str(evalpy(pid)))} {shlex.quote(str(pd/'evaluator.py'))} "
-                           f"--solution {shlex.quote(str(f))} --out {shlex.quote(out)}",
-                           shell=True, cwd=str(pd), capture_output=True, text=True, timeout=600)
-            d = json.loads(Path(out).read_text())
-            return d.get("score", 0.0) if (not d.get("error") and d.get("runs_successfully", 0.0) == 1.0) else 0.0
-        except Exception: return 0.0
-        finally:
-            try: os.unlink(out)
-            except OSError: pass
+        code = Path(f).read_text(errors="ignore")
+        if exploit_hits(code): return 0.0
+        return J.score(evalpy(pid), pd, code)
     def loop():
         while not stop_evt.is_set():
             for f in sorted(glob.glob(str(inbox/"*.py"))):

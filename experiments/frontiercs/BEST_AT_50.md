@@ -36,15 +36,15 @@ Research — score-metric (higher better; score / LLM-$), opus-4-6 (mirrors READ
 
 | task | Nous | Claude (agent) | Engram (real) | notes |
 |---|---|---|---|---|
-| grammar_fuzzing/seed (SQL-parser coverage, pl) | **86.9** / $53.7 | TBD | TBD | api-loop baselines removed 2026-10-12; agent re-runs queued |
-| llm_router (cost-aware routing, ai)            | **59.7** / $51.4 | TBD | TBD | trivial baseline=25.4, oracle≈90 |
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | re-run queued (old 86.9 leaked) | queued | queued | sandboxed judge |
+| llm_router (cost-aware routing, ai)            | re-run queued (old 59.7 leaked) | queued | queued | trivial baseline=25.4, oracle≈90 |
 
 Model scaling, grammar_fuzzing/seed/sql (Nous vs Claude agent, iso-$50, re-judged clean best):
 
 | model | Nous | Claude (agent) |
 |---|---|---|
-| aws/claude-sonnet-4-5 | **59.56** / $56.2 | 53.95 / $50.5 |
-| aws/claude-opus-5 | running | running |
+| aws/claude-sonnet-4-5 | re-run queued (old 59.56 leaked) | 53.95 / $50.5 |
+| aws/claude-opus-5 | re-run queued (old 87.14 leaked) | queued |
 
 > llm_router re-judge must run with cwd = the problem dir (solutions read `resources/reference_data.csv`
 > via a relative path; wrong cwd silently falls back to a constant router ~25.4). Nous research runs are
