@@ -1,0 +1,87 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "claude-code",
+  "label": "gf_s45",
+  "model": "aws/claude-sonnet-4-5",
+  "final_score": 53.95,
+  "cost_usd_tokenbased": 50.48,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0
+  },
+  "stop_reason": "budget",
+  "sessions": 5,
+  "best_file": "solution.py",
+  "n_clean": 16,
+  "n_rejected": 0,
+  "isolation": "claude -p agent under sandbox-exec deny ~/frontier/{research,datasets}; measure only via out-of-sandbox judge daemon; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "file": "attempt_10_best_baseline.py",
+      "score": 53.88326627846087
+    },
+    {
+      "file": "attempt_11_score_51.8_compact.py",
+      "score": 51.84322130933257
+    },
+    {
+      "file": "attempt_12_score_53.9_final_best.py",
+      "score": 53.88326627846087
+    },
+    {
+      "file": "attempt_13_score_52.7_parser_methods.py",
+      "score": 52.67333401214141
+    },
+    {
+      "file": "attempt_14_score_52.7_extended.py",
+      "score": 52.742312292200715
+    },
+    {
+      "file": "attempt_1_score_51.3.py",
+      "score": 51.305906006829474
+    },
+    {
+      "file": "attempt_2_score_52.2.py",
+      "score": 52.212539688408235
+    },
+    {
+      "file": "attempt_3_score_51.7.py",
+      "score": 51.714815378473446
+    },
+    {
+      "file": "attempt_4_score_52.5.py",
+      "score": 52.4594300749623
+    },
+    {
+      "file": "attempt_5_score_53.9.py",
+      "score": 53.88326627846087
+    },
+    {
+      "file": "attempt_6_score_52.5.py",
+      "score": 52.54906375679103
+    },
+    {
+      "file": "attempt_7_score_53.7.py",
+      "score": 53.69232699107034
+    },
+    {
+      "file": "attempt_8_score_53.4_systematic.py",
+      "score": 53.43749662978642
+    },
+    {
+      "file": "attempt_9_score_52.9_pruned.py",
+      "score": 52.92772107849958
+    },
+    {
+      "file": "attempt_final_score_53.9.py",
+      "score": 53.88326627846087
+    },
+    {
+      "file": "solution.py",
+      "score": 53.95138898595198
+    }
+  ],
+  "elapsed_s": 5105.1
+}
