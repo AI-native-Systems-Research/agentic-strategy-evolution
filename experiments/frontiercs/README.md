@@ -40,6 +40,11 @@ Engram's method is untouched. **Engram isolation (correction):** Engram agents D
 runs inside a Docker container (`python:3.11`) that only sees the agent workspace, and file tools are
 rooted at the workspace, so host benchmark files are not visible.
 
+**Nous cost cap (fixed 2026-10-12):** `llm_metrics.jsonl` only lands at phase end (gf Sonnet jumped
+$43.89 → $56.20 in one step), so `nous_research_cap.py` now also reads live per-turn usage from the
+Agent SDK transcripts (`~/.claude/projects/<ws>*`) and caps on the max of the two (validated: s45
+transcripts $54.98 vs metrics $56.20).
+
 Audit after every run: grep the agent transcript for `testdata|\.ans\b|nous_runs|gen_logs` (algorithmic)
 or exploit signatures (research); any real hit rejects the run.
 

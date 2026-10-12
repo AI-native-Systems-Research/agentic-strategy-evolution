@@ -46,6 +46,26 @@ def token_cost(camp_dir):
     return round(cost, 4)
 
 
+def live_cost(logdir, slug, since):
+    """Per-turn usage from the Agent SDK transcripts, written live (llm_metrics.jsonl only lands at phase end)."""
+    ws_key = re.sub(r"[^A-Za-z0-9]", "-", str(Path(logdir) / f"research_{slug}_ws"))
+    cost, seen = 0.0, set()
+    for f in glob.glob(os.path.expanduser(f"~/.claude/projects/{ws_key}*/**/*.jsonl"), recursive=True):
+        if os.path.getmtime(f) < since: continue
+        for ln in open(f, errors="ignore"):
+            try: d = json.loads(ln)
+            except Exception: continue
+            m = d.get("message") if isinstance(d.get("message"), dict) else None
+            u = m.get("usage") if m else None
+            if not u: continue
+            if m.get("id"):
+                if m["id"] in seen: continue
+                seen.add(m["id"])
+            cost += (u.get("input_tokens", 0) * R_IN + u.get("output_tokens", 0) * R_OUT
+                     + u.get("cache_creation_input_tokens", 0) * R_CW + u.get("cache_read_input_tokens", 0) * R_CR)
+    return round(cost, 4)
+
+
 def kill_inner_nous(slug):
     pat = rf"nous run .*campaign_{re.escape(slug)}\.yaml"
     subprocess.run(["pkill", "-f", pat]); time.sleep(5)
@@ -78,14 +98,15 @@ def main():
     killed = False; t0 = time.time()
     while proc.poll() is None:
         time.sleep(a.poll)
-        cost = token_cost(camp_dir)
+        mcost, lcost = token_cost(camp_dir), live_cost(logdir, a.slug, t0)
+        cost = max(mcost, lcost)
         print(f"[rcap {time.strftime('%H:%M:%S')}] elapsed={int(time.time()-t0)}s cost=${cost:.2f} "
-              f"(budget ${a.budget})", flush=True)
+              f"(metrics ${mcost:.2f}, live ${lcost:.2f}; budget ${a.budget})", flush=True)
         if not killed and cost >= a.budget:
             print(f"[rcap] cost ${cost:.2f} >= ${a.budget} -> kill inner `nous run` (runner harvests)", flush=True)
             kill_inner_nous(a.slug); killed = True
     rc = proc.wait()
-    final_cost = token_cost(camp_dir)
+    final_cost = max(token_cost(camp_dir), live_cost(logdir, a.slug, t0))
     print(f"[rcap] runner exited rc={rc}; capped={killed}; token-cost=${final_cost:.2f}", flush=True)
     try:
         pred = json.loads(out.read_text())
