@@ -45,6 +45,12 @@ $43.89 → $56.20 in one step), so `nous_research_cap.py` now also reads live pe
 Agent SDK transcripts (`~/.claude/projects/<ws>*`) and caps on the max of the two (validated: s45
 transcripts $54.98 vs metrics $56.20).
 
+**Engram cost (research, 2026-10-12):** Engram only logs cost every 5 iterations (~$30 steps), so
+`engram_research_cap.py` routes Engram's LLM calls through `gen/token_meter_proxy.py`, a local
+pass-through that reads `usage` from every response and prices it with the same $15/$75 cache-aware
+ruler as Nous/Claude; the run is killed within one call of $50. Engram's own logged cost is kept in
+the pred as `cost_engram_logged` for reference.
+
 Audit after every run: grep the agent transcript for `testdata|\.ans\b|nous_runs|gen_logs` (algorithmic)
 or exploit signatures (research); any real hit rejects the run.
 
