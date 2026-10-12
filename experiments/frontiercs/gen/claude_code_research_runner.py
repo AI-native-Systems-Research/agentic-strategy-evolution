@@ -85,9 +85,11 @@ def judge_clean(pid, sol_path, timeout=600):
     return s, []
 
 
-def start_daemon(pid, root, stop_evt):
+def start_daemon(pid, root, stop_evt, archive):
     inbox = Path(root)/"inbox"; outbox = Path(root)/"outbox"
     inbox.mkdir(parents=True, exist_ok=True); outbox.mkdir(parents=True, exist_ok=True)
+    # Keep every measured solution, in case the agent skips copying an attempt to trials/.
+    archive = Path(archive); archive.mkdir(parents=True, exist_ok=True)
     pd = probdir(pid)
     def score_file(f):
         try:
@@ -110,6 +112,10 @@ def start_daemon(pid, root, stop_evt):
                 tok = Path(f).stem
                 try: s = score_file(f)
                 except Exception: s = 0.0
+                try:
+                    n = len(list(archive.glob("*.py")))
+                    (archive/f"m{n:04d}_{time.strftime('%H%M%S')}_score{s:.2f}.py").write_text(Path(f).read_text(errors="ignore"))
+                except OSError: pass
                 (outbox/f"{tok}.score").write_text(f"SCORE: {s}\n")
                 try: os.unlink(f)
                 except OSError: pass
@@ -135,7 +141,7 @@ def main():
     stmt = statement(pid)
 
     # out-of-sandbox scoring daemon
-    djroot = f"/tmp/fcs_rjudge_claude/{a.slug}"; stop = threading.Event(); start_daemon(pid, djroot, stop)
+    djroot = f"/tmp/fcs_rjudge_claude/{a.slug}"; stop = threading.Event(); measured = run/"measured"; start_daemon(pid, djroot, stop, measured)
 
     # sandbox: deny the benchmark research tree + datasets; allow the agent's own run dir + /tmp
     sb = run/"sandbox.sb"
@@ -232,7 +238,10 @@ def main():
 
     # harvest: re-judge every trial (clean), audit exploits
     ev = []; rejected = []; final = -1.0; bestf = None
-    for f in sorted(glob.glob(str(trials/"*.py"))) + [str(run/"solution.py")]:
+    def _sc(p):
+        m = re.search(r"_score([0-9.]+)\.py$", p); return float(m.group(1)) if m else -1.0
+    top_measured = sorted(glob.glob(str(measured/"*.py")), key=_sc, reverse=True)[:10]
+    for f in sorted(glob.glob(str(trials/"*.py"))) + top_measured + [str(run/"solution.py")]:
         if not Path(f).exists(): continue
         s, hits = judge_clean(pid, f)
         tag = os.path.basename(f)
