@@ -1163,10 +1163,6 @@ def run_iteration(
     default_models = defaults.get("models", {})
     default_max_turns = defaults.get("max_turns", {})
     campaign_models = campaign.get("models", {})
-    # #186: campaign-level max_turns overrides defaults.yaml. Schema
-    # accepts an object {design, execute_analyze, report}; we read it
-    # the same way as `models:`.
-    campaign_max_turns = campaign.get("max_turns", {}) or {}
     # #282: per-phase SDK effort. Same key shape as models/max_turns.
     campaign_sdk_options = campaign.get("sdk_options", {}) or {}
 
@@ -1174,14 +1170,9 @@ def run_iteration(
         return campaign_models.get(phase_key) or default_models.get(phase_key) or model or "aws/claude-sonnet-4-5"
 
     def _max_turns_for(phase_key: str) -> int:
-        # Resolution order (#186): campaign > defaults > hardcoded fallback.
-        v = campaign_max_turns.get(phase_key)
-        if v is not None:
-            return int(v)
-        v = default_max_turns.get(phase_key)
-        if v is not None:
-            return int(v)
-        return 25
+        # Resolution order (#186): campaign > design_profile > defaults > hardcoded fallback.
+        from orchestrator.design_profile import resolve_max_turns
+        return resolve_max_turns(campaign, phase_key, default_max_turns)
 
     def _effort_for(phase_key: str) -> str | None:
         # #282: campaign.sdk_options[phase].effort, or None (SDK default).

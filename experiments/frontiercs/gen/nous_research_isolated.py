@@ -120,7 +120,8 @@ def main():
     import yaml
     ap = argparse.ArgumentParser()
     ap.add_argument("problem_id"); ap.add_argument("--slug", required=True)
-    ap.add_argument("--niters", type=int, default=8); ap.add_argument("--model", default="claude-opus-4-6")
+    ap.add_argument("--niters", type=int, default=8)
+    ap.add_argument("--design-profile", choices=["standard", "lightweight"], default="lightweight"); ap.add_argument("--model", default="claude-opus-4-6")
     ap.add_argument("--out", required=True); ap.add_argument("--logdir", default=os.path.expanduser("~/frontier/gen_logs"))
     a = ap.parse_args(); pid = a.problem_id; stmt = statement(pid)
     Path(a.logdir).mkdir(parents=True, exist_ok=True)
@@ -173,6 +174,7 @@ def main():
             "target_system": {"name": f"frontier-cs::research::{pid}", "description": desc,
                               "repo_path": str(ws), "observable_metrics": ["score"], "controllable_knobs": ["solution_py"]},
             "objective": {"weights": {"score": 1.0}},
+            "design_profile": a.design_profile,
             "models": {"design": a.model, "execute_analyze": a.model, "report": a.model},
             "prompts": {"methodology_layer": f"{NOUS_REPO}/prompts/methodology", "domain_adapter_layer": None}}
     camp = ws.parent/f"campaign_{a.slug}.yaml"; camp.write_text(yaml.safe_dump(spec, sort_keys=False))
