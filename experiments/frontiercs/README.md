@@ -53,7 +53,12 @@ transcripts $54.98 vs metrics $56.20).
 `engram_research_cap.py` routes Engram's LLM calls through `gen/token_meter_proxy.py`, a local
 pass-through that reads `usage` from every response and prices it with the same $15/$75 cache-aware
 ruler as Nous/Claude; the run is killed within one call of $50. Engram's own logged cost is kept in
-the pred as `cost_engram_logged` for reference.
+the pred as `cost_engram_logged` for reference only: it double-counts under the meter, because Engram
+sums usage in two callbacks into the same dict (`HandoffUsageCallbackHandler.on_llm_end` and
+`UsageTrackingCallback` on AI_MESSAGE events, `Architect/methods/handoff_utils/`), and the second one
+only sees usage once streamed messages carry it, which the meter's `include_usage` enables
+(gf run: Engram-logged $17.35 vs metered $8.89). Engram does not act on its cost, so behavior is
+unaffected. The metered cost is the iso-cost number.
 
 **Judge side channel (found + closed 2026-10-12):** our local research judge (used because the
 official Docker backend fails on this Mac) ran each solution on the host with full file access. A
