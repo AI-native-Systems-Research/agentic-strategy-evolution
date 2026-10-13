@@ -144,7 +144,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--logdir", default=os.path.expanduser("~/frontier/gen_logs"))
     ap.add_argument("--poll", type=float, default=20.0)
-    ap.add_argument("--design-profile", choices=["standard", "lightweight"], default="lightweight")
+    ap.add_argument("--design-profile", choices=["standard", "lightweight", "v4"], default="lightweight")
     ap.add_argument("--finish-iteration", action="store_true",
                     help="at the budget, let the iteration in progress complete before stopping")
     ap.add_argument("--ceiling", type=float, default=57.0, help="hard stop even mid-iteration")
