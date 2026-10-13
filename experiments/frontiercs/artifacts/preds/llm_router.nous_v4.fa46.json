@@ -1,0 +1,87 @@
+{
+  "problem_id": "llm_router",
+  "track": "research",
+  "agent": "nous",
+  "label": "router_v4fa46",
+  "model": "claude-opus-4-6",
+  "final_score": 59.66,
+  "cost_usd": 12.92,
+  "n_clean_candidates": 13,
+  "n_rejected_exploits": 1,
+  "best_source": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0898_161324_score59.66.py",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-router-v4fa46/runs/iter-3/inputs/sweep.py",
+      "exploits": [
+        "calls the scoring judge from inside the solution"
+      ]
+    }
+  ],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-router-v4fa46/runs/iter-1/patches/h-main.patch",
+      "score": 59.2835286894765
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-router-v4fa46/runs/iter-2/patches/h-main.patch",
+      "score": 59.57220220290529
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0861_161036_score59.66.py",
+      "score": 59.65535472941769
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0889_161255_score59.66.py",
+      "score": 59.65766187065598
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0874_161144_score59.66.py",
+      "score": 59.65535472941769
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0865_161048_score59.66.py",
+      "score": 59.65535472941769
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0891_161301_score59.66.py",
+      "score": 59.657486321503264
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0886_161245_score59.66.py",
+      "score": 59.657291337265846
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0875_161147_score59.66.py",
+      "score": 59.65535472941769
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0898_161324_score59.66.py",
+      "score": 59.66440471161143
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0883_161211_score59.66.py",
+      "score": 59.6580053016038
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_measured_20261013_141656/m0897_161320_score59.66.py",
+      "score": 59.66440471161143
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v4fa46_ws/solution.py",
+      "score": 25.375108277382168
+    }
+  ],
+  "elapsed_s": 7051.9,
+  "cost_usd_tokenbased": 57.51,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true,
+  "stop_rule": "finish the iteration in progress at $50.0 (ceiling $57.0)",
+  "best_at_budget": 59.57,
+  "budget_reached_at": 1791921382.0978
+}
