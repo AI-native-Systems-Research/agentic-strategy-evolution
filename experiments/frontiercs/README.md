@@ -73,6 +73,11 @@ runs every evaluation under sandbox-exec with no network and no writes except a 
 Claude's (deny `~/frontier`, `experiments/frontiercs`, `~/engram_repo`, `~/.claude/projects`; re-allow
 only its own workspace, campaign dir, scripts, and transcripts).
 
+**Judge-call-from-solution rule (2026-10-12):** a Nous gf Sonnet candidate called `fmeasure_*.sh` from
+inside `solve()` (using the judge as an oracle at eval time); in the sandboxed judge this just hangs to
+the 600s timeout. The exploit audit now rejects solutions that call `fmeasure`/`measure.sh`/the judge
+inbox, for every agent.
+
 **cloudcast reward hack (caught 2026-10-12):** the cloudcast evaluator prices transfers from the edge
 data the solution returns. Claude cloudcast submitted a solution that sets `edge_data['cost'] = 0.0`
 on every returned edge, so the evaluator reported $10.86 instead of the real cost (score 8.43 vs ~0.16
@@ -247,7 +252,7 @@ Model-scaling study — grammar_fuzzing/seed/sql, Nous vs Claude agent, iso-$50 
 
 | model | Nous | Claude (agent) | status |
 |---|---|---|---|
-| aws/claude-sonnet-4-5 | re-run queued (old 59.56 leaked) | 53.95 / $50.5 | Claude clean (no /tmp use) |
+| aws/claude-sonnet-4-5 | **54.23** / $50.6 | 53.95 / $50.5 | both clean |
 | aws/claude-opus-5 | **77.56** / $50.2 | 65.78 / $54.8 (best reached at $48.2) | both tried to probe the judge; all blocked |
 
 Nous Sonnet note: cost overshot to $56.20 (one large metrics jump from $43.89 past the cap). Best =

@@ -1,0 +1,101 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_s45b",
+  "model": "aws/claude-sonnet-4-5",
+  "final_score": 54.23,
+  "cost_usd": 9.52,
+  "n_clean_candidates": 19,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-1/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-1/patches/h-control-negative.patch",
+      "score": 44.949617381434855
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-1/patches/h-dose-response.patch",
+      "score": 53.953158668407504
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-1/patches/h-main.patch",
+      "score": 54.22605857100349
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-2/patches/h-ablation.patch",
+      "score": 49.47262872432104
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-2/patches/h-dose-response.patch",
+      "score": 54.187102583530674
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-2/patches/h-main.patch",
+      "score": 49.47262872432104
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-3/patches/h-control-negative.patch",
+      "score": 24.585939821341224
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-3/patches/h-dose-response.patch",
+      "score": 47.52239748927957
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-3/patches/h-main.patch",
+      "score": 47.79488831924398
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-4/patches/h-ablation.patch",
+      "score": 53.894472049762825
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-4/patches/h-control-negative.patch",
+      "score": 40.640637237228624
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-4/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-5/patches/h-control-negative.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-5/patches/h-dose-response.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-s45b/runs/iter-5/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_s45b_measured_20261012_203418/m0032_205947_score54.19.py",
+      "score": 54.187102583530674
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_s45b_measured_20261012_203418/m0033_205948_score54.00.py",
+      "score": 53.99526638711638
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_s45b_measured_20261012_203418/m0031_205946_score54.00.py",
+      "score": 53.998119745686026
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_s45b_ws/solution.py",
+      "score": 36.67687542683891
+    }
+  ],
+  "elapsed_s": 5530.0,
+  "cost_usd_tokenbased": 50.6,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true
+}
