@@ -98,6 +98,10 @@ Nous v3 `gf_v3bfa46` / `router_v3bfa46` (`runs/*/nous_v3_fa46.log`); Nous v4 `ro
 Stop rules: Claude hard $50; Nous finishes its iteration after $50 (ceiling $57) and records best_at_budget.
 Both use the same $15/$75 token ruler (`gen/cost_meter.py`), the same access rule and judge.
 Score-vs-spend curves (best score at each $) will be added when the runs finish.
+Caveat (llm_router): the sanctioned measure scores on the same data every agent tunes against, so many-sample
+search (Claude ~1,100 measurements, Nous v4 sweeps ~300) partly fits the evaluation data. Nous v4's own gap
+analysis: tuning on resources/reference_data.csv alone gives 55.14 vs 59.28 when tuned with the measure. This is
+allowed and identical for all agents, but scores reward measurement volume.
 
 Backups (kept, superseded): Nous v1 gf 84.23 @ $49.08 (`gf_seed_sql.nous_v1.fa46.json`); Nous v2 gf 84.95 @ $39.81
 and router 51.27 @ $18.92 (`*.nous_v2.fa46.killed_designbug.json`: iter-2 design hit the 30-turn cap 3x and
