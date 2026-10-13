@@ -1,0 +1,110 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_v4fa46",
+  "model": "claude-opus-4-6",
+  "final_score": 83.59,
+  "cost_usd": 15.79,
+  "n_clean_candidates": 4,
+  "n_rejected_exploits": 9,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-gf-v4fa46/runs/iter-2/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0450_160933_score91.44.py",
+      "exploits": [
+        "import-hook (builtins.__import__ override)",
+        "targets engine modules by name"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0449_160855_score89.68.py",
+      "exploits": [
+        "import-hook (builtins.__import__ override)",
+        "targets engine modules by name"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0448_160825_score86.75.py",
+      "exploits": [
+        "import-hook (builtins.__import__ override)",
+        "targets engine modules by name"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0442_160534_score86.00.py",
+      "exploits": [
+        "import-hook (builtins.__import__ override)",
+        "targets engine modules by name"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0445_160653_score86.00.py",
+      "exploits": [
+        "import-hook (builtins.__import__ override)",
+        "targets engine modules by name"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0447_160756_score86.00.py",
+      "exploits": [
+        "import-hook (builtins.__import__ override)",
+        "targets engine modules by name"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0443_160557_score86.00.py",
+      "exploits": [
+        "import-hook (builtins.__import__ override)",
+        "targets engine modules by name"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0446_160723_score86.00.py",
+      "exploits": [
+        "import-hook (builtins.__import__ override)",
+        "targets engine modules by name"
+      ]
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0441_160511_score85.04.py",
+      "exploits": [
+        "import-hook (builtins.__import__ override)",
+        "targets engine modules by name"
+      ]
+    }
+  ],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-v4fa46/runs/iter-1/patches/h-main.patch",
+      "score": 82.97440666675284
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-v4fa46/runs/iter-2/patches/h-main.patch",
+      "score": 83.58501036384372
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_measured_20261013_145257/m0129_153314_score83.59.py",
+      "score": 83.58501036384372
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v4fa46_ws/solution.py",
+      "score": 36.67687542683891
+    }
+  ],
+  "elapsed_s": 4643.1,
+  "cost_usd_tokenbased": 56.5,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": false,
+  "stop_rule": "finish the iteration in progress at $50.0 (ceiling $57.0)",
+  "best_at_budget": 83.59,
+  "budget_reached_at": 1791921421.125212,
+  "final_score_before_reaudit": 91.44,
+  "reaudit": "2026-10-13: builtins.__import__ hook signature added; hooked candidates moved to rejected"
+}
