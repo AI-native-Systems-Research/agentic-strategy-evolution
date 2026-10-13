@@ -43,7 +43,7 @@ Model scaling, grammar_fuzzing/seed/sql (Nous vs Claude agent, iso-$50, re-judge
 
 | model | Nous | Claude (agent) |
 |---|---|---|
-| aws/claude-sonnet-4-5 | re-run queued (old 59.56 leaked) | 53.95 / $50.5 |
+| aws/claude-sonnet-4-5 | **54.23** / $50.6 | 53.95 / $50.5 |
 | aws/claude-opus-5 | **77.56** / $50.2 | 65.78 / $54.8 (best at $48.2) |
 
 > llm_router re-judge must run with cwd = the problem dir (solutions read `resources/reference_data.csv`
