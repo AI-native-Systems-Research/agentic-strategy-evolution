@@ -21,6 +21,7 @@ Usage:
   nous_research_cap.py grammar_fuzzing/seed/sql --slug gf_s45 --model aws/claude-sonnet-4-5 \
     --budget 50 --niters 30 --out nous_gates/preds/gf.nous.s45.json --logdir ~/frontier/gen_logs
 """
+import cost_meter as C
 import argparse, glob, json, os, re, subprocess, sys, time
 from pathlib import Path
 
@@ -47,23 +48,8 @@ def token_cost(camp_dir):
 
 
 def live_cost(logdir, slug, since):
-    """Per-turn usage from the Agent SDK transcripts, written live (llm_metrics.jsonl only lands at phase end)."""
-    ws_key = re.sub(r"[^A-Za-z0-9]", "-", str(Path(logdir) / f"research_{slug}_ws"))
-    cost, seen = 0.0, set()
-    for f in glob.glob(os.path.expanduser(f"~/.claude/projects/{ws_key}*/**/*.jsonl"), recursive=True):
-        if os.path.getmtime(f) < since: continue
-        for ln in open(f, errors="ignore"):
-            try: d = json.loads(ln)
-            except Exception: continue
-            m = d.get("message") if isinstance(d.get("message"), dict) else None
-            u = m.get("usage") if m else None
-            if not u: continue
-            if m.get("id"):
-                if m["id"] in seen: continue
-                seen.add(m["id"])
-            cost += (u.get("input_tokens", 0) * R_IN + u.get("output_tokens", 0) * R_OUT
-                     + u.get("cache_creation_input_tokens", 0) * R_CW + u.get("cache_read_input_tokens", 0) * R_CR)
-    return round(cost, 4)
+    """Live per-reply usage from the Agent SDK transcripts (shared ruler, gen/cost_meter.py)."""
+    return C.transcript_cost(Path(logdir) / f"research_{slug}_ws", since=since)
 
 
 def kill_inner_nous(slug):

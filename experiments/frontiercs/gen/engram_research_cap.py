@@ -11,9 +11,10 @@ Nous/Claude), because Engram itself only logs cost every 5 iterations; killed at
 Usage:
   engram_research_cap.py grammar_fuzzing/seed/sql --slug gf_e46 --out artifacts/preds/gf_seed_sql.engram.o46.json
 """
-import argparse, glob, json, os, re, signal, subprocess, threading, time
+import argparse, glob, json, os, re, shutil, signal, subprocess, threading, time
 from pathlib import Path
 
+import access_rule as A
 import nous_research_isolated as N
 import token_meter_proxy as TM
 
@@ -42,7 +43,12 @@ def main():
     stop = threading.Event(); N.start_daemon(pid, root, stop, measured)
     log = Path(a.logdir) / f"engram_{a.slug}.log"
     _, meter, proxy = TM.start(os.environ["OPENAI_BASE_URL"])
-    env = dict(os.environ, FCS_JUDGE_ROOT=root, OPENAI_BASE_URL=proxy, OPENAI_API_BASE=proxy)
+    # same visible files as the other agents: readme + resources/ minus the hidden test datasets
+    files = Path(a.logdir) / f"engram_{a.slug}_files"; shutil.rmtree(files, ignore_errors=True); files.mkdir(parents=True)
+    pd = A.probdir(pid); shutil.copy(pd / "readme", files / "readme")
+    shutil.copytree(pd / "resources", files / "resources", ignore=shutil.ignore_patterns(*A.HIDDEN_IN_RESOURCES, "__pycache__"))
+    env = dict(os.environ, FCS_JUDGE_ROOT=root, OPENAI_BASE_URL=proxy, OPENAI_API_BASE=proxy,
+               FCS_EXTRA_PATHS=f"{files/'readme'}:{files/'resources'}")
     cmd = (f"cd {ENGRAM} && source .venv/bin/activate && exec python -u examples/handoff_example_usage.py "
            f"--problem_name fcs_res_{pid} --model claude-opus-4-6 --max_agents {a.max_agents} "
            f"--agent_timeout {a.agent_timeout} --num_runs 1")
