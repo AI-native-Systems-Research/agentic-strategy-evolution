@@ -175,6 +175,7 @@ def main():
                     + f'(allow file-read* (regex #"^{re.escape(rr(home))}/\\.claude/projects/{re.escape(proj_key)}"))\n'
                     # git worktree add must stat parent dirs; metadata only (no file contents)
                     + A.sbpl_task_access(pid)
+                    + A.sbpl_judge_tmp(djroot)
                     + '(allow file-read-metadata)\n')
     # fmeasure: inbox/outbox handshake (no direct ~/frontier access)
     fm = ws.parent/f"fmeasure_{a.slug}.sh"
