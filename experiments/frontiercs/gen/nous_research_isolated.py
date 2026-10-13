@@ -23,6 +23,7 @@ import argparse, glob, json, os, re, shlex, subprocess, tempfile, threading, tim
 from pathlib import Path
 
 import judge_sandbox as J
+import access_rule as A
 
 FRONTIER = os.environ.get("FRONTIER_DIR", os.path.expanduser("~/frontier/Frontier-CS"))
 NOUS_REPO = os.path.expanduser("~/nous_repo"); NOUS_BIN = f"{NOUS_REPO}/.venv/bin/nous"
@@ -145,6 +146,7 @@ def main():
                     + "".join(f'(allow file-read* (subpath "{p_}"))\n' for p_ in allow)
                     + f'(allow file-read* (regex #"^{re.escape(rr(home))}/\\.claude/projects/{re.escape(proj_key)}"))\n'
                     # git worktree add must stat parent dirs; metadata only (no file contents)
+                    + A.sbpl_task_access(pid)
                     + '(allow file-read-metadata)\n')
     # fmeasure: inbox/outbox handshake (no direct ~/frontier access)
     fm = ws.parent/f"fmeasure_{a.slug}.sh"
@@ -162,11 +164,7 @@ def main():
     desc = (f"You are solving Frontier-CS research problem '{pid}'. Read the README below (objective, "
             f"scoring metric, and the required Solution API). Edit solution.py in your working directory to "
             f"implement `class Solution` EXACTLY per the README API.\n\n"
-            f"RULES (enforced): you are sandboxed and CANNOT read the problem's internal files (engine "
-            f"source, evaluator, datasets, reference solutions). Solve the task legitimately: your solution "
-            f"must do the real work (generate SQL / choose a route). Do NOT use import hooks, sys.meta_path, "
-            f"or call engine internals, and do NOT read dataset/label files from disk — such solutions are "
-            f"rejected.\n\n"
+            f"{A.prompt_rules(pid)} Your solution must do the real work (generate SQL / choose a route).\n\n"
             f"MEASURE only with this command: bash {fm} $PWD/solution.py  (prints 'SCORE: <n>', higher is "
             f"better). Record it in finding metadata under key 'score'.\n\nPROBLEM README:\n{stmt}")
     slug = re.sub(r"[^A-Za-z0-9]+", "-", f"research-{a.slug}").strip("-")

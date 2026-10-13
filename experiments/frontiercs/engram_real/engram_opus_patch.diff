@@ -123,6 +123,22 @@ index 0000000..c29d7aa
 +                "error": "" if ok else "score 0 (invalid solution, exploit, or evaluator error)",
 +                "error_type": "" if ok else "evaluation_failed", "sim_dir": None,
 +                "stdout": f"SCORE: {score}", "stderr": ""}
+diff --git a/examples/_common.py b/examples/_common.py
+index acb6776..db94d6d 100644
+--- a/examples/_common.py
++++ b/examples/_common.py
+@@ -117,6 +117,11 @@ def resolve_problem_config(base_dir: Path, problem_name: str, give_files: bool =
+         os.environ["FCS_TRACK"] = "research"
+         os.environ["FCS_PROBLEM_ID"] = problem_id
+         initial_program_path = fcs_base / "research" / "initial_program.py"
++        # Task-visible files (readme + resources, test data stripped) copied into the agent workspace,
++        # matching the access the Nous/Claude agents get. Colon-separated paths.
++        extra = [Path(p) for p in os.environ.get("FCS_EXTRA_PATHS", "").split(":") if p]
++        if extra:
++            initial_program_path = [initial_program_path] + extra
+         fcs_repo = fcs_base / "frontier_cs_repo"
+         task_prompt_path = fcs_repo / "research" / "problems" / problem_id / "readme"
+         evaluator_path = fcs_base
 diff --git a/examples/single_agent_example_usage.py b/examples/single_agent_example_usage.py
 index 8d3ddeb..647d4fc 100644
 --- a/examples/single_agent_example_usage.py

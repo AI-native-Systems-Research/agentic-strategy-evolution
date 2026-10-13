@@ -1,4 +1,4 @@
-# Frontier-CS controlled comparison — TODO
+# Frontier-CS — checkpoint history (see README.md for the current state)
 
 > ⚠ **READ `README.md` FIRST** — it is the canonical source of truth (agents, rule, 10 tasks, clean
 > results, run commands, TODO). This `todo.md` is checkpoint history. If they disagree, README wins.
