@@ -19,7 +19,10 @@ V4 = "v4"
 # small budget still gets several design->execute loops, incremental edits, sweeps only for tunable values,
 # and re-measurement when the judge is noisy.
 V5 = "v5"
-LIGHT_PROFILES = (LIGHTWEIGHT, V4, V5)
+# v6 = v5 without the EXECUTE turn cap: long uninterrupted executor sessions, still starting from the best.
+V6 = "v6"
+CARRY_PROFILES = (V5, V6)
+LIGHT_PROFILES = (LIGHTWEIGHT, V4, V5, V6)
 V4_ARM_REFINE_CYCLES = 10
 V5_EXECUTE_MAX_TURNS = 45
 LIGHTWEIGHT_DESIGN_MAX_TURNS = 30
@@ -91,11 +94,11 @@ def is_light(campaign: dict) -> bool:
 
 
 def refine_cycles(campaign: dict) -> int:
-    return V4_ARM_REFINE_CYCLES if profile_for(campaign) in (V4, V5) else LIGHTWEIGHT_ARM_REFINE_CYCLES
+    return V4_ARM_REFINE_CYCLES if profile_for(campaign) in (V4,) + CARRY_PROFILES else LIGHTWEIGHT_ARM_REFINE_CYCLES
 
 
 def carry_forward_enabled(campaign: dict) -> bool:
-    return profile_for(campaign) == V5
+    return profile_for(campaign) in CARRY_PROFILES
 
 
 def design_max_turns_override(campaign: dict) -> int | None:
@@ -162,7 +165,7 @@ def design_guidance(campaign: dict, max_turns: int, mode: str = "real") -> str:
         "intended change precisely enough that the executor can implement it without re-deriving it.\n"
         "- **Seeds:** use a single seed when the measurement is deterministic.\n"
         + (V4_DESIGN_EXTRA if profile_for(campaign) == V4 else "")
-        + (V5_DESIGN_EXTRA if profile_for(campaign) == V5 else "")
+        + (V5_DESIGN_EXTRA if profile_for(campaign) in CARRY_PROFILES else "")
         + "\n"
     )
 
@@ -182,7 +185,7 @@ def execute_guidance(campaign: dict, mode: str = "real") -> str:
         "objective's metric keys to the kept values and put the per-cycle history under a separate "
         "`refine_cycles` key (do not add other keys to the arm result).\n"
         + ("- If the measurement is noisy, do not refine: run the planned conditions as usual.\n"
-           if profile_for(campaign) != V5 else
+           if profile_for(campaign) not in CARRY_PROFILES else
            "- If the measurement is noisy, refine only by re-measuring: keep the version with the best average "
            "over two or three measurements (see below).\n")
         + "- Do not spend measurements re-running unchanged conditions when the measurement is deterministic.\n"
@@ -193,7 +196,7 @@ def execute_guidance(campaign: dict, mode: str = "real") -> str:
         "not exercised, failing cases, or the largest remaining loss terms); and the most promising next "
         "step. The next designer starts from this file instead of re-exploring the system.\n"
         + (V4_EXECUTE_EXTRA if profile_for(campaign) == V4 else "")
-        + (V5_EXECUTE_EXTRA if profile_for(campaign) == V5 else "")
+        + (V5_EXECUTE_EXTRA if profile_for(campaign) in CARRY_PROFILES else "")
         + "\n"
     )
 
