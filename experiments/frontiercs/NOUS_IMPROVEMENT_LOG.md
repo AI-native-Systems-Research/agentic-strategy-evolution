@@ -24,7 +24,7 @@ partly fits it to the benchmark.
 
 | task (budget) | Claude | v1 | v2 | v3 | v4 | v5 | v6 |
 |---|---|---|---|---|---|---|---|
-| gf ($50) | 85.70 | 84.23 | 84.95* | **86.30** | 83.59 (hooked 91.44 rejected) | running | running |
+| gf ($50) | 85.70 | 84.23 | 84.95* | **86.30** | 83.59 (hooked 91.44 rejected) | 85.70* ($36.94) | running |
 | llm_router ($50) | 58.74 | - | 51.27* | 56.70* | **59.57** (59.66) | - | - |
 | p0 ($25) | 79.4 **contaminated** (see 3) | - | - | - | 73.48 (74.30) | 74.09 (75.32) | - |
 | p5 ($25) | 50.0 | - | - | - | **58.00** | 49.00 | running |
@@ -43,6 +43,13 @@ Old Claude algorithmic score-vs-spend (from transcripts, shared ruler):
 Claude research score-vs-spend (SDK runner, minimal prompt): gf 83.87 @ $10, **85.33 @ $25**, 85.70 @ $50;
 llm_router 56.27 @ $10, **58.12 @ $25**, 58.74 @ $50. From 2026-10-13 17:10 the user set a **$25 cap for every
 final run** (research included), compared against these $25 points.
+
+Research at **$25** (best clean score by $25 on each run's own curve, `gen/curve_at.py`):
+
+| task | Claude | v3 | v4 | v5 | v6 |
+|---|---|---|---|---|---|
+| gf | 85.33 | **85.70** | 82.97 | 82.93 | running (85.33 by ~$13) |
+| llm_router | 58.12 | 56.69 | **59.29** | - | - |
 
 ## 3. Integrity findings
 
