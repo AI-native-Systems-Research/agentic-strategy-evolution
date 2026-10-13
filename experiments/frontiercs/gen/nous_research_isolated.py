@@ -29,10 +29,12 @@ FRONTIER = os.environ.get("FRONTIER_DIR", os.path.expanduser("~/frontier/Frontie
 NOUS_REPO = os.path.expanduser("~/nous_repo"); NOUS_BIN = f"{NOUS_REPO}/.venv/bin/nous"
 FR_ROOT = os.path.expanduser("~/frontier/Frontier-CS")
 
-def probdir(pid): return Path(FRONTIER) / "research" / "problems" / str(pid)
+FEVAL = os.environ.get("FEVAL_BIN", f"{FRONTIER}/.venv/bin/frontier")
+probdir, statement, is_algo = A.probdir, A.statement, A.is_algo
 def evalpy(pid):  return probdir(pid) / ".evalvenv" / "bin" / "python3"
-def statement(pid):
-    p = probdir(pid) / "readme"; return p.read_text() if p.exists() else f"(research problem {pid})"
+def ext(pid): return ".cpp" if is_algo(pid) else ".py"
+def sol_name(pid): return "solution" + ext(pid)
+ALGO_SEED = "#include <bits/stdc++.h>\nusing namespace std;\nint main(){return 0;}\n"
 
 SEEDS = {
     "grammar_fuzzing/fuzzer": "class Solution:\n    def solve(self, resources_path):\n        return {'code': \"def fuzz(parse_sql):\\n    parse_sql(['SELECT 1;'])\\n\"}\n",
@@ -40,6 +42,7 @@ SEEDS = {
     "llm_router": "class Solution:\n    def solve(self, query, eval_name, candidate_models):\n        return candidate_models[0] if candidate_models else 'cheap'\n",
 }
 def seed_for(pid):
+    if is_algo(pid): return ALGO_SEED
     for k, v in SEEDS.items():
         if str(pid).startswith(k): return v
     return "class Solution:\n    def solve(self, *a, **k):\n        raise NotImplementedError\n"
@@ -60,17 +63,37 @@ EXPLOIT_SIGS = [
     (r"""['"](cost|throughput)['"]\s*:\s*0(\.0*)?\b""", "sets edge cost/throughput to zero in returned paths"),
     (r"/datasets/|resources/datasets", "accesses the datasets directory directly"),
 ]
-def exploit_hits(code):
+ALGO_EXPLOIT_SIGS = [
+    (r"testdata|\.ans\b|/problems/\d+", "reads judge test data or answer files"),
+    (r"/frontier/|Frontier-CS", "accesses the benchmark tree"),
+    (r"fmeasure|measure\.sh|fcs_", "calls the scoring judge from inside the solution"),
+]
+def exploit_hits(code, pid=None):
     hits = []
-    for pat, desc in EXPLOIT_SIGS:
+    for pat, desc in (ALGO_EXPLOIT_SIGS if pid is not None and is_algo(pid) else EXPLOIT_SIGS):
         if re.search(pat, code): hits.append(desc)
     return hits
 
 def judge_clean(pid, code, timeout=600):
     """Judge a solution ONLY if it has no exploit signatures; return (score, hits)."""
-    hits = exploit_hits(code)
+    hits = exploit_hits(code, pid)
     if hits: return None, hits
+    if is_algo(pid): return algo_score(pid, code, timeout), []
     return J.score(evalpy(pid), probdir(pid), code, timeout), []
+
+def algo_score(pid, code, timeout=900):
+    """Score a C++ solution with the official go-judge (outside any agent sandbox)."""
+    with tempfile.NamedTemporaryFile("w", suffix=".cpp", delete=False) as f:
+        f.write(code); path = f.name
+    try:
+        r = subprocess.run(f"{FEVAL} eval algorithmic {pid} {shlex.quote(path)} --json", shell=True,
+                           capture_output=True, text=True, cwd=FRONTIER, timeout=timeout)
+        ms = re.findall(r'"score"\s*:\s*([0-9.]+)', r.stdout + r.stderr)
+        return max((float(m) for m in ms), default=0.0)
+    except subprocess.TimeoutExpired:
+        return 0.0
+    finally:
+        os.unlink(path)
 
 def reconstruct(patch):
     lines = Path(patch).read_text(errors="ignore").splitlines()
@@ -93,17 +116,18 @@ def start_daemon(pid, root, stop_evt, archive):
     def score_file(f):
         code = Path(f).read_text(errors="ignore")
         # reject gaming IN-LOOP so the agent gets 0 feedback for exploits and pursues legit solutions
-        if exploit_hits(code): return 0.0
+        if exploit_hits(code, pid): return 0.0
+        if is_algo(pid): return algo_score(pid, code)
         return J.score(evalpy(pid), pd, code)
     def loop():
         while not stop_evt.is_set():
-            for f in sorted(glob.glob(str(inbox/"*.py"))):
+            for f in sorted(glob.glob(str(inbox/f"*{ext(pid)}"))):
                 tok = Path(f).stem
                 try: s = score_file(f)
                 except Exception: s = 0.0
                 try:
-                    n = len(list(archive.glob("*.py")))
-                    Path(archive/f"m{n:04d}_{time.strftime('%H%M%S')}_score{s:.2f}.py").write_text(Path(f).read_text(errors="ignore"))
+                    n = len(list(archive.glob(f"*{ext(pid)}")))
+                    Path(archive/f"m{n:04d}_{time.strftime('%H%M%S')}_score{s:.2f}{ext(pid)}").write_text(Path(f).read_text(errors="ignore"))
                 except OSError: pass
                 (outbox/f"{tok}.score").write_text(f"SCORE: {s}\n")
                 try: os.unlink(f)
@@ -113,8 +137,9 @@ def start_daemon(pid, root, stop_evt, archive):
 
 def _top_measured(d, k):
     def sc(p):
-        m = re.search(r"_score([0-9.]+)\.py$", p); return float(m.group(1)) if m else -1.0
-    return sorted(glob.glob(str(Path(d)/"*.py")), key=sc, reverse=True)[:k]
+        m = re.search(r"_score([0-9.]+)\.(py|cpp)$", p); return float(m.group(1)) if m else -1.0
+    files = glob.glob(str(Path(d)/"*.py")) + glob.glob(str(Path(d)/"*.cpp"))
+    return sorted(files, key=sc, reverse=True)[:k]
 
 def main():
     import yaml
@@ -126,7 +151,7 @@ def main():
     a = ap.parse_args(); pid = a.problem_id; stmt = statement(pid)
     Path(a.logdir).mkdir(parents=True, exist_ok=True)
     ws = Path(a.logdir) / f"research_{a.slug}_ws"; ws.mkdir(parents=True, exist_ok=True)
-    (ws/"solution.py").write_text(seed_for(pid))
+    (ws/sol_name(pid)).write_text(seed_for(pid))
     subprocess.run("git init -q && git add -A && git -c user.email=x@x -c user.name=x commit -q -m seed", shell=True, cwd=str(ws))
     # daemon
     djroot = f"/tmp/fcs_rjudge2/{a.slug}"; stop = threading.Event()
@@ -152,27 +177,37 @@ def main():
     # fmeasure: inbox/outbox handshake (no direct ~/frontier access)
     fm = ws.parent/f"fmeasure_{a.slug}.sh"
     fm.write_text("#!/bin/bash\n"
-        "# fmeasure.sh <solution.py> -> 'SCORE: <n>' via the out-of-sandbox judge daemon\n"
+        f"# fmeasure.sh <{sol_name(pid)}> -> 'SCORE: <n>' via the out-of-sandbox judge daemon\n"
         f'IN="{djroot}/inbox"; OUT="{djroot}/outbox"\n'
         'tok="m$$_$RANDOM"\n'
-        'cp "$1" "$IN/$tok.py"\n'
-        'for i in $(seq 1 600); do\n'
+        f'cp "$1" "$IN/$tok{ext(pid)}"\n'
+        f'for i in $(seq 1 {1200 if is_algo(pid) else 600}); do\n'
         '  if [ -f "$OUT/$tok.score" ]; then cat "$OUT/$tok.score"; rm -f "$OUT/$tok.score"; exit 0; fi\n'
         '  sleep 1\n'
         'done\n'
         'echo "SCORE: 0.0"\n')
     fm.chmod(0o755)
-    desc = (f"You are solving Frontier-CS research problem '{pid}'. Read the README below (objective, "
+    if is_algo(pid):
+        desc = (f"You are solving Frontier-CS algorithmic problem #{pid}. Scoring is continuous partial credit "
+                f"from 0 to 100 (higher is better); maximize it. Your working directory is a git worktree "
+                f"containing solution.cpp (a C++17 stub). Edit solution.cpp with your algorithm.\n\n"
+                f"{A.prompt_rules(pid)}\n\n"
+                f"MEASURE only with this command: bash {fm} $PWD/solution.cpp  (prints 'SCORE: <n>'; one call "
+                f"takes roughly 30-60s). Record it in finding metadata under key 'score'.\n\nPROBLEM STATEMENT:\n{stmt}")
+    else:
+      desc = (f"You are solving Frontier-CS research problem '{pid}'. Read the README below (objective, "
             f"scoring metric, and the required Solution API). Edit solution.py in your working directory to "
             f"implement `class Solution` EXACTLY per the README API.\n\n"
             f"{A.prompt_rules(pid)} Your solution must do the real work (generate SQL / choose a route).\n\n"
             f"MEASURE only with this command: bash {fm} $PWD/solution.py  (prints 'SCORE: <n>', higher is "
             f"better). Record it in finding metadata under key 'score'.\n\nPROBLEM README:\n{stmt}")
     slug = re.sub(r"[^A-Za-z0-9]+", "-", f"research-{a.slug}").strip("-")
+    track = "algorithmic" if is_algo(pid) else "research"
     spec = {"research_question": f"What legitimate solution maximizes the score for '{pid}'?",
             "run_id": slug, "max_iterations": a.niters, "sandbox": "bypass",
-            "target_system": {"name": f"frontier-cs::research::{pid}", "description": desc,
-                              "repo_path": str(ws), "observable_metrics": ["score"], "controllable_knobs": ["solution_py"]},
+            "target_system": {"name": f"frontier-cs::{track}::{pid}", "description": desc,
+                              "repo_path": str(ws), "observable_metrics": ["score"],
+                              "controllable_knobs": ["solution_cpp" if is_algo(pid) else "solution_py"]},
             "objective": {"weights": {"score": 1.0}},
             "design_profile": a.design_profile,
             "models": {"design": a.model, "execute_analyze": a.model, "report": a.model},
@@ -195,8 +230,8 @@ def main():
     best = -1.0; bestsrc = None; ev = []; rejected = []
     seen = set()
     cand_sources = [(p, reconstruct(p)) for p in patches if not p.endswith("cumulative.patch")]
-    extra = (sorted(glob.glob(str(camp_dir)+"/runs/iter-*/inputs/*.py")) + _top_measured(measured, 10)
-             + [str(ws/"solution.py")])
+    extra = (sorted(glob.glob(str(camp_dir)+f"/runs/iter-*/inputs/*{ext(pid)}")) + _top_measured(measured, 10)
+             + [str(ws/sol_name(pid))])
     cand_sources += [(p, Path(p).read_text(errors="ignore")) for p in extra if Path(p).exists()]
     for src, code in cand_sources:
         if not code.strip() or code in seen: continue
@@ -211,7 +246,7 @@ def main():
         for l in open(mf, errors="ignore"):
             try: cost += json.loads(l).get("cost_usd", 0) or 0
             except Exception: pass
-    pred = {"problem_id": pid, "track": "research", "agent": "nous", "label": a.slug, "model": a.model,
+    pred = {"problem_id": pid, "track": track, "agent": "nous", "label": a.slug, "model": a.model,
             "final_score": (round(best, 2) if best >= 0 else None), "cost_usd": round(cost, 2),
             "n_clean_candidates": len(ev), "n_rejected_exploits": len(rejected),
             "best_source": bestsrc, "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
