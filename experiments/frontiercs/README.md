@@ -126,8 +126,8 @@ finish-iteration with ceiling $28.5, headline = best_at_budget ($25). Slugs `p<p
 | task | Claude (old, ~$25) | Nous old (overspent) | Engram | AIDE | **Nous v4 @ $25** (best_at_budget / final re-judged / total spent) |
 |---|---|---|---|---|---|
 | p0 | 79.4 | 89.1 | 68.5 | 0 | 73.48 / 74.30 / $29.09 (1 full iteration inside $25) |
-| p5 | 50.0 | 83 | 41 | 44 | running |
-| p47 | 94.1 | 95.5 | 94.2 | 96.8 | queued |
+| p5 | 50.0 | 83 | 41 | 44 | **58.00** / 58.00 / $25.99 (beats Claude, Engram, AIDE at $25) |
+| p47 | 94.1 | 95.5 | 94.2 | 96.8 | dropped for v5 |
 
 p0's judge is time-limited, so the same solution re-scores within about +/-2 (75.51 when measured, 74.30 re-judged).
 
