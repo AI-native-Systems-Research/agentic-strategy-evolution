@@ -1,0 +1,63 @@
+{
+  "problem_id": "0",
+  "track": "algorithmic",
+  "agent": "claude-code-sdk",
+  "label": "p0_csdk25",
+  "model": "claude-opus-4-6",
+  "final_score": 75.47,
+  "best_file": "measured/m0014_174110_score75.47.cpp",
+  "cost_usd_tokenbased": 25.1,
+  "cost_capped": true,
+  "n_clean": 11,
+  "n_rejected": 0,
+  "stack": "claude_agent_sdk (same as Nous), Claude Code preset system prompt, bypassPermissions, WebSearch/WebFetch disallowed",
+  "isolation": "sandbox-exec: task readme+resources readable (resources/datasets hidden); evaluator, other runs, transcripts denied; sandboxed judge daemon; exploit audit",
+  "clean_evidence": [
+    {
+      "file": "measured/m0025_175120_score76.41.cpp",
+      "score": 72.9190492057143
+    },
+    {
+      "file": "measured/m0024_174956_score76.25.cpp",
+      "score": 73.82711022571425
+    },
+    {
+      "file": "measured/m0020_174615_score76.17.cpp",
+      "score": 73.9227572485714
+    },
+    {
+      "file": "measured/m0029_175431_score76.14.cpp",
+      "score": 74.99591613714283
+    },
+    {
+      "file": "measured/m0022_174816_score76.13.cpp",
+      "score": 73.85600807285712
+    },
+    {
+      "file": "measured/m0014_174110_score75.47.cpp",
+      "score": 75.47370568714284
+    },
+    {
+      "file": "measured/m0028_175352_score75.33.cpp",
+      "score": 75.29451927714285
+    },
+    {
+      "file": "measured/m0032_175647_score75.01.cpp",
+      "score": 71.59090838999998
+    },
+    {
+      "file": "measured/m0018_174451_score74.95.cpp",
+      "score": 74.98861329571427
+    },
+    {
+      "file": "measured/m0027_175308_score74.95.cpp",
+      "score": 75.03309660428569
+    },
+    {
+      "file": "solution.cpp",
+      "score": 0.0
+    }
+  ],
+  "rejected_exploit_candidates": [],
+  "elapsed_s": 2057.6
+}
