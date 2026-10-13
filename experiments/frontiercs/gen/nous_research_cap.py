@@ -49,7 +49,16 @@ def token_cost(camp_dir):
 
 def live_cost(logdir, slug, since):
     """Live per-reply usage from the Agent SDK transcripts (shared ruler, gen/cost_meter.py)."""
-    return C.transcript_cost(Path(logdir) / f"research_{slug}_ws", since=since)
+    sdk = C.transcript_cost(Path(logdir) / f"research_{slug}_ws", since=since)
+    # Nous's non-SDK calls (LLMDispatcher, e.g. gate summaries) never appear in transcripts; add them from metrics
+    run_slug = re.sub(r"[^A-Za-z0-9]+", "-", f"research-{slug}").strip("-")
+    direct = 0.0
+    for mf in glob.glob(str(Path(logdir) / "nous_runs" / run_slug / "**" / "llm_metrics.jsonl"), recursive=True):
+        for ln in open(mf, errors="ignore"):
+            try: d = json.loads(ln)
+            except ValueError: continue
+            if d.get("dispatcher") == "llm": direct += C.usage_cost(d)
+    return round(sdk + direct, 4)
 
 
 def kill_inner_nous(slug):
@@ -64,6 +73,67 @@ def kill_inner_nous(slug):
             subprocess.run(["kill", "-9", pid])
 
 
+def nous_iteration(camp_dir):
+    try: return int(json.loads((Path(camp_dir) / "state.json").read_text()).get("iteration", 0))
+    except (OSError, ValueError): return 0
+
+
+def best_at_budget(problem_id, logdir, slug, t_cap, k=5):
+    """Best clean re-judged score among solutions measured before the budget was reached."""
+    import nous_research_isolated as N
+    arch = sorted(glob.glob(str(Path(logdir) / f"research_{slug}_measured_*")))
+    if not arch or t_cap is None: return None
+    files = [f for f in N._top_measured(arch[-1], 10**6) if os.path.getmtime(f) <= t_cap][:k]
+    best = None
+    for f in files:
+        sc, hits = N.judge_clean(problem_id, Path(f).read_text(errors="ignore"))
+        if not hits and (best is None or sc > best): best = sc
+    return best
+
+
+def watch(a, alive, logdir, camp_dir, t0):
+    """Poll cost; hard mode kills at budget, finish-iteration mode lets the current iteration complete."""
+    killed = False; t_cap = None; it_cap = None
+    while alive():
+        time.sleep(a.poll)
+        mcost, lcost = token_cost(camp_dir), live_cost(logdir, a.slug, t0)
+        cost = max(mcost, lcost); it = nous_iteration(camp_dir)
+        print(f"[rcap {time.strftime('%H:%M:%S')}] elapsed={int(time.time()-t0)}s cost=${cost:.2f} "
+              f"(metrics ${mcost:.2f}, live ${lcost:.2f}; budget ${a.budget}) iter={it}", flush=True)
+        if killed: continue
+        if t_cap is None and cost >= a.budget:
+            t_cap, it_cap = time.time(), it
+            if not a.finish_iteration:
+                print(f"[rcap] cost ${cost:.2f} >= ${a.budget} -> kill inner `nous run` (runner harvests)", flush=True)
+                kill_inner_nous(a.slug); killed = True; continue
+            print(f"[rcap] budget reached at ${cost:.2f} in iter {it}; letting iter {it} finish (ceiling ${a.ceiling})", flush=True)
+        if t_cap is not None and (it > it_cap or cost >= a.ceiling):
+            why = f"iter {it_cap} finished" if it > it_cap else f"ceiling ${a.ceiling}"
+            print(f"[rcap] {why} at ${cost:.2f} -> kill inner `nous run` (runner harvests)", flush=True)
+            kill_inner_nous(a.slug); killed = True
+    return killed, t_cap
+
+
+def stamp(a, out, logdir, camp_dir, t0, killed, t_cap):
+    kill_inner_nous(a.slug)  # reap any orphaned SDK children
+    final_cost = max(token_cost(camp_dir), live_cost(logdir, a.slug, t0))
+    print(f"[rcap] runner exited; capped={killed}; token-cost=${final_cost:.2f}", flush=True)
+    try:
+        pred = json.loads(out.read_text())
+        pred["cost_usd_tokenbased"] = round(final_cost, 2)
+        pred["cost_rates_per_mtok"] = {"in": R_IN*1e6, "out": R_OUT*1e6, "cache_write": R_CW*1e6, "cache_read": R_CR*1e6}
+        pred["cost_capped"] = killed
+        if a.finish_iteration:
+            b = best_at_budget(a.problem_id, logdir, a.slug, t_cap)
+            pred["stop_rule"] = f"finish the iteration in progress at ${a.budget} (ceiling ${a.ceiling})"
+            pred["best_at_budget"] = round(b, 2) if b is not None else None
+            pred["budget_reached_at"] = t_cap
+        out.write_text(json.dumps(pred, indent=2))
+        print(f"[rcap] stamped cost (+ best_at_budget={pred.get('best_at_budget')}) into {out}", flush=True)
+    except Exception as e:
+        print(f"[rcap] WARN could not stamp cost into {out}: {e}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("problem_id")
@@ -74,43 +144,32 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--logdir", default=os.path.expanduser("~/frontier/gen_logs"))
     ap.add_argument("--poll", type=float, default=20.0)
+    ap.add_argument("--finish-iteration", action="store_true",
+                    help="at the budget, let the iteration in progress complete before stopping")
+    ap.add_argument("--ceiling", type=float, default=57.0, help="hard stop even mid-iteration")
+    ap.add_argument("--attach", type=float, default=None,
+                    help="attach to an already-running isolated runner (value = its start epoch)")
     a = ap.parse_args()
     logdir = Path(os.path.expanduser(a.logdir))
-    # mirror the isolated runner's path derivation
     run_slug = re.sub(r"[^A-Za-z0-9]+", "-", f"research-{a.slug}").strip("-")
     camp_dir = logdir / "nous_runs" / run_slug
     out = Path(a.out).resolve()
-
+    if a.attach is not None:
+        pat = f"nous_research_isolated.py {a.problem_id} --slug {a.slug} "
+        alive = lambda: subprocess.run(["pgrep", "-f", pat], capture_output=True).returncode == 0
+        print(f"[rcap] attached to running runner ({pat.strip()})", flush=True)
+        killed, t_cap = watch(a, alive, logdir, camp_dir, a.attach)
+        stamp(a, out, logdir, camp_dir, a.attach, killed, t_cap); return
     cmd = [sys.executable, "-u", str(ISO), a.problem_id, "--slug", a.slug, "--model", a.model,
            "--niters", str(a.niters), "--out", str(out), "--logdir", str(logdir)]
     print(f"[rcap] launching isolated nous research: {' '.join(cmd)}", flush=True)
     print(f"[rcap] token-based budget=${a.budget} (rates ${R_IN*1e6:.0f}/${R_OUT*1e6:.0f} per M); "
           f"metrics under {camp_dir}", flush=True)
     proc = subprocess.Popen(cmd, cwd=str(HERE.parent))
-    killed = False; t0 = time.time()
-    while proc.poll() is None:
-        time.sleep(a.poll)
-        mcost, lcost = token_cost(camp_dir), live_cost(logdir, a.slug, t0)
-        cost = max(mcost, lcost)
-        print(f"[rcap {time.strftime('%H:%M:%S')}] elapsed={int(time.time()-t0)}s cost=${cost:.2f} "
-              f"(metrics ${mcost:.2f}, live ${lcost:.2f}; budget ${a.budget})", flush=True)
-        if not killed and cost >= a.budget:
-            print(f"[rcap] cost ${cost:.2f} >= ${a.budget} -> kill inner `nous run` (runner harvests)", flush=True)
-            kill_inner_nous(a.slug); killed = True
-    rc = proc.wait()
-    kill_inner_nous(a.slug)  # reap any orphaned SDK children
-    final_cost = max(token_cost(camp_dir), live_cost(logdir, a.slug, t0))
-    print(f"[rcap] runner exited rc={rc}; capped={killed}; token-cost=${final_cost:.2f}", flush=True)
-    try:
-        pred = json.loads(out.read_text())
-        pred["cost_usd_tokenbased"] = round(final_cost, 2)
-        pred["cost_rates_per_mtok"] = {"in": R_IN*1e6, "out": R_OUT*1e6,
-                                       "cache_write": R_CW*1e6, "cache_read": R_CR*1e6}
-        pred["cost_capped"] = killed
-        out.write_text(json.dumps(pred, indent=2))
-        print(f"[rcap] stamped token-based cost into {out}", flush=True)
-    except Exception as e:
-        print(f"[rcap] WARN could not stamp cost into {out}: {e}", flush=True)
+    t0 = time.time()
+    killed, t_cap = watch(a, lambda: proc.poll() is None, logdir, camp_dir, t0)
+    proc.wait()
+    stamp(a, out, logdir, camp_dir, t0, killed, t_cap)
 
 
 if __name__ == "__main__":
