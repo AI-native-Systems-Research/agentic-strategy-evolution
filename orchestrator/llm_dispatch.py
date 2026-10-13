@@ -624,7 +624,11 @@ class LLMDispatcher:
             )
             mode = iteration_mode_for(self.campaign, iteration)
             ctx["iteration_mode"] = mode
-            ctx["mode_guidance"] = mode_guidance_for(mode)
+            # campaign.design_profile guidance rides on mode_guidance (empty for the standard profile),
+            # so templates and callers that build their own context need no new placeholder.
+            from orchestrator.design_profile import design_guidance
+            ctx["mode_guidance"] = mode_guidance_for(mode) + design_guidance(
+                self.campaign, self._max_turns_for_phase("design"), mode)
             # #185: surface a top-level pre-registered ground_truth block
             # to the designer so the immutable direction-claim and pass
             # condition reach the LLM directly. When absent, the
@@ -754,7 +758,8 @@ class LLMDispatcher:
             )
             mode = iteration_mode_for(self.campaign, iteration)
             ctx["iteration_mode"] = mode
-            ctx["mode_guidance"] = execute_mode_guidance_for(mode)
+            from orchestrator.design_profile import execute_guidance
+            ctx["mode_guidance"] = execute_mode_guidance_for(mode) + execute_guidance(self.campaign, mode)
 
         if perspective is not None:
             ctx["perspective_name"] = perspective
@@ -831,15 +836,11 @@ class LLMDispatcher:
 
 
     def _max_turns_for_phase(self, phase: str) -> int:
-        """Return the max_turns limit for a CLI-dispatched phase."""
+        """Return the max_turns limit for a phase (same resolver as iteration._max_turns_for)."""
+        from orchestrator.design_profile import resolve_max_turns
         defaults_path = Path(__file__).parent / "defaults.yaml"
-        if defaults_path.exists():
-            defaults = yaml.safe_load(defaults_path.read_text()) or {}
-            max_turns = defaults.get("max_turns", {})
-            phase_key = phase.replace("-", "_")
-            if phase_key in max_turns:
-                return max_turns[phase_key]
-        return 25
+        defaults = (yaml.safe_load(defaults_path.read_text()) or {}) if defaults_path.exists() else {}
+        return resolve_max_turns(self.campaign, phase.replace("-", "_"), defaults.get("max_turns", {}))
 
     def _format_principles(self) -> str:
         """Read principles.json and format active ones for prompt injection."""
