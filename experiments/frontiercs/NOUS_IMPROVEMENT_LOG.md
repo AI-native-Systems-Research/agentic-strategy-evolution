@@ -40,6 +40,10 @@ Old Claude algorithmic score-vs-spend (from transcripts, shared ruler):
 | p5 | 45.0 | 50.0 | 50.0 | 50.0 | 50.0 | $29.97 |
 | p47 | 91.4 | 92.6 | 93.2 | 93.9 | 94.1 | $25.68 |
 
+Claude research score-vs-spend (SDK runner, minimal prompt): gf 83.87 @ $10, **85.33 @ $25**, 85.70 @ $50;
+llm_router 56.27 @ $10, **58.12 @ $25**, 58.74 @ $50. From 2026-10-13 17:10 the user set a **$25 cap for every
+final run** (research included), compared against these $25 points.
+
 ## 3. Integrity findings
 
 - **Claude p0 baseline is contaminated (found 2026-10-13).** The old CLI runner shared `/tmp/fcs_judge` with
