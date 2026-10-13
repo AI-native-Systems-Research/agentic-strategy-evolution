@@ -64,6 +64,10 @@ runs every evaluation under sandbox-exec with no network and no writes except a 
 Claude's (deny `~/frontier`, `experiments/frontiercs`, `~/engram_repo`, `~/.claude/projects`; re-allow
 only its own workspace, campaign dir, scripts, and transcripts).
 
+**Claude resume overshoot (fixed 2026-10-12):** a `--continue` resume re-sends the whole context in
+its first call (gf Opus-5 jumped $48.21 -> $54.76), so `claude_code_research_runner.py` now skips a
+resume whose estimated first-call cost would cross the cap (`stop_reason=budget_no_room_to_resume`).
+
 **llm_router audit rule (fixed 2026-10-12):** the exploit audit banned `reference_data.csv` and any
 `read_csv`, but the task README explicitly provides `resources/reference_data.csv` (training data) for
 solutions to read at runtime. Those two patterns were removed for every agent; the labeled test split
@@ -222,7 +226,7 @@ Research — score-metric (higher better; score / LLM-$), opus-4-6:
 | task | Nous | Claude (agent) | Engram (real) | notes |
 |---|---|---|---|---|
 | grammar_fuzzing/seed (SQL-parser coverage, pl) | re-run queued (old 86.9 leaked) | 57.70 / $50.6 | queued | all re-run on sandboxed judge |
-| llm_router (cost-aware routing, ai) | re-run queued (old 59.7 leaked) | queued | queued | trivial baseline=25.4; oracle≈90 |
+| llm_router (cost-aware routing, ai) | re-run queued (old 59.7 leaked) | 58.21 / $50.1 | queued | trivial baseline=25.4; oracle≈90 |
 
 Model-scaling study — grammar_fuzzing/seed/sql, Nous vs Claude agent, iso-$50 (re-judged clean best):
 

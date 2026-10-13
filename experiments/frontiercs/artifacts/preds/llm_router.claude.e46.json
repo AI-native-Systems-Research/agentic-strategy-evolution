@@ -1,0 +1,99 @@
+{
+  "problem_id": "llm_router",
+  "track": "research",
+  "agent": "claude-code",
+  "label": "router_e46",
+  "model": "claude-opus-4-6",
+  "final_score": 58.21,
+  "cost_usd_tokenbased": 50.07,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0
+  },
+  "stop_reason": "budget",
+  "sessions": 1,
+  "best_file": "solution.py",
+  "n_clean": 19,
+  "n_rejected": 0,
+  "isolation": "claude -p agent under sandbox-exec deny ~/frontier/{research,datasets}; measure only via out-of-sandbox judge daemon; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "file": "attempt_1_score_30.07.py",
+      "score": 30.069261718094094
+    },
+    {
+      "file": "attempt_2_score_53.81.py",
+      "score": 53.80574286611094
+    },
+    {
+      "file": "attempt_3_score_55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "file": "attempt_4_score_55.35.py",
+      "score": 55.354472294465026
+    },
+    {
+      "file": "attempt_5_score_55.16.py",
+      "score": 55.15558710552478
+    },
+    {
+      "file": "attempt_6_score_55.56.py",
+      "score": 55.55903042794842
+    },
+    {
+      "file": "attempt_7_score_55.93.py",
+      "score": 55.92849978885399
+    },
+    {
+      "file": "attempt_8_score_55.99.py",
+      "score": 55.98527313824191
+    },
+    {
+      "file": "m0042_210327_score55.99.py",
+      "score": 55.98527313824191
+    },
+    {
+      "file": "m0037_210114_score55.99.py",
+      "score": 55.98527313824191
+    },
+    {
+      "file": "m0043_210344_score55.98.py",
+      "score": 55.978983871493035
+    },
+    {
+      "file": "m0040_210215_score55.97.py",
+      "score": 55.97086934026297
+    },
+    {
+      "file": "m0034_205954_score55.93.py",
+      "score": 55.92849978885399
+    },
+    {
+      "file": "m0039_210157_score55.66.py",
+      "score": 55.6571907068644
+    },
+    {
+      "file": "m0038_210139_score55.56.py",
+      "score": 55.55903042794842
+    },
+    {
+      "file": "m0041_210241_score55.56.py",
+      "score": 55.55903042794842
+    },
+    {
+      "file": "m0029_205805_score55.56.py",
+      "score": 55.55903042794842
+    },
+    {
+      "file": "m0033_205938_score55.56.py",
+      "score": 55.55903042794842
+    },
+    {
+      "file": "solution.py",
+      "score": 58.21015823079566
+    }
+  ],
+  "elapsed_s": 2355.9
+}
