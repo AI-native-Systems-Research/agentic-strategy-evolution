@@ -139,5 +139,12 @@
   ],
   "elapsed_s": 2774.3,
   "total_transfer_cost": 626.244636,
-  "reharvest_note": "re-harvested with the edge-cost-rewrite exploit rule; original harvest (8.43, $10.86 fake cost) kept at runs/cloudcast/claude_e46/pred_original_harvest.json"
+  "reharvest_note": "re-harvested with the edge-cost-rewrite exploit rule; original harvest (8.43, $10.86 fake cost) kept at runs/cloudcast/claude_e46/pred_original_harvest.json",
+  "rejudge5_transfer_cost": [
+    626.2,
+    626.2,
+    626.2,
+    626.2,
+    626.2
+  ]
 }

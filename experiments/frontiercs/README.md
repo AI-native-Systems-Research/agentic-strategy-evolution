@@ -239,14 +239,14 @@ isolation, re-judged from persisted artifacts, cheat-audit **CLEAN** (0 testdata
 Research — cost-metric (cloudcast = $ transfer cost, LOWER better):
 | task | Nous | Engram (capped) | Claude (isolated) | AIDE | baseline |
 |---|---|---|---|---|---|
-| cloudcast | re-run queued (old $626 leaked) | ~$942 / $59 | **$626.24** / $50.1 (2 cost-rewrite cheats rejected) | N/A | naive $1046 |
+| cloudcast | $648.5 / $50.5 | ~$942 / $59 | **$626.2** / $50.1 (2 cost-rewrite cheats rejected) | N/A | naive $1046 (transfer $ = mean of 5 re-judges) |
 
 Research — score-metric (higher better; score / LLM-$), opus-4-6:
 
 | task | Nous | Claude (agent) | Engram (real) | notes |
 |---|---|---|---|---|
 | grammar_fuzzing/seed (SQL-parser coverage, pl) | **59.55** / $50.2 | 57.70 / $50.6 | 55.93 / $51.3 | all on sandboxed judge |
-| llm_router (cost-aware routing, ai) | running | 58.21 / $50.1 | 55.14 / $51.7 | trivial baseline=25.4; oracle≈90 |
+| llm_router (cost-aware routing, ai) | 57.15 / $50.4 | **58.21** / $50.1 | 55.14 / $51.7 | trivial baseline=25.4; oracle≈90 |
 
 Model-scaling study — grammar_fuzzing/seed/sql, Nous vs Claude agent, iso-$50 (re-judged clean best):
 
@@ -474,10 +474,12 @@ thinking-OFF answers in seconds).
 ## 6. TODO / remaining work
 
 **CURRENT PLAN (2026-10-12):**
-Queue (2 at a time; vpc = Nous/Engram, vpc-int = Claude), all on the sandboxed judge:
-1. gf Opus-5: Nous + Claude.  2. gf Sonnet-4.5: Nous re-run (Claude done) + gf opus-4-6 Claude.
-3. gf opus-4-6 Nous + llm_router opus-4-6 Claude.  4. llm_router opus-4-6 Nous.
-5. Engram (real) gf + llm_router, opus-4-6.  6. cloudcast Nous + Claude re-run (both used the side channel).
+**DONE 2026-10-13:** all research runs re-done on the sandboxed judge (Nous gf x3 models, llm_router,
+cloudcast; Claude gf Opus-5 + opus-4-6, llm_router, cloudcast; real Engram gf + llm_router). Summary:
+Nous wins gf at every model tier (Sonnet 54.23 vs 53.95, opus-4-6 59.55 vs 57.70 vs Engram 55.93,
+Opus-5 77.56 vs 65.78); Claude wins llm_router (58.21 vs Nous 57.15 vs Engram 55.14) and cloudcast
+($626.2 vs Nous $648.5; lower is better). Algorithmic results unchanged (separate Docker judge).
+Remaining TODO: Engram cloudcast is the older built-in-problem run (~$942, not metered); AIDE p0 variance.
 3. Keep this README + BEST_AT_50.md current; commit + push to `aiopslab` after each result.
 
 (Older status notes below are history.)

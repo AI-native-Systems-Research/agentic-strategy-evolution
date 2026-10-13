@@ -1,0 +1,49 @@
+{
+  "problem_id": "llm_router",
+  "track": "research",
+  "agent": "nous",
+  "label": "router_e46n",
+  "model": "claude-opus-4-6",
+  "final_score": 57.15,
+  "cost_usd": 13.24,
+  "n_clean_candidates": 6,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/research_router_e46n_measured_20261012_225212/m0117_000949_score57.15.py",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-router-e46n/runs/iter-1/patches/h-control-negative.patch",
+      "score": 50.38239527570716
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-router-e46n/runs/iter-1/patches/h-main.patch",
+      "score": 55.74043604174022
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-router-e46n/runs/iter-2/patches/h-ablation.patch",
+      "score": 56.3417906320072
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-router-e46n/runs/iter-2/patches/h-main.patch",
+      "score": 57.140224115109305
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_e46n_measured_20261012_225212/m0117_000949_score57.15.py",
+      "score": 57.154296849921714
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_e46n_measured_20261012_225212/m0089_235627_score57.15.py",
+      "score": 57.154296849921714
+    }
+  ],
+  "elapsed_s": 5036.4,
+  "cost_usd_tokenbased": 50.37,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true
+}
