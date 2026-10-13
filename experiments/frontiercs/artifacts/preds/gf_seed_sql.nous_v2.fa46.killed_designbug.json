@@ -1,0 +1,57 @@
+{
+ "problem_id": "grammar_fuzzing/seed/sql",
+ "track": "research",
+ "agent": "nous",
+ "label": "gf_v2fa46",
+ "model": "claude-opus-4-6",
+ "final_score": 84.95,
+ "cost_usd": 12.43,
+ "n_clean_candidates": 9,
+ "n_rejected_exploits": 0,
+ "best_source": "~/frontier/gen_logs/research_gf_v2fa46_measured_20261013_122126/m0043_131507_score84.95.py",
+ "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+ "rejected_exploit_candidates": [],
+ "clean_evidence": [
+  {
+   "src": "~/frontier/gen_logs/nous_runs/research-gf-v2fa46/runs/iter-1/patches/h-main.patch",
+   "score": 84.04756049754151
+  },
+  {
+   "src": "~/frontier/gen_logs/research_gf_v2fa46_measured_20261013_122126/m0043_131507_score84.95.py",
+   "score": 84.94961311239885
+  },
+  {
+   "src": "~/frontier/gen_logs/research_gf_v2fa46_measured_20261013_122126/m0046_132140_score84.41.py",
+   "score": 84.41281683148435
+  },
+  {
+   "src": "~/frontier/gen_logs/research_gf_v2fa46_measured_20261013_122126/m0030_124842_score84.41.py",
+   "score": 84.41281683148435
+  },
+  {
+   "src": "~/frontier/gen_logs/research_gf_v2fa46_measured_20261013_122126/m0016_123540_score84.05.py",
+   "score": 84.04756049754151
+  },
+  {
+   "src": "~/frontier/gen_logs/research_gf_v2fa46_measured_20261013_122126/m0029_124825_score84.01.py",
+   "score": 84.01109198887372
+  },
+  {
+   "src": "~/frontier/gen_logs/research_gf_v2fa46_measured_20261013_122126/m0015_123523_score84.01.py",
+   "score": 84.01109198887372
+  },
+  {
+   "src": "~/frontier/gen_logs/research_gf_v2fa46_measured_20261013_122126/m0036_125638_score83.98.py",
+   "score": 83.98239444591266
+  },
+  {
+   "src": "~/frontier/gen_logs/research_gf_v2fa46_measured_20261013_122126/m0037_125653_score83.90.py",
+   "score": 83.90126702734969
+  }
+ ],
+ "elapsed_s": 3661.9,
+ "status": "killed_design_retry_bug",
+ "cost_usd_tokenbased_live": 39.81,
+ "best_measured": 84.95,
+ "note": "Killed by user 13:22: lightweight design hit 30-turn cap 3x in iter 2 (gf), each retry restarted from scratch; superseded by design fix."
+}

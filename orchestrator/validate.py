@@ -32,6 +32,8 @@ _KNOWN_ROOT_FILES = {
     "problem.md", "bundle.yaml", "handoff_snapshot.md",
     "experiment_plan.yaml", "findings.json", "principle_updates.json",
     "design_log.md", "executor_log.md", "design_raw.md",
+    # lightweight design_profile: executor's notes for the next designer.
+    "handoff_update.md",
     "execute_analyze_output.json",
     "gate_summary_design.json", "gate_summary_findings.json",
     "gate_summary_continue.json",

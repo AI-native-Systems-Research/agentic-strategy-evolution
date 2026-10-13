@@ -650,6 +650,8 @@ class LLMDispatcher:
                 ctx["previous_handoff"] = (
                     "This is the first iteration. No prior handoff."
                 )
+            from orchestrator.design_profile import executor_update_for_design
+            ctx["previous_handoff"] += executor_update_for_design(self.campaign, self.work_dir, iteration)
 
             if iteration > 1:
                 prev_findings_path = (
