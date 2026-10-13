@@ -225,7 +225,7 @@ isolation, re-judged from persisted artifacts, cheat-audit **CLEAN** (0 testdata
 Research — cost-metric (cloudcast = $ transfer cost, LOWER better):
 | task | Nous | Engram (capped) | Claude (isolated) | AIDE | baseline |
 |---|---|---|---|---|---|
-| cloudcast | re-run queued (old $626 leaked) | ~$942 / $59 | re-run queued (old 659 leaked) | N/A | naive $1046 |
+| cloudcast | re-run queued (old $626 leaked) | ~$942 / $59 | **$626.24** / $50.1 (2 cost-rewrite cheats rejected) | N/A | naive $1046 |
 
 Research — score-metric (higher better; score / LLM-$), opus-4-6:
 
