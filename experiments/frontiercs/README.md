@@ -79,11 +79,13 @@ Agents could not read `resources/` under this rule; Claude's actual spend was ~h
 
 | task | Nous v2 (lightweight) | Claude (SDK, minimal prompt) | status |
 |---|---|---|---|
-| grammar_fuzzing | running (`runs/gf/nous_v2_fa46.log`, slug gf_v2fa46, vpc) | running (`runs/gf/claude_min_fa46.log`, slug gf_cmin46, vpc-int) | started 12:21 / 11:21 |
-| llm_router | queued (slug router_v2fa46, vpc) | queued (slug router_cmin46, vpc-int) | after gf on each lane |
+| grammar_fuzzing | running (`runs/gf/nous_v2_fa46.log`, slug gf_v2fa46, vpc key nous-dam) | **85.70 @ $50.26** (`gf_seed_sql.claude_sdk.fa46.json`) | Nous running; Claude done |
+| llm_router | running (`runs/llm_router/nous_v2_fa46.log`, slug router_v2fa46, vpc key 3) | running (`runs/llm_router/claude_min_fa46.log`, slug router_cmin46, vpc litellm key) | started 12:48 / 13:05 |
 
 Backups: Nous v1 (standard design) gf 84.23 @ $49.08 (`gf_seed_sql.nous_v1.fa46.json`); Claude SDK verbose-prompt gf
 stopped at $13.6 (85.70, `runs/gf/claude_sdk_fa46.aborted_verbose_prompt/`). Engram held until we discuss.
+vpc-int was too slow (first request hung 5 min), so all three concurrent runs use vpc with separate keys; the hung
+Claude llm_router attempt is kept at `runs/llm_router/claude_min_fa46.stuck_130354/` ($0 spent).
 Stop rules: Claude hard $50; Nous finishes its iteration after $50 (ceiling $57) and records best_at_budget.
 Both use the same $15/$75 token ruler (`gen/cost_meter.py`), the same access rule and judge.
 
