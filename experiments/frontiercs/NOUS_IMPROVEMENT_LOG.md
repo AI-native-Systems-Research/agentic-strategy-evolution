@@ -25,7 +25,7 @@ partly fits it to the benchmark.
 | task (budget) | Claude | v1 | v2 | v3 | v4 | v5 | v6 |
 |---|---|---|---|---|---|---|---|
 | gf ($50) | 85.70 | 84.23 | 84.95* | **86.30** | 83.59 (hooked 91.44 rejected) | 85.70* ($36.94) | 85.33* ($28.83) |
-| llm_router ($50) | 58.74 | - | 51.27* | 56.70* | **59.57** (59.66) | - | - |
+| llm_router ($50) | 58.74 | - | 51.27* | 56.70* | **59.57** (59.66) | - | 58.89 at $25 ($28.66) |
 | p0 ($25) | 79.4 **contaminated**; clean SDK re-run 75.47 (76.41 measured, $25.10); **5x mean 74.28** | - | - | - | 73.48 (74.30) | 74.09 (75.32); 5x mean 74.52 | 73.72 (73.65, $26.37); **5x mean 75.27** |
 | p5 ($25) | 50.0 | - | - | - | **58.00** | 49.00 | 57.00 ($28.80) |
 | p47 ($25) | 94.07 | - | - | - | - | - | **94.39** (94.57, $28.94) |
@@ -104,3 +104,36 @@ Nous v5 74.52, Claude 74.28. Nous v6 leads by ~1 point, within the judge noise (
 1. Finish v5/v6 on gf and p5; pick v5 vs v6 on gf + p0 + p5 together.
 2. Re-run Claude p0 clean (SDK runner, minimal prompt, $25, new sandbox).
 3. Final runs of the chosen version on p0, p5, p47, gf, llm_router; report score at budget plus curves.
+
+## 7. Final result (2026-10-13 18:45)
+
+| task | Claude @ $25 | **Nous v6 @ $25** | result | other Nous (at $25) | Engram / AIDE (old) |
+|---|---|---|---|---|---|
+| grammar_fuzzing | 85.33 | 85.33 | tie | v3 85.70, v4 82.97, v5 82.93 | - |
+| llm_router | 58.12 | **58.89** | Nous +0.77 | v4 59.29, v3 56.69 | - |
+| p0 (5x re-judged mean) | 74.28 (clean SDK re-run) | **75.27** | Nous +1.0 (within judge noise) | v5 74.52, v4 73.48 | 68.5 / 0 |
+| p5 | 50.0 | **57.00** | Nous +7.0 | v4 58.00, v5 49.00 | 41 / 44 |
+| p47 | 94.07 | **94.39** | Nous +0.3 | - | 94.2 / 96.8 |
+| p9, p15, p22 | 100 / 100 / 0 | 100 / 100 / 100 (old Nous, not re-run) | - | | |
+
+Score vs spend (best clean measured score by each $; p0 uses single measurements here, so it is noisy):
+
+| task | agent | $5 | $10 | $15 | $20 | $25 |
+|---|---|---|---|---|---|---|
+| gf | Claude | 81.13 | 83.87 | 84.30 | 85.33 | 85.33 |
+| gf | Nous v6 | 73.31 | 81.11 | 83.54 | 85.33 | 85.33 |
+| llm_router | Claude | 55.10 | 56.27 | 57.37 | 58.09 | 58.12 |
+| llm_router | Nous v6 | 25.38 | 55.21 | 56.57 | **58.89** | **58.89** |
+| p0 | Claude (clean) | 67.05 | 75.47 | 76.17 | 76.41 | 76.41 |
+| p0 | Nous v6 | 69.37 | 74.51 | 74.73 | 75.95 | 75.95 |
+| p5 | Claude | 45.0 | 50.0 | 50.0 | 50.0 | 50.0 |
+| p5 | Nous v6 | 31.0 | 47.0 | 50.0 | **56.0** | **57.0** |
+| p47 | Claude | 91.43 | 92.62 | 93.22 | 93.88 | 94.07 |
+| p47 | Nous v6 | 90.66 | **94.26** | **94.39** | **94.39** | **94.39** |
+
+Summary: at a true $25 per task, one Nous version (v6) beats Claude on 4 of 5 re-run tasks (p5 clearly; llm_router,
+p47, p0 narrowly) and ties on gf. Claude climbs faster in the first ~$5-10 (one long session); Nous overtakes
+by $15-25. Nous v6 = `design_profile: v6` (lightweight design-only designer, scripted sweeps, carry-forward of
+the best arm, uncapped EXECUTE). Single runs per agent; p0 judge noise is about +-2. Full history, versions,
+integrity findings: `NOUS_IMPROVEMENT_LOG.md`.
+
