@@ -39,6 +39,10 @@ EXPLOIT_SIGS = [
     (r"\b_match\b|TokenType\.", "parser/tokenizer internals"),
     (r"routerbench", "reads labeled RouterBench dataset"),
     (r"_test\.csv|routerbench_0shot_test", "reads labeled test split"),
+    # cloudcast: the evaluator prices transfers from the edge data the solution returns, so a
+    # solution that rewrites edge cost/throughput fakes a cheap topology instead of finding one
+    (r"""\[\s*['"](cost|throughput)['"]\s*\]\s*=(?!=)""", "rewrites edge cost/throughput in returned paths"),
+    (r"""['"](cost|throughput)['"]\s*:\s*0(\.0*)?\b""", "sets edge cost/throughput to zero in returned paths"),
     (r"/datasets/|resources/datasets", "accesses datasets directory"),
 ]
 def exploit_hits(code):
