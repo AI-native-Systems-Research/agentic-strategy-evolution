@@ -50,18 +50,13 @@ def main():
         shutil.copy(HERE / f, run / f)
 
     prompt = (
-        f"You are solving Frontier-CS research problem '{pid}'. Read the README below: it states the exact "
-        f"objective, the scoring metric, and the required Solution API. Edit solution.py in THIS directory to "
-        f"implement `class Solution` EXACTLY per the README API (same method name/signature/return type).\n\n"
-        f"MEASURE your score with this ONE command: `bash {measure} $PWD/solution.py` -> prints 'SCORE: <n>' "
-        f"(higher is better). Iterate: improve solution.py and re-measure to MAXIMIZE the score. Do NOT stop "
-        f"until SCORE reaches {a.max_score:g}; while below it, keep trying new strategies.\n\n"
-        f"PERSIST EVERY ATTEMPT: right after each measure, copy the exact solution.py you scored to "
-        f"trials/attempt_<N>_score_<SCORE>.py (N=1,2,3...). Never overwrite earlier ones.\n\n"
+        f"Solve Frontier-CS research problem '{pid}' (README below). Implement `class Solution` in solution.py "
+        f"in this directory, exactly per the README API.\n\n"
+        f"Measure your score with: `bash {measure} $PWD/solution.py` (prints 'SCORE: <n>', higher is better).\n\n"
+        f"Maximize the score. Keep improving until you are stopped.\n\n"
         f"{A.prompt_rules(pid)}\n\nPROBLEM README:\n{A.probdir(pid).joinpath('readme').read_text()}")
-    cont = ("Your best solution so far scored {score} on `bash " + str(measure) + " $PWD/solution.py`, below the "
-            "target, so you are NOT finished. Try a genuinely different/improved approach, edit solution.py, "
-            "re-measure, and save the attempt to trials/. Keep pushing the score up.")
+    # a session that ends on its own is resumed in the same conversation with no new information
+    cont = "Continue."
     (run / "driver_cfg.json").write_text(json.dumps({"run_dir": str(run), "model": a.model, "max_turns": a.max_turns,
         "max_score": a.max_score, "budget": a.budget, "prompt": prompt, "continue": cont}))
 

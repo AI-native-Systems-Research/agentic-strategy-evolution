@@ -79,13 +79,19 @@ Agents could not read `resources/` under this rule; Claude's actual spend was ~h
 
 | task | Nous | Claude (SDK) | Engram | status |
 |---|---|---|---|---|
-| grammar_fuzzing | running | running | queued | pair 1 started 2026-10-13 10:44 |
+| grammar_fuzzing | v1: 84.23 / $49.1 (backup) — v2 (lightweight) queued | running (minimal prompt) | queued | Claude restarted 11:21 with minimal prompt |
 | llm_router | queued | queued | queued | |
 
 Superseded research results (blocked rule, Claude at ~$25) and leaked runs are kept in
 `artifacts/preds/` and `artifacts/preds/leaked_backup/` (with evidence) for provenance only.
 
-## 6. TODO (next, after the research queue)
+## 6. TODO
+
+0. **Nous v2 (lightweight design), in progress:** design capped ~30 turns (Opus kept), 2-4 focused arms with
+   controls/ablations only when needed, per-arm refine loop, budget-aware iteration sizing. Nous v1 gf
+   result (84.23 @ $49.08) is kept as a backup (`artifacts/preds/gf_seed_sql.nous_v1.fa46.json`). Then re-run
+   Nous v2 on gf + llm_router; algorithmic re-runs later.
+
 
 1. Re-run the Claude baseline on the algorithmic tasks (p0, p5, p9, p15, p22, p47 + p0 variance reps) on the
    SDK stack with the shared cost ruler, so the algorithmic Claude column is a true iso-$50 baseline.
