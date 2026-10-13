@@ -216,6 +216,10 @@ def main():
         print(f"[claude-research] session={session} ended best={best} cost=${cost}", flush=True)
         refuse = refuse + 1 if (cost - cost_before) < 0.05 else 0
         if killed: stop_reason = "budget"; break
+        # A --continue resume re-sends the whole context in its first call (~cost of the last
+        # session's context); if that cannot fit under the cap, stop here instead of overshooting.
+        resume_est = (cost - cost_before) / max(turns, 1) * 4 + 2.0
+        if cost + resume_est >= a.budget: stop_reason = "budget_no_room_to_resume"; break
     stop.set()
 
     # harvest: re-judge every trial (clean), audit exploits
