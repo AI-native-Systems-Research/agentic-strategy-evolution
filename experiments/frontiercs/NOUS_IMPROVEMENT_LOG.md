@@ -28,6 +28,7 @@ partly fits it to the benchmark.
 | llm_router ($50) | 58.74 | - | 51.27* | 56.70* | **59.57** (59.66) | - | - |
 | p0 ($25) | 79.4 **contaminated**; clean SDK re-run **75.47** (76.41 measured, $25.10) | - | - | - | 73.48 (74.30) | 74.09 (75.32) | - |
 | p5 ($25) | 50.0 | - | - | - | **58.00** | 49.00 | 57.00 ($28.80) |
+| p47 ($25) | 94.07 | - | - | - | - | - | **94.39** (94.57, $28.94) |
 
 `*` stopped early (bug or by user). Old algorithmic Nous (89.1 p0, 83 p5) stopped on the SDK's own cost
 figure (~3x below our ruler), so it spent ~$97-162 per task; not comparable at $25.
