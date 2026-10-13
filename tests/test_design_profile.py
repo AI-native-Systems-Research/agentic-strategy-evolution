@@ -328,3 +328,93 @@ class TestV4Profile:
     def test_v4_design_prompt_gets_executor_update(self, tmp_path):
         p = TestExecutorUpdate()._iter2_prompt(tmp_path, _campaign(design_profile="v4"), update="GAP-1: parser.py:558")
         assert "GAP-1: parser.py:558" in p
+
+
+class TestV5Profile:
+    """v5 = v4 + carry-forward of the best arm, capped EXECUTE, incremental edits; others unchanged."""
+
+    def test_schema_and_turns(self):
+        from orchestrator.design_profile import resolve_max_turns, V5_EXECUTE_MAX_TURNS, carry_forward_enabled
+        c = _campaign(design_profile="v5")
+        jsonschema.validate(c, SCHEMA)
+        d = {"design": 80, "execute_analyze": 120}
+        assert resolve_max_turns(c, "execute_analyze", d) == V5_EXECUTE_MAX_TURNS
+        assert resolve_max_turns(c, "design", d) == LIGHTWEIGHT_DESIGN_MAX_TURNS
+        assert resolve_max_turns(_campaign(design_profile="v4"), "execute_analyze", d) == 120
+        assert resolve_max_turns(_campaign(design_profile="v5", max_turns={"execute_analyze": 60}), "execute_analyze", d) == 60
+        assert carry_forward_enabled(c) and not carry_forward_enabled(_campaign(design_profile="v4"))
+
+    def test_v5_guidance(self):
+        c = _campaign(design_profile="v5")
+        d, e = design_guidance(c, 30), execute_guidance(c)
+        assert "Build on the current best code" in d and "Target the largest measured gap" in d
+        assert "Start from the current best" in e and "Edit, don't rewrite" in e and "Noisy judge" in e
+        assert "Sweep tunable values with a script" not in e  # v4's unconditional sweep text is not used
+        assert "budget" not in (d + e).lower() and "$" not in d + e
+        assert "Build on the current best code" not in design_guidance(_campaign(design_profile="v4"), 30)
+
+
+def _git(repo, *args):
+    import subprocess
+    return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout
+
+
+class TestCarryForward:
+    def _setup(self, tmp_path, score=84.05):
+        import json, subprocess
+        repo = tmp_path / "repo"; repo.mkdir()
+        (repo / "solution.py").write_text("v = 0\n")
+        _git(repo, "init", "-q"); _git(repo, "add", "-A")
+        _git(repo, "-c", "user.email=x@x", "-c", "user.name=x", "commit", "-q", "-m", "seed")
+        (repo / "solution.py").write_text("v = 1\n")
+        patch = _git(repo, "diff")
+        _git(repo, "checkout", "--", "solution.py")
+        work = tmp_path / "work"; (work / "runs" / "iter-1" / "patches").mkdir(parents=True)
+        (work / "runs" / "iter-1" / "patches" / "h-main.patch").write_text(patch)
+        (work / "best_found.json").write_text(json.dumps({"top_k": [
+            {"candidate_id": "iter-1/h-main/0", "score": score, "iteration": 1, "arm_id": "h-main"}]}))
+        return repo, work
+
+    def test_applies_best_once(self, tmp_path):
+        from orchestrator.carry_forward import carry_forward_best
+        repo, work = self._setup(tmp_path)
+        msg = carry_forward_best(work, repo)
+        assert msg and "carried forward best iter-1/h-main/0" in msg
+        assert (repo / "solution.py").read_text() == "v = 1\n"
+        assert "carry forward iter-1/h-main/0" in _git(repo, "log", "-1", "--format=%s")
+        assert carry_forward_best(work, repo) is None  # already applied
+        assert _git(repo, "status", "--porcelain") == ""
+
+    def test_bad_patch_is_recorded_not_raised(self, tmp_path):
+        from orchestrator.carry_forward import carry_forward_best
+        repo, work = self._setup(tmp_path)
+        (work / "runs" / "iter-1" / "patches" / "h-main.patch").write_text("garbage\n")
+        msg = carry_forward_best(work, repo)
+        assert msg and "could not carry forward" in msg
+        assert (repo / "solution.py").read_text() == "v = 0\n"
+        assert carry_forward_best(work, repo) is None
+
+    def test_no_best_found_is_noop(self, tmp_path):
+        from orchestrator.carry_forward import carry_forward_best
+        repo, work = self._setup(tmp_path)
+        (work / "best_found.json").unlink()
+        assert carry_forward_best(work, repo) is None
+
+
+def test_carry_forward_skips_when_index_dirty(tmp_path):
+    from orchestrator.carry_forward import carry_forward_best
+    repo, work = TestCarryForward()._setup(tmp_path)
+    (repo / "other.txt").write_text("staged\n"); _git(repo, "add", "other.txt")
+    assert carry_forward_best(work, repo) is None
+    assert (repo / "solution.py").read_text() == "v = 0\n"
+
+
+def test_carry_forward_runs_before_design_only_for_v5(tmp_path):
+    from orchestrator.iteration import _maybe_carry_forward
+    repo, work = TestCarryForward()._setup(tmp_path)
+    _maybe_carry_forward(_campaign(design_profile="v4"), work, str(repo))
+    assert (repo / "solution.py").read_text() == "v = 0\n"
+    _maybe_carry_forward(_campaign(design_profile="v5", derived_from={"campaign": "x"}), work, str(repo))
+    assert (repo / "solution.py").read_text() == "v = 0\n"
+    _maybe_carry_forward(_campaign(design_profile="v5"), work, str(repo))
+    assert (repo / "solution.py").read_text() == "v = 1\n"

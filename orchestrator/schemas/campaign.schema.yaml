@@ -237,7 +237,7 @@ properties:
 
   design_profile:
     type: string
-    enum: [standard, lightweight, v4]
+    enum: [standard, lightweight, v4, v5]
     description: >-
       Methodology weight. `standard` (default) keeps the full design. `lightweight`
       caps the DESIGN phase at 30 turns (unless campaign.max_turns.design is set),
@@ -245,7 +245,9 @@ properties:
       causal attribution, and lets each arm refine its implementation over a few
       measure-edit cycles. `v4` is lightweight plus scripted sweeps of tunable values in
       EXECUTE, 10 refine cycles, and a measured gap analysis that the next design must
-      target. The design model is unchanged.
+      target. `v5` is v4 plus carry-forward of the best arm into the target before each
+      EXECUTE, a 45-turn EXECUTE cap, incremental edits, sweeps only for tunable arms, and
+      re-measurement on noisy judges. The design model is unchanged.
   sdk_options:
     type: object
     additionalProperties: false
