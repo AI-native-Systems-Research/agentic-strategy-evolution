@@ -229,7 +229,7 @@ Model-scaling study — grammar_fuzzing/seed/sql, Nous vs Claude agent, iso-$50 
 | model | Nous | Claude (agent) | status |
 |---|---|---|---|
 | aws/claude-sonnet-4-5 | re-run queued (old 59.56 leaked) | 53.95 / $50.5 | Claude clean (no /tmp use) |
-| aws/claude-opus-5 | running (best 72.93) | 65.78 / $54.8 (best reached at $48.2) | Claude tried 3 exfil tricks, all blocked |
+| aws/claude-opus-5 | **77.56** / $50.2 | 65.78 / $54.8 (best reached at $48.2) | both tried to probe the judge; all blocked |
 
 Nous Sonnet note: cost overshot to $56.20 (one large metrics jump from $43.89 past the cap). Best =
 iter-5 `h-dose-37` (59.56; iter-5 `h-main` 59.51), recovered from the Agent SDK transcript, re-judged
