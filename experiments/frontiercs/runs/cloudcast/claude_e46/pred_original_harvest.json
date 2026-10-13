@@ -1,0 +1,99 @@
+{
+  "problem_id": "cloudcast",
+  "track": "research",
+  "agent": "claude-code",
+  "label": "cc_e46",
+  "model": "claude-opus-4-6",
+  "final_score": 8.43,
+  "cost_usd_tokenbased": 50.14,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0
+  },
+  "stop_reason": "budget",
+  "sessions": 1,
+  "best_file": "m0025_215122_score8.43.py",
+  "n_clean": 19,
+  "n_rejected": 0,
+  "isolation": "claude -p agent under sandbox-exec deny ~/frontier/{research,datasets}; measure only via out-of-sandbox judge daemon; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "file": "attempt_1_score_0.10.py",
+      "score": 0.09552371980292827
+    },
+    {
+      "file": "attempt_2_score_0.08.py",
+      "score": 0.08183521144297971
+    },
+    {
+      "file": "attempt_3_score_0.10.py",
+      "score": 0.09552371980292827
+    },
+    {
+      "file": "attempt_4_score_0.14.py",
+      "score": 0.1477695944092875
+    },
+    {
+      "file": "attempt_5_score_0.15.py",
+      "score": 0.1546205324847874
+    },
+    {
+      "file": "attempt_6_score_0.15.py",
+      "score": 0.15329951231316705
+    },
+    {
+      "file": "attempt_7_score_0.16.py",
+      "score": 0.15942742952368588
+    },
+    {
+      "file": "attempt_8_score_0.16.py",
+      "score": 0.15942742952368588
+    },
+    {
+      "file": "m0025_215122_score8.43.py",
+      "score": 8.43141528472257
+    },
+    {
+      "file": "m0024_215048_score8.43.py",
+      "score": 8.43141528472257
+    },
+    {
+      "file": "m0017_213319_score0.16.py",
+      "score": 0.15942742952368588
+    },
+    {
+      "file": "m0013_212525_score0.16.py",
+      "score": 0.15580600255587906
+    },
+    {
+      "file": "m0018_213507_score0.16.py",
+      "score": 0.15942742952368588
+    },
+    {
+      "file": "m0019_214017_score0.16.py",
+      "score": 0.15942742952368588
+    },
+    {
+      "file": "m0021_214513_score0.16.py",
+      "score": 0.15942742952368588
+    },
+    {
+      "file": "m0012_212417_score0.15.py",
+      "score": 0.1548175036347589
+    },
+    {
+      "file": "m0015_212804_score0.15.py",
+      "score": 0.14890878126221477
+    },
+    {
+      "file": "m0014_212705_score0.15.py",
+      "score": 0.14890878126221477
+    },
+    {
+      "file": "solution.py",
+      "score": 0.15942742952368588
+    }
+  ],
+  "elapsed_s": 2774.3
+}
