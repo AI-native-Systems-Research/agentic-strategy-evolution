@@ -89,8 +89,8 @@ Nous versions (all opt-in via `campaign.design_profile`; `standard` = original N
 
 | task | Claude SDK | Nous v3 | Nous v4 | notes |
 |---|---|---|---|---|
-| grammar_fuzzing | **85.70 @ $50.26** (done) | running, 85.70 tied @ ~$24 | queued (key4, after v4 router) | near ceiling (~86) |
-| llm_router | **58.74 @ $51.93** (done; last reply overshot the $50 poll by $1.93) | running, 56.68 @ ~$25 | running, **59.28 @ ~$11** | v4 sweeps: 160 measurements in iter 1 |
+| grammar_fuzzing | 85.70 @ $50.26 (done) | **86.30 @ $37.83** (stopped by user to free a slot for v4) | running (slug gf_v4fa46, nous-dam key) | v3 beats Claude with 25% less spend |
+| llm_router | 58.74 @ $51.93 (done; last reply overshot the $50 poll by $1.93) | 56.70 @ $33.17 (stopped by user; plateaued since iter 2) | running, **59.29 @ ~$13** | v4 sweeps: 176 measurements in iter 1 |
 
 Run slugs/logs: Claude gf `gf_cmin46` (`runs/gf/claude_min_fa46.log`), Claude router `router_cmin46`;
 Nous v3 `gf_v3bfa46` / `router_v3bfa46` (`runs/*/nous_v3_fa46.log`); Nous v4 `router_v4fa46` / `gf_v4fa46`
@@ -106,7 +106,7 @@ restarted from scratch); Nous v3a gf 77.83 / router 55.14 (`*.nous_v3.fa46.kille
 (`runs/gf/claude_sdk_fa46.aborted_verbose_prompt/`); Claude router hung on vpc-int
 (`runs/llm_router/claude_min_fa46.stuck_130354/`, $0). Engram held until we discuss.
 
-### Algorithmic re-runs — Nous v4 at a $25 cap — QUEUED
+### Algorithmic re-runs — Nous v4 at a $25 cap — RUNNING (p0 started 14:54; p5, p47 queued; max 3 runs at a time)
 
 Claude's old algorithmic runs actually spent ~$24-30 (see disclosure above), so Nous v4 is re-run at a $25 cap
 on p0, p5, p47 and compared with the existing Claude/Engram/AIDE numbers (unchanged). p22 is not re-run (old
