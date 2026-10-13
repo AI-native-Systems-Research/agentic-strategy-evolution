@@ -418,3 +418,15 @@ def test_carry_forward_runs_before_design_only_for_v5(tmp_path):
     assert (repo / "solution.py").read_text() == "v = 0\n"
     _maybe_carry_forward(_campaign(design_profile="v5"), work, str(repo))
     assert (repo / "solution.py").read_text() == "v = 1\n"
+
+
+def test_v6_is_v5_without_execute_cap():
+    from orchestrator.design_profile import resolve_max_turns, carry_forward_enabled
+    v5, v6 = _campaign(design_profile="v5"), _campaign(design_profile="v6")
+    jsonschema.validate(v6, SCHEMA)
+    d = {"design": 80, "execute_analyze": 120}
+    assert resolve_max_turns(v6, "execute_analyze", d) == 120
+    assert resolve_max_turns(v6, "design", d) == LIGHTWEIGHT_DESIGN_MAX_TURNS
+    assert carry_forward_enabled(v6)
+    assert design_guidance(v6, 30) == design_guidance(v5, 30)
+    assert execute_guidance(v6) == execute_guidance(v5)

@@ -148,7 +148,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("problem_id"); ap.add_argument("--slug", required=True)
     ap.add_argument("--niters", type=int, default=8)
-    ap.add_argument("--design-profile", choices=["standard", "lightweight", "v4", "v5"], default="lightweight"); ap.add_argument("--model", default="claude-opus-4-6")
+    ap.add_argument("--design-profile", choices=["standard", "lightweight", "v4", "v5", "v6"], default="lightweight"); ap.add_argument("--model", default="claude-opus-4-6")
     ap.add_argument("--out", required=True); ap.add_argument("--logdir", default=os.path.expanduser("~/frontier/gen_logs"))
     a = ap.parse_args(); pid = a.problem_id; stmt = statement(pid)
     Path(a.logdir).mkdir(parents=True, exist_ok=True)
