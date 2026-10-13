@@ -18,8 +18,8 @@ log = open(run / "stream.jsonl", "a")
 
 
 def best_measured():
-    scores = [float(m.group(1)) for f in glob.glob(str(run / "measured" / "*.py"))
-              if (m := re.search(r"_score([0-9.]+)\.py$", f))]
+    scores = [float(m.group(1)) for f in glob.glob(str(run / "measured" / "*"))
+              if (m := re.search(r"_score([0-9.]+)\.(py|cpp)$", f))]
     return max(scores, default=-1.0)
 
 

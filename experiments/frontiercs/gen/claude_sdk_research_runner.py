@@ -39,17 +39,26 @@ def main():
     measure = run / "measure.sh"
     measure.write_text("#!/bin/bash\n"
         f'IN="{djroot}/inbox"; OUT="{djroot}/outbox"\n'
-        'tok="m$$_$RANDOM"\ncp "$1" "$IN/$tok.py"\n'
-        'for i in $(seq 1 600); do\n'
+        f'tok="m$$_$RANDOM"\ncp "$1" "$IN/$tok{N.ext(pid)}"\n'
+        f'for i in $(seq 1 {1200 if A.is_algo(pid) else 600}); do\n'
         '  if [ -f "$OUT/$tok.score" ]; then cat "$OUT/$tok.score"; rm -f "$OUT/$tok.score"; exit 0; fi\n'
         '  sleep 1\ndone\necho "SCORE: 0.0"\n')
     measure.chmod(0o755)
-    if not (run / "solution.py").exists():
-        (run / "solution.py").write_text(N.seed_for(pid))
+    sol = N.sol_name(pid)
+    if not (run / sol).exists():
+        (run / sol).write_text(N.seed_for(pid))
     for f in ("claude_sdk_driver.py", "cost_meter.py"):
         shutil.copy(HERE / f, run / f)
 
-    prompt = (
+    if A.is_algo(pid):
+        prompt = (
+            f"Solve Frontier-CS algorithmic problem #{pid} (statement below). Write a C++17 solution in "
+            f"solution.cpp in this directory.\n\n"
+            f"Measure your score with: `bash {measure} $PWD/solution.cpp` (prints 'SCORE: <0-100>', higher is "
+            f"better).\n\nMaximize the score. Keep improving until you are stopped.\n\n"
+            f"{A.prompt_rules(pid)}\n\nPROBLEM STATEMENT:\n{A.statement(pid)}")
+    else:
+      prompt = (
         f"Solve Frontier-CS research problem '{pid}' (README below). Implement `class Solution` in solution.py "
         f"in this directory, exactly per the README API.\n\n"
         f"Measure your score with: `bash {measure} $PWD/solution.py` (prints 'SCORE: <n>', higher is better).\n\n"
@@ -81,9 +90,10 @@ def main():
         while p.poll() is None:
             time.sleep(15)
             cost = C.transcript_cost(run)
-            best = max([float(m.group(1)) for f in glob.glob(str(measured / "*.py"))
-                        if (m := re.search(r"_score([0-9.]+)\.py$", f))], default=-1.0)
-            print(f"[csdk {time.strftime('%H:%M:%S')}] cost=${cost:.2f} best={best} measured={len(list(measured.glob('*.py')))}", flush=True)
+            mfiles = glob.glob(str(measured / f"*{N.ext(pid)}"))
+            best = max([float(m.group(1)) for f in mfiles
+                        if (m := re.search(r"_score([0-9.]+)\.(py|cpp)$", f))], default=-1.0)
+            print(f"[csdk {time.strftime('%H:%M:%S')}] cost=${cost:.2f} best={best} measured={len(mfiles)}", flush=True)
             if cost >= a.budget or best >= a.max_score:
                 capped = cost >= a.budget
                 print(f"[csdk] stop: cost=${cost:.2f} best={best}", flush=True)
@@ -98,7 +108,7 @@ def main():
     cost = C.transcript_cost(run)
 
     seen, ev, rejected, best, bestf = set(), [], [], -1.0, None
-    for f in sorted(glob.glob(str(run / "trials" / "*.py"))) + N._top_measured(measured, 10) + [str(run / "solution.py")]:
+    for f in sorted(glob.glob(str(run / "trials" / f"*{N.ext(pid)}"))) + N._top_measured(measured, 10) + [str(run / sol)]:
         if not Path(f).exists(): continue
         code = Path(f).read_text(errors="ignore")
         if code in seen: continue
@@ -108,7 +118,7 @@ def main():
         if hits: rejected.append({"file": tag, "exploits": hits}); continue
         ev.append({"file": tag, "score": sc})
         if sc > best: best, bestf = sc, tag
-    pred = {"problem_id": pid, "track": "research", "agent": "claude-code-sdk", "label": a.slug, "model": a.model,
+    pred = {"problem_id": pid, "track": "algorithmic" if A.is_algo(pid) else "research", "agent": "claude-code-sdk", "label": a.slug, "model": a.model,
             "final_score": round(best, 2) if best >= 0 else None, "best_file": bestf,
             "cost_usd_tokenbased": round(cost, 2), "cost_capped": capped, "n_clean": len(ev), "n_rejected": len(rejected),
             "stack": "claude_agent_sdk (same as Nous), Claude Code preset system prompt, bypassPermissions, WebSearch/WebFetch disallowed",
