@@ -64,6 +64,12 @@ runs every evaluation under sandbox-exec with no network and no writes except a 
 Claude's (deny `~/frontier`, `experiments/frontiercs`, `~/engram_repo`, `~/.claude/projects`; re-allow
 only its own workspace, campaign dir, scripts, and transcripts).
 
+**cloudcast reward hack (caught 2026-10-12):** the cloudcast evaluator prices transfers from the edge
+data the solution returns. Claude cloudcast submitted a solution that sets `edge_data['cost'] = 0.0`
+on every returned edge, so the evaluator reported $10.86 instead of the real cost (score 8.43 vs ~0.16
+for a legit ~$620 topology). The exploit audit (every agent) now rejects solutions that rewrite edge
+`cost`/`throughput` in returned paths; the in-loop daemons score them 0.
+
 **Claude resume overshoot (fixed 2026-10-12):** a `--continue` resume re-sends the whole context in
 its first call (gf Opus-5 jumped $48.21 -> $54.76), so `claude_code_research_runner.py` now skips a
 resume whose estimated first-call cost would cross the cap (`stop_reason=budget_no_room_to_resume`).
