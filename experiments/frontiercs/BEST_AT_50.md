@@ -1,3 +1,5 @@
+> **Superseded 2026-10-13:** the current results, rules, and run commands are in `README.md`. This file is kept for history only.
+
 > ⚠ **README.md is canonical** (wins conflicts). This file = the iso-cost tables, kept in sync.
 > STATUS 2026-10-12: Claude column = **raw Claude Code, isolated, re-judged** (not the old
 > Engram-single_agent); p47 included; research score-metric table + p0 variance (n=3) added below.

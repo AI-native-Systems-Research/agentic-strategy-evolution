@@ -1,3 +1,5 @@
+> **Superseded 2026-10-13:** the current results, rules, and run commands are in `README.md`. This file is kept for history only.
+
 # Reproducing a Frontier-CS datapoint
 
 `README.md` is the source of truth (golden rules §0, exact env §5/§5.1). This file is the short recipe.
