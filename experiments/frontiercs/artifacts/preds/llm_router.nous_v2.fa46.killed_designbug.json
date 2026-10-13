@@ -1,0 +1,6 @@
+{
+ "status": "killed_design_retry_bug",
+ "cost_usd_tokenbased_live": 18.92,
+ "best_measured": 51.27,
+ "note": "Killed by user 13:22: lightweight design hit 30-turn cap 3x in iter 2 (gf), each retry restarted from scratch; superseded by design fix."
+}

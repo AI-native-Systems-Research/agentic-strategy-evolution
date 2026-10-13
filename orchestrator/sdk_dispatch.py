@@ -339,6 +339,8 @@ class SDKResult:
     num_turns: int = 1
     is_error: bool = False
     error_message: str = ""
+    session_id: str | None = None
+    subtype: str | None = None
 
     def __post_init__(self) -> None:
         if self.is_error and not self.error_message.strip():
@@ -373,8 +375,12 @@ class SDKRunner(Protocol):
         permission_mode: Literal["bypassPermissions"] | None = None,
         turn_silence_threshold: float | None = None,
         effort: str | None = None,
+        resume: str | None = None,
     ) -> SDKResult:
         """One SDK turn.
+
+        ``resume``: continue an earlier SDK session (by session id) instead of
+        starting a fresh one. Only passed when the dispatcher resumes a turn.
 
         ``permission_mode``: ``"bypassPermissions"`` disables the Claude
         Code SDK's filesystem sandbox (the default for nous campaigns;
@@ -413,6 +419,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
         permission_mode: Literal["bypassPermissions"] | None = "bypassPermissions",
         turn_silence_threshold: float | None = None,
         effort: str | None = None,
+        resume: str | None = None,
     ) -> SDKResult:
         try:
             import anyio
@@ -462,6 +469,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     effort=effort,
                     disallowed_tools=_disallowed,
                     **({"cli_path": _cli_path} if _cli_path else {}),
+                    **({"resume": resume} if resume else {}),
                 )
             else:
                 options = ClaudeAgentOptions(
@@ -473,12 +481,14 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     effort=effort,
                     disallowed_tools=_disallowed,
                     **({"cli_path": _cli_path} if _cli_path else {}),
+                    **({"resume": resume} if resume else {}),
                 )
             text_chunks: list[str] = []
             usage: dict = {}
             cost_usd = 0.0
             duration_ms = 0
             num_turns = 0
+            session_id: str | None = None
             t0 = time.time()
             # #216: track message-class counts so a downstream is_error
             # path can synthesize a useful diagnostic when result text is
@@ -529,6 +539,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     cost_usd = float(getattr(message, "total_cost_usd", 0.0) or 0.0)
                     duration_ms = int(getattr(message, "duration_ms", 0) or 0)
                     num_turns = int(getattr(message, "num_turns", 0) or 0)
+                    session_id = getattr(message, "session_id", None) or None
                     if getattr(message, "is_error", False):
                         return SDKResult(
                             text="".join(text_chunks),
@@ -550,6 +561,8 @@ def _default_sdk_runner_factory() -> SDKRunner:
                             cost_usd=cost_usd,
                             duration_ms=duration_ms,
                             num_turns=num_turns,
+                            session_id=session_id,
+                            subtype=getattr(message, "subtype", None),
                         )
             return SDKResult(
                 text="".join(text_chunks),
@@ -564,6 +577,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 cost_usd=cost_usd,
                 duration_ms=duration_ms or int((time.time() - t0) * 1000),
                 num_turns=num_turns or 1,
+                session_id=session_id,
             )
 
         try:
@@ -852,8 +866,13 @@ class SDKDispatcher(CLIDispatcher):
             "SDK turn (model=%s, cwd=%s, max_turns=%d)", self.model, cwd, turns,
         )
 
+        from orchestrator.design_profile import (
+            WRAP_UP_PROMPT, max_wrap_ups, wrap_up_max_turns,
+        )
         failure_count = 0
         original_prompt = prompt
+        wrap_ups_left = max_wrap_ups(self.campaign)
+        resume_id: str | None = None
         while True:
             try:
                 result = self._sdk_runner(
@@ -867,6 +886,7 @@ class SDKDispatcher(CLIDispatcher):
                     permission_mode=self._permission_mode,
                     turn_silence_threshold=self._turn_silence_threshold,
                     effort=self._effort,
+                    **({"resume": resume_id} if resume_id else {}),
                 )
             except SDKTransientError as exc:
                 failure_count += 1
@@ -876,10 +896,27 @@ class SDKDispatcher(CLIDispatcher):
                         f"SDK still failing after {failure_count} attempt(s): {exc}"
                     ) from exc
                 time.sleep(_backoff_for(failure_count))
-                prompt = self._maybe_resume_hint(prompt, original_prompt, "transient")
+                if resume_id is None:
+                    prompt = self._maybe_resume_hint(prompt, original_prompt, "transient")
                 continue
 
             self._log_metrics_row(result)
+
+            # Turn limit hit: continue the same session with a short wrap-up instead of restarting
+            # from scratch, which would redo the exploration and hit the same limit again.
+            if (result.is_error
+                    and (result.subtype == "error_max_turns" or "error_max_turns" in result.error_message)
+                    and result.session_id and wrap_ups_left > 0):
+                wrap_ups_left -= 1
+                self._log_retry("max_turns_wrap_up", failure_count + 1,
+                                RuntimeError(result.error_message))
+                resume_id = result.session_id
+                prompt = WRAP_UP_PROMPT
+                turns = wrap_up_max_turns(self.campaign)
+                continue
+            if resume_id is not None:
+                # A failed wrap-up falls back to the normal fresh-session retry.
+                resume_id, prompt, turns = None, original_prompt, max_turns or self.max_turns
 
             if result.is_error:
                 failure_count += 1
