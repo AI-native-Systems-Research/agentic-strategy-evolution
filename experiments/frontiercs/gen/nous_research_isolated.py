@@ -179,6 +179,8 @@ def main():
             "prompts": {"methodology_layer": f"{NOUS_REPO}/prompts/methodology", "domain_adapter_layer": None}}
     camp = ws.parent/f"campaign_{a.slug}.yaml"; camp.write_text(yaml.safe_dump(spec, sort_keys=False))
     env = dict(os.environ); env["NOUS_CAMPAIGN_PARENT"] = str(ws.parent/"nous_runs")
+    # agents call `nous validate`; make sure it is this Nous checkout, not another one on PATH
+    env["PATH"] = f"{NOUS_REPO}/.venv/bin:" + env.get("PATH", "")
     log = Path(a.logdir)/f"research_{a.slug}.nous.log"
     cmd = ["sandbox-exec", "-f", str(prof), NOUS_BIN, "run", str(camp), "--auto-approve", "--agent", "sdk",
            "--sandbox", "bypass", "--max-iterations", str(a.niters), "--timeout", "2400"]

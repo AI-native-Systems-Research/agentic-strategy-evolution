@@ -1,0 +1,45 @@
+{
+  "problem_id": "llm_router",
+  "track": "research",
+  "agent": "nous",
+  "label": "router_v3fa46",
+  "model": "claude-opus-4-6",
+  "final_score": 55.14,
+  "cost_usd": 2.53,
+  "n_clean_candidates": 7,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-router-v3fa46/runs/iter-1/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-router-v3fa46/runs/iter-1/patches/h-main.patch",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v3fa46_measured_20261013_134212/m0004_135011_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v3fa46_measured_20261013_134212/m0005_135050_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v3fa46_measured_20261013_134212/m0001_134713_score54.73.py",
+      "score": 54.725754205039415
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v3fa46_measured_20261013_134212/m0003_134830_score51.29.py",
+      "score": 51.29340196986072
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v3fa46_measured_20261013_134212/m0002_134747_score42.34.py",
+      "score": 42.34048148936881
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_v3fa46_measured_20261013_134212/m0000_134306_score25.38.py",
+      "score": 25.375108277382168
+    }
+  ],
+  "elapsed_s": 824.4
+}
