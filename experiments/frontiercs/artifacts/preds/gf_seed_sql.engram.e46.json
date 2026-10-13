@@ -1,0 +1,63 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "engram",
+  "label": "gf_eng46",
+  "model": "claude-opus-4-6",
+  "method": "real Engram agentic_handoff (as-is)",
+  "final_score": 55.93,
+  "cost_usd_tokenbased": 51.31,
+  "llm_calls": 101,
+  "cost_engram_logged": 84.26,
+  "cost_capped": true,
+  "n_measured": 21,
+  "n_clean_candidates": 10,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0008_220749_score55.93.py",
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0008_220749_score55.93.py",
+      "score": 55.934509443621174
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0009_220913_score55.36.py",
+      "score": 55.36066103071963
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0006_220606_score55.14.py",
+      "score": 55.141044456867185
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0017_221911_score54.14.py",
+      "score": 54.14339975658509
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0004_220315_score53.98.py",
+      "score": 53.980427552333936
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0018_222047_score53.89.py",
+      "score": 53.88508291162999
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0010_221043_score53.40.py",
+      "score": 53.39844929345927
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0012_221323_score53.28.py",
+      "score": 53.28179373481643
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0013_221427_score51.85.py",
+      "score": 51.84714027105618
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_eng46_measured_20261012_215538/m0019_222249_score50.51.py",
+      "score": 50.512769026350824
+    }
+  ],
+  "rejected_exploit_candidates": [],
+  "isolation": "Engram agents: workspace-rooted FS + Docker shell; scoring via out-of-process judge daemon (exploits=0); post-harvest exploit audit + re-judge",
+  "engram_results_dir": "/Users/toslali/engram_repo/results/handoff_fcs_res_grammar_fuzzing/seed/sql_model_claude-opus-4-6_give_files_False_run0",
+  "elapsed_s": 1853.7
+}
