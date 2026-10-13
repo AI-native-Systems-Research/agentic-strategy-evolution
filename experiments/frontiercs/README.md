@@ -85,7 +85,13 @@ Agents could not read `resources/` under this rule; Claude's actual spend was ~h
 Superseded research results (blocked rule, Claude at ~$25) and leaked runs are kept in
 `artifacts/preds/` and `artifacts/preds/leaked_backup/` (with evidence) for provenance only.
 
-## 6. How to run (research)
+## 6. TODO (next, after the research queue)
+
+1. Re-run the Claude baseline on the algorithmic tasks (p0, p5, p9, p15, p22, p47 + p0 variance reps) on the
+   SDK stack with the shared cost ruler, so the algorithmic Claude column is a true iso-$50 baseline.
+2. Paper: update the case-studies table with the new company case studies.
+
+## 7. How to run (research)
 
 ```bash
 cd experiments/frontiercs
@@ -106,7 +112,7 @@ OPENAI_BASE_URL=$OPENAI_BASE_URL OPENAI_API_KEY=$OPENAI_API_KEY \
 Re-judge a solution: `python3 -c "import sys; sys.path.insert(0,'gen'); import judge_sandbox as J, nous_research_isolated as N; print(J.score(N.evalpy('<task>'), N.probdir('<task>'), open('<sol.py>').read()))"`.
 cloudcast's evaluator is stochastic: report the mean of 5 re-judges.
 
-## 7. Where things live
+## 8. Where things live
 
 - Preds: `artifacts/preds/` (current), `artifacts/preds/leaked_backup/` (invalid, with evidence).
 - Per-run dirs: `runs/<task>/<agent>_<tag>/` (trials, measured archive, transcripts excluded by .gitignore).
