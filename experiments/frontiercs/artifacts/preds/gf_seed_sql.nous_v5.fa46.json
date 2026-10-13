@@ -1,0 +1,72 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_v5fa46",
+  "model": "claude-opus-4-6",
+  "final_score": 85.7,
+  "cost_usd": 24.12,
+  "n_clean_candidates": 11,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-gf-v5fa46/runs/iter-2/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-v5fa46/runs/iter-1/patches/h-main.patch",
+      "score": 79.50305190844864
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-v5fa46/runs/iter-2/patches/h-main.patch",
+      "score": 85.70357607944052
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v5fa46_measured_20261013_162512/m0032_165917_score85.70.py",
+      "score": 85.70357607944052
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v5fa46_measured_20261013_162512/m0034_170043_score85.70.py",
+      "score": 85.70357607944052
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v5fa46_measured_20261013_162512/m0033_170025_score85.67.py",
+      "score": 85.67441236859096
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v5fa46_measured_20261013_162512/m0031_165812_score84.96.py",
+      "score": 84.96334002218268
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v5fa46_measured_20261013_162512/m0035_170152_score84.86.py",
+      "score": 84.856528477589
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v5fa46_measured_20261013_162512/m0028_165033_score82.93.py",
+      "score": 82.9257372376846
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v5fa46_measured_20261013_162512/m0030_165338_score82.93.py",
+      "score": 82.9257372376846
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v5fa46_measured_20261013_162512/m0027_165020_score82.52.py",
+      "score": 82.52401239507397
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v5fa46_measured_20261013_162512/m0029_165044_score82.12.py",
+      "score": 82.12028456910446
+    }
+  ],
+  "elapsed_s": 2741.7,
+  "cost_usd_tokenbased": 36.94,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": false,
+  "stop_rule": "finish the iteration in progress at $50.0 (ceiling $57.0)",
+  "best_at_budget": null,
+  "budget_reached_at": null
+}
