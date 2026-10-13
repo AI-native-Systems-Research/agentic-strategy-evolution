@@ -79,6 +79,7 @@ def main():
                   + "".join(f'(allow file-read* (subpath "{p_}"))\n' for p_ in allow)
                   + f'(allow file-read* (regex #"^{re.escape(rr(home))}/\\.claude/projects/{re.escape(C.project_key(run))}"))\n'
                   + A.sbpl_task_access(pid)
+                  + A.sbpl_judge_tmp(djroot)
                   + "(allow file-read-metadata)\n")
 
     env = dict(os.environ); env.pop("ANTHROPIC_AUTH_TOKEN", None)

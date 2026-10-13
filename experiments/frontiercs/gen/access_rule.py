@@ -52,3 +52,13 @@ def prompt_rules(pid):
             f"reference solutions, and any other runs' files are hidden; do not try to access them. "
             f"Solve legitimately: do NOT use import hooks / sys.meta_path, do NOT read test/label data, and do "
             f"NOT tamper with what the evaluator measures; such solutions are rejected and score 0.")
+
+
+JUDGE_TMP_ROOTS = ["/tmp/fcs_judge", "/tmp/fcs_rjudge2", "/tmp/fcs_rjudge_csdk"]
+
+
+def sbpl_judge_tmp(own_root):
+    """Deny every run's judge inbox/outbox under /tmp except this run's own (SBPL: last match wins)."""
+    lines = [f'(deny file-read* (subpath "{os.path.realpath(r)}"))\n' for r in JUDGE_TMP_ROOTS]
+    lines.append(f'(allow file-read* (subpath "{os.path.realpath(own_root)}"))\n')
+    return "".join(lines)
