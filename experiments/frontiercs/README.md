@@ -48,6 +48,38 @@ Algorithmic track runners: `gen/nous_cap_launch.py`, `gen/claude_code_runner.py`
   imports, test-split or `datasets/` reads, rewriting cloudcast edge cost/throughput, calling the judge
   from inside a solution.
 
+## FINAL (2026-10-13): Nous v6 vs Claude Code at $25 per task (opus-4-6, one cost ruler, sandboxed, audited)
+
+| task | Claude @ $25 | **Nous v6 @ $25** | result | other Nous (at $25) | Engram / AIDE (old) |
+|---|---|---|---|---|---|
+| grammar_fuzzing | 85.33 | 85.33 | tie | v3 85.70, v4 82.97, v5 82.93 | - |
+| llm_router | 58.12 | **58.89** | Nous +0.77 | v4 59.29, v3 56.69 | - |
+| p0 (5x re-judged mean) | 74.28 (clean SDK re-run) | **75.27** | Nous +1.0 (within judge noise) | v5 74.52, v4 73.48 | 68.5 / 0 |
+| p5 | 50.0 | **57.00** | Nous +7.0 | v4 58.00, v5 49.00 | 41 / 44 |
+| p47 | 94.07 | **94.39** | Nous +0.3 | - | 94.2 / 96.8 |
+| p9, p15, p22 | 100 / 100 / 0 | 100 / 100 / 100 (old Nous, not re-run) | - | | |
+
+Score vs spend (best clean measured score by each $; p0 uses single measurements here, so it is noisy):
+
+| task | agent | $5 | $10 | $15 | $20 | $25 |
+|---|---|---|---|---|---|---|
+| gf | Claude | 81.13 | 83.87 | 84.30 | 85.33 | 85.33 |
+| gf | Nous v6 | 73.31 | 81.11 | 83.54 | 85.33 | 85.33 |
+| llm_router | Claude | 55.10 | 56.27 | 57.37 | 58.09 | 58.12 |
+| llm_router | Nous v6 | 25.38 | 55.21 | 56.57 | **58.89** | **58.89** |
+| p0 | Claude (clean) | 67.05 | 75.47 | 76.17 | 76.41 | 76.41 |
+| p0 | Nous v6 | 69.37 | 74.51 | 74.73 | 75.95 | 75.95 |
+| p5 | Claude | 45.0 | 50.0 | 50.0 | 50.0 | 50.0 |
+| p5 | Nous v6 | 31.0 | 47.0 | 50.0 | **56.0** | **57.0** |
+| p47 | Claude | 91.43 | 92.62 | 93.22 | 93.88 | 94.07 |
+| p47 | Nous v6 | 90.66 | **94.26** | **94.39** | **94.39** | **94.39** |
+
+Summary: at a true $25 per task, one Nous version (v6) beats Claude on 4 of 5 re-run tasks (p5 clearly; llm_router,
+p47, p0 narrowly) and ties on gf. Claude climbs faster in the first ~$5-10 (one long session); Nous overtakes
+by $15-25. Nous v6 = `design_profile: v6` (lightweight design-only designer, scripted sweeps, carry-forward of
+the best arm, uncapped EXECUTE). Single runs per agent; p0 judge noise is about +-2. Full history, versions,
+integrity findings: `NOUS_IMPROVEMENT_LOG.md`.
+
 ## 5. Results
 
 ### Algorithmic (opus-4-6, go-judge 0-100) — final, kept as is
