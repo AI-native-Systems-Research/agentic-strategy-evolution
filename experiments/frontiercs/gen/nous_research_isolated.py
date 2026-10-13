@@ -50,6 +50,8 @@ def seed_for(pid):
 # Exploit signatures that invalidate a research solution (gaming, not solving).
 EXPLOIT_SIGS = [
     (r"sys\.meta_path", "import-hook (sys.meta_path)"),
+    (r"__import__|__builtins__|import\s+builtins|builtins\.", "import-hook (builtins.__import__ override)"),
+    (r"['\"]ast_nodes['\"]|['\"]tokenizer['\"]|['\"]parser['\"]\s+in\s", "targets engine modules by name"),
     (r"find_spec\s*\(", "import-hook (find_spec)"),
     (r"importlib\.util\.find_spec|exec_module|module_from_spec", "import machinery to reach internals"),
     (r"sql_engine\.(parser|tokenizer|ast_nodes)", "direct engine-internal access"),

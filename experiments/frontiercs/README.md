@@ -89,7 +89,7 @@ Nous versions (all opt-in via `campaign.design_profile`; `standard` = original N
 
 | task | Claude SDK | Nous v3 | Nous v4 | notes |
 |---|---|---|---|---|
-| grammar_fuzzing | 85.70 @ $50.26 (done) | **86.30 @ $37.83** (stopped by user to free a slot for v4) | running (slug gf_v4fa46, nous-dam key) | v3 beats Claude with 25% less spend |
+| grammar_fuzzing | 85.70 @ $50.26 (done) | **86.30 @ $37.83** (stopped by user to free a slot for v4) | 83.59 @ $56.50 (at $50: 83.59; 9 hooked candidates rejected, incl. 91.44) | v3 beats Claude with 25% less spend |
 | llm_router | 58.74 @ $51.93 (done; last reply overshot the $50 poll by $1.93) | 56.70 @ $33.17 (stopped by user; plateaued since iter 2) | running, **59.29 @ ~$13** | v4 sweeps: 176 measurements in iter 1 |
 
 Run slugs/logs: Claude gf `gf_cmin46` (`runs/gf/claude_min_fa46.log`), Claude router `router_cmin46`;
@@ -98,6 +98,10 @@ Nous v3 `gf_v3bfa46` / `router_v3bfa46` (`runs/*/nous_v3_fa46.log`); Nous v4 `ro
 Stop rules: Claude hard $50; Nous finishes its iteration after $50 (ceiling $57) and records best_at_budget.
 Both use the same $15/$75 token ruler (`gen/cost_meter.py`), the same access rule and judge.
 Score-vs-spend curves (best score at each $) will be added when the runs finish.
+Exploit found 2026-10-13: Nous v4 gf produced solutions that override `builtins.__import__` to instantiate
+sql_engine AST classes directly (coverage gaming; 91.44). The audit now rejects `__import__`/`builtins` hooks
+and string-targeting of engine modules (`gen/nous_research_isolated.py` EXPLOIT_SIGS); the v4 gf pred was
+re-audited (clean best 83.59). All other gf archives were scanned: Claude and Nous v3 have no hooks.
 Caveat (llm_router): the sanctioned measure scores on the same data every agent tunes against, so many-sample
 search (Claude ~1,100 measurements, Nous v4 sweeps ~300) partly fits the evaluation data. Nous v4's own gap
 analysis: tuning on resources/reference_data.csv alone gives 55.14 vs 59.28 when tuned with the measure. This is
