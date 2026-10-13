@@ -26,7 +26,7 @@ partly fits it to the benchmark.
 |---|---|---|---|---|---|---|---|
 | gf ($50) | 85.70 | 84.23 | 84.95* | **86.30** | 83.59 (hooked 91.44 rejected) | 85.70* ($36.94) | 85.33* ($28.83) |
 | llm_router ($50) | 58.74 | - | 51.27* | 56.70* | **59.57** (59.66) | - | - |
-| p0 ($25) | 79.4 **contaminated**; clean SDK re-run **75.47** (76.41 measured, $25.10) | - | - | - | 73.48 (74.30) | 74.09 (75.32) | - |
+| p0 ($25) | 79.4 **contaminated**; clean SDK re-run 75.47 (76.41 measured, $25.10); **5x mean 74.28** | - | - | - | 73.48 (74.30) | 74.09 (75.32); 5x mean 74.52 | 73.72 (73.65, $26.37); **5x mean 75.27** |
 | p5 ($25) | 50.0 | - | - | - | **58.00** | 49.00 | 57.00 ($28.80) |
 | p47 ($25) | 94.07 | - | - | - | - | - | **94.39** (94.57, $28.94) |
 
@@ -51,6 +51,10 @@ Research at **$25** (best clean score by $25 on each run's own curve, `gen/curve
 |---|---|---|---|---|---|
 | gf | 85.33 | **85.70** | 82.97 | 82.93 | 85.33 (81.11 @ $10; stopped at $28.65 under the $25 rule) |
 | llm_router | 58.12 | 56.69 | **59.29** | - | - |
+
+p0's judge is time-limited and noisy (same solution re-scores within about +-2), so p0 is compared on the
+**best 5x-mean of each agent's top-3 measured solutions** (`artifacts/preds/p0_rejudge5.json`): Nous v6 75.27,
+Nous v5 74.52, Claude 74.28. Nous v6 leads by ~1 point, within the judge noise (a narrow edge, not a clear win).
 
 ## 3. Integrity findings
 
