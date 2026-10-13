@@ -63,7 +63,10 @@ Algorithmic track runners: `gen/nous_cap_launch.py`, `gen/claude_code_runner.py`
 | p0 variance (n=3) | **85.2** [80-89] | 73.6 [69-79] | 71.4 [68-74] | — |
 
 Disclosure: the Claude algorithmic runs were capped by a transcript counter that double-counted replies,
-so Claude's actual spend was ~$24-30 (p9 $9.4), not $50. Engram overshot to $56-68 (5-iteration cost logging).
+so Claude's actual spend was ~$24-30 (p9 $9.4), not $50. Nous stopped on the SDK's own `cost_usd`, which prices
+opus-4-6 ~3x below the shared $15/$75 ruler, so on that ruler Nous spent ~$97-162 per task. Engram overshot to
+$56-68 (5-iteration cost logging). AIDE cost not yet re-checked on the shared ruler. This table is therefore NOT
+iso-cost; p0 and p5 are being re-run (Nous vs Claude SDK, true $50 on one ruler).
 
 ### Research — model scaling, grammar_fuzzing (blocked-resources rule) — final, kept as is
 
