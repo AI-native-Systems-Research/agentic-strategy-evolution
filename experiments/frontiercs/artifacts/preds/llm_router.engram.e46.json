@@ -1,0 +1,63 @@
+{
+  "problem_id": "llm_router",
+  "track": "research",
+  "agent": "engram",
+  "label": "router_eng46",
+  "model": "claude-opus-4-6",
+  "method": "real Engram agentic_handoff (as-is)",
+  "final_score": 55.14,
+  "cost_usd_tokenbased": 51.65,
+  "llm_calls": 108,
+  "cost_engram_logged": 50.12,
+  "cost_capped": true,
+  "n_measured": 18,
+  "n_clean_candidates": 10,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0010_223728_score55.14.py",
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0010_223728_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0014_224137_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0017_224955_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0016_224906_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0006_223308_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0009_223613_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0011_223833_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0015_224806_score55.14.py",
+      "score": 55.13685908454081
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0007_223403_score54.66.py",
+      "score": 54.662842769192466
+    },
+    {
+      "src": "~/frontier/gen_logs/research_router_eng46_measured_20261012_222714/m0013_224018_score52.09.py",
+      "score": 52.09147658729094
+    }
+  ],
+  "rejected_exploit_candidates": [],
+  "isolation": "Engram agents: workspace-rooted FS + Docker shell; scoring via out-of-process judge daemon (exploits=0); post-harvest exploit audit + re-judge",
+  "engram_results_dir": "/Users/toslali/engram_repo/results/handoff_fcs_res_llm_router_model_claude-opus-4-6_give_files_False_run0",
+  "elapsed_s": 1460.5
+}
