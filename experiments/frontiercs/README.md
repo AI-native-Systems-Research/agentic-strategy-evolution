@@ -75,12 +75,17 @@ so Claude's actual spend was ~$24-30 (p9 $9.4), not $50. Engram overshot to $56-
 
 Agents could not read `resources/` under this rule; Claude's actual spend was ~half (same counter bug).
 
-### Research — main comparison (opus-4-6, faithful access, Claude on the Nous SDK stack) — RUNNING
+### Research — main comparison (opus-4-6, faithful access, Nous v2 lightweight vs Claude SDK minimal prompt) — RUNNING
 
-| task | Nous | Claude (SDK) | Engram | status |
-|---|---|---|---|---|
-| grammar_fuzzing | v1: 84.23 / $49.1 (backup) — v2 (lightweight) queued | running (minimal prompt) | queued | Claude restarted 11:21 with minimal prompt |
-| llm_router | queued | queued | queued | |
+| task | Nous v2 (lightweight) | Claude (SDK, minimal prompt) | status |
+|---|---|---|---|
+| grammar_fuzzing | running (`runs/gf/nous_v2_fa46.log`, slug gf_v2fa46, vpc) | running (`runs/gf/claude_min_fa46.log`, slug gf_cmin46, vpc-int) | started 12:21 / 11:21 |
+| llm_router | queued (slug router_v2fa46, vpc) | queued (slug router_cmin46, vpc-int) | after gf on each lane |
+
+Backups: Nous v1 (standard design) gf 84.23 @ $49.08 (`gf_seed_sql.nous_v1.fa46.json`); Claude SDK verbose-prompt gf
+stopped at $13.6 (85.70, `runs/gf/claude_sdk_fa46.aborted_verbose_prompt/`). Engram held until we discuss.
+Stop rules: Claude hard $50; Nous finishes its iteration after $50 (ceiling $57) and records best_at_budget.
+Both use the same $15/$75 token ruler (`gen/cost_meter.py`), the same access rule and judge.
 
 Superseded research results (blocked rule, Claude at ~$25) and leaked runs are kept in
 `artifacts/preds/` and `artifacts/preds/leaked_backup/` (with evidence) for provenance only.
