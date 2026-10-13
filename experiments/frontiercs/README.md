@@ -78,34 +78,52 @@ iso-cost; p0 and p5 are being re-run (Nous vs Claude SDK, true $50 on one ruler)
 
 Agents could not read `resources/` under this rule; Claude's actual spend was ~half (same counter bug).
 
-### Research — main comparison (opus-4-6, faithful access, Nous v2 lightweight vs Claude SDK minimal prompt) — RUNNING
+### Research — main comparison (opus-4-6, faithful access, $50, Nous vs Claude SDK minimal prompt) — RUNNING
 
-| task | Nous v2 (lightweight) | Claude (SDK, minimal prompt) | status |
-|---|---|---|---|
-| grammar_fuzzing | running (`runs/gf/nous_v2_fa46.log`, slug gf_v2fa46, vpc key nous-dam) | **85.70 @ $50.26** (`gf_seed_sql.claude_sdk.fa46.json`) | Nous running; Claude done |
-| llm_router | running (`runs/llm_router/nous_v2_fa46.log`, slug router_v2fa46, vpc key 3) | running (`runs/llm_router/claude_min_fa46.log`, slug router_cmin46, vpc litellm key) | started 12:48 / 13:05 |
+Nous versions (all opt-in via `campaign.design_profile`; `standard` = original Nous, tag `nous-v1-pre-lightweight`):
+- **v3 = `lightweight`** (a598468, 68121f7, ca49a72): 30-turn design-only designer that builds on the handoff,
+  1-3 focused arms, 5 refine cycles per arm, turn-limit wrap-up (resume, not restart), executor writes
+  `handoff_update.md` for the next designer, agents use this checkout's `nous` CLI.
+- **v4 = `v4`** (0293c42): v3 + scripted sweeps of tunable values in EXECUTE (<=~100 settings, generalize, no
+  special-casing), 10 refine cycles, ranked measured gap analysis that h-main must target from iteration 2.
 
-Backups: Nous v1 (standard design) gf 84.23 @ $49.08 (`gf_seed_sql.nous_v1.fa46.json`); Claude SDK verbose-prompt gf
-stopped at $13.6 (85.70, `runs/gf/claude_sdk_fa46.aborted_verbose_prompt/`). Engram held until we discuss.
-vpc-int was too slow (first request hung 5 min), so all three concurrent runs use vpc with separate keys; the hung
-Claude llm_router attempt is kept at `runs/llm_router/claude_min_fa46.stuck_130354/` ($0 spent).
+| task | Claude SDK | Nous v3 | Nous v4 | notes |
+|---|---|---|---|---|
+| grammar_fuzzing | **85.70 @ $50.26** (done) | running, 85.70 tied @ ~$24 | queued (key4, after v4 router) | near ceiling (~86) |
+| llm_router | running, 58.74 @ ~$47 | running, 56.68 @ ~$25 | running, **59.28 @ ~$11** | v4 sweeps: 160 measurements in iter 1 |
+
+Run slugs/logs: Claude gf `gf_cmin46` (`runs/gf/claude_min_fa46.log`), Claude router `router_cmin46`;
+Nous v3 `gf_v3bfa46` / `router_v3bfa46` (`runs/*/nous_v3_fa46.log`); Nous v4 `router_v4fa46` / `gf_v4fa46`
+(`runs/*/nous_v4_fa46.log`). All on the vpc endpoint, one key per concurrent run (vpc-int too slow).
 Stop rules: Claude hard $50; Nous finishes its iteration after $50 (ceiling $57) and records best_at_budget.
 Both use the same $15/$75 token ruler (`gen/cost_meter.py`), the same access rule and judge.
+Score-vs-spend curves (best score at each $) will be added when the runs finish.
+
+Backups (kept, superseded): Nous v1 gf 84.23 @ $49.08 (`gf_seed_sql.nous_v1.fa46.json`); Nous v2 gf 84.95 @ $39.81
+and router 51.27 @ $18.92 (`*.nous_v2.fa46.killed_designbug.json`: iter-2 design hit the 30-turn cap 3x and
+restarted from scratch); Nous v3a gf 77.83 / router 55.14 (`*.nous_v3.fa46.killed_pathbug.json`: agents'
+`nous validate` came from another checkout and rejected `handoff_update.md`); Claude SDK verbose-prompt gf
+(`runs/gf/claude_sdk_fa46.aborted_verbose_prompt/`); Claude router hung on vpc-int
+(`runs/llm_router/claude_min_fa46.stuck_130354/`, $0). Engram held until we discuss.
+
+### Algorithmic re-runs — Nous v4 at a $25 cap — QUEUED
+
+Claude's old algorithmic runs actually spent ~$24-30 (see disclosure above), so Nous v4 is re-run at a $25 cap
+on p0, p5, p47 and compared with the existing Claude/Engram/AIDE numbers (unchanged). p22 is not re-run (old
+Nous reached 100 in 18 min; its metrics file is missing, so its exact cost is unverified). Same isolated
+pipeline as research (`gen/nous_research_cap.py <pid>`; integer ids dispatch to the algorithmic judge),
+finish-iteration with ceiling $28.5, headline = best_at_budget ($25). Slugs `p<pid>_v4c25`, preds
+`artifacts/preds/p<pid>.nous_v4.c25.json`, logs `runs/p<pid>/nous_v4_c25.log`.
 
 Superseded research results (blocked rule, Claude at ~$25) and leaked runs are kept in
 `artifacts/preds/` and `artifacts/preds/leaked_backup/` (with evidence) for provenance only.
 
 ## 6. TODO
 
-0. **Nous v2 (lightweight design), in progress:** design capped ~30 turns (Opus kept), 2-4 focused arms with
-   controls/ablations only when needed, per-arm refine loop, budget-aware iteration sizing. Nous v1 gf
-   result (84.23 @ $49.08) is kept as a backup (`artifacts/preds/gf_seed_sql.nous_v1.fa46.json`). Then re-run
-   Nous v2 on gf + llm_router; algorithmic re-runs later.
-
-
-1. Re-run the Claude baseline on the algorithmic tasks (p0, p5, p9, p15, p22, p47 + p0 variance reps) on the
-   SDK stack with the shared cost ruler, so the algorithmic Claude column is a true iso-$50 baseline.
-2. Paper: update the case-studies table with the new company case studies.
+1. Finish research runs (above), add score-vs-spend curves, pick the Nous version for the paper.
+2. Algorithmic: Nous v4 at $25 on p0, p5, p47 (queued).
+3. Engram research runs: held until discussed.
+4. Paper: update the case-studies table with the new company case studies.
 
 ## 7. How to run (research)
 
