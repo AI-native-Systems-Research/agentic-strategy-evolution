@@ -15,8 +15,13 @@ LIGHTWEIGHT = "lightweight"
 # v4 = lightweight + scripted sweeps in EXECUTE, more refine cycles, and a measured gap analysis that the
 # next design must target.
 V4 = "v4"
-LIGHT_PROFILES = (LIGHTWEIGHT, V4)
+# v5 = v4 + each iteration starts from the best solution so far (carry-forward), a capped EXECUTE phase so a
+# small budget still gets several design->execute loops, incremental edits, sweeps only for tunable values,
+# and re-measurement when the judge is noisy.
+V5 = "v5"
+LIGHT_PROFILES = (LIGHTWEIGHT, V4, V5)
 V4_ARM_REFINE_CYCLES = 10
+V5_EXECUTE_MAX_TURNS = 45
 LIGHTWEIGHT_DESIGN_MAX_TURNS = 30
 LIGHTWEIGHT_ARM_REFINE_CYCLES = 5
 LIGHTWEIGHT_WRAP_UP_TURNS = 12
@@ -50,6 +55,33 @@ V4_EXECUTE_EXTRA = (
 )
 
 
+V5_DESIGN_EXTRA = (
+    "- **Build on the current best code:** the target already contains the best solution measured so far "
+    "(carried forward from earlier iterations). Each arm is a change to that solution, not a rewrite from "
+    "scratch.\n"
+    "- **Target the largest measured gap:** from the second iteration on, `h-main` must attack the largest "
+    "remaining loss in the executor update with a change that generalizes (never special-case specific inputs "
+    "or test cases), and state the mechanism and roughly how much it should recover. Mark an arm as tunable "
+    "only if it has real numeric knobs (thresholds, weights, counts), and give their plausible ranges.\n"
+)
+V5_EXECUTE_EXTRA = (
+    "- **Start from the current best:** your worktree already contains the best solution so far. Measure it "
+    "once as the baseline, then apply each arm as a change on top of it.\n"
+    "- **Edit, don't rewrite:** change the solution with small targeted edits instead of rewriting the whole "
+    "file; generate variants with a script when you need many.\n"
+    "- **Sweep only tunable arms (deterministic measurements only):** when an arm has numeric knobs, one "
+    "script may measure up to about 100 settings with the sanctioned measure command and keep the best; keep "
+    "the solution general (never special-case specific inputs or test cases). For structural changes, think, "
+    "make one well-reasoned change, and measure it. A sweep counts as one refine cycle.\n"
+    "- **Noisy judge:** if the same solution can score differently between runs (time limits, randomness), "
+    "re-measure your top candidates two or three times and keep the one with the best average.\n"
+    "- **Measured gap analysis:** in the update for the next designer, quantify where the remaining score is "
+    "lost, ranked from largest to smallest, with the measurement that shows it.\n"
+    "- **Finish within your turn limit:** you have a limited number of turns; leave enough to write the "
+    "required artifacts and validate.\n"
+)
+
+
 def profile_for(campaign: dict) -> str:
     return campaign.get("design_profile") or "standard"
 
@@ -59,7 +91,11 @@ def is_light(campaign: dict) -> bool:
 
 
 def refine_cycles(campaign: dict) -> int:
-    return V4_ARM_REFINE_CYCLES if profile_for(campaign) == V4 else LIGHTWEIGHT_ARM_REFINE_CYCLES
+    return V4_ARM_REFINE_CYCLES if profile_for(campaign) in (V4, V5) else LIGHTWEIGHT_ARM_REFINE_CYCLES
+
+
+def carry_forward_enabled(campaign: dict) -> bool:
+    return profile_for(campaign) == V5
 
 
 def design_max_turns_override(campaign: dict) -> int | None:
@@ -76,6 +112,8 @@ def resolve_max_turns(campaign: dict, phase_key: str, default_max_turns: dict) -
         v = design_max_turns_override(campaign)
         if v is not None:
             return v
+    if phase_key == "execute_analyze" and profile_for(campaign) == V5:
+        return V5_EXECUTE_MAX_TURNS
     v = (default_max_turns or {}).get(phase_key)
     if v is not None:
         return int(v)
@@ -124,6 +162,7 @@ def design_guidance(campaign: dict, max_turns: int, mode: str = "real") -> str:
         "intended change precisely enough that the executor can implement it without re-deriving it.\n"
         "- **Seeds:** use a single seed when the measurement is deterministic.\n"
         + (V4_DESIGN_EXTRA if profile_for(campaign) == V4 else "")
+        + (V5_DESIGN_EXTRA if profile_for(campaign) == V5 else "")
         + "\n"
     )
 
@@ -142,8 +181,11 @@ def execute_guidance(campaign: dict, mode: str = "real") -> str:
         "reproduce the reported result. Report the kept score in `observed`; in the arm's `metadata`, set the "
         "objective's metric keys to the kept values and put the per-cycle history under a separate "
         "`refine_cycles` key (do not add other keys to the arm result).\n"
-        "- If the measurement is noisy, do not refine: run the planned conditions as usual.\n"
-        "- Do not spend measurements re-running unchanged conditions when the measurement is deterministic.\n"
+        + ("- If the measurement is noisy, do not refine: run the planned conditions as usual.\n"
+           if profile_for(campaign) != V5 else
+           "- If the measurement is noisy, refine only by re-measuring: keep the version with the best average "
+           "over two or three measurements (see below).\n")
+        + "- Do not spend measurements re-running unchanged conditions when the measurement is deterministic.\n"
         f"- **Update for the next designer:** before validating, write `{EXECUTOR_UPDATE_FILE}` in the "
         "iteration directory, next to `findings.json` (it is a protocol artifact in this profile; at most about 60 lines). Include: the best score this iteration and which arm and "
         "version produced it (point to its patch under `patches/`); what each arm changed and what the "
@@ -151,6 +193,7 @@ def execute_guidance(campaign: dict, mode: str = "real") -> str:
         "not exercised, failing cases, or the largest remaining loss terms); and the most promising next "
         "step. The next designer starts from this file instead of re-exploring the system.\n"
         + (V4_EXECUTE_EXTRA if profile_for(campaign) == V4 else "")
+        + (V5_EXECUTE_EXTRA if profile_for(campaign) == V5 else "")
         + "\n"
     )
 

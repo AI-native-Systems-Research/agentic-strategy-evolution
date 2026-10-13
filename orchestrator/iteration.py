@@ -181,6 +181,19 @@ class CampaignStopped(RuntimeError):
     """
 
 
+def _maybe_carry_forward(campaign: dict, work_dir: Path, repo_path) -> None:
+    from orchestrator.design_profile import carry_forward_enabled
+    if not repo_path or not carry_forward_enabled(campaign):
+        return
+    ts = campaign.get("target_system", {})
+    if ts.get("live_target") or campaign.get("derived_from"):
+        return  # live targets have no worktree; derived_from patches are re-applied per worktree
+    from orchestrator.carry_forward import carry_forward_best
+    msg = carry_forward_best(work_dir, Path(repo_path))
+    if msg:
+        print(f"  {msg}")
+
+
 def check_stop_requested(work_dir: Path) -> Path | None:
     """Return the STOP sentinel path if it exists, else None."""
     sentinel = Path(work_dir) / STOP_SENTINEL_NAME
@@ -1224,6 +1237,9 @@ def run_iteration(
         print(f"\n  Resuming from {engine.phase}\n")
 
     # ─── DESIGN ───────────────────────────────────────────────────────────
+    # v5: start the iteration (DESIGN and EXECUTE) from the best arm measured so far.
+    _maybe_carry_forward(campaign, work_dir, repo_path)
+
     if _enter_phase(engine, "DESIGN", work_dir):
         print(f"\n{'='*60}")
         if pre_authored_bundle is not None:
@@ -1385,6 +1401,7 @@ def run_iteration(
                 remove_experiment_worktree,
             )
             extras = campaign.get("target_system", {}).get("worktree_extras") or []
+            _maybe_carry_forward(campaign, work_dir, repo_path)  # idempotent backstop (resumed runs)
             experiment_dir, experiment_id = create_experiment_worktree(
                 Path(repo_path), iteration, extras=extras,
             )
