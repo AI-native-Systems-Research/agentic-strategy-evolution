@@ -90,7 +90,7 @@ Nous versions (all opt-in via `campaign.design_profile`; `standard` = original N
 | task | Claude SDK | Nous v3 | Nous v4 | notes |
 |---|---|---|---|---|
 | grammar_fuzzing | 85.70 @ $50.26 (done) | **86.30 @ $37.83** (stopped by user to free a slot for v4) | 83.59 @ $56.50 (at $50: 83.59; 9 hooked candidates rejected, incl. 91.44) | v3 beats Claude with 25% less spend |
-| llm_router | 58.74 @ $51.93 (done; last reply overshot the $50 poll by $1.93) | 56.70 @ $33.17 (stopped by user; plateaued since iter 2) | running, **59.29 @ ~$13** | v4 sweeps: 176 measurements in iter 1 |
+| llm_router | 58.74 @ $51.93 (done; last reply overshot the $50 poll by $1.93) | 56.70 @ $33.17 (stopped by user; plateaued since iter 2) | **59.66 @ $57.51** (at $50: **59.57**; 1 rejected candidate) | v4 beats Claude; ~850 measurements via sweeps |
 
 Run slugs/logs: Claude gf `gf_cmin46` (`runs/gf/claude_min_fa46.log`), Claude router `router_cmin46`;
 Nous v3 `gf_v3bfa46` / `router_v3bfa46` (`runs/*/nous_v3_fa46.log`); Nous v4 `router_v4fa46` / `gf_v4fa46`
