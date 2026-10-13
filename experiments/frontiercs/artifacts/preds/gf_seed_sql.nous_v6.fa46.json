@@ -1,0 +1,56 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_v6fa46",
+  "model": "claude-opus-4-6",
+  "final_score": 85.33,
+  "cost_usd": 8.09,
+  "n_clean_candidates": 7,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-gf-v6fa46/runs/iter-1/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-v6fa46/runs/iter-1/patches/h-main.patch",
+      "score": 85.33264487417554
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v6fa46_measured_20261013_165956/m0028_171958_score84.86.py",
+      "score": 84.856528477589
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v6fa46_measured_20261013_165956/m0026_171844_score84.60.py",
+      "score": 84.59565795023798
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v6fa46_measured_20261013_165956/m0025_171743_score84.56.py",
+      "score": 84.55921476934334
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v6fa46_measured_20261013_165956/m0030_172112_score84.45.py",
+      "score": 84.44919576515679
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v6fa46_measured_20261013_165956/m0024_171711_score84.05.py",
+      "score": 84.04756049754151
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_v6fa46_measured_20261013_165956/m0023_171651_score83.54.py",
+      "score": 83.53906743563732
+    }
+  ],
+  "elapsed_s": 1974.8,
+  "cost_usd_tokenbased": 28.83,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": false,
+  "stop_rule": "finish the iteration in progress at $50.0 (ceiling $57.0)",
+  "best_at_budget": null,
+  "budget_reached_at": null
+}

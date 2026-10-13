@@ -24,7 +24,7 @@ partly fits it to the benchmark.
 
 | task (budget) | Claude | v1 | v2 | v3 | v4 | v5 | v6 |
 |---|---|---|---|---|---|---|---|
-| gf ($50) | 85.70 | 84.23 | 84.95* | **86.30** | 83.59 (hooked 91.44 rejected) | 85.70* ($36.94) | running |
+| gf ($50) | 85.70 | 84.23 | 84.95* | **86.30** | 83.59 (hooked 91.44 rejected) | 85.70* ($36.94) | 85.33* ($28.83) |
 | llm_router ($50) | 58.74 | - | 51.27* | 56.70* | **59.57** (59.66) | - | - |
 | p0 ($25) | 79.4 **contaminated** (see 3) | - | - | - | 73.48 (74.30) | 74.09 (75.32) | - |
 | p5 ($25) | 50.0 | - | - | - | **58.00** | 49.00 | running |
@@ -48,7 +48,7 @@ Research at **$25** (best clean score by $25 on each run's own curve, `gen/curve
 
 | task | Claude | v3 | v4 | v5 | v6 |
 |---|---|---|---|---|---|
-| gf | 85.33 | **85.70** | 82.97 | 82.93 | running (85.33 by ~$13) |
+| gf | 85.33 | **85.70** | 82.97 | 82.93 | 85.33 (81.11 @ $10; stopped at $28.65 under the $25 rule) |
 | llm_router | 58.12 | 56.69 | **59.29** | - | - |
 
 ## 3. Integrity findings
@@ -78,7 +78,13 @@ Research at **$25** (best clean score by $25 on each run's own curve, `gen/curve
 - Task type matters: sweeps win tuning tasks (llm_router), careful reasoning wins discovery tasks (gf).
 - Single runs are noisy: one idea can swing p5 by +-10; p0's judge itself re-scores a solution within +-2.
 
-## 5. Next
+## 5. Decision log
+
+- 2026-10-13 17:30: **v6 chosen for the final runs.** At $25: gf v6 85.33 = Claude 85.33 (v5 82.93); p5 v6 56.00
+  so far > Claude 50.0 (v5 49.00); p0 v5 74.09 (v6 running). v6 keeps carry-forward and removes the EXECUTE cap
+  that cut v5's iterations short. Final v6 runs: p0 (running), p47, llm_router at $25.
+
+## 6. Next
 
 1. Finish v5/v6 on gf and p5; pick v5 vs v6 on gf + p0 + p5 together.
 2. Re-run Claude p0 clean (SDK runner, minimal prompt, $25, new sandbox).
