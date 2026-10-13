@@ -1,0 +1,322 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_o5c",
+  "model": "aws/claude-opus-5",
+  "final_score": 77.56,
+  "cost_usd": 15.93,
+  "n_clean_candidates": 74,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-2/inputs/solution_hmain_candidate.py",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/patches/h-control-negative.patch",
+      "score": 48.175830067963275
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/patches/h-main.patch",
+      "score": 72.93062552769615
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/build_sol.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/hctrl_body.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/hmain_body.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_badonly.py",
+      "score": 59.97821203598503
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_ceiling.py",
+      "score": 57.58946071067977
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_chosenN.py",
+      "score": 32.49996990461343
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_covbit.py",
+      "score": 32.49996990461343
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_covbit2.py",
+      "score": 34.009869761998004
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_ctrlN.py",
+      "score": 30.050976343582448
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_dense.py",
+      "score": 51.114408921405996
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_diag.py",
+      "score": 35.60586115069456
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_dup9.py",
+      "score": 32.49996990461343
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_exotic.py",
+      "score": 59.631282528693475
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_finalN.py",
+      "score": 28.1329182752603
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_gcands.py",
+      "score": 32.86963214373296
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_imponly.py",
+      "score": 30.03601465116989
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_import.py",
+      "score": 30.03601465116989
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_parsefrac.py",
+      "score": 28.754628513549754
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_pipe1.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_proto.py",
+      "score": 64.18245907618058
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_purge.py",
+      "score": 35.60586115069456
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_purge_full.py",
+      "score": 35.60586115069456
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_ref1.py",
+      "score": 35.60586115069456
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_rich.py",
+      "score": 60.46939341228757
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_rich_bad.py",
+      "score": 59.668277823104646
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_rules.py",
+      "score": 23.012138295330764
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/probe_validate.py",
+      "score": 32.45478733669318
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_big.py",
+      "score": 72.45761226527935
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_g400.py",
+      "score": 72.93062552769615
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_grasp.py",
+      "score": 71.97588602329056
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_hmain.py",
+      "score": 64.98111730057222
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_mut.py",
+      "score": 72.36032902618062
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_n14.py",
+      "score": 68.7506511134189
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_n18.py",
+      "score": 68.97856730667607
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_n22.py",
+      "score": 69.3475798306495
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_n26.py",
+      "score": 69.3475798306495
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_n30.py",
+      "score": 69.3475798306495
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_n36.py",
+      "score": 69.3475798306495
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_n44.py",
+      "score": 69.3475798306495
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_n9.py",
+      "score": 64.98111730057222
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/sol_wc96_big.py",
+      "score": 72.93062552769615
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solm_16.py",
+      "score": 70.41318241749116
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solm_20.py",
+      "score": 71.97588602329056
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solm_24.py",
+      "score": 72.36032902618062
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solm_28.py",
+      "score": 72.36032902618062
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solm_32.py",
+      "score": 72.36032902618062
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solm_36.py",
+      "score": 72.36032902618062
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solm_42.py",
+      "score": 72.36032902618062
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solm_50.py",
+      "score": 72.36032902618062
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solw_100.py",
+      "score": 72.93062552769615
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solw_105.py",
+      "score": 68.7685212625295
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solw_112.py",
+      "score": 64.8057818661446
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solw_125.py",
+      "score": 56.86374449941848
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solw_94.py",
+      "score": 72.93062552769615
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/solw_98.py",
+      "score": 72.93062552769615
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-1/inputs/wcov.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-2/inputs/decodeN.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-2/inputs/diag_tail.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-2/inputs/dir_tail.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-2/inputs/fix_tail.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-2/inputs/hmain_tail.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-2/inputs/pool_tail.py",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-o5c/runs/iter-2/inputs/solution_hmain_candidate.py",
+      "score": 77.56167856451066
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5c_measured_20261012_191314/m0126_201610_score75.08.py",
+      "score": 75.08285806241588
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5c_measured_20261012_191314/m0127_201626_score74.27.py",
+      "score": 74.55862992109849
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5c_measured_20261012_191314/m0090_200306_score73.82.py",
+      "score": 73.816130094094
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5c_measured_20261012_191314/m0125_201535_score73.82.py",
+      "score": 73.816130094094
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5c_measured_20261012_191314/m0094_200354_score73.31.py",
+      "score": 73.3116071759235
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5c_measured_20261012_191314/m0098_200431_score73.19.py",
+      "score": 73.19163009190714
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5c_measured_20261012_191314/m0096_200412_score73.19.py",
+      "score": 73.19163009190714
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5c_measured_20261012_191314/m0097_200421_score73.19.py",
+      "score": 73.19163009190714
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_o5c_measured_20261012_191314/m0095_200403_score73.18.py",
+      "score": 73.1785094130291
+    }
+  ],
+  "elapsed_s": 4752.8,
+  "cost_usd_tokenbased": 50.22,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true,
+  "exfil_attempts_blocked": "one probe solution tried to write /tmp/nlog_test.txt from inside the judge; blocked (file never created); no sockets; best solution has no file/tmp/network access"
+}
