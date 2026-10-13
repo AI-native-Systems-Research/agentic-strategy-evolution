@@ -36,7 +36,11 @@ out-of-process daemon that scores exploit solutions 0 and archives every measure
 own Frontier-CS docker research backend fails on this host (`cp: cannot stat '/workspace/*'`), so
 Engram's adapter (`~/engram_repo/SystemBench/FrontierCS/evaluator.py`, recorded in
 `engram_real/engram_opus_patch.diff`) routes research scoring to the same daemon via `FCS_JUDGE_ROOT`;
-Engram's method is untouched. **Engram isolation (correction):** Engram agents DO have a shell, but it
+Engram's method is untouched. Upstream Engram's `fcs_res_*` path references
+`Architect/methods/deepagents_utils/handoff_system_prompt_research.txt`, which upstream never shipped
+(the file is also gitignored there); we create it as a copy of Engram's own generic research prompt
+`handoff_system_prompt.txt` (the one it uses for cloudcast/vidur/eplb/llm_sql):
+`cp handoff_system_prompt.txt handoff_system_prompt_research.txt`. **Engram isolation (correction):** Engram agents DO have a shell, but it
 runs inside a Docker container (`python:3.11`) that only sees the agent workspace, and file tools are
 rooted at the workspace, so host benchmark files are not visible.
 
