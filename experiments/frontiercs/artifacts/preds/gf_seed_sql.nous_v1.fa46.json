@@ -1,0 +1,70 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_fa46",
+  "model": "claude-opus-4-6",
+  "final_score": 84.23,
+  "cost_usd": 13.05,
+  "n_clean_candidates": 10,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/research_gf_fa46_measured_20261013_104417/m0157_114622_score84.23.py",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-fa46/runs/iter-1/patches/h-main.patch",
+      "score": 83.6096331948047
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-fa46/runs/iter-2/inputs/control_solution.py",
+      "score": 83.24615086339736
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-fa46/runs/iter-3/inputs/solution_baseline.py",
+      "score": 83.97472902200784
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_fa46_measured_20261013_104417/m0157_114622_score84.23.py",
+      "score": 84.23117933763008
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_fa46_measured_20261013_104417/m0143_114123_score84.23.py",
+      "score": 84.23117933763008
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_fa46_measured_20261013_104417/m0111_113543_score84.23.py",
+      "score": 84.23117933763008
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_fa46_measured_20261013_104417/m0161_114845_score84.23.py",
+      "score": 84.23117933763008
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_fa46_measured_20261013_104417/m0145_114125_score84.23.py",
+      "score": 84.23117933763008
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_fa46_measured_20261013_104417/m0153_114430_score84.23.py",
+      "score": 84.23117933763008
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_fa46_measured_20261013_104417/m0155_114619_score84.23.py",
+      "score": 84.23117933763008
+    }
+  ],
+  "elapsed_s": 3981.5,
+  "cost_usd_tokenbased": 49.08,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": false,
+  "stop_rule": "finish the iteration in progress at $50.0 (ceiling $57.0)",
+  "best_at_budget": 84.23,
+  "budget_reached_at": null,
+  "nous_version": "v1 (heavy design: 80-turn design, full arm bundles)",
+  "stop_note": "stopped manually at $49.08 (iter 3 executing) to switch to the lightweight Nous design; kept as backup"
+}
