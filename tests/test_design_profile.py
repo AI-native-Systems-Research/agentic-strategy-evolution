@@ -297,3 +297,34 @@ def test_wrap_up_detects_subtype_even_with_result_text(tmp_path, monkeypatch):
         SDKResult(text="done"),
     ], monkeypatch)
     assert runner.calls[1]["resume"] == "s-9"
+
+
+class TestV4Profile:
+    """v4 = lightweight + scripted sweeps, 10 refine cycles, gap-targeted design; lightweight unchanged."""
+
+    def test_schema_accepts_v4(self):
+        jsonschema.validate(_campaign(design_profile="v4"), SCHEMA)
+
+    def test_v4_adds_sweep_gap_and_cycles(self):
+        c = _campaign(design_profile="v4")
+        d, e = design_guidance(c, 30), execute_guidance(c)
+        assert "Target the largest measured gap" in d and "1-3 arms" in d
+        assert "Sweep tunable values with a script" in e and "gap analysis" in e
+        assert "up to 9 more measure-edit cycles" in e
+        assert "budget" not in (d + e).lower() and "$" not in d + e
+
+    def test_lightweight_text_has_no_v4_extras(self):
+        c = _campaign(design_profile="lightweight")
+        assert "Target the largest measured gap" not in design_guidance(c, 30)
+        e = execute_guidance(c)
+        assert "Sweep tunable values" not in e and "up to 4 more measure-edit cycles" in e
+
+    def test_v4_keeps_lightweight_machinery(self):
+        from orchestrator.design_profile import max_wrap_ups, resolve_max_turns
+        c = _campaign(design_profile="v4")
+        assert resolve_max_turns(c, "design", {"design": 80}) == LIGHTWEIGHT_DESIGN_MAX_TURNS
+        assert max_wrap_ups(c) > 0
+
+    def test_v4_design_prompt_gets_executor_update(self, tmp_path):
+        p = TestExecutorUpdate()._iter2_prompt(tmp_path, _campaign(design_profile="v4"), update="GAP-1: parser.py:558")
+        assert "GAP-1: parser.py:558" in p

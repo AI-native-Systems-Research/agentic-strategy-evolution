@@ -12,6 +12,11 @@ import json
 from pathlib import Path
 
 LIGHTWEIGHT = "lightweight"
+# v4 = lightweight + scripted sweeps in EXECUTE, more refine cycles, and a measured gap analysis that the
+# next design must target.
+V4 = "v4"
+LIGHT_PROFILES = (LIGHTWEIGHT, V4)
+V4_ARM_REFINE_CYCLES = 10
 LIGHTWEIGHT_DESIGN_MAX_TURNS = 30
 LIGHTWEIGHT_ARM_REFINE_CYCLES = 5
 LIGHTWEIGHT_WRAP_UP_TURNS = 12
@@ -25,13 +30,41 @@ WRAP_UP_PROMPT = (
 )
 
 
+V4_DESIGN_EXTRA = (
+    "- **Target the largest measured gap:** from the second iteration on, read the gap analysis in the "
+    "executor update. `h-main` must attack the largest remaining loss it reports with a change that "
+    "generalizes (never special-case specific inputs or test cases), and the hypothesis must state the mechanism by which the "
+    "change recovers it and roughly how much it should recover. Name any tunable values (thresholds, weights, "
+    "counts) and their plausible ranges so the executor can sweep them.\n"
+)
+V4_EXECUTE_EXTRA = (
+    "- **Sweep tunable values with a script (deterministic measurements only):** when an arm has tunable "
+    "values (thresholds, weights, counts, orderings), write one script that measures up to about 100 settings "
+    "with the sanctioned measure command and keeps the best, instead of editing and measuring by hand. Stay "
+    "within the arm's hypothesis and keep the solution general (never special-case specific inputs or test "
+    "cases). A sweep counts as one refine cycle. Record the swept "
+    "ranges and the best setting in the arm's `refine_cycles` history.\n"
+    "- **Measured gap analysis:** in the update for the next designer, quantify where the remaining score is "
+    "lost (for example, the score components or the inputs, cases, or code paths that cost the most), ranked "
+    "from largest to smallest, with the measurement that shows it.\n"
+)
+
+
 def profile_for(campaign: dict) -> str:
     return campaign.get("design_profile") or "standard"
 
 
+def is_light(campaign: dict) -> bool:
+    return profile_for(campaign) in LIGHT_PROFILES
+
+
+def refine_cycles(campaign: dict) -> int:
+    return V4_ARM_REFINE_CYCLES if profile_for(campaign) == V4 else LIGHTWEIGHT_ARM_REFINE_CYCLES
+
+
 def design_max_turns_override(campaign: dict) -> int | None:
     """DESIGN max_turns implied by the profile, or None to use the normal resolution."""
-    return LIGHTWEIGHT_DESIGN_MAX_TURNS if profile_for(campaign) == LIGHTWEIGHT else None
+    return LIGHTWEIGHT_DESIGN_MAX_TURNS if is_light(campaign) else None
 
 
 def resolve_max_turns(campaign: dict, phase_key: str, default_max_turns: dict) -> int:
@@ -51,7 +84,7 @@ def resolve_max_turns(campaign: dict, phase_key: str, default_max_turns: dict) -
 
 def max_wrap_ups(campaign: dict) -> int:
     """How many times a turn-limited SDK session is resumed with WRAP_UP_PROMPT (0 = restart as before)."""
-    return LIGHTWEIGHT_MAX_WRAP_UPS if profile_for(campaign) == LIGHTWEIGHT else 0
+    return LIGHTWEIGHT_MAX_WRAP_UPS if is_light(campaign) else 0
 
 
 def wrap_up_max_turns(campaign: dict) -> int:
@@ -63,7 +96,7 @@ def design_guidance(campaign: dict, max_turns: int, mode: str = "real") -> str:
 
     `max_turns` is the resolved DESIGN turn limit.
     """
-    if profile_for(campaign) != LIGHTWEIGHT or mode == "rehearsal":
+    if not is_light(campaign) or mode == "rehearsal":
         return ""
     half = max(1, max_turns // 2)
     return (
@@ -89,20 +122,22 @@ def design_guidance(campaign: dict, max_turns: int, mode: str = "real") -> str:
         "attribution. For a pure optimization objective, prefer arms whose treatment is itself a plausible "
         "improvement over the current best rather than a deliberately weaker control. Describe each arm's "
         "intended change precisely enough that the executor can implement it without re-deriving it.\n"
-        "- **Seeds:** use a single seed when the measurement is deterministic.\n\n"
+        "- **Seeds:** use a single seed when the measurement is deterministic.\n"
+        + (V4_DESIGN_EXTRA if profile_for(campaign) == V4 else "")
+        + "\n"
     )
 
 
 def execute_guidance(campaign: dict, mode: str = "real") -> str:
     """Extra EXECUTE_ANALYZE guidance for the profile (none in rehearsal mode)."""
-    if profile_for(campaign) != LIGHTWEIGHT or mode == "rehearsal":
+    if not is_light(campaign) or mode == "rehearsal":
         return ""
     return (
         "\n\n## Lightweight profile (this campaign)\n\n"
         "These rules take precedence over the methodology where they differ.\n\n"
         f"- **Per-arm refinement (deterministic measurements only):** after an arm's first measurement you "
         f"may improve that arm's implementation, staying within its hypothesis, for up to "
-        f"{LIGHTWEIGHT_ARM_REFINE_CYCLES - 1} more measure-edit cycles, keeping the best version. When done, "
+        f"{refine_cycles(campaign) - 1} more measure-edit cycles, keeping the best version. When done, "
         "regenerate the arm's patch and `experiment_plan.yaml` entry from the version you kept, so they "
         "reproduce the reported result. Report the kept score in `observed`; in the arm's `metadata`, set the "
         "objective's metric keys to the kept values and put the per-cycle history under a separate "
@@ -114,7 +149,9 @@ def execute_guidance(campaign: dict, mode: str = "real") -> str:
         "version produced it (point to its patch under `patches/`); what each arm changed and what the "
         "measurements showed; the concrete open gaps you observed (for example, specific code paths still "
         "not exercised, failing cases, or the largest remaining loss terms); and the most promising next "
-        "step. The next designer starts from this file instead of re-exploring the system.\n\n"
+        "step. The next designer starts from this file instead of re-exploring the system.\n"
+        + (V4_EXECUTE_EXTRA if profile_for(campaign) == V4 else "")
+        + "\n"
     )
 
 
@@ -124,7 +161,7 @@ def executor_update_for_design(campaign: dict, work_dir: Path, iteration: int) -
     The campaign handoff is written during DESIGN, before anything is measured, so on its own it never
     reflects what the executor found. Empty for the standard profile and for the first iteration.
     """
-    if profile_for(campaign) != LIGHTWEIGHT or iteration <= 1:
+    if not is_light(campaign) or iteration <= 1:
         return ""
     prev = Path(work_dir) / "runs" / f"iter-{iteration - 1}"
     parts: list[str] = []

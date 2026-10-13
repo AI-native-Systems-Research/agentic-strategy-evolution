@@ -237,13 +237,15 @@ properties:
 
   design_profile:
     type: string
-    enum: [standard, lightweight]
+    enum: [standard, lightweight, v4]
     description: >-
       Methodology weight. `standard` (default) keeps the full design. `lightweight`
       caps the DESIGN phase at 30 turns (unless campaign.max_turns.design is set),
       asks for 1-3 focused arms with controls/ablations only when a finding needs
       causal attribution, and lets each arm refine its implementation over a few
-      measure-edit cycles. The design model is unchanged.
+      measure-edit cycles. `v4` is lightweight plus scripted sweeps of tunable values in
+      EXECUTE, 10 refine cycles, and a measured gap analysis that the next design must
+      target. The design model is unchanged.
   sdk_options:
     type: object
     additionalProperties: false
