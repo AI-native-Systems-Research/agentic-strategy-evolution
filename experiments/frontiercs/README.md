@@ -64,6 +64,12 @@ runs every evaluation under sandbox-exec with no network and no writes except a 
 Claude's (deny `~/frontier`, `experiments/frontiercs`, `~/engram_repo`, `~/.claude/projects`; re-allow
 only its own workspace, campaign dir, scripts, and transcripts).
 
+**llm_router audit rule (fixed 2026-10-12):** the exploit audit banned `reference_data.csv` and any
+`read_csv`, but the task README explicitly provides `resources/reference_data.csv` (training data) for
+solutions to read at runtime. Those two patterns were removed for every agent; the labeled test split
+(`*_test.csv`, `routerbench_0shot_test`), `routerbench`, and the `datasets/` dir stay banned. The first
+Claude llm_router attempt ($3.67, scored 0 under the old rule) was discarded and restarted.
+
 **Sandbox hardening (2026-10-12):** the research sandboxes only denied `Frontier-CS/research` and
 `datasets`, so other runs' solutions (`~/frontier/gen_logs`, repo `runs/`/`artifacts/`, SDK transcripts
 in `~/.claude/projects`) were readable. Claude research runner now denies `~/frontier`, the whole

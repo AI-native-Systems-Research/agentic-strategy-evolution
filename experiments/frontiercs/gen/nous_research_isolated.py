@@ -12,7 +12,7 @@ Isolation design (mirrors the algorithmic judge-daemon pattern):
     .evalvenv evaluator and writes the score to an outbox. fmeasure.sh (the only sanctioned measure)
     does the inbox/outbox handshake and never touches ~/frontier directly.
   - Post-harvest EXPLOIT AUDIT: reconstruct every iteration's solution from its stored git patch, reject
-    any that contain exploit signatures (sys.meta_path/import-hook, reading routerbench/reference_data/
+    any that contain exploit signatures (sys.meta_path/import-hook, reading routerbench/test-split/
     test CSVs, direct sql_engine internal calls), and report the best CLEAN candidate's reproduced score.
 
 Usage:
@@ -51,9 +51,7 @@ EXPLOIT_SIGS = [
     (r"sql_engine\.(parser|tokenizer|ast_nodes)", "direct engine-internal access"),
     (r"\b_match\b|TokenType\.", "calling parser/tokenizer internals directly"),
     (r"routerbench", "reads the labeled RouterBench dataset"),
-    (r"reference_data\.csv", "reads reference_data.csv (labels)"),
     (r"_test\.csv|routerbench_0shot_test", "reads the labeled test split"),
-    (r"read_csv|read_pickle|read_parquet", "reads a data file from disk (possible label leak)"),
     (r"/datasets/|resources/datasets", "accesses the datasets directory directly"),
 ]
 def exploit_hits(code):
