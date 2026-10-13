@@ -125,7 +125,7 @@ finish-iteration with ceiling $28.5, headline = best_at_budget ($25). Slugs `p<p
 
 | task | Claude (old, ~$25) | Nous old (overspent) | Engram | AIDE | **Nous v4 @ $25** (best_at_budget / final re-judged / total spent) |
 |---|---|---|---|---|---|
-| p0 | 79.4 | 89.1 | 68.5 | 0 | 73.48 / 74.30 / $29.09 (1 full iteration inside $25) |
+| p0 | 79.4 (**contaminated**: copied a solution from the shared judge folder; re-run pending) | 89.1 | 68.5 | 0 | 73.48 / 74.30 / $29.09 (1 full iteration inside $25) |
 | p5 | 50.0 | 83 | 41 | 44 | **58.00** / 58.00 / $25.99 (beats Claude, Engram, AIDE at $25) |
 
 Nous v5 at $25 (best_at_budget / final re-judged / spent): p0 **74.09 / 75.32 / $26.38**; p5 running. Claude's own p0
@@ -136,6 +136,9 @@ p0's judge is time-limited, so the same solution re-scores within about +/-2 (75
 
 Superseded research results (blocked rule, Claude at ~$25) and leaked runs are kept in
 `artifacts/preds/` and `artifacts/preds/leaked_backup/` (with evidence) for provenance only.
+
+**Improvement loop and integrity log:** `NOUS_IMPROVEMENT_LOG.md` (versions v1-v6, results, contamination of the
+old Claude p0 baseline, sandbox fixes).
 
 ## 6. TODO
 
