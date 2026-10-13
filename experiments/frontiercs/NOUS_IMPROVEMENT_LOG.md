@@ -76,6 +76,16 @@ Research at **$25** (best clean score by $25 on each run's own curve, `gen/curve
 - Per-reply cost and token mix are now the same for Nous and Claude (cache reads ~60%, output ~30%), so the
   remaining gap is search quality and run-to-run variance, not overhead.
 - Task type matters: sweeps win tuning tasks (llm_router), careful reasoning wins discovery tasks (gf).
+- The executor is an LLM agent, not machinery: implementing, refining, measuring and reading results are all
+  model turns (~$0.17-0.30 each, mostly re-reading 70-120K tokens of context). Only the judge is free. $25 buys
+  ~100-120 turns for Nous or Claude alike.
+- At $25, depth beats iteration count: v6 (one long iteration, ~30 measurements) beat v5 (45-turn cap, 2-3
+  iterations) on gf (85.33 vs 82.93) and p5 (57 vs 49). Nous's edge at small budgets comes from the focused
+  design, distinct arms and gap analysis inside an iteration; compounding across many iterations needs more
+  budget (old Nous with 3-6x spend: p0 89, p5 83).
+- The cost ruler is model-independent ($15/$75 for every model), so a cheaper executor model would not buy
+  more turns on the ruler; trimming the executor's system prompt (it also carries the design method) would
+  save only ~5%.
 - Single runs are noisy: one idea can swing p5 by +-10; p0's judge itself re-scores a solution within +-2.
 
 ## 5. Decision log
