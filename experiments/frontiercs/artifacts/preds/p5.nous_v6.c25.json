@@ -1,0 +1,60 @@
+{
+  "problem_id": "5",
+  "track": "algorithmic",
+  "agent": "nous",
+  "label": "p5_v6c25",
+  "model": "claude-opus-4-6",
+  "final_score": 57.0,
+  "cost_usd": 1.45,
+  "n_clean_candidates": 8,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-p5-v6c25/runs/iter-1/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p5-v6c25/runs/iter-1/patches/h-main.patch",
+      "score": 56.99999999999999
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6c25_measured_20261013_165656/m0029_173333_score57.00.cpp",
+      "score": 56.99999999999999
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6c25_measured_20261013_165656/m0031_173447_score57.00.cpp",
+      "score": 56.99999999999999
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6c25_measured_20261013_165656/m0023_172816_score56.00.cpp",
+      "score": 56.00000000000001
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6c25_measured_20261013_165656/m0026_173018_score56.00.cpp",
+      "score": 55.00000000000001
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6c25_measured_20261013_165656/m0027_173100_score56.00.cpp",
+      "score": 55.00000000000001
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6c25_measured_20261013_165656/m0021_172629_score54.00.cpp",
+      "score": 54.99999999999999
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6c25_ws/solution.cpp",
+      "score": 0.0
+    }
+  ],
+  "elapsed_s": 2463.1,
+  "cost_usd_tokenbased": 28.8,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true,
+  "stop_rule": "finish the iteration in progress at $25.0 (ceiling $28.5)",
+  "best_at_budget": 57.0,
+  "budget_reached_at": 1791927257.4490418
+}
