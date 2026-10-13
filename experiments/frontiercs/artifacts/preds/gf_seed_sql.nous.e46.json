@@ -1,0 +1,65 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_e46n",
+  "model": "claude-opus-4-6",
+  "final_score": 59.55,
+  "cost_usd": 15.81,
+  "n_clean_candidates": 10,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-gf-e46n/runs/iter-1/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-e46n/runs/iter-1/patches/h-main.patch",
+      "score": 59.552368838201886
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_e46n_measured_20261012_220708/m0054_225630_score59.53.py",
+      "score": 59.52720877773053
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_e46n_measured_20261012_220708/m0053_225607_score59.11.py",
+      "score": 59.10550137788953
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_e46n_measured_20261012_220708/m0052_225535_score58.92.py",
+      "score": 58.91618092488736
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_e46n_measured_20261012_220708/m0051_225506_score58.52.py",
+      "score": 58.51722141458701
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_e46n_measured_20261012_220708/m0048_225338_score58.32.py",
+      "score": 58.32185158675518
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_e46n_measured_20261012_220708/m0050_225439_score58.32.py",
+      "score": 58.32185158675518
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_e46n_measured_20261012_220708/m0047_225316_score58.13.py",
+      "score": 58.1291714730762
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_e46n_measured_20261012_220708/m0046_225251_score57.94.py",
+      "score": 57.93914404346049
+    },
+    {
+      "src": "~/frontier/gen_logs/research_gf_e46n_ws/solution.py",
+      "score": 53.98848539624354
+    }
+  ],
+  "elapsed_s": 3445.6,
+  "cost_usd_tokenbased": 50.16,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true
+}

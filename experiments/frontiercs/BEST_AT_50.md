@@ -36,7 +36,7 @@ Research — score-metric (higher better; score / LLM-$), opus-4-6 (mirrors READ
 
 | task | Nous | Claude (agent) | Engram (real) | notes |
 |---|---|---|---|---|
-| grammar_fuzzing/seed (SQL-parser coverage, pl) | running | 57.70 / $50.6 | 55.93 / $51.3 | sandboxed judge |
+| grammar_fuzzing/seed (SQL-parser coverage, pl) | **59.55** / $50.2 | 57.70 / $50.6 | 55.93 / $51.3 | sandboxed judge |
 | llm_router (cost-aware routing, ai)            | running | 58.21 / $50.1 | 55.14 / $51.7 | trivial baseline=25.4, oracle≈90 |
 
 Model scaling, grammar_fuzzing/seed/sql (Nous vs Claude agent, iso-$50, re-judged clean best):
