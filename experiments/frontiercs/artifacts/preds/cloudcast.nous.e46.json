@@ -1,0 +1,73 @@
+{
+  "problem_id": "cloudcast",
+  "track": "research",
+  "agent": "nous",
+  "label": "cc_e46n",
+  "model": "claude-opus-4-6",
+  "final_score": 0.15,
+  "cost_usd": 15.71,
+  "n_clean_candidates": 10,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-cc-e46n/runs/iter-1/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-cc-e46n/runs/iter-1/patches/h-control-negative.patch",
+      "score": 0.09552371980292827
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-cc-e46n/runs/iter-1/patches/h-main.patch",
+      "score": 0.1540476491191873
+    },
+    {
+      "src": "~/frontier/gen_logs/research_cc_e46n_measured_20261012_230502/m0095_000611_score0.15.py",
+      "score": 0.13412715074696938
+    },
+    {
+      "src": "~/frontier/gen_logs/research_cc_e46n_measured_20261012_230502/m0077_235539_score0.15.py",
+      "score": 0.13405317457247856
+    },
+    {
+      "src": "~/frontier/gen_logs/research_cc_e46n_measured_20261012_230502/m0067_234602_score0.15.py",
+      "score": 0.14559480269883382
+    },
+    {
+      "src": "~/frontier/gen_logs/research_cc_e46n_measured_20261012_230502/m0032_231628_score0.15.py",
+      "score": 0.14539666087611866
+    },
+    {
+      "src": "~/frontier/gen_logs/research_cc_e46n_measured_20261012_230502/m0052_232830_score0.15.py",
+      "score": 0.14071641677194693
+    },
+    {
+      "src": "~/frontier/gen_logs/research_cc_e46n_measured_20261012_230502/m0042_232401_score0.15.py",
+      "score": 0.1455185304286174
+    },
+    {
+      "src": "~/frontier/gen_logs/research_cc_e46n_measured_20261012_230502/m0046_232525_score0.15.py",
+      "score": 0.14550764018712423
+    },
+    {
+      "src": "~/frontier/gen_logs/research_cc_e46n_measured_20261012_230502/m0106_001317_score0.15.py",
+      "score": 0.1540476491191873
+    }
+  ],
+  "elapsed_s": 4237.7,
+  "cost_usd_tokenbased": 50.5,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true,
+  "total_transfer_cost": 648.5,
+  "rejudge5_transfer_cost": [
+    648.6,
+    648.6,
+    648.6,
+    648.1,
+    648.6
+  ]
+}
