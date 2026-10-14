@@ -1,8 +1,8 @@
 # Build the local evaluator, iteration {{iteration}} for {{target_system}}
 
 Before any mechanism arm runs, build a local evaluator that every later session will use, and measure
-the current solution with it. Do not work on the solution itself. This session stops at about
-${{budget_usd}}.
+the current solution with it. Do not work on the solution itself. Aim to finish within about
+${{budget_usd}}; the session is stopped at twice that.
 
 ## Context
 
@@ -36,5 +36,6 @@ need more, write code or notes to a file, run them, and continue from the result
  "knobs": [{"name": "<knob>", "low": <value>, "high": <value>, "delta": <score change>, "matters": <bool>}]}
 ```
 
-Write `{{evaluator_dir}}/README.md` last: the command, the size groups, the time limit used, and the
-current solution's per-group summary. Later sessions only read the README, so keep it short and exact.
+As soon as the command runs once, write `{{instrument_path}}` and `{{evaluator_dir}}/README.md` (the
+command, the size groups, the time limit used, the current solution's per-group summary), then update
+both as you finish the checks. Later sessions only read these two files, so keep them short and exact.

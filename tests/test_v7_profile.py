@@ -666,7 +666,11 @@ class TestV7Execute:
         labels = [r["session_label"] for r in rows]
         assert labels == ["evaluator", "h-main", "h-alternative-1", "h-alternative-2", "winner"]
         s = v7_settings(campaign)
-        assert all(r["budget_usd"] <= s.arm_budget_usd for r in rows[:-1])
+        # screening sessions aim for at most the arm budget; their hard stop is twice the target
+        assert all(r["budget_usd"] <= 2 * s.arm_budget_usd for r in rows[:-1])
+        state = json.loads((it / "arms" / "state.json").read_text())
+        for r in rows[:-1]:
+            assert r["budget_usd"] == pytest.approx(2 * state["sessions"][r["session_label"]]["budget_usd"])
         spent = sum(r["output_tokens"] for r in rows[:-1]) * 75 / 1e6
         assert rows[-1]["budget_usd"] == pytest.approx(s.iteration_budget_usd - spent, abs=0.01)
         # only the winner's worktree is left for the caller to clean up

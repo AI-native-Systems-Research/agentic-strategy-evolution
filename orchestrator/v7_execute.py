@@ -37,6 +37,7 @@ BUDGET_FILE = "budget.json"
 EVALUATOR_KEY = "evaluator"
 MIN_SESSION_USD = 1.0
 ASSUMED_ARMS = 2  # mechanism arms expected after a pre-design evaluator session, for its budget share
+HARD_CAP_FACTOR = 2.0  # evaluator and screening sessions aim for their share; the hard stop is this multiple
 STOP_BELOW_USD = 0.05  # a resumed winner with less than this left records what exists instead
 MAX_UNTRACKED_BYTES = 1_000_000  # larger new files (build outputs, data) stay out of the winner patch
 _STATUSES = ("CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED")
@@ -430,10 +431,11 @@ def _run_session(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, ite
     _save_state(adir, state)
     phase = "build-evaluator" if key == EVALUATOR_KEY else "execute-arm"
     log = adir / key / "session_log.md"
-    print(f"  v7 {phase} `{key}` (cap ${cap:.2f}) in {wt}")
+    hard = round(cap * HARD_CAP_FACTOR, 2)
+    print(f"  v7 {phase} `{key}` (target ${cap:.2f}, hard cap ${hard:.2f}) in {wt}")
     status = "done"
     try:
-        with dispatcher.override_cwd(wt), dispatcher.session_budget(cap, label=key):
+        with dispatcher.override_cwd(wt), dispatcher.session_budget(hard, label=key, target_usd=cap):
             dispatcher.dispatch("executor", phase, output_path=log, iteration=iteration, perspective=key)
     except RuntimeError as exc:
         logger.warning("v7 session %s failed: %s", key, exc)

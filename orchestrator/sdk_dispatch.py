@@ -949,17 +949,19 @@ class SDKDispatcher(CLIDispatcher):
         self._event_log_path: Path | None = None
         # Optional per-session dollar cap (design_profile v7); None leaves sessions uncapped.
         self.budget_usd: float | None = None
+        # Budget the session is told to aim for; the hard cap (budget_usd) may be looser.
+        self.target_usd: float | None = None
         self._session_label: str | None = None
 
     @contextlib.contextmanager
-    def session_budget(self, usd: float | None, label: str | None = None):
+    def session_budget(self, usd: float | None, label: str | None = None, target_usd: float | None = None):
         """Cap every SDK session started inside the block at ``usd`` (token ruler)."""
-        old = (self.budget_usd, self._session_label)
-        self.budget_usd, self._session_label = usd, label
+        old = (self.budget_usd, self._session_label, self.target_usd)
+        self.budget_usd, self._session_label, self.target_usd = usd, label, target_usd
         try:
             yield
         finally:
-            self.budget_usd, self._session_label = old
+            self.budget_usd, self._session_label, self.target_usd = old
 
     # ------------------------------------------------------------------
     # Per-iteration event log (#127 Phase B)

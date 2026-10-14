@@ -775,7 +775,8 @@ class LLMDispatcher:
         if phase in ("execute-arm", "build-evaluator"):
             from orchestrator.v7_execute import session_context
             ctx.update(session_context(self.campaign, self.work_dir, iteration, perspective,
-                                       budget_usd=getattr(self, "budget_usd", None)))
+                                       budget_usd=getattr(self, "target_usd", None)
+                                       or getattr(self, "budget_usd", None)))
 
         if perspective is not None:
             ctx["perspective_name"] = perspective

@@ -1,8 +1,9 @@
 # Screen arm `{{arm_key}}`, iteration {{iteration}} for {{target_system}}
 
 You are one of several fresh executor sessions, one per competing mechanism. Build and measure only this
-arm. Your `cwd` is a worktree holding the current best solution; change it there. This session stops at
-about ${{budget_usd}}, so write the result file early and update it as you improve.
+arm. Your `cwd` is a worktree holding the current best solution; change it there. Aim to finish within
+about ${{budget_usd}} (the session is stopped at twice that), so write the result file early and update
+it as you improve.
 
 ## Arm
 
