@@ -144,7 +144,11 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--logdir", default=os.path.expanduser("~/frontier/gen_logs"))
     ap.add_argument("--poll", type=float, default=20.0)
-    ap.add_argument("--design-profile", choices=["standard", "lightweight", "v4", "v5", "v6"], default="lightweight")
+    ap.add_argument("--design-profile", choices=["standard", "lightweight", "v4", "v5", "v6", "v7"], default="lightweight")
+    ap.add_argument("--arm-budget", type=float, default=None,
+                    help="v7: dollar cap per screening session (Nous default $4)")
+    ap.add_argument("--iteration-budget", type=float, default=None,
+                    help="v7: dollar cap per iteration (Nous default $12, so $25 gives at least 2 designs)")
     ap.add_argument("--finish-iteration", action="store_true",
                     help="at the budget, let the iteration in progress complete before stopping")
     ap.add_argument("--ceiling", type=float, default=57.0, help="hard stop even mid-iteration")
@@ -164,6 +168,9 @@ def main():
     cmd = [sys.executable, "-u", str(ISO), a.problem_id, "--slug", a.slug, "--model", a.model,
            "--niters", str(a.niters), "--out", str(out), "--logdir", str(logdir),
            "--design-profile", a.design_profile]
+    for flag, val in (("--arm-budget", a.arm_budget), ("--iteration-budget", a.iteration_budget)):
+        if val is not None:
+            cmd += [flag, str(val)]
     print(f"[rcap] launching isolated nous research: {' '.join(cmd)}", flush=True)
     print(f"[rcap] token-based budget=${a.budget} (rates ${R_IN*1e6:.0f}/${R_OUT*1e6:.0f} per M); "
           f"metrics under {camp_dir}", flush=True)

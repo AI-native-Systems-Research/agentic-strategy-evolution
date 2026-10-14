@@ -148,7 +148,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("problem_id"); ap.add_argument("--slug", required=True)
     ap.add_argument("--niters", type=int, default=8)
-    ap.add_argument("--design-profile", choices=["standard", "lightweight", "v4", "v5", "v6"], default="lightweight"); ap.add_argument("--model", default="claude-opus-4-6")
+    ap.add_argument("--design-profile", choices=["standard", "lightweight", "v4", "v5", "v6", "v7"], default="lightweight"); ap.add_argument("--model", default="claude-opus-4-6")
+    ap.add_argument("--arm-budget", type=float, default=None); ap.add_argument("--iteration-budget", type=float, default=None)
     ap.add_argument("--out", required=True); ap.add_argument("--logdir", default=os.path.expanduser("~/frontier/gen_logs"))
     a = ap.parse_args(); pid = a.problem_id; stmt = statement(pid)
     Path(a.logdir).mkdir(parents=True, exist_ok=True)
@@ -215,6 +216,9 @@ def main():
             "design_profile": a.design_profile,
             "models": {"design": a.model, "execute_analyze": a.model, "report": a.model},
             "prompts": {"methodology_layer": f"{NOUS_REPO}/prompts/methodology", "domain_adapter_layer": None}}
+    v7 = {k: v for k, v in (("arm_budget_usd", a.arm_budget), ("iteration_budget_usd", a.iteration_budget)) if v is not None}
+    if a.design_profile == "v7" and v7:
+        spec["v7"] = v7
     camp = ws.parent/f"campaign_{a.slug}.yaml"; camp.write_text(yaml.safe_dump(spec, sort_keys=False))
     env = dict(os.environ); env["NOUS_CAMPAIGN_PARENT"] = str(ws.parent/"nous_runs")
     # agents call `nous validate`; make sure it is this Nous checkout, not another one on PATH

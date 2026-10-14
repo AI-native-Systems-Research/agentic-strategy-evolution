@@ -194,6 +194,16 @@ def _maybe_carry_forward(campaign: dict, work_dir: Path, repo_path) -> None:
         print(f"  {msg}")
 
 
+def _v7_flow(campaign: dict, iteration: int, cli_dispatcher, repo_path, agent: str) -> bool:
+    """v7 multi-session EXECUTE needs the SDK dispatcher and a worktree target; otherwise v7 runs like v6."""
+    from orchestrator.design_profile import is_v7
+    from orchestrator.iteration_mode import iteration_mode_for
+    ts = campaign.get("target_system", {})
+    return (is_v7(campaign) and agent == "sdk" and repo_path is not None
+            and hasattr(cli_dispatcher, "session_budget") and not ts.get("live_target")
+            and not campaign.get("derived_from") and iteration_mode_for(campaign, iteration) == "real")
+
+
 def check_stop_requested(work_dir: Path) -> Path | None:
     """Return the STOP sentinel path if it exists, else None."""
     sentinel = Path(work_dir) / STOP_SENTINEL_NAME
@@ -1239,6 +1249,10 @@ def run_iteration(
     # ─── DESIGN ───────────────────────────────────────────────────────────
     # v5: start the iteration (DESIGN and EXECUTE) from the best arm measured so far.
     _maybe_carry_forward(campaign, work_dir, repo_path)
+    v7_flow = _v7_flow(campaign, iteration, cli_dispatcher, repo_path, agent)
+    if v7_flow:
+        from orchestrator.v7_execute import mark_iteration_start
+        mark_iteration_start(campaign, work_dir, iter_dir)
 
     if _enter_phase(engine, "DESIGN", work_dir):
         print(f"\n{'='*60}")
@@ -1283,10 +1297,15 @@ def run_iteration(
             pass  # already finished above
         elif cli_dispatcher:
             # CLI path: agent writes files directly to iter_dir
-            design_dispatcher.dispatch(
-                "planner", "design",
-                output_path=iter_dir / "design_log.md", iteration=iteration,
-            )
+            import contextlib
+            from orchestrator.design_profile import v7_settings
+            budget_ctx = (cli_dispatcher.session_budget(v7_settings(campaign).design_budget_usd, label="design")
+                          if v7_flow else contextlib.nullcontext())
+            with budget_ctx:
+                design_dispatcher.dispatch(
+                    "planner", "design",
+                    output_path=iter_dir / "design_log.md", iteration=iteration,
+                )
         else:
             # LLM API path or stub: dispatch and check if files were written directly
             output_file = iter_dir / "design_raw.md"
@@ -1395,7 +1414,16 @@ def run_iteration(
         live_target = bool(
             campaign.get("target_system", {}).get("live_target", False)
         )
-        if repo_path and not live_target:
+        if v7_flow:
+            # v7: screen each mechanism arm in its own capped session, then one long session for the winner.
+            from orchestrator.worktree import remove_experiment_worktree
+            from orchestrator.v7_execute import run_v7_execute
+            _maybe_carry_forward(campaign, work_dir, repo_path)  # idempotent backstop (resumed runs)
+            experiment_dir, experiment_id = run_v7_execute(
+                cli_dispatcher, campaign, work_dir, iter_dir, iteration, repo_path,
+                extras=campaign.get("target_system", {}).get("worktree_extras") or [],
+            )
+        elif repo_path and not live_target:
             from orchestrator.worktree import (
                 create_experiment_worktree,
                 remove_experiment_worktree,
@@ -1434,7 +1462,9 @@ def run_iteration(
             # is nothing to isolate — bundles must contain no code_changes arms.
             experiment_dir = Path(repo_path)
             print(f"  Live target: executor runs in {experiment_dir}")
-        if cli_dispatcher:
+        if v7_flow:
+            pass  # run_v7_execute already ran every EXECUTE session
+        elif cli_dispatcher:
             import contextlib
             ctx = cli_dispatcher.override_cwd(experiment_dir) if experiment_dir else contextlib.nullcontext()
             with ctx:

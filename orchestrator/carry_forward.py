@@ -26,8 +26,13 @@ def _patch_for(work_dir: Path, candidate_id: str) -> Path | None:
     if len(parts) < 2:
         return None
     patches = work_dir / "runs" / parts[0] / "patches"
-    exact = patches / f"{parts[1]}.patch"
-    return exact if exact.is_file() and exact.stat().st_size > 0 else None
+    # v7 names patches by arm key (iter-N/h-alternative/h-alternative-2 -> h-alternative-2.patch)
+    names = ([parts[2]] if len(parts) > 2 and parts[2].startswith(parts[1]) else []) + [parts[1]]
+    for name in names:
+        exact = patches / f"{name}.patch"
+        if exact.is_file() and exact.stat().st_size > 0:
+            return exact
+    return None
 
 
 def carry_forward_best(work_dir: Path, repo_path: Path) -> str | None:

@@ -46,6 +46,14 @@
           "type": ["string", "null"],
           "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED", null]
         },
+        "alternative_results": {
+          "type": "object",
+          "description": "Status of each h-alternative arm, keyed by candidate id. Present only when the iteration had h-alternative arms.",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED"]
+          }
+        },
         "prediction_accuracy": {
           "oneOf": [
             { "type": "null" },

@@ -119,7 +119,7 @@ def _build_row(
     accuracy = _compute_accuracy(arms)
     extracted = _detect_principle_changes(principles, iteration)
 
-    return {
+    row = {
         "iteration": iteration,
         "family": family,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -132,6 +132,10 @@ def _build_row(
         "principles_extracted": extracted,
         "frontier_update": None,
     }
+    alternatives = _collect_alternative_results(arms)
+    if alternatives:
+        row["alternative_results"] = alternatives
+    return row
 
 
 def _find_arm_status(arms: list[dict], arm_type: str) -> str | None:
@@ -152,6 +156,18 @@ def _collect_ablation_results(arms: list[dict]) -> dict[str, str]:
             status = arm.get("status", "REFUTED")
             results[key] = status
             idx += 1
+    return results
+
+
+def _collect_alternative_results(arms: list[dict]) -> dict[str, str]:
+    """h-alternative arm statuses keyed by metadata.candidate_id (or position)."""
+    results: dict[str, str] = {}
+    for arm in arms:
+        if arm.get("arm_type") != "h-alternative" or not arm.get("status"):
+            continue
+        meta = arm.get("metadata") if isinstance(arm.get("metadata"), dict) else {}
+        key = meta.get("candidate_id") or f"h-alternative-{len(results) + 1}"
+        results[str(key)] = arm["status"]
     return results
 
 

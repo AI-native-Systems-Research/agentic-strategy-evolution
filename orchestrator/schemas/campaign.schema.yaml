@@ -237,7 +237,7 @@ properties:
 
   design_profile:
     type: string
-    enum: [standard, lightweight, v4, v5, v6]
+    enum: [standard, lightweight, v4, v5, v6, v7]
     description: >-
       Methodology weight. `standard` (default) keeps the full design. `lightweight`
       caps the DESIGN phase at 30 turns (unless campaign.max_turns.design is set),
@@ -247,8 +247,42 @@ properties:
       EXECUTE, 10 refine cycles, and a measured gap analysis that the next design must
       target. `v5` is v4 plus carry-forward of the best arm into the target before each
       EXECUTE, a 45-turn EXECUTE cap, incremental edits, sweeps only for tunable arms, and
-      re-measurement on noisy judges. `v6` is v5 without the EXECUTE turn cap. The design
-      model is unchanged.
+      re-measurement on noisy judges. `v6` is v5 without the EXECUTE turn cap. `v7` is v6
+      plus competing `h-alternative` mechanism arms, each screened in its own fresh
+      executor session under a dollar cap, then one long session for the winner; a local
+      evaluator built in the first iteration; and a per-iteration dollar cap (see `v7`).
+      The design model is unchanged.
+  v7:
+    type: object
+    additionalProperties: false
+    description: >-
+      Dollar caps for design_profile v7, on a token ruler (cost_rates_per_mtok).
+    properties:
+      arm_budget_usd:
+        type: number
+        exclusiveMinimum: 0
+        description: "Cap per screening session (each mechanism arm, and the evaluator build). Default 4."
+      iteration_budget_usd:
+        type: number
+        exclusiveMinimum: 0
+        description: "Cap per iteration (design + screening + winner). Default 12, so $25 gives at least 2 designs."
+      design_budget_usd:
+        type: number
+        exclusiveMinimum: 0
+        description: "Cap for the DESIGN session. Default 4."
+      winner_min_usd:
+        type: number
+        minimum: 0
+        description: "Budget reserved for the winner session; screening caps shrink to keep it. Default 2."
+      cost_rates_per_mtok:
+        type: object
+        additionalProperties: false
+        description: "USD per million tokens. Default 15 / 75 / 18.75 / 1.5."
+        properties:
+          input: { type: number, minimum: 0 }
+          output: { type: number, minimum: 0 }
+          cache_write: { type: number, minimum: 0 }
+          cache_read: { type: number, minimum: 0 }
   sdk_options:
     type: object
     additionalProperties: false

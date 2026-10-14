@@ -26,6 +26,7 @@ Design decisions worth knowing:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from dataclasses import dataclass
@@ -33,7 +34,7 @@ from pathlib import Path
 from typing import Callable, Literal, Protocol, runtime_checkable
 
 from orchestrator.cli_dispatch import CLIDispatcher, _backoff_for
-from orchestrator.metrics import log_metrics, log_retry_event
+from orchestrator.metrics import log_metrics, log_retry_event, usage_cost
 
 logger = logging.getLogger(__name__)
 
@@ -376,8 +377,14 @@ class SDKRunner(Protocol):
         turn_silence_threshold: float | None = None,
         effort: str | None = None,
         resume: str | None = None,
+        max_cost_usd: float | None = None,
+        cost_rates: dict | None = None,
     ) -> SDKResult:
         """One SDK turn.
+
+        ``max_cost_usd``: stop the session once its token-ruler cost (``cost_rates``, see
+        ``orchestrator.metrics.usage_cost``) reaches this many dollars, returning ``is_error=True`` with
+        ``subtype="error_max_budget_usd"`` and the session id so it can be resumed. Only passed when set.
 
         ``resume``: continue an earlier SDK session (by session id) instead of
         starting a fresh one. Only passed when the dispatcher resumes a turn.
@@ -420,6 +427,8 @@ def _default_sdk_runner_factory() -> SDKRunner:
         turn_silence_threshold: float | None = None,
         effort: str | None = None,
         resume: str | None = None,
+        max_cost_usd: float | None = None,
+        cost_rates: dict | None = None,
     ) -> SDKResult:
         try:
             import anyio
@@ -517,9 +526,10 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     )
                 except (IndexError, ValueError):
                     stop_immediate_path = None
-            async for message in aiter_with_silence_watchdog(
-                aiter, turn_silence_threshold,
-            ):
+            reply_usage: dict[str, dict] = {}
+            stream_session_id: str | None = None
+            stream = aiter_with_silence_watchdog(aiter, turn_silence_threshold)
+            async for message in stream:
                 if stop_immediate_path is not None and stop_immediate_path.exists():
                     raise SDKTransientError(
                         "STOP_IMMEDIATE sentinel detected; aborting SDK turn "
@@ -534,6 +544,36 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     for block in getattr(message, "content", []):
                         if hasattr(block, "text"):
                             text_chunks.append(block.text)
+                    stream_session_id = getattr(message, "session_id", None) or stream_session_id
+                    if max_cost_usd is not None and isinstance(getattr(message, "usage", None), dict):
+                        # One reply streams as several messages repeating its usage: count it once.
+                        mid = getattr(message, "message_id", None) or f"#{len(reply_usage)}"
+                        prev = reply_usage.get(mid)
+                        if prev is None or usage_cost(message.usage, cost_rates) >= usage_cost(prev, cost_rates):
+                            reply_usage[mid] = message.usage
+                        spent = sum(usage_cost(u, cost_rates) for u in reply_usage.values())
+                        if spent >= max_cost_usd:
+                            with contextlib.suppress(Exception):
+                                await stream.aclose()
+                            totals = {k: sum(int(u.get(k, 0) or 0) for u in reply_usage.values())
+                                      for k in ("input_tokens", "output_tokens",
+                                                "cache_read_input_tokens", "cache_creation_input_tokens")}
+                            return SDKResult(
+                                text="".join(text_chunks),
+                                is_error=True,
+                                error_message=(f"session cost ${spent:.2f} reached the "
+                                               f"${max_cost_usd:.2f} cap"),
+                                subtype="error_max_budget_usd",
+                                cost_usd=spent,
+                                duration_ms=int((time.time() - t0) * 1000),
+                                num_turns=len(reply_usage),
+                                session_id=stream_session_id,
+                                **totals,
+                            )
+                elif cls == "SystemMessage":
+                    data = getattr(message, "data", None)
+                    if isinstance(data, dict) and data.get("session_id"):
+                        stream_session_id = stream_session_id or data["session_id"]
                 elif cls == "ResultMessage":
                     usage = getattr(message, "usage", {}) or {}
                     cost_usd = float(getattr(message, "total_cost_usd", 0.0) or 0.0)
@@ -740,6 +780,19 @@ class SDKDispatcher(CLIDispatcher):
         # #127 Phase B: event log path is recomputed per-dispatch (it depends
         # on the iteration), so we don't store it on the dispatcher.
         self._event_log_path: Path | None = None
+        # Optional per-session dollar cap (design_profile v7); None leaves sessions uncapped.
+        self.budget_usd: float | None = None
+        self._session_label: str | None = None
+
+    @contextlib.contextmanager
+    def session_budget(self, usd: float | None, label: str | None = None):
+        """Cap every SDK session started inside the block at ``usd`` (token ruler)."""
+        old = (self.budget_usd, self._session_label)
+        self.budget_usd, self._session_label = usd, label
+        try:
+            yield
+        finally:
+            self.budget_usd, self._session_label = old
 
     # ------------------------------------------------------------------
     # Per-iteration event log (#127 Phase B)
@@ -867,12 +920,14 @@ class SDKDispatcher(CLIDispatcher):
         )
 
         from orchestrator.design_profile import (
-            WRAP_UP_PROMPT, max_wrap_ups, wrap_up_max_turns,
+            WRAP_UP_PROMPT, budget_wrap_up_usd, max_wrap_ups, wrap_up_max_turns,
         )
         failure_count = 0
         original_prompt = prompt
         wrap_ups_left = max_wrap_ups(self.campaign)
         resume_id: str | None = None
+        budget = self.budget_usd
+        budget_wrap_up_done = False
         while True:
             try:
                 result = self._sdk_runner(
@@ -887,6 +942,8 @@ class SDKDispatcher(CLIDispatcher):
                     turn_silence_threshold=self._turn_silence_threshold,
                     effort=self._effort,
                     **({"resume": resume_id} if resume_id else {}),
+                    **({"max_cost_usd": budget, "cost_rates": self._cost_rates()}
+                       if budget is not None else {}),
                 )
             except SDKTransientError as exc:
                 failure_count += 1
@@ -900,7 +957,22 @@ class SDKDispatcher(CLIDispatcher):
                     prompt = self._maybe_resume_hint(prompt, original_prompt, "transient")
                 continue
 
-            self._log_metrics_row(result)
+            self._log_metrics_row(result, budget)
+
+            # Dollar cap hit: never restart (that would spend the cap again). Resume once with a
+            # wrap-up on a small cap so the session writes its artifacts, then stop.
+            if result.is_error and (result.subtype == "error_max_budget_usd"
+                                    or "error_max_budget_usd" in result.error_message):
+                if result.session_id and not budget_wrap_up_done:
+                    budget_wrap_up_done = True
+                    self._log_retry("max_budget_wrap_up", failure_count + 1,
+                                    RuntimeError(result.error_message))
+                    resume_id, prompt = result.session_id, WRAP_UP_PROMPT
+                    turns = wrap_up_max_turns(self.campaign)
+                    budget = budget_wrap_up_usd(self.budget_usd)
+                    continue
+                self._log_retry("max_budget_stop", failure_count + 1, RuntimeError(result.error_message))
+                return result.text
 
             # Turn limit hit: continue the same session with a short wrap-up instead of restarting
             # from scratch, which would redo the exploration and hit the same limit again.
@@ -913,10 +985,13 @@ class SDKDispatcher(CLIDispatcher):
                 resume_id = result.session_id
                 prompt = WRAP_UP_PROMPT
                 turns = wrap_up_max_turns(self.campaign)
+                if budget is not None:
+                    budget = budget_wrap_up_usd(self.budget_usd)
                 continue
             if resume_id is not None:
                 # A failed wrap-up falls back to the normal fresh-session retry.
                 resume_id, prompt, turns = None, original_prompt, max_turns or self.max_turns
+                budget = self.budget_usd
 
             if result.is_error:
                 failure_count += 1
@@ -954,7 +1029,12 @@ class SDKDispatcher(CLIDispatcher):
             "error": str(exc)[:500],
         })
 
-    def _log_metrics_row(self, result: SDKResult) -> None:
+    def _cost_rates(self) -> dict:
+        from orchestrator.design_profile import v7_settings
+        return v7_settings(self.campaign).cost_rates
+
+    def _log_metrics_row(self, result: SDKResult, budget: float | None = None) -> None:
+        extra = {} if budget is None else {"budget_usd": budget, "session_label": self._session_label}
         log_metrics(self._metrics_path, {
             "dispatcher": "sdk",
             "role": self._current_role,
@@ -967,6 +1047,7 @@ class SDKDispatcher(CLIDispatcher):
             "cost_usd": result.cost_usd,
             "duration_ms": result.duration_ms,
             "num_turns": result.num_turns,
+            **extra,
         })
 
     @staticmethod

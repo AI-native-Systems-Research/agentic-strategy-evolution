@@ -9,6 +9,39 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+# Token ruler (USD per million tokens) for dollar caps; model-independent so caps mean the same for every model.
+DEFAULT_COST_RATES = {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.5}
+
+
+def usage_cost(usage: dict, rates: dict | None = None) -> float:
+    """USD cost of one usage record (SDK usage dict or llm_metrics row) on the token ruler."""
+    r = {**DEFAULT_COST_RATES, **(rates or {})}
+    def n(key: str) -> float:
+        try:
+            return float(usage.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    return (n("input_tokens") * r["input"] + n("output_tokens") * r["output"]
+            + n("cache_creation_input_tokens") * r["cache_write"]
+            + n("cache_read_input_tokens") * r["cache_read"]) / 1e6
+
+
+def spent_usd(metrics_path: Path, rates: dict | None = None) -> float:
+    """Total token-ruler spend recorded in an llm_metrics.jsonl file (0 if missing)."""
+    total = 0.0
+    try:
+        lines = Path(metrics_path).read_text().splitlines()
+    except OSError:
+        return 0.0
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            total += usage_cost(row, rates)
+    return total
+
 
 def log_retry_event(metrics_path: Path, entry: dict) -> None:
     """Append a retry failure event to retry_log.jsonl. Never raises."""

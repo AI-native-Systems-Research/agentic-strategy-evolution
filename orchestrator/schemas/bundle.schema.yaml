@@ -41,6 +41,11 @@ properties:
     type: string
     description: "Brief explanation of which arms were chosen and why."
 
+  single_family_reason:
+    type: string
+    minLength: 1
+    description: "Why the bundle has no h-alternative arm (design_profile v7 requires this when only one mechanism family is used)."
+
   complexity_tier:
     type: integer
     minimum: 1
@@ -346,6 +351,7 @@ $defs:
         type: string
         enum:
           - h-main
+          - h-alternative
           - h-ablation
           - h-super-additivity
           - h-control-negative
@@ -355,6 +361,18 @@ $defs:
       component:
         type: string
         description: "Component name, used for h-ablation arms."
+      mechanism_family:
+        type: string
+        minLength: 1
+        description: "Algorithm family of the mechanism. Required on h-alternative arms and on h-main when the bundle has h-alternative arms; must differ between them."
+      differs_from_main:
+        type: string
+        minLength: 1
+        description: "h-alternative only: one line on why this family differs from h-main's."
+      validity_check:
+        type: string
+        minLength: 1
+        description: "Cheap test on a tiny case, run before the executor builds on the mechanism. Required on h-main and h-alternative arms under design_profile v7."
       prediction:
         type: string
         minLength: 1

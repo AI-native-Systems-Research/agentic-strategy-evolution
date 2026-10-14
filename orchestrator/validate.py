@@ -455,6 +455,57 @@ def _validate_typed_arm_fields(bundle: dict) -> list[str]:
                     f"arms[{i}] (h-tradeoff): secondary_metric must differ "
                     f"from primary metric (both = {arm.get('metric')!r})."
                 )
+    errors.extend(_validate_alternative_arms(arms))
+    return errors
+
+
+def _family_key(arm: dict) -> str:
+    return " ".join(str(arm.get("mechanism_family") or "").lower().split())
+
+
+def _validate_alternative_arms(arms: list) -> list[str]:
+    """h-alternative: a different algorithm family than h-main, stated and justified."""
+    arms = [a for a in arms if isinstance(a, dict)]
+    alts = [(i, a) for i, a in enumerate(arms) if a.get("type") == "h-alternative"]
+    if not alts:
+        return []
+    errors: list[str] = []
+    main = next((a for a in arms if a.get("type") == "h-main"), None)
+    if main is None or not _family_key(main):
+        errors.append("h-main must declare mechanism_family when the bundle has h-alternative arms")
+    seen: dict[str, int] = {}
+    for i, alt in alts:
+        if _family_key(alt) and _family_key(alt) in seen:
+            errors.append(f"arms[{i}] (h-alternative) repeats the mechanism_family of arms[{seen[_family_key(alt)]}]")
+        seen.setdefault(_family_key(alt), i)
+        for field in ("mechanism_family", "differs_from_main"):
+            if not str(alt.get(field) or "").strip():
+                errors.append(f"arms[{i}] (h-alternative) missing required field {field!r}")
+        if main is not None and _family_key(main) and _family_key(alt) == _family_key(main):
+            errors.append(
+                f"arms[{i}] (h-alternative) has the same mechanism_family as h-main "
+                f"({main.get('mechanism_family')!r}); an alternative must come from a different family"
+            )
+    return errors
+
+
+V7_MAX_ALTERNATIVES = 2
+
+
+def _validate_v7_bundle(bundle: dict, campaign: dict | None) -> list[str]:
+    """design_profile v7: validity checks on mechanism arms, 1-2 alternatives or a single-family reason."""
+    if (campaign or {}).get("design_profile") != "v7":
+        return []
+    arms = [a for a in (bundle.get("arms") or []) if isinstance(a, dict)]
+    errors: list[str] = []
+    for i, arm in enumerate(arms):
+        if arm.get("type") in ("h-main", "h-alternative") and not str(arm.get("validity_check") or "").strip():
+            errors.append(f"arms[{i}] ({arm.get('type')}) needs a validity_check (v7)")
+    n_alt = sum(1 for a in arms if a.get("type") == "h-alternative")
+    if n_alt > V7_MAX_ALTERNATIVES:
+        errors.append(f"v7 allows at most {V7_MAX_ALTERNATIVES} h-alternative arms (got {n_alt})")
+    if n_alt == 0 and not str(bundle.get("single_family_reason") or "").strip():
+        errors.append("v7 bundle has no h-alternative arm: add one or set single_family_reason")
     return errors
 
 
@@ -557,6 +608,7 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
             schema = _load_yaml_schema("bundle.schema.yaml")
             jsonschema.validate(bundle, schema)
             errors.extend(_validate_typed_arm_fields(bundle))
+            errors.extend(_validate_v7_bundle(bundle, campaign))
             # #246 (F1): locked_parameters spec-fidelity. Hard-fail under
             # auto-approve too — that's the whole point.
             errors.extend(_validate_locked_parameters(bundle, campaign))

@@ -197,6 +197,7 @@ Now design a hypothesis bundle based on what you actually observed and verified:
    - One `h-main` arm: The primary falsifiable prediction with a causal mechanism.
 
    Include additional arms when they add value (skip when they don't):
+   - `h-alternative`: A competing mechanism from a genuinely different algorithm family than `h-main`, measured against the same incumbent. Required fields: `mechanism_family` (also set on `h-main`; the two must differ) and `differs_from_main` (one line on why the family differs).
    - `h-control-negative`: A regime where the effect should vanish (validates mechanism specificity).
    - `h-ablation`: Remove one component to test if it's necessary.
    - `h-robustness`: Test under varied conditions.
@@ -301,7 +302,7 @@ Now design a hypothesis bundle based on what you actually observed and verified:
      metadata for operators reviewing the campaign.
 
 4. Each arm must have:
-   - `type`: One of h-main, h-ablation, h-super-additivity, h-control-negative, h-robustness, h-dose-response, h-tradeoff.
+   - `type`: One of h-main, h-alternative, h-ablation, h-super-additivity, h-control-negative, h-robustness, h-dose-response, h-tradeoff.
    - `prediction`: A **directional**, falsifiable claim referencing observable metrics. State the expected direction and relative magnitude (e.g., "increasing X will decrease Y consistently across seeds"). Do NOT invent arbitrary numeric thresholds (e.g., ">10% improvement") unless the campaign.yaml specifies one. The hypothesis bundle's multi-seed design tests significance — your prediction tests direction and mechanism.
    - `mechanism`: A causal explanation grounded in the code you read.
    - `diagnostic`: What to investigate if the prediction is wrong.

@@ -9,6 +9,7 @@ turn limit. The design model is not changed.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 LIGHTWEIGHT = "lightweight"
@@ -21,8 +22,11 @@ V4 = "v4"
 V5 = "v5"
 # v6 = v5 without the EXECUTE turn cap: long uninterrupted executor sessions, still starting from the best.
 V6 = "v6"
-CARRY_PROFILES = (V5, V6)
-LIGHT_PROFILES = (LIGHTWEIGHT, V4, V5, V6)
+# v7 = v6 + competing mechanism arms (h-alternative) screened in fresh dollar-capped sessions, one long session
+# for the winner, a local evaluator built in the first iteration, and a per-iteration dollar cap.
+V7 = "v7"
+CARRY_PROFILES = (V5, V6, V7)
+LIGHT_PROFILES = (LIGHTWEIGHT, V4, V5, V6, V7)
 V4_ARM_REFINE_CYCLES = 10
 V5_EXECUTE_MAX_TURNS = 45
 LIGHTWEIGHT_DESIGN_MAX_TURNS = 30
@@ -85,6 +89,99 @@ V5_EXECUTE_EXTRA = (
 )
 
 
+LIGHT_ARMS = (
+    "- **Few, focused arms:** use 1-3 arms in total: `h-main` plus at most two more, each of a documented "
+    "arm type and each type at most once, and only when the arm changes what you would do next. Skip "
+    "`h-control-negative`, `h-ablation`, and robustness arms unless a finding genuinely needs causal "
+    "attribution. For a pure optimization objective, prefer arms whose treatment is itself a plausible "
+    "improvement over the current best rather than a deliberately weaker control. Describe each arm's "
+    "intended change precisely enough that the executor can implement it without re-deriving it.\n"
+)
+V7_ARMS = (
+    "- **Competing mechanisms:** write `h-main` plus one or two `h-alternative` arms, each from a genuinely "
+    "different algorithm family (2-3 families in total), all measured against the same incumbent. Every "
+    "mechanism arm sets `mechanism_family`; each `h-alternative` also sets `differs_from_main`, one line on "
+    "why its family differs from `h-main`'s. If the problem allows only one sensible family, use `h-main` "
+    "alone and say why in the bundle's top-level `single_family_reason`. Describe each arm's change precisely "
+    "enough that the executor can implement it without re-deriving it.\n"
+    "- **Validity check:** every mechanism arm sets `validity_check`: a cheap test on a tiny case showing the "
+    "mechanism is correct (for example, the output is feasible), run before the executor builds on it.\n"
+    "- **Arm roles:** `h-main` and `h-alternative` are the only arms with their own executor session: each is "
+    "screened in a fresh session with a small budget, then the winner continues in one long session from "
+    "its best version. `h-dose-response` is a scripted sweep on the winning arm. `h-control-negative` "
+    "re-measures the unchanged incumbent (noise test); a noise claim may enter the handoff or a principle "
+    "only if this re-measure supports it. `h-robustness` and `h-tradeoff` are not sessions: report them as "
+    "evaluator columns (per size group, largest sizes, CPU time). `h-ablation` and `h-super-additivity` only "
+    "after a multi-part win (tier 2 or higher).\n"
+)
+V7_DESIGN_EXTRA = (
+    "- **Target per-instance gaps:** from the second iteration on, pick mechanisms that attack the largest "
+    "loss per instance and size group in the executor's gap analysis (score lost, CPU time against the time "
+    "limit, timeouts), not just the aggregate score.\n"
+)
+V7_EXECUTE_EXTRA = (
+    "- **Winner session:** the mechanism arms were screened in separate sessions (results below). Your "
+    "worktree holds the winning arm's best version. Deepen it: sweeps of its tunable values, refinement, "
+    "measurement. Regenerate the winner's patch as `patches/<winner key>.patch` from the version you keep.\n"
+    "- **findings.json:** one entry for the winner (set `metadata.candidate_id` to its key and the "
+    "objective's metric keys to the kept values) and one `h-control-negative` entry that re-measures the "
+    "unchanged incumbent. Losing screened arms are added from their result files by the orchestrator.\n"
+    "- **Gap analysis per instance and size group:** with the local evaluator, report where score is lost "
+    "per size group (mean score, worst instances, CPU time against the time limit, timeouts), largest "
+    "first, in the update for the next designer and as `gap_analysis` entries in findings.json. Call a "
+    "difference noise only if the `h-control-negative` re-measure shows that spread.\n"
+)
+
+V7_DEFAULT_ARM_BUDGET_USD = 4.0
+V7_DEFAULT_ITERATION_BUDGET_USD = 12.0
+V7_DEFAULT_DESIGN_BUDGET_USD = 4.0
+V7_DEFAULT_WINNER_MIN_USD = 2.0
+EVALUATOR_DIR = "evaluator"
+
+
+@dataclass(frozen=True)
+class V7Settings:
+    arm_budget_usd: float = V7_DEFAULT_ARM_BUDGET_USD
+    iteration_budget_usd: float = V7_DEFAULT_ITERATION_BUDGET_USD
+    design_budget_usd: float = V7_DEFAULT_DESIGN_BUDGET_USD
+    winner_min_usd: float = V7_DEFAULT_WINNER_MIN_USD
+    cost_rates: dict = field(default_factory=dict)
+
+
+def is_v7(campaign: dict) -> bool:
+    return profile_for(campaign) == V7
+
+
+def v7_settings(campaign: dict) -> V7Settings:
+    cfg = campaign.get("v7") or {}
+    return V7Settings(
+        arm_budget_usd=float(cfg.get("arm_budget_usd", V7_DEFAULT_ARM_BUDGET_USD)),
+        iteration_budget_usd=float(cfg.get("iteration_budget_usd", V7_DEFAULT_ITERATION_BUDGET_USD)),
+        design_budget_usd=float(cfg.get("design_budget_usd", V7_DEFAULT_DESIGN_BUDGET_USD)),
+        winner_min_usd=float(cfg.get("winner_min_usd", V7_DEFAULT_WINNER_MIN_USD)),
+        cost_rates=dict(cfg.get("cost_rates_per_mtok") or {}),
+    )
+
+
+def v7_design_context(campaign: dict, work_dir: Path) -> str:
+    """v7 DESIGN note on the local evaluator: plan it while missing, otherwise point at its README."""
+    if not is_v7(campaign):
+        return ""
+    ev = Path(work_dir).resolve() / EVALUATOR_DIR
+    readme = ev / "README.md"
+    if readme.is_file() and readme.read_text().strip():
+        return (f"\n\n## Local evaluator (v7)\n\nIt lives in `{ev}`. Its README:\n\n"
+                + readme.read_text().strip()[:3000] + "\n")
+    return (
+        "\n\n## Local evaluator (v7)\n\n"
+        f"None exists yet. Before the arms run, an executor session builds a local evaluator in `{ev}` from "
+        "the problem statement: an instance generator that includes the largest allowed sizes, a "
+        "per-instance score, and per-instance CPU time against the time limit, grouped by size. In "
+        "`problem.md`, state what it must cover (sizes, time limit, scoring) so it can be built without "
+        "re-deriving them.\n"
+    )
+
+
 def profile_for(campaign: dict) -> str:
     return campaign.get("design_profile") or "standard"
 
@@ -132,6 +229,14 @@ def wrap_up_max_turns(campaign: dict) -> int:
     return LIGHTWEIGHT_WRAP_UP_TURNS
 
 
+BUDGET_WRAP_UP_USD = 1.0
+
+
+def budget_wrap_up_usd(cap: float | None) -> float:
+    """Cap for the one wrap-up after a session reaches its dollar cap: a quarter of it, at most $1."""
+    return round(min(BUDGET_WRAP_UP_USD, max(0.25, 0.25 * (cap or 0))), 2)
+
+
 def design_guidance(campaign: dict, max_turns: int, mode: str = "real") -> str:
     """Extra DESIGN guidance for the profile (none in rehearsal mode, which has its own scope rules).
 
@@ -157,15 +262,11 @@ def design_guidance(campaign: dict, max_turns: int, mode: str = "real") -> str:
         "- **Do not implement or measure:** do not edit the target or solution files and do not run candidate "
         "solutions. In the first iteration you may run the baseline command once to confirm it works; later, "
         "cite the last measured score from the handoff or executor update as the baseline validation.\n"
-        "- **Few, focused arms:** use 1-3 arms in total: `h-main` plus at most two more, each of a documented "
-        "arm type and each type at most once, and only when the arm changes what you would do next. Skip "
-        "`h-control-negative`, `h-ablation`, and robustness arms unless a finding genuinely needs causal "
-        "attribution. For a pure optimization objective, prefer arms whose treatment is itself a plausible "
-        "improvement over the current best rather than a deliberately weaker control. Describe each arm's "
-        "intended change precisely enough that the executor can implement it without re-deriving it.\n"
-        "- **Seeds:** use a single seed when the measurement is deterministic.\n"
+        + (V7_ARMS if profile_for(campaign) == V7 else LIGHT_ARMS)
+        + "- **Seeds:** use a single seed when the measurement is deterministic.\n"
         + (V4_DESIGN_EXTRA if profile_for(campaign) == V4 else "")
         + (V5_DESIGN_EXTRA if profile_for(campaign) in CARRY_PROFILES else "")
+        + (V7_DESIGN_EXTRA if profile_for(campaign) == V7 else "")
         + "\n"
     )
 
@@ -197,6 +298,7 @@ def execute_guidance(campaign: dict, mode: str = "real") -> str:
         "step. The next designer starts from this file instead of re-exploring the system.\n"
         + (V4_EXECUTE_EXTRA if profile_for(campaign) == V4 else "")
         + (V5_EXECUTE_EXTRA if profile_for(campaign) in CARRY_PROFILES else "")
+        + (V7_EXECUTE_EXTRA if profile_for(campaign) == V7 else "")
         + "\n"
     )
 

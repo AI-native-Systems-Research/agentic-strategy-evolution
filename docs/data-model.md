@@ -128,6 +128,7 @@ The experiment plan. A set of hypotheses ("arms") designed together to test one 
 | Arm type | Question it answers |
 |---|---|
 | `h-main` | Does the mechanism work? (the primary hypothesis) |
+| `h-alternative` | Does a mechanism from a different algorithm family do better against the same incumbent? |
 | `h-ablation` | Does each component matter on its own? |
 | `h-super-additivity` | Do the components together do more than the sum of parts? |
 | `h-control-negative` | At low load, the strategy should have no effect (proves mechanism, not noise) |

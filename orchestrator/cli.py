@@ -560,13 +560,27 @@ def _render_property_md(name: str, spec: dict) -> list[str]:
     return out
 
 
+def _v7_campaign_for(iter_dir) -> dict | None:
+    """The campaign copy at <work_dir>/campaign.yaml when it uses design_profile v7, else None.
+
+    Lets `nous validate design` apply the same v7 bundle rules as the orchestrator; other profiles keep
+    the campaign-free CLI check.
+    """
+    path = Path(iter_dir).resolve().parent.parent / "campaign.yaml"
+    try:
+        campaign = yaml.safe_load(path.read_text())
+    except (OSError, yaml.YAMLError):
+        return None
+    return campaign if isinstance(campaign, dict) and campaign.get("design_profile") == "v7" else None
+
+
 def _cmd_validate(args):
     import json
 
     from orchestrator.validate import validate_design, validate_execution
 
     if args.phase == "design":
-        result = validate_design(args.dir)
+        result = validate_design(args.dir, campaign=_v7_campaign_for(args.dir))
     else:
         result = validate_execution(args.dir)
 

@@ -25,6 +25,25 @@
       "maximum": 100,
       "description": "Percentage of total effect from single dominant component, if detected."
     },
+    "gap_analysis": {
+      "type": "array",
+      "description": "Where the remaining score is lost, one entry per instance size group (largest loss first), measured with the local evaluator.",
+      "items": {
+        "type": "object",
+        "required": ["group", "loss"],
+        "properties": {
+          "group": { "type": "string", "minLength": 1 },
+          "loss": { "type": ["number", "string"], "description": "Score lost in this group, in objective units." },
+          "n_instances": { "type": "integer", "minimum": 0 },
+          "mean_score": { "type": "number" },
+          "worst_instances": { "type": "array", "items": { "type": "string" } },
+          "max_cpu_s": { "type": "number", "minimum": 0 },
+          "time_limit_s": { "type": "number", "minimum": 0 },
+          "timeouts": { "type": "integer", "minimum": 0 },
+          "evidence": { "type": "string" }
+        }
+      }
+    },
     "worktree_uncommitted_writes": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
@@ -40,7 +59,7 @@
       "properties": {
         "arm_type": {
           "type": "string",
-          "enum": ["h-main", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness", "h-dose-response", "h-tradeoff"]
+          "enum": ["h-main", "h-alternative", "h-ablation", "h-super-additivity", "h-control-negative", "h-robustness", "h-dose-response", "h-tradeoff"]
         },
         "predicted": { "type": "string", "minLength": 1 },
         "observed": { "type": "string", "minLength": 1 },

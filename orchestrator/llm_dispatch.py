@@ -573,6 +573,8 @@ class LLMDispatcher:
         # (role, phase) -> (template_name, output_format, schema_name)
         ("planner", "design"): ("design", None, None),
         ("executor", "execute-analyze"): ("execute_analyze", "json", "execute_analyze.schema.json"),
+        ("executor", "execute-arm"): ("execute_arm", None, None),
+        ("executor", "build-evaluator"): ("build_evaluator", None, None),
         ("summarizer", "summarize-gate"): ("summarize_gate", "json", "gate_summary.schema.json"),
         ("extractor", "report"): ("report", None, None),
     }
@@ -650,8 +652,9 @@ class LLMDispatcher:
                 ctx["previous_handoff"] = (
                     "This is the first iteration. No prior handoff."
                 )
-            from orchestrator.design_profile import executor_update_for_design
+            from orchestrator.design_profile import executor_update_for_design, v7_design_context
             ctx["previous_handoff"] += executor_update_for_design(self.campaign, self.work_dir, iteration)
+            ctx["previous_handoff"] += v7_design_context(self.campaign, self.work_dir)
 
             if iteration > 1:
                 prev_findings_path = (
@@ -762,6 +765,13 @@ class LLMDispatcher:
             ctx["iteration_mode"] = mode
             from orchestrator.design_profile import execute_guidance
             ctx["mode_guidance"] = execute_mode_guidance_for(mode) + execute_guidance(self.campaign, mode)
+            from orchestrator.v7_execute import screening_summary
+            ctx["mode_guidance"] += screening_summary(self.campaign, iter_dir)
+
+        if phase in ("execute-arm", "build-evaluator"):
+            from orchestrator.v7_execute import session_context
+            ctx.update(session_context(self.campaign, self.work_dir, iteration, perspective,
+                                       budget_usd=getattr(self, "budget_usd", None)))
 
         if perspective is not None:
             ctx["perspective_name"] = perspective
