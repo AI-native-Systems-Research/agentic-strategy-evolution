@@ -41,6 +41,12 @@ WRAP_UP_PROMPT = (
     "the phase's `nous validate` command, and fix only what the validator reports."
 )
 
+OUTPUT_LIMIT_PROMPT = (
+    "Your last reply went over the output limit and was lost. Do not redo that reasoning in one reply. "
+    "Write what you have now to this phase's files, then continue in short steps: a few paragraphs of "
+    "reasoning, then write or run something, and repeat."
+)
+
 
 V4_DESIGN_EXTRA = (
     "- **Target the largest measured gap:** from the second iteration on, read the gap analysis in the "
@@ -126,7 +132,8 @@ V7_DESIGN_EXTRA = (
 V7_EXECUTE_EXTRA = (
     "- **Short steps:** keep a runnable version at all times and measure after each change. Keep each "
     "reasoning step short (a few paragraphs). If you need more, write code or notes to a file, run them, "
-    "and continue from the result.\n"
+    "and continue from the result. If a tooling problem (compiler, environment) is not fixed after 2-3 "
+    "tries, measure with the official measure command instead.\n"
     "- **Winner session:** the mechanism arms were screened in separate sessions (results below). Your "
     "worktree holds the winning arm's best version. Deepen it: sweeps of its tunable values, refinement, "
     "measurement. Regenerate the winner's patch as `patches/<winner key>.patch` from the version you keep.\n"

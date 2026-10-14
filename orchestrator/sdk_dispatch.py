@@ -99,6 +99,12 @@ def _load_methodology_preamble(methodology_dir: Path) -> str | None:
     return "\n\n---\n\n".join(blocks)
 
 
+def _is_output_limit(result) -> bool:
+    """True when the CLI ended because a reply exceeded its output-token maximum."""
+    text = f"{getattr(result, 'error_message', '') or ''} {getattr(result, 'text', '') or ''}"
+    return "max_output_tokens" in text or "output token maximum" in text
+
+
 def build_error_message(message, *, message_class_counts: dict | None = None) -> str:
     """Construct a useful error_message from an SDK ResultMessage with is_error=True.
 
@@ -1089,11 +1095,13 @@ class SDKDispatcher(CLIDispatcher):
         )
 
         from orchestrator.design_profile import (
-            WRAP_UP_PROMPT, budget_wrap_up_usd, max_wrap_ups, wrap_up_max_turns,
+            OUTPUT_LIMIT_PROMPT, WRAP_UP_PROMPT, budget_wrap_up_usd, max_wrap_ups, wrap_up_max_turns,
         )
         failure_count = 0
         original_prompt = prompt
         wrap_ups_left = max_wrap_ups(self.campaign)
+        from orchestrator.design_profile import is_v7
+        output_limit_resumes_left = 2 if is_v7(self.campaign or {}) else 0
         resume_id: str | None = None
         # Dollar cap (v7): ``limit`` is what this whole dispatch may spend on the token ruler, across
         # retries; ``spent`` counts every attempt, including the partial usage of transient aborts.
@@ -1179,6 +1187,15 @@ class SDKDispatcher(CLIDispatcher):
                 if cap is not None:
                     next_budget = budget_wrap_up_usd(cap, result.last_turn_cost_usd)
                     limit = max(limit, spent + next_budget)
+                continue
+            # A reply over the CLI's output-token maximum is lost, and the CLI gives up after a few in a
+            # row. A fresh restart would redo the same long reasoning, so resume this session instead
+            # (its files and earlier turns survive) and ask for the work in short steps.
+            if (result.is_error and result.session_id and output_limit_resumes_left > 0
+                    and _is_output_limit(result)):
+                output_limit_resumes_left -= 1
+                self._log_retry("output_limit_resume", failure_count + 1, RuntimeError(result.error_message))
+                resume_id, prompt = result.session_id, OUTPUT_LIMIT_PROMPT
                 continue
             if resume_id is not None:
                 if budget_wrap_up_done:

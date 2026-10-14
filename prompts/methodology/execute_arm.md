@@ -24,6 +24,8 @@ it as you improve.
 
 Within your first few turns write a runnable version and measure it. Keep each reasoning step short (a
 few paragraphs). If you need more, write code or notes to a file, run them, and continue from the result.
+If a tooling problem (compiler, environment, missing library) is not fixed after 2-3 tries, measure with
+the official measure command instead.
 
 1. Implement the mechanism minimally, then run the arm's `validity_check` on a tiny case. If it fails,
    stop building: record `validity_check.passed: false` with what failed.

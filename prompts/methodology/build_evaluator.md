@@ -13,7 +13,9 @@ ${{budget_usd}}; the session is stopped at twice that.
 ## Build in `{{evaluator_dir}}`
 
 Write and run each piece as soon as it exists. Keep each reasoning step short (a few paragraphs). If you
-need more, write code or notes to a file, run them, and continue from the result.
+need more, write code or notes to a file, run them, and continue from the result. If a tooling problem
+(compiler, environment, missing library) is not fixed after 2-3 tries, stop working on it: measure with
+the official measure command instead and note the problem in the README.
 
 1. An instance generator from the problem statement, covering small cases and the largest allowed sizes.
 2. A per-instance score, computed the way the statement defines it.

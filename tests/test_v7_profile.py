@@ -357,6 +357,23 @@ class TestDispatcherBudget:
             d.dispatch("planner", "design", output_path=tmp_path / "out.md", iteration=1)
         assert runner.calls[1]["resume"] == "s-2" and runner.calls[1]["max_cost_usd"] < 4.0
 
+    def test_output_limit_resumes_the_same_session_in_short_steps(self, tmp_path, monkeypatch):
+        from orchestrator.design_profile import OUTPUT_LIMIT_PROMPT
+        over = dict(text="API Error: Claude's response exceeded the 64000 output token maximum.",
+                    is_error=True, error_message="max_output_tokens", session_id="s-3")
+        runner = _Runner([SDKResult(**over), SDKResult(text="done in steps")])
+        d = _sdk(tmp_path, _campaign(design_profile="v7"), runner, monkeypatch)
+        d.dispatch("planner", "design", output_path=tmp_path / "out.md", iteration=1)
+        assert runner.calls[1]["resume"] == "s-3" and runner.calls[1]["prompt"] == OUTPUT_LIMIT_PROMPT
+        assert "output_limit_resume" in (tmp_path / "retry_log.jsonl").read_text()
+
+    def test_output_limit_resume_is_v7_only(self, tmp_path, monkeypatch):
+        over = dict(text="", is_error=True, error_message="max_output_tokens", session_id="s-3")
+        runner = _Runner([SDKResult(**over), SDKResult(text="fresh")])
+        d = _sdk(tmp_path, _campaign(design_profile="v6"), runner, monkeypatch)
+        d.dispatch("planner", "design", output_path=tmp_path / "out.md", iteration=1)
+        assert runner.calls[1].get("resume") is None
+
     def test_budget_stop_without_session_is_final(self, tmp_path, monkeypatch):
         runner = _Runner([SDKResult(**BUDGET_ERR)])
         d = _sdk(tmp_path, _campaign(design_profile="v7"), runner, monkeypatch)
