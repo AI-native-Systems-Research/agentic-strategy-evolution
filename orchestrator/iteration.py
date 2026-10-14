@@ -1523,8 +1523,9 @@ def run_iteration(
                 "max_turns": _max_turns_for("execute_analyze"),
                 "undeclared_writes": incomplete_undeclared,
             })
-            # Clean up the experiment worktree so a re-run isn't blocked.
-            if repo_path and experiment_id:
+            # Clean up the experiment worktree so a re-run isn't blocked. v7 keeps the winner's
+            # worktree: the retry continues in it on what is left of the iteration budget.
+            if repo_path and experiment_id and not v7_flow:
                 remove_experiment_worktree(Path(repo_path), experiment_id)
             raise ExecuteAnalyzeIncompleteError(
                 missing=missing,

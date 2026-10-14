@@ -257,7 +257,10 @@ class _Runner:
 
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
-        return self._scripted.pop(0)
+        item = self._scripted.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
 
 
 def _metrics(work_dir):
@@ -322,6 +325,66 @@ class TestDispatcherBudget:
         assert "max_budget_stop" in retry
 
 
+def _transient(output_tokens):
+    from orchestrator.sdk_dispatch import SDKTransientError
+    exc = SDKTransientError("silence watchdog")
+    exc.usage = {"output_tokens": output_tokens}
+    return exc
+
+
+class TestCapSurvivesRetries:
+    """A capped session's spend accumulates across retries; retries only get what is left of the cap."""
+
+    def test_transient_spend_is_logged_and_retry_gets_the_remainder(self, tmp_path, monkeypatch):
+        from orchestrator.metrics import spent_usd
+        runner = _Runner([_transient(20_000), SDKResult(text="ok", output_tokens=10_000)])  # $1.50, $0.75
+        d = _sdk(tmp_path, _campaign(design_profile="v7"), runner, monkeypatch)
+        with d.session_budget(4.0, label="h-main"):
+            d.dispatch("planner", "design", output_path=tmp_path / "out.md", iteration=1)
+        assert runner.calls[1]["max_cost_usd"] == pytest.approx(2.5)
+        assert spent_usd(tmp_path / "llm_metrics.jsonl") == pytest.approx(2.25)
+
+    def test_transients_that_use_up_the_cap_stop_the_session(self, tmp_path, monkeypatch):
+        from orchestrator.metrics import spent_usd
+        runner = _Runner([_transient(30_000), _transient(30_000), SDKResult(text="never")])
+        d = _sdk(tmp_path, _campaign(design_profile="v7"), runner, monkeypatch)
+        with d.session_budget(4.0):
+            d.dispatch("planner", "design", output_path=tmp_path / "out.md", iteration=1)
+        assert len(runner.calls) == 2
+        assert runner.calls[1]["max_cost_usd"] == pytest.approx(1.75)
+        assert spent_usd(tmp_path / "llm_metrics.jsonl") == pytest.approx(4.5)
+        assert "max_budget_stop" in (tmp_path / "retry_log.jsonl").read_text()
+
+    def test_failed_wrap_up_never_restarts_with_a_fresh_cap(self, tmp_path, monkeypatch):
+        runner = _Runner([SDKResult(session_id="s-1", output_tokens=53_334, **BUDGET_ERR),
+                          SDKResult(text="", is_error=True, error_message="api boom", output_tokens=1_000),
+                          SDKResult(text="fresh restart")])
+        d = _sdk(tmp_path, _campaign(design_profile="v7"), runner, monkeypatch)
+        with d.session_budget(4.0):
+            d.dispatch("planner", "design", output_path=tmp_path / "out.md", iteration=1)
+        assert len(runner.calls) == 2
+
+    def test_wrap_up_cap_covers_a_few_cached_context_reads(self, tmp_path, monkeypatch):
+        runner = _Runner([SDKResult(session_id="s-1", output_tokens=53_334, last_turn_cost_usd=0.9,
+                                    **BUDGET_ERR), SDKResult(text="wrapped")])
+        d = _sdk(tmp_path, _campaign(design_profile="v7"), runner, monkeypatch)
+        with d.session_budget(4.0):
+            d.dispatch("planner", "design", output_path=tmp_path / "out.md", iteration=1)
+        assert runner.calls[1]["max_cost_usd"] >= 3 * 0.9
+        assert runner.calls[1]["max_cost_usd"] <= 4.0
+
+    def test_wrap_up_floor_unchanged_for_small_contexts(self):
+        from orchestrator.design_profile import budget_wrap_up_usd
+        assert budget_wrap_up_usd(4.0) == 1.0 and budget_wrap_up_usd(0.5) == 0.25
+        assert budget_wrap_up_usd(4.0, last_turn_usd=0.1) == 1.0
+
+    def test_uncapped_transient_logs_no_row(self, tmp_path, monkeypatch):
+        runner = _Runner([_transient(20_000), SDKResult(text="ok")])
+        d = _sdk(tmp_path, _campaign(design_profile="v6"), runner, monkeypatch)
+        d.dispatch("planner", "design", output_path=tmp_path / "out.md", iteration=1)
+        assert len(_metrics(tmp_path)) == 1 and "max_cost_usd" not in runner.calls[1]
+
+
 class TestDefaultRunnerCostCap:
     @staticmethod
     def _fake_sdk(n_messages, consumed):
@@ -372,10 +435,30 @@ class TestDefaultRunnerCostCap:
         assert res.is_error and res.subtype == "error_max_budget_usd"
         assert res.session_id == "sess-7" and len(consumed) == 3
         assert res.output_tokens == 30_000 and res.cost_usd == pytest.approx(2.25)
+        assert res.last_turn_cost_usd == pytest.approx(0.75)
 
     def test_no_cap_runs_to_completion(self, monkeypatch, tmp_path):
         res, consumed = self._run(monkeypatch, tmp_path)
         assert not res.is_error and len(consumed) == 10
+
+    def test_transient_mid_stream_carries_the_partial_usage(self, monkeypatch, tmp_path):
+        import sys
+        from orchestrator.sdk_dispatch import SDKTransientError, _default_sdk_runner_factory
+        sdk = self._fake_sdk(10, [])
+        good = sdk.query
+
+        async def _dies(*, prompt, options):
+            n = 0
+            async for m in good(prompt=prompt, options=options):
+                yield m
+                n += 1
+                if n == 4:  # two replies, each streamed twice
+                    raise ConnectionError("server disconnected")
+        sdk.query = _dies
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", sdk)
+        with pytest.raises(SDKTransientError) as info:
+            _default_sdk_runner_factory()(prompt="p", model="m", cwd=tmp_path, max_turns=5, max_cost_usd=9.0)
+        assert info.value.usage["output_tokens"] == 20_000
 
 
 # ─── v7 EXECUTE flow on a real git repo with a scripted SDK runner ─────────
@@ -403,8 +486,39 @@ class _Fake:
         self.cost_tokens = cost_tokens  # output tokens per session ($1.50 at $75/M)
         self.winner_saw = None
         self.sessions = []
+        self.winner_mode = "normal"  # "sloppy": no patch, no candidate_id, new file; "cut": no findings
+        self.winner_tokens = cost_tokens
+        self.no_result = False  # screening sessions write a patch but no result.json
+        self.budgets = {}
 
     def __call__(self, **kw):
+        if "max_cost_usd" in kw:
+            self.budgets.setdefault(len(self.sessions), kw["max_cost_usd"])
+        if (self.winner_mode != "normal" and "Build the local evaluator" not in kw["prompt"]
+                and "Screen arm `" not in kw["prompt"]):
+            return self._odd_winner(Path(kw["cwd"]))
+        return self._call(**kw)
+
+    def _odd_winner(self, cwd):
+        self.sessions.append("winner")
+        self.winner_saw = (cwd / "solution.py").read_text()
+        win = self.winner_saw.split("=")[1].strip()
+        (cwd / "solution.py").write_text(f"v = {win}1\n")
+        (cwd / "helper.py").write_text("H = 1\n")
+        if self.winner_mode == "sloppy":
+            (self.iter_dir / "experiment_plan.yaml").write_text(yaml.safe_dump({
+                "metadata": {"iteration": 1, "bundle_ref": "bundle.yaml"},
+                "arms": [{"arm_id": "h-main", "conditions": [{"name": "kept", "cmd": "measure"}]}]}))
+            (self.iter_dir / "findings.json").write_text(json.dumps({
+                "iteration": 1, "bundle_ref": "bundle.yaml", "experiment_valid": True,
+                "discrepancy_analysis": "x",
+                "arms": [{"arm_type": "h-main", "predicted": "p", "observed": "o", "status": "CONFIRMED",
+                          "error_type": None, "diagnostic_note": None,
+                          "metadata": {"score": float(f"{win}1")}}]}))
+            (self.iter_dir / "principle_updates.json").write_text("[]")
+        return SDKResult(text="done", output_tokens=self.winner_tokens)
+
+    def _call(self, **kw):
         prompt, cwd = kw["prompt"], Path(kw["cwd"])
         if "Build the local evaluator" in prompt:
             self.sessions.append("evaluator")
@@ -419,6 +533,8 @@ class _Fake:
             (self.iter_dir / "patches" / f"{key}.patch").write_text(patch)
             out = self.iter_dir / "arms" / key
             out.mkdir(parents=True, exist_ok=True)
+            if self.no_result:
+                return SDKResult(text="done", output_tokens=self.cost_tokens)
             (out / "result.json").write_text(json.dumps({
                 "arm_key": key, "arm_type": "h-main" if key == "h-main" else "h-alternative",
                 "mechanism_family": key, "metrics": {"score": score},
@@ -563,6 +679,56 @@ class TestV7Execute:
         assert "Screening results" in winner_prompt and "h-alternative-1" in winner_prompt
         assert "winner" in winner_prompt.lower()
 
+    def test_winner_patch_is_the_kept_worktree_and_carries_forward(self, tmp_path, monkeypatch):
+        from orchestrator.carry_forward import carry_forward_best
+        from orchestrator.composite_score import update_best_found
+        from orchestrator.iteration import _resolve_objective
+        repo, work, it, campaign, fake, d = _v7_setup(tmp_path, monkeypatch, SCORES)
+        fake.winner_mode = "sloppy"  # no patch, arm_type h-main, no candidate_id, a new file
+        _run(repo, work, it, campaign, d)
+        patch = (it / "patches" / "h-alternative-1.patch").read_text()
+        assert "v = 701" in patch and "helper.py" in patch
+        win = json.loads((it / "findings.json").read_text())["arms"][0]
+        assert win["arm_type"] == "h-alternative" and win["metadata"]["candidate_id"] == "h-alternative-1"
+        top = update_best_found(work, objective=_resolve_objective(campaign))["top_k"][0]
+        assert top["candidate_id"] == "iter-1/h-alternative/h-alternative-1" and top["score"] == 701
+        assert carry_forward_best(work, repo)
+        assert (repo / "solution.py").read_text() == "v = 701\n" and (repo / "helper.py").is_file()
+
+    def test_arm_without_result_never_applies_its_patch(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _v7_setup(tmp_path, monkeypatch, SCORES)
+        fake.no_result = True
+        _run(repo, work, it, campaign, d)
+        assert fake.winner_saw == "v = 0\n"
+        assert json.loads((it / "arms" / "state.json").read_text())["winner"]["patch_applied"] is False
+
+    def test_cut_winner_resumes_its_worktree_on_the_remaining_budget(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _v7_setup(tmp_path, monkeypatch, SCORES)
+        fake.winner_mode = "cut"  # $1.50 per attempt, never writes findings.json
+        wt, _ = _run(repo, work, it, campaign, d)
+        assert not (it / "findings.json").exists() and wt.exists()
+        _run(repo, work, it, campaign, d)
+        assert fake.winner_saw == "v = 701\n"  # the retry continues in the kept worktree
+        assert fake.budgets[5] == pytest.approx(12.0 - 5 * 1.5, abs=0.01)  # only what is left
+
+    def test_spent_budget_stops_the_winner_and_records_the_screening(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _v7_setup(tmp_path, monkeypatch, SCORES)
+        fake.winner_mode, fake.winner_tokens = "cut", 80_000  # $6: the iteration budget is gone
+        _run(repo, work, it, campaign, d)
+        findings = json.loads((it / "findings.json").read_text())
+        jsonschema.validate(findings, FINDINGS_SCHEMA)
+        ids = [a["metadata"]["candidate_id"] for a in findings["arms"]]
+        assert ids[0] == "h-alternative-1" and set(ids) == set(SCORES)
+        assert findings["arms"][0]["metadata"]["score"] == 70
+        assert (it / "experiment_plan.yaml").exists() and (it / "principle_updates.json").exists()
+        # the measured screening patch is kept, not the unmeasured worktree state
+        assert "v = 70\n" in (it / "patches" / "h-alternative-1.patch").read_text()
+        from orchestrator.validate import validate_execution
+        assert validate_execution(it, campaign=campaign)["status"] == "pass"
+        n = len(fake.sessions)
+        _run(repo, work, it, campaign, d)
+        assert len(fake.sessions) == n  # no more spending once the budget is gone
+
 
 # ─── full iteration through run_iteration ──────────────────────────────────
 
@@ -614,3 +780,29 @@ def test_run_iteration_v7_end_to_end(tmp_path, monkeypatch):
     from orchestrator.iteration import _maybe_carry_forward
     _maybe_carry_forward(campaign, work, str(repo))
     assert (repo / "solution.py").read_text() == "v = 701\n"
+
+
+def test_run_iteration_v7_keeps_cut_winner_worktree(tmp_path, monkeypatch):
+    import orchestrator.iteration as ri
+    from orchestrator.dispatch import StubDispatcher
+    from orchestrator.iteration import ExecuteAnalyzeIncompleteError, run_iteration
+    repo = _make_repo(tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    for t in ("state.json", "ledger.json", "principles.json"):
+        shutil.copy(TEMPLATES / t, work / t)
+    campaign = _campaign(design_profile="v7", objective={"weights": {"score": 1.0}})
+    campaign["target_system"]["repo_path"] = str(repo)
+    fake = _DesignAndExecute(work, work / "runs" / "iter-1", SCORES)
+    fake.winner_mode = "cut"
+    monkeypatch.setattr("orchestrator.sdk_dispatch._default_sdk_runner_factory", lambda: fake)
+    monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+
+    def stub(work_dir, campaign, model=None):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return StubDispatcher(work_dir)
+    monkeypatch.setattr(ri, "LLMDispatcher", stub)
+    with pytest.raises(ExecuteAnalyzeIncompleteError):
+        run_iteration(campaign, work, iteration=1, auto_approve=True)
+    assert _git(repo, "worktree", "list").count("\n") == 2  # the winner's worktree is kept for resume

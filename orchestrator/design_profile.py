@@ -230,11 +230,19 @@ def wrap_up_max_turns(campaign: dict) -> int:
 
 
 BUDGET_WRAP_UP_USD = 1.0
+# A resumed wrap-up re-reads the whole (cached) context on every turn; leave room for this many turns.
+BUDGET_WRAP_UP_TURNS = 3
 
 
-def budget_wrap_up_usd(cap: float | None) -> float:
-    """Cap for the one wrap-up after a session reaches its dollar cap: a quarter of it, at most $1."""
-    return round(min(BUDGET_WRAP_UP_USD, max(0.25, 0.25 * (cap or 0))), 2)
+def budget_wrap_up_usd(cap: float | None, last_turn_usd: float = 0.0) -> float:
+    """Cap for a wrap-up after a session reaches its dollar cap or turn limit.
+
+    Floor: a quarter of the cap, between $0.25 and $1. With a large context one turn can cost more than
+    that, so the wrap-up gets ``BUDGET_WRAP_UP_TURNS`` times the last turn's cost, at most the cap itself.
+    """
+    floor = min(BUDGET_WRAP_UP_USD, max(0.25, 0.25 * (cap or 0)))
+    sized = min(BUDGET_WRAP_UP_TURNS * max(0.0, float(last_turn_usd or 0)), float(cap or 0))
+    return round(max(floor, sized), 2)
 
 
 def design_guidance(campaign: dict, max_turns: int, mode: str = "real") -> str:

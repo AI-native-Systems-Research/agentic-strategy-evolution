@@ -48,8 +48,23 @@ logger = logging.getLogger(__name__)
 _UNBOUNDED_RETRY_SAFETY_CAP = 1000
 
 
+# A capped session with less than this left is not retried (nothing useful fits in it).
+_MIN_ATTEMPT_USD = 0.01
+_USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
+def _usage_of(result: "SDKResult") -> dict:
+    return {k: getattr(result, k, 0) for k in _USAGE_KEYS}
+
+
 class SDKTransientError(RuntimeError):
-    """Runner raises this for retryable transport-level failures."""
+    """Runner raises this for retryable transport-level failures.
+
+    ``usage``: token counts the aborted turn had already streamed (SDK usage keys), so a dollar-capped
+    session can charge them to its cap. Empty when unknown.
+    """
+
+    usage: dict = {}
 
 
 def _load_methodology_preamble(methodology_dir: Path) -> str | None:
@@ -342,6 +357,8 @@ class SDKResult:
     error_message: str = ""
     session_id: str | None = None
     subtype: str | None = None
+    # Token-ruler cost of the last model reply (measured only for dollar-capped sessions); sizes wrap-ups.
+    last_turn_cost_usd: float = 0.0
 
     def __post_init__(self) -> None:
         if self.is_error and not self.error_message.strip():
@@ -526,7 +543,8 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     )
                 except (IndexError, ValueError):
                     stop_immediate_path = None
-            reply_usage: dict[str, dict] = {}
+            reply_usage = partial_usage  # per-reply usage, kept for a transient abort (capped sessions)
+            last_mid: str | None = None
             stream_session_id: str | None = None
             stream = aiter_with_silence_watchdog(aiter, turn_silence_threshold)
             async for message in stream:
@@ -551,6 +569,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                         prev = reply_usage.get(mid)
                         if prev is None or usage_cost(message.usage, cost_rates) >= usage_cost(prev, cost_rates):
                             reply_usage[mid] = message.usage
+                        last_mid = mid
                         spent = sum(usage_cost(u, cost_rates) for u in reply_usage.values())
                         if spent >= max_cost_usd:
                             with contextlib.suppress(Exception):
@@ -568,6 +587,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                                 duration_ms=int((time.time() - t0) * 1000),
                                 num_turns=len(reply_usage),
                                 session_id=stream_session_id,
+                                last_turn_cost_usd=usage_cost(reply_usage[last_mid], cost_rates),
                                 **totals,
                             )
                 elif cls == "SystemMessage":
@@ -603,6 +623,8 @@ def _default_sdk_runner_factory() -> SDKRunner:
                             num_turns=num_turns,
                             session_id=session_id,
                             subtype=getattr(message, "subtype", None),
+                            last_turn_cost_usd=(usage_cost(reply_usage[last_mid], cost_rates)
+                                                if last_mid else 0.0),
                         )
             return SDKResult(
                 text="".join(text_chunks),
@@ -618,10 +640,21 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 duration_ms=duration_ms or int((time.time() - t0) * 1000),
                 num_turns=num_turns or 1,
                 session_id=session_id,
+                last_turn_cost_usd=usage_cost(reply_usage[last_mid], cost_rates) if last_mid else 0.0,
             )
+
+        partial_usage: dict[str, dict] = {}
+
+        def _partial_totals() -> dict:
+            return {k: sum(int(u.get(k, 0) or 0) for u in partial_usage.values())
+                    for k in ("input_tokens", "output_tokens",
+                              "cache_read_input_tokens", "cache_creation_input_tokens")}
 
         try:
             return anyio.run(_run)
+        except SDKTransientError as exc:
+            exc.usage = _partial_totals()  # what the aborted turn already spent, for dollar caps
+            raise
         except Exception as exc:
             cls_name = type(exc).__name__
             transient_signals = (
@@ -633,7 +666,9 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 "TimeoutError",
             )
             if any(sig in cls_name for sig in transient_signals):
-                raise SDKTransientError(f"{cls_name}: {exc}") from exc
+                err = SDKTransientError(f"{cls_name}: {exc}")
+                err.usage = _partial_totals()
+                raise err from exc
             raise
 
     return _runner
@@ -926,9 +961,24 @@ class SDKDispatcher(CLIDispatcher):
         original_prompt = prompt
         wrap_ups_left = max_wrap_ups(self.campaign)
         resume_id: str | None = None
-        budget = self.budget_usd
+        # Dollar cap (v7): ``limit`` is what this whole dispatch may spend on the token ruler, across
+        # retries; ``spent`` counts every attempt, including the partial usage of transient aborts.
+        # Retries only get ``limit - spent``. The only extension is a wrap-up after a cap or turn limit.
+        cap = self.budget_usd
+        limit, spent = cap, 0.0
+        next_budget: float | None = None  # smaller per-attempt cap for a wrap-up turn
         budget_wrap_up_done = False
+        last_text = ""
+        budget: float | None = None
         while True:
+            if cap is not None:
+                left = limit - spent
+                if left < _MIN_ATTEMPT_USD:
+                    self._log_retry("max_budget_stop", failure_count + 1, RuntimeError(
+                        f"session spent ${spent:.2f} of its ${limit:.2f} cap; no retry"))
+                    return last_text
+                budget = round(min(left, next_budget) if next_budget is not None else left, 4)
+                next_budget = None
             try:
                 result = self._sdk_runner(
                     prompt=prompt,
@@ -943,11 +993,13 @@ class SDKDispatcher(CLIDispatcher):
                     effort=self._effort,
                     **({"resume": resume_id} if resume_id else {}),
                     **({"max_cost_usd": budget, "cost_rates": self._cost_rates()}
-                       if budget is not None else {}),
+                       if cap is not None else {}),
                 )
             except SDKTransientError as exc:
                 failure_count += 1
                 self._log_retry("transient", failure_count, exc)
+                if cap is not None:
+                    spent += self._charge_partial(exc, budget)
                 if self._exhausted(failure_count):
                     raise RuntimeError(
                         f"SDK still failing after {failure_count} attempt(s): {exc}"
@@ -957,10 +1009,13 @@ class SDKDispatcher(CLIDispatcher):
                     prompt = self._maybe_resume_hint(prompt, original_prompt, "transient")
                 continue
 
-            self._log_metrics_row(result, budget)
+            self._log_metrics_row(result, budget if cap is not None else None)
+            if cap is not None:
+                spent += usage_cost(_usage_of(result), self._cost_rates())
+                last_text = result.text or last_text
 
             # Dollar cap hit: never restart (that would spend the cap again). Resume once with a
-            # wrap-up on a small cap so the session writes its artifacts, then stop.
+            # wrap-up sized from the last turn so the session writes its artifacts, then stop.
             if result.is_error and (result.subtype == "error_max_budget_usd"
                                     or "error_max_budget_usd" in result.error_message):
                 if result.session_id and not budget_wrap_up_done:
@@ -969,7 +1024,9 @@ class SDKDispatcher(CLIDispatcher):
                                     RuntimeError(result.error_message))
                     resume_id, prompt = result.session_id, WRAP_UP_PROMPT
                     turns = wrap_up_max_turns(self.campaign)
-                    budget = budget_wrap_up_usd(self.budget_usd)
+                    if cap is not None:
+                        next_budget = budget_wrap_up_usd(cap, result.last_turn_cost_usd)
+                        limit = max(limit, spent + next_budget)
                     continue
                 self._log_retry("max_budget_stop", failure_count + 1, RuntimeError(result.error_message))
                 return result.text
@@ -985,13 +1042,18 @@ class SDKDispatcher(CLIDispatcher):
                 resume_id = result.session_id
                 prompt = WRAP_UP_PROMPT
                 turns = wrap_up_max_turns(self.campaign)
-                if budget is not None:
-                    budget = budget_wrap_up_usd(self.budget_usd)
+                if cap is not None:
+                    next_budget = budget_wrap_up_usd(cap, result.last_turn_cost_usd)
+                    limit = max(limit, spent + next_budget)
                 continue
             if resume_id is not None:
-                # A failed wrap-up falls back to the normal fresh-session retry.
+                if budget_wrap_up_done:
+                    # The cap was reached and its one wrap-up failed: stop rather than restart fresh.
+                    self._log_retry("max_budget_stop", failure_count + 1, RuntimeError(
+                        f"wrap-up after the dollar cap failed: {result.error_message or 'no error text'}"))
+                    return result.text or last_text
+                # A failed wrap-up falls back to the normal fresh-session retry (on what is left of the cap).
                 resume_id, prompt, turns = None, original_prompt, max_turns or self.max_turns
-                budget = self.budget_usd
 
             if result.is_error:
                 failure_count += 1
@@ -1028,6 +1090,17 @@ class SDKDispatcher(CLIDispatcher):
             "attempt": attempt,
             "error": str(exc)[:500],
         })
+
+    def _charge_partial(self, exc: BaseException, budget: float | None) -> float:
+        """Log the usage a transient abort had already streamed (capped sessions); return its cost."""
+        usage = {k: int(v or 0) for k, v in (getattr(exc, "usage", None) or {}).items()
+                 if k in _USAGE_KEYS}
+        if not any(usage.values()):
+            return 0.0
+        cost = usage_cost(usage, self._cost_rates())
+        self._log_metrics_row(SDKResult(text="", cost_usd=cost, num_turns=0, is_error=True,
+                                        error_message=f"transient abort: {exc}"[:200], **usage), budget)
+        return cost
 
     def _cost_rates(self) -> dict:
         from orchestrator.design_profile import v7_settings
