@@ -106,6 +106,20 @@ class TestV7DesignRules:
         assert validate_design(_design_dir(tmp_path, _bundle(MAIN, alt)),
                                campaign=_campaign(design_profile="v6"))["status"] == "pass"
 
+    def test_extra_main_arms_with_other_families_become_alternatives(self, tmp_path):
+        mains = [dict(MAIN), dict(MAIN, mechanism_family="fibonacci representation"),
+                 dict(MAIN, mechanism_family="factorization")]
+        d = _design_dir(tmp_path, _bundle(*mains))
+        assert validate_design(d, campaign=self.V7)["status"] == "pass"
+        arms = yaml.safe_load((d / "bundle.yaml").read_text())["arms"]
+        assert [a["type"] for a in arms] == ["h-main", "h-alternative", "h-alternative"]
+        assert all(a["differs_from_main"] for a in arms[1:])
+        # other profiles leave the bundle as written
+        (tmp_path / "v6").mkdir()
+        d6 = _design_dir(tmp_path / "v6", _bundle(*mains))
+        validate_design(d6, campaign=_campaign(design_profile="v6"))
+        assert [a["type"] for a in yaml.safe_load((d6 / "bundle.yaml").read_text())["arms"]] == ["h-main"] * 3
+
     def test_at_most_two_alternatives(self, tmp_path):
         alts = [dict(ALT, mechanism_family=f"family {i}") for i in range(3)]
         r = validate_design(_design_dir(tmp_path, _bundle(MAIN, *alts)), campaign=self.V7)

@@ -360,6 +360,9 @@ $defs:
       id:
         type: string
         description: "Optional label for the arm (ignored by the orchestrator)."
+      name:
+        type: string
+        description: "Optional human-readable name for the arm (ignored by the orchestrator)."
       component:
         type: string
         description: "Component name, used for h-ablation arms."

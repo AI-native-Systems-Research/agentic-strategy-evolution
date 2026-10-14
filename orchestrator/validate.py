@@ -495,6 +495,33 @@ def _validate_alternative_arms(arms: list) -> list[str]:
 V7_MAX_ALTERNATIVES = 2
 
 
+def _normalize_v7_bundle(bundle_path: Path, campaign: dict | None) -> None:
+    """v7: an extra ``h-main`` whose family differs from the first one is a competing alternative.
+
+    Designers often label every competing family ``h-main``; relabeling here saves the turns spent
+    fixing it after a validation error.
+    """
+    if (campaign or {}).get("design_profile") != "v7":
+        return
+    try:
+        bundle = yaml.safe_load(bundle_path.read_text())
+    except (OSError, yaml.YAMLError):
+        return
+    arms = [a for a in ((bundle or {}).get("arms") or []) if isinstance(a, dict)]
+    mains = [a for a in arms if a.get("type") == "h-main"]
+    if len(mains) < 2 or not _family_key(mains[0]):
+        return
+    changed = False
+    for arm in mains[1:]:
+        if _family_key(arm) and _family_key(arm) != _family_key(mains[0]):
+            arm["type"] = "h-alternative"
+            arm.setdefault("differs_from_main",
+                           f"{arm['mechanism_family']} instead of {mains[0]['mechanism_family']}")
+            changed = True
+    if changed:
+        bundle_path.write_text(yaml.safe_dump(bundle, sort_keys=False, allow_unicode=True))
+
+
 def _validate_v7_bundle(bundle: dict, campaign: dict | None) -> list[str]:
     """design_profile v7: validity checks on mechanism arms, 1-2 alternatives or a single-family reason."""
     if (campaign or {}).get("design_profile") != "v7":
@@ -606,6 +633,7 @@ def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
     if not bundle_path.exists():
         errors.append("bundle.yaml not found")
     else:
+        _normalize_v7_bundle(bundle_path, campaign)
         try:
             bundle = yaml.safe_load(bundle_path.read_text())
             schema = _load_yaml_schema("bundle.schema.yaml")
