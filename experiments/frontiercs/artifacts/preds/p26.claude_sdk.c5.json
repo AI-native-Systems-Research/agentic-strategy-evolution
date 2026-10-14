@@ -1,0 +1,23 @@
+{
+  "problem_id": "26",
+  "track": "algorithmic",
+  "agent": "claude-code-sdk",
+  "label": "p26_cs5",
+  "model": "claude-opus-4-6",
+  "final_score": 0.0,
+  "best_file": "solution.cpp",
+  "cost_usd_tokenbased": 5.01,
+  "cost_capped": true,
+  "n_clean": 1,
+  "n_rejected": 0,
+  "stack": "claude_agent_sdk (same as Nous), Claude Code preset system prompt, bypassPermissions, WebSearch/WebFetch disallowed",
+  "isolation": "sandbox-exec: task readme+resources readable (resources/datasets hidden); evaluator, other runs, transcripts denied; sandboxed judge daemon; exploit audit",
+  "clean_evidence": [
+    {
+      "file": "solution.cpp",
+      "score": 0.0
+    }
+  ],
+  "rejected_exploit_candidates": [],
+  "elapsed_s": 987.5
+}

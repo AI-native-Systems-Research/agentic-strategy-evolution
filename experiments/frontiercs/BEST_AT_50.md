@@ -1,4 +1,5 @@
 > **Superseded 2026-10-13:** the current results, rules, and run commands are in `README.md`. This file is kept for history only.
+> **2026-10-14:** the algorithmic Nous scores here (p0 89.1, p5 83, p9/p15/p22 100, p0 n=3 85.2) are contaminated (unsandboxed, read hidden testdata; p0 seeded from `reference.cpp`). See `NOUS_IMPROVEMENT_LOG.md` §3.
 
 > ⚠ **README.md is canonical** (wins conflicts). This file = the iso-cost tables, kept in sync.
 > STATUS 2026-10-12: Claude column = **raw Claude Code, isolated, re-judged** (not the old

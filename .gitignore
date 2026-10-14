@@ -215,3 +215,5 @@ docs/plans/
 
 # Nous s390x — local campaign artifact sync
 s390x/campaigns/
+.DS_Store
+.claude/worktrees/

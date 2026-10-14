@@ -31,7 +31,8 @@ partly fits it to the benchmark.
 | p47 ($25) | 94.07 | - | - | - | - | - | **94.39** (94.57, $28.94) |
 
 `*` stopped early (bug or by user). Old algorithmic Nous (89.1 p0, 83 p5) stopped on the SDK's own cost
-figure (~3x below our ruler), so it spent ~$97-162 per task; not comparable at $25.
+figure (~3x below our ruler), so it spent ~$97-162 per task; not comparable at $25. **These old algorithmic
+Nous scores are also contaminated and must not be cited** (see §3, 2026-10-14).
 
 Old Claude algorithmic score-vs-spend (from transcripts, shared ruler):
 
@@ -72,6 +73,15 @@ Nous v5 74.52, Claude 74.28. Nous v6 leads by ~1 point, within the judge noise (
 - **Coverage-gaming hook (gf).** Nous v4 produced solutions overriding `builtins.__import__` to instantiate
   sql_engine AST classes (91.44). Audit signatures extended (74b9488); v4 gf re-audited to 83.59. All other gf
   archives scanned: Claude and v3 have none; the published Opus-5 Nous 77.56 is clean.
+- **Every old (pre-isolation) algorithmic Nous run is contaminated (found 2026-10-14).** All `frontier-*`
+  campaigns ran with `sandbox: bypass`, and the executor logs (`runs/iter-*/inputs/executor_log.jsonl`) show
+  reads of hidden test data: p0 and p5 looped over `testdata/*.in` (p5 read tests 1, 7, 8, 10 and built
+  `probe_graph.cpp` to profile them); p9 read `.ans` for tests 2 and 7; p15 read `1.ans`; p22 read `1.in`; no
+  access found for p47 `frontier-47-p47nous`. p0 is also seeded from the human solution: `p0.nous_rr.cpp`
+  (86.5) says "Based on reference.cpp (Shang Zhou, IIMOC #1443)" and `frontier-0-clean50` (89.1) iter-1
+  `h-main.patch` says "Adapted from reference.cpp". `frontier-0-freshvpc` (80.08) also ran unsandboxed and read
+  testdata. So p0 89.1/86.5/80.1 (and the n=3 mean 85.2), p5 83, p9/p15/p22 100 are **invalid**; `ATTRIBUTION.md`
+  is built on them. Only the isolated $25 runs (v4-v6) are clean algorithmic Nous results.
 - **llm_router tunes against the measure.** Both agents tune thresholds with the sanctioned measure, which
   scores on the same data; scores reward measurement volume (Claude ~1,100, v4 ~850 measurements).
 
@@ -86,8 +96,8 @@ Nous v5 74.52, Claude 74.28. Nous v6 leads by ~1 point, within the judge noise (
   ~100-120 turns for Nous or Claude alike.
 - At $25, depth beats iteration count: v6 (one long iteration, ~30 measurements) beat v5 (45-turn cap, 2-3
   iterations) on gf (85.33 vs 82.93) and p5 (57 vs 49). Nous's edge at small budgets comes from the focused
-  design, distinct arms and gap analysis inside an iteration; compounding across many iterations needs more
-  budget (old Nous with 3-6x spend: p0 89, p5 83).
+  design, distinct arms and gap analysis inside an iteration. Whether compounding across many iterations pays
+  off at larger budgets is untested: the old high-budget runs (p0 89, p5 83) are contaminated (§3).
 - The cost ruler is model-independent ($15/$75 for every model), so a cheaper executor model would not buy
   more turns on the ruler; trimming the executor's system prompt (it also carries the design method) would
   save only ~5%.
@@ -114,7 +124,7 @@ Nous v5 74.52, Claude 74.28. Nous v6 leads by ~1 point, within the judge noise (
 | p0 (5x re-judged mean) | 74.28 (clean SDK re-run) | **75.27** | Nous +1.0 (within judge noise) | v5 74.52, v4 73.48 | 68.5 / 0 |
 | p5 | 50.0 | **57.00** | Nous +7.0 | v4 58.00, v5 49.00 | 41 / 44 |
 | p47 | 94.07 | **94.39** | Nous +0.3 | - | 94.2 / 96.8 |
-| p9, p15, p22 | 100 / 100 / 0 | 100 / 100 / 100 (old Nous, not re-run) | - | | |
+| p9, p15, p22 | 100 / 100 / 0 | not re-run (old Nous 100 / 100 / 100 is contaminated, §3) | - | | |
 
 Score vs spend (best clean measured score by each $; p0 uses single measurements here, so it is noisy):
 
@@ -161,3 +171,61 @@ best_at_budget, i.e. best re-judged solution measured by $25):
 |---|---|---|---|
 | p5 | **96.0** ($25.69; final solution.cpp, last measured 92) | 90.0 @ $25 (outage run, backup; re-run queued) | |
 | p0 | re-run queued | 93.96 @ $25 (outage run, backup; re-run queued) | |
+
+## 9. What the $25 runs missed (p0, p5 transcript analysis, 2026-10-14) and the v7 plan
+
+Read-only analysis of the clean Claude SDK and Nous v4-v6 runs (transcripts, measured candidates, findings),
+with local per-test re-scoring (`/tmp/p0an/`, `/tmp/p5j/`; our local scorer reproduces the judge's totals).
+
+**p0 (everyone ~75).** The packing is fine; the time limit is not. Per test, with a test over the judge's 2 s CPU
+limit scored 0 (`judge_engine.js` cpuLimit from `config.yaml`; the limit is not in `statement.txt`):
+
+| solution | mean density, no timeouts | judge score | timeouts (of 70) | max CPU |
+|---|---|---|---|---|
+| Claude m0024 | 81.23 | 76.13 | 4 | 3.98 s |
+| Nous v6 best | 79.68 | 75.95 | 3 | 5.02 s |
+| Nous v5 best | 81.50 | 76.36 | 4 | 7.01 s |
+| human reference.cpp | 89.11 | 89.11 | 0 | 1.94 s (89.02 when capped at 0.9 s) |
+
+Every agent saw only one aggregate SCORE, so timeouts looked like noise. Claude decided "the judge uses random
+test cases"; Nous v6 wrote the same into its handoff; v5 wrote "time limit is ~7-8s". Most of the "+-2 judge
+noise" is large tests flipping between finishing and timing out. Small tests (53 of 70) use 2-4% of the limit.
+The reference's main idea, choosing the best next piece from a lookahead window instead of a fixed order,
+was never tried at $25.
+
+**p5 (Claude 50, v6 57, v4 58).** All runs committed early to SCC + greedy/DFS and hill-climbed it (Claude ran
+~15 variants at 49-50). Nous's gain came from the executor's refine loop (v6: 31 -> 41 -> 50 -> 54 -> 56 -> 57)
+and, for v4, Hopcroft-Karp matching, which only fixed the two near-DAG tests (t3 33 -> 60, t4 98 -> 500 path
+length). The Nous designer's plan proposed a reversal "rotation" that is invalid on directed graphs; Claude
+found it invalid and dropped rotation entirely. The likely route to 90+ (cycle cover by matching, then cycle
+merging / rotation-extension) was never tried; local checks show a perfect matching gives only 4-15 cycles per
+test.
+
+**Lessons (general, not task-specific).** Same information for both agents; only the method differs.
+
+1. **Build the instrument first.** Before tuning, the agent builds a local evaluator from the statement: an
+   instance generator (including the largest allowed sizes), a per-instance score, and per-instance CPU time.
+   An aggregate score hid the cause on both tasks.
+2. **Per-instance, falsifiable gap analysis.** "Where is score lost" must be answered per instance and per size
+   group. A noise explanation must be tested (re-run an unchanged solution) before it enters a handoff or a
+   principle.
+3. **Competing mechanisms in the bundle.** 2-3 arms with genuinely different algorithm families when the
+   problem allows. Today every arm type is a variant of h-main and the lightweight profiles say to skip extra
+   arms, so all $25 bundles had one arm. Needs a new arm type for a competing alternative.
+4. **Cheap validity check of the design.** Check a proposed mechanism on a tiny case before the executor builds on
+   it (the invalid directed rotation).
+5. **Budget for a second iteration.** Every v6 run spent $16-24 of $25 in one executor session, so the designer,
+   principles and gap analysis never fed a second design.
+
+**v7 plan (to build).** v6 plus:
+- DESIGN: 2-3 arms from different mechanism families (new competing-alternative arm type); first iteration
+  must include building the local evaluator (lesson 1) and a validity check of each mechanism (lesson 4).
+- EXECUTE: each arm runs in its own fresh executor session with a dollar budget (explore ~$3-5 per arm), then
+  the winning arm gets the remaining iteration budget in one long session, starting from the best (keeps v6's
+  depth). Losing arms' refuted predictions become principles.
+- Gap analysis per instance and size group, with noise claims tested (lesson 2).
+- Iteration budget sized so a $25 run gets at least 2 designs.
+- Open question to measure on the first run: whether fresh per-arm sessions cut cost per turn (smaller context)
+  or just re-explore.
+
+Evaluation: on newly selected tasks fixed before any v7 run (not gf/p0/p5, which we tuned on).

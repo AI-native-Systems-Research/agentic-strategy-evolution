@@ -57,7 +57,7 @@ Algorithmic track runners: `gen/nous_cap_launch.py`, `gen/claude_code_runner.py`
 | p0 (5x re-judged mean) | 74.28 (clean SDK re-run) | **75.27** | Nous +1.0 (within judge noise) | v5 74.52, v4 73.48 | 68.5 / 0 |
 | p5 | 50.0 | **57.00** | Nous +7.0 | v4 58.00, v5 49.00 | 41 / 44 |
 | p47 | 94.07 | **94.39** | Nous +0.3 | - | 94.2 / 96.8 |
-| p9, p15, p22 | 100 / 100 / 0 | 100 / 100 / 100 (old Nous, not re-run) | - | | |
+| p9, p15, p22 | 100 / 100 / 0 | not re-run (old Nous 100 / 100 / 100 is contaminated, see §5) | - | | |
 
 Score vs spend (best clean measured score by each $; p0 uses single measurements here, so it is noisy):
 
@@ -80,9 +80,43 @@ by $15-25. Nous v6 = `design_profile: v6` (lightweight design-only designer, scr
 the best arm, uncapped EXECUTE). Single runs per agent; p0 judge noise is about +-2. Full history, versions,
 integrity findings: `NOUS_IMPROVEMENT_LOG.md`.
 
+## Task selection for the next round (2026-10-14)
+
+Why: gf, llm_router and p47 are near their ceilings (llm_router's real maximum is 75.0, and a lookup table by
+eval_name already gives 59.71), so they cannot separate agents. Selection used only free signals plus a small Claude
+pilot, and was fixed before any new Nous version was run.
+
+Method: (1) published per-problem scores for 188 algorithmic problems (`~/frontier/Frontier-CS/results/*.csv`:
+gemini-3.1-pro-cli, gemini-3.1-pro-amplio, gpt-5.6-sol) to find problems with a proven high ceiling and a wide
+spread; (2) read each checker for smooth partial credit (not pass/fail, not an unreachable bound); (3) on our
+judge, scored 6 bundled one-shot model solutions per problem and re-judged the best 3 more times for noise
+(`/tmp/fcs_pilot/results.jsonl`, 99 runs, no LLM calls); (4) Claude SDK pilot at $5 (`gen/pilot_c5.sh`).
+
+**Focus set (5):**
+
+| task | type | one-shot models (our judge) | best published | judge noise | role |
+|---|---|---|---|---|---|
+| p0 polyomino packing | packing heuristic | 0-72 | 97.7 | +-2 (time-limit sensitive) | dev task (Nous was tuned on it) |
+| p5 Hamiltonian path | graph search | 0-34 | 71 | +-5 (step scoring) | dev task |
+| p181 binary QAP | local search | 10-31 | 86 | +-1 | held out |
+| p26 OgreSort | sorting with move costs | 0-34 | 100 | 0 | held out |
+| p58 inverse counting path | math construction | 1-59 | 86 | +-0.6 | held out |
+
+**Backups:** p225 set merging (one-shot 0-39, published 99.8, deterministic, but bimodal scores), p44 Santa tour
+(one-shot 0-45, published max 78, deterministic). **Dropped:** p211 (one-shot already 86 of a published 87; noise
++-10), p248 (noise +-7, 34 s per judge), p45 (everyone ~40-56), p48 (100 is the Kepler bound, unreachable), the
+AHC-style problems (10 s x 100-150 tests per measurement is too slow to iterate), p47/gf/llm_router (saturated).
+Judge caveat: the human p0 reference scored 84.0 on 2026-10-14 vs 81.2 before; compare agents under the same
+judge load.
+
 ## 5. Results
 
-### Algorithmic (opus-4-6, go-judge 0-100) — final, kept as is
+### Algorithmic (opus-4-6, go-judge 0-100) — INVALID for Nous, do not cite
+
+**2026-10-14: the Nous column below is contaminated.** Every old algorithmic Nous campaign ran with
+`sandbox: bypass` and read hidden `testdata` (p9 and p15 also read `.ans` files); p0 89.1/86.5 were seeded from
+the human `reference.cpp`. Details: `NOUS_IMPROVEMENT_LOG.md` §3. The clean algorithmic Nous results are the
+isolated $25 runs in the FINAL table above.
 
 | task | Nous | Claude | Engram | AIDE |
 |---|---|---|---|---|

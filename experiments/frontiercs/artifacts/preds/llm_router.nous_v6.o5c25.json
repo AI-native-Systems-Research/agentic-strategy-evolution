@@ -1,0 +1,32 @@
+{
+  "problem_id": "llm_router",
+  "track": "research",
+  "agent": "nous",
+  "label": "router_v6o5",
+  "model": "aws/claude-opus-5",
+  "final_score": 25.38,
+  "cost_usd": 0.0,
+  "n_clean_candidates": 1,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/research_router_v6o5_ws/solution.py",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/research_router_v6o5_ws/solution.py",
+      "score": 25.375108277382168
+    }
+  ],
+  "elapsed_s": 14402.0,
+  "cost_usd_tokenbased": 0.0,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": false,
+  "stop_rule": "finish the iteration in progress at $25.0 (ceiling $28.5)",
+  "best_at_budget": null,
+  "budget_reached_at": null
+}

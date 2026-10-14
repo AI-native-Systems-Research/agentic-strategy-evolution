@@ -1,0 +1,27 @@
+{
+  "problem_id": "47",
+  "track": "algorithmic",
+  "agent": "claude-code-sdk",
+  "label": "p47_cso5",
+  "model": "aws/claude-opus-5",
+  "final_score": 89.53,
+  "best_file": "solution.cpp",
+  "cost_usd_tokenbased": 4.72,
+  "cost_capped": false,
+  "n_clean": 2,
+  "n_rejected": 0,
+  "stack": "claude_agent_sdk (same as Nous), Claude Code preset system prompt, bypassPermissions, WebSearch/WebFetch disallowed",
+  "isolation": "sandbox-exec: task readme+resources readable (resources/datasets hidden); evaluator, other runs, transcripts denied; sandboxed judge daemon; exploit audit",
+  "clean_evidence": [
+    {
+      "file": "measured/m0000_231557_score89.26.cpp",
+      "score": 89.18073333333332
+    },
+    {
+      "file": "solution.cpp",
+      "score": 89.53156
+    }
+  ],
+  "rejected_exploit_candidates": [],
+  "elapsed_s": 972.2
+}

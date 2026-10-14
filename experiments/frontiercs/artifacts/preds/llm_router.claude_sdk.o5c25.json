@@ -1,0 +1,23 @@
+{
+  "problem_id": "llm_router",
+  "track": "research",
+  "agent": "claude-code-sdk",
+  "label": "router_cso5",
+  "model": "aws/claude-opus-5",
+  "final_score": 25.38,
+  "best_file": "solution.py",
+  "cost_usd_tokenbased": 0.0,
+  "cost_capped": false,
+  "n_clean": 1,
+  "n_rejected": 0,
+  "stack": "claude_agent_sdk (same as Nous), Claude Code preset system prompt, bypassPermissions, WebSearch/WebFetch disallowed",
+  "isolation": "sandbox-exec: task readme+resources readable (resources/datasets hidden); evaluator, other runs, transcripts denied; sandboxed judge daemon; exploit audit",
+  "clean_evidence": [
+    {
+      "file": "solution.py",
+      "score": 25.375108277382168
+    }
+  ],
+  "rejected_exploit_candidates": [],
+  "elapsed_s": 513.0
+}

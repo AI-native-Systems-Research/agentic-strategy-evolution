@@ -1,0 +1,36 @@
+{
+  "problem_id": "47",
+  "track": "algorithmic",
+  "agent": "nous",
+  "label": "p47_v6o5",
+  "model": "aws/claude-opus-5",
+  "final_score": 92.59,
+  "cost_usd": 3.2,
+  "n_clean_candidates": 2,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/research_p47_v6o5_measured_20261013_230734/m0001_231634_score92.59.cpp",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/research_p47_v6o5_measured_20261013_230734/m0001_231634_score92.59.cpp",
+      "score": 92.58502666666668
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p47_v6o5_measured_20261013_230734/m0000_230822_score0.00.cpp",
+      "score": 0.0
+    }
+  ],
+  "elapsed_s": 14407.7,
+  "cost_usd_tokenbased": 9.2,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": false,
+  "stop_rule": "finish the iteration in progress at $25.0 (ceiling $28.5)",
+  "best_at_budget": null,
+  "budget_reached_at": null
+}

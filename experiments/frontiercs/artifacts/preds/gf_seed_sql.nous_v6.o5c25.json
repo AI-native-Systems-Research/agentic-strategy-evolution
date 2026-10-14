@@ -1,0 +1,39 @@
+{
+  "problem_id": "grammar_fuzzing/seed/sql",
+  "track": "research",
+  "agent": "nous",
+  "label": "gf_v6o5",
+  "model": "aws/claude-opus-5",
+  "final_score": 36.68,
+  "cost_usd": 2.43,
+  "n_clean_candidates": 1,
+  "n_rejected_exploits": 1,
+  "best_source": "~/frontier/gen_logs/research_gf_v6o5_measured_20261013_231344/m0000_231436_score36.68.py",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-gf-v6o5/runs/iter-1/inputs/devharness.py",
+      "exploits": [
+        "import machinery to reach internals"
+      ]
+    }
+  ],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/research_gf_v6o5_measured_20261013_231344/m0000_231436_score36.68.py",
+      "score": 36.67687542683891
+    }
+  ],
+  "elapsed_s": 14400.3,
+  "cost_usd_tokenbased": 6.93,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": false,
+  "stop_rule": "finish the iteration in progress at $25.0 (ceiling $28.5)",
+  "best_at_budget": null,
+  "budget_reached_at": null
+}
