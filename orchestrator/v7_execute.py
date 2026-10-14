@@ -24,6 +24,7 @@ from pathlib import Path
 import yaml
 
 from orchestrator.design_profile import EVALUATOR_DIR, V7Settings, is_v7, v7_settings
+from orchestrator.instrument import INSTRUMENT_FILE, add_to_handoff, check_instrument, instrument_summary
 from orchestrator.metrics import spent_usd
 from orchestrator.util import atomic_write
 
@@ -269,9 +270,13 @@ def session_context(campaign: dict, work_dir: Path, iteration: int, key: str | N
         "budget_usd": f"{budget_usd:.2f}" if budget_usd is not None else "(uncapped)",
         "metric_keys": ", ".join(_metric_keys(campaign)),
     }
-    if key and key != EVALUATOR_KEY:
+    if key == EVALUATOR_KEY:
+        ctx["instrument_path"] = str(iter_dir / INSTRUMENT_FILE)
+    elif key:
         arm = dict(mechanism_arms(_load_bundle(iter_dir))).get(key, {})
         ctx.update({
+            "instrument_summary": instrument_summary(campaign, work_dir, iteration)
+            or "No instrument checks recorded yet.",
             "arm_key": key,
             "arm_yaml": yaml.safe_dump(arm, sort_keys=False).strip(),
             "result_path": str(iter_dir / ARMS_DIR / key / "result.json"),
@@ -417,6 +422,8 @@ def run_v7_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
     def remaining() -> float:
         return s.iteration_budget_usd - iteration_spent(campaign, work_dir, iter_dir)
 
+    add_to_handoff(campaign, work_dir, iter_dir, iteration)  # the designer rewrote the handoff
+
     sessions: list[tuple[str, dict | None]] = []
     evaluator_done = (state["sessions"].get(EVALUATOR_KEY) or {}).get("status") == "done"
     if evaluator_done or not (work_dir / EVALUATOR_DIR / "README.md").is_file():
@@ -448,6 +455,9 @@ def run_v7_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
             _ensure_patch(wt, iter_dir / "patches" / f"{key}.patch")
         remove_experiment_worktree(repo, eid)
         state["sessions"][key] = {"status": "done", "outcome": status, "budget_usd": cap}
+        if key == EVALUATOR_KEY:
+            state["sessions"][key]["instrument"] = check_instrument(iter_dir)
+            add_to_handoff(campaign, work_dir, iter_dir, iteration)
         _save_state(adir, state)
 
     results = {k: _load_json(adir / k / "result.json", None) for k, _ in arms}

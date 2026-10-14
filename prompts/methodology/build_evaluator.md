@@ -17,5 +17,20 @@ work on the solution itself. This session stops at about ${{budget_usd}}.
 4. A summary grouped by instance size: count, mean score, worst instances, max CPU time, timeouts.
 5. One command that runs all of it on a solution file. Run it once on the current solution.
 
+## Instrument checks (required), written to `{{instrument_path}}`
+
+1. Worst case: max CPU seconds of the current solution on the largest allowed inputs, and the time
+   limit from the statement (`null` if it gives none). `speed_first` is true when max CPU is over 50%
+   of the limit: judge machines may be slower than this one.
+2. Noise: run the official measure command 3 times on the unchanged solution.
+3. Knobs (optional, cheap): for each exposed knob, score at a low and a high value, one at a time.
+   `matters` is true when the score moves by more than the noise spread.
+
+```json
+{"max_cpu_s": <s>, "time_limit_s": <s or null>, "speed_first": <bool>,
+ "noise": {"runs": [<score>, <score>, <score>], "min": <score>, "max": <score>, "spread": <max - min>},
+ "knobs": [{"name": "<knob>", "low": <value>, "high": <value>, "delta": <score change>, "matters": <bool>}]}
+```
+
 Write `{{evaluator_dir}}/README.md` last: the command, the size groups, the time limit used, and the
 current solution's per-group summary. Later sessions only read the README, so keep it short and exact.

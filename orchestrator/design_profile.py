@@ -163,15 +163,22 @@ def v7_settings(campaign: dict) -> V7Settings:
     )
 
 
-def v7_design_context(campaign: dict, work_dir: Path) -> str:
-    """v7 DESIGN note on the local evaluator: plan it while missing, otherwise point at its README."""
+def v7_design_context(campaign: dict, work_dir: Path, iteration: int | None = None) -> str:
+    """v7 DESIGN note on the local evaluator: plan it while missing, otherwise point at its README.
+
+    Once an instrument.json exists, its summary follows unless the campaign handoff already carries it.
+    """
     if not is_v7(campaign):
         return ""
     ev = Path(work_dir).resolve() / EVALUATOR_DIR
     readme = ev / "README.md"
     if readme.is_file() and readme.read_text().strip():
+        from orchestrator.instrument import HEADING, instrument_summary
+        handoff = Path(work_dir) / "handoff.md"
+        checks = "" if handoff.is_file() and HEADING in handoff.read_text() else instrument_summary(
+            campaign, work_dir, iteration)
         return (f"\n\n## Local evaluator (v7)\n\nIt lives in `{ev}`. Its README:\n\n"
-                + readme.read_text().strip()[:3000] + "\n")
+                + readme.read_text().strip()[:3000] + "\n" + ("\n" + checks if checks else ""))
     return (
         "\n\n## Local evaluator (v7)\n\n"
         f"None exists yet. Before the arms run, an executor session builds a local evaluator in `{ev}` from "

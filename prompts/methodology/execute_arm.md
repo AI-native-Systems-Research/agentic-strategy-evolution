@@ -17,6 +17,8 @@ about ${{budget_usd}}, so write the result file early and update it as you impro
 - Local evaluator: `{{evaluator_dir}}` (read its README.md). Use it for the validity check and for
   per-instance, per-size-group measurement; report the score from the sanctioned measure command.
 
+{{instrument_summary}}
+
 ## Steps
 
 1. Implement the mechanism minimally, then run the arm's `validity_check` on a tiny case. If it fails,

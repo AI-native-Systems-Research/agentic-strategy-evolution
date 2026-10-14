@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "instrument.json (design_profile v7)",
+  "description": "Instrument checks written by the v7 build-evaluator session: worst-case CPU time against the time limit, the noise of the official measure command, and which knobs move the score more than that noise.",
+  "type": "object",
+  "required": ["max_cpu_s", "time_limit_s", "speed_first", "noise"],
+  "properties": {
+    "max_cpu_s": {"type": "number", "minimum": 0, "description": "Max CPU seconds of the current solution on the largest allowed inputs."},
+    "time_limit_s": {"type": ["number", "null"], "exclusiveMinimum": 0, "description": "Time limit from the statement; null when the statement gives none."},
+    "time_limit_source": {"type": "string"},
+    "speed_first": {"type": "boolean", "description": "max_cpu_s is over 50% of time_limit_s: fix speed before tuning."},
+    "noise": {
+      "type": "object",
+      "required": ["runs", "min", "max", "spread"],
+      "properties": {
+        "runs": {"type": "array", "items": {"type": "number"}, "minItems": 3},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "spread": {"type": "number", "minimum": 0},
+        "command": {"type": "string"}
+      }
+    },
+    "knobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "low", "high", "delta", "matters"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "low": {},
+          "high": {},
+          "delta": {"type": "number", "description": "Score at high minus score at low, other knobs unchanged."},
+          "matters": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

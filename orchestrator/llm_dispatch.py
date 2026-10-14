@@ -654,7 +654,7 @@ class LLMDispatcher:
                 )
             from orchestrator.design_profile import executor_update_for_design, v7_design_context
             ctx["previous_handoff"] += executor_update_for_design(self.campaign, self.work_dir, iteration)
-            ctx["previous_handoff"] += v7_design_context(self.campaign, self.work_dir)
+            ctx["previous_handoff"] += v7_design_context(self.campaign, self.work_dir, iteration)
 
             if iteration > 1:
                 prev_findings_path = (
@@ -767,6 +767,10 @@ class LLMDispatcher:
             ctx["mode_guidance"] = execute_mode_guidance_for(mode) + execute_guidance(self.campaign, mode)
             from orchestrator.v7_execute import screening_summary
             ctx["mode_guidance"] += screening_summary(self.campaign, iter_dir)
+            from orchestrator.instrument import HEADING, instrument_summary
+            if HEADING not in ctx["design_handoff"]:
+                checks = instrument_summary(self.campaign, self.work_dir, iteration)
+                ctx["mode_guidance"] += "\n" + checks if checks else ""
 
         if phase in ("execute-arm", "build-evaluator"):
             from orchestrator.v7_execute import session_context
