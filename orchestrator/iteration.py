@@ -1299,6 +1299,23 @@ def run_iteration(
             # CLI path: agent writes files directly to iter_dir
             import contextlib
             from orchestrator.design_profile import v7_settings
+            if v7_flow:
+                # v7 iteration 1: build the evaluator and measure the incumbent first, so the
+                # designer works from numbers. A no-op once the evaluator exists.
+                from orchestrator.v7_execute import evaluator_before_design, run_v7_evaluator
+                if evaluator_before_design(campaign, work_dir, iter_dir):
+                    cli_dispatcher.model = _model_for("execute_analyze")
+                    cli_dispatcher.max_turns = _max_turns_for("execute_analyze")
+                    cli_dispatcher._effort = _effort_for("execute_analyze")
+                    try:
+                        run_v7_evaluator(
+                            cli_dispatcher, campaign, work_dir, iter_dir, iteration, repo_path,
+                            extras=campaign.get("target_system", {}).get("worktree_extras") or [],
+                        )
+                    finally:
+                        cli_dispatcher.model = _model_for("design")
+                        cli_dispatcher.max_turns = _max_turns_for("design")
+                        cli_dispatcher._effort = _effort_for("design")
             budget_ctx = (cli_dispatcher.session_budget(v7_settings(campaign).design_budget_usd, label="design")
                           if v7_flow else contextlib.nullcontext())
             with budget_ctx:

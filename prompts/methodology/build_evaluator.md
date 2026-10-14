@@ -1,18 +1,19 @@
 # Build the local evaluator, iteration {{iteration}} for {{target_system}}
 
-Before any mechanism arm runs, build a local evaluator that every later session will use. Do not
-work on the solution itself. This session stops at about ${{budget_usd}}.
+Before any mechanism arm runs, build a local evaluator that every later session will use, and measure
+the current solution with it. Do not work on the solution itself. This session stops at about
+${{budget_usd}}.
 
 ## Context
 
-- Problem framing: `{{iter_dir}}/problem.md`. Design: `{{iter_dir}}/bundle.yaml`.
+- {{design_context}}
 - Target: {{system_description}}
 - Your `cwd` is a worktree with the current solution; use it only to test the evaluator.
 
 ## Build in `{{evaluator_dir}}`
 
-Write and run each piece as soon as it exists; reason in short steps between runs, never a whole turn
-without writing or running code.
+Write and run each piece as soon as it exists. Keep each reasoning step short (a few paragraphs). If you
+need more, write code or notes to a file, run them, and continue from the result.
 
 1. An instance generator from the problem statement, covering small cases and the largest allowed sizes.
 2. A per-instance score, computed the way the statement defines it.

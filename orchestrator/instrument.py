@@ -106,6 +106,25 @@ def instrument_summary(campaign: dict, work_dir: Path, iteration: int | None = N
     return format_summary(*found) if found else ""
 
 
+def baseline_note(work_dir: Path, iteration: int | None) -> str:
+    """Baseline line from this iteration's own valid instrument.json (empty otherwise).
+
+    Only the current iteration's file counts: an older one measured an older incumbent.
+    """
+    if iteration is None:
+        return ""
+    path = Path(work_dir) / "runs" / f"iter-{iteration}" / INSTRUMENT_FILE
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return ""
+    if validate_instrument(data):
+        return ""
+    runs = [float(r) for r in data["noise"]["runs"]]
+    return (f"Baseline, measured before this design: the current solution scored {_num(sum(runs) / len(runs))} "
+            f"(mean of {len(runs)} runs, {_num(min(runs))} to {_num(max(runs))}). Design arms to beat it.\n")
+
+
 def _upsert(path: Path, section: str) -> None:
     text = path.read_text()
     start = text.find(HEADING)

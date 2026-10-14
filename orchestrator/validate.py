@@ -41,6 +41,9 @@ _KNOWN_ROOT_FILES = {
     # #188: provenance for `nous run --bundle <path>` (pre-authored
     # bundle, skips DESIGN dispatch).
     "bundle_manifest.json",
+    # design_profile v7: instrument checks from the build-evaluator session, which in iteration 1
+    # runs before the design is validated.
+    "instrument.json",
 }
 
 

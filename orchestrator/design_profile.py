@@ -102,8 +102,8 @@ V7_ARMS = (
     "different algorithm family (2-3 families in total), all measured against the same incumbent. Every "
     "mechanism arm sets `mechanism_family`; each `h-alternative` also sets `differs_from_main`, one line on "
     "why its family differs from `h-main`'s. If the problem allows only one sensible family, use `h-main` "
-    "alone and say why in the bundle's top-level `single_family_reason`. Describe each arm's change precisely "
-    "enough that the executor can implement it without re-deriving it.\n"
+    "alone and say why in the bundle's top-level `single_family_reason`. Describe each arm in a few lines: "
+    "the mechanism, why it should beat the incumbent, and its validity check.\n"
     "- **Validity check:** every mechanism arm sets `validity_check`: a cheap test on a tiny case showing the "
     "mechanism is correct (for example, the output is feasible), run before the executor builds on it.\n"
     "- **Arm roles:** `h-main` and `h-alternative` are the only arms with their own executor session: each is "
@@ -118,14 +118,15 @@ V7_DESIGN_EXTRA = (
     "- **Target per-instance gaps:** from the second iteration on, pick mechanisms that attack the largest "
     "loss per instance and size group in the executor's gap analysis (score lost, CPU time against the time "
     "limit, timeouts), not just the aggregate score.\n"
-    "- **Design in steps:** write `bundle.yaml` early and refine it. A mechanism sketch plus its validity "
-    "check is enough; the executor works out the details by building and measuring. Do not try to solve "
-    "the problem in one long reasoning turn: unbroken reasoning hits the output limit and is lost.\n"
+    "- **Iteration 1:** name 2-3 algorithm families in a few lines each with a validity check; do not "
+    "derive, prove, or fully specify them; the executor works the details out by building and measuring.\n"
+    "- **Short steps:** write `bundle.yaml` early. Keep each reasoning step short (a few paragraphs). If "
+    "you need more, write code or notes to a file, run them, and continue from the result.\n"
 )
 V7_EXECUTE_EXTRA = (
-    "- **Build and measure early:** keep a runnable version at all times and measure after each change. "
-    "Reason in short steps between measurements; never spend a whole turn reasoning without writing or "
-    "running code.\n"
+    "- **Short steps:** keep a runnable version at all times and measure after each change. Keep each "
+    "reasoning step short (a few paragraphs). If you need more, write code or notes to a file, run them, "
+    "and continue from the result.\n"
     "- **Winner session:** the mechanism arms were screened in separate sessions (results below). Your "
     "worktree holds the winning arm's best version. Deepen it: sweeps of its tunable values, refinement, "
     "measurement. Regenerate the winner's patch as `patches/<winner key>.patch` from the version you keep.\n"
@@ -173,6 +174,7 @@ def v7_design_context(campaign: dict, work_dir: Path, iteration: int | None = No
     """v7 DESIGN note on the local evaluator: plan it while missing, otherwise point at its README.
 
     Once an instrument.json exists, its summary follows unless the campaign handoff already carries it.
+    When this iteration's evaluator ran before the design (iteration 1), the baseline score follows too.
     """
     if not is_v7(campaign):
         return ""
@@ -183,8 +185,11 @@ def v7_design_context(campaign: dict, work_dir: Path, iteration: int | None = No
         handoff = Path(work_dir) / "handoff.md"
         checks = "" if handoff.is_file() and HEADING in handoff.read_text() else instrument_summary(
             campaign, work_dir, iteration)
+        from orchestrator.instrument import baseline_note
+        base = baseline_note(work_dir, iteration)
         return (f"\n\n## Local evaluator (v7)\n\nIt lives in `{ev}`. Its README:\n\n"
-                + readme.read_text().strip()[:3000] + "\n" + ("\n" + checks if checks else ""))
+                + readme.read_text().strip()[:3000] + "\n" + ("\n" + checks if checks else "")
+                + ("\n" + base if base else ""))
     return (
         "\n\n## Local evaluator (v7)\n\n"
         f"None exists yet. Before the arms run, an executor session builds a local evaluator in `{ev}` from "

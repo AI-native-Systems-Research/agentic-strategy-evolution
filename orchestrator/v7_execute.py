@@ -3,7 +3,8 @@
 Order within an iteration (all sessions sequential, each in its own worktree branched from the target HEAD,
 which carry-forward keeps at the best solution so far):
 
-1. ``build-evaluator`` session, only while ``<work_dir>/evaluator/README.md`` is missing.
+1. ``build-evaluator`` session, only while ``<work_dir>/evaluator/README.md`` is missing. It normally runs
+   before the designer (``run_v7_evaluator``, iteration 1) so the design starts from measured numbers.
 2. One ``execute-arm`` session per mechanism arm (``h-main``, ``h-alternative-1``, ...), each capped at
    ``v7.arm_budget_usd`` (shrunk so the winner keeps ``v7.winner_min_usd`` of the iteration budget). Each
    writes ``arms/<key>/result.json`` and ``patches/<key>.patch``.
@@ -35,6 +36,7 @@ STATE_FILE = "state.json"
 BUDGET_FILE = "budget.json"
 EVALUATOR_KEY = "evaluator"
 MIN_SESSION_USD = 1.0
+ASSUMED_ARMS = 2  # mechanism arms expected after a pre-design evaluator session, for its budget share
 STOP_BELOW_USD = 0.05  # a resumed winner with less than this left records what exists instead
 MAX_UNTRACKED_BYTES = 1_000_000  # larger new files (build outputs, data) stay out of the winner patch
 _STATUSES = ("CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED")
@@ -280,6 +282,12 @@ def session_context(campaign: dict, work_dir: Path, iteration: int, key: str | N
     }
     if key == EVALUATOR_KEY:
         ctx["instrument_path"] = str(iter_dir / INSTRUMENT_FILE)
+        if (iter_dir / "bundle.yaml").is_file():
+            ctx["design_context"] = (f"Problem framing: `{iter_dir}/problem.md`. "
+                                     f"Design: `{iter_dir}/bundle.yaml`.")
+        else:
+            ctx["design_context"] = ("No design yet: the designer runs after you, from your numbers. Work from "
+                                     "the problem statement in the target (your `cwd`).")
     elif key:
         arm = dict(mechanism_arms(_load_bundle(iter_dir))).get(key, {})
         ctx.update({
@@ -409,12 +417,75 @@ def record_screened_arms(campaign: dict, iter_dir: Path, iteration: int) -> None
         atomic_write(iter_dir / "principle_updates.json", json.dumps(updates, indent=2) + "\n")
 
 
+def _run_session(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, iteration: int, repo: Path,
+                 state: dict, key: str, cap: float, extras) -> None:
+    """One capped build-evaluator or execute-arm session in a fresh worktree; its state survives a crash."""
+    from orchestrator.worktree import create_experiment_worktree, remove_experiment_worktree
+    adir = Path(iter_dir) / ARMS_DIR
+    rec = state["sessions"].get(key) or {}
+    if rec.get("experiment_id"):  # interrupted earlier: start this session over
+        remove_experiment_worktree(repo, rec["experiment_id"])
+    wt, eid = create_experiment_worktree(repo, iteration, extras=extras or [])
+    state["sessions"][key] = {"status": "running", "experiment_id": eid, "budget_usd": cap}
+    _save_state(adir, state)
+    phase = "build-evaluator" if key == EVALUATOR_KEY else "execute-arm"
+    log = adir / key / "session_log.md"
+    print(f"  v7 {phase} `{key}` (cap ${cap:.2f}) in {wt}")
+    status = "done"
+    try:
+        with dispatcher.override_cwd(wt), dispatcher.session_budget(cap, label=key):
+            dispatcher.dispatch("executor", phase, output_path=log, iteration=iteration, perspective=key)
+    except RuntimeError as exc:
+        logger.warning("v7 session %s failed: %s", key, exc)
+        status = "failed"
+    if key != EVALUATOR_KEY:
+        _ensure_patch(wt, iter_dir / "patches" / f"{key}.patch")
+    remove_experiment_worktree(repo, eid)
+    state["sessions"][key] = {"status": "done", "outcome": status, "budget_usd": cap}
+    if key == EVALUATOR_KEY:
+        state["sessions"][key]["instrument"] = check_instrument(iter_dir)
+        add_to_handoff(campaign, work_dir, iter_dir, iteration)
+    _save_state(adir, state)
+
+
+def evaluator_before_design(campaign: dict, work_dir: Path, iter_dir: Path) -> bool:
+    """True while the evaluator session should run before the designer (iteration 1 order).
+
+    That is while no evaluator exists, or while this iteration's evaluator session was interrupted.
+    """
+    if not is_v7(campaign):
+        return False
+    rec = _load_json(Path(iter_dir) / ARMS_DIR / STATE_FILE, {}).get("sessions", {}).get(EVALUATOR_KEY) or {}
+    if rec.get("status") == "done":
+        return False
+    return rec.get("status") == "running" or not (Path(work_dir) / EVALUATOR_DIR / "README.md").is_file()
+
+
+def run_v7_evaluator(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, iteration: int,
+                     repo_path, *, extras=None) -> None:
+    """Build the evaluator and measure the incumbent before the designer runs (no-op when not needed).
+
+    The cap is a screening share of what is left after the design budget, assuming two arms follow.
+    ``run_v7_execute`` later sees the session as done and goes straight to the arms.
+    """
+    work_dir, iter_dir = Path(work_dir), Path(iter_dir)
+    if not evaluator_before_design(campaign, work_dir, iter_dir):
+        return
+    s = v7_settings(campaign)
+    (iter_dir / ARMS_DIR).mkdir(parents=True, exist_ok=True)
+    mark_iteration_start(campaign, work_dir, iter_dir)
+    state = _load_json(iter_dir / ARMS_DIR / STATE_FILE, {})
+    state.setdefault("sessions", {})
+    left = s.iteration_budget_usd - iteration_spent(campaign, work_dir, iter_dir) - s.design_budget_usd
+    cap = screening_cap(s, left, 1 + ASSUMED_ARMS)
+    _run_session(dispatcher, campaign, work_dir, iter_dir, iteration, Path(repo_path), state, EVALUATOR_KEY,
+                 cap, extras)
+
+
 def run_v7_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, iteration: int,
                    repo_path, *, extras=None) -> tuple[Path, str]:
     """Run screening and the winner session; return the winner's (worktree, experiment_id) for cleanup."""
-    from orchestrator.worktree import (
-        _EXPERIMENTS_DIRNAME, create_experiment_worktree, remove_experiment_worktree,
-    )
+    from orchestrator.worktree import _EXPERIMENTS_DIRNAME, create_experiment_worktree
     work_dir, iter_dir, repo = Path(work_dir), Path(iter_dir), Path(repo_path)
     s = v7_settings(campaign)
     adir = iter_dir / ARMS_DIR
@@ -439,34 +510,11 @@ def run_v7_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
     sessions += arms
     todo = [k for k, _ in sessions if (state["sessions"].get(k) or {}).get("status") != "done"]
     for key, _arm in sessions:
-        rec = state["sessions"].get(key) or {}
-        if rec.get("status") == "done":
+        if (state["sessions"].get(key) or {}).get("status") == "done":
             continue
-        if rec.get("experiment_id"):  # interrupted earlier: start this session over
-            remove_experiment_worktree(repo, rec["experiment_id"])
         cap = screening_cap(s, remaining(), len(todo))
         todo.remove(key)
-        wt, eid = create_experiment_worktree(repo, iteration, extras=extras or [])
-        state["sessions"][key] = {"status": "running", "experiment_id": eid, "budget_usd": cap}
-        _save_state(adir, state)
-        phase = "build-evaluator" if key == EVALUATOR_KEY else "execute-arm"
-        log = adir / key / "session_log.md"
-        print(f"  v7 {phase} `{key}` (cap ${cap:.2f}) in {wt}")
-        status = "done"
-        try:
-            with dispatcher.override_cwd(wt), dispatcher.session_budget(cap, label=key):
-                dispatcher.dispatch("executor", phase, output_path=log, iteration=iteration, perspective=key)
-        except RuntimeError as exc:
-            logger.warning("v7 session %s failed: %s", key, exc)
-            status = "failed"
-        if key != EVALUATOR_KEY:
-            _ensure_patch(wt, iter_dir / "patches" / f"{key}.patch")
-        remove_experiment_worktree(repo, eid)
-        state["sessions"][key] = {"status": "done", "outcome": status, "budget_usd": cap}
-        if key == EVALUATOR_KEY:
-            state["sessions"][key]["instrument"] = check_instrument(iter_dir)
-            add_to_handoff(campaign, work_dir, iter_dir, iteration)
-        _save_state(adir, state)
+        _run_session(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key, cap, extras)
 
     results = {k: _load_json(adir / k / "result.json", None) for k, _ in arms}
     win = state.get("winner") or {}

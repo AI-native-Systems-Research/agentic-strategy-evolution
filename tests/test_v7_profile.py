@@ -192,20 +192,34 @@ class TestGuidance:
         assert "per size group" in e and "gap_analysis" in e and "h-control-negative" in e
         assert "Start from the current best" in e and "--" not in e
 
-    def test_v7_build_and_measure_early(self):
+    SHORT = ("Keep each reasoning step short (a few paragraphs). If you need more, write code or notes to a "
+             "file, run them, and continue from the result.")
+
+    def test_v7_short_reasoning_steps_in_every_prompt(self):
+        import re
         c = _campaign(design_profile="v7")
-        assert "Design in steps" in design_guidance(c, 30)
-        assert "Build and measure early" in execute_guidance(c)
         root = Path(__file__).resolve().parents[1] / "prompts" / "methodology"
-        assert "Build and measure early" in (root / "execute_arm.md").read_text()
-        assert "never a whole turn" in (root / "build_evaluator.md").read_text()
+        texts = {"design": design_guidance(c, 30), "winner": execute_guidance(c),
+                 "arm": (root / "execute_arm.md").read_text(),
+                 "evaluator": (root / "build_evaluator.md").read_text()}
+        for name, text in texts.items():
+            flat = re.sub(r"\s+", " ", text)
+            assert flat.count(self.SHORT) == 1, name
+            assert "Build and measure early" not in text and "never a whole turn" not in text, name
+            assert "--" not in text, name
+
+    def test_v7_iteration_one_designer_job_is_narrow(self):
+        g = design_guidance(_campaign(design_profile="v7"), 30)
+        assert "name 2-3 algorithm families in a few lines each with a validity check" in g
+        assert "do not derive, prove, or fully specify them" in g
+        assert "without re-deriving it" not in g
 
     def test_other_profiles_unchanged(self):
         for p in ("lightweight", "v4", "v5", "v6"):
             c = _campaign(design_profile=p)
             text = design_guidance(c, 30) + execute_guidance(c)
             assert "h-alternative" not in text and "validity_check" not in text
-            assert "Build and measure early" not in text and "Design in steps" not in text
+            assert "Keep each reasoning step short" not in text and "Iteration 1:" not in text
             assert "Few, focused arms" in design_guidance(c, 30)
 
     def test_cached_methodology_has_no_v7_text(self):
@@ -522,6 +536,9 @@ class _Fake:
         self.winner_tokens = cost_tokens
         self.no_result = False  # screening sessions write a patch but no result.json
         self.budgets = {}
+        self.instrument = None  # instrument.json the evaluator session writes, when set
+        self.first_prompts = {}  # first prompt seen per session name
+        self.crash_in = None  # session name that dies like a killed process
 
     def __call__(self, **kw):
         if "max_cost_usd" in kw:
@@ -563,8 +580,14 @@ class _Fake:
         prompt, cwd = kw["prompt"], Path(kw["cwd"])
         if "Build the local evaluator" in prompt:
             self.sessions.append("evaluator")
+            self.first_prompts.setdefault("evaluator", prompt)
+            if self.crash_in == "evaluator":
+                self.crash_in = None
+                raise _Crash("process killed mid evaluator session")
             (self.work_dir / "evaluator").mkdir(exist_ok=True)
             (self.work_dir / "evaluator" / "README.md").write_text("python eval.py\n")
+            if self.instrument is not None:
+                (self.iter_dir / "instrument.json").write_text(json.dumps(self.instrument))
         elif "Screen arm `" in prompt:
             key = prompt.split("Screen arm `", 1)[1].split("`", 1)[0]
             self.sessions.append(key)
@@ -829,6 +852,10 @@ class _DesignAndExecute(_Fake):
         p = kw["prompt"]
         if "scientific planner" in p.split("\n", 1)[0] or p.startswith("# Design"):
             self.sessions.append("design")
+            self.first_prompts.setdefault("design", p)
+            if self.crash_in == "design":
+                self.crash_in = None
+                raise _Crash("process killed mid design session")
             it = self.work_dir / "runs" / "iter-1"
             (it / "problem.md").write_text("# P\n")
             (it / "handoff_snapshot.md").write_text("# H\n")
@@ -858,15 +885,99 @@ def test_run_iteration_v7_end_to_end(tmp_path, monkeypatch):
             return StubDispatcher(work_dir)
     monkeypatch.setattr(ri, "LLMDispatcher", stub)
     assert run_iteration(campaign, work, iteration=1, auto_approve=True) == IterationOutcome.COMPLETED
-    assert fake.sessions == ["design", "evaluator", "h-main", "h-alternative-1", "h-alternative-2", "winner"]
+    # iteration 1: the evaluator measures the incumbent before the designer runs
+    assert fake.sessions == ["evaluator", "design", "h-main", "h-alternative-1", "h-alternative-2", "winner"]
     rows = {r["session_label"]: r["budget_usd"] for r in _metrics(work) if "session_label" in r}
     assert rows["design"] == v7_settings(campaign).design_budget_usd
+    assert rows["evaluator"] <= v7_settings(campaign).arm_budget_usd
     best = json.loads((work / "best_found.json").read_text())["top_k"][0]
     assert best["candidate_id"] == "iter-1/h-alternative/h-alternative-1" and best["score"] == 701
     assert _git(repo, "worktree", "list").count("\n") == 1  # winner worktree cleaned up too
     from orchestrator.iteration import _maybe_carry_forward
     _maybe_carry_forward(campaign, work, str(repo))
     assert (repo / "solution.py").read_text() == "v = 701\n"
+
+
+INSTRUMENT = {"max_cpu_s": 0.4, "time_limit_s": 2.0, "speed_first": False,
+              "noise": {"runs": [41.0, 42.0, 43.0], "min": 41.0, "max": 43.0, "spread": 2.0}}
+
+
+def _iteration_setup(tmp_path, monkeypatch):
+    import orchestrator.iteration as ri
+    from orchestrator.dispatch import StubDispatcher
+    repo = _make_repo(tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    for t in ("state.json", "ledger.json", "principles.json"):
+        shutil.copy(TEMPLATES / t, work / t)
+    campaign = _campaign(design_profile="v7", objective={"weights": {"score": 1.0}})
+    campaign["target_system"]["repo_path"] = str(repo)
+    fake = _DesignAndExecute(work, work / "runs" / "iter-1", SCORES)
+    fake.instrument = INSTRUMENT
+    monkeypatch.setattr("orchestrator.sdk_dispatch._default_sdk_runner_factory", lambda: fake)
+    monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+
+    def stub(work_dir, campaign, model=None):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return StubDispatcher(work_dir)
+    monkeypatch.setattr(ri, "LLMDispatcher", stub)
+    return repo, work, campaign, fake
+
+
+class TestEvaluatorBeforeDesign:
+    def test_designer_gets_instrument_and_baseline_and_evaluator_needs_no_bundle(self, tmp_path, monkeypatch):
+        from orchestrator.iteration import IterationOutcome, run_iteration
+        repo, work, campaign, fake = _iteration_setup(tmp_path, monkeypatch)
+        assert run_iteration(campaign, work, iteration=1, auto_approve=True) == IterationOutcome.COMPLETED
+        assert fake.sessions[:2] == ["evaluator", "design"]
+        ev = fake.first_prompts["evaluator"]
+        assert "bundle.yaml" not in ev and "No design yet" in ev and "{{" not in ev
+        design = fake.first_prompts["design"]
+        assert "## Instrument checks (v7)" in design and "41 to 43" in design
+        assert "Baseline, measured before this design" in design and "scored 42" in design
+        state = json.loads((work / "runs" / "iter-1" / "arms" / "state.json").read_text())
+        assert state["sessions"]["evaluator"]["status"] == "done"
+        assert state["sessions"]["evaluator"]["instrument"] == "valid"
+
+    def test_crash_in_the_evaluator_reruns_it_before_the_design(self, tmp_path, monkeypatch):
+        from orchestrator.iteration import IterationOutcome, run_iteration
+        repo, work, campaign, fake = _iteration_setup(tmp_path, monkeypatch)
+        fake.crash_in = "evaluator"
+        with pytest.raises(_Crash):
+            run_iteration(campaign, work, iteration=1, auto_approve=True)
+        assert run_iteration(campaign, work, iteration=1, auto_approve=True) == IterationOutcome.COMPLETED
+        assert fake.sessions == ["evaluator", "evaluator", "design", "h-main", "h-alternative-1",
+                                 "h-alternative-2", "winner"]
+        assert _git(repo, "worktree", "list").count("\n") == 1  # the crashed session's worktree is gone
+
+    def test_crash_in_the_design_does_not_rerun_the_evaluator(self, tmp_path, monkeypatch):
+        from orchestrator.iteration import IterationOutcome, run_iteration
+        repo, work, campaign, fake = _iteration_setup(tmp_path, monkeypatch)
+        fake.crash_in = "design"
+        with pytest.raises(_Crash):
+            run_iteration(campaign, work, iteration=1, auto_approve=True)
+        assert run_iteration(campaign, work, iteration=1, auto_approve=True) == IterationOutcome.COMPLETED
+        assert fake.sessions == ["evaluator", "design", "design", "h-main", "h-alternative-1",
+                                 "h-alternative-2", "winner"]
+
+    def test_existing_evaluator_keeps_design_first(self, tmp_path, monkeypatch):
+        from orchestrator.iteration import IterationOutcome, run_iteration
+        repo, work, campaign, fake = _iteration_setup(tmp_path, monkeypatch)
+        (work / "evaluator").mkdir()
+        (work / "evaluator" / "README.md").write_text("python eval.py\n")
+        assert run_iteration(campaign, work, iteration=1, auto_approve=True) == IterationOutcome.COMPLETED
+        assert "evaluator" not in fake.sessions and fake.sessions[0] == "design"
+        assert "Baseline, measured before this design" not in fake.first_prompts["design"]
+
+    def test_evaluator_after_design_still_sees_the_bundle(self, tmp_path):
+        from orchestrator.v7_execute import EVALUATOR_KEY, session_context
+        it = tmp_path / "runs" / "iter-1"
+        it.mkdir(parents=True)
+        c = _campaign(design_profile="v7")
+        assert "No design yet" in session_context(c, tmp_path, 1, EVALUATOR_KEY)["design_context"]
+        (it / "bundle.yaml").write_text(yaml.safe_dump(V7_BUNDLE))
+        assert "bundle.yaml" in session_context(c, tmp_path, 1, EVALUATOR_KEY)["design_context"]
 
 
 def test_run_iteration_v7_cut_winner_completes_and_cleans_up(tmp_path, monkeypatch):
