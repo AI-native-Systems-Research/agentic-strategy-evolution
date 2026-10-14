@@ -42,9 +42,8 @@ properties:
     description: "Brief explanation of which arms were chosen and why."
 
   single_family_reason:
-    type: string
-    minLength: 1
-    description: "Why the bundle has no h-alternative arm (design_profile v7 requires this when only one mechanism family is used)."
+    type: [string, "null"]
+    description: "Why the bundle has no h-alternative arm (design_profile v7 requires this when only one mechanism family is used). Null or empty counts as absent."
 
   complexity_tier:
     type: integer
@@ -358,6 +357,9 @@ $defs:
           - h-robustness
           - h-dose-response
           - h-tradeoff
+      id:
+        type: string
+        description: "Optional label for the arm (ignored by the orchestrator)."
       component:
         type: string
         description: "Component name, used for h-ablation arms."

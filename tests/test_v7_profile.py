@@ -117,6 +117,20 @@ class TestV7DesignRules:
         ok = _bundle(MAIN, single_family_reason="only exact DP is feasible at these sizes")
         assert validate_design(_design_dir(tmp_path, ok), campaign=self.V7)["status"] == "pass"
 
+    @pytest.mark.parametrize("empty", [None, "", "  "])
+    def test_null_or_empty_single_family_reason_counts_as_absent(self, tmp_path, empty):
+        with_alt = _bundle(MAIN, ALT, single_family_reason=empty)
+        assert validate_design(_design_dir(tmp_path, with_alt), campaign=self.V7)["status"] == "pass"
+        r = validate_design(_design_dir(tmp_path, _bundle(MAIN, single_family_reason=empty)), campaign=self.V7)
+        assert r["status"] != "pass" and any("single_family_reason" in e for e in r["errors"])
+
+    def test_arms_may_carry_an_id(self, tmp_path):
+        b = _bundle(dict(MAIN, id="A"), dict(ALT, id="B"))
+        assert validate_design(_design_dir(tmp_path, b), campaign=self.V7)["status"] == "pass"
+        # other unknown arm keys are still rejected
+        bad = _bundle(dict(MAIN, colour="red"), ALT)
+        assert validate_design(_design_dir(tmp_path, bad), campaign=self.V7)["status"] != "pass"
+
     def test_cli_validate_reads_v7_campaign(self, tmp_path, capsys):
         import argparse
         from orchestrator.cli import _cmd_validate
