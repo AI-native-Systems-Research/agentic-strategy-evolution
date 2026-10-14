@@ -28,6 +28,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import signal
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -212,6 +215,113 @@ async def aiter_with_silence_watchdog(aiter, threshold: float | None):
                 # makes post-mortem impossible. Log at debug so it's
                 # recoverable without adding noise to the abort report.
                 logger.debug("aiter cleanup raised (non-fatal): %s", exc)
+
+
+# Seconds a stopped claude CLI process tree gets between SIGTERM and SIGKILL.
+_CLI_KILL_GRACE_S = 3.0
+
+
+def _ps_table() -> dict[int, tuple[int, str]] | None:
+    """``{pid: (ppid, stat)}`` for every process (POSIX ``ps``), or None when ``ps`` is unavailable."""
+    try:
+        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,stat="], capture_output=True,
+                             text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    table: dict[int, tuple[int, str]] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            table[int(parts[0])] = (int(parts[1]), parts[2] if len(parts) > 2 else "")
+    return table
+
+
+def _live_tree(roots: list[int], table: dict[int, tuple[int, str]] | None) -> list[int]:
+    """``roots`` plus their descendants, minus processes that already exited (zombies count as exited)."""
+    if table is None:
+        alive = []
+        for pid in roots:
+            try:
+                os.kill(pid, 0)
+                alive.append(pid)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                alive.append(pid)
+        return alive
+    children: dict[int, list[int]] = {}
+    for pid, (ppid, _) in table.items():
+        children.setdefault(ppid, []).append(pid)
+    seen: list[int] = []
+    todo = list(roots)
+    while todo:
+        pid = todo.pop()
+        if pid in seen or pid not in table:
+            continue
+        seen.append(pid)
+        todo.extend(children.get(pid, []))
+    return [p for p in seen if not table[p][1].startswith("Z")]
+
+
+def kill_process_tree(root: int, grace_s: float = _CLI_KILL_GRACE_S) -> None:
+    """SIGTERM ``root`` and every descendant, then SIGKILL whatever is left after ``grace_s``.
+
+    Descendants are found before any signal is sent, while they are still attached to ``root``.
+    Synchronous on purpose: it must finish even while the event loop is being cancelled.
+    """
+    tree = _live_tree([root], _ps_table())
+    if not tree:
+        return
+    for pid in tree:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+    deadline = time.time() + grace_s
+    while True:
+        tree = _live_tree(tree, _ps_table())  # survivors plus anything they spawned meanwhile
+        if not tree or time.time() >= deadline:
+            break
+        time.sleep(0.1)
+    for pid in tree:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+    if tree:
+        logger.warning("claude CLI process tree ignored SIGTERM; killed %s", tree)
+
+
+def _cli_transport(sdk, prompt, options):
+    """A SubprocessCLITransport we hold a handle on, or None when this SDK cannot take one.
+
+    Passing our own transport to ``query()`` lets the runner kill the CLI it spawned. ``query()`` alone
+    cannot: closing it does not close the SDK's inner generator (PEP 533), so on an early stop the CLI
+    keeps working, and spending, until garbage collection. Nous never sets ``can_use_tool`` or a
+    ``session_store``, the only options ``query()`` applies to its own transport and not to ours.
+    """
+    import inspect
+    cls = getattr(sdk, "SubprocessCLITransport", None)
+    if cls is None:
+        try:
+            from claude_agent_sdk._internal.transport.subprocess_cli import (  # type: ignore[import-not-found]
+                SubprocessCLITransport as cls,
+            )
+        except ImportError:
+            return None
+    try:
+        if "transport" not in inspect.signature(sdk.query).parameters:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return cls(prompt=prompt, options=options)
+
+
+async def _stop_cli(transport) -> None:
+    """Make sure the CLI behind ``transport`` and its children are gone (no-op once the SDK closed it)."""
+    proc = getattr(transport, "_process", None)
+    pid = getattr(proc, "pid", None)
+    if pid is None or getattr(proc, "returncode", None) is not None:
+        return
+    kill_process_tree(pid)
+    # The SDK's own close (run when its generator is finalized) now finds the process dead and only
+    # tidies up; calling transport.close() here as well would race it.
 
 
 def summarize_silence_gaps(event_log_path: Path) -> dict:
@@ -449,6 +559,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
     ) -> SDKResult:
         try:
             import anyio
+            import claude_agent_sdk as _sdk  # type: ignore[import-not-found]
             from claude_agent_sdk import (  # type: ignore[import-not-found]
                 ClaudeAgentOptions,
                 query,
@@ -460,7 +571,18 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 "nous, which now lists it as a required dependency — see #183)."
             ) from exc
 
+        cli: dict = {}  # the transport whose CLI process _run must not leave running
+
         async def _run() -> SDKResult:
+            # Every exit (cap stop, error result, watchdog, STOP_IMMEDIATE, exception) kills the CLI
+            # tree; otherwise it keeps working unattended, editing worktrees and spending.
+            try:
+                return await _session()
+            finally:
+                if cli.get("transport") is not None:
+                    await _stop_cli(cli["transport"])
+
+        async def _session() -> SDKResult:
             # #193: ``permission_mode`` controls the Claude Code SDK
             # filesystem sandbox. Default is "bypassPermissions" because
             # nous campaigns routinely need writes outside cwd (the
@@ -528,7 +650,9 @@ def _default_sdk_runner_factory() -> SDKRunner:
             # model-side hang surfaces as ``SDKTransientError``. The
             # existing transient-retry machinery (lines below) catches
             # it and retries instead of blocking the campaign forever.
-            aiter = query(prompt=prompt, options=options).__aiter__()
+            cli["transport"] = _cli_transport(_sdk, prompt, options)
+            q_kw = {"transport": cli["transport"]} if cli["transport"] is not None else {}
+            aiter = query(prompt=prompt, options=options, **q_kw).__aiter__()
             # #250 (F5): event-boundary STOP. Resolve the work_dir once
             # per-turn from the event_log_path (which lives at
             # ``<work_dir>/runs/iter-N/inputs/executor_log.jsonl``) so
