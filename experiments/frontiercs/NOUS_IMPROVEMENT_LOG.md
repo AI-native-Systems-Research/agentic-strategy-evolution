@@ -137,3 +137,10 @@ by $15-25. Nous v6 = `design_profile: v6` (lightweight design-only designer, scr
 the best arm, uncapped EXECUTE). Single runs per agent; p0 judge noise is about +-2. Full history, versions,
 integrity findings: `NOUS_IMPROVEMENT_LOG.md`.
 
+
+## 8. Opus-5 at $25 (started 2026-10-13 22:15)
+
+Question: does a stronger model get more benefit from Nous? Identical setup to the opus-4-6 final (same $25 cap,
+$15/$75 ruler, sandbox, judge, audit, Nous v6 vs Claude SDK minimal prompt); only the model changes to
+`aws/claude-opus-5`. 10 runs (5 tasks x 2 agents), queued by `gen/o5_queue.sh`, max 3 concurrent, Nous and Claude
+for the same task launched back to back. Results will be filled in below.
