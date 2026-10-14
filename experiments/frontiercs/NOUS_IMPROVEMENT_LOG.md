@@ -153,3 +153,11 @@ Claude p0 had just started and was killed ($0.69). Fix: colima restarted, `~/fro
 restarts it if the judge disappears. Decision recorded before any re-run result: **clean re-runs of Nous p5, Nous
 p0 and Claude p0 (`gen/o5_queue2.sh`, slugs *_o5b) are the official Opus-5 numbers**; the outage runs are kept
 as `*.o5c25.outage_backup.json`.
+
+Opus-5 results so far (headline rule as for opus-4-6: Claude = final re-judged harvest at its cap; Nous =
+best_at_budget, i.e. best re-judged solution measured by $25):
+
+| task | Claude (Opus-5) | Nous v6 (Opus-5) | notes |
+|---|---|---|---|
+| p5 | **96.0** ($25.69; final solution.cpp, last measured 92) | 90.0 @ $25 (outage run, backup; re-run queued) | |
+| p0 | re-run queued | 93.96 @ $25 (outage run, backup; re-run queued) | |
