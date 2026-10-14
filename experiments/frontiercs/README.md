@@ -109,6 +109,29 @@ AHC-style problems (10 s x 100-150 tests per measurement is too slow to iterate)
 Judge caveat: the human p0 reference scored 84.0 on 2026-10-14 vs 81.2 before; compare agents under the same
 judge load.
 
+**Claude $5 pilot (2026-10-14, `gen/pilot_c5.sh`):** p181, p26, p58 all scored 0 at $5. p26 and p58 never
+submitted a solution (each $5 went into one or two long reasoning turns). Taken as evidence these are hard.
+
+## Focus set at $50: Claude Code baseline (2026-10-14, opus-4-6, done)
+
+Same runner, sandbox, judge daemon, exploit audit and cost ruler as the $25 runs (`gen/claude_c50.sh`,
+`gen/claude_c50_dev.sh`; keys from env `NOUS_LITELLM_*` / `NOUS_VPCINT_*`). Minimal prompt, WebSearch/WebFetch
+off, default effort. Final score is the re-judged clean final solution.
+
+| task | endpoint | final | cost | best known | pred |
+|---|---|---|---|---|---|
+| p5 | vpc-int | 57.00 | $51.29 | 96.0 (our Opus-5 Claude run; published 71) | `p5.claude_sdk.c50.json` |
+| p181 | vpc | 56.00 | $50.76 | 86 | `p181.claude_sdk.c50.json` |
+| p0 | vpc-int | 26.43 | $51.35 | 97.7 | `p0.claude_sdk.c50.json` |
+| p26 | vpc | 0 | $20.13 | 100 | `p26.claude_sdk.c50.json` |
+| p58 | vpc | 0 | $20.53 | 86 | `p58.claude_sdk.c50.json` |
+
+p26 and p58: every turn was one reasoning block that hit Claude Code's 64k output-token maximum (Claude Code
+auto-resumes with "Output token limit hit. Resume directly..."); after 4 in a row the CLI exited with code 1
+("response exceeded the 64000 output token maximum") having never submitted a solution. Our driver auto-continues
+only after a normal session end, so a CLI crash ends the run; we count these as 0. Audit: every run touched only
+its own judge inbox/outbox; no test data, `.ans`, reference or other-run access; 0 exploit rejections.
+
 ## 5. Results
 
 ### Algorithmic (opus-4-6, go-judge 0-100) — INVALID for Nous, do not cite
