@@ -144,3 +144,12 @@ Question: does a stronger model get more benefit from Nous? Identical setup to t
 $15/$75 ruler, sandbox, judge, audit, Nous v6 vs Claude SDK minimal prompt); only the model changes to
 `aws/claude-opus-5`. 10 runs (5 tasks x 2 agents), queued by `gen/o5_queue.sh`, max 3 concurrent, Nous and Claude
 for the same task launched back to back. Results will be filled in below.
+
+**Judge outage (2026-10-13 22:49-23:08).** The colima Docker VM running the algorithmic go-judge stopped; every
+algorithmic score in that window was a false 0 (re-judging the same files after restart gives 91 etc.). Affected:
+Nous p5 (finished; best 91 came before the outage, re-judged final 91.0, at $25 90.0) and Nous p0 (8 false-0
+measurements after 22:57; best 92.08 came before). Claude p5 did not measure during the outage (unaffected).
+Claude p0 had just started and was killed ($0.69). Fix: colima restarted, `~/frontier/judge_watchdog.sh`
+restarts it if the judge disappears. Decision recorded before any re-run result: **clean re-runs of Nous p5, Nous
+p0 and Claude p0 (`gen/o5_queue2.sh`, slugs *_o5b) are the official Opus-5 numbers**; the outage runs are kept
+as `*.o5c25.outage_backup.json`.

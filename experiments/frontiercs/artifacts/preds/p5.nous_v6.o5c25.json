@@ -1,0 +1,71 @@
+{
+  "problem_id": "5",
+  "track": "algorithmic",
+  "agent": "nous",
+  "label": "p5_v6o5",
+  "model": "aws/claude-opus-5",
+  "final_score": 91.0,
+  "cost_usd": 2.07,
+  "n_clean_candidates": 5,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0004_224400_score91.00.cpp",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0004_224400_score91.00.cpp",
+      "score": 90.99999999999999
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0003_222855_score51.00.cpp",
+      "score": 53.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0002_222646_score35.00.cpp",
+      "score": 35.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0000_221624_score0.00.cpp",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0006_224911_score0.00.cpp",
+      "score": 88.99999999999999
+    }
+  ],
+  "elapsed_s": 2889.3,
+  "cost_usd_tokenbased": 28.71,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true,
+  "stop_rule": "finish the iteration in progress at $25.0 (ceiling $28.5)",
+  "best_at_budget": 90.0,
+  "budget_reached_at": 1791946684.374985,
+  "clean_evidence_outage_rejudge": [
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0004_224400_score91.00.cpp",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0003_222855_score51.00.cpp",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0002_222646_score35.00.cpp",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0000_221624_score0.00.cpp",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p5_v6o5_measured_20261013_221542/m0006_224911_score0.00.cpp",
+      "score": 0.0
+    }
+  ],
+  "note": "go-judge (colima docker) was down ~22:49-23:08; in-run scores in that window were false 0s; re-judged after restart"
+}
