@@ -118,8 +118,14 @@ V7_DESIGN_EXTRA = (
     "- **Target per-instance gaps:** from the second iteration on, pick mechanisms that attack the largest "
     "loss per instance and size group in the executor's gap analysis (score lost, CPU time against the time "
     "limit, timeouts), not just the aggregate score.\n"
+    "- **Design in steps:** write `bundle.yaml` early and refine it. A mechanism sketch plus its validity "
+    "check is enough; the executor works out the details by building and measuring. Do not try to solve "
+    "the problem in one long reasoning turn: unbroken reasoning hits the output limit and is lost.\n"
 )
 V7_EXECUTE_EXTRA = (
+    "- **Build and measure early:** keep a runnable version at all times and measure after each change. "
+    "Reason in short steps between measurements; never spend a whole turn reasoning without writing or "
+    "running code.\n"
     "- **Winner session:** the mechanism arms were screened in separate sessions (results below). Your "
     "worktree holds the winning arm's best version. Deepen it: sweeps of its tunable values, refinement, "
     "measurement. Regenerate the winner's patch as `patches/<winner key>.patch` from the version you keep.\n"

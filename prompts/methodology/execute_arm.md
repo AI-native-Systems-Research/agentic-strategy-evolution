@@ -21,6 +21,10 @@ about ${{budget_usd}}, so write the result file early and update it as you impro
 
 ## Steps
 
+Build and measure early: within your first few turns write a runnable version and measure it, then
+reason in short steps between measurements. Never spend a whole turn reasoning without writing or
+running code; unbroken reasoning hits the output limit and is lost.
+
 1. Implement the mechanism minimally, then run the arm's `validity_check` on a tiny case. If it fails,
    stop building: record `validity_check.passed: false` with what failed.
 2. Measure. Refine within this arm's hypothesis while the budget allows, keeping the best version in the

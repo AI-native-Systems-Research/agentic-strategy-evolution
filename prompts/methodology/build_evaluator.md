@@ -11,6 +11,9 @@ work on the solution itself. This session stops at about ${{budget_usd}}.
 
 ## Build in `{{evaluator_dir}}`
 
+Write and run each piece as soon as it exists; reason in short steps between runs, never a whole turn
+without writing or running code.
+
 1. An instance generator from the problem statement, covering small cases and the largest allowed sizes.
 2. A per-instance score, computed the way the statement defines it.
 3. Per-instance CPU time of the solution against the time limit, flagging instances over the limit.

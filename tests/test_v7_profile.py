@@ -178,11 +178,20 @@ class TestGuidance:
         assert "per size group" in e and "gap_analysis" in e and "h-control-negative" in e
         assert "Start from the current best" in e and "--" not in e
 
+    def test_v7_build_and_measure_early(self):
+        c = _campaign(design_profile="v7")
+        assert "Design in steps" in design_guidance(c, 30)
+        assert "Build and measure early" in execute_guidance(c)
+        root = Path(__file__).resolve().parents[1] / "prompts" / "methodology"
+        assert "Build and measure early" in (root / "execute_arm.md").read_text()
+        assert "never a whole turn" in (root / "build_evaluator.md").read_text()
+
     def test_other_profiles_unchanged(self):
         for p in ("lightweight", "v4", "v5", "v6"):
             c = _campaign(design_profile=p)
             text = design_guidance(c, 30) + execute_guidance(c)
             assert "h-alternative" not in text and "validity_check" not in text
+            assert "Build and measure early" not in text and "Design in steps" not in text
             assert "Few, focused arms" in design_guidance(c, 30)
 
     def test_v7_keeps_v6_machinery(self):
