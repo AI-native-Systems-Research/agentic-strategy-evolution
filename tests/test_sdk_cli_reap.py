@@ -24,6 +24,15 @@ time.sleep(60)
 """
 
 
+# A CLI that finishes normally: it writes its last transcript line about 1 s after the final result.
+_FLUSHING_CLI = r"""
+import sys, time
+time.sleep(1.0)
+with open(sys.argv[1], "w") as f:
+    f.write("flushed\n")
+"""
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -33,8 +42,19 @@ def _alive(pid: int) -> bool:
     return bool(stat.strip()) and not stat.strip().startswith("Z")
 
 
-def _fake_sdk(tmp_path, spawned, *, messages=10, hang_after=None):
+def _fake_sdk(tmp_path, spawned, *, messages=10, hang_after=None, finish=False):
     import anyio
+
+    class ResultMessage:
+        def __init__(self):
+            self.usage = {"output_tokens": 10}
+            self.total_cost_usd = 0.0
+            self.duration_ms = 1
+            self.num_turns = 1
+            self.session_id = "sess-1"
+            self.is_error = False
+            self.subtype = "success"
+            self.result = "done"
 
     class _Opts:
         def __init__(self, **kw):
@@ -52,6 +72,11 @@ def _fake_sdk(tmp_path, spawned, *, messages=10, hang_after=None):
             self._process = None
 
         async def connect(self):
+            if finish:
+                self._process = await anyio.open_process(
+                    [sys.executable, "-c", _FLUSHING_CLI, str(tmp_path / "transcript.done")])
+                spawned["cli"] = self._process.pid
+                return
             pid_file = tmp_path / "child.pid"
             self._process = await anyio.open_process([sys.executable, "-c", _DUMMY_CLI, str(pid_file)])
             for _ in range(200):
@@ -70,6 +95,8 @@ def _fake_sdk(tmp_path, spawned, *, messages=10, hang_after=None):
             if hang_after is not None and i == hang_after:
                 await anyio.sleep(60)
             yield AssistantMessage(i)
+        if finish:
+            yield ResultMessage()
 
     m = types.ModuleType("claude_agent_sdk")
     m.ClaudeAgentOptions = _Opts
@@ -114,6 +141,17 @@ def test_silence_watchdog_abort_kills_the_cli(monkeypatch, tmp_path, cleanup):
     finally:
         cleanup.extend(spawned.values())
     assert not _alive(spawned["cli"]) and not _alive(spawned["child"])
+
+
+def test_normal_finish_lets_the_cli_flush_its_transcript(monkeypatch, tmp_path, cleanup):
+    spawned = {}
+    try:
+        res = _run(monkeypatch, tmp_path, spawned, sdk_kw={"messages": 1, "finish": True})
+    finally:
+        cleanup.extend(spawned.values())
+    assert not res.is_error
+    assert (tmp_path / "transcript.done").exists(), "CLI was killed before writing its last transcript line"
+    assert not _alive(spawned["cli"])
 
 
 def test_stop_returns_promptly(monkeypatch, tmp_path, cleanup):

@@ -313,12 +313,19 @@ def _cli_transport(sdk, prompt, options):
     return cls(prompt=prompt, options=options)
 
 
-async def _stop_cli(transport) -> None:
-    """Make sure the CLI behind ``transport`` and its children are gone (no-op once the SDK closed it)."""
+async def _stop_cli(transport, exit_wait_s: float = 0.0) -> None:
+    """Make sure the CLI behind ``transport`` and its children are gone (no-op once the SDK closed it).
+
+    ``exit_wait_s``: after a final result the CLI is still flushing its session transcript (which the
+    cost ruler and session resume read), so let it exit on its own for that long before killing it.
+    """
     proc = getattr(transport, "_process", None)
     pid = getattr(proc, "pid", None)
     if pid is None or getattr(proc, "returncode", None) is not None:
         return
+    deadline = time.time() + exit_wait_s
+    while time.time() < deadline and _live_tree([pid], _ps_table()):
+        await asyncio.sleep(0.2)
     kill_process_tree(pid)
     # The SDK's own close (run when its generator is finalized) now finds the process dead and only
     # tidies up; calling transport.close() here as well would race it.
@@ -580,7 +587,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 return await _session()
             finally:
                 if cli.get("transport") is not None:
-                    await _stop_cli(cli["transport"])
+                    await _stop_cli(cli["transport"], exit_wait_s=5.0 if cli.get("result_seen") else 0.0)
 
         async def _session() -> SDKResult:
             # #193: ``permission_mode`` controls the Claude Code SDK
@@ -719,6 +726,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     if isinstance(data, dict) and data.get("session_id"):
                         stream_session_id = stream_session_id or data["session_id"]
                 elif cls == "ResultMessage":
+                    cli["result_seen"] = True
                     usage = getattr(message, "usage", {}) or {}
                     cost_usd = float(getattr(message, "total_cost_usd", 0.0) or 0.0)
                     duration_ms = int(getattr(message, "duration_ms", 0) or 0)
