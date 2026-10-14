@@ -194,6 +194,11 @@ class TestGuidance:
             assert "Build and measure early" not in text and "Design in steps" not in text
             assert "Few, focused arms" in design_guidance(c, 30)
 
+    def test_cached_methodology_has_no_v7_text(self):
+        from orchestrator.sdk_dispatch import _load_methodology_preamble
+        preamble = _load_methodology_preamble(ROOT / "prompts" / "methodology")
+        assert preamble and "h-alternative" not in preamble and "mechanism_family" not in preamble
+
     def test_v7_keeps_v6_machinery(self):
         from orchestrator.design_profile import carry_forward_enabled, max_wrap_ups, resolve_max_turns
         c = _campaign(design_profile="v7")
@@ -486,6 +491,10 @@ def _make_repo(tmp_path):
     return repo
 
 
+class _Crash(BaseException):
+    """Stands in for the process dying (not an error the dispatcher could catch and retry)."""
+
+
 class _Fake:
     """Scripted executor: acts on the prompt it receives, as a real session would (files on disk)."""
 
@@ -514,6 +523,15 @@ class _Fake:
         win = self.winner_saw.split("=")[1].strip()
         (cwd / "solution.py").write_text(f"v = {win}1\n")
         (cwd / "helper.py").write_text("H = 1\n")
+        if self.winner_mode == "crash":
+            raise _Crash("process killed mid winner session")
+        if self.winner_mode == "findings_only":  # wrap-up cut short after findings.json
+            (self.iter_dir / "findings.json").write_text(json.dumps({
+                "iteration": 1, "bundle_ref": "bundle.yaml", "experiment_valid": True,
+                "discrepancy_analysis": "x",
+                "arms": [{"arm_type": "h-alternative", "predicted": "p", "observed": "o",
+                          "status": "CONFIRMED", "error_type": None, "diagnostic_note": None,
+                          "metadata": {"candidate_id": "h-alternative-1", "score": float(f"{win}1")}}]}))
         if self.winner_mode == "sloppy":
             (self.iter_dir / "experiment_plan.yaml").write_text(yaml.safe_dump({
                 "metadata": {"iteration": 1, "bundle_ref": "bundle.yaml"},
@@ -711,14 +729,60 @@ class TestV7Execute:
         assert fake.winner_saw == "v = 0\n"
         assert json.loads((it / "arms" / "state.json").read_text())["winner"]["patch_applied"] is False
 
-    def test_cut_winner_resumes_its_worktree_on_the_remaining_budget(self, tmp_path, monkeypatch):
+    def test_crashed_winner_resumes_its_worktree_on_the_remaining_budget(self, tmp_path, monkeypatch):
         repo, work, it, campaign, fake, d = _v7_setup(tmp_path, monkeypatch, SCORES)
-        fake.winner_mode = "cut"  # $1.50 per attempt, never writes findings.json
-        wt, _ = _run(repo, work, it, campaign, d)
-        assert not (it / "findings.json").exists() and wt.exists()
+        fake.winner_mode = "crash"
+        with pytest.raises(_Crash):
+            _run(repo, work, it, campaign, d)
+        fake.winner_mode = "normal"
+        n = len(fake.sessions)
         _run(repo, work, it, campaign, d)
+        assert fake.sessions[n:] == ["winner"]  # screens are not redone
         assert fake.winner_saw == "v = 701\n"  # the retry continues in the kept worktree
-        assert fake.budgets[5] == pytest.approx(12.0 - 5 * 1.5, abs=0.01)  # only what is left
+        assert fake.budgets[n] == pytest.approx(12.0 - 4 * 1.5, abs=0.01)  # only what is left
+
+    def test_cut_winner_with_budget_left_records_the_screening(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _v7_setup(tmp_path, monkeypatch, SCORES)
+        fake.winner_mode = "cut"  # $1.50, stops early, writes nothing; most of the budget is left
+        wt, _ = _run(repo, work, it, campaign, d)
+        findings = json.loads((it / "findings.json").read_text())
+        jsonschema.validate(findings, FINDINGS_SCHEMA)
+        assert findings["arms"][0]["metadata"]["candidate_id"] == "h-alternative-1"
+        assert findings["arms"][0]["metadata"]["score"] == 70
+        from orchestrator.validate import validate_execution
+        assert validate_execution(it, campaign=campaign)["status"] == "pass"
+        assert "v = 701" in (it / "patches" / "h-alternative-1.unmeasured.patch").read_text()
+        from orchestrator.composite_score import update_best_found
+        from orchestrator.iteration import _resolve_objective
+        top = update_best_found(work, objective=_resolve_objective(campaign))["top_k"][0]
+        assert top["candidate_id"] == "iter-1/h-alternative/h-alternative-1" and top["score"] == 70
+        n = len(fake.sessions)
+        _run(repo, work, it, campaign, d)
+        assert len(fake.sessions) == n  # the iteration is finished; no second winner session
+
+    def test_winner_with_findings_only_gets_stub_plan_and_principles(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _v7_setup(tmp_path, monkeypatch, SCORES)
+        fake.winner_mode = "findings_only"
+        _run(repo, work, it, campaign, d)
+        plan = yaml.safe_load((it / "experiment_plan.yaml").read_text())
+        jsonschema.validate(plan, yaml.safe_load((SCHEMAS / "experiment_plan.schema.yaml").read_text()))
+        principles = json.loads((it / "principle_updates.json").read_text())
+        assert {p["id"] for p in principles} == {"iter-1-h-main-lost", "iter-1-h-alternative-2-lost"}
+        from orchestrator.validate import validate_execution
+        assert validate_execution(it, campaign=campaign)["status"] == "pass"
+        assert "v = 701" in (it / "patches" / "h-alternative-1.patch").read_text()
+
+    def test_resume_after_winner_finished_does_not_rerun_it(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _v7_setup(tmp_path, monkeypatch, SCORES)
+        _run(repo, work, it, campaign, d)
+        state = json.loads((it / "arms" / "state.json").read_text())
+        state["winner"].pop("status")  # crash after the session wrote findings, before `done` was saved
+        (it / "arms" / "state.json").write_text(json.dumps(state))
+        n = len(fake.sessions)
+        _run(repo, work, it, campaign, d)
+        assert len(fake.sessions) == n
+        assert json.loads((it / "arms" / "state.json").read_text())["winner"]["status"] == "done"
+        assert "v = 701" in (it / "patches" / "h-alternative-1.patch").read_text()
 
     def test_spent_budget_stops_the_winner_and_records_the_screening(self, tmp_path, monkeypatch):
         repo, work, it, campaign, fake, d = _v7_setup(tmp_path, monkeypatch, SCORES)
@@ -791,10 +855,10 @@ def test_run_iteration_v7_end_to_end(tmp_path, monkeypatch):
     assert (repo / "solution.py").read_text() == "v = 701\n"
 
 
-def test_run_iteration_v7_keeps_cut_winner_worktree(tmp_path, monkeypatch):
+def test_run_iteration_v7_cut_winner_completes_and_cleans_up(tmp_path, monkeypatch):
     import orchestrator.iteration as ri
     from orchestrator.dispatch import StubDispatcher
-    from orchestrator.iteration import ExecuteAnalyzeIncompleteError, run_iteration
+    from orchestrator.iteration import IterationOutcome, run_iteration
     repo = _make_repo(tmp_path)
     work = tmp_path / "work"
     work.mkdir()
@@ -812,6 +876,10 @@ def test_run_iteration_v7_keeps_cut_winner_worktree(tmp_path, monkeypatch):
             warnings.simplefilter("ignore")
             return StubDispatcher(work_dir)
     monkeypatch.setattr(ri, "LLMDispatcher", stub)
-    with pytest.raises(ExecuteAnalyzeIncompleteError):
-        run_iteration(campaign, work, iteration=1, auto_approve=True)
-    assert _git(repo, "worktree", "list").count("\n") == 2  # the winner's worktree is kept for resume
+    assert run_iteration(campaign, work, iteration=1, auto_approve=True) == IterationOutcome.COMPLETED
+    best = json.loads((work / "best_found.json").read_text())["top_k"][0]
+    assert best["candidate_id"] == "iter-1/h-alternative/h-alternative-1" and best["score"] == 70
+    assert _git(repo, "worktree", "list").count("\n") == 1  # winner worktree cleaned up
+    from orchestrator.iteration import _maybe_carry_forward
+    _maybe_carry_forward(campaign, work, str(repo))
+    assert (repo / "solution.py").read_text() == "v = 70\n"

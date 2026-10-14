@@ -35,7 +35,7 @@ STATE_FILE = "state.json"
 BUDGET_FILE = "budget.json"
 EVALUATOR_KEY = "evaluator"
 MIN_SESSION_USD = 1.0
-STOP_BELOW_USD = 0.05  # a winner retry with less than this left records what exists instead
+STOP_BELOW_USD = 0.05  # a resumed winner with less than this left records what exists instead
 MAX_UNTRACKED_BYTES = 1_000_000  # larger new files (build outputs, data) stay out of the winner patch
 _STATUSES = ("CONFIRMED", "REFUTED", "PARTIALLY_CONFIRMED")
 _ERROR_TYPES = ("direction", "magnitude", "regime", "shape_mismatch")
@@ -221,7 +221,7 @@ def tag_winner_findings(iter_dir: Path, winner: str, screened: list[str]) -> Non
 
 
 def record_without_winner_session(campaign: dict, iter_dir: Path, iteration: int, winner: str) -> None:
-    """The iteration budget ran out before the winner session wrote its artifacts: record the screening.
+    """The winner session ended without findings.json (budget spent or stopped early): record the screening.
 
     The winner's entry comes from its screening result, so its measured score matches the screening
     patch, which is kept; the winner session's unmeasured worktree is saved separately by the caller.
@@ -234,26 +234,34 @@ def record_without_winner_session(campaign: dict, iter_dir: Path, iteration: int
     if not (iter_dir / "findings.json").exists():
         if isinstance(result, dict):
             entry = _arm_entry(winner, arm, result, campaign)
-            entry["diagnostic_note"] = ("Won the v7 screening; the iteration budget ran out before the "
-                                        f"winner session finished. Screening result in arms/{winner}/result.json")
+            entry["diagnostic_note"] = ("Won the v7 screening; the winner session ended without findings. "
+                                        f"Screening result in arms/{winner}/result.json")
         else:
             entry = {"arm_type": _winner_arm_type(winner),
                      "predicted": str(arm.get("prediction") or "(not stated)"),
                      "observed": "no screening result file", "status": "REFUTED", "error_type": None,
-                     "diagnostic_note": "No arm reported a passing validity check; budget ran out.",
+                     "diagnostic_note": "No arm reported a passing validity check; the winner session "
+                                        "ended without findings.",
                      "metadata": {"candidate_id": winner, "screening": True}}
         findings = {
             "iteration": iteration, "bundle_ref": "bundle.yaml", "arms": [entry],
             "experiment_valid": _passed(result),
-            "discrepancy_analysis": ("The iteration budget ran out before the winner session wrote "
-                                     "findings; every entry comes from a screening result file."),
+            "discrepancy_analysis": ("The winner session ended without writing findings; every entry "
+                                     "comes from a screening result file."),
         }
         atomic_write(iter_dir / "findings.json", json.dumps(findings, indent=2) + "\n")
+    fill_missing_artifacts(iter_dir, iteration, "v7 screening only (the winner session wrote no findings)")
+
+
+def fill_missing_artifacts(iter_dir: Path, iteration: int, description: str) -> None:
+    """Write minimal schema-valid principle_updates.json and experiment_plan.yaml when they are missing."""
+    iter_dir = Path(iter_dir)
     if not (iter_dir / "principle_updates.json").exists():
         atomic_write(iter_dir / "principle_updates.json", "[]\n")
     if not (iter_dir / "experiment_plan.yaml").exists():
+        arms = mechanism_arms(_load_bundle(iter_dir)) or [("h-main", {})]
         plan = {"metadata": {"iteration": max(1, int(iteration)), "bundle_ref": "bundle.yaml",
-                             "description": "v7 screening only (iteration budget spent)"},
+                             "description": description},
                 "arms": [{"arm_id": k, "conditions": [{"name": "screen", "cmd": f"see arms/{k}/result.json"}]}
                          for k, _ in arms]}
         atomic_write(iter_dir / "experiment_plan.yaml", yaml.safe_dump(plan, sort_keys=False))
@@ -472,7 +480,7 @@ def run_v7_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
     patch = iter_dir / "patches" / f"{win['key']}.patch"
     old_wt = repo / _EXPERIMENTS_DIRNAME / str(win.get("experiment_id") or "")
     if win.get("experiment_id") and old_wt.is_dir():
-        wt, eid = old_wt, win["experiment_id"]  # a retry continues in the kept worktree
+        wt, eid = old_wt, win["experiment_id"]  # a resumed run continues in the kept worktree
     else:
         wt, eid = create_experiment_worktree(repo, iteration, extras=extras or [])
         # Only a patch whose arm wrote a result with a passing validity check is applied.
@@ -488,10 +496,12 @@ def run_v7_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
 
     screened = [k for k, _ in arms]
     if win.get("status") != "done":
-        # The first attempt keeps the winner's reserve; a retry only gets what is left of the iteration.
+        # The first attempt keeps the winner's reserve; a resumed attempt only gets what is left.
         left = remaining()
         cap = winner_cap(s, left) if not win.get("attempts") else round(max(0.0, left), 2)
-        if win.get("attempts") and cap < STOP_BELOW_USD:
+        if (iter_dir / "findings.json").exists():
+            pass  # the winner finished before a crash kept `done` from being saved: do not rerun it
+        elif win.get("attempts") and cap < STOP_BELOW_USD:
             print(f"  v7 winner `{win['key']}`: the iteration budget is spent; recording what exists")
         else:
             win["attempts"] = int(win.get("attempts") or 0) + 1
@@ -504,12 +514,13 @@ def run_v7_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
             # The kept worktree is the measured winner: its full diff is the winner's patch.
             save_worktree_diff(wt, win.get("base") or "HEAD", patch, exclude=extras or [])
             tag_winner_findings(iter_dir, win["key"], screened)
-            win["status"] = "done"
-        elif remaining() < STOP_BELOW_USD:
+            fill_missing_artifacts(iter_dir, iteration, "v7 winner session (plan not written by the session)")
+        else:
+            # Nothing retries a failed iteration, so record the screening rather than fail it.
             save_worktree_diff(wt, win.get("base") or "HEAD",
                                iter_dir / "patches" / f"{win['key']}.unmeasured.patch", exclude=extras or [])
             record_without_winner_session(campaign, iter_dir, iteration, win["key"])
-            win["status"] = "done"
+        win["status"] = "done"
         _save_state(adir, state)
     record_screened_arms(campaign, iter_dir, iteration)
     return wt, eid
