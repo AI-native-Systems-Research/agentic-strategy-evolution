@@ -379,8 +379,14 @@ def test_observation_keys_have_no_dead_vocabulary():
     in the test, so adding one is a visible edit.
     """
     pol = compile_policy(_campaign())
+    # Both campaign shapes: `front_gap_large` is read only by the multi-objective
+    # gap-fill guard, which a single-objective policy never registers.
+    mo = _campaign()
+    mo["optimization"]["response"] = {"objectives": [
+        {"metric": "m", "direction": "maximize"},
+        {"metric": "m2", "direction": "minimize"}]}
     assert inv.check_observation_keys_consumed(
-        pol, documented_non_branching=DOCUMENTED_NON_BRANCHING,
+        [pol, compile_policy(mo)], documented_non_branching=DOCUMENTED_NON_BRANCHING,
     ) == []
     # Teeth: with no exemptions at all, the non-branching keys must be reported.
     errs = inv.check_observation_keys_consumed(pol, documented_non_branching=())

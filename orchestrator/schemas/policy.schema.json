@@ -25,7 +25,21 @@
           {"required": ["abs"], "properties": {"abs": {"type": "number", "minimum": 0}}, "additionalProperties": false},
           {"required": ["pct"], "properties": {"pct": {"type": "number", "minimum": 0}}, "additionalProperties": false}]},
         "delta_screen": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
-        "delta_terminal": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5}
+        "delta_terminal": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
+        "objectives": {
+          "description": "Multi-objective campaigns only: every objective with its own indifference width. metric/direction above are the FIRST objective's.",
+          "type": "array", "minItems": 2,
+          "items": {"type": "object", "required": ["metric", "direction", "epsilon"],
+                    "properties": {"metric": {"type": "string"},
+                                   "direction": {"enum": ["maximize", "minimize"]},
+                                   "epsilon": {"type": "object"}}}
+        },
+        "preference": {
+          "type": "object", "required": ["method"],
+          "properties": {"method": {"enum": ["knee", "weights", "lexicographic"]},
+                         "weights": {"type": "object"},
+                         "order": {"type": "array", "items": {"type": "string"}}}
+        }
       }
     },
     "budget": {"type": "object", "required": ["max_runs"], "properties": {"max_runs": {"type": ["integer", "null"]}}},

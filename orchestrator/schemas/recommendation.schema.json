@@ -298,6 +298,87 @@
         "cells": { "type": "array", "items": { "type": "object" } }
       }
     },
+    "objectives": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "string"
+      },
+      "description": "Multi-objective campaigns only (spec 2026-10-15-pareto-front-design.md): the objective metrics, in declaration order. Present iff the campaign declares response.objectives; `levels`/`coded`/`predicted` are then the PREFERRED point of the predicted front (`predicted` is the first objective's prediction)."
+    },
+    "objective_models": {
+      "type": "object",
+      "description": "Per objective: was its model adequate (estimable, pure error, lack of fit not rejected), and if not, why. A rejected model's predictions are ranking hints only.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "modelled",
+          "reason",
+          "lack_of_fit_p"
+        ],
+        "properties": {
+          "modelled": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "lack_of_fit_p": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "n_rows": {
+            "type": "integer"
+          },
+          "pure_error_df": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "predicted_front": {
+      "type": "array",
+      "description": "Every point-nondominated candidate (`nondominated`), then up to 64 further candidates no other candidate CONFIDENTLY dominates (`possibly_nondominated`, nearest the point front first). Each objective's bound is one-sided at delta_screen / K. `stage` names the fitting stage that predicted it: entries an earlier stage predicted at another level of a factor this stage holds fixed are carried, so a front split by a choice factor stays whole.",
+      "items": {
+        "type": "object",
+        "required": [
+          "levels",
+          "predicted",
+          "se",
+          "status"
+        ],
+        "properties": {
+          "levels": {
+            "type": "object"
+          },
+          "predicted": {
+            "type": "object"
+          },
+          "se": {
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "nondominated",
+              "possibly_nondominated"
+            ]
+          },
+          "stage": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "front_size_predicted": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many candidates are point-nondominated under the objective models."
+    },
     "aliases": {
       "type": "array",
       "description": "Every alias pair the design confounds, consequential or not. One fitted coefficient per ALIAS CLASS is what keeps X^T X non-singular under a resolution-IV screen, so recording the classes is how a reader checks which effects share an estimate.",

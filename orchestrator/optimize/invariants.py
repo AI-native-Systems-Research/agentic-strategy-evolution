@@ -229,7 +229,7 @@ def check_comparison_ops_subset() -> list[str]:
     ]
 
 
-def check_observation_keys_consumed(policy: dict, *, documented_non_branching=()) -> list[str]:
+def check_observation_keys_consumed(policy, *, documented_non_branching=()) -> list[str]:
     """INV-VOC04: no dead vocabulary that reads like a live guard.
 
     Every ``OBSERVATION_KEYS`` member must have a named consumer: a registered
@@ -244,12 +244,18 @@ def check_observation_keys_consumed(policy: dict, *, documented_non_branching=()
     them: the caller (the test) supplies the set the document justifies, which
     is what makes an addition to that set a visible edit to the inventory
     instead of an invisible edit to a Python literal.
+
+    ``policy`` may be ONE compiled policy or a list of them: a key some
+    campaign SHAPE compiles a guard for is consumed, even when a single-objective
+    policy never registers it (``front_gap_large`` branches only in a
+    multi-objective policy). The caller passes every shape it means to cover.
     """
     from orchestrator.optimize.policy import OBSERVATION_KEYS
 
     branched: set[str] = set()
-    for t in policy.get("transitions") or []:
-        branched |= set(t.get("when") or {})
+    for pol in (policy if isinstance(policy, (list, tuple)) else [policy]):
+        for t in pol.get("transitions") or []:
+            branched |= set(t.get("when") or {})
     dead = sorted(set(OBSERVATION_KEYS) - branched - set(documented_non_branching))
     return [
         f"observation key {k!r} is in OBSERVATION_KEYS, is read by no `when` "

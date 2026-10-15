@@ -116,7 +116,14 @@ def synthetic_campaign(surface: Surface, **overrides) -> dict:
         )
     """
     opt = {
-        "response": {"primary": {"metric": "m", "direction": surface.direction}},
+        "response": (
+            {"objectives": [{"metric": o["metric"], "direction": o["direction"]}
+                            for o in surface.objectives],
+             **({"constraints": [dict(c) for c in surface.constraints]}
+                if surface.constraints else {})}
+            if surface.objectives
+            else {"primary": {"metric": "m", "direction": surface.direction}}
+        ),
         "factors": [dict(f) for f in surface.factors],
         "design": {"screen": {"resolution": 5, "center_points": 4},
                    "refine": {"kind": "central_composite", "center_points": 4},
@@ -286,3 +293,94 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
         true_optimum=opt, true_best=best, true_gap=gap, path=path,
         work_dir=work_dir, report=report,
     )
+
+
+def true_front_hypervolume(surface: Surface, levels_list) -> tuple[float, float]:
+    """``(HV of the TRUE objective values at levels_list, HV of the true front)``
+    in one frame: each objective normalised by its range over the VALID grid,
+    reference = the worst valid grid value of each objective. The ratio is the
+    oracle's front-quality number -- it scores the configurations a campaign
+    REPORTED by what they are actually worth, not by what it measured."""
+    from orchestrator.optimize import pareto
+    from orchestrator.optimize.synthetic import (
+        candidate_grid,
+        objective_values,
+        true_front,
+    )
+
+    grid = [lv for lv in candidate_grid(list(surface.factors))
+            if surface.invalid is None or not surface.invalid(lv)]
+    objs = [pareto.Objective(o["metric"], o["direction"], {}) for o in surface.objectives]
+    frame = pareto.make_frame(objs, [objective_values(surface, lv) for lv in grid], {})
+    ref = [0.0] * len(objs)
+    rep = [frame.z(objective_values(surface, lv)) for lv in levels_list]
+    tru = [frame.z(v) for _, v in true_front(surface)]
+    return pareto.hypervolume(rep, ref)[0], pareto.hypervolume(tru, ref)[0]
+
+
+def evaluate_pareto_campaign(surface: Surface, *, seed: int, parent_dir: Path,
+                             campaign_overrides: dict | None = None,
+                             max_iterations: int = 10) -> dict:
+    """Run a multi-objective synthetic campaign and score its front against
+    the exhaustively enumerated truth (``synthetic.true_front``).
+
+    * ``coverage`` -- fraction of TRUE front points epsilon-covered by a
+      reported ``confidently_nondominated`` point (some reported point is no
+      worse than it by more than ``eps_k`` on every objective, in truth);
+    * ``n_confident_off_front`` -- reported ``confidently_nondominated`` points
+      that are NOT within epsilon of the true front (property 1 wants 0);
+    * ``hv_ratio`` -- ``true_front_hypervolume`` ratio (property 2);
+    * ``recommended_within_eps`` -- the recommendation is within epsilon of the
+      true front (property 3); ``false_certified`` -- certified although not.
+    """
+    from orchestrator.optimize.synthetic import (
+        objective_values,
+        true_front,
+        within_eps_of_front,
+    )
+
+    res = run_synthetic_campaign(surface, seed=seed, parent_dir=parent_dir,
+                                 campaign_overrides=campaign_overrides,
+                                 max_iterations=max_iterations)
+    par = res.report.get("pareto") or {}
+    eps = {m: (v if v is not None else 0.0) for m, v in (par.get("epsilon") or {}).items()}
+    if not eps:
+        eps = {o["metric"]: 0.0 for o in surface.objectives}
+    confident = [dict(f["levels"]) for f in par.get("front") or []
+                 if f["status"] == "confidently_nondominated"]
+    tf = true_front(surface)
+    # A reported point that is truly INADMISSIBLE is off the front however good
+    # its objectives look -- the front is over X_valid.
+    off = [lv for lv in confident
+           if (surface.invalid is not None and surface.invalid(lv))
+           or not within_eps_of_front(surface, lv, eps, front=tf)]
+
+    def covered(fv):
+        for lv in confident:
+            v = objective_values(surface, lv)
+            if all(((-1.0 if o["direction"] == "minimize" else 1.0)
+                    * (v[o["metric"]] - fv[o["metric"]])) >= -eps[o["metric"]]
+                   for o in surface.objectives):
+                return True
+        return False
+
+    hv_rep, hv_true = true_front_hypervolume(surface, confident)
+    rec = res.recommendation
+    rec_ok = (bool(rec) and not (surface.invalid is not None and surface.invalid(rec))
+              and within_eps_of_front(surface, rec, eps, front=tf))
+    runs = 0
+    for p in Path(res.work_dir).glob("runs/iter-*/runs.jsonl"):
+        runs += sum(1 for ln in p.read_text().splitlines() if ln.strip())
+    return {
+        "seed": seed, "path": res.path, "path_tail": (res.path or [""])[-1],
+        "coverage": (sum(1 for _, fv in tf if covered(fv)) / len(tf)) if tf else 0.0,
+        "n_confident": len(confident), "n_confident_off_front": len(off),
+        "off_front": off,
+        "hv_ratio": (hv_rep / hv_true) if hv_true else 0.0,
+        "hv_reported_measured": (par.get("hypervolume") or {}).get("value"),
+        "recommended": rec, "recommended_within_eps": rec_ok,
+        "basis": res.basis, "certified": bool(res.report.get("certified")),
+        "false_certified": bool(res.report.get("certified")) and not rec_ok,
+        "rounds": par.get("rounds"), "runs": runs, "work_dir": res.work_dir,
+        "eps": eps,
+    }

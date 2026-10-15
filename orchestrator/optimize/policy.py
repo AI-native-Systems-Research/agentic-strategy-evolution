@@ -28,6 +28,13 @@ OBSERVATION_KEYS: frozenset[str] = frozenset({
     "runs_needed_foldover", "foldover_affordable",
     "runs_needed_confirm", "confirm_affordable",
     "residual_regret", "epsilon",
+    # MULTI-OBJECTIVE ONLY (spec 2026-10-15-pareto-front-design.md step 6).
+    # Consumer: the registered `confirm -> confirm` gap-fill branch
+    # (`FRONT_GAP_ACCOUNTING`), compiled only when `response.objectives` is
+    # declared. True when the largest normalised gap between adjacent
+    # measured-front points exceeds `2 x max_k(eps_k / range_k)`; the gap list
+    # itself is in `confirmation.json["pareto"]["gaps_remaining"]`.
+    "front_gap_large",
     # `behavioral_violation` is INTENTIONALLY never read by a compiled `when`
     # clause, and the intent is the one `stage.decide_after_screen` states in
     # its own words: "Behavioral violations are reported but never block
@@ -195,6 +202,43 @@ def _curvature_rule(state: str) -> dict:
             "accounting": CURVATURE_ACCOUNTING}
 
 
+FRONT_GAP_ACCOUNTING = "front gap fill, Bonferroni over rounds"
+"""The accounting rule of the registered multi-objective gap-fill branch.
+
+``confirm -> confirm`` when the measured front has a gap wider than twice the
+largest normalised epsilon and a round remains: the next round seats
+predicted-front candidates inside the largest gaps. Every round's front claims
+are made at ``delta_terminal / max_rounds`` (Bonferroni over the registered
+rounds), so looping cannot buy a claim the round cap did not pay for.
+"""
+
+
+def _multi_objective_block(opt: dict) -> dict | None:
+    """``objective.objectives`` / ``objective.preference`` for a multi-objective
+    campaign (``None`` for single-objective, which keeps its policy identical)."""
+    from orchestrator.optimize.objectives import (
+        DEFAULT_PREFERENCE,
+        declared_objectives,
+        epsilon_spec_for,
+        is_multi_objective,
+    )
+
+    if not is_multi_objective(opt):
+        return None
+    objs = declared_objectives(opt)
+    pref_raw = ((opt.get("response") or {}).get("preference") or {})
+    pref = {"method": pref_raw.get("method") or DEFAULT_PREFERENCE}
+    if pref["method"] == "weights":
+        pref["weights"] = {k: float(v) for k, v in (pref_raw.get("weights") or {}).items()}
+    if pref["method"] == "lexicographic":
+        pref["order"] = list(pref_raw.get("order") or [o["metric"] for o in objs])
+    return {
+        "objectives": [{"metric": o["metric"], "direction": o["direction"],
+                        "epsilon": epsilon_spec_for(opt, o["metric"])} for o in objs],
+        "preference": pref,
+    }
+
+
 def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1) -> dict:
     opt = campaign.get("optimization") or {}
     factors = parse_factors(opt["factors"])
@@ -223,6 +267,21 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
     fold_on = bool(pol_cfg.get("foldover", True))
     primary = (opt.get("response") or {}).get("primary") or {}
     confirm_cfg = design.get("confirm") or {}
+    mo = _multi_objective_block(opt)
+    if mo is not None:
+        # The FIRST objective plays the primary's role wherever the
+        # single-objective machinery needs one metric (the stage rule's fit,
+        # effects.json, the NaN guard); every objective is fitted and the front
+        # is what the campaign reports.
+        primary = {"metric": mo["objectives"][0]["metric"],
+                   "direction": mo["objectives"][0]["direction"]}
+    # Multi-objective defaults (spec decision): a front needs more seats than a
+    # single argmax -- one extreme measured and one predicted per objective,
+    # the knee, and a spread point -- and the registered gap-fill branch needs a
+    # second round to exist at all. Explicit declarations always win.
+    k_obj = len(mo["objectives"]) if mo else 0
+    default_shortlist = 2 * k_obj + 2 if mo else 3
+    default_rounds = 2 if mo else 1
 
     states: dict = {
         "screen": {
@@ -275,9 +334,11 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # `1` is still legal and reproduces the old single-point confirm
             # exactly, which is what the legacy tests declare explicitly.
             "design": {"kind": "shortlist_replicate",
-                       "shortlist_size": int(confirm_cfg.get("shortlist_size", 3)),
+                       "shortlist_size": int(confirm_cfg.get("shortlist_size",
+                                                             default_shortlist)),
                        "replicates": max(1, int(confirm_cfg.get("replicates", 3))),
-                       "max_rounds": int(pol_cfg.get("confirm_max_rounds", 1))},
+                       "max_rounds": int(pol_cfg.get("confirm_max_rounds",
+                                                     default_rounds))},
             "estimator": "sample_means",
             # Bonferroni, not Holm. Holm is uniformly more powerful for
             # TESTING, but the terminal artifact is a BOUND (`R_delta`), and
@@ -371,6 +432,19 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         transitions += [
             {"from": "confirm", "when": {"correctness_failed": True}, "to": "exception", "accounting": sem},
             {"from": "confirm", "when": {"nan_response": True}, "to": "exception", "accounting": sem},
+        ]
+        if mo is not None:
+            # BEFORE `certified`: the multi-objective epoch's product is the
+            # FRONT, and a certified preferred point with a wide unexplored
+            # gap beside it has answered the smaller question. Guarded on the
+            # round cap and affordability so it can never outlive them.
+            transitions.append({
+                "from": "confirm",
+                "when": {"front_gap_large": True, "confirm_affordable": True,
+                         "round": {"<": states["confirm"]["design"]["max_rounds"]}},
+                "to": "confirm", "accounting": FRONT_GAP_ACCOUNTING,
+            })
+        transitions += [
             {"from": "confirm", "when": {"certified": True}, "to": "report",
              "accounting": "bonferroni_one_sided_welch_t at delta_terminal over |S|-1 finalists"},
             # BEFORE both budget guards below, and the order is load-bearing for
@@ -421,7 +495,9 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         "objective": {
             "metric": primary.get("metric", ""),
             "direction": primary.get("direction", "maximize"),
-            "epsilon": dict(pol_cfg.get("epsilon") or {"pct": 2.0}),
+            "epsilon": (dict(mo["objectives"][0]["epsilon"]) if mo
+                        else dict(pol_cfg.get("epsilon") or {"pct": 2.0})),
+            **(mo or {}),
             "delta_screen": float(pol_cfg.get("delta_screen", 0.05)),
             "delta_terminal": float(pol_cfg.get("delta_terminal", 0.05)),
         },

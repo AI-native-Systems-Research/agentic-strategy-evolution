@@ -114,6 +114,16 @@ class Surface:
     #: with an interval -- which is right for ``sla`` and wrong for a surface
     #: whose point is a constraint model with real uncertainty.
     noisy_observables: Callable[[dict, Any], dict] | None = None
+    #: MULTI-OBJECTIVE surfaces only (``PARETO_SURFACES``): one entry per
+    #: objective, ``{"metric", "direction", "fn", "noise_sd"}``. The target
+    #: emits every objective with its own noise; ``fn`` above is the FIRST
+    #: objective so the single-objective helpers stay meaningful. Empty on every
+    #: single-objective surface, whose observations are therefore unchanged.
+    objectives: tuple = ()
+    #: ``response.constraints`` the harness declares for this surface (so the
+    #: oracle runs the campaign the surface was built for). Empty on every
+    #: pre-existing surface, whose tests pass constraints explicitly.
+    constraints: tuple = ()
 
 
 def _numeric(fid: str, levels=(2, 4, 8, 16), grid=1) -> dict:
@@ -445,6 +455,110 @@ SURFACES: dict[str, Callable[[], Surface]] = {
 }
 
 
+# ── MULTI-OBJECTIVE oracles (spec 2026-10-15-pareto-front-design.md) ────────
+#
+# Ground truth for every one of these is EXHAUSTIVE ENUMERATION over
+# ``candidate_grid`` (``true_front``), the same grid ``true_optimum`` uses, so
+# the truth is "the best the declared space offers", not an analytic curve the
+# grid cannot reach. Each is named for what it catches:
+#
+#   * ``pareto_convex`` -- the front BULGES toward the ideal point (f2 is a
+#     concave function of f1): a knee exists and every front point is some
+#     weighted sum's optimum. The baseline: a correct implementation finds the
+#     whole curve.
+#   * ``pareto_concave`` -- the front SAGS toward the anti-ideal (f2 convex in
+#     f1): no weighted sum reaches an interior front point, so a weights
+#     preference returns an extreme while knee / lexicographic must still return
+#     a FRONT point. Catches scalarising up front.
+#   * ``pareto_with_constraint`` -- the convex front with its high-f1 end cut
+#     off by a NOISY coupled constraint (``load = A + B/2 <= 18``): catches a
+#     front that reports inadmissible points, or loses the constrained edge.
+#   * ``pareto_three`` -- three objectives; the front is a 2-D surface, the
+#     hypervolume is exact by slicing, and "adjacent" gaps are MST edges.
+#   * ``pareto_choice_split`` -- a CHOICE factor splits the front into two
+#     branches (C=off owns the high-f2 half, C=on the high-f1 half). Refine holds
+#     C at one level, so a campaign that forgets the other branch reports half a
+#     front; catches exactly that.
+#   * ``pareto_noisy`` -- the convex front at noise 0.25, i.e. about one
+#     epsilon: neighbouring front points are NOT separable by a few replicates,
+#     so a point-estimate front would misreport dominance. Catches confidence
+#     claims the measurements cannot support (statuses must degrade to
+#     ``possibly_dominated`` rather than lie).
+#
+# Noise is 0.05 on objectives whose range is ~3-4 units (the single-objective
+# surfaces' level), so the default epsilon (2% of ~13 = ~0.27) is ~7% of range.
+
+
+def _unit(lv: dict, fid: str, lo: float = 2.0, hi: float = 16.0) -> float:
+    return (float(lv[fid]) - lo) / (hi - lo)
+
+
+def _obj(metric, fn, direction="maximize", noise_sd=0.05) -> dict:
+    return {"metric": metric, "direction": direction, "fn": fn, "noise_sd": noise_sd}
+
+
+def _pareto_convex(name="pareto_convex", noise_sd: float = 0.05) -> Surface:
+    f1 = lambda lv: 10.0 + 4.0 * _unit(lv, "A") + 1.0 * _unit(lv, "B")  # noqa: E731
+    f2 = lambda lv: 14.0 - 4.0 * _unit(lv, "A") ** 2 + 1.0 * _unit(lv, "B")  # noqa: E731
+    return Surface(name=name, noise_sd=noise_sd,
+                   factors=(_numeric("A"), _numeric("B")), fn=f1,
+                   objectives=(_obj("f1", f1, noise_sd=noise_sd),
+                               _obj("f2", f2, noise_sd=noise_sd)))
+
+
+def _pareto_concave() -> Surface:
+    f1 = lambda lv: 10.0 + 4.0 * _unit(lv, "A") + 1.0 * _unit(lv, "B")  # noqa: E731
+    f2 = lambda lv: 10.0 + 4.0 * (1.0 - _unit(lv, "A")) ** 2 + 1.0 * _unit(lv, "B")  # noqa: E731
+    return Surface(name="pareto_concave", noise_sd=0.05,
+                   factors=(_numeric("A"), _numeric("B")), fn=f1,
+                   objectives=(_obj("f1", f1), _obj("f2", f2)))
+
+
+def _pareto_with_constraint() -> Surface:
+    base = _pareto_convex(name="pareto_with_constraint")
+
+    def load(lv):
+        return float(lv["A"]) + 0.5 * float(lv["B"])
+
+    return Surface(name="pareto_with_constraint", noise_sd=0.05,
+                   factors=base.factors, fn=base.fn, objectives=base.objectives,
+                   invalid=lambda lv: load(lv) > 18.0,
+                   constraints=({"metric": "load", "op": "<=", "value": 18.0},),
+                   noisy_observables=lambda lv, rng: {"load": load(lv) + rng.gauss(0.0, 0.3)})
+
+
+def _pareto_three() -> Surface:
+    f1 = lambda lv: 10.0 + 3.0 * _unit(lv, "A") + 0.5 * _unit(lv, "C")  # noqa: E731
+    f2 = lambda lv: 10.0 + 3.0 * _unit(lv, "B") + 0.5 * _unit(lv, "C")  # noqa: E731
+    f3 = lambda lv: (14.0 - 2.0 * _unit(lv, "A") ** 2 - 2.0 * _unit(lv, "B") ** 2  # noqa: E731
+                     + 0.5 * _unit(lv, "C"))
+    return Surface(name="pareto_three", noise_sd=0.05,
+                   factors=(_numeric("A"), _numeric("B"), _numeric("C")), fn=f1,
+                   objectives=(_obj("f1", f1), _obj("f2", f2), _obj("f3", f3)))
+
+
+def _pareto_choice_split() -> Surface:
+    def f1(lv):
+        return (13.0 if lv["C"] == "on" else 10.0) + 3.0 * _unit(lv, "A")
+
+    def f2(lv):
+        return (12.0 if lv["C"] == "on" else 16.0) - 3.0 * _unit(lv, "A") ** 2
+
+    return Surface(name="pareto_choice_split", noise_sd=0.05,
+                   factors=(_numeric("A"), _choice("C")), fn=f1,
+                   objectives=(_obj("f1", f1), _obj("f2", f2)))
+
+
+PARETO_SURFACES: dict[str, Callable[[], Surface]] = {
+    "pareto_convex": _pareto_convex,
+    "pareto_concave": _pareto_concave,
+    "pareto_with_constraint": _pareto_with_constraint,
+    "pareto_three": _pareto_three,
+    "pareto_choice_split": _pareto_choice_split,
+    "pareto_noisy": lambda: _pareto_convex(name="pareto_noisy", noise_sd=0.25),
+}
+
+
 def candidate_grid(factors_raw: list[dict], *, max_numeric_points: int = 9) -> list[dict]:
     """Every level combination worth predicting: declared levels, plus for
     numeric factors with a grid up to ``max_numeric_points`` snapped points
@@ -504,6 +618,44 @@ def true_optimum(surface: Surface) -> tuple[dict, float]:
     return best_lv, best_v
 
 
+def objective_values(surface: Surface, levels: dict) -> dict:
+    """The NOISELESS objective vector at ``levels`` (multi-objective surfaces)."""
+    return {o["metric"]: float(o["fn"](levels)) for o in surface.objectives}
+
+
+def true_front(surface: Surface) -> list[tuple[dict, dict]]:
+    """Every VALID grid point no other valid grid point dominates.
+
+    Exhaustive over ``candidate_grid`` (exactly as ``true_optimum``), plain
+    Pareto dominance on the noiseless objectives. ``fails_at`` points are NOT
+    skipped, for the reason ``true_optimum`` gives.
+    """
+    pts = []
+    for lv in candidate_grid(list(surface.factors)):
+        if surface.invalid is not None and surface.invalid(lv):
+            continue
+        pts.append((lv, objective_values(surface, lv)))
+    from orchestrator.optimize.pareto import nondominated_indices
+
+    signs = [(-1.0 if o["direction"] == "minimize" else 1.0) for o in surface.objectives]
+    vec = [[s * v[o["metric"]] for s, o in zip(signs, surface.objectives)] for _, v in pts]
+    return [pts[i] for i in nondominated_indices(vec)]
+
+
+def within_eps_of_front(surface: Surface, levels: dict, eps: dict, *,
+                        front: list | None = None) -> bool:
+    """Additive epsilon-approximate Pareto optimality of ``levels`` in TRUTH:
+    no valid grid point beats it by at least ``eps[m]`` on every objective.
+    ``front`` is ``true_front(surface)`` when the caller already has it."""
+    me = objective_values(surface, levels)
+    for lv, v in (true_front(surface) if front is None else front):
+        if all(((-1.0 if o["direction"] == "minimize" else 1.0)
+                * (v[o["metric"]] - me[o["metric"]])) >= eps[o["metric"]]
+               for o in surface.objectives):
+            return False
+    return True
+
+
 def _observe(surface: Surface, levels: dict, *, rng: random.Random,
              run_counter: int) -> dict:
     """One observation dict: the metric plus every declared observable.
@@ -532,6 +684,8 @@ def _observe(surface: Surface, levels: dict, *, rng: random.Random,
         m = (surface.fn(lv) + rng.gauss(0.0, surface.noise_sd)
              + surface.drift_per_run * run_counter)
     obs = {"cfg": {k.lower(): v for k, v in lv.items()}, "m": m}
+    for o in surface.objectives:
+        obs[o["metric"]] = float(o["fn"](lv)) + rng.gauss(0.0, float(o.get("noise_sd", 0.0)))
     obs.update(surface.extra_observables(lv))
     if surface.noisy_observables is not None:
         obs.update(surface.noisy_observables(lv, rng))

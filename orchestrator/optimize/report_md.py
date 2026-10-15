@@ -69,6 +69,18 @@ WITHHELD_MEANING = {
                         "test, so nothing supports the claim that screening "
                         "did not exclude the optimum",
     "no_terminal_discrimination": "no terminal discrimination ran",
+    "front_point_possibly_dominated": "the preferred point of the measured front "
+                                      "is only POSSIBLY nondominated -- some rival "
+                                      "could not be ruled out as better on every "
+                                      "objective by epsilon",
+    "no_front_point": "no measured admissible configuration formed a front",
+}
+
+#: Plain-language reading of a measured-front status (``report.json["pareto"]``).
+FRONT_STATUS_MEANING = {
+    "confidently_nondominated": "no rival is better by epsilon on every "
+                                "objective, with confidence",
+    "possibly_dominated": "a rival could not be ruled out",
 }
 
 
@@ -207,6 +219,128 @@ def _next_epoch_section(work_dir: Path, report: dict) -> list[str]:
     return lines
 
 
+def _campaign_factors(work_dir: Path) -> dict:
+    import yaml
+
+    from orchestrator.optimize.factors import parse_factors
+
+    epoch_copy = work_dir / f"campaign.epoch-{_epoch_of(work_dir)}.yaml"
+    source = epoch_copy if epoch_copy.exists() else work_dir / "campaign.yaml"
+    try:
+        campaign = yaml.safe_load(source.read_text()) or {}
+        return {f.id: f for f in parse_factors(
+            (campaign.get("optimization") or {}).get("factors") or [])}
+    except (OSError, ValueError, yaml.YAMLError):
+        return {}
+
+
+def _front_section(work_dir: Path, report: dict) -> list[str]:
+    """The measured trade-off front (multi-objective campaigns only).
+
+    Sorted by the first objective (the order ``report.json`` stores it in),
+    the preferred point marked, each status explained once, then the
+    hypervolume and the gaps the campaign did not fill.
+    """
+    par = report.get("pareto") or {}
+    objs = par.get("objectives") or []
+    metrics = [o["metric"] for o in objs]
+    chosen = (par.get("preference") or {}).get("chosen") or {}
+    front = par.get("front") or []
+    lines = ["## Trade-off front", ""]
+    lines.append("Objectives: " + ", ".join(
+        f"`{o['metric']}` ({o['direction']})" for o in objs) + ".")
+    lines.append("")
+    if not front:
+        return lines + ["_No measured admissible configuration formed a front._", ""]
+    head = "| # | configuration | " + " | ".join(f"{m}" for m in metrics) + \
+        " | n | status | source |"
+    lines += [head, "|" + "---|" * (len(metrics) + 5)]
+    for i, f in enumerate(front):
+        mark = " **(preferred)**" if dict(f.get("levels") or {}) == dict(chosen) else ""
+        cells = []
+        for m in metrics:
+            ci = (f.get("ci") or {}).get(m)
+            cells.append(_fmt((f.get("mean") or {}).get(m)) + (
+                f" [{_fmt(ci[0])}, {_fmt(ci[1])}]" if ci else ""))
+        lines.append(
+            f"| {i} | {_fmt_levels(f.get('levels'))}{mark} | " + " | ".join(cells)
+            + f" | {_fmt(f.get('n'))} | {f.get('status', '')} | {f.get('source', '')} |")
+    lines.append("")
+    for st, meaning in FRONT_STATUS_MEANING.items():
+        n = sum(1 for f in front if f.get("status") == st)
+        if n:
+            lines.append(f"- `{st}` ({n}): {meaning}.")
+    hv = par.get("hypervolume") or {}
+    pref = par.get("preference") or {}
+    lines += [
+        f"- **Preference:** `{pref.get('method', 'knee')}` chose "
+        f"{_fmt_levels(chosen)} ({pref.get('chosen_status') or 'n/a'}); scalar "
+        f"regret {_fmt(pref.get('scalar_regret'))} vs epsilon "
+        f"{_fmt(pref.get('scalar_epsilon'))}.",
+        f"- **Hypervolume:** {_fmt(hv.get('value'))} (objectives normalised to "
+        f"[0, 1] by the measured range; reference "
+        + ", ".join(f"{m}={_fmt(v)}" for m, v in sorted((hv.get("reference") or {}).items()))
+        + f"; {hv.get('method', '')}).",
+        f"- **Confirm rounds:** {_fmt(par.get('rounds'))}.",
+    ]
+    gaps = par.get("gaps_remaining") or []
+    if gaps:
+        lines.append("- **Gaps remaining** (normalised, wider than twice the largest "
+                     "normalised epsilon): " + "; ".join(
+                         f"between #{g['between'][0]} and #{g['between'][1]} "
+                         f"({_fmt(g['size'])})" for g in gaps) + ".")
+    else:
+        lines.append("- **Gaps remaining:** none wider than twice the largest "
+                     "normalised epsilon.")
+    lines.append("")
+    return lines
+
+
+def _front_next_steps(work_dir: Path, report: dict) -> list[str]:
+    """How to widen or refine the front -- stated from the front itself."""
+    par = report.get("pareto") or {}
+    front = par.get("front") or []
+    objs = par.get("objectives") or []
+    out = ["## What to do next", ""]
+    if par.get("gaps_remaining"):
+        out.append(
+            "- **Fill the gaps:** the front has gaps wider than the campaign's "
+            "indifference. Raise `optimization.policy.confirm_max_rounds` (each "
+            "extra round runs the registered gap-fill branch) or "
+            "`optimization.design.confirm.shortlist_size`.")
+    n_poss = sum(1 for f in front if f.get("status") == "possibly_dominated")
+    if n_poss:
+        out.append(
+            f"- **Resolve {n_poss} possibly-dominated point(s):** more confirm "
+            f"replicates (`design.confirm.replicates`) narrow every interval; a "
+            f"wider `policy.epsilon` accepts smaller differences as ties.")
+    factors = _campaign_factors(work_dir)
+    edges = []
+    for o in objs:
+        m, sgn = o["metric"], (-1.0 if o["direction"] == "minimize" else 1.0)
+        pts = [f for f in front if isinstance((f.get("mean") or {}).get(m), (int, float))]
+        if not pts:
+            continue
+        best = max(pts, key=lambda f: sgn * f["mean"][m])
+        for fid, lv in sorted((best.get("levels") or {}).items()):
+            f = factors.get(fid)
+            if f is None or f.type != "numeric" or not isinstance(lv, (int, float)):
+                continue
+            lo, hi = min(f.levels), max(f.levels)
+            if lv in (lo, hi):
+                edges.append(f"`{fid}={lv}` (the {'upper' if lv == hi else 'lower'} "
+                             f"edge) at the best `{m}`")
+    if edges:
+        out.append("- **Widen the front:** the extreme of an objective sits on a "
+                   "declared range edge -- " + "; ".join(edges) + ". Extending "
+                   "that factor's levels past the edge may extend the front "
+                   "(unless a constraint binds there).")
+    if len(out) == 2:
+        out.append("- The front is resolved at this campaign's epsilon; pick the "
+                   "trade-off you want from the table above.")
+    return out + [""]
+
+
 def render_report_markdown(work_dir: Path) -> str:
     """Render ``report.md`` from ``report.json``. Pure; makes no model call.
 
@@ -249,6 +383,10 @@ def render_report_markdown(work_dir: Path) -> str:
             f"`{r}` ({WITHHELD_MEANING.get(r, 'unrecognised reason')})"
             for r in withheld))
     lines.append("")
+    if isinstance(report.get("pareto"), dict):
+        lines += _front_section(work_dir, report)
+        if not report.get("epoch_ended"):
+            lines += _front_next_steps(work_dir, report)
     if report.get("epoch_ended"):
         lines += [
             f"> **The epoch ended on a semantic exception:** "

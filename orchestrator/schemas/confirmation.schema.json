@@ -221,7 +221,9 @@
           "finalist_unmeasured",
           "fit_exclusions_level_correlated",
           "model_inadequate",
-          "no_admissible_finalist"
+          "no_admissible_finalist",
+          "front_point_possibly_dominated",
+          "no_front_point"
         ]
       },
       "description": "Why `certified` is false, as named reasons rather than an unexplained boolean -- so a reader can tell a bound that was simply too wide from a GLOBAL claim withheld because the delta_screen premise was broken, or from a shortlist that was never fully compared. Empty exactly when certified is true. `finalist_measured_infeasible` and `fit_exclusions_level_correlated` are the two premise-breaking reasons: both are evidence that the model's ranking is not tracking the constrained objective, so epsilon-optimality over X_valid is unearned even though residual_regret_terminal (a number over the admissible shortlist resting on fresh measurements and no model) remains valid and is still reported. `finalist_unmeasured` means an admissible finalist produced no usable measurement (timeout, crash, unparseable output): the comparison is incomplete, residual_regret_terminal is null, and the remedy is to re-run it rather than strike it off. `no_admissible_finalist` means EVERY finalist was measured inadmissible (each had at least one replicate violating a declared constraint): the measurements are valid and complete, there is simply no admissible configuration in this shortlist to bound, so it replaces `bound_not_computable` (which means too little data to estimate a bound) and is distinct from a NaN response (an instrumentation defect). `model_inadequate` means the latest fitting stage's lack-of-fit F on pure error rejected the registered response class (recommendation.json model_adequate: false): the shortlist was seeded from measured leaders and the ranking of a rejected surface, so nothing supports the delta_screen premise that screening did not exclude the winner (design spec 3.6 rung 3 sits below certification). The within-shortlist bound is still reported.",
@@ -230,6 +232,229 @@
     "certified": {
       "type": "boolean",
       "description": "The GLOBAL epsilon-optimality verdict over X_valid, which rests on Pr(wrong global decision) <= delta_screen + delta_terminal. False whenever ANY finalist was measured inadmissible, even if the within-shortlist bound came in at or below epsilon: an inadmissible finalist is direct evidence that the model's ranking is not tracking the CONSTRAINED objective, so the delta_screen premise (screening did not exclude the true optimum) does not hold and the sum bound is unearned. The within-shortlist number stays reported; only the global label is withheld."
+    },
+    "pareto": {
+      "type": "object",
+      "description": "Multi-objective campaigns only (spec 2026-10-15-pareto-front-design.md steps 5-8): the MEASURED front over every admissible configuration the campaign measured (confirm finalists and fitting-stage rows, means over complete rows), each point's dominance status, the preferred point, the hypervolume and the remaining gaps.",
+      "required": [
+        "objectives",
+        "front",
+        "hypervolume",
+        "preference",
+        "rounds",
+        "gaps_remaining"
+      ],
+      "properties": {
+        "objectives": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": [
+              "metric",
+              "direction"
+            ],
+            "properties": {
+              "metric": {
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "maximize",
+                  "minimize"
+                ]
+              }
+            }
+          }
+        },
+        "front": {
+          "type": "array",
+          "description": "Points no other measured point eps-dominates in point estimate, sorted best-first by the first objective. `confidently_nondominated`: for EVERY other measured point some objective's one-sided upper bound on its advantage is below that objective's epsilon (pooled pure-error variance, Bonferroni over rivals x objectives at delta_front), and no adequate-model prediction beats it by epsilon on every objective. Otherwise `possibly_dominated`, and `dominated_by` names who could not be ruled out.",
+          "items": {
+            "type": "object",
+            "required": [
+              "levels",
+              "n",
+              "mean",
+              "ci",
+              "status",
+              "dominated_by",
+              "source"
+            ],
+            "properties": {
+              "levels": {
+                "type": "object"
+              },
+              "n": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "mean": {
+                "type": "object"
+              },
+              "ci": {
+                "type": "object"
+              },
+              "status": {
+                "enum": [
+                  "confidently_nondominated",
+                  "possibly_dominated"
+                ]
+              },
+              "dominated_by": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "levels",
+                    "kind"
+                  ],
+                  "properties": {
+                    "levels": {
+                      "type": "object"
+                    },
+                    "kind": {
+                      "enum": [
+                        "measured",
+                        "predicted"
+                      ]
+                    }
+                  }
+                }
+              },
+              "source": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "hypervolume": {
+          "type": "object",
+          "required": [
+            "value",
+            "reference",
+            "normalized"
+          ],
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": 0
+            },
+            "reference": {
+              "type": "object"
+            },
+            "normalized": {
+              "type": "boolean"
+            },
+            "method": {
+              "type": "string"
+            },
+            "over": {
+              "type": "string"
+            }
+          }
+        },
+        "preference": {
+          "type": "object",
+          "required": [
+            "method",
+            "chosen"
+          ],
+          "properties": {
+            "method": {
+              "enum": [
+                "knee",
+                "weights",
+                "lexicographic"
+              ]
+            },
+            "chosen": {
+              "type": "object"
+            },
+            "chosen_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scalar_regret": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "scalar_epsilon": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "scalar_regret_method": {
+              "type": "string"
+            }
+          }
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gaps_remaining": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "between",
+              "size"
+            ],
+            "properties": {
+              "between": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "size": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "gap_threshold": {
+          "type": "number"
+        },
+        "front_gap_large": {
+          "type": "boolean"
+        },
+        "epsilon": {
+          "type": "object"
+        },
+        "delta_front": {
+          "type": "number"
+        },
+        "pooled_variance": {
+          "type": "object"
+        },
+        "frame": {
+          "type": "object"
+        },
+        "n_measured_configurations": {
+          "type": "integer"
+        },
+        "dominance_method": {
+          "type": "string"
+        }
+      }
+    },
+    "certification_caveats": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "finalist_measured_infeasible"
+        ]
+      },
+      "description": "Facts that weaken the certificate's premise without withholding it. Present only when non-empty. `finalist_measured_infeasible`: a finalist was measured inadmissible but at least two admissible finalists remained, their simultaneous bound is within epsilon and the model was adequate (stage_runner._INFEASIBLE_FINALIST_CAVEAT)."
     },
     "paired": {
       "type": "boolean",

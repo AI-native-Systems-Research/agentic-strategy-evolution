@@ -162,61 +162,11 @@ def fit_constraint_models(constraints, design, records, *, fitted_ids,
         if why:
             out.append(ConstraintModel(metric, op, value, None, why))
             continue
-        pos, ys = [], []
-        bad = None
-        for i, (status, response) in enumerate(records):
-            if status not in _MEASURED:
-                continue
-            if held_levels and levels_by_pos is not None:
-                lv = levels_by_pos[i] or {}
-                if any(lv.get(k) != v for k, v in held_levels.items()):
-                    continue
-            raw = _resolve(metric, response or {})
-            try:
-                y = float(raw) if raw is not _MISSING and raw is not None \
-                    and not isinstance(raw, bool) else None
-            except (TypeError, ValueError):
-                y = None
-            if y is None or not math.isfinite(y):
-                bad = i
-                break
-            pos.append(i)
-            ys.append(y)
-        if bad is not None:
-            out.append(ConstraintModel(
-                metric, op, value, None,
-                f"metric missing or non-numeric on measured row at position {bad}"))
-            continue
-        sub = dataclasses.replace(
-            design, factor_ids=tuple(keep_ids),
-            points=tuple(
-                dataclasses.replace(
-                    design.points[i],
-                    coded=tuple(design.points[i].coded[j] for j in cols),
-                )
-                for i in pos
-            ),
-        )
-        # Same reduction the primary fit uses (stage_runner floor (c)): omit
-        # each higher-order term that is a function of the intercept and main
-        # effects on these rows, then fall back to main effects only.
-        from orchestrator.optimize.exclusions import non_estimable_terms
-
-        omit = non_estimable_terms(sub)
-        fit = None
-        for interactions in (True, False):
-            try:
-                fit = fit_effects(sub, ys, factor_ids=keep_ids,
-                                  include_interactions=interactions,
-                                  omit_terms=omit)
-                break
-            except ValueError:
-                continue
+        fit, why_not, n_rows = _fit_one(metric, design, records, keep_ids, cols,
+                                        held_levels, levels_by_pos)
         if fit is None:
-            out.append(ConstraintModel(
-                metric, op, value, None,
-                f"model not estimable from the {len(ys)} measured row(s) (singular)",
-                n_rows=len(ys)))
+            out.append(ConstraintModel(metric, op, value, None, why_not,
+                                       n_rows=n_rows))
             continue
         terms = list(fit.effects) + list(fit.quadratic)
         if fit.pure_error_df <= 0 or not fit.pure_error_var or any(
@@ -225,16 +175,72 @@ def fit_constraint_models(constraints, design, records, *, fitted_ids,
                 metric, op, value, None,
                 "no pure-error estimate (no replicated centre points, or a "
                 "deterministic constraint metric): an unknown variance is not zero",
-                n_rows=len(ys)))
+                n_rows=n_rows))
             continue
         if fit.lack_of_fit_p is not None and fit.lack_of_fit_p < LACK_OF_FIT_ALPHA:
             out.append(ConstraintModel(
                 metric, op, value, None,
                 f"lack of fit rejects the model (p={fit.lack_of_fit_p:.3g})",
-                n_rows=len(ys)))
+                n_rows=n_rows))
             continue
-        out.append(ConstraintModel(metric, op, value, fit, "modelled", n_rows=len(ys)))
+        out.append(ConstraintModel(metric, op, value, fit, "modelled", n_rows=n_rows))
     return out
+
+
+def _fit_one(metric, design, records, keep_ids, cols, held_levels, levels_by_pos):
+    """Fit ONE metric over the measured rows of ``design``.
+
+    Returns ``(fit, reason, n_rows)``; ``fit is None`` with ``reason`` when the
+    metric is missing/non-numeric on a measured row or the model is singular.
+    Shared by the constraint models and the objective models so both are fitted
+    on exactly the same rows with exactly the same reduction.
+    """
+    pos, ys = [], []
+    for i, (status, response) in enumerate(records):
+        if status not in _MEASURED:
+            continue
+        if held_levels and levels_by_pos is not None:
+            lv = levels_by_pos[i] or {}
+            if any(lv.get(k) != v for k, v in held_levels.items()):
+                continue
+        raw = _resolve(metric, response or {})
+        try:
+            y = float(raw) if raw is not _MISSING and raw is not None \
+                and not isinstance(raw, bool) else None
+        except (TypeError, ValueError):
+            y = None
+        if y is None or not math.isfinite(y):
+            return (None,
+                    f"metric missing or non-numeric on measured row at position {i}",
+                    0)
+        pos.append(i)
+        ys.append(y)
+    sub = dataclasses.replace(
+        design, factor_ids=tuple(keep_ids),
+        points=tuple(
+            dataclasses.replace(
+                design.points[i],
+                coded=tuple(design.points[i].coded[j] for j in cols),
+            )
+            for i in pos
+        ),
+    )
+    # Same reduction the primary fit uses (stage_runner floor (c)): omit
+    # each higher-order term that is a function of the intercept and main
+    # effects on these rows, then fall back to main effects only.
+    from orchestrator.optimize.exclusions import non_estimable_terms
+
+    omit = non_estimable_terms(sub)
+    for interactions in (True, False):
+        try:
+            return (fit_effects(sub, ys, factor_ids=keep_ids,
+                                include_interactions=interactions,
+                                omit_terms=omit), "", len(ys))
+        except ValueError:
+            continue
+    return (None,
+            f"model not estimable from the {len(ys)} measured row(s) (singular)",
+            len(ys))
 
 
 def predicted_with_se(fit: Fit, coded: dict) -> tuple[float, float]:
@@ -428,4 +434,74 @@ def supported_feasible(candidates, models, *, delta: float, region: dict) -> lis
             verdicts.append({**head, **b})
         if ok:
             out.append((c, verdicts))
+    return out
+
+
+# ── OBJECTIVE models (multi-objective campaigns) ─────────────────────────────
+
+
+@dataclass(frozen=True)
+class ObjectiveModel:
+    """One ``response.objectives`` entry fitted like a constraint metric.
+
+    ``fit`` is kept whenever the model is ESTIMABLE, even when it is rejected:
+    a rejected objective model's predictions are still a ranking hint (spec
+    step 1). ``modelled`` is the adequacy verdict (estimable, has pure error,
+    lack of fit not rejected); ``has_se`` says whether its prediction bounds are
+    defined at all (pure error present).
+    """
+
+    metric: str
+    direction: str
+    fit: Fit | None
+    reason: str
+    n_rows: int = 0
+
+    @property
+    def has_se(self) -> bool:
+        f = self.fit
+        return bool(f is not None and f.pure_error_df > 0 and f.pure_error_var
+                    and all(e.se is not None
+                            for e in list(f.effects) + list(f.quadratic)))
+
+    @property
+    def modelled(self) -> bool:
+        f = self.fit
+        return bool(self.has_se and not (
+            f.lack_of_fit_p is not None and f.lack_of_fit_p < LACK_OF_FIT_ALPHA))
+
+    def as_dict(self) -> dict:
+        f = self.fit
+        return {"modelled": self.modelled, "reason": self.reason,
+                "lack_of_fit_p": None if f is None else f.lack_of_fit_p,
+                "n_rows": self.n_rows,
+                "pure_error_df": None if f is None else int(f.pure_error_df)}
+
+
+def fit_objective_models(objectives, design, records, *, fitted_ids,
+                         held_levels: dict | None = None,
+                         levels_by_pos=None) -> dict:
+    """``{metric: ObjectiveModel}``, fitted on the SAME rows and reduction as
+    the constraint models (complete + infeasible rows, coded as run)."""
+    keep_ids = [f for f in design.factor_ids if f in set(fitted_ids)]
+    cols = [j for j, f in enumerate(design.factor_ids) if f in set(fitted_ids)]
+    out: dict = {}
+    for o in objectives:
+        metric, direction = o["metric"], o.get("direction", "maximize")
+        fit, why_not, n_rows = _fit_one(metric, design, records, keep_ids, cols,
+                                        held_levels, levels_by_pos)
+        if fit is None:
+            out[metric] = ObjectiveModel(metric, direction, None, why_not, n_rows)
+            continue
+        m = ObjectiveModel(metric, direction, fit, "modelled", n_rows)
+        if not m.has_se:
+            m = ObjectiveModel(metric, direction, fit,
+                               "no pure-error estimate: predictions are ranking "
+                               "hints only (an unknown variance is not zero)", n_rows)
+        elif not m.modelled:
+            m = ObjectiveModel(metric, direction, fit,
+                               f"lack of fit rejects the model "
+                               f"(p={fit.lack_of_fit_p:.3g}); predictions are "
+                               f"ranking hints only", n_rows)
+        out[metric] = m
     return out

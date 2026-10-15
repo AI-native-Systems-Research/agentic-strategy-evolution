@@ -160,6 +160,7 @@ from orchestrator.optimize import (
 from orchestrator.optimize import constraint_models as cmodels
 from orchestrator.optimize import design as design_mod
 from orchestrator.optimize import locked as locked_mod
+from orchestrator.optimize import pareto_stage
 from orchestrator.optimize import policy as policy_mod
 from orchestrator.optimize.effects import fit_effects, solve_stationary_point
 from orchestrator.optimize.factors import is_refinable, parse_factors
@@ -213,6 +214,25 @@ class StageOutcome:
     triggers: tuple[str, ...] = ()
     surviving: tuple[str, ...] = ()
     dropped: tuple[str, ...] = ()
+
+
+def _primary_of(response_spec) -> dict:
+    """``response.primary``, or the FIRST of ``response.objectives``.
+
+    A multi-objective campaign (spec 2026-10-15-pareto-front-design.md) has no
+    ``primary``; its first objective plays that role wherever the
+    single-objective machinery needs ONE metric (the stage rule's fit,
+    effects.json, the NaN guard, the adapter's metric path). Every objective
+    is fitted and reported by ``orchestrator.optimize.pareto``. Single-objective
+    campaigns read exactly what they always read.
+    """
+    resp = response_spec if isinstance(response_spec, dict) else {}
+    if resp.get("primary") is not None:
+        return resp.get("primary") or {}
+    from orchestrator.optimize.objectives import declared_objectives
+
+    objs = declared_objectives({"response": resp})
+    return dict(objs[0]) if objs else {}
 
 
 def _opt_block(campaign: dict) -> dict:
@@ -382,7 +402,7 @@ def _measure_contention_floor(opt, factors, config_runner, *, width):
     back to the behaviour that needs no license.
     """
     levels = concurrency.contention_probe_levels(opt)
-    metric = (((opt or {}).get("response") or {}).get("primary") or {}).get("metric")
+    metric = _primary_of((opt or {}).get("response")).get("metric")
     if not levels:
         return concurrency.Verdict(
             width=1, basis=concurrency.BASIS_SERIAL, detail=(
@@ -726,6 +746,15 @@ _MODEL_CONSTRAINTS = True
 #: campaign knob, for the same reason as ``_MODEL_CONSTRAINTS``: it exists so the
 #: metamorphic oracle tests can run one campaign with and without the seat.
 _SUPPORTED_FEASIBLE_SEAT = True
+
+#: Whether a finalist measured INFEASIBLE is a certification CAVEAT rather than a
+#: veto. Off (today's rule) means any infeasible finalist withholds
+#: certification (``finalist_measured_infeasible``). On means it does not
+#: withhold when at least two admissible finalists remain, the simultaneous
+#: terminal bound over them is within epsilon, and the model was adequate; the
+#: fact is then recorded in ``certification_caveats``. Not a campaign knob: the
+#: oracle evaluation that decides it runs the same campaigns both ways.
+_INFEASIBLE_FINALIST_CAVEAT = False
 
 #: Row statuses whose PRIMARY metric enters the primary fit (INV-STAT15).
 #:
@@ -1154,9 +1183,13 @@ def _baseline_tolerance_pct(campaign: dict) -> float:
         val = float(explicit)
         if val > 0:
             return val
-    noise = ((_opt_block(campaign) or {}).get("response") or {}).get(
-        "noise_estimate_pct",
-    )
+    # A multi-objective campaign may give a MAP (metric -> pct); the baseline
+    # check compares the primary role's metric (the first objective), so that
+    # entry is the noise it is judged against -- not the module default.
+    from orchestrator.optimize.objectives import noise_pct_for
+
+    _opt = _opt_block(campaign) or {}
+    noise = noise_pct_for(_opt, _primary_of(_opt.get("response")).get("metric") or "")
     if isinstance(noise, (int, float)) and not isinstance(noise, bool):
         derived = 3.0 * float(noise)
         if derived > 0:
@@ -1362,7 +1395,7 @@ def _check_baseline_equivalence(
     from orchestrator.optimize import build as build_mod
 
     metric = (
-        (((_opt_block(campaign) or {}).get("response") or {}).get("primary") or {})
+        _primary_of((_opt_block(campaign) or {}).get("response"))
         .get("metric") or ""
     )
     tol = float(rec.get("tolerance_pct") or _baseline_tolerance_pct(campaign))
@@ -2063,14 +2096,39 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     into one number would advertise the assumption-light guarantee while
     delivering the model-dependent one.
     """
-    primary = (((campaign.get("optimization") or {}).get("response") or {})
-               .get("primary") or {})
+    primary = _primary_of((campaign.get("optimization") or {}).get("response"))
     metric = primary.get("metric") or ""
     direction = primary.get("direction") or pol["objective"]["direction"]
     conf = _latest_confirmation(work_dir)
     rec = _read_recommendation(work_dir) or {}
+    # ── MULTI-OBJECTIVE: the front is the answer; the ladder picks a point ──
+    #
+    # The latest confirm round's measured front when there is one; otherwise
+    # the measured front over the fitting stages' admissible rows (rounds 0).
+    # The ladder below keeps its rungs; only WHICH point each rung names
+    # changes (the preferred point of the measured front, by preference).
+    mo_front = None
+    if pareto_stage.objectives(pol):
+        mo_front = (conf or {}).get("pareto") or pareto_stage.front_record(
+            pol, work_dir, rec=rec, rnd=0,
+            baseline=pol.get("known_valid_baseline"),
+        )
+    _mo_chosen = dict(((mo_front or {}).get("preference") or {}).get("chosen") or {})
 
-    if conf and conf.get("best"):
+    def _mo_value(levels):
+        for f in (mo_front or {}).get("front") or []:
+            if _same_levels(dict(f["levels"]), dict(levels)):
+                return f["mean"].get(metric)
+        return None
+
+    if mo_front is not None and conf and conf.get("pareto") and _mo_chosen:
+        basis = "certified" if conf.get("certified") else "terminal_best"
+        levels, value = _mo_chosen, _mo_value(_mo_chosen)
+    elif mo_front is not None and conf and conf.get("pareto"):
+        basis, levels, value = (
+            ("baseline", dict(pol["known_valid_baseline"]), None)
+            if pol.get("known_valid_baseline") else ("none", {}, None))
+    elif conf and conf.get("best") and mo_front is None:
         basis = "certified" if conf.get("certified") else "terminal_best"
         levels, value = dict(conf.get("confirmed_at_levels") or {}), conf.get("mean")
     elif (
@@ -2097,10 +2155,12 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         and _config_admissible(work_dir, rec["levels"])
     ):
         basis, levels, value = "model", dict(rec["levels"]), rec.get("predicted")
+    elif mo_front is not None and _mo_chosen:
+        basis, levels, value = "measured", _mo_chosen, _mo_value(_mo_chosen)
     else:
         best = (
             _best_observed(work_dir, metric, direction=direction)
-            if metric else None
+            if metric and mo_front is None else None
         )
         if best:
             basis, levels, value = "measured", dict(best["levels"]), best.get(metric)
@@ -2168,6 +2228,9 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # carries the full record next to it.
         **({"epoch_ended": epoch_ended} if epoch_ended else {}),
         **({"held_out": held_out_block} if held_out_block else {}),
+        **({"pareto": mo_front} if mo_front is not None else {}),
+        **({"certification_caveats": list(conf["certification_caveats"])}
+           if conf and conf.get("certification_caveats") else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
     })
@@ -2368,7 +2431,7 @@ def run_stage(
     if config_runner is None and opt.get("run_command") and repo:
         config_runner = runner.make_config_runner(
             opt["run_command"], cwd=Path(repo),
-            metric_path=((opt.get("response") or {}).get("primary") or {}).get(
+            metric_path=_primary_of(opt.get("response")).get(
                 "metric", "",
             ),
             timeout=resolve_run_timeout(opt),
@@ -2421,7 +2484,7 @@ def run_stage(
         if _pre_baseline and config_runner is not None:
             _n = _baseline_replicates(campaign)
             _metric = (
-                ((opt.get("response") or {}).get("primary") or {}).get("metric") or ""
+                _primary_of(opt.get("response")).get("metric") or ""
             )
             # The workload block reaches the oracle from the campaign rather
             # than from `pol` — `pol` is None at the pre-epoch stages, and
@@ -2579,7 +2642,7 @@ def run_stage(
 
     factors = parse_factors(opt["factors"])
     response_spec = opt.get("response") or {}
-    primary = ((response_spec.get("primary") or {}).get("metric")) or ""
+    primary = (_primary_of(response_spec).get("metric")) or ""
     invariants = ((opt.get("design_space") or {}).get("invariants")) or []
 
     iter_dir = Path(work_dir) / "runs" / f"iter-{iteration}"
@@ -2718,7 +2781,7 @@ def run_stage(
     # `design` stays None. `_build_design` is therefore never called for
     # confirm, and `fit_effects` is never reached on that path either.
     direction = (
-        (response_spec.get("primary") or {}).get("direction", "maximize")
+        _primary_of(response_spec).get("direction", "maximize")
     )
     design = None
     screen_design = None
@@ -3215,7 +3278,7 @@ def run_stage(
     if concurrency.declared_load_independent(opt):
         contradiction = concurrency.falsify_load_independence(
             artifacts.read_runs(iter_dir),
-            metric=((response_spec.get("primary") or {}).get("metric") or ""),
+            metric=(_primary_of(response_spec).get("metric") or ""),
         )
         if contradiction:
             logger.warning("%s: %s", stage_name, contradiction)
@@ -3258,7 +3321,10 @@ def run_stage(
     # `_primary_is_nan` accepts only a genuine float NaN.
     nan_rows = [
         o.row_index for o in outcomes
-        if getattr(o, "status", None) == "complete" and _primary_is_nan(o, primary)
+        if getattr(o, "status", None) == "complete" and (
+            _primary_is_nan(o, primary)
+            # Multi-objective: ANY objective NaN on a complete row (spec step 2).
+            or pareto_stage.nan_on_complete(o, pareto_stage.objectives(pol)))
     ]
     if nan_rows:
         logger.warning(
@@ -3790,6 +3856,43 @@ def run_stage(
             f"them.",
         )
     rec = top[0]
+    # ── MULTI-OBJECTIVE: fit every objective, predict the front ────────────
+    #
+    # Spec 2026-10-15-pareto-front-design.md steps 1-3. Every objective is
+    # fitted on the same complete + infeasible rows, coded as run, with the
+    # same reduction as the constraint models; the predicted front is taken
+    # over exactly the space `scored` enumerates (measured-infeasible and
+    # confidently-infeasible candidates already removed), and the top-level
+    # recommendation becomes its PREFERRED point. Gated on the compiled
+    # policy registering objectives, so a single-objective recommendation.json
+    # is byte-identical.
+    mo_record = None
+    mo_rejected: list[str] = []
+    mo_lof: list[str] = []
+    mo_survivors: set[str] = set()
+    if pareto_stage.objectives(pol):
+        _omodels = cmodels.fit_objective_models(
+            [{"metric": o.metric, "direction": o.direction}
+             for o in pareto_stage.objectives(pol)],
+            design_run, _fit_records, fitted_ids=fitted_ids,
+            held_levels=non_identifiable_held, levels_by_pos=levels_by_pos,
+        )
+        _pref_cand, mo_record = pareto_stage.fit_record(
+            pol, scored=scored, omodels=_omodels, delta_s=delta_s,
+            stage_name=stage_name, held_now=held_now,
+            prev_rec=_read_recommendation(work_dir),
+        )
+        mo_rejected = pareto_stage.models_rejected(_omodels)
+        mo_lof = pareto_stage.models_rejected(_omodels, lack_of_fit_only=True)
+        mo_survivors = pareto_stage.survivors(_omodels, factors)
+        if _pref_cand is not None:
+            rec = _pref_cand
+        logger.info(
+            "%s: predicted front of %d point(s) over %d candidate(s); preferred "
+            "(%s) %s; rejected objective model(s): %s", stage_name,
+            mo_record["front_size_predicted"], len(scored),
+            pareto_stage.preference(pol).method, rec.levels, mo_rejected or "none",
+        )
     # ── the SUPPORTED-FEASIBLE candidate (INV-STAT16) ───────────────────────
     #
     # The exclusion above removes only CONFIDENTLY infeasible candidates, so on
@@ -3892,7 +3995,8 @@ def run_stage(
         # inadequacy from effects.json would put the lack-of-fit test in two
         # places. `observations_from_decision` already computes it for the policy;
         # this is the same fact written where the consumer can read it.
-        "model_adequate": Trigger.LACK_OF_FIT not in set(decision.triggers),
+        "model_adequate": (Trigger.LACK_OF_FIT not in set(decision.triggers)
+                           and not mo_rejected),
         "excluded_measured_infeasible": excluded,
         # Per declared constraint: was it modelled (and if not, why not), how
         # many candidates its model removed as CONFIDENTLY infeasible, and its
@@ -3919,6 +4023,7 @@ def run_stage(
         # verdict here is also what lets `confirm` read it back — the Fit is gone
         # by then, exactly as `model_adequate` is persisted for the same reason.
         **({"exclusion_balance": balance.as_dict()} if dropped else {}),
+        **(mo_record or {}),
     })
     if alias_pairs_consequential:
         logger.info(
@@ -4002,7 +4107,8 @@ def run_stage(
     obs = observations_from_decision(
         decision, fit,
         refinable_survivors=sum(
-            1 for fid in decision.surviving
+            1 for fid in (set(decision.surviving) | mo_survivors
+                          if mo_record is not None else decision.surviving)
             if fid in by_fid and is_refinable(by_fid[fid])
         ),
         stationary_in_hull=(
@@ -4075,6 +4181,24 @@ def run_stage(
     # arithmetic behind the branch reconstructible from the log alone. This is
     # also what makes the key live rather than dead vocabulary.
     obs["alias_consequential"] = bool(alias_pairs_consequential)
+    if mo_record is not None:
+        # NOT the semantic "optimum outside the hull" exception. That guard
+        # says the declared ranges cannot contain THE optimum; a front has no
+        # single optimum, and its extremes sit on the hull boundary by the
+        # nature of a trade-off (the first objective's stationary point -- all
+        # this fit can solve for -- leaves the hull whenever that objective is
+        # monotone in a knob the other objective pays for). Unknown, so the
+        # registered default (confirm) applies; report.md's What-to-do-next
+        # names widening a range whose extreme the front sits on.
+        obs["stationary_in_hull"] = None
+    if mo_record is not None and mo_rejected:
+        # Spec step 2: `lack_of_fit` = ANY objective's model rejects. It is the
+        # registered curvature branch's trigger at screen/foldover, so a
+        # curvature visible only in the SECOND objective still buys a refine.
+        # An objective that could not be estimated at all is inadequate but is
+        # not curvature evidence, so it moves only `model_adequate`.
+        obs["lack_of_fit"] = bool(obs.get("lack_of_fit")) or bool(mo_lof)
+        obs["model_adequate"] = False
     if stage_name == Stage.SCREEN.value and "foldover" in (pol.get("states") or {}):
         # What the block would cost: the fold design is the screen's corners plus
         # its centre replicates, so it is sized from the design rather than from
@@ -4655,7 +4779,29 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             finalists[i], provenance[i], measured_seat[i] = lv, why, False
             return
 
-    if rnd > 1:
+    if pareto_stage.objectives(pol):
+        # ── MULTI-OBJECTIVE: seat the FRONT, not a winner's challengers ────
+        #
+        # Spec step 4 (round 1: per-objective measured extremes, predicted
+        # extremes, the preferred point, then maximin spread) and step 6
+        # (round r > 1: the previous preferred point, gap-fill candidates when
+        # the front had a large gap, then possibly-dominated front points and
+        # their predicted dominators). `_add` keeps its job: de-duplicate, cap
+        # at `shortlist_size`, never re-seat a measured-inadmissible point.
+        rec = _read_recommendation(work_dir) or {}
+        for lv, why, measured in pareto_stage.shortlist_plan(
+                pol, work_dir, rec, rnd,
+                _latest_confirmation(work_dir) if rnd > 1 else None):
+            if lv in finalists:
+                continue
+            if len(finalists) >= k:
+                break
+            _add(lv, why, measured=measured)
+        _seat_supported(rec, "best supported-feasible candidate", displace=True)
+        if not finalists:
+            _add(pol.get("known_valid_baseline"), "known_valid_baseline",
+                 allow_measured_invalid=True)
+    elif rnd > 1:
         prev = _latest_confirmation(work_dir) or {}
         eps = prev.get("epsilon")
         by_key = {f["key"]: f for f in prev.get("finalists") or []}
@@ -4673,7 +4819,7 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             ):
                 _add(f.get("levels"), f"round {rnd - 1} bound above epsilon",
                      measured=True)
-    if not finalists:
+    if not finalists and not pareto_stage.objectives(pol):
         # The round-1 ladder, and also the recovery path for a round r > 1 whose
         # entire carry-over was excluded. Both want the same priority order, and
         # both are filtered against measured-invalid levels by `_add`.
@@ -4770,7 +4916,7 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         if not finalists:
             _add(pol.get("known_valid_baseline"), "known_valid_baseline",
                  allow_measured_invalid=True)
-    elif rnd > 1 and len(finalists) < k:
+    elif rnd > 1 and len(finalists) < k and not pareto_stage.objectives(pol):
         # TOP UP a shortlist the previous round shrank.
         #
         # Retiring a finalist (its bound fell below epsilon, or a measurement
@@ -5217,8 +5363,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             f"unmeasured rival(s) and is not R_terminal.",
         )
     primary_spec = (
-        ((campaign.get("optimization") or {}).get("response") or {})
-        .get("primary") or {}
+        _primary_of((campaign.get("optimization") or {}).get("response"))
     )
     metric = primary_spec.get("metric") or ""
     eps, eps_ref = _confirm_epsilon(
@@ -5356,9 +5501,24 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # `unmeasured` block above), and the survivors-only number is recorded as
     # `terminal_bound_measured_only`.
     n_excluded = sum(1 for v in status.values() if v != "ok")
+    # ── an infeasible finalist as a CAVEAT rather than a veto (evaluated) ────
+    #
+    # See `_INFEASIBLE_FINALIST_CAVEAT`. When on, a finalist measured
+    # inadmissible no longer withholds certification provided at least two
+    # admissible finalists remain, the simultaneous bound over THEM is within
+    # epsilon, and the model was adequate; it is then recorded under
+    # `certification_caveats`. Unmeasured finalists still veto (their bound is
+    # unknown, not small).
+    n_infeasible = sum(1 for v in status.values() if v == "infeasible")
+    _within_now = bound.value is not None and eps is not None and bound.value <= eps
+    infeasible_caveat = bool(
+        _INFEASIBLE_FINALIST_CAVEAT and n_infeasible and len(ok) >= 2
+        and _within_now and not model_inadequate
+    )
     certified = (
         bound.value is not None and eps is not None and bound.value <= eps
-        and not n_excluded and not fit_bias and not model_inadequate
+        and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
+        and not fit_bias and not model_inadequate
     )
     # NO ADMISSIBLE FINALIST is its own reason, not `bound_not_computable`. Every
     # finalist was MEASURED (numerically, completely) and every one had at least
@@ -5458,7 +5618,8 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                  bound.value is not None and eps is not None
                  and bound.value > eps),
                 ("finalist_measured_infeasible",
-                 any(s == "infeasible" for s in status.values())),
+                 any(s == "infeasible" for s in status.values())
+                 and not infeasible_caveat),
                 ("finalist_unmeasured", bool(unmeasured)),
                 ("fit_exclusions_level_correlated", fit_bias),
                 ("model_inadequate", model_inadequate),
@@ -5466,6 +5627,8 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         ],
         **({"terminal_bound_measured_only": measured_only.as_dict()}
            if measured_only is not None else {}),
+        **({"certification_caveats": ["finalist_measured_infeasible"]}
+           if infeasible_caveat else {}),
         "paired": paired,
         "delta_terminal": delta_t,
         # Name kept for the readers that already exist, and now it is TRUE:
@@ -5490,6 +5653,13 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "spread": pstdev(ok[best]) if best and len(ok[best]) > 1 else 0.0,
         "observations": list(ok[best]) if best else [],
     }
+
+    if pareto_stage.objectives(pol):
+        certified, mo_reasons = _finish_confirm_pareto(
+            pol, work_dir, summary, rec=_rec_for_bias, status=status, ok=ok,
+            unmeasured=unmeasured, fit_bias=fit_bias,
+            model_inadequate=model_inadequate,
+        )
 
     # Did the winning finalist actually beat everything the campaign measured?
     #
@@ -5614,6 +5784,12 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "residual_regret": bound.value,
         "epsilon": eps,
     }
+    if "pareto" in summary:
+        # The PREFERENCE scalarisation's terminal pair (spec step 7), and the
+        # gap-fill branch's own observation (step 6).
+        obs["residual_regret"] = summary["pareto"]["preference"]["scalar_regret"]
+        obs["epsilon"] = summary["pareto"]["preference"]["scalar_epsilon"]
+        obs["front_gap_large"] = bool(summary["pareto"]["front_gap_large"])
 
     # ── the confirm-loop's affordability guard, the same shape as foldover's ──
     #
@@ -5638,7 +5814,12 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # claim, and over-estimating the cost would decline rounds the budget can
     # actually pay for.
     _cfg = pol["states"]["confirm"]["design"] or {}
-    carry = _next_round_finalists(summary, shortlist_size=_cfg.get("shortlist_size", 3))
+    carry = (
+        # A multi-objective round re-seats up to the whole shortlist (front
+        # points, gap fills, spread), so the full shortlist is the upper bound.
+        max(1, int(_cfg.get("shortlist_size", 3))) if "pareto" in summary
+        else _next_round_finalists(summary, shortlist_size=_cfg.get("shortlist_size", 3))
+    )
     obs["runs_needed_confirm"] = carry * max(1, int(_cfg.get("replicates", 3)))
     obs["confirm_affordable"] = (
         obs["budget_remaining"] >= obs["runs_needed_confirm"]
@@ -5658,6 +5839,75 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         engine, campaign, work_dir, iter_dir, iteration, stage_name, pol, obs,
         recommendation_levels=dict(winner_levels) or None,
     )
+
+
+def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: dict,
+                           ok: dict, unmeasured: list, fit_bias: bool,
+                           model_inadequate: bool) -> tuple[bool, list]:
+    """The multi-objective verdict of a confirm round, written into ``summary``.
+
+    Spec steps 5-8: the measured front over every admissible configuration of
+    the campaign (finalists AND fitting-stage rows), the preferred point by the
+    declared preference, and the certificate -- ``certified`` iff the preferred
+    point is ``confidently_nondominated`` AND the preference scalarisation's
+    terminal regret bound is within ``epsilon_scalar``, with the same premise
+    interlocks as the single-objective verdict (an unmeasured finalist, a
+    level-correlated fit exclusion, an inadequate objective model). An
+    infeasible finalist follows the same rule as the single-objective path
+    (``_INFEASIBLE_FINALIST_CAVEAT``), judged on the admissible finalists.
+
+    ``summary["confirmed_at_levels"]`` becomes the preferred point, which is
+    what ``_close_iteration`` and the harness read; ``best`` stays the best
+    finalist on the first objective, a fact about the shortlist.
+    """
+    par = pareto_stage.front_record(
+        pol, work_dir, rec=rec, rnd=int(summary.get("round") or 1),
+        baseline=pol.get("known_valid_baseline"),
+    )
+    pref = par["preference"]
+    reg, eps_s = pref["scalar_regret"], pref["scalar_epsilon"]
+    chosen_ok = pref["chosen_status"] == "confidently_nondominated"
+    within = reg is not None and eps_s is not None and reg <= eps_s
+    n_inf = sum(1 for v in status.values() if v == "infeasible")
+    caveat = bool(_INFEASIBLE_FINALIST_CAVEAT and n_inf and len(ok) >= 2
+                  and within and not model_inadequate)
+    infeasible_veto = bool(n_inf) and not caveat
+    no_admissible = bool(status) and all(v == "infeasible" for v in status.values())
+    certified = bool(pref["chosen"]) and chosen_ok and within and not unmeasured \
+        and not infeasible_veto and not fit_bias and not model_inadequate
+    reasons = [r for r, hit in (
+        ("no_admissible_finalist", no_admissible),
+        ("bound_not_computable", reg is None and not no_admissible),
+        ("bound_above_epsilon", reg is not None and eps_s is not None and reg > eps_s),
+        ("front_point_possibly_dominated", bool(pref["chosen"]) and not chosen_ok),
+        ("finalist_measured_infeasible", infeasible_veto),
+        ("finalist_unmeasured", bool(unmeasured)),
+        ("fit_exclusions_level_correlated", fit_bias),
+        ("model_inadequate", model_inadequate),
+    ) if hit]
+    if not certified and not reasons:
+        reasons = ["no_front_point"]
+    summary["pareto"] = par
+    summary["certified"] = certified
+    summary["certification_withheld"] = [] if certified else reasons
+    if caveat:
+        summary["certification_caveats"] = ["finalist_measured_infeasible"]
+    else:
+        summary.pop("certification_caveats", None)
+    if pref["chosen"]:
+        summary["confirmed_at_levels"] = dict(pref["chosen"])
+    logger.info(
+        "confirm round %s: measured front of %d point(s) (%d confidently "
+        "nondominated) over %d admissible configuration(s); preferred (%s) %s "
+        "[%s], scalar regret %s vs epsilon %s, hypervolume %.4g; largest gap "
+        "%s (threshold %.3g) -> %s", summary.get("round"), len(par["front"]),
+        sum(1 for f in par["front"] if f["status"] == "confidently_nondominated"),
+        par["n_measured_configurations"], pref["method"], pref["chosen"],
+        pref["chosen_status"], reg, eps_s, par["hypervolume"]["value"],
+        par["gaps_remaining"][0]["size"] if par["gaps_remaining"] else "none",
+        par["gap_threshold"], "CERTIFIED" if certified else "uncertified",
+    )
+    return certified, reasons
 
 
 def _next_round_finalists(summary: dict, *, shortlist_size) -> int:

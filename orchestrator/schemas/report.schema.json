@@ -76,7 +76,7 @@
     },
     "certification_withheld": {
       "type": "array",
-      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "model_inadequate", "no_admissible_finalist", "no_terminal_discrimination", "reason_not_recorded"] },
+      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "model_inadequate", "no_admissible_finalist", "no_terminal_discrimination", "reason_not_recorded", "front_point_possibly_dominated", "no_front_point"] },
       "description": "Why `certified` is false, so the report never pairs an unexplained `certified: false` with bounds that look as though they should certify. Empty exactly when certified is true. Copied from the latest confirmation.json's certification_withheld (see confirmation.schema.json for each reason); `no_terminal_discrimination` when no confirm state ran, so no certificate was attempted. `reason_not_recorded` when the confirmation.json it reads predates the reasons field. `no_admissible_finalist` when every finalist was measured inadmissible (see confirmation.schema.json). `model_inadequate` when the shortlist rests on a fit the lack-of-fit test rejected (see confirmation.schema.json). Optional here only so reports written before the field existed still validate; _run_report always writes it."
     },
     "finalists": {
@@ -113,6 +113,229 @@
         "recommendation": {"$ref": "#/$defs/held_out_entry"},
         "finalists": {"type": "array", "items": {"$ref": "#/$defs/held_out_entry"}}
       }
+    },
+    "pareto": {
+      "type": "object",
+      "description": "Multi-objective campaigns only (spec 2026-10-15-pareto-front-design.md steps 5-8): the MEASURED front over every admissible configuration the campaign measured (confirm finalists and fitting-stage rows, means over complete rows), each point's dominance status, the preferred point, the hypervolume and the remaining gaps.",
+      "required": [
+        "objectives",
+        "front",
+        "hypervolume",
+        "preference",
+        "rounds",
+        "gaps_remaining"
+      ],
+      "properties": {
+        "objectives": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": [
+              "metric",
+              "direction"
+            ],
+            "properties": {
+              "metric": {
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "maximize",
+                  "minimize"
+                ]
+              }
+            }
+          }
+        },
+        "front": {
+          "type": "array",
+          "description": "Points no other measured point eps-dominates in point estimate, sorted best-first by the first objective. `confidently_nondominated`: for EVERY other measured point some objective's one-sided upper bound on its advantage is below that objective's epsilon (pooled pure-error variance, Bonferroni over rivals x objectives at delta_front), and no adequate-model prediction beats it by epsilon on every objective. Otherwise `possibly_dominated`, and `dominated_by` names who could not be ruled out.",
+          "items": {
+            "type": "object",
+            "required": [
+              "levels",
+              "n",
+              "mean",
+              "ci",
+              "status",
+              "dominated_by",
+              "source"
+            ],
+            "properties": {
+              "levels": {
+                "type": "object"
+              },
+              "n": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "mean": {
+                "type": "object"
+              },
+              "ci": {
+                "type": "object"
+              },
+              "status": {
+                "enum": [
+                  "confidently_nondominated",
+                  "possibly_dominated"
+                ]
+              },
+              "dominated_by": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "levels",
+                    "kind"
+                  ],
+                  "properties": {
+                    "levels": {
+                      "type": "object"
+                    },
+                    "kind": {
+                      "enum": [
+                        "measured",
+                        "predicted"
+                      ]
+                    }
+                  }
+                }
+              },
+              "source": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "hypervolume": {
+          "type": "object",
+          "required": [
+            "value",
+            "reference",
+            "normalized"
+          ],
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": 0
+            },
+            "reference": {
+              "type": "object"
+            },
+            "normalized": {
+              "type": "boolean"
+            },
+            "method": {
+              "type": "string"
+            },
+            "over": {
+              "type": "string"
+            }
+          }
+        },
+        "preference": {
+          "type": "object",
+          "required": [
+            "method",
+            "chosen"
+          ],
+          "properties": {
+            "method": {
+              "enum": [
+                "knee",
+                "weights",
+                "lexicographic"
+              ]
+            },
+            "chosen": {
+              "type": "object"
+            },
+            "chosen_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scalar_regret": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "scalar_epsilon": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "scalar_regret_method": {
+              "type": "string"
+            }
+          }
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gaps_remaining": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "between",
+              "size"
+            ],
+            "properties": {
+              "between": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "size": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "gap_threshold": {
+          "type": "number"
+        },
+        "front_gap_large": {
+          "type": "boolean"
+        },
+        "epsilon": {
+          "type": "object"
+        },
+        "delta_front": {
+          "type": "number"
+        },
+        "pooled_variance": {
+          "type": "object"
+        },
+        "frame": {
+          "type": "object"
+        },
+        "n_measured_configurations": {
+          "type": "integer"
+        },
+        "dominance_method": {
+          "type": "string"
+        }
+      }
+    },
+    "certification_caveats": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "finalist_measured_infeasible"
+        ]
+      },
+      "description": "Facts that weaken the certificate's premise without withholding it. Present only when non-empty. `finalist_measured_infeasible`: a finalist was measured inadmissible but at least two admissible finalists remained, their simultaneous bound is within epsilon and the model was adequate (stage_runner._INFEASIBLE_FINALIST_CAVEAT)."
     },
     "policy_hash": {
       "type": "string",
