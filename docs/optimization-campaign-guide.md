@@ -168,7 +168,7 @@ with its own gates and artifacts:
 |---|---|---|---|---|
 | 1 | `verify` | 0 | ~2/factor | pure Python: certifies levers, reconciles relations, compiles the policy |
 | 2 | `screen` | 0 | 16-64 | Which factors matter + all two-factor interactions |
-| 3 | `refine` | 0 | 15-25 | Curvature on surviving `numeric` factors; a stationary point |
+| 3 | `refine` | 0 | 15-25 | Curvature on the refinable `numeric` factors; a stationary point (entered on a refinable survivor OR on screen curvature) |
 | 4 | `confirm` | 0 | ~3-5 x replicates | Predicted optimum reproduces; `held_out` evaluated |
 
 `screen` and `refine` make **zero** model calls. The author declares factors;
@@ -1806,10 +1806,31 @@ The registered branches worth understanding as an author:
   resolution-V screen aliases nothing, so the branch simply never fires,
   and making the state's existence depend on the resolution would put the
   same fact in two places and let them drift.
-- **`refine`** — entered when at least one refinable factor survives
-  screening (numeric, more than two levels). All-`choice` or all-binary
-  campaigns skip it, which is why `stages: [verify, screen, confirm]` is a
-  legitimate schedule rather than a shortcut.
+- **`refine`** — entered by either of two registered rules from `screen`
+  (and from `foldover`):
+  1. **survivors** — at least one refinable factor (numeric, more than two
+     levels) survives screening;
+  2. **curvature** — the screen's lack-of-fit F on pure error rejects at
+     alpha=0.05 (`lack_of_fit: true`), whether or not anything survived.
+     This is what the screen's centre points are for. An interior optimum
+     (a batch size best near the middle of `[8, 32]`) has ~zero main effects
+     at the corners, because every corner is about as far from it as every
+     other, so rule 1 never fires; before rule 2 such a campaign went straight
+     to `confirm` and certified the best of the corners and centre — 26% below
+     the true optimum on the `geometric_knob` oracle. Curvature seen by a
+     2-level design is one contrast that no single factor can be credited
+     with, so refine's central composite spans **every** refinable factor (it
+     always has), and non-refinable factors are held at their best **corner**
+     marginal level — the centre rows pin each `choice` factor to one level,
+     so the screen's own argmax would credit the curvature to that level.
+     Accounting: `policy.CURVATURE_ACCOUNTING` (INV-SEM16).
+
+  All-`choice` or all-binary campaigns register neither rule, which is why
+  `stages: [verify, screen, confirm]` is a legitimate schedule rather than a
+  shortcut. Refine itself carries no lack-of-fit branch: its design already
+  is the second-order augmentation, so an inadequate refine fit goes to
+  `confirm`, which seeds the shortlist from measured leaders and withholds
+  certification (below).
 - **`confirm` → `confirm`** — a further round of terminal discrimination,
   capped by `confirm_max_rounds`, re-measuring the winner plus every finalist
   whose bound still exceeded epsilon.
@@ -1823,7 +1844,7 @@ reading a single log line:
 
 | `recommendation.basis` | What it means |
 |---|---|
-| `certified` | terminal discrimination ran and `R_δ^term ≤ ε`. The strongest claim the kind makes. |
+| `certified` | terminal discrimination ran, `R_δ^term ≤ ε`, and nothing broke the `delta_screen` premise. The strongest claim the kind makes. |
 | `terminal_best` | terminal discrimination ran, bound too wide to certify. The winner is still a *measured* configuration compared against measured rivals. |
 | `model` | no terminal stage ran; the fitted argmax stands with its model bound. **The one rung that rests on the fitted surface** — suppressed when a semantic exception ended the epoch, or when the exact levels were already measured infeasible. |
 | `measured` | the model's answer is unusable; the best measured *valid* configuration is returned. Never the largest noisy observation — only `complete` rows are eligible. |
@@ -1847,6 +1868,20 @@ not a rung at all.
   `bonferroni_one_sided_t_paired` under common random numbers, else
   `bonferroni_one_sided_welch_t`. It does not depend on the fitted model at
   all.
+
+**A certificate needs an adequate model behind the shortlist (INV-SEM17).**
+`R_δ^term` is a within-shortlist claim; `certified` is the global one, and it
+leans on `delta_screen`'s premise that screening did not exclude the winner.
+When the latest fitting stage's lack-of-fit test rejected the model
+(`recommendation.json` `model_adequate: false`), the shortlist was seeded from
+measured leaders and a rejected ranking, so nothing supports that premise:
+the campaign reports `terminal_best` with `certification_withheld:
+["model_inadequate"]` and still reports the within-shortlist bound. The cost
+is honest and bounded: on a surface the response class does describe, the
+test falsely rejects at about its alpha, and those campaigns lose a
+certificate they would have earned (measured: 2 of 20 seeds on `bowl`). If
+your factor is geometric, `scale: log` is usually what makes the model
+adequate.
 
 They rest on different assumptions, so a single "regret" number would
 advertise the assumption-light guarantee while delivering the

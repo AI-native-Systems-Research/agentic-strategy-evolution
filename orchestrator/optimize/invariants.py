@@ -499,6 +499,72 @@ def check_epsilon_has_a_reference(confirmation: dict) -> list[str]:
     return out
 
 
+def check_curvature_routes_to_refine(policy: dict) -> list[str]:
+    """INV-SEM16: centre-point curvature never routes to confirm while refine exists.
+
+    A response with an interior optimum has ~zero main effects at a 2-level
+    screen's corners, so ``refinable_survivors > 0`` cannot fire and the ONLY
+    evidence of the optimum is the centre-point curvature contrast (the
+    lack-of-fit F on pure error). Whenever the policy registers ``refine``, each
+    first-order state (``screen``, ``foldover``) must carry a
+    ``{"lack_of_fit": True} -> refine`` rule that names its accounting, so such a
+    screen augments to the second-order design instead of certifying an
+    uninformed shortlist (``SURFACES["geometric_knob"]``: 26% below the optimum,
+    certified, on every seed).
+    """
+    states = policy.get("states") or {}
+    if "refine" not in states:
+        return []
+    out: list[str] = []
+    for src in ("screen", "foldover"):
+        if src not in states:
+            continue
+        hit = [t for t in policy.get("transitions") or []
+               if t.get("from") == src and t.get("to") == "refine"
+               and (t.get("when") or {}).get("lack_of_fit") is True
+               and t.get("accounting")]
+        if not hit:
+            out.append(
+                f"policy registers refine but {src!r} has no `lack_of_fit` -> refine "
+                f"rule: a screen whose centre points detect curvature with no "
+                f"refinable survivor would go to confirm and certify an "
+                f"uninformed shortlist",
+            )
+    return out
+
+
+def check_certificate_rests_on_adequate_model(certifying: dict,
+                                              recommendation: dict) -> list[str]:
+    """INV-SEM17: no global certificate rests on a model the data rejected.
+
+    ``certifying`` is a ``confirmation.json`` or ``report.json``;
+    ``recommendation`` is the latest fitting stage's ``recommendation.json``.
+    When that fit's lack-of-fit test rejected (``model_adequate: false``) the
+    shortlist was not informed by an adequate model, so the delta_screen premise
+    is unsupported: ``certified`` must be false and, whenever terminal
+    discrimination ran, ``certification_withheld`` must name
+    ``model_inadequate``. An absent ``model_adequate`` reads as adequate (records
+    predating the field).
+    """
+    if recommendation.get("model_adequate") is not False:
+        return []
+    out: list[str] = []
+    if certifying.get("certified"):
+        out.append(
+            "certified is true although the latest fitting stage reported "
+            "model_adequate: false -- the shortlist was not informed by an "
+            "adequate model, so the delta_screen premise is unearned",
+        )
+    withheld = list(certifying.get("certification_withheld") or [])
+    if withheld and "no_terminal_discrimination" not in withheld \
+            and "model_inadequate" not in withheld:
+        out.append(
+            f"certification_withheld {withheld} omits model_inadequate although "
+            f"the model behind the shortlist failed its lack-of-fit test",
+        )
+    return out
+
+
 def check_bound_unknown_is_not_zero(bound: Any) -> list[str]:
     """INV-SEM02 / INV-STAT05: a bound with no variance estimate is None.
 
@@ -1256,6 +1322,24 @@ _ENTRIES: tuple[Invariant, ...] = (
               check_epsilon_has_a_reference,
               violated_by="field campaign: every finalist inadmissible, epsilon resolved "
                           "as pct of 0.0 = 0.0"),
+    Invariant("INV-SEM16", "Whenever the policy registers refine, screen and foldover each "
+                           "carry a registered `lack_of_fit` -> refine rule naming its "
+                           "accounting: centre-point curvature with no refinable survivor "
+                           "augments to the second-order design, never to confirm.",
+              "SEM", "artifact", "policy.CURVATURE_ACCOUNTING; compile_policy raises on it",
+              ALWAYS, check_curvature_routes_to_refine,
+              violated_by="SURFACES['geometric_knob'] (linear coding): zero main effects "
+                          "at the corners, lack-of-fit p~3.5e-7, routed screen -> confirm "
+                          "and certified a point 26% below the optimum on every seed"),
+    Invariant("INV-SEM17", "No global certificate rests on a model the data rejected: when "
+                           "the latest fitting stage reported model_adequate: false, "
+                           "certified is false and certification_withheld names "
+                           "model_inadequate.",
+              "SEM", "artifact", "stage_runner._finish_confirm (model_inadequate); spec 3.6 "
+              "rung 3, 3.3", ALWAYS, check_certificate_rests_on_adequate_model,
+              violated_by="SURFACES['geometric_knob']: screen and refine both rejected "
+                          "for lack of fit, and confirm certified the best of a "
+                          "measured-only shortlist 26% below the optimum"),
     # ── statistical ───────────────────────────────────────────────────────
     Invariant("INV-STAT01", "One fitted coefficient per ALIAS CLASS, not per two-factor "
                             "interaction: a resolution-IV design must not make XtX singular.",

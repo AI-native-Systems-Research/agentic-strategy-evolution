@@ -2708,10 +2708,43 @@ def run_stage(
     if held and rows and stage_name != Stage.CONFIRM.value:
         import dataclasses
 
-        prev_levels = (
-            (_read_recommendation(work_dir) or {}).get("levels")
-            if stage_name == Stage.REFINE.value else None
+        prev_rec = (
+            (_read_recommendation(work_dir) or {})
+            if stage_name == Stage.REFINE.value else {}
         )
+        prev_levels = prev_rec.get("levels")
+        # ── UNDER CURVATURE, the screen's argmax is the wrong source ────────
+        #
+        # Refine reached on the registered CURVATURE branch
+        # (`policy.CURVATURE_ACCOUNTING`) comes from a screen whose lack-of-fit
+        # test rejected, and its recommendation is then biased in a NAMED way
+        # for exactly the factors held here: every centre row runs a choice
+        # factor at the level it is pinned to (INV-STAT14 fits the level it
+        # ran), so the centre-vs-corner curvature contrast is credited to that
+        # level's main effect. Measured on `SURFACES["bowl_centred"]`: the
+        # screen recommended C="off" (the centre rows' level) although C="on" is
+        # +1.0 everywhere, refine held C at "off", and the campaign certified a
+        # point 1.0 below the optimum.
+        #
+        # The corners are the part of the design that curvature cannot bias: on
+        # a 2-level fraction every pure quadratic column equals the intercept
+        # there, and the fraction is balanced, so each held factor's marginal
+        # mean over the complete CORNER rows estimates its main effect free of
+        # curvature -- which is also the right criterion at the refine design's
+        # centre, where every interaction with a refined factor vanishes.
+        if prev_rec and prev_rec.get("model_adequate") is False:
+            corner_best = _corner_marginal_best(
+                work_dir, prev_rec.get("iteration"), [f.id for f in held],
+                primary, direction,
+            )
+            if corner_best:
+                logger.info(
+                    "refine: the screen's model was inadequate (lack of fit), so "
+                    "held factor(s) take their best CORNER marginal level, which "
+                    "curvature cannot bias, instead of the screen argmax: %s",
+                    corner_best,
+                )
+                prev_levels = {**(prev_levels or {}), **corner_best}
         fixed = {
             f.id: (
                 prev_levels[f.id]
@@ -5070,6 +5103,30 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     fit_bias = bool(
         (_rec_for_bias.get("exclusion_balance") or {}).get("level_correlated"),
     )
+    # ── the SAME premise, with no model behind it at all: lack of fit ───────
+    #
+    # `recommendation.json["model_adequate"] is False` means the latest fitting
+    # stage's lack-of-fit F on pure error REJECTED the registered response
+    # class. The shortlist was then seeded from measured leaders plus the
+    # ranking of a surface the data refused (`_confirm_rows`), so nothing
+    # supports `delta_s`'s premise that screening did not exclude the winner:
+    # the true optimum need never have been measured or ranked anywhere near
+    # the top. Spec §3.6 places "model inadequate" BELOW rung 1 -- re-measure
+    # the leading measured valid candidates and return the best -- and the
+    # spec's own §3.3 says the remaining global claim after terminal
+    # discrimination is ONLY that screening did not exclude the winner. With
+    # the model rejected that claim is unearned, so certification is withheld
+    # (`model_inadequate`) while the within-shortlist bound is still reported.
+    #
+    # Measured on `SURFACES["geometric_knob"]` (linear coding of a log-bowl):
+    # screen and refine both reject (p~3.5e-7, p~0.002), the shortlist is the
+    # best centre point and its neighbours, and that point is 26.2 (26%) below
+    # the true optimum -- certified epsilon-optimal on every seed before this.
+    #
+    # Absent key reads as adequate (records predating the field), matching
+    # `_confirm_rows`. Like `fit_bias`, this changes what the campaign CLAIMS,
+    # never where it goes.
+    model_inadequate = _rec_for_bias.get("model_adequate") is False
     # EVERY non-"ok" status counts, and the reason is a bug this line already
     # caused once. The statuses were split into "infeasible" (measured
     # inadmissible) and "unmeasured" (the instrument failed on an admissible
@@ -5092,7 +5149,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     n_excluded = sum(1 for v in status.values() if v != "ok")
     certified = (
         bound.value is not None and eps is not None and bound.value <= eps
-        and not n_excluded and not fit_bias
+        and not n_excluded and not fit_bias and not model_inadequate
     )
     # NO ADMISSIBLE FINALIST is its own reason, not `bound_not_computable`. Every
     # finalist was MEASURED (numerically, completely) and every one had at least
@@ -5195,6 +5252,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                  any(s == "infeasible" for s in status.values())),
                 ("finalist_unmeasured", bool(unmeasured)),
                 ("fit_exclusions_level_correlated", fit_bias),
+                ("model_inadequate", model_inadequate),
             ) if hit
         ],
         **({"terminal_bound_measured_only": measured_only.as_dict()}
@@ -5575,6 +5633,51 @@ def _confirm_findings(summary: dict, iteration: int) -> dict:
             "metadata": summary,
         }],
     }
+
+
+def _corner_marginal_best(work_dir, iteration, factor_ids, primary: str,
+                          direction: str) -> dict:
+    """Each factor's best level by its marginal mean over the CORNER rows.
+
+    Reads ``runs/iter-<iteration>/runs.jsonl``: ``complete`` rows whose
+    ``role`` is ``corner`` and whose primary is finite. A factor gets an entry
+    only when at least two of its levels were measured there, so a factor the
+    corners never varied keeps whatever the caller would otherwise hold it at.
+    Ties go to the level that appeared first in the file. See the
+    refine held-fixed block for why corners and not the screen's argmax.
+    """
+    import math
+
+    if iteration is None:
+        return {}
+    p = Path(work_dir) / "runs" / f"iter-{int(iteration)}" / "runs.jsonl"
+    if not p.exists():
+        return {}
+    sums: dict[str, dict] = {fid: {} for fid in factor_ids}
+    for line in p.read_text().splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("status") != "complete" or row.get("role") != "corner":
+            continue
+        y = (row.get("response") or {}).get(primary)
+        if not isinstance(y, (int, float)) or not math.isfinite(y):
+            continue
+        for fid in factor_ids:
+            lv = (row.get("levels") or {}).get(fid)
+            if lv is None:
+                continue
+            acc = sums[fid].setdefault(json.dumps(lv), [lv, 0.0, 0])
+            acc[1] += float(y)
+            acc[2] += 1
+    sign = -1.0 if direction == "minimize" else 1.0
+    out: dict = {}
+    for fid, by_level in sums.items():
+        if len(by_level) < 2:
+            continue
+        best = max(by_level.values(), key=lambda a: sign * a[1] / a[2])
+        out[fid] = best[0]
+    return out
 
 
 def _best_observed(work_dir, primary: str, *,

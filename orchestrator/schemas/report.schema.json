@@ -72,12 +72,12 @@
     },
     "certified": {
       "type": "boolean",
-      "description": "True only when terminal discrimination ran AND certified globally. A bound at or below epsilon is NOT enough: an inadmissible or unmeasured finalist, or a fit whose exclusions were level-correlated, withholds certification -- certification_withheld names which."
+      "description": "True only when terminal discrimination ran AND certified globally. A bound at or below epsilon is NOT enough: an inadmissible or unmeasured finalist, a fit whose exclusions were level-correlated, or a fitting stage whose lack-of-fit test rejected the model (model_inadequate), withholds certification -- certification_withheld names which."
     },
     "certification_withheld": {
       "type": "array",
-      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "no_admissible_finalist", "no_terminal_discrimination", "reason_not_recorded"] },
-      "description": "Why `certified` is false, so the report never pairs an unexplained `certified: false` with bounds that look as though they should certify. Empty exactly when certified is true. Copied from the latest confirmation.json's certification_withheld (see confirmation.schema.json for each reason); `no_terminal_discrimination` when no confirm state ran, so no certificate was attempted. `reason_not_recorded` when the confirmation.json it reads predates the reasons field. `no_admissible_finalist` when every finalist was measured inadmissible (see confirmation.schema.json). Optional here only so reports written before the field existed still validate; _run_report always writes it."
+      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "model_inadequate", "no_admissible_finalist", "no_terminal_discrimination", "reason_not_recorded"] },
+      "description": "Why `certified` is false, so the report never pairs an unexplained `certified: false` with bounds that look as though they should certify. Empty exactly when certified is true. Copied from the latest confirmation.json's certification_withheld (see confirmation.schema.json for each reason); `no_terminal_discrimination` when no confirm state ran, so no certificate was attempted. `reason_not_recorded` when the confirmation.json it reads predates the reasons field. `no_admissible_finalist` when every finalist was measured inadmissible (see confirmation.schema.json). `model_inadequate` when the shortlist rests on a fit the lack-of-fit test rejected (see confirmation.schema.json). Optional here only so reports written before the field existed still validate; _run_report always writes it."
     },
     "finalists": {
       "type": "array",
