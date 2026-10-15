@@ -56,12 +56,32 @@ WITHHELD_MEANING = {
     "bound_not_computable": "the terminal bound could not be estimated "
                             "(unknown, not zero)",
     "finalist_measured_infeasible": "a finalist was measured inadmissible",
+    "no_admissible_finalist": "every finalist was measured inadmissible (each "
+                              "had a replicate violating a declared "
+                              "constraint) -- no admissible configuration in "
+                              "the shortlist to bound; the measurements "
+                              "themselves are valid",
     "finalist_unmeasured": "a finalist produced no usable measurement, so the "
                            "shortlist was never fully compared -- re-run it",
     "fit_exclusions_level_correlated": "the fit behind the shortlist lost rows "
                                        "correlated with factor levels",
     "no_terminal_discrimination": "no terminal discrimination ran",
 }
+
+
+def _eps_ref(ref) -> str:
+    """Which reference a percentage epsilon was taken of, when it was not the winner."""
+    if not isinstance(ref, dict) or ref.get("source") in (None, "best_finalist",
+                                                         "declared_abs"):
+        return ""
+    src = ref["source"]
+    if src == "best_observed":
+        lv = ", ".join(f"{k}={v}" for k, v in sorted((ref.get("levels") or {}).items()))
+        return (f" (of the best measured admissible configuration `{lv}` = "
+                f"{_fmt(ref.get('value'))}; no finalist was admissible)")
+    if src == "recommendation":
+        return " (the fitting stage's epsilon; no admissible configuration was measured)"
+    return " (no reference: unknown, not zero)"
 
 
 def _read_json(path: Path):
@@ -139,7 +159,8 @@ def render_report_markdown(work_dir: Path) -> str:
         "",
         "| quantity | value |",
         "|---|---|",
-        f"| epsilon (acceptable regret) | {_fmt(report.get('epsilon'))} |",
+        f"| epsilon (acceptable regret) | {_fmt(report.get('epsilon'))}"
+        f"{_eps_ref(report.get('epsilon_reference'))} |",
         f"| residual regret, model (at the fitted argmax) | {_fmt(report.get('residual_regret_model'))} |",
         f"| residual regret, terminal | {_fmt(report.get('residual_regret_terminal'))} |",
         f"| delta, screen | {_fmt(report.get('delta_screen'))} |",

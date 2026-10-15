@@ -43,6 +43,14 @@ Each surface is named for the historical failure it catches:
     15 valid, all 15 discarded four times over), and so is refitting silently:
     the loss deletes the region where the mechanism under study does the most
     work, which biases that factor's coefficient in a named direction.
+  * ``stochastic_constraint_boundary`` — the constraint metric's MEAN sits on
+    its bound across the whole high-primary region, with run-to-run noise
+    that straddles it, so feasibility is STOCHASTIC per replicate there and
+    every confirm finalist drawn from that region gets at least one
+    infeasible replicate. No finalist is admissible; reading that as a NaN
+    (an instrumentation defect), resolving epsilon against a non-existent
+    best as 0, or returning a configuration whose OTHER rows were measured
+    infeasible are the three bugs it catches.
 
 No numpy: the surfaces are closed-form arithmetic and the noise comes from
 ``random.Random``, so the oracle has no dependency the harness does not
@@ -287,6 +295,43 @@ def _fails_at_one_level() -> Surface:
     )
 
 
+def _stochastic_constraint_boundary() -> Surface:
+    """The confirm-with-no-admissible-finalist defect, in closed form.
+
+    Observed on a real campaign (bulk-insert throughput maximised,
+    ``max_stall_ms <= 10``): under one journal mode the stall metric's
+    run-to-run noise straddled 10 ms right where throughput peaked, so EVERY
+    confirm finalist had at least one infeasible replicate. That state then
+    produced three wrong artifacts — an epsilon of 0 (resolved as a percentage
+    of a best that did not exist), a ``nan_response`` exception blaming the
+    metric's definition although every value was numeric, and a ``measured``
+    recommendation of a finalist whose other replicates were infeasible.
+
+    Here ``stall_ms`` has mean ``bound + 0.3`` (with sd 1.0) wherever
+    ``A + B > 18`` — the high-primary corner, where the primary is maximised —
+    and mean 4 (seven sd clear) everywhere else. Each replicate in the corner
+    therefore violates with probability ~0.62 and a 5-replicate finalist is
+    admissible on all five with probability < 1%. Declare the constraint as
+    ``{"metric": "stall_ms", "op": "<=", "value": 10}``.
+
+    ``invalid`` marks the corner: a configuration admissible only sometimes is
+    not admissible (``_finish_confirm``'s sticky rule), so the true
+    constrained optimum lies outside it — ``{A: 16, B: 2}`` (18.4).
+    """
+    def mean_stall(lv: dict) -> float:
+        return 10.3 if float(lv["A"]) + float(lv["B"]) > 18 else 4.0
+
+    return Surface(
+        name="stochastic_constraint_boundary", noise_sd=0.05,
+        factors=(_numeric("A"), _numeric("B")),
+        fn=lambda lv: 10 + 0.5 * lv["A"] + 0.2 * lv["B"],
+        invalid=lambda lv: mean_stall(lv) > 10.0,
+        noisy_observables=lambda lv, rng: {
+            "stall_ms": mean_stall(lv) + rng.gauss(0.0, 1.0),
+        },
+    )
+
+
 SURFACES: dict[str, Callable[[], Surface]] = {
     "additive": _additive,
     "interaction_only": _interaction_only,
@@ -299,6 +344,7 @@ SURFACES: dict[str, Callable[[], Surface]] = {
     "infeasible_corner_interior": _infeasible_corner_interior,
     "nan_at_corner": _nan_at_corner,
     "fails_at_one_level": _fails_at_one_level,
+    "stochastic_constraint_boundary": _stochastic_constraint_boundary,
 }
 
 

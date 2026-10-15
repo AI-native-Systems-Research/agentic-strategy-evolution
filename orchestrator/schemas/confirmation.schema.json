@@ -122,8 +122,45 @@
       "description": "PER-CHALLENGER upper bounds against the winner alone, keyed by finalist key, each computed at delta_terminal with M=1. That is the right level for a `keep measuring this one?` screening decision and the WRONG level for a certificate -- the certified verdict reads terminal_bound.value (the simultaneous max) and never these. Round r+1 reads this to decide who is still in contention."
     },
     "epsilon": {
-      "type": "number",
-      "description": "The resolved epsilon-optimality tolerance residual_regret_terminal is compared against."
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "The resolved epsilon-optimality tolerance residual_regret_terminal is compared against: the declared `pct` of the reference named by epsilon_reference (or the declared `abs`). Null only when there is no reference at all -- unknown, never 0."
+    },
+    "epsilon_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "levels",
+        "value"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "best_finalist",
+            "best_observed",
+            "recommendation",
+            "declared_abs",
+            "none"
+          ]
+        },
+        "levels": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "description": "WHICH reference a percentage epsilon was resolved against. `best_finalist`: the winning admissible finalist's fresh mean (the normal case). `best_observed`: no finalist was admissible, so the best measured ADMISSIBLE configuration so far (per-configuration feasibility; `levels`/`value` name it). `recommendation`: nothing admissible was measured, so the epsilon the fitting stage resolved in recommendation.json. `declared_abs`: an absolute epsilon needs no reference. `none`: nothing to take a percentage of, so epsilon is null (unknown) -- never 0, which can never certify and is not what the author declared."
     },
     "residual_regret_terminal": {
       "type": [
@@ -182,10 +219,11 @@
           "bound_not_computable",
           "finalist_measured_infeasible",
           "finalist_unmeasured",
-          "fit_exclusions_level_correlated"
+          "fit_exclusions_level_correlated",
+          "no_admissible_finalist"
         ]
       },
-      "description": "Why `certified` is false, as named reasons rather than an unexplained boolean -- so a reader can tell a bound that was simply too wide from a GLOBAL claim withheld because the delta_screen premise was broken, or from a shortlist that was never fully compared. Empty exactly when certified is true. `finalist_measured_infeasible` and `fit_exclusions_level_correlated` are the two premise-breaking reasons: both are evidence that the model's ranking is not tracking the constrained objective, so epsilon-optimality over X_valid is unearned even though residual_regret_terminal (a number over the admissible shortlist resting on fresh measurements and no model) remains valid and is still reported. `finalist_unmeasured` means an admissible finalist produced no usable measurement (timeout, crash, unparseable output): the comparison is incomplete, residual_regret_terminal is null, and the remedy is to re-run it rather than strike it off.",
+      "description": "Why `certified` is false, as named reasons rather than an unexplained boolean -- so a reader can tell a bound that was simply too wide from a GLOBAL claim withheld because the delta_screen premise was broken, or from a shortlist that was never fully compared. Empty exactly when certified is true. `finalist_measured_infeasible` and `fit_exclusions_level_correlated` are the two premise-breaking reasons: both are evidence that the model's ranking is not tracking the constrained objective, so epsilon-optimality over X_valid is unearned even though residual_regret_terminal (a number over the admissible shortlist resting on fresh measurements and no model) remains valid and is still reported. `finalist_unmeasured` means an admissible finalist produced no usable measurement (timeout, crash, unparseable output): the comparison is incomplete, residual_regret_terminal is null, and the remedy is to re-run it rather than strike it off. `no_admissible_finalist` means EVERY finalist was measured inadmissible (each had at least one replicate violating a declared constraint): the measurements are valid and complete, there is simply no admissible configuration in this shortlist to bound, so it replaces `bound_not_computable` (which means too little data to estimate a bound) and is distinct from a NaN response (an instrumentation defect).",
       "default": []
     },
     "certified": {

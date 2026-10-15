@@ -191,6 +191,8 @@ about the presence of a cause.
 | `INV-SEM11` | Contract drift is a campaign ABORT, not a row failure: re-running a row against a changed instrument produces a number that still cannot be compared to rows measured before the change. | epoch | `adapter_contract.AdapterContractDrift` docstring | `always` | — |
 | `INV-SEM12` | `null` is its own fingerprint type. `{"slope": 0.4}` and `{"slope": null}` must not fingerprint alike. | function | `adapter_contract._type_name` ("that is the whole point") | `always` | **yes** — defect 4 |
 | `INV-SEM13` | A measured row whose observation contradicts a `locked_parameters` value at its declared `optimization.locked_observables` path — or omits that path — ABORTS the campaign, regardless of `--auto-approve`. A lock with no declared observable is unenforceable and `nous validate campaign` WARNs naming it; a lock that is also a factor is a validation error. | campaign | `locked.check_row`; `stage_runner` hard-fail #4; #246 (F1) | `always` — `tests/test_optimize_locked_parameters.py::test_a_target_that_ignores_the_locked_value_aborts_the_campaign` (metamorphic partner: `::test_a_target_that_honours_the_locked_value_is_unaffected`) | — |
+| `INV-SEM14` | Feasibility is per CONFIGURATION, not per row: the report never returns — and no shortlist seed or best-observed selector picks — a configuration that ANY row measured `infeasible`/`rejected`, however many of its other rows completed. The same sticky rule `_finish_confirm` applies to a finalist's replicates; one shared predicate (`_config_admissible`) serves the model and measured rungs, `_top_measured`/`_best_observed`, and confirm's epsilon reference. `baseline` is exempt (the author's declared last resort). A row that merely failed to measure does not strike a configuration off. | artifact | `stage_runner._config_admissible`; `_run_report`; field campaign with a constraint noisy around its bound | `always` — `tests/test_optimize_no_admissible_finalist.py` (property over seeds and round caps) | **yes** — the measured rung returned a finalist confirm had struck off |
+| `INV-SEM15` | Confirm's epsilon records the reference its percentage was taken of (`epsilon_reference`) and is never 0 for want of one. With no admissible finalist it is the declared percentage of the best measured ADMISSIBLE configuration (`best_observed`), else `recommendation.json`'s epsilon, else null (unknown). | artifact | `stage_runner._confirm_epsilon`; spec §3.3 | `always` — `tests/test_optimize_no_admissible_finalist.py` | **yes** — every finalist inadmissible gave `epsilon: 0.0` |
 
 **`INV-SEM02` — the violation.** `certificate.model_regret_bound` returns
 `RegretBound(None, ..., method="none")` when `pure_error_df <= 0`, correctly
@@ -384,7 +386,7 @@ that holds wins. `report.json` always carries exactly one.
 | `certified` | `confirmation.json` exists with a `best`, and `certified` is true (`R_t ≤ ε`). | The terminally-discriminated winner, with `residual_regret_terminal ≤ epsilon`. | `report.json.recommendation`, `certified: true` | `BEH-BASIS-01` |
 | `terminal_best` | `confirmation.json` exists with a `best`, `certified` false. | Same winner, uncertified. Still a measured configuration compared against measured rivals. | `report.json`, `certified: false` | `BEH-BASIS-02` |
 | `model` | No confirmation; a `recommendation.json` with `levels`; **AND** no semantic exception ended the epoch; **AND** those exact levels have not been measured infeasible. | The fitted argmax with its model bound. The ONLY rung resting on the fitted surface. | `report.json`, `residual_regret_model` | `BEH-BASIS-03` |
-| `measured` | The model rung is unavailable (no recommendation, or `epoch_ended`, or the argmax was measured infeasible) and some `complete` row exists. | The best measured VALID configuration — never the largest noisy observation; `_best_observed` filters to `complete`. | `report.json` | `BEH-BASIS-04` |
+| `measured` | The model rung is unavailable (no recommendation, or `epoch_ended`, or the argmax was measured infeasible) and some ADMISSIBLE configuration was measured. | The best measured ADMISSIBLE configuration — never the largest noisy observation; `_best_observed` keeps configurations with a `complete` row and NO infeasible/rejected row anywhere (`INV-SEM14`: feasibility is per configuration). | `report.json` | `BEH-BASIS-04` |
 | `baseline` | Nothing above survives, and the policy carries a `known_valid_baseline`. | The author's known-good configuration. | `report.json` | `BEH-BASIS-05` |
 | `none` | Not a rung. No baseline was declared, so there is genuinely nothing legal to return. | Empty levels, and saying so rather than inventing an origin. | `report.json` | `BEH-BASIS-06` |
 
@@ -453,6 +455,15 @@ a primary metric that is a *string* is a campaign abort (instrumentation
 mismatch, not a measurement). Three outcomes from three shades of "the number
 is not a number".
 
+And `nan_response` means exactly that — a COMPLETE row with a non-finite
+primary. A confirm round in which every finalist was measured INADMISSIBLE is
+none of the three: every value is a number and every run measured fine, the
+configurations simply violate a constraint. It is not a semantic exception; it
+withholds certification as `no_admissible_finalist` and takes the registered
+`confirm -> confirm` top-up (the ranking, minus measured-inadmissible
+configurations) or, at the round cap / budget guard, `report`, whose ladder
+returns the best measured admissible configuration.
+
 ---
 
 ## 9. Counts
@@ -464,16 +475,16 @@ they disagree.
 |---|---|---|---|---|---|
 | Structural (`INV-ST`) | 10 | 10 | 0 | 0 | 0 |
 | Closed vocabulary (`INV-VOC`) | 8 | 7 | 0 | 1 | 0 |
-| Semantic (`INV-SEM`) | 13 | 12 | 0 | 1 | 0 |
+| Semantic (`INV-SEM`) | 15 | 14 | 0 | 1 | 0 |
 | Statistical (`INV-STAT`) | 12 | 7 | 0 | 5 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
 | Provenance (`INV-PROV`) | 6 | 4 | 0 | 2 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **66** | **51** | **0** | **13** | **2** |
+| **Total** | **68** | **53** | **0** | **13** | **2** |
 
-By level: `function` 26, `module` 6, `artifact` 20, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
-checker function exists): 41 of 66. The 25 without one are
+By level: `function` 26, `module` 6, `artifact` 22, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
+checker function exists): 43 of 68. The 25 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check

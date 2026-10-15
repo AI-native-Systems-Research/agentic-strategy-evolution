@@ -443,6 +443,62 @@ def check_exception_removes_only_model_rung(report: dict) -> list[str]:
     return out
 
 
+def check_recommendation_admissible_per_configuration(
+    report: dict, rows: list[dict],
+) -> list[str]:
+    """INV-SEM14: the report never returns a configuration any row measured inadmissible.
+
+    Feasibility is a property of the CONFIGURATION: one ``infeasible`` /
+    ``rejected`` row at the recommended levels makes it inadmissible however
+    many other rows there completed -- the sticky rule confirm applies to its
+    finalists. ``baseline`` is exempt (the author's declared last resort,
+    returned and labelled as such) and ``none`` names nothing.
+    """
+    rec = report.get("recommendation") or {}
+    if rec.get("basis") in ("baseline", "none") or not rec.get("levels"):
+        return []
+    want = rec["levels"]
+    bad = sorted({
+        r.get("status") for r in rows
+        if r.get("levels") == want and r.get("status") in ("infeasible", "rejected")
+    })
+    if bad:
+        return [
+            f"report.json recommends {want} on basis {rec.get('basis')!r} although "
+            f"rows at those levels were measured {bad}: a configuration admissible "
+            f"only sometimes is not admissible",
+        ]
+    return []
+
+
+def check_epsilon_has_a_reference(confirmation: dict) -> list[str]:
+    """INV-SEM15: confirm's epsilon names its reference and is never a 0 from none.
+
+    ``{"pct": p}`` is a percentage OF something. With no admissible finalist
+    there is no winner to take it of, and resolving it against a missing value
+    gave epsilon = 0 -- a width that can never certify and that the author never
+    declared. Either a recorded reference stands behind a positive epsilon, or
+    epsilon is null (unknown).
+    """
+    eps = confirmation.get("epsilon")
+    ref = confirmation.get("epsilon_reference")
+    out: list[str] = []
+    if not isinstance(ref, dict) or "source" not in ref:
+        out.append("confirmation.json carries no epsilon_reference")
+        return out
+    if ref["source"] == "none":
+        if eps is not None:
+            out.append(f"epsilon={eps!r} with no reference; it must be null (unknown)")
+    elif ref["source"] != "declared_abs" and not (
+        isinstance(eps, (int, float)) and eps > 0
+    ):
+        out.append(
+            f"epsilon={eps!r} resolved from reference {ref['source']!r}; a "
+            f"percentage of a recorded reference is never 0",
+        )
+    return out
+
+
 def check_bound_unknown_is_not_zero(bound: Any) -> list[str]:
     """INV-SEM02 / INV-STAT05: a bound with no variance estimate is None.
 
@@ -1128,6 +1184,24 @@ _ENTRIES: tuple[Invariant, ...] = (
                    "test_a_target_that_honours_the_locked_value_is_unaffected). A lock "
                    "with NO declared observable is not enforceable and is only WARNed "
                    "by validate_optimization_campaign."),
+    Invariant("INV-SEM14", "Feasibility is per CONFIGURATION: the report never returns (and "
+                           "no shortlist seed or best-observed selector picks) a "
+                           "configuration any row measured infeasible/rejected, however "
+                           "many of its other rows completed.",
+              "SEM", "artifact", "stage_runner._config_admissible / _top_measured / "
+              "_run_report; _finish_confirm sticky rule", ALWAYS,
+              check_recommendation_admissible_per_configuration,
+              violated_by="field campaign (constraint noise straddling its bound): the "
+                          "measured rung returned a finalist confirm had struck off, on "
+                          "the strength of its one complete replicate"),
+    Invariant("INV-SEM15", "Confirm's epsilon records the reference its percentage was taken "
+                           "of, and is never 0 for want of one: with no admissible finalist "
+                           "it is resolved from the best measured admissible configuration "
+                           "(else recommendation.json's epsilon), else it is null.",
+              "SEM", "artifact", "stage_runner._confirm_epsilon", ALWAYS,
+              check_epsilon_has_a_reference,
+              violated_by="field campaign: every finalist inadmissible, epsilon resolved "
+                          "as pct of 0.0 = 0.0"),
     # ── statistical ───────────────────────────────────────────────────────
     Invariant("INV-STAT01", "One fitted coefficient per ALIAS CLASS, not per two-factor "
                             "interaction: a resolution-IV design must not make XtX singular.",

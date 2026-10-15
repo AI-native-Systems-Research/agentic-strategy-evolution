@@ -436,6 +436,7 @@ one source of truth.
 | `residual_regret_terminal` | The **terminal bound**'s value — model-free, from the fresh replicates only |
 | `bounds` | The per-challenger bound record: `delta`, `method`, `challenger`, `detail` |
 | `epsilon` | The resolved indifference width this round was judged against |
+| `epsilon_reference` | Which reference a percentage epsilon was taken of: `best_finalist` (normal), `best_observed` (no finalist admissible — the best measured admissible configuration), `recommendation` (the fitting stage's epsilon), `declared_abs`, or `none` (epsilon null — unknown, never 0) |
 | `certified` | Whether `R_δ^term ≤ ε` |
 | `best_observed` / `confirmed_is_best_observed` / `regression_vs_best_observed` | The best configuration observed anywhere against the winning finalist — "best finalist" and "best configuration found" are different claims |
 

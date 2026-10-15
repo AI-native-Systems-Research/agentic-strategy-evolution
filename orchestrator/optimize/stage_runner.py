@@ -138,6 +138,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -1835,10 +1836,14 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
                               is the one rung that rests on the fitted surface,
                               and an exception is evidence against that surface.
       4. ``measured``       — the model's answer is unusable; return the best
-                              measured VALID configuration. Never the largest
-                              noisy observation — ``_best_observed`` filters to
-                              ``complete``, and the terminal stage is what
-                              re-measures when there is budget for it.
+                              measured ADMISSIBLE configuration. Never the largest
+                              noisy observation — ``_best_observed`` keeps only
+                              configurations with a ``complete`` row and NO
+                              infeasible/rejected row anywhere
+                              (``_config_admissible``: feasibility is per
+                              configuration, the same sticky rule confirm
+                              applies to its finalists), and the terminal stage
+                              is what re-measures when there is budget for it.
       5. ``baseline``       — nothing above survives; return the author's
                               ``known_valid_baseline``, the one configuration
                               known to work.
@@ -1894,7 +1899,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # no `best` to read anyway, so those rungs fall through on their own
         # facts rather than on a special case.
         and not epoch_ended
-        and not _measured_infeasible_contains(work_dir, rec["levels"])
+        and _config_admissible(work_dir, rec["levels"])
     ):
         basis, levels, value = "model", dict(rec["levels"]), rec.get("predicted")
     else:
@@ -1941,6 +1946,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
             conf.get("residual_regret_terminal") if conf else None
         ),
         "epsilon": conf.get("epsilon") if conf else rec.get("epsilon"),
+        "epsilon_reference": (conf.get("epsilon_reference") if conf else None),
         "delta_screen": pol["objective"]["delta_screen"],
         "delta_terminal": pol["objective"]["delta_terminal"],
         "certified": bool(conf and conf.get("certified")),
@@ -1983,7 +1989,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     engine.transition("DONE")
 
 
-def _measured_infeasible_contains(work_dir, levels: dict) -> bool:
+def _measured_infeasible_contains(work_dir, levels: dict, *,
+                                  invalid: list[dict] | None = None) -> bool:
     """Has this exact configuration already been MEASURED inadmissible?
 
     The model rung of the ladder must not hand back a configuration the campaign
@@ -1998,29 +2005,60 @@ def _measured_infeasible_contains(work_dir, levels: dict) -> bool:
     ``!=`` on a float would report a mismatch a representation step away and
     silently promote an infeasible configuration back onto the model rung.
     """
-    import math as _math
-
     want = dict(levels or {})
     if not want:
         return False
-    for other in _measured_infeasible(work_dir):
-        if set(other) != set(want):
-            continue
-        same = True
-        for k, v in want.items():
-            o = other[k]
-            if (isinstance(v, (int, float)) and isinstance(o, (int, float))
-                    and not isinstance(v, bool) and not isinstance(o, bool)):
-                if not _math.isclose(float(o), float(v), rel_tol=1e-9,
-                                     abs_tol=1e-12):
-                    same = False
-                    break
-            elif o != v:
-                same = False
-                break
-        if same:
-            return True
-    return False
+    return any(
+        _same_levels(other, want)
+        for other in (
+            _measured_infeasible(work_dir) if invalid is None else invalid
+        )
+    )
+
+
+def _same_levels(a: dict, b: dict) -> bool:
+    """Two level dicts name the same CONFIGURATION (numerics within tolerance)."""
+    import math as _math
+
+    if set(a) != set(b):
+        return False
+    for k, v in b.items():
+        o = a[k]
+        if (isinstance(v, (int, float)) and isinstance(o, (int, float))
+                and not isinstance(v, bool) and not isinstance(o, bool)):
+            if not _math.isclose(float(o), float(v), rel_tol=1e-9,
+                                 abs_tol=1e-12):
+                return False
+        elif o != v:
+            return False
+    return True
+
+
+def _config_admissible(work_dir, levels: dict, *,
+                       invalid: list[dict] | None = None) -> bool:
+    """FEASIBILITY IS A PROPERTY OF A CONFIGURATION, NOT OF A ROW.
+
+    The ONE predicate every selector of a configuration to RETURN or to SEED
+    goes through: the report ladder's ``model`` and ``measured`` rungs,
+    ``_top_measured`` / ``_best_observed`` (and so the shortlist's measured
+    seeds and ``_finish_confirm``'s best-observed comparison and epsilon
+    reference). A configuration with ANY ``infeasible`` / ``rejected`` row
+    anywhere in the campaign is inadmissible, however many of its other rows
+    completed — the same sticky rule ``_finish_confirm`` applies to a finalist's
+    replicates ("a configuration that is admissible only sometimes is not
+    admissible").
+
+    Judging per row was the defect: on a field campaign whose constraint metric
+    straddled its bound, a finalist with two complete and three infeasible
+    replicates was struck off by confirm and then returned by the report's
+    ``measured`` rung on the strength of its best complete row. A row that
+    merely failed to measure (timeout, crash) is NOT evidence of
+    inadmissibility and does not strike the configuration off.
+
+    ``invalid`` lets a caller that tests many configurations read
+    ``_measured_infeasible`` once.
+    """
+    return not _measured_infeasible_contains(work_dir, levels, invalid=invalid)
 
 
 def run_stage(
@@ -4741,8 +4779,15 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             f"(terminal_bound_measured_only); that number is silent about the "
             f"unmeasured rival(s) and is not R_terminal.",
         )
-    eps = certificate.resolve_epsilon(
-        pol["objective"]["epsilon"], mean(ok[best]) if best else 0.0,
+    primary_spec = (
+        ((campaign.get("optimization") or {}).get("response") or {})
+        .get("primary") or {}
+    )
+    metric = primary_spec.get("metric") or ""
+    eps, eps_ref = _confirm_epsilon(
+        pol["objective"]["epsilon"], work_dir, metric, direction=direction,
+        best_levels=next((f["levels"] for f in fin if f["key"] == best), None),
+        best_value=mean(ok[best]) if best else None,
     )
 
     # AN EXCLUSION AT CONFIRM IS EVIDENCE THAT THE delta_s PREMISE HAS FAILED,
@@ -4851,10 +4896,19 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # `terminal_bound_measured_only`.
     n_excluded = sum(1 for v in status.values() if v != "ok")
     certified = (
-        bound.value is not None and bound.value <= eps
+        bound.value is not None and eps is not None and bound.value <= eps
         and not n_excluded and not fit_bias
     )
-    if fit_bias and bound.value is not None and bound.value <= eps and not n_excluded:
+    # NO ADMISSIBLE FINALIST is its own reason, not `bound_not_computable`. Every
+    # finalist was MEASURED (numerically, completely) and every one had at least
+    # one replicate violating a declared constraint, so nothing is unknown about
+    # the bound for want of data: there is simply no admissible configuration in
+    # this shortlist to bound. Naming it lets a reader tell "re-fill the
+    # shortlist from deeper in the ranking / relax the constraint" from "the
+    # instrument produced too little to estimate a bound".
+    no_admissible = bool(fin) and all(v == "infeasible" for v in status.values())
+    within = bound.value is not None and eps is not None and bound.value <= eps
+    if fit_bias and within and not n_excluded:
         logger.info(
             "confirm: R_terminal=%.6g is at or below epsilon=%.6g over the "
             "finalists, which is a valid WITHIN-SHORTLIST result and is reported "
@@ -4868,7 +4922,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             bound.value, eps,
             (_rec_for_bias.get("exclusion_balance") or {}).get("flagged_factors"),
         )
-    if n_excluded and bound.value is not None and bound.value <= eps:
+    if n_excluded and within:
         logger.info(
             "confirm: R_terminal=%.6g is at or below epsilon=%.6g over the "
             "surviving finalists, which is a valid WITHIN-SHORTLIST result and "
@@ -4917,6 +4971,11 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "best": best,
         "bounds": bounds,
         "epsilon": eps,
+        # WHICH reference the declared percentage was taken of. Normally the
+        # winning finalist's mean; when no finalist is admissible there is no
+        # winner, and resolving the percentage against nothing gave epsilon = 0
+        # — a width that can never certify and that the author never declared.
+        "epsilon_reference": eps_ref,
         "residual_regret_terminal": bound.value,
         "terminal_bound": bound.as_dict(),
         "certified": certified,
@@ -4931,9 +4990,12 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         # the configuration off, the other says re-run it.
         "certification_withheld": [
             r for r, hit in (
-                ("bound_not_computable", bound.value is None),
+                ("no_admissible_finalist", no_admissible),
+                ("bound_not_computable",
+                 bound.value is None and not no_admissible),
                 ("bound_above_epsilon",
-                 bound.value is not None and bound.value > eps),
+                 bound.value is not None and eps is not None
+                 and bound.value > eps),
                 ("finalist_measured_infeasible",
                  any(s == "infeasible" for s in status.values())),
                 ("finalist_unmeasured", bool(unmeasured)),
@@ -4979,11 +5041,6 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # construction, so a disagreement here means the earlier corner was
     # measured worse this time round — real information about run-to-run
     # variation, not a bug.)
-    primary_spec = (
-        ((campaign.get("optimization") or {}).get("response") or {})
-        .get("primary") or {}
-    )
-    metric = primary_spec.get("metric") or ""
     maximize = direction != "minimize"
     best_obs = (
         _best_observed(work_dir, metric, direction=direction) if metric else None
@@ -5041,17 +5098,34 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     append_ledger_row(work_dir, iteration)
 
     logger.info(
-        "confirm round %d: winner %s (%s) with R_%.3g=%s vs epsilon=%.6g -> %s",
+        "confirm round %d: winner %s (%s) with R_%.3g=%s vs epsilon=%s (%s) -> %s",
         summary["round"], best, winner_levels, delta_t,
         "unknown" if bound.value is None else f"{bound.value:.6g}",
-        eps, "CERTIFIED" if certified else "uncertified",
+        "unknown" if eps is None else f"{eps:.6g}", eps_ref["source"],
+        "CERTIFIED" if certified else "uncertified",
     )
 
     obs = {
         "correctness_failed": False,
-        # No finalist produced a usable measurement, which the policy routes the
-        # same way it routes a NaN fit input.
-        "nan_response": not ok,
+        # EXACTLY what the key says: a row that ran to COMPLETION reported a
+        # non-finite primary. It used to be `not ok` — "no finalist is in the
+        # running" — which conflated three different states into the one that
+        # blames the instrumentation: every finalist measured INADMISSIBLE (the
+        # measurements are fine; the configurations violate a constraint),
+        # every finalist UNMEASURED (a re-run repairs it), and a genuine NaN.
+        # Observed on a field campaign whose constraint noise straddled its bound:
+        # every value was numeric, yet the epoch ended telling the author to fix
+        # the metric's definition. The first two are what the registered
+        # `confirm -> confirm` top-up (re-fill the shortlist from the ranking,
+        # skipping measured-inadmissible configurations) and the round cap /
+        # budget guards -> `report` exist for; they need no branch of their own.
+        # (`run_stage` routes a NaN on a complete row before confirm is reached,
+        # so this is the backstop for any other non-finite value.)
+        "nan_response": any(
+            o.status == "complete" and not math.isfinite(y)
+            for o, y in zip(outcomes, ys)
+            if isinstance(y, (int, float))
+        ),
         "certified": certified,
         "round": summary["round"],
         "budget_remaining": _budget_remaining(pol, work_dir),
@@ -5149,6 +5223,49 @@ def _next_round_finalists(summary: dict, *, shortlist_size) -> int:
     return min(k, len(carry)) if carry else k
 
 
+def _confirm_epsilon(spec: dict, work_dir, metric: str, *, direction: str,
+                     best_levels: dict | None,
+                     best_value: float | None) -> tuple[float | None, dict]:
+    """Resolve confirm's epsilon and record WHICH reference it rests on.
+
+    ``{"pct": p}`` is a percentage "of the best". The reference, in order:
+
+      1. ``best_finalist`` — the winning admissible finalist's fresh mean (the
+         normal case, unchanged);
+      2. ``best_observed`` — when no finalist is admissible there is no winner,
+         so take the best measured ADMISSIBLE configuration so far
+         (``_best_observed``, per-configuration feasibility): a measured value,
+         which is what "of the best" means, and the configuration the report's
+         ``measured`` rung would return;
+      3. ``recommendation`` — the epsilon the fitting stage already resolved
+         (``recommendation.json["epsilon"]``, a percentage of its prediction);
+      4. ``none`` — nothing to take a percentage of: epsilon is ``None``
+         (unknown), never 0. An epsilon of 0 can never certify and is not what
+         the author declared.
+
+    ``{"abs": a}`` needs no reference and is recorded as ``declared_abs``.
+    """
+    if "abs" in spec:
+        return float(spec["abs"]), {"source": "declared_abs", "levels": None,
+                                    "value": None}
+    if best_value is not None:
+        return (certificate.resolve_epsilon(spec, best_value),
+                {"source": "best_finalist", "levels": dict(best_levels or {}),
+                 "value": float(best_value)})
+    obs = _best_observed(work_dir, metric, direction=direction) if metric else None
+    if obs is not None and isinstance(obs.get(metric), (int, float)):
+        eps = certificate.resolve_epsilon(spec, obs[metric])
+        if eps > 0:
+            return eps, {"source": "best_observed",
+                         "levels": dict(obs["levels"]),
+                         "value": float(obs[metric])}
+    rec_eps = (_read_recommendation(work_dir) or {}).get("epsilon")
+    if isinstance(rec_eps, (int, float)) and rec_eps > 0:
+        return float(rec_eps), {"source": "recommendation", "levels": None,
+                                "value": None}
+    return None, {"source": "none", "levels": None, "value": None}
+
+
 def _confirm_findings(summary: dict, iteration: int) -> dict:
     """A findings.schema.json-conformant record of the terminal discrimination.
 
@@ -5170,8 +5287,23 @@ def _confirm_findings(summary: dict, iteration: int) -> dict:
     r, eps = summary.get("residual_regret_terminal"), summary.get("epsilon")
     excluded = summary.get("excluded_infeasible") or []
     kept = [f for f in summary["finalists"] if f["status"] == "ok"]
+    # Every finalist MEASURED inadmissible is not "no usable measurement": the
+    # runs measured fine and said the configurations violate a constraint. The
+    # experiment is valid; its prediction (the shortlist contains an admissible
+    # optimum) is what is refuted.
+    no_admissible = "no_admissible_finalist" in (
+        summary.get("certification_withheld") or []
+    )
 
-    if best is None:
+    if best is None and no_admissible:
+        n_complete = sum(f["n"] for f in summary["finalists"])
+        observed = (
+            f"no admissible finalist: all {len(summary['finalists'])} "
+            f"finalist(s) were measured inadmissible (each had at least one "
+            f"replicate violating a declared constraint; {n - n_complete}/{n} "
+            f"fresh runs infeasible or otherwise excluded)"
+        )
+    elif best is None:
         observed = f"no finalist produced a usable measurement out of {n} runs"
     else:
         observed = (
@@ -5189,7 +5321,16 @@ def _confirm_findings(summary: dict, iteration: int) -> dict:
         else ("PARTIALLY_CONFIRMED" if best is not None else "REFUTED")
     )
     note = None
-    if best is None:
+    if best is None and no_admissible:
+        note = (
+            "every finalist was measured inadmissible; the measurements are "
+            "valid, so this is information about the admissible region, not an "
+            "instrumentation failure. The registered confirm -> confirm round "
+            "re-fills the shortlist from the ranking (skipping measured-"
+            "inadmissible configurations) when the round cap allows; otherwise "
+            "the report falls to the best measured admissible configuration"
+        )
+    elif best is None:
         note = "every fresh run failed to produce a usable measurement"
     elif not certified:
         note = (
@@ -5204,7 +5345,7 @@ def _confirm_findings(summary: dict, iteration: int) -> dict:
     return {
         "iteration": iteration,
         "bundle_ref": f"runs/iter-{iteration}/confirmation.json",
-        "experiment_valid": best is not None,
+        "experiment_valid": best is not None or no_admissible,
         "discrepancy_analysis": (
             "Terminal discrimination: a shortlist of finalists was measured "
             "freshly and compared with each other, so this comparison does not "
@@ -5230,7 +5371,11 @@ def _confirm_findings(summary: dict, iteration: int) -> dict:
 
 def _best_observed(work_dir, primary: str, *,
                    direction: str = "maximize") -> dict | None:
-    """The best COMPLETED configuration observed so far, by primary metric.
+    """The best ADMISSIBLE configuration observed so far, by primary metric.
+
+    Admissible PER CONFIGURATION (``_config_admissible``): a configuration with
+    any ``infeasible`` / ``rejected`` row is never returned, even when some of
+    its other rows completed.
 
     ``complete`` is load-bearing: an ``infeasible`` or ``rejected`` row is a
     trustworthy measurement of an INADMISSIBLE configuration, so it is real
@@ -5299,7 +5444,12 @@ def _measured_seats(shortlist_size: int) -> int:
 
 def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
                   k: int = 3) -> list[dict]:
-    """The ``k`` best COMPLETED configurations observed so far, best first.
+    """The ``k`` best ADMISSIBLE configurations observed so far, best first.
+
+    A configuration qualifies when it has a ``complete`` row with a finite
+    primary AND no row anywhere measured it ``infeasible`` / ``rejected``
+    (``_config_admissible``): feasibility is judged per configuration, never
+    per row.
 
     ``_best_observed`` is this with ``k=1``, and the two share one definition on
     purpose: "the best measured valid configuration" is the report's ``measured``
@@ -5323,6 +5473,7 @@ def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
     """
     sign = 1.0 if direction != "minimize" else -1.0
     best: dict[str, tuple[dict, float]] = {}
+    invalid = _measured_infeasible(work_dir)
     for path in sorted(Path(work_dir).glob("runs/iter-*/runs.jsonl")):
         for line in path.read_text().splitlines():
             if not line.strip():
@@ -5344,6 +5495,11 @@ def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
                 continue
             levels = dict(row.get("levels") or {})
             if not levels:
+                continue
+            # PER CONFIGURATION, not per row: a complete row at levels that
+            # ANOTHER row measured infeasible is not a valid answer (see
+            # `_config_admissible`).
+            if not _config_admissible(work_dir, levels, invalid=invalid):
                 continue
             key = json.dumps(levels, sort_keys=True, default=str)
             prior = best.get(key)
