@@ -1625,7 +1625,20 @@ def make_config_runner(
     import shlex
     import subprocess
 
+    import tempfile
+
     from orchestrator.optimize import concurrency
+
+    # Where each row's NOUS_RUN_DIR lives. NOT `log_dir` itself: that is the
+    # FAILED-runs directory, and rooting scratch there left an empty
+    # `failed_runs/row-N/` for every clean row -- a campaign with zero failures
+    # read as one with eighteen. And NOT `cwd` when there is no log dir: `cwd` is
+    # the target repo, so scratch landed in its working tree. Beside the
+    # iteration's other artifacts when there is one; a private temp dir when not.
+    if log_dir is not None:
+        run_root = Path(log_dir).parent / "run_dirs"
+    else:
+        run_root = Path(tempfile.mkdtemp(prefix="nous-run-dirs-"))
 
     def run(row) -> dict:
         cmd = shlex.split(command_template)
@@ -1645,8 +1658,7 @@ def make_config_runner(
         # NOUS_RUN_DIR themselves has a reason, and silently overriding a
         # declared factor level would be the worse failure.
         iso = concurrency.run_isolation(
-            log_dir if log_dir is not None else cwd,
-            row_index=getattr(row, "row_index", 0),
+            run_root, row_index=getattr(row, "row_index", 0),
         )
         env_extra = {**iso, **env_extra}
         # The patched copies land next to the iteration's other run artifacts
@@ -1654,9 +1666,17 @@ def make_config_runner(
         # the exact configuration it ran on), and in a scratch directory
         # otherwise. `_patch_scope` removes the scratch case afterwards; the
         # log-dir case is kept deliberately -- it is evidence.
-        with _patch_scope(row, cmd, cwd=cwd, log_dir=log_dir) as cmd:
-            return _run_command(row, cmd, cwd=cwd, env_extra=env_extra,
-                                timeout=timeout, log_dir=log_dir)
+        try:
+            with _patch_scope(row, cmd, cwd=cwd, log_dir=log_dir) as cmd:
+                return _run_command(row, cmd, cwd=cwd, env_extra=env_extra,
+                                    timeout=timeout, log_dir=log_dir)
+        finally:
+            # An empty run dir is noise; one the adapter wrote into is evidence
+            # and stays. rmdir refuses a non-empty directory, which is the test.
+            try:
+                Path(iso["NOUS_RUN_DIR"]).rmdir()
+            except OSError:
+                pass
 
     def _run_command(row, cmd, *, cwd, env_extra, timeout, log_dir):
         try:

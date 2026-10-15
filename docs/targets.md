@@ -350,6 +350,12 @@ go build -o "$NOUS_RUN_DIR/bench" ./cmd/bench
 "$NOUS_RUN_DIR/bench" --metrics-out "$NOUS_RUN_DIR/metrics.json"
 ```
 
+Each row's directory is `runs/iter-N/run_dirs/row-<index>/` in the campaign
+work-dir (a private temp directory for `--smoke` / `--liveness` probes), never
+inside the target's working tree. A directory the adapter left empty is removed
+after the run; anything written into it is kept beside the iteration as
+evidence of what that row actually ran.
+
 This is not hypothetical. On a real campaign two rows shared a single
 `go build -o` output path, so one row measured a binary built for the *other*
 row's configuration — plausible numbers, attributed to the wrong levels, with

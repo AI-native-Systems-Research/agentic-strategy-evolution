@@ -909,3 +909,54 @@ class TestFalsificationIsWiredIntoTheStage:
         assert "contention_probe_levels" in msg, (
             "the report must name the remedy for the next epoch"
         )
+
+
+# ===========================================================================
+# WHERE the per-row directory lives -- found by the first end-to-end campaign
+# ===========================================================================
+
+class TestRunDirectoryPlacement:
+    """NOUS_RUN_DIR was rooted at the FAILED-runs log dir, so a campaign with
+    zero failures left an empty ``failed_runs/row-N/`` per row (18 of them on a
+    clean screen), and with no log dir it fell back to ``cwd`` -- the target's
+    working tree."""
+
+    def _bench(self, tmp_path, body: str) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "bench").write_text(
+            "#!/bin/sh\n" + body
+            + 'printf \'{"qps": 1, "telemetry": {"L1": "off"}}\\n\'\n')
+        (repo / "bench").chmod(0o755)
+        return repo
+
+    def _run(self, repo, log_dir):
+        run = make_config_runner("./bench", cwd=repo, metric_path="qps",
+                                 log_dir=log_dir)
+        (o,) = execute_design(
+            [_row(0)], runner=run,
+            response_spec={"primary": {"metric": "qps", "direction": "maximize"}},
+            invariants=[], factors=_factor(),
+        )
+        assert o.status == "complete", o.error
+        return o
+
+    def test_a_clean_row_leaves_nothing_under_failed_runs(self, tmp_path):
+        repo = self._bench(tmp_path, "")
+        failed = tmp_path / "iter-2" / "failed_runs"
+        self._run(repo, failed)
+        assert not any(failed.glob("row-*")) if failed.exists() else True
+        assert not any((tmp_path / "iter-2").rglob("row-*"))
+
+    def test_what_an_adapter_writes_is_kept_beside_the_iteration_not_in_failed_runs(
+            self, tmp_path):
+        repo = self._bench(tmp_path, 'printf x > "$NOUS_RUN_DIR/out.txt"\n')
+        failed = tmp_path / "iter-2" / "failed_runs"
+        self._run(repo, failed)
+        kept = list((tmp_path / "iter-2").rglob("out.txt"))
+        assert len(kept) == 1 and "failed_runs" not in kept[0].parts
+
+    def test_without_a_log_dir_nothing_is_written_into_the_target_tree(self, tmp_path):
+        repo = self._bench(tmp_path, 'printf x > "$NOUS_RUN_DIR/out.txt"\n')
+        self._run(repo, None)
+        assert sorted(p.name for p in repo.iterdir()) == ["bench"]
