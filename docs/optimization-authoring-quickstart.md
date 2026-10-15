@@ -127,8 +127,17 @@ says which step catches it. **[static]** = `nous validate campaign`,
   infeasible: kept as data, but never the winner. **Invariants of the
   measurement itself** (the run completed, nothing was censored) go in
   `response.self_check`. [static, smoke]
-- **`held_out` is reported, never optimized.** It is recorded at confirm and
-  never fitted. [static rejects leakage]
+- **`held_out` is reported, never optimized.** It is recorded on every row,
+  split off the response so nothing fits or ranks on it, and summarised in
+  `report.json`'s `held_out` block. [static rejects leakage]
+- **On a shared machine, measure CPU time, not wall clock, for a CPU-bound
+  in-process target.** Co-scheduled work (another test suite, a build) inflates
+  wall-clock throughput noise by an order of magnitude — measured 0.5% → 12% CV
+  on one laptop — while `time.process_time()` (user + system time of the
+  adapter's own process, SQLite syscalls included) barely moves. Report wall
+  clock too, as a diagnostic. A target that waits on I/O, a network or another
+  process needs wall clock — then run on a quiet machine. [you; liveness shows
+  the CV]
 - **Measure the noise, then size epsilon.** `--liveness` prints the
   baseline's CV (put it in `noise_estimate_pct`) and the screen's minimum
   detectable effect, `MDE = t(0.975, df) · 2·sd / √corners`, where
