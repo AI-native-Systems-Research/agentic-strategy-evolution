@@ -154,6 +154,7 @@ from orchestrator.optimize import (
     resume,
     runner,
 )
+from orchestrator.optimize import constraint_models as cmodels
 from orchestrator.optimize import design as design_mod
 from orchestrator.optimize import locked as locked_mod
 from orchestrator.optimize import policy as policy_mod
@@ -676,6 +677,74 @@ def _fit_exclusion_reasons(outcomes, stage_name: str, dropped, *, n_total: int,
         # `_screen_responses` NaN flag's business (it routes to nan_response);
         # here it is simply a row that produced no measurement.
         out[i] = EXCLUSION_REASONS.get(status or "", "failed_to_measure")
+    return out
+
+
+#: Whether the fitting stages model ``response.constraints`` metrics and use
+#: those models to drop CONFIDENTLY infeasible candidates from the argmax and
+#: ``top_candidates`` (see ``orchestrator.optimize.constraint_models``). Not a
+#: campaign knob: the spec gives the author no reason to rank candidates the
+#: campaign already knows to be inadmissible. It exists so the metamorphic
+#: oracle tests can run the same campaign with and without the models.
+_MODEL_CONSTRAINTS = True
+
+
+def _fit_row_records(work_dir: Path, outcomes, stage_name: str,
+                     screen_iter: int | None, *, n_total: int,
+                     n_fold: int) -> list[tuple[str, dict]]:
+    """``(status, response)`` for every POSITION in the fit's response vector.
+
+    Same positional convention as ``_fit_row_levels``: at ``foldover`` the
+    first ``n_total - n_fold`` positions are the SCREEN block's rows, read back
+    from its own ``runs.jsonl``. The constraint models need the infeasible rows
+    the primary fit drops, so they cannot reuse ``ys``.
+    """
+    fold = [(str(getattr(o, "status", "") or ""), dict(getattr(o, "response", {}) or {}))
+            for o in list(outcomes)[:n_fold]]
+    if stage_name != Stage.FOLDOVER.value or n_total == n_fold:
+        return fold
+    screen = _screen_block_rows(work_dir, screen_iter, n_total - n_fold)
+    return [(str(r.get("status") or ""), dict(r.get("response") or {}))
+            for r in screen] + fold
+
+
+def _constraint_models_record(models, scored_all, rec, *, delta: float) -> list[dict]:
+    """What the constraint models did, per constraint, for ``recommendation.json``.
+
+    ``scored_all`` is the candidate space BEFORE the model-based exclusion, so
+    ``excluded_confidently_infeasible`` counts exactly the candidates each
+    constraint removed (a candidate two constraints both exclude is counted
+    under each). ``at_recommendation`` gives the argmax's own verdict, so a
+    recommendation that is merely UNCERTAIN on a constraint says so.
+    """
+    d = cmodels.per_constraint_delta(models, delta)
+    n_kept = sum(
+        1 for c in scored_all
+        if not cmodels.confidently_infeasible(models, c.coded, delta=delta)
+    )
+    applied = n_kept > 0
+    out: list[dict] = []
+    for m in models:
+        entry = {
+            "metric": m.metric, "op": m.op, "value": m.value,
+            "modelled": m.modelled, "reason": m.reason, "n_rows": m.n_rows,
+            "excluded_confidently_infeasible": 0, "delta": d,
+            "applied": bool(m.modelled and applied),
+            "at_recommendation": None,
+        }
+        if m.modelled:
+            entry["excluded_confidently_infeasible"] = sum(
+                1 for c in scored_all
+                if cmodels.bound(m, c.coded, delta=d)["verdict"] == "infeasible"
+            ) if applied else 0
+            entry["at_recommendation"] = cmodels.bound(m, rec.coded, delta=d)
+            if not applied:
+                entry["reason"] = (
+                    "modelled, but NOT applied: the models predict every "
+                    "candidate confidently infeasible, and an empty space can only "
+                    "abort -- left to measurement instead"
+                )
+        out.append(entry)
     return out
 
 
@@ -3282,7 +3351,8 @@ def run_stage(
     # Configurations already MEASURED infeasible or rejected are removed from
     # the candidate space before the argmax: the campaign has direct evidence
     # those points are inadmissible, and recommending one anyway would be
-    # recommending a configuration it watched fail.
+    # recommending a configuration it watched fail. Candidates a fitted
+    # constraint model predicts CONFIDENTLY infeasible are removed too (below).
     held_now = dict(payload.get("held_fixed") or {})
     # A factor dropped for non-identifiability was not "varied but unfitted":
     # every retained row sat at ONE of its levels, so the argmax must hold it
@@ -3293,6 +3363,28 @@ def run_stage(
     # so the pin is visible next to the narrowed `fitted_ids`.
     held_now.update(non_identifiable_held)
     excluded = _measured_infeasible(work_dir)
+    # ── the constraint models (constrained response-surface practice) ──────
+    #
+    # The primary fit knows nothing about `response.constraints`, so without
+    # these the ranking happily nominates the INTERIOR of a region every
+    # measurement refused (observed: every screen row at one corner measured
+    # infeasible, and the two top candidates were interior points of that
+    # corner). Each numeric constraint metric is fitted over the same design
+    # and model family, on the complete AND infeasible rows -- an infeasible row
+    # is precisely a measurement of where the boundary is. A candidate leaves the
+    # ranking only when the constraint's one-sided bound at delta_screen sits
+    # entirely on the violating side; see `constraint_models` for the rule and
+    # for every reason a constraint falls back to measurement only.
+    delta_s = pol["objective"]["delta_screen"]
+    cmods: list = []
+    if _MODEL_CONSTRAINTS and (response_spec.get("constraints") or []):
+        cmods = cmodels.fit_constraint_models(
+            response_spec.get("constraints") or [], design,
+            _fit_row_records(work_dir, outcomes, stage_name, screen_iter,
+                             n_total=len(ys), n_fold=fold_n),
+            fitted_ids=fitted_ids, held_levels=non_identifiable_held,
+            levels_by_pos=levels_by_pos,
+        )
     # `top=None` means "no truncation", so one call gives both the shortlist
     # and the size of the space it was chosen from. Ordering stays in `decide`
     # — re-deriving the argmax here would put the tie-break and the direction
@@ -3300,6 +3392,7 @@ def run_stage(
     scored = decide.ranked(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded, top=None,
+        constraint_models=cmods, constraint_delta=delta_s,
     )
     # `top_candidates` is not only a human-readable "how close was the
     # runner-up" — it is the POOL `_confirm_rows` draws the terminal shortlist
@@ -3357,7 +3450,26 @@ def run_stage(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded,
         epsilon_pct=float((pol["objective"]["epsilon"] or {}).get("pct", 2.0)),
+        constraint_models=cmods, constraint_delta=delta_s,
     )
+    constraint_record = _constraint_models_record(
+        cmods,
+        decide.ranked(
+            fit, factors, direction=direction, fitted_ids=fitted_ids,
+            held_fixed=held_now, exclude_levels=excluded, top=None,
+        ) if any(m.modelled for m in cmods) else [],
+        rec, delta=delta_s,
+    )
+    uncertain_at_rec = [
+        e["metric"] for e in constraint_record
+        if (e.get("at_recommendation") or {}).get("verdict") == "uncertain"
+    ]
+    if uncertain_at_rec:
+        logger.info(
+            "%s: the recommendation is UNCERTAIN on constraint(s) %s -- its "
+            "one-sided bound straddles the threshold, so only a measurement can "
+            "say whether it is admissible.", stage_name, uncertain_at_rec,
+        )
     _write_json(iter_dir / "recommendation.json", {
         "stage": stage_name,
         "iteration": iteration,
@@ -3391,6 +3503,12 @@ def run_stage(
         # this is the same fact written where the consumer can read it.
         "model_adequate": Trigger.LACK_OF_FIT not in set(decision.triggers),
         "excluded_measured_infeasible": excluded,
+        # Per declared constraint: was it modelled (and if not, why not), how
+        # many candidates its model removed as CONFIDENTLY infeasible, and its
+        # verdict at the recommendation itself. An auditor can reconcile
+        # `top_candidates` against this without refitting anything.
+        "constraint_models": constraint_record,
+        "recommendation_constraint_uncertain": uncertain_at_rec,
         "residual_regret_model": rb.as_dict(),
         "epsilon": epsilon,
         "alias_consequential": [list(p) for p in alias_pairs_consequential],
@@ -4190,11 +4308,23 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # better informed list than the one round 1 drew from.
         #
         # This is the mechanism `SURFACES["sla"]` needs. There the model's whole
-        # top-3 violates the p99 constraint (the fit has no p99 term, so only a
-        # measurement can say so); round 1 excludes all three, and round 2 draws
-        # the next candidates down the ranking — which is how the campaign
-        # reaches the true CONSTRAINED optimum rather than settling for the one
-        # feasible corner that happened to be on the first shortlist.
+        # top-3 violates the p99 constraint and only a measurement can say so:
+        # sla's p99 is deterministic, so its constraint model has no pure error
+        # and stays UNMODELLED (`recommendation.json["constraint_models"]` says
+        # so). Round 1 excludes all three, and round 2 draws the next candidates
+        # down the ranking — which is how the campaign reaches the true
+        # CONSTRAINED optimum rather than settling for the one feasible corner
+        # that happened to be on the first shortlist.
+        #
+        # When a constraint IS modelled (pure error, no lack of fit), the fitting
+        # stage has already removed every CONFIDENTLY infeasible candidate from
+        # `top_candidates` — including interior points of a region that measured
+        # infeasible, which the exact-match `_measured_infeasible` skip cannot
+        # see (`SURFACES["infeasible_corner_interior"]`, and the field campaign
+        # that lost a round to it). What reaches this pool is then either
+        # predicted feasible or UNCERTAIN, and an uncertain candidate is exactly
+        # what a confirm round is for. The exact-match skip stays: it is the
+        # backstop for every unmodelled constraint and for model error.
         invalid = _measured_infeasible(work_dir)
         rec = _read_recommendation(work_dir) or {}
         if not rec.get("model_adequate", True):

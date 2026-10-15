@@ -29,6 +29,11 @@ Each surface is named for the historical failure it catches:
     and a time-ordered sweep would attribute to a factor.
   * ``sla`` — the unconstrained argmax violates a constraint observable, so
     the answer must be the argmax restricted to the valid region.
+  * ``infeasible_corner_interior`` — a whole CORNER region violates a
+    smooth, noisy constraint metric while the primary is maximised there, so
+    the primary-only fit ranks the corner's INTERIOR points (levels the screen
+    never ran) highest; without a model of the constraint, confirm seats them
+    as finalists and spends a round measuring them infeasible.
   * ``nan_at_corner`` — one configuration makes the target emit NaN, which
     is a semantic exception that ends the epoch rather than a datum to fit.
   * ``fails_at_one_level`` — a whole CORNER of the space never produces a
@@ -91,6 +96,12 @@ class Surface:
     fails_at: Callable[[dict], bool] | None = None
     direction: str = "maximize"
     extra_observables: Callable[[dict], dict] = field(default=lambda lv: {})
+    #: Observables that carry their OWN measurement noise, drawn from the same
+    #: per-row stream as the primary. ``extra_observables`` is deterministic, so
+    #: a constraint built from it has zero pure error and can never be fitted
+    #: with an interval -- which is right for ``sla`` and wrong for a surface
+    #: whose point is a constraint model with real uncertainty.
+    noisy_observables: Callable[[dict, Any], dict] | None = None
 
 
 def _numeric(fid: str, levels=(2, 4, 8, 16), grid=1) -> dict:
@@ -180,6 +191,51 @@ def _sla() -> Surface:
     )
 
 
+def _infeasible_corner_interior() -> Surface:
+    """The confirm-shortlist defect, in closed form.
+
+    Observed on a real campaign (primary throughput maximised, ``p99 <= 90``):
+    every screen row at ``BS=32, CMP=on`` measured infeasible, yet the top two
+    candidates were ``BS=32, CMP=on, PF=6`` and ``PF=2`` -- interior points of
+    that corner, which the screen never ran, so the exact-match
+    measured-infeasible skip could not see them. A confirm round was spent
+    measuring them infeasible and their infeasibility withheld certification.
+
+    Here ``p99_ms`` is a SMOOTH function of the factors (mains plus the
+    ``BS x CMP`` interaction -- inside the screen's model class) with real
+    measurement noise, so it can be fitted with pure error. It exceeds 90 over
+    the whole ``BS=32, CMP=2`` region for every ``PF`` (true value 104..107)
+    and clears it by >= 12 everywhere else, while the primary is additive and
+    maximised in exactly that region, so the primary-only fit ranks the
+    region's interior ``PF`` points first. The true constrained optimum is
+    ``{BS: 32, CMP: 0, PF: 8}`` (14.4).
+
+    ``BS`` and ``CMP`` are two-level NUMERICS with no grid (so the candidate
+    space and ``true_optimum`` both see only their declared pair) rather than
+    a ``choice`` (``CMP`` is a 0/2 compression level, so its centre point is
+    the runnable integer 1): a choice factor's centre points run at its FIRST level while
+    the fit codes them 0, which biases every coefficient they touch and would
+    confound the failure this surface isolates with an unrelated one.
+    """
+    def p99(lv: dict) -> float:
+        cmp_ = float(lv["CMP"]) / 2.0
+        bs = float(lv["BS"]) - 8.0
+        return 50.0 + 1.0 * bs + 5.0 * cmp_ + 1.0 * bs * cmp_ + 0.5 * float(lv["PF"])
+
+    return Surface(
+        name="infeasible_corner_interior", noise_sd=0.05,
+        factors=(_numeric("BS", levels=(8, 32), grid=None),
+                 _numeric("CMP", levels=(0, 2), grid=None),
+                 _numeric("PF", levels=(2, 4, 6, 8))),
+        fn=lambda lv: (
+            10.0 + 0.1 * float(lv["BS"]) + 0.75 * float(lv["CMP"])
+            + 0.15 * float(lv["PF"])
+        ),
+        invalid=lambda lv: p99(lv) > 90.0,
+        noisy_observables=lambda lv, rng: {"p99_ms": p99(lv) + rng.gauss(0.0, 1.5)},
+    )
+
+
 def _nan_at_corner() -> Surface:
     return Surface(
         name="nan_at_corner", noise_sd=0.05,
@@ -240,6 +296,7 @@ SURFACES: dict[str, Callable[[], Surface]] = {
     "choice_x_numeric": _choice_x_numeric,
     "drift": _drift,
     "sla": _sla,
+    "infeasible_corner_interior": _infeasible_corner_interior,
     "nan_at_corner": _nan_at_corner,
     "fails_at_one_level": _fails_at_one_level,
 }
@@ -333,6 +390,8 @@ def _observe(surface: Surface, levels: dict, *, rng: random.Random,
              + surface.drift_per_run * run_counter)
     obs = {"cfg": {k.lower(): v for k, v in lv.items()}, "m": m}
     obs.update(surface.extra_observables(lv))
+    if surface.noisy_observables is not None:
+        obs.update(surface.noisy_observables(lv, rng))
     return obs
 
 

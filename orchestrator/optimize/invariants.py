@@ -1209,6 +1209,25 @@ _ENTRIES: tuple[Invariant, ...] = (
                    "Asserted directly in test_welch_df_underflows_on_subnormal_variance. "
                    "The guard should test the DENOMINATOR, not the sum of the variances."),
 
+    Invariant("INV-STAT13", "A fitted constraint model excludes a candidate only when the "
+                            "constraint's one-sided bound at delta_screen lies ENTIRELY on "
+                            "the violating side: a candidate whose bound admits feasibility "
+                            "is never removed from the argmax or top_candidates.",
+              "STAT", "function", "constraint_models module docstring; decide._scored",
+              TEST, None,
+              violated_by="field campaign (throughput under p99 <= 90): every screen row at "
+                          "one corner measured infeasible, the primary-only fit ranked that "
+                          "corner's INTERIOR points first, and a confirm round was spent "
+                          "measuring them infeasible, withholding certification. Excluding on "
+                          "the point prediction instead would delete the true optimum "
+                          "whenever model error puts it past the boundary.",
+              note="A property over generated fits, thresholds, ops and deltas: "
+                   "tests/test_optimize_constraint_models.py::"
+                   "test_exclusion_never_removes_a_candidate_whose_bound_admits_feasibility, "
+                   "which restates the bound from the definition rather than reading the "
+                   "verdict back from the code under test (mutation-verified: excluding on "
+                   "the point prediction fails it)."),
+
     # ── temporal ──────────────────────────────────────────────────────────
     Invariant("INV-TMP01", "policy.json + policy.sha256 are written BEFORE the first "
                            "benchmark run of the epoch. That ordering IS the pre-registration.",

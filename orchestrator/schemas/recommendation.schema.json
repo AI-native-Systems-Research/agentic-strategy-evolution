@@ -16,6 +16,8 @@
     "stationary_point",
     "model_adequate",
     "excluded_measured_infeasible",
+    "constraint_models",
+    "recommendation_constraint_uncertain",
     "residual_regret_model",
     "epsilon",
     "alias_consequential",
@@ -81,6 +83,112 @@
       "type": "array",
       "items": { "type": "object" },
       "description": "Configurations excluded from the candidate space because the campaign has already MEASURED them inadmissible. Recorded so the exclusion is auditable rather than invisible; _run_report repeats the check at the point of use, because this recommendation may be read later than the run that invalidated it."
+    },
+    "constraint_models": {
+      "type": "array",
+      "description": "One entry per declared response.constraints entry, in declaration order: whether the fitting stage could MODEL that constraint's metric (same design and model family as the primary, fitted on the complete AND infeasible rows) and what the model did to the candidate ranking. A candidate is removed from the argmax and from top_candidates only when a modelled constraint's one-sided bound at `delta` lies entirely on the violating side -- never on a point prediction. An unmodelled constraint (== / != op, a when/when_not guard, no pure error, singular, lack of fit, a missing metric) excludes nothing and `reason` says why. Empty when the campaign declares no constraints.",
+      "items": {
+        "type": "object",
+        "required": [
+          "metric",
+          "op",
+          "value",
+          "modelled",
+          "reason",
+          "n_rows",
+          "excluded_confidently_infeasible",
+          "delta",
+          "applied",
+          "at_recommendation"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "metric": {
+            "type": "string"
+          },
+          "op": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {},
+          "modelled": {
+            "type": "boolean",
+            "description": "True when a constraint model was fitted and is usable for exclusion."
+          },
+          "reason": {
+            "type": "string",
+            "description": "'modelled', or why the constraint fell back to measurement only."
+          },
+          "n_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Measured rows the constraint model was fitted on (0 when it was never attempted)."
+          },
+          "excluded_confidently_infeasible": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Candidates this constraint's model removed as confidently infeasible. A candidate removed by two constraints counts under each."
+          },
+          "delta": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "The per-constraint one-sided level: delta_screen divided by the number of constraints modelled (Bonferroni over constraints)."
+          },
+          "applied": {
+            "type": "boolean",
+            "description": "False when the model was fitted but NOT used, because it would have excluded every candidate (always act, spec 3.6)."
+          },
+          "at_recommendation": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The model's verdict at the recommended levels: predicted value, its SE, the lower and upper one-sided 1-delta bounds, and verdict feasible / uncertain / infeasible. Null when unmodelled.",
+            "required": [
+              "predicted",
+              "se",
+              "lower",
+              "upper",
+              "verdict"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "predicted": {
+                "type": "number"
+              },
+              "se": {
+                "type": "number",
+                "minimum": 0
+              },
+              "lower": {
+                "type": "number",
+                "description": "One-sided lower 1-delta bound on the constraint metric."
+              },
+              "upper": {
+                "type": "number",
+                "description": "One-sided upper 1-delta bound on the constraint metric."
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "feasible",
+                  "uncertain",
+                  "infeasible"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "recommendation_constraint_uncertain": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Metrics of every modelled constraint on which the RECOMMENDATION itself is uncertain (its confidence band straddles the threshold): the model cannot say it is admissible and only a measurement can. Empty when every modelled constraint is confidently satisfied there, or nothing was modelled."
     },
     "residual_regret_model": {
       "type": "object",
