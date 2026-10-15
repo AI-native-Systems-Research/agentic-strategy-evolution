@@ -387,6 +387,14 @@ neighbouring front points cannot be separated by a few replicates and stay
 `possibly_dominated`: that is the honest answer, and more `replicates` (or a
 wider epsilon) is the remedy.
 
+**Vacated seats are refilled once.** With `response.constraints` declared, a
+confirm round at the round cap that measured finalists infeasible and left
+fewer than two admissible ones runs ONE extra registered round (`refill vacated
+seats`): the survivors are re-measured beside candidates whose nearest measured
+configuration was admissible. That round never certifies on its own
+(`shortlist_refilled`) -- it buys a better-supported answer; a certificate
+needs at least one measured-feasible rival (`no_feasible_rival` otherwise).
+
 **Preference: picking one point.** A recommendation is always produced.
 
 | `method` | Picks | Needs |

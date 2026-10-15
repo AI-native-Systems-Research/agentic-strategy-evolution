@@ -279,15 +279,58 @@ epsilon OR truly inadmissible), seeds 1-8:
 
 | surface | rounds | (a) today | (b) caveat |
 |---|---|---|---|
-| `sla` (p99 <= 40) | 1 / 3 | 0/0, 0/0 | 0/0, 5/0 |
-| `infeasible_corner_interior` | 1 / 3 | 3/0, 3/0 | 3/0, 3/0 |
-| `stochastic_constraint_boundary` | 1 / 3 | 0/0, 0/0 | 0/0, **1/1** |
+| `sla` (p99 <= 40) | 1 / 3 | 0/0, 0/0 | 0/0, 6/0 |
+| `infeasible_corner_interior` | 1 / 3 | 8/0, 8/0 | 8/0, 8/0 |
+| `stochastic_constraint_boundary` | 1 / 3 | 0/0, 0/0 | 0/0, **2/2** |
 | `deterministic_constraint_axis` | 1 / 3 | 0/0, 0/0 | 8/0, 8/0 |
 | `pareto_with_constraint` | 2 / 3 | 1/0, 7/0 | 7/0, 7/0 |
 
-(b) raises certification sharply but adds a false certificate: on
+(Measured with the refill branch below in place, on the merged `nousko`
+code; before them the stochastic row read 0/0, 1/1 -- the same verdict.)
+
+(b) raises certification sharply but adds false certificates: on
 `stochastic_constraint_boundary` it certified a truly inadmissible
 configuration that passed its own replicates by luck while a sibling in the
 same stochastic region did not -- exactly the evidence the veto reads. Today's
 rule is kept (`stage_runner._INFEASIBLE_FINALIST_CAVEAT = False`, pinned by
 `tests/test_optimize_pareto.py::test_an_infeasible_finalist_still_withholds_certification`).
+
+### A certificate needs a measured-feasible rival; the refill branch
+
+Today's rule stays, and its reason is stated as its own label:
+`no_feasible_rival` joins `finalist_measured_infeasible` when only one
+admissible finalist remains -- `R_terminal = 0` then bounds the winner against
+nothing (field case: a Go campaign, 2 of 3 finalists infeasible at the round
+cap). The remedy is a registered branch, `confirm -> confirm` with accounting
+`refill vacated seats` (`policy.REFILL_ACCOUNTING`), compiled only when
+`response.constraints` is declared:
+
+- observations `finalists_vacated` (finalists measured inadmissible this
+  round), `feasible_finalists`, and the derived `refill_available` (no refill
+  spent this epoch AND an unmeasured candidate remains), produced only on a
+  round that vacated a seat;
+- fires when `finalists_vacated > 0`, `feasible_finalists < 2`,
+  `refill_available`, `confirm_affordable`, and `round >= confirm_max_rounds`:
+  it is the ONE extra round a capped epoch lacks (while registered rounds
+  remain, the default `confirm -> confirm` already tops up from the ranking --
+  firing earlier changed the four-round `sla` trajectory and lost its
+  certificate);
+- registered first after the semantic guards (INV-VOC10);
+- seats: the survivors (same replicate seeds, so CRN-paired), then the
+  supported-feasible pool and then the constraint-filtered ranking
+  (`refill_pool.json`, 64 deep), minus anything already measured, keeping only
+  candidates whose NEAREST measured configuration (coded space, this epoch) is
+  admissible -- the admissible box alone contains the corner the finalists were
+  just measured infeasible in when the constraint couples factors;
+- the refill round's bound is taken at `delta_terminal / rounds spent`, and the
+  refill round itself never certifies (`shortlist_refilled`): its replacements
+  are compared, but the ranking that nominated the vacated finalists is the
+  premise that failed. Measured on `sla`: certifying it certified 6/8 seeds 0.4
+  below the optimum (epsilon 0.38).
+
+Oracle (`tests/test_optimize_refill.py`): on `sla` at the default single
+round, every seed went from one feasible finalist (`no_feasible_rival`) to >= 2
+in the refill round, the answer improved from 1.2 to 0.4 below the constrained
+optimum, and nothing was certified falsely; on `stochastic_constraint_boundary`
+no false certificate; a campaign that vacates nothing is identical except the
+compiled policy and its hash.

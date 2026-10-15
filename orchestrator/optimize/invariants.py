@@ -1028,6 +1028,40 @@ def check_gap_fill_branch(policy: dict) -> list[str]:
     return out
 
 
+def check_refill_branch(policy: dict) -> list[str]:
+    """INV-VOC10: ``finalists_vacated`` / ``feasible_finalists`` /
+    ``refill_available`` are read only by the registered refill branch --
+    ``confirm -> confirm``, accounting ``REFILL_ACCOUNTING``, guarded by the
+    round cap, affordability and ``refill_available`` -- registered only when
+    constraints exist (``response.constraints``), and ordered BEFORE
+    certification and every decline guard out of ``confirm``."""
+    from orchestrator.optimize.policy import REFILL_ACCOUNTING
+
+    pol = policy or {}
+    keys = {"finalists_vacated", "feasible_finalists", "refill_available"}
+    out: list[str] = []
+    cap = (((pol.get("states") or {}).get("confirm") or {}).get("design") or {}).get(
+        "max_rounds")
+    confirm_rules = [t for t in pol.get("transitions") or []
+                     if t.get("from") == "confirm" and "when" in t]
+    for i, t in enumerate(confirm_rules):
+        when = t.get("when") or {}
+        if not keys & set(when):
+            continue
+        where = f"{t.get('from')}->{t.get('to')}"
+        if t.get("to") != "confirm" or t.get("accounting") != REFILL_ACCOUNTING:
+            out.append(f"{where}: refill observations read outside the refill branch")
+        if when.get("refill_available") is not True or when.get(
+                "confirm_affordable") is not True or when.get("round") != {">=": cap}:
+            out.append(f"{where}: refill not guarded by availability, affordability "
+                       f"and the round cap")
+        later_decl = [r for r in confirm_rules[:i]
+                      if r.get("to") == "report" or "certified" in (r.get("when") or {})]
+        if later_decl:
+            out.append(f"{where}: registered after a certification/decline rule")
+    return out
+
+
 def check_single_objective_untouched(policy: dict, report: dict | None = None) -> list[str]:
     """INV-ST11: a single-objective campaign carries no multi-objective
     vocabulary -- no ``objective.objectives``, no ``front_gap_large`` guard, no
@@ -1397,6 +1431,17 @@ _ENTRIES: tuple[Invariant, ...] = (
                            "confirm_affordable), and only in a multi-objective policy.",
               "VOC", "artifact", "policy.FRONT_GAP_ACCOUNTING; compile_policy", TEST,
               check_gap_fill_branch),
+
+    Invariant("INV-VOC10", "finalists_vacated, feasible_finalists and refill_available "
+                           "are read only by the registered refill branch (confirm -> "
+                           "confirm, accounting 'refill vacated seats', guarded by "
+                           "refill_available, confirm_affordable and the round cap), "
+                           "registered before certification and every decline guard.",
+              "VOC", "artifact", "policy.REFILL_ACCOUNTING; compile_policy", TEST,
+              check_refill_branch,
+              violated_by="a real Go campaign: 2 of 3 finalists measured infeasible at "
+                          "the round cap, R_terminal = 0 over no feasible rival, two "
+                          "thirds of confirm's budget spent and never refilled"),
 
     # ── semantic / accounting ─────────────────────────────────────────────
     Invariant("INV-SEM01", "residual_regret_model and residual_regret_terminal are separate "

@@ -35,6 +35,17 @@ OBSERVATION_KEYS: frozenset[str] = frozenset({
     # measured-front points exceeds `2 x max_k(eps_k / range_k)`; the gap list
     # itself is in `confirmation.json["pareto"]["gaps_remaining"]`.
     "front_gap_large",
+    # CONSTRAINED CAMPAIGNS ONLY. Consumer: the registered `confirm -> confirm`
+    # refill branch (`REFILL_ACCOUNTING`), compiled only when
+    # `response.constraints` is declared. `finalists_vacated` = finalists
+    # measured inadmissible this round; `feasible_finalists` = admissible
+    # finalists that produced measurements; `refill_available` = no refill
+    # round spent yet this epoch (the branch is capped at one) AND the refill
+    # pool still holds an unmeasured candidate whose nearest measured neighbour
+    # is admissible -- derived in the runtime, like `confirm_affordable`.
+    # Produced only on a round that vacated a seat, so an unvacated round's
+    # observations are unchanged.
+    "finalists_vacated", "feasible_finalists", "refill_available",
     # `behavioral_violation` is INTENTIONALLY never read by a compiled `when`
     # clause, and the intent is the one `stage.decide_after_screen` states in
     # its own words: "Behavioral violations are reported but never block
@@ -211,6 +222,28 @@ predicted-front candidates inside the largest gaps. Every round's front claims
 are made at ``delta_terminal / max_rounds`` (Bonferroni over the registered
 rounds), so looping cannot buy a claim the round cap did not pay for.
 """
+
+
+REFILL_ACCOUNTING = (
+    "refill vacated seats: one round, Bonferroni over the rounds actually "
+    "spent, CRN-paired with the surviving finalists' replicates"
+)
+"""The accounting rule of the registered refill branch (constrained campaigns).
+
+``confirm -> confirm`` once, when a round measured finalists inadmissible and
+fewer than two admissible finalists remain: with no admissible rival the
+terminal bound is vacuous, so the vacated seats are refilled from the
+supported-feasible pool first, then the constraint-filtered ranking, never with
+a configuration already measured inadmissible. Capped at ONE round regardless of
+``confirm_max_rounds`` (so the default single-round campaign benefits); the
+refill round's terminal bound is taken at ``delta_terminal / rounds spent``, and
+its survivors share the round's replicate seeds with the new seats.
+"""
+
+#: Whether constrained campaigns register the refill branch. Not a campaign
+#: knob: it exists so the metamorphic oracle can compile the same campaign with
+#: and without the branch.
+_REFILL_VACATED = True
 
 
 def _multi_objective_block(opt: dict) -> dict | None:
@@ -451,6 +484,27 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             {"from": "confirm", "when": {"correctness_failed": True}, "to": "exception", "accounting": sem},
             {"from": "confirm", "when": {"nan_response": True}, "to": "exception", "accounting": sem},
         ]
+        if _REFILL_VACATED and (opt.get("response") or {}).get("constraints"):
+            # FIRST after the semantic guards -- before gap fill, certification and
+            # every decline guard: a round
+            # whose finalists were measured inadmissible has no admissible rival
+            # to bound against, so neither a certificate nor a decline is the
+            # right reading of it. Its own guard carries affordability, so it
+            # cannot outlive the budget; `refill_available` caps it at one round
+            # whatever `confirm_max_rounds` says. It fires only AT the round cap:
+            # while registered rounds remain, the default `confirm -> confirm`
+            # already re-fills the shortlist from deeper in the ranking, so the
+            # refill is the one extra round a capped epoch would otherwise lack
+            # (the default single-round campaign is exactly that case). Registered only when
+            # constraints are declared -- the only way a finalist is vacated by
+            # a measurement -- so an unconstrained policy is unchanged.
+            transitions.append({
+                "from": "confirm",
+                "when": {"finalists_vacated": {">": 0}, "feasible_finalists": {"<": 2},
+                         "refill_available": True, "confirm_affordable": True,
+                         "round": {">=": states["confirm"]["design"]["max_rounds"]}},
+                "to": "confirm", "accounting": REFILL_ACCOUNTING,
+            })
         if mo is not None:
             # BEFORE `certified`: the multi-objective epoch's product is the
             # FRONT, and a certified preferred point with a wide unexplored

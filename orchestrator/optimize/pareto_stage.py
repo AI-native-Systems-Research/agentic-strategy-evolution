@@ -436,7 +436,9 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     # round shrink the confident set even when it bought new points (measured
     # on `pareto_noisy`).
     delta_front = delta_t
-    delta_cert = delta_t / max(1, max_rounds)
+    # A refill round (policy.REFILL_ACCOUNTING) is a look beyond the cap, so
+    # the divisor is the larger of the registered cap and the rounds spent.
+    delta_cert = delta_t / max(1, max_rounds, int(rnd or 1))
     pool = pooled(pts, objs)
     eps = pareto.resolve_eps(objs, best_reference(pts, objs))
     eps_known = {m: (e if e is not None else 0.0) for m, e in eps.items()}

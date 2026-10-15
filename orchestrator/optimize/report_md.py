@@ -74,6 +74,13 @@ WITHHELD_MEANING = {
                                       "could not be ruled out as better on every "
                                       "objective by epsilon",
     "no_front_point": "no measured admissible configuration formed a front",
+    "no_feasible_rival": "only one finalist was admissible, so the terminal "
+                         "bound compares it against nothing -- the vacated "
+                         "seats need refilling",
+    "shortlist_refilled": "the shortlist was refilled after finalists were "
+                          "measured inadmissible; the replacements were "
+                          "compared, but the ranking that nominated the "
+                          "originals is not trusted to have kept the optimum",
 }
 
 #: Plain-language reading of a measured-front status (``report.json["pareto"]``).

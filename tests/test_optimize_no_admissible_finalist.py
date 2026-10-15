@@ -44,13 +44,25 @@ _SEEDS = (1, 5, 6, 11)
 
 
 def _run(tmp_path: Path, seed: int, *, rounds: int = 1, surface: str = SURFACE,
-         overrides: dict | None = None):
+         overrides: dict | None = None, refill: bool = False):
+    """The field state these tests pin is the round cap reached with every
+    finalist inadmissible. The registered REFILL branch (policy.REFILL_ACCOUNTING)
+    exists to add one round after exactly that state, so it is compiled out here
+    unless ``refill`` is asked for; tests/test_optimize_refill.py owns it."""
+    import orchestrator.optimize.policy as policy
+
     ov = dict(overrides if overrides is not None else _CONSTRAINED)
     ov["policy"] = {"confirm_max_rounds": rounds}
-    return run_synthetic_campaign(
-        SURFACES[surface](), seed=seed, parent_dir=tmp_path / f"{surface}-{seed}-{rounds}",
-        campaign_overrides=ov, max_iterations=12,
-    )
+    saved = policy._REFILL_VACATED
+    policy._REFILL_VACATED = refill
+    try:
+        return run_synthetic_campaign(
+            SURFACES[surface](), seed=seed,
+            parent_dir=tmp_path / f"{surface}-{seed}-{rounds}",
+            campaign_overrides=ov, max_iterations=12,
+        )
+    finally:
+        policy._REFILL_VACATED = saved
 
 
 def _rows(work_dir: Path) -> list[dict]:

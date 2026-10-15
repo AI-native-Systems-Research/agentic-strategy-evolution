@@ -756,6 +756,9 @@ _SUPPORTED_FEASIBLE_SEAT = True
 #: oracle evaluation that decides it runs the same campaigns both ways.
 _INFEASIBLE_FINALIST_CAVEAT = False
 
+#: How deep into the constraint-filtered ranking the refill pool reaches.
+_REFILL_POOL = 64
+
 #: Row statuses whose PRIMARY metric enters the primary fit (INV-STAT15).
 #:
 #: ``infeasible`` IS FITTED. An infeasible row violated a declared
@@ -3924,6 +3927,18 @@ def run_stage(
     # unconstrained campaign's recommendation.json is byte-identical.
     supported_record = None
     _declared = response_spec.get("constraints") or []
+    if _declared and policy_mod._REFILL_VACATED:
+        # The REFILL branch's candidate pool (policy.REFILL_ACCOUNTING): the
+        # constraint-filtered ranking, deeper than `top_candidates`, because the
+        # configurations a refill needs are the ones BELOW the model's
+        # infeasible favourites. A sibling file, not a recommendation.json
+        # field, so a constrained campaign that never vacates a seat writes the
+        # same governed artifacts it always did.
+        _write_json(iter_dir / "refill_pool.json", {
+            "stage": stage_name, "iteration": iteration,
+            "candidates": [{"levels": c.levels, "coded": c.coded,
+                            "predicted": c.predicted} for c in scored[:_REFILL_POOL]],
+        })
     if _SUPPORTED_FEASIBLE_SEAT and _declared:
         supported_record = _supported_feasible_record(
             work_dir, factors, _declared, cmods, scored, delta=delta_s,
@@ -4800,6 +4815,13 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             finalists[i], provenance[i], measured_seat[i] = lv, why, False
             return
 
+    refill = rnd > 1 and _refill_round(pol, work_dir)
+
+    def _seat_refill_pool() -> None:
+        """The REFILL branch's seats: ``_refill_candidates``, best first."""
+        for lv_ in _refill_candidates(work_dir, factors):
+            _add(lv_, f"round {rnd} refill: nearest measured neighbour admissible")
+
     if pareto_stage.objectives(pol):
         # ── MULTI-OBJECTIVE: seat the FRONT, not a winner's challengers ────
         #
@@ -4810,6 +4832,11 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # their predicted dominators). `_add` keeps its job: de-duplicate, cap
         # at `shortlist_size`, never re-seat a measured-inadmissible point.
         rec = _read_recommendation(work_dir) or {}
+        if refill:
+            prev_ = (_latest_confirmation(work_dir) or {}).get("pareto") or {}
+            _add((prev_.get("preference") or {}).get("chosen"),
+                 "previous round's preferred point", measured=True)
+            _seat_refill_pool()
         for lv, why, measured in pareto_stage.shortlist_plan(
                 pol, work_dir, rec, rnd,
                 _latest_confirmation(work_dir) if rnd > 1 else None):
@@ -4840,6 +4867,8 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             ):
                 _add(f.get("levels"), f"round {rnd - 1} bound above epsilon",
                      measured=True)
+        if refill:
+            _seat_refill_pool()
     if not finalists and not pareto_stage.objectives(pol):
         # The round-1 ladder, and also the recovery path for a round r > 1 whose
         # entire carry-over was excluded. Both want the same priority order, and
@@ -5295,6 +5324,12 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     from orchestrator.optimize import artifacts, relations
 
     delta_t = pol["objective"]["delta_terminal"]
+    # BONFERRONI OVER THE ROUNDS ACTUALLY SPENT, once the registered refill
+    # branch has run (policy.REFILL_ACCOUNTING): a refill is an extra look the
+    # round cap did not pay for, so the round it buys is judged at
+    # delta_terminal / rounds. Unchanged for every epoch that never refilled.
+    if _refills_spent(pol, work_dir):
+        delta_t = delta_t / max(1, int(payload.get("round") or 1))
     direction = pol["objective"]["direction"]
     sign = 1.0 if direction != "minimize" else -1.0
     paired = bool(payload.get("paired"))
@@ -5536,10 +5571,20 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         _INFEASIBLE_FINALIST_CAVEAT and n_infeasible and len(ok) >= 2
         and _within_now and not model_inadequate
     )
+    # A REFILLED shortlist inherits the premise failure that vacated it: the
+    # round before measured the model's ranking handing out inadmissible
+    # finalists, so `delta_s`'s "screening did not exclude the winner" is no
+    # better supported because the replacements happen to be admissible.
+    # Measured on SURFACES["sla"]: certifying the refill round certified 6/8
+    # seeds 0.4 below the true constrained optimum (epsilon 0.38). The refill
+    # buys a better ANSWER (1.2 -> 0.4 below) under `terminal_best`. Only the
+    # REFILL round itself is barred: a later registered round (round cap
+    # permitting) re-ranks and tops up as it always did, and can certify.
+    refilled = _refill_round(pol, work_dir)
     certified = (
         bound.value is not None and eps is not None and bound.value <= eps
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
-        and not fit_bias and not model_inadequate
+        and not fit_bias and not model_inadequate and not refilled
     )
     # NO ADMISSIBLE FINALIST is its own reason, not `bound_not_computable`. Every
     # finalist was MEASURED (numerically, completely) and every one had at least
@@ -5641,6 +5686,14 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("finalist_measured_infeasible",
                  any(s == "infeasible" for s in status.values())
                  and not infeasible_caveat),
+                # A certificate needs at least one MEASURED-FEASIBLE rival: with
+                # every other finalist inadmissible, R_terminal = 0 bounds the
+                # winner against nothing (a real campaign: 2 of 3 finalists
+                # infeasible, R_terminal 0, rightly withheld). Named so the
+                # remedy -- refill the vacated seats -- is legible.
+                ("no_feasible_rival",
+                 any(s == "infeasible" for s in status.values()) and len(ok) == 1),
+                ("shortlist_refilled", refilled),
                 ("finalist_unmeasured", bool(unmeasured)),
                 ("fit_exclusions_level_correlated", fit_bias),
                 ("model_inadequate", model_inadequate),
@@ -5809,6 +5862,21 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "residual_regret": bound.value,
         "epsilon": eps,
     }
+    _vacated = sum(1 for v in status.values() if v == "infeasible")
+    _refill_registered = any(
+        t.get("accounting") == policy_mod.REFILL_ACCOUNTING
+        for t in pol.get("transitions") or [])
+    if _vacated and _refill_registered:
+        # The refill branch's observations, produced ONLY on a round that
+        # vacated a seat (an unvacated round's observations are unchanged).
+        obs["finalists_vacated"] = _vacated
+        obs["feasible_finalists"] = len(ok)
+        # DERIVED, like confirm_affordable: no refill spent yet this epoch AND
+        # the refill pool still holds a candidate worth measuring.
+        obs["refill_available"] = (
+            _refills_spent(pol, work_dir) < 1
+            and bool(_refill_candidates(work_dir, factors))
+        )
     if "pareto" in summary:
         # The PREFERENCE scalarisation's terminal pair (spec step 7), and the
         # gap-fill branch's own observation (step 6).
@@ -5845,6 +5913,10 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         max(1, int(_cfg.get("shortlist_size", 3))) if "pareto" in summary
         else _next_round_finalists(summary, shortlist_size=_cfg.get("shortlist_size", 3))
     )
+    if "finalists_vacated" in obs and obs["feasible_finalists"] < 2 \
+            and obs["refill_available"]:
+        # A refill round re-seats the survivors AND every vacated seat.
+        carry = max(1, int(_cfg.get("shortlist_size", 3)))
     obs["runs_needed_confirm"] = carry * max(1, int(_cfg.get("replicates", 3)))
     obs["confirm_affordable"] = (
         obs["budget_remaining"] >= obs["runs_needed_confirm"]
@@ -5900,8 +5972,10 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
                   and within and not model_inadequate)
     infeasible_veto = bool(n_inf) and not caveat
     no_admissible = bool(status) and all(v == "infeasible" for v in status.values())
+    refilled = _refill_round(pol, work_dir)
     certified = bool(pref["chosen"]) and chosen_ok and within and not unmeasured \
-        and not infeasible_veto and not fit_bias and not model_inadequate
+        and not infeasible_veto and not fit_bias and not model_inadequate \
+        and not refilled
     reasons = [r for r, hit in (
         ("no_admissible_finalist", no_admissible),
         ("bound_not_computable", reg is None and not no_admissible),
@@ -5911,6 +5985,7 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
         ("finalist_unmeasured", bool(unmeasured)),
         ("fit_exclusions_level_correlated", fit_bias),
         ("model_inadequate", model_inadequate),
+        ("shortlist_refilled", refilled),
     ) if hit]
     if not certified and not reasons:
         reasons = ["no_front_point"]
@@ -5935,6 +6010,84 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
         par["gap_threshold"], "CERTIFIED" if certified else "uncertified",
     )
     return certified, reasons
+
+
+def _refill_candidates(work_dir, factors) -> list[dict]:
+    """The REFILL branch's candidates (policy.REFILL_ACCOUNTING), best first.
+
+    The supported-feasible pool first, then the constraint-filtered ranking
+    (``refill_pool.json``), minus anything an earlier round measured and
+    anything measured inadmissible. Each must also sit in the MEASURED-FEASIBLE
+    NEIGHBOURHOOD: its nearest measured configuration (coded space, this
+    epoch's rows) is admissible. That is what an unmodelled coupled constraint
+    needs -- the admissible box of ``supported_feasible`` contains the very
+    corner the finalists were just measured infeasible in (``SURFACES["sla"]``:
+    2A + B <= 40, every pool member past the boundary). A heuristic, like the
+    box: a refill seat is measured before it can win.
+    """
+    from orchestrator.optimize.factors import code_actual
+
+    rec_ = _read_recommendation(work_dir) or {}
+    if rec_.get("iteration") is None:
+        return []
+    retired = _previous_finalist_levels(work_dir)
+    pool_file = Path(work_dir) / "runs" / f"iter-{rec_.get('iteration')}" / "refill_pool.json"
+    try:
+        ranked = json.loads(pool_file.read_text()).get("candidates") or []
+    except (OSError, ValueError):
+        ranked = []
+    cands = [dict(p_.get("levels") or {}) for p_ in
+             (rec_.get("supported_feasible_candidate") or {}).get("pool") or []]
+    cands += [dict(c_.get("levels") or {}) for c_ in ranked]
+    by_id = {f.id: f for f in factors}
+
+    def code(lv):
+        out_ = []
+        for fid in sorted(lv):
+            f = by_id.get(fid)
+            try:
+                out_.append(code_actual(f, lv[fid]) if f is not None else 0.0)
+            except (TypeError, ValueError):
+                out_.append(0.0)
+        return out_
+
+    invalid = _measured_infeasible(work_dir)
+    measured = []
+    for rp in _this_epoch_runs(work_dir):
+        for row in artifacts.read_runs(rp.parent):
+            lv_ = row.get("levels")
+            if lv_ and row.get("status") in ("complete", "infeasible", "rejected"):
+                measured.append((code(lv_), _config_admissible(work_dir, lv_, invalid=invalid)))
+
+    def near_feasible(lv) -> bool:
+        if not measured:
+            return True
+        z = code(lv)
+        return min(measured, key=lambda m: (math.dist(z, m[0]), not m[1]))[1]
+
+    out: list[dict] = []
+    for lv_ in cands:
+        if (lv_ and not any(_same_levels(r_, lv_) for r_ in retired)
+                and not any(_same_levels(o_, lv_) for o_ in out)
+                and not _measured_infeasible_contains(work_dir, lv_, invalid=invalid)
+                and near_feasible(lv_)):
+            out.append(lv_)
+    return out
+
+
+def _refills_spent(pol, work_dir) -> int:
+    """Refill rounds (``policy.REFILL_ACCOUNTING``) this epoch has already run."""
+    return sum(
+        1 for t in policy_mod.epoch_transitions(pol, work_dir)
+        if (t.get("rule") or {}).get("accounting") == policy_mod.REFILL_ACCOUNTING
+    )
+
+
+def _refill_round(pol, work_dir) -> bool:
+    """Is the confirm round about to run the registered REFILL branch?"""
+    trans = policy_mod.epoch_transitions(pol, work_dir)
+    return bool(trans) and (trans[-1].get("rule") or {}).get(
+        "accounting") == policy_mod.REFILL_ACCOUNTING
 
 
 def _next_round_finalists(summary: dict, *, shortlist_size) -> int:
