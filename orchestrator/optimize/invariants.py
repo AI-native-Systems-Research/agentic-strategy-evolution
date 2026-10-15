@@ -868,6 +868,53 @@ def check_fitted_statuses(fit_coordinates: dict) -> list[str]:
     return out
 
 
+def check_supported_feasible_candidate(recommendation: dict) -> list[str]:
+    """INV-STAT16: the recorded supported-feasible candidate satisfies its rule.
+
+    Read from ``recommendation.json`` alone: every modelled constraint's verdict
+    is ``feasible`` with its satisfying-side bound inside the threshold, every
+    unmodelled one is ``inside_admissible_region`` and the levels (and every
+    pool member's) lie inside the recorded ``admissible_region``, the candidate
+    heads its pool, and it was never measured inadmissible. Vacuous when the
+    record is absent (no constraints declared) or names no candidate.
+    """
+    from orchestrator.optimize.constraint_models import in_admissible_region
+
+    sf = (recommendation or {}).get("supported_feasible_candidate")
+    if not sf or sf.get("levels") is None:
+        return []
+    out: list[str] = []
+    levels = sf["levels"]
+    region = sf.get("admissible_region")
+    unmodelled = False
+    for v in sf.get("constraint_verdicts") or []:
+        if not v.get("modelled"):
+            unmodelled = True
+            if v.get("verdict") != "inside_admissible_region":
+                out.append(f"unmodelled {v.get('metric')!r} verdict {v.get('verdict')!r}")
+            continue
+        if v.get("verdict") != "feasible":
+            out.append(f"modelled {v.get('metric')!r} verdict {v.get('verdict')!r}, "
+                       f"not confidently feasible")
+            continue
+        op, val = v.get("op"), float(v.get("value"))
+        ok = {"<=": v["upper"] <= val, "<": v["upper"] < val,
+              ">=": v["lower"] >= val, ">": v["lower"] > val}.get(op, False)
+        if not ok:
+            out.append(f"modelled {v.get('metric')!r}: the satisfying-side bound "
+                       f"is not inside {op} {val}")
+    if unmodelled:
+        for lv in [levels] + [p.get("levels") for p in sf.get("pool") or []]:
+            if not in_admissible_region(lv or {}, region or {}):
+                out.append(f"{lv} lies outside the measured-admissible region")
+    pool = sf.get("pool") or []
+    if not pool or pool[0].get("levels") != levels:
+        out.append("the supported-feasible candidate does not head its pool")
+    if any(lv == levels for lv in recommendation.get("excluded_measured_infeasible") or []):
+        out.append(f"{levels} was already measured inadmissible")
+    return out
+
+
 # ── temporal / provenance ─────────────────────────────────────────────────
 
 def check_preregistration_precedes_measurement(work_dir: Path) -> list[str]:
@@ -1478,6 +1525,30 @@ _ENTRIES: tuple[Invariant, ...] = (
               note="tests/test_optimize_coded_as_run.py::"
                    "test_fitting_infeasible_rows_is_never_worse_on_the_constrained_oracle "
                    "(metamorphic, both rules per seed) and the checker over fit_coordinates."),
+
+    Invariant("INV-STAT16", "When response.constraints are declared and the confirm "
+                            "shortlist has >= 2 seats, a seat is reserved for the best-"
+                            "predicted SUPPORTED-FEASIBLE candidate when one exists: every "
+                            "modelled constraint confidently feasible at delta_screen "
+                            "(Bonferroni, as exclusion) and, for each unmodelled one, inside "
+                            "the per-factor span of measured-admissible configurations. "
+                            "The seat never duplicates a finalist and never displaces a "
+                            "measured one; with no constraints the shortlist is unchanged.",
+              "STAT", "artifact",
+              "constraint_models.supported_feasible; stage_runner._confirm_rows "
+              "(_seat_supported); recommendation.json supported_feasible_candidate",
+              TEST, check_supported_feasible_candidate,
+              violated_by="two field campaigns: a deterministic max_unflushed_writes <= 200 "
+                          "(unmodelled) saw both model-ranked finalists pair a bigger cache "
+                          "with an infeasible write cache while a bigger cache with a "
+                          "measured-feasible write cache was never tested; a noisy hit-rate "
+                          "constraint's shortlist tested only the boundary level.",
+              note="tests/test_optimize_supported_feasible_seat.py: oracle on "
+                   "SURFACES['deterministic_constraint_axis'] (feasible answer beating "
+                   "everything measured before confirm), metamorphic byte-identity with no "
+                   "constraints, a property restating (a)/(b) from the definition, and the "
+                   "checker over every recommendation.json. The admissible-region rule is a "
+                   "conservative interpolation heuristic, not a feasibility guarantee."),
 
     # ── temporal ──────────────────────────────────────────────────────────
     Invariant("INV-TMP01", "policy.json + policy.sha256 are written BEFORE the first "

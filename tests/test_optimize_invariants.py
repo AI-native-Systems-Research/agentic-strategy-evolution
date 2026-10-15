@@ -240,6 +240,7 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_curvature_routes_to_refine",
         "check_certificate_rests_on_adequate_model",
         "check_fit_coordinates_are_actual", "check_fitted_statuses",
+        "check_supported_feasible_candidate",
     }
     registered = {i.checker.__name__ for i in inv.checkable()}
     assert registered <= exercised, (
@@ -269,6 +270,37 @@ def test_fit_coordinate_checkers_accept_the_recoded_fit_and_reject_the_nominal_o
     assert errs and all("never run" in e for e in errs), errs      # the +-1.41 axials
     assert inv.check_fitted_statuses(bad) == [
         f"fitted row {len(lv) - 1} has status 'rejected', which must never be fitted"]
+
+
+def test_supported_feasible_checker_catches_an_unsupported_seat():
+    """INV-STAT16: teeth. A recorded seat that is uncertain, outside the region,
+    not its pool's head, or already measured infeasible is flagged."""
+    lv = {"A": 4, "C": "on"}
+    good = {
+        "excluded_measured_infeasible": [],
+        "supported_feasible_candidate": {
+            "levels": lv, "pool": [{"levels": lv}],
+            "admissible_region": {"A": {"kind": "range", "min": 2, "max": 8},
+                                  "C": {"kind": "levels", "levels": ["on"]}},
+            "constraint_verdicts": [
+                {"metric": "q", "op": "<=", "value": 10, "modelled": True,
+                 "verdict": "feasible", "upper": 9.0, "lower": 5.0},
+                {"metric": "w", "op": "<=", "value": 7, "modelled": False,
+                 "verdict": "inside_admissible_region"}],
+        },
+    }
+    assert inv.check_supported_feasible_candidate(good) == []
+    assert inv.check_supported_feasible_candidate({}) == []
+    bad = json.loads(json.dumps(good))
+    sf = bad["supported_feasible_candidate"]
+    sf["constraint_verdicts"][0].update(verdict="uncertain", upper=11.0)
+    sf["levels"] = {"A": 16, "C": "on"}
+    bad["excluded_measured_infeasible"] = [{"A": 16, "C": "on"}]
+    errs = inv.check_supported_feasible_candidate(bad)
+    assert any("not confidently feasible" in e for e in errs), errs
+    assert any("outside the measured-admissible region" in e for e in errs), errs
+    assert any("does not head its pool" in e for e in errs), errs
+    assert any("already measured inadmissible" in e for e in errs), errs
 
 
 # ── structural / vocabulary ───────────────────────────────────────────────
