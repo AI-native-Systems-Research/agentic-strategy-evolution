@@ -1,0 +1,7 @@
+Wrote FILE
+
+Next steps:
+  1. Edit FILE — replace TODO markers, especially
+     target_system.description (that's the channel the LLM reads).
+  2. Skim the AUTHORING CHECKLIST near the top of the file.
+  3. Run: nous run FILE
