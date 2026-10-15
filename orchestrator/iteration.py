@@ -833,6 +833,11 @@ def setup_work_dir(
     from orchestrator.work_dir_resolver import ENV_VAR, resolve_work_dir
 
     work_dir = resolve_work_dir(run_id, repo_path)
+    if work_dir.parent.name == ".nous":
+        # The legacy layout puts the work_dir inside the target repo.
+        from orchestrator.work_dir_resolver import ensure_self_ignored
+
+        ensure_self_ignored(work_dir.parent)
 
     # #239 D1: collision detection. If state.json already exists with a
     # different recorded repo_path, the user has accidentally collided

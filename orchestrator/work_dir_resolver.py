@@ -191,3 +191,37 @@ def find_existing_work_dir(
                 return recorded_path.resolve()
         return candidate
     return None
+
+
+_SELF_IGNORE = (
+    "# Created by Nous: everything in this directory is Nous output, not part\n"
+    "# of this repository. Ignoring it keeps `git status`, `git add .` and\n"
+    "# `git stash -u` in the target from sweeping it up.\n"
+    "*\n"
+)
+
+
+def ensure_self_ignored(directory: str | Path) -> None:
+    """Create ``directory`` with a self-ignoring ``.gitignore`` (``*``).
+
+    For the directories Nous creates INSIDE a target repo -- ``.nous/`` (the
+    legacy work_dir parent and the repo cache) and ``.nous-experiments/`` (arm
+    worktrees). The same convention ``.pytest_cache`` uses: the directory hides
+    itself, so no edit to the target's own ``.gitignore`` is needed. A worktree
+    under ``.nous-experiments/`` is unaffected -- git reads ignore files only
+    within a worktree's own tree. Best-effort: a write failure is logged, never
+    fatal, because the campaign does not depend on it.
+    """
+    directory = Path(directory)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        marker = directory / ".gitignore"
+        if not marker.exists():
+            marker.write_text(_SELF_IGNORE)
+    except OSError as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "could not mark %s as ignored (%s); its contents will show in the "
+            "target's git status", directory, exc,
+        )

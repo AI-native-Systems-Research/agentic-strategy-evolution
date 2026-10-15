@@ -60,6 +60,9 @@ def create_experiment_worktree(
     experiment_id = f"iter-{iteration}-{uuid.uuid4().hex[:8]}"
     worktree_dir = repo_path / _EXPERIMENTS_DIRNAME / experiment_id
     branch_name = f"nous-exp-{experiment_id}"
+    from orchestrator.work_dir_resolver import ensure_self_ignored
+
+    ensure_self_ignored(repo_path / _EXPERIMENTS_DIRNAME)
 
     subprocess.run(
         ["git", "worktree", "add", str(worktree_dir), "-b", branch_name],
