@@ -1768,6 +1768,48 @@ is and leaves "is it the best?" as a claim about the fitted model. Total runs
 at this stage are `shortlist_size * replicates`, out of the same `max_runs`
 budget as everything else.
 
+**Who gets a seat.** Round 1 seats, in order and without duplicates: the
+fitting stage's recommendation and the best measured valid configuration (or,
+when the model failed lack of fit, the leading *measured* valid
+configurations instead), then **one reserved seat for the best
+supported-feasible candidate**, then the model's ranked `top_candidates`. A
+round r > 1 keeps the previous winner and every finalist whose bound still
+exceeds epsilon, and tops up in the same order. Every finalist is measured
+freshly before it can win, and one measured infeasible is struck off.
+
+**The supported-feasible seat (INV-STAT16).** Constraint models exclude only
+*confidently* infeasible candidates, so on a constraint-bound frontier every
+model-ranked candidate can be of uncertain feasibility — and on two real
+campaigns every one of them was measured infeasible while a feasible
+improvement was never tested (a deterministic `max_unflushed_writes <= 200`,
+where both model-ranked finalists paired a bigger cache with an infeasible
+write cache although a bigger cache with an already-feasible write cache was
+faster). So when `response.constraints` are declared and `shortlist_size >= 2`,
+confirm reserves a seat for the best-predicted candidate whose feasibility the
+*evidence* supports:
+
+- every **modelled** constraint is confidently *feasible* there — its
+  satisfying-side one-sided bound at `delta_screen` lies inside the
+  threshold, with the same Bonferroni split as exclusion; and
+- for every **unmodelled** constraint (deterministic metric, `==`, a guard,
+  lack of fit, ...), every level lies inside the region the measured-admissible
+  configurations span: per numeric factor the min..max of its admissible
+  levels (the same box in any monotone `scale`), per choice factor the levels
+  seen admissible. This is a **conservative interpolation heuristic, not a
+  guarantee**: it never extrapolates a factor past a level the campaign
+  watched pass, but a constraint that couples factors (`2A + B <= 40`) can
+  still fail at a box corner nobody measured. The seat then costs one
+  finalist's replicates, and the measurement strikes it off.
+
+The seat never duplicates a finalist (a recommendation that is itself
+supported fills it) and never displaces a *measured* seat: at
+`shortlist_size: 2` with both anchors seated it replaces the model's pick.
+When no candidate qualifies, the shortlist is what it would have been and
+`recommendation.json["supported_feasible_candidate"]` says why (`levels: null`
+and a `reason`); otherwise that record carries the candidate, its per-
+constraint verdicts, the admissible region, and the `pool` round-r top-ups draw
+from. With no constraints declared nothing changes, byte for byte.
+
 ### States and registered branches
 
 `build` and `verify` are **pre-epoch** — `verify` is what compiles the

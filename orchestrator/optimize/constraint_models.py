@@ -285,3 +285,147 @@ def confidently_infeasible(models, coded: dict, *, delta: float) -> list[str]:
     d = per_constraint_delta(models, delta)
     return [m.metric for m in models
             if m.modelled and bound(m, coded, delta=d)["verdict"] == "infeasible"]
+
+
+# ── the SUPPORTED-FEASIBLE candidate: a confirm seat the evidence backs ──────
+#
+# Exclusion above is deliberately one-sided: only a CONFIDENTLY infeasible
+# candidate leaves the ranking. That is right for not deleting the optimum, but
+# it means nothing guarantees the terminal comparison tests even ONE candidate
+# whose feasibility the evidence actually supports. On a constraint-bound
+# frontier the ranking prefers higher-predicted candidates of uncertain
+# feasibility; observed on two real campaigns, every model-ranked finalist was
+# then measured infeasible and a feasible improvement was never tested (a
+# deterministic `max_unflushed_writes <= 200`, unmodelled for want of pure
+# error: both model-ranked finalists paired a bigger cache with a write cache
+# infeasible by construction, while a bigger cache with an already-measured-
+# feasible write cache was faster and never seated; and a noisy hit-rate
+# constraint whose shortlist tested only the boundary level). The rule below
+# names the best-predicted candidate the evidence supports, and confirm
+# reserves a seat for it -- one registered row block, no new model call.
+
+
+def admissible_region(configurations, factors) -> dict:
+    """The per-factor span of the measured-ADMISSIBLE configurations.
+
+    ``configurations`` are level dicts the campaign has measured admissible
+    (``stage_runner._config_admissible``: a complete row and no infeasible /
+    rejected row anywhere). Returns ``{factor_id: span}`` with
+
+      * numeric: ``{"kind": "range", "min": lo, "max": hi}`` over the admissible
+        levels. Taken on the LEVELS themselves, which is the same box in the
+        factor's own scale whatever that scale is: ``scale: log`` (or any coding)
+        is a monotone map, so the min and max of the coded levels are the coded
+        min and max. The box is not widened to a grid neighbour or a declared
+        range end -- only levels the campaign watched pass count;
+      * choice (or any non-numeric level): ``{"kind": "levels", "levels": [...]}``,
+        the levels SEEN admissible. A categorical has no "between", so a level
+        never measured admissible is outside however its neighbours behaved.
+
+    A factor with no admissible observation is absent, which puts every
+    candidate outside the region (no evidence is not support). An empty input
+    gives ``{}``.
+    """
+    numeric = {f.id for f in factors if getattr(f, "type", None) == "numeric"}
+    spans: dict = {}
+    for f in factors:
+        vals = [c[f.id] for c in configurations or () if f.id in c]
+        if not vals:
+            continue
+        if f.id in numeric:
+            nums = [v for v in vals
+                    if isinstance(v, (int, float)) and not isinstance(v, bool)
+                    and math.isfinite(float(v))]
+            if nums:
+                spans[f.id] = {"kind": "range", "min": min(nums), "max": max(nums)}
+            continue
+        seen: list = []
+        for v in vals:
+            if v not in seen:
+                seen.append(v)
+        spans[f.id] = {"kind": "levels", "levels": sorted(seen, key=str)}
+    return spans
+
+
+def in_admissible_region(levels: dict, region: dict) -> bool:
+    """Is every level of ``levels`` inside ``region`` (``admissible_region``)?
+
+    Numerics compare with a relative tolerance (levels round-trip through
+    JSON, so ``8`` and ``8.0`` are one level). A factor the region does not
+    span is outside.
+    """
+    if not region or not levels:
+        return False
+    for fid, v in levels.items():
+        span = region.get(fid)
+        if span is None:
+            return False
+        if span["kind"] == "range":
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return False
+            lo, hi = float(span["min"]), float(span["max"])
+            tol = 1e-9 * max(1.0, abs(lo), abs(hi))
+            if not (lo - tol <= float(v) <= hi + tol):
+                return False
+        elif v not in span["levels"]:
+            return False
+    return True
+
+
+def supported_feasible(candidates, models, *, delta: float, region: dict) -> list:
+    """The candidates whose feasibility the EVIDENCE supports, in input order.
+
+    ``models`` holds ONE ``ConstraintModel`` per declared constraint (an
+    unmodelled one has ``fit is None``). A candidate qualifies when
+
+      (a) every MODELLED constraint's verdict is confidently ``feasible``: the
+          one-sided bound on the SATISFYING side lies inside the threshold (for
+          ``<=``: ``upper <= value``), at the same per-constraint delta the
+          exclusion uses (``per_constraint_delta``, Bonferroni over the
+          modelled constraints) -- the mirror image of exclusion, so
+          "excluded", "uncertain" and "supported" partition the modelled space;
+      (b) when ANY constraint is unmodelled, the candidate lies inside
+          ``region`` (``admissible_region``): every level within the span of
+          configurations the campaign has measured admissible.
+
+    (b) IS A CONSERVATIVE INTERPOLATION HEURISTIC, NOT A GUARANTEE. With no
+    model there is no bound to be on the right side of, and the only evidence
+    is which configurations passed. Staying inside their per-factor box never
+    EXTRAPOLATES any single factor past a level the campaign watched pass --
+    which is exactly the failure observed (a write cache larger than any
+    admissible one) -- and costs nothing to compute. It does not prove
+    feasibility: a constraint that couples factors (``A + B <= c``) can fail at
+    a box corner no admissible configuration occupies. That risk is bounded by
+    what the seat costs -- one candidate measured freshly, struck off by
+    ``_finish_confirm`` if a replicate is infeasible, never returned unmeasured.
+
+    Returns ``[(candidate, verdicts)]``; ``verdicts`` has one entry per model:
+    the ``bound`` dict (plus metric/op/value/modelled) for a modelled
+    constraint, ``{"verdict": "inside_admissible_region"}`` for an unmodelled
+    one. An empty list when nothing qualifies.
+    """
+    models = list(models or ())
+    need_region = any(not m.modelled for m in models)
+    if need_region and not region:
+        return []
+    d = per_constraint_delta(models, delta)
+    out = []
+    for c in candidates:
+        if need_region and not in_admissible_region(c.levels, region):
+            continue
+        verdicts = []
+        ok = True
+        for m in models:
+            head = {"metric": m.metric, "op": m.op, "value": m.value,
+                    "modelled": m.modelled}
+            if not m.modelled:
+                verdicts.append({**head, "verdict": "inside_admissible_region"})
+                continue
+            b = bound(m, c.coded, delta=d)
+            if b["verdict"] != "feasible":
+                ok = False
+                break
+            verdicts.append({**head, **b})
+        if ok:
+            out.append((c, verdicts))
+    return out

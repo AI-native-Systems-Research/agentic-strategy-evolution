@@ -720,6 +720,13 @@ def _fit_exclusion_reasons(outcomes, stage_name: str, dropped, *, n_total: int,
 #: oracle tests can run the same campaign with and without the models.
 _MODEL_CONSTRAINTS = True
 
+#: Whether confirm reserves a seat for the best SUPPORTED-FEASIBLE candidate
+#: (``constraint_models.supported_feasible``; recorded as
+#: ``recommendation.json["supported_feasible_candidate"]``, INV-STAT16). Not a
+#: campaign knob, for the same reason as ``_MODEL_CONSTRAINTS``: it exists so the
+#: metamorphic oracle tests can run one campaign with and without the seat.
+_SUPPORTED_FEASIBLE_SEAT = True
+
 #: Row statuses whose PRIMARY metric enters the primary fit (INV-STAT15).
 #:
 #: ``infeasible`` IS FITTED. An infeasible row violated a declared
@@ -804,6 +811,97 @@ def _constraint_models_record(models, scored_all, rec, *, delta: float) -> list[
                 )
         out.append(entry)
     return out
+
+
+def _admissible_configurations(work_dir) -> list[dict]:
+    """Every distinct configuration the campaign has measured ADMISSIBLE.
+
+    A ``complete`` row whose configuration ``_config_admissible`` accepts (no
+    ``infeasible`` / ``rejected`` row anywhere): the same per-configuration
+    feasibility every other selector uses. Read across every iteration on disk,
+    earlier epochs included -- a measurement of the same target does not stop
+    being evidence because the declared ranges moved.
+    """
+    runs = Path(work_dir) / "runs" if work_dir is not None else None
+    if runs is None or not runs.exists():
+        return []
+    invalid = _measured_infeasible(work_dir)
+    seen: dict[str, dict] = {}
+    for d in sorted(runs.glob("iter-*")):
+        for row in artifacts.read_runs(d):
+            lv = row.get("levels")
+            if row.get("status") != "complete" or not lv:
+                continue
+            key = json.dumps(lv, sort_keys=True, default=str)
+            if key not in seen and _config_admissible(work_dir, lv, invalid=invalid):
+                seen[key] = dict(lv)
+    return list(seen.values())
+
+
+def _supported_feasible_record(work_dir, factors, constraints, models, scored, *,
+                               delta: float, pool_size: int) -> dict:
+    """``recommendation.json["supported_feasible_candidate"]``.
+
+    ``scored`` is the ranked valid space (best first, measured-infeasible and
+    confidently-infeasible candidates already removed). ``models`` is
+    ``fit_constraint_models``' output -- one per declared constraint -- or empty
+    when the models are switched off, in which case every constraint is treated
+    as unmodelled. ``levels`` is ``None`` and ``reason`` says why when nothing
+    qualifies; confirm then keeps today's shortlist.
+    """
+    if not models:
+        models = [
+            cmodels.ConstraintModel(
+                str(c.get("metric") or c.get("observable") or ""), c.get("op"),
+                c.get("value"), None, "constraint models disabled")
+            for c in constraints
+        ]
+    admissible = _admissible_configurations(work_dir)
+    region = cmodels.admissible_region(admissible, factors)
+    unmodelled = [m.metric for m in models if not m.modelled]
+    hits = cmodels.supported_feasible(scored, models, delta=delta, region=region)
+    rank = {id(c): i for i, c in enumerate(scored)}
+    record = {
+        "levels": None, "coded": None, "predicted": None, "rank": None,
+        "constraint_verdicts": [],
+        "admissible_region": region if unmodelled else None,
+        "n_admissible_configurations": len(admissible),
+        "pool": [{"levels": c.levels, "coded": c.coded, "predicted": c.predicted}
+                 for c, _ in hits[:max(1, int(pool_size))]],
+    }
+    if hits:
+        best, verdicts = hits[0]
+        record.update(levels=best.levels, coded=best.coded, predicted=best.predicted,
+                      rank=rank.get(id(best)), constraint_verdicts=verdicts)
+        record["reason"] = (
+            "best-predicted candidate with every modelled constraint confidently "
+            "feasible" + (
+                f" and inside the measured-admissible region for unmodelled "
+                f"{unmodelled}" if unmodelled else ""))
+    elif unmodelled and not admissible:
+        record["reason"] = (
+            f"no configuration has been measured admissible yet, so nothing "
+            f"supports feasibility under unmodelled {unmodelled}")
+    else:
+        record["reason"] = (
+            "no valid candidate is confidently feasible under every modelled "
+            "constraint" + (
+                f" and inside the measured-admissible region for unmodelled "
+                f"{unmodelled}" if unmodelled else ""))
+    return record
+
+
+def _previous_finalist_levels(work_dir) -> list[dict]:
+    """Levels of every finalist an earlier confirm round already measured."""
+    runs = Path(work_dir) / "runs"
+    out: list[dict] = []
+    for p in sorted(runs.glob("iter-*/confirmation.json")) if runs.exists() else ():
+        try:
+            conf = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        out.extend(dict(f.get("levels") or {}) for f in conf.get("finalists") or [])
+    return [lv for lv in out if lv]
 
 
 def _stationary_in_hull(fit, stationary: dict | None, direction: str) -> bool:
@@ -3692,6 +3790,24 @@ def run_stage(
             f"them.",
         )
     rec = top[0]
+    # ── the SUPPORTED-FEASIBLE candidate (INV-STAT16) ───────────────────────
+    #
+    # The exclusion above removes only CONFIDENTLY infeasible candidates, so on
+    # a constraint-bound frontier every member of `top` can be of uncertain
+    # feasibility -- and confirm, which seats from `top`, would then measure
+    # nothing the evidence says is admissible. Name the best-predicted candidate
+    # the evidence DOES support (see `constraint_models.supported_feasible`), and
+    # a short pool behind it for round-r top-ups; `_confirm_rows` reserves a seat
+    # for it. Pure arithmetic over the space already scored: no new fit, no new
+    # model call. Written only when constraints are declared, so an
+    # unconstrained campaign's recommendation.json is byte-identical.
+    supported_record = None
+    _declared = response_spec.get("constraints") or []
+    if _SUPPORTED_FEASIBLE_SEAT and _declared:
+        supported_record = _supported_feasible_record(
+            work_dir, factors, _declared, cmods, scored, delta=delta_s,
+            pool_size=max(5, _shortlist * 2),
+        )
     # ── how much doubt remains: R_delta(x-hat) (spec §3.5, paper eq. 2) ────
     #
     # A recommendation is not a certificate. `scored` is the WHOLE valid space,
@@ -3784,6 +3900,10 @@ def run_stage(
         # `top_candidates` against this without refitting anything.
         "constraint_models": constraint_record,
         "recommendation_constraint_uncertain": uncertain_at_rec,
+        # The best candidate whose feasibility the evidence supports, and why
+        # (or why none qualifies). Confirm reserves a seat for it.
+        **({"supported_feasible_candidate": supported_record}
+           if supported_record is not None else {}),
         "residual_regret_model": rb.as_dict(),
         "epsilon": epsilon,
         "alias_consequential": [list(p) for p in alias_pairs_consequential],
@@ -4367,12 +4487,20 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
          filters to ``status == "complete"``) — spec §3.6 rung 3's "never
          return the largest noisy observation" needs it in the comparison, not
          only in the report;
-      3. ``recommendation.json``'s ``top_candidates`` in order — the near
+      3. the best SUPPORTED-FEASIBLE candidate
+         (``recommendation.json["supported_feasible_candidate"]``, INV-STAT16) —
+         a seat reserved, when constraints are declared and ``k >= 2``, for the
+         best-predicted candidate every modelled constraint predicts
+         confidently feasible and that lies inside the measured-admissible
+         region for every unmodelled one, so the comparison always tests at
+         least one candidate the evidence says is admissible (see
+         ``_seat_supported``);
+      4. ``recommendation.json``'s ``top_candidates`` in order — the near
          misses whose intervals still reach above x-hat.
 
     UNLESS ``recommendation.json["model_adequate"] is False``, in which case rungs
     1 and 2 are replaced by ``_top_measured``'s leading MEASURED valid candidates
-    (plural) and rung 3 still fills whatever seats remain. A lack-of-fit verdict
+    (plural) and rungs 3 and 4 still fill whatever seats remain. A lack-of-fit verdict
     says the response class was rejected, so its argmax must not ANCHOR the
     comparison; it does not say the ranking may nominate nothing. Spec §3.6 rung 3
     constrains the REPORT LADDER — what may be returned as the answer — and every
@@ -4422,8 +4550,14 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
     rnd = _confirm_round(work_dir, pol)
     finalists: list[dict] = []
     provenance: list[str] = []
+    # Parallel to `finalists`: was this seat nominated by a MEASUREMENT (a
+    # carried finalist, the best observed configuration, a measured leader)?
+    # The reserved supported-feasible seat may displace a model-ranked
+    # nomination, never one of these.
+    measured_seat: list[bool] = []
 
-    def _add(levels, why: str, *, allow_measured_invalid: bool = False) -> None:
+    def _add(levels, why: str, *, allow_measured_invalid: bool = False,
+             measured: bool = False) -> None:
         """Seat a finalist, unless it is a duplicate, the list is full, or the
         campaign has already MEASURED this exact configuration inadmissible.
 
@@ -4466,6 +4600,60 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             return
         finalists.append(lv)
         provenance.append(why)
+        measured_seat.append(bool(measured))
+
+    def _seat_supported(rec: dict, why: str, *, displace: bool) -> None:
+        """Reserve a seat for the best SUPPORTED-FEASIBLE candidate (INV-STAT16).
+
+        The pool is ``recommendation.json["supported_feasible_candidate"]["pool"]``
+        (best first): candidates every modelled constraint predicts confidently
+        feasible and that lie inside the measured-admissible region for every
+        unmodelled one. Without this seat nothing guarantees the terminal
+        comparison tests even one candidate the evidence says is admissible --
+        on a constraint-bound frontier every model-ranked finalist can be of
+        uncertain feasibility, be measured infeasible, and leave a feasible
+        improvement untested (two field campaigns; ``SURFACES[
+        "deterministic_constraint_axis"]``).
+
+        Walk the pool: a member already on the shortlist satisfies the
+        reservation; one measured inadmissible, or (round r > 1) one an earlier
+        round already measured -- it either lost or was retired by its bound --
+        is skipped; the first remaining member is seated. Needs ``k >= 2``: at
+        ``k == 1`` the one seat is the anchor the ladder exists to provide. When
+        the shortlist is already full (``k == 2`` with both anchors seated) and
+        ``displace`` is set, the seat takes the LAST model-ranked nomination's
+        place -- never a measured one, so a measured leader seeded because the
+        model is inadequate is never displaced. No pool -- no constraints
+        declared, or nothing qualified -- is a no-op, so the shortlist is
+        byte-identical to the one this seat did not exist for.
+        """
+        if not _SUPPORTED_FEASIBLE_SEAT or k < 2:
+            return
+        pool = (rec.get("supported_feasible_candidate") or {}).get("pool") or []
+        retired = _previous_finalist_levels(work_dir) if rnd > 1 else []
+        for p in pool:
+            lv = dict(p.get("levels") or {})
+            if not lv:
+                continue
+            if any(_same_levels(f, lv) for f in finalists):
+                return
+            if _measured_infeasible_contains(work_dir, lv) or any(
+                    _same_levels(r, lv) for r in retired):
+                continue
+            if len(finalists) < k:
+                _add(lv, why)
+                return
+            model_ranked = [i for i, m in enumerate(measured_seat) if not m]
+            if not displace or not model_ranked:
+                return
+            i = model_ranked[-1]
+            logger.info(
+                "confirm round %d: the shortlist is full, so the reserved "
+                "supported-feasible seat replaces model-ranked nomination %s (%s) "
+                "with %s.", rnd, finalists[i], provenance[i], lv,
+            )
+            finalists[i], provenance[i], measured_seat[i] = lv, why, False
+            return
 
     if rnd > 1:
         prev = _latest_confirmation(work_dir) or {}
@@ -4473,7 +4661,7 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         by_key = {f["key"]: f for f in prev.get("finalists") or []}
         winner = by_key.get(prev.get("best") or "")
         if winner:
-            _add(winner.get("levels"), "previous round's best")
+            _add(winner.get("levels"), "previous round's best", measured=True)
         for f in prev.get("finalists") or []:
             bound = (prev.get("bounds") or {}).get(f["key"])
             # `None` is UNKNOWN, not "small": a challenger whose bound could
@@ -4483,7 +4671,8 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             if f.get("status") == "ok" and (
                 eps is None or bound is None or bound > eps
             ):
-                _add(f.get("levels"), f"round {rnd - 1} bound above epsilon")
+                _add(f.get("levels"), f"round {rnd - 1} bound above epsilon",
+                     measured=True)
     if not finalists:
         # The round-1 ladder, and also the recovery path for a round r > 1 whose
         # entire carry-over was excluded. Both want the same priority order, and
@@ -4554,7 +4743,8 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             _add(rec.get("levels"), f"{rec.get('stage') or 'model'} recommendation")
             best = _best_observed(work_dir, primary, direction=direction)
             if best is not None:
-                _add(best["levels"], "best measured valid configuration")
+                _add(best["levels"], "best measured valid configuration",
+                     measured=True)
         else:
             logger.info(
                 "confirm round %d: the fitting stage reported model_adequate="
@@ -4571,7 +4761,10 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
                 work_dir, primary, direction=direction, k=_measured_seats(k),
             ):
                 _add(m["levels"], "leading measured valid candidate "
-                                  "(model inadequate)")
+                                  "(model inadequate)", measured=True)
+        # After the anchors, BEFORE the model's ranking fills the rest: the
+        # reserved seat for a candidate whose feasibility the evidence supports.
+        _seat_supported(rec, "best supported-feasible candidate", displace=True)
         for c in rec.get("top_candidates") or []:
             _add(c.get("levels"), "model top candidate")
         if not finalists:
@@ -4620,7 +4813,9 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             ):
                 _add(m["levels"],
                      f"round {rnd} top-up from measured leaders "
-                     f"(model inadequate)")
+                     f"(model inadequate)", measured=True)
+        _seat_supported(rec, f"round {rnd} top-up: best supported-feasible "
+                             f"candidate", displace=False)
         for c in rec.get("top_candidates") or []:
             _add(c.get("levels") or {},
                  f"round {rnd} top-up from the model's ranking")

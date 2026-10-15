@@ -190,6 +190,54 @@
       },
       "description": "Metrics of every modelled constraint on which the RECOMMENDATION itself is uncertain (its confidence band straddles the threshold): the model cannot say it is admissible and only a measurement can. Empty when every modelled constraint is confidently satisfied there, or nothing was modelled."
     },
+    "supported_feasible_candidate": {
+      "type": "object",
+      "description": "OPTIONAL; present only when response.constraints are declared (INV-STAT16). The best-predicted valid candidate whose feasibility the EVIDENCE supports: every modelled constraint's satisfying-side one-sided bound at delta_screen (Bonferroni, as exclusion) lies inside its threshold, and -- when any constraint is unmodelled -- every level lies inside `admissible_region`, the per-factor span of the configurations measured admissible (a conservative interpolation heuristic, not a guarantee). Confirm reserves a seat for it (round 1) and tops up from `pool` (round r). `levels` is null and `reason` says why when no candidate qualifies; confirm then keeps its previous shortlist.",
+      "required": ["levels", "coded", "predicted", "rank", "constraint_verdicts", "admissible_region", "n_admissible_configurations", "pool", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "levels": {"type": ["object", "null"]},
+        "coded": {"type": ["object", "null"]},
+        "predicted": {"type": ["number", "null"]},
+        "rank": {"type": ["integer", "null"], "minimum": 0, "description": "0-based position in the ranked valid space; 0 means the recommendation itself is supported."},
+        "constraint_verdicts": {
+          "type": "array",
+          "description": "One per declared constraint: a modelled one carries its bound (predicted, se, lower, upper) and verdict `feasible`; an unmodelled one carries verdict `inside_admissible_region`.",
+          "items": {
+            "type": "object",
+            "required": ["metric", "op", "value", "modelled", "verdict"],
+            "properties": {
+              "metric": {"type": "string"},
+              "op": {"type": ["string", "null"]},
+              "value": {},
+              "modelled": {"type": "boolean"},
+              "verdict": {"type": "string", "enum": ["feasible", "inside_admissible_region"]},
+              "predicted": {"type": "number"},
+              "se": {"type": "number"},
+              "lower": {"type": "number"},
+              "upper": {"type": "number"}
+            }
+          }
+        },
+        "admissible_region": {
+          "type": ["object", "null"],
+          "description": "Per factor: {kind: range, min, max} for a numeric (the admissible levels' span, the same box in any monotone scale) or {kind: levels, levels} for a choice. Null when every constraint is modelled, so no region was needed.",
+          "additionalProperties": {"type": "object", "required": ["kind"]}
+        },
+        "n_admissible_configurations": {"type": "integer", "minimum": 0},
+        "pool": {
+          "type": "array",
+          "description": "Every qualifying candidate, best first, capped like top_candidates; pool[0] is `levels`.",
+          "items": {
+            "type": "object",
+            "required": ["levels", "coded", "predicted"],
+            "additionalProperties": false,
+            "properties": {"levels": {"type": "object"}, "coded": {"type": "object"}, "predicted": {"type": "number"}}
+          }
+        },
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
     "residual_regret_model": {
       "type": "object",
       "required": ["value", "challenger", "delta", "method", "detail"],

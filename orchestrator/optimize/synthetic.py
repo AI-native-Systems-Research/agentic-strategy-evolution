@@ -388,6 +388,43 @@ def _geometric_knob(*, scale: str | None = None) -> Surface:
     )
 
 
+def _deterministic_constraint_axis() -> Surface:
+    """The confirm-shortlist-never-tests-a-supported-feasible-point defect.
+
+    Observed on a real campaign (ops per CPU-second maximised, a write cache
+    whose un-persisted writes must stay ``<= 200``): the constraint metric is
+    DETERMINISTIC (it is the write-cache size minus one), so its model has no
+    pure error and stays unmodelled; the fitted ranking preferred a large write
+    cache, so every model-ranked finalist was infeasible by construction, and
+    the campaign returned the measured leader -- although a bigger front cache
+    with a small, already-measured-feasible write cache was faster and was
+    never tested.
+
+    Here the primary rises freely with ``A`` and ``B`` and with ``C`` (coded on
+    a log scale, like a cache size); the constraint ``backlog = C - 1 <= 7``
+    is violated iff ``C > 8``. ``C``'s centre level 8 is exactly feasible, so
+    the screen measures it admissible, but no design point pairs it with
+    ``A = B = 16``: a factorial corner has ``C`` at 1 or 64, and an axial point
+    moves one factor at a time from the centre. The true constrained optimum
+    ``{A: 16, B: 16, C: 8}`` (19.0) is therefore inside the region the
+    measured-admissible configurations span, never measured, and below every
+    model-ranked candidate at ``C > 8``. Declare the constraint as
+    ``{"metric": "backlog", "op": "<=", "value": 7}``.
+    """
+    import math
+
+    c = _numeric("C", levels=(1, 8, 64), grid=1)
+    c["scale"] = "log"
+    return Surface(
+        name="deterministic_constraint_axis", noise_sd=0.05,
+        factors=(_numeric("A"), _numeric("B"), c),
+        fn=lambda lv: (10.0 + 0.25 * float(lv["A"]) + 0.2 * float(lv["B"])
+                       + 0.6 * math.log2(float(lv["C"]))),
+        invalid=lambda lv: float(lv["C"]) - 1.0 > 7.0,
+        extra_observables=lambda lv: {"backlog": float(lv["C"]) - 1.0},
+    )
+
+
 SURFACES: dict[str, Callable[[], Surface]] = {
     "additive": _additive,
     "interaction_only": _interaction_only,
@@ -404,6 +441,7 @@ SURFACES: dict[str, Callable[[], Surface]] = {
     "stochastic_constraint_boundary": _stochastic_constraint_boundary,
     "geometric_knob": _geometric_knob,
     "geometric_knob_log": lambda: _geometric_knob(scale="log"),
+    "deterministic_constraint_axis": _deterministic_constraint_axis,
 }
 
 
