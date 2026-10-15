@@ -874,3 +874,16 @@ def test_default_locator_reads_the_exact_project_dir_without_listing_projects(tm
         return real_glob(pattern, *a, **kw)
     monkeypatch.setattr(_glob, "glob", no_listing)
     assert [p.name for p in default_transcript_paths(cwd, {"s1"}, config_dir=tmp_path / "cfg")] == ["s1.jsonl"]
+
+
+def test_instrument_summary_judges_speed_against_the_assumed_limit(tmp_path):
+    from orchestrator.instrument import instrument_summary
+    it = tmp_path / "runs" / "iter-1"
+    it.mkdir(parents=True)
+    (it / "instrument.json").write_text(json.dumps({
+        "max_cpu_s": 0.8, "time_limit_s": None, "speed_first": False,
+        "noise": {"runs": [1, 1, 1], "min": 1, "max": 1, "spread": 0}}))
+    v8 = instrument_summary(_v8(), tmp_path, 1)
+    assert "time limit 1 s (assumed" in v8 and "make it faster" in v8
+    v7 = instrument_summary(_campaign(design_profile="v7"), tmp_path, 1)
+    assert "time limit unknown" in v7 and "make it faster" not in v7

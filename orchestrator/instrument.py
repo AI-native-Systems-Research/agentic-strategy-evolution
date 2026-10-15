@@ -68,12 +68,19 @@ def _num(x: float) -> str:
     return f"{x:.3g}" if abs(x) < 1000 else f"{x:.0f}"
 
 
-def format_summary(source: str, data: dict) -> str:
-    """The heading plus 2-3 lines. Spread, speed_first, and knob relevance are recomputed from the raw numbers."""
+def format_summary(source: str, data: dict, assumed_limit_s: float | None = None) -> str:
+    """The heading plus 2-3 lines. Spread, speed_first, and knob relevance are recomputed from the raw numbers.
+
+    ``assumed_limit_s`` (v8): the limit to judge speed against when the statement gives none.
+    """
     cpu, limit = float(data["max_cpu_s"]), data.get("time_limit_s")
+    assumed = not limit and assumed_limit_s
+    if assumed:
+        limit = assumed_limit_s
     if limit:
         speed_first = cpu > SPEED_FIRST_FRACTION * float(limit)
-        worst = (f"max CPU {_num(cpu)} s on the largest inputs, time limit {_num(float(limit))} s "
+        worst = (f"max CPU {_num(cpu)} s on the largest inputs, time limit {_num(float(limit))} s"
+                 f"{' (assumed: the statement gives none)' if assumed else ''} "
                  f"({100 * cpu / float(limit):.0f}%).")
     else:
         speed_first = bool(data.get("speed_first"))
@@ -99,11 +106,14 @@ def format_summary(source: str, data: dict) -> str:
 
 def instrument_summary(campaign: dict, work_dir: Path, iteration: int | None = None) -> str:
     """Summary of the newest valid instrument.json; empty for other profiles or when there is none."""
-    from orchestrator.design_profile import is_v7_family
+    from orchestrator.design_profile import is_v7_family, is_v8, v8_settings
     if not is_v7_family(campaign):
         return ""
     found = latest_instrument(work_dir, iteration)
-    return format_summary(*found) if found else ""
+    if not found:
+        return ""
+    assumed = v8_settings(campaign).assumed_time_limit_s if is_v8(campaign) else None
+    return format_summary(*found, assumed_limit_s=assumed)
 
 
 def baseline_note(work_dir: Path, iteration: int | None) -> str:

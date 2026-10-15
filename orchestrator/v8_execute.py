@@ -310,7 +310,8 @@ def _dispatch(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, iterat
             rec.update({"experiment_id": new_eid, "base": _git(new_wt, "rev-parse", "HEAD").stdout.strip(),
                         "hang_restarts": restarts, "session_id": None})
             _notes(state)[key] = ("Note: your previous session hung on API timeouts and was restarted. Your "
-                                  "worktree holds your last saved patch; check the result file and continue.")
+                                  "worktree holds your last saved patch; check the files you wrote and "
+                                  "continue from them.")
             _save_state(adir, state)
             resume = None
         except Exception as exc:  # noqa: BLE001 - one failed session must not stop the campaign
