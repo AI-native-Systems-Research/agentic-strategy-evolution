@@ -2637,7 +2637,7 @@ def test_adapter_contract_is_captured_at_the_work_dir_root(tmp_path, work_dir):
 
     doc = json.loads((Path(wd) / "adapter_contract.json").read_text())
     assert set(doc["keys"]) == {"cfg", "m"}
-    assert doc["keys"]["m"] == "float"
+    assert doc["keys"]["m"] == "number"
     assert doc["captured_at"]["stage"] == "screen"
     assert (Path(wd) / "adapter_contract.sha256").exists()
     assert not (Path(wd) / "runs" / "iter-2" / "adapter_contract.json").exists()
@@ -2691,7 +2691,7 @@ def test_a_null_where_a_value_was_aborts_the_campaign(tmp_path, work_dir):
     with pytest.raises(OptimizationAborted) as exc:
         _run(c, wd, runner=_runner(extra=_nulls_a_key))
 
-    assert "slope: float -> null" in str(exc.value)
+    assert "slope: number -> null" in str(exc.value)
     assert "an unknown is not a measurement" in str(exc.value)
 
 

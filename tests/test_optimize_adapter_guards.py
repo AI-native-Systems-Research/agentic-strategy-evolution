@@ -135,7 +135,7 @@ def test_contract_captured_from_first_successful_row(tmp_path):
 
     assert outcomes[0].status == "complete"
     doc = json.loads((work_dir / "adapter_contract.json").read_text())
-    assert doc["keys"] == {"throughput": "float", "slope": "float"}
+    assert doc["keys"] == {"throughput": "number", "slope": "number"}
     assert doc["epoch"] == 1
     assert doc["captured_at"] == {"stage": "screen", "row_index": 0}
     # The sidecar is the record that the document itself was not edited later --
@@ -163,7 +163,7 @@ def test_failed_row_does_not_establish_the_contract(tmp_path):
     doc = json.loads((work_dir / "adapter_contract.json").read_text())
     # Captured from row 1 -- the first row that SUCCEEDED -- not from row 0.
     assert doc["captured_at"]["row_index"] == 1
-    assert doc["keys"] == {"throughput": "float", "slope": "float"}
+    assert doc["keys"] == {"throughput": "number", "slope": "number"}
 
 
 def test_rejected_row_does_not_establish_the_contract(tmp_path):
@@ -257,7 +257,7 @@ def test_value_becoming_null_aborts(tmp_path):
                        adapter_guard=guard)
 
     msg = str(exc.value)
-    assert "slope: float -> null" in msg
+    assert "slope: number -> null" in msg
     assert "an unknown is not a measurement" in msg
 
 
@@ -279,7 +279,7 @@ def test_type_change_aborts(tmp_path):
                        response_spec=_spec(), invariants=[], factors=factors,
                        adapter_guard=guard)
 
-    assert "queue_depth: int -> str" in str(exc.value)
+    assert "queue_depth: number -> str" in str(exc.value)
 
 
 def test_unchanged_contract_across_many_rows_never_aborts(tmp_path):
@@ -636,8 +636,8 @@ def test_contract_drift_beats_a_stale_or_self_check_verdict(tmp_path):
 # ═══ the fingerprint itself ══════════════════════════════════════════════
 
 @pytest.mark.parametrize("value,expected", [
-    (None, "null"), (True, "bool"), (3, "int"), (3.0, "float"),
-    ("x", "str"), ({"a": 1, "b": 2}, "object{a:int,b:int}"), ([1, 2], "array[int]"),
+    (None, "null"), (True, "bool"), (3, "number"), (3.0, "number"),
+    ("x", "str"), ({"a": 1, "b": 2}, "object{a:number,b:number}"), ([1, 2], "array[number]"),
 ])
 def test_fingerprint_names_each_type_distinctly(value, expected):
     assert ac.fingerprint({"k": value}) == {"k": expected}
@@ -660,4 +660,37 @@ def test_nested_key_set_is_part_of_the_contract():
     before = {"keys": ac.fingerprint({"tel": {"a": 1, "b": 2}})}
     added, removed, changed = ac.diff_contract(before, {"tel": {"a": 1}})
     assert not added and not removed
-    assert changed == ["tel: object{a:int,b:int} -> object{a:int}"]
+    assert changed == ["tel: object{a:number,b:number} -> object{a:number}"]
+
+
+# ── JSON has ONE number type (found on a real Go campaign) ──────────────────
+#
+# Go's and JavaScript's encoders print an integral float 48.0 as `48`, so the
+# parsed Python type flips with the value. A healthy Go adapter was halted as
+# "contract changed mid-epoch: peak_rss_mib float -> int".
+
+def test_an_integral_float_does_not_drift_from_a_fractional_one():
+    from orchestrator.optimize.adapter_contract import check_contract, fingerprint
+    recorded = {"keys": fingerprint({"peak_rss_mib": 47.5, "cfg": {"gogc": 100}})}
+    check_contract(recorded, {"peak_rss_mib": 48, "cfg": {"gogc": 100.0}}, row_index=1)
+
+
+def test_a_number_becoming_a_string_is_still_drift():
+    from orchestrator.optimize.adapter_contract import (
+        AdapterContractDrift, check_contract, fingerprint)
+    recorded = {"keys": fingerprint({"peak_rss_mib": 47.5})}
+    with pytest.raises(AdapterContractDrift):
+        check_contract(recorded, {"peak_rss_mib": "47.5"}, row_index=1)
+
+
+def test_a_contract_recorded_before_unification_still_matches():
+    from orchestrator.optimize.adapter_contract import check_contract
+    legacy = {"keys": {"peak_rss_mib": "float", "cfg": "object{gogc:int}"}}
+    check_contract(legacy, {"peak_rss_mib": 48, "cfg": {"gogc": 100}}, row_index=1)
+
+
+def test_legacy_normalization_never_rewrites_a_key_named_int():
+    from orchestrator.optimize.adapter_contract import check_contract, fingerprint
+    legacy = {"keys": {"cfg": "object{buf:int,int:int}"}}
+    check_contract(legacy, {"cfg": {"buf": 3, "int": 8}}, row_index=1)
+    assert fingerprint({"cfg": {"int": 8}})["cfg"] == "object{int:number}"

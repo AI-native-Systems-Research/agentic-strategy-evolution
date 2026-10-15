@@ -102,14 +102,17 @@ def _type_name(value: Any, *, _depth: int = 0) -> str:
     the key usually holds. That is the whole point: ``{"slope": 0.4}`` and
     ``{"slope": null}`` must not fingerprint alike.
 
-    ``int`` and ``float`` are deliberately NOT unified into one "number" type.
-    An adapter that starts emitting ``"3"`` where it emitted ``3`` is caught by
-    any type-aware fingerprint, but one that moves a count from ``3`` to ``3.0``
-    is a real change in what the instrument reports and is cheap to look at
-    once; conflating them buys nothing and hides a class of rounding change.
-    ``bool`` is separated from ``int`` for the same reason (and because Python
-    would otherwise call ``True`` an ``int``, which is how a bool/int level
-    mismatch failed 67 of 67 runs on a real campaign).
+    ``int`` and ``float`` ARE unified into one ``number`` type. JSON has a
+    single number type, and the int/float split Python's parser produces is a
+    property of how the adapter's ENCODER prints a value, not of the
+    instrument: Go's and JavaScript's encoders write an integral float ``48.0``
+    as ``48``, so the parsed type flips row to row with the value itself. An
+    earlier version kept them apart, and a real Go campaign was halted as
+    "contract changed mid-epoch: peak_rss_mib float -> int" on a healthy
+    instrument. ``"3"`` vs ``3`` (str vs number) is still drift. ``bool`` stays
+    separate from ``number`` (Python would otherwise call ``True`` an ``int``,
+    which is how a bool/int level mismatch failed 67 of 67 runs on a real
+    campaign).
 
     Nesting carries key names AND their types, to a bounded depth
     (``_MAX_NEST_DEPTH``), rather than key names alone. Names alone reproduced
@@ -130,10 +133,8 @@ def _type_name(value: Any, *, _depth: int = 0) -> str:
         return "null"
     if isinstance(value, bool):
         return "bool"
-    if isinstance(value, int):
-        return "int"
-    if isinstance(value, float):
-        return "float"
+    if isinstance(value, (int, float)):
+        return "number"
     if isinstance(value, str):
         return "str"
     if isinstance(value, dict):
@@ -157,10 +158,8 @@ def _scalar_kind(value: Any) -> str:
         return "null"
     if isinstance(value, bool):
         return "bool"
-    if isinstance(value, int):
-        return "int"
-    if isinstance(value, float):
-        return "float"
+    if isinstance(value, (int, float)):
+        return "number"
     if isinstance(value, str):
         return "str"
     if isinstance(value, dict):
@@ -278,13 +277,27 @@ def capture_contract(
 
 # ── GUARD 1: drift detection ──────────────────────────────────────────────
 
+#: A TYPE token (never a key name): preceded by start / ``:`` / ``[`` / ``,``
+#: and followed by ``,`` / ``]`` / ``}`` / end. A key is followed by ``:``, so a
+#: factor or field literally named ``int`` is left alone.
+_LEGACY_NUMBER = __import__("re").compile(r"(?:(?<=^)|(?<=[:\[,]))(int|float)(?=[,\]}]|$)")
+
+
+def _unify_numbers(type_name: str) -> str:
+    return _LEGACY_NUMBER.sub("number", str(type_name))
+
+
 def diff_contract(recorded: dict, response: dict) -> tuple[list[str], list[str], list[str]]:
     """``(added, removed, changed)`` key names between a contract and a response.
 
     ``changed`` entries are rendered ``key: was -> now`` so the abort message
     can name what moved without the caller re-deriving it.
     """
-    expected: dict = dict((recorded or {}).get("keys") or {})
+    # A contract recorded before int/float were unified spells them apart;
+    # compare in the unified vocabulary so an in-flight campaign is not halted
+    # by the fix itself.
+    expected: dict = {k: _unify_numbers(v)
+                      for k, v in dict((recorded or {}).get("keys") or {}).items()}
     observed = fingerprint(response)
     added = sorted(set(observed) - set(expected))
     removed = sorted(set(expected) - set(observed))
