@@ -43,6 +43,7 @@ from orchestrator.v7_execute import (
 logger = logging.getLogger(__name__)
 
 BASELINE_PATCH = "baseline.patch"
+V8_EVALUATOR_MIN_USD = 3.0
 MAX_HANG_RESTARTS = 1
 WINNER_LABEL = "winner"
 EXPLOIT, EXPLORE = "exploit", "explore"
@@ -97,7 +98,7 @@ def decide_mode(campaign: dict, work_dir: Path, iteration: int) -> dict:
         before, after = prev.get("best_before"), prev.get("best_after")
         noise = noise_spread(campaign, work_dir)
         from orchestrator.design_profile import V8_NOISE_UNKNOWN
-        thr = noise if noise is not None else V8_NOISE_UNKNOWN
+        thr = max(noise, V8_NOISE_UNKNOWN) if noise is not None else V8_NOISE_UNKNOWN
         if before is None or after is None:
             mode = {"mode": EXPLORE, "reason": "no measured progress for the previous iteration"}
         elif after - before > thr:
@@ -303,8 +304,14 @@ def _dispatch(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, iterat
             logger.warning("v8 session %s (%s) hung: %s", key, label, exc)
             if restarts > MAX_HANG_RESTARTS:
                 return "failed"
-            # Restart from the last saved patch in a fresh worktree and a fresh session.
+            # Restart from the session's current work in a fresh worktree and a fresh session.
             old = rec["experiment_id"]
+            if wt.is_dir():  # keep the session's latest edits, but never replace a saved patch with nothing
+                tmp = patch.with_name(patch.name + ".hang")
+                save_worktree_diff(wt, rec.get("base") or "HEAD", tmp, exclude=extras or [])
+                if tmp.is_file() and tmp.read_text().strip():
+                    tmp.replace(patch)
+                tmp.unlink(missing_ok=True)
             new_wt, new_eid = _fresh_worktree_from_patch(repo, iteration, patch, extras)
             remove_experiment_worktree(repo, old)
             rec.update({"experiment_id": new_eid, "base": _git(new_wt, "rev-parse", "HEAD").stdout.strip(),
@@ -354,6 +361,7 @@ def commit_baseline(repo: Path, patch: Path, state: dict) -> bool:
 def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, cap, extras) -> None:
     from orchestrator.worktree import remove_experiment_worktree
     adir = Path(iter_dir) / ARMS_DIR
+    cap = max(cap, V8_EVALUATOR_MIN_USD)  # v7 evaluators really cost $2.7-4.7 on the ruler
     _start_session(repo, iteration, state, EVALUATOR_KEY, cap, extras)
     _save_state(adir, state)
     hard = round(cap * 2.0, 2)
@@ -395,7 +403,8 @@ def _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, ke
     s8 = v8_settings(campaign)
     _start_session(repo, iteration, state, key, cap, extras)
     _save_state(adir, state)
-    hard = round(cap * 2.0, 2)
+    # The hard stop may exceed the target, but never into the winner's reserve.
+    hard = round(max(cap, min(cap * 2.0, remaining() - winner_reserve(v7_settings(campaign), s8))), 2)
     patch = Path(iter_dir) / "patches" / f"{key}.patch"
     print(f"  v8 execute-arm `{key}` (target ${cap:.2f}, hard cap ${hard:.2f})")
     outcome = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key, "execute-arm-v8",
@@ -556,8 +565,10 @@ def run_v8_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
             win["attempts"] = int(win.get("attempts") or 0) + 1
             _save_state(adir, state)
             print(f"  v8 winner `{key}` (score {win.get('score')}) continues its session with ${cap:.2f}")
+            # Without a session to resume, the continuation needs the full arm prompt (problem, arm, context).
+            phase = "continue-arm" if rec.get("session_id") else "execute-arm-v8"
             win["outcome"] = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key,
-                                       "continue-arm", label=WINNER_LABEL, target=cap, hard=cap,
+                                       phase, label=WINNER_LABEL, target=cap, hard=cap,
                                        resume=rec.get("session_id"), extras=extras, patch=patch)
             rec = state["sessions"][key]
             eid = rec["experiment_id"]

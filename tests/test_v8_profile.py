@@ -847,7 +847,20 @@ class TestDesignHang:
         d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=runner, max_retries=3)
         run_v8_design(d, c, tmp_path, it, 1)
         assert len(runner.calls) == 2 and runner.calls[1].get("resume") is None
-        assert runner.calls[1]["max_cost_usd"] == pytest.approx(4.0 - 0.75)
+        assert runner.calls[1]["max_cost_usd"] == pytest.approx(8.0 - 0.75)  # v8 design default $8
+
+    def test_exploit_threshold_is_never_below_half_a_point(self, tmp_path):
+        from orchestrator.v8_execute import EXPLORE, decide_mode
+        _prev_iteration(tmp_path, 40.0, 40.2)  # +0.2 on a deterministic judge (noise 0) is not progress
+        (tmp_path / "runs" / "iter-2").mkdir(parents=True, exist_ok=True)
+        assert decide_mode(_v8(), tmp_path, 2)["mode"] == EXPLORE
+
+    def test_v8_budget_defaults_are_real_dollars(self):
+        from orchestrator.design_profile import v7_settings
+        s = v7_settings(_v8())
+        assert (s.iteration_budget_usd, s.design_budget_usd, s.arm_budget_usd) == (22.0, 8.0, 6.0)
+        v7 = v7_settings({**_v8(), "design_profile": "v7"})
+        assert (v7.iteration_budget_usd, v7.design_budget_usd, v7.arm_budget_usd) == (12.0, 4.0, 4.0)
 
     def test_orchestrator_written_design_survives_a_resume(self, tmp_path):
         from orchestrator.v8_execute import maybe_write_exploit_bundle

@@ -85,6 +85,7 @@ class SDKHangError(RuntimeError):
 # ─── v8: session cost and liveness from the Claude Code transcript ────────────────────────────
 
 _TRANSCRIPT_POLL_S = 10.0
+HANG_MIN_API_ERRORS = 3  # v7 had 17- and 58-minute gaps behind one or two timeouts that still ended in a reply
 
 
 def project_key(cwd) -> str:
@@ -151,6 +152,7 @@ class TranscriptMeter:
         self.session_ids: set[str] = set()
         self.last_assistant_ts: float | None = None
         self.last_api_error_ts: float | None = None
+        self.api_errors_since_reply = 0
         self._lock = threading.Lock()
         self._paths: list = []
         self._located: tuple[frozenset, float] | None = None
@@ -202,9 +204,11 @@ class TranscriptMeter:
         kind = d.get("type")
         if kind == "system" and (d.get("subtype") == "api_error" or d.get("level") == "error"):
             self.last_api_error_ts = max(self.last_api_error_ts or 0.0, now)
+            self.api_errors_since_reply += 1
         msg = d.get("message") if isinstance(d.get("message"), dict) else None
         if kind == "assistant":
             self.last_assistant_ts = max(self.last_assistant_ts or 0.0, now)
+            self.api_errors_since_reply = 0
         usage = msg.get("usage") if msg else None
         if not isinstance(usage, dict):
             return
@@ -755,17 +759,28 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
         stop: dict = {}  # {"why": "cap" | "hang"} once the watcher decided to end the session
         watcher_done = threading.Event()
 
+        t_start = time.time()
+
         def _check() -> str | None:
             if meter is None:
                 return None
             meter.poll()
+            if (transcript_caps and not stop.get("warned_no_transcript") and live["stream_usd"] > 0
+                    and time.time() - t_start > 90 and not meter._paths):
+                stop["warned_no_transcript"] = True
+                logger.warning("v8: no Claude Code transcript found for session(s) %s under cwd %s; the dollar "
+                               "cap falls back to stream usage, which undercounts output tokens",
+                               sorted(meter.session_ids), cwd)
             if transcript_caps and max_cost_usd is not None:
                 if max(meter.cost(), live["stream_usd"]) >= max_cost_usd:
                     return "cap"
             if hang_after_s:
+                # A long legitimate reply can sit behind one or two timeouts and still arrive; only
+                # repeated timeouts with no reply for the whole window count as a hang.
                 last_reply = max(live["reply"], meter.last_assistant_ts or 0.0)
                 last_err = max(live["api_error"], meter.last_api_error_ts or 0.0)
-                if time.time() - last_reply > hang_after_s and last_err > last_reply:
+                if (time.time() - last_reply > hang_after_s and last_err > last_reply
+                        and meter.api_errors_since_reply >= HANG_MIN_API_ERRORS):
                     return "hang"
             return None
 

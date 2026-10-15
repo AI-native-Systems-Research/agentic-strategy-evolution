@@ -188,12 +188,22 @@ def _settings_block(campaign: dict) -> dict:
     return campaign.get("v7") or {}
 
 
+# v8 counts spend from transcripts, so its defaults are the real dollars v7 sessions used (v7's were set
+# when output tokens were undercounted ~10x): a v7 "$12 iteration" really cost $20-24, a design $2-12.
+V8_DEFAULT_ARM_BUDGET_USD = 6.0
+V8_DEFAULT_ITERATION_BUDGET_USD = 22.0
+V8_DEFAULT_DESIGN_BUDGET_USD = 8.0
+
+
 def v7_settings(campaign: dict) -> V7Settings:
     cfg = _settings_block(campaign)
+    v8 = is_v8(campaign)
     return V7Settings(
-        arm_budget_usd=float(cfg.get("arm_budget_usd", V7_DEFAULT_ARM_BUDGET_USD)),
-        iteration_budget_usd=float(cfg.get("iteration_budget_usd", V7_DEFAULT_ITERATION_BUDGET_USD)),
-        design_budget_usd=float(cfg.get("design_budget_usd", V7_DEFAULT_DESIGN_BUDGET_USD)),
+        arm_budget_usd=float(cfg.get("arm_budget_usd", V8_DEFAULT_ARM_BUDGET_USD if v8 else V7_DEFAULT_ARM_BUDGET_USD)),
+        iteration_budget_usd=float(cfg.get("iteration_budget_usd", V8_DEFAULT_ITERATION_BUDGET_USD if v8
+                                           else V7_DEFAULT_ITERATION_BUDGET_USD)),
+        design_budget_usd=float(cfg.get("design_budget_usd", V8_DEFAULT_DESIGN_BUDGET_USD if v8
+                                        else V7_DEFAULT_DESIGN_BUDGET_USD)),
         winner_min_usd=float(cfg.get("winner_min_usd", V7_DEFAULT_WINNER_MIN_USD)),
         cost_rates=dict(cfg.get("cost_rates_per_mtok") or {}),
     )
