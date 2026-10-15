@@ -183,6 +183,20 @@ def _generate_report(
     agent: str = "sdk", timeout: int = 1800,
 ) -> None:
     """Generate report.md summarizing the campaign."""
+    from orchestrator.validate import campaign_kind
+
+    if campaign_kind(campaign) == "optimization":
+        # Rendered from report.json, not written by a model: the kind's only
+        # model calls are plan and build, and an LLMDispatcher call here both
+        # spends unbudgeted tokens and routes through OPENAI_* (#304).
+        from orchestrator.optimize.report_md import write_report_markdown
+
+        try:
+            print(f"  -> {write_report_markdown(work_dir)}")
+        except OSError as exc:
+            logger.warning("Report rendering failed: %s", exc)
+            print(f"  Report rendering skipped: {exc}")
+        return
     try:
         resolved = _resolve_model(campaign, "report", model)
         if agent == "inline":
@@ -642,22 +656,29 @@ def run_campaign(
         # Generate continue gate summary
         gate_summary_path = iter_dir / "gate_summary_continue.json"
         try:
-            resolved = _resolve_model(campaign, "report", model)
-            if agent == "inline":
-                dispatcher = InlineDispatcher(
-                    work_dir=work_dir, campaign=campaign, timeout=timeout,
-                )
+            if _is_optimization:
+                # Zero-token: rendered from the progress snapshot (see
+                # orchestrator.optimize.report_md for why not a model call).
+                from orchestrator.optimize.report_md import write_gate_summary
+
+                gate_summary_path = write_gate_summary(work_dir, i)
             else:
-                dispatcher = LLMDispatcher(
-                    work_dir=work_dir, campaign=campaign,
-                    model=resolved,
+                resolved = _resolve_model(campaign, "report", model)
+                if agent == "inline":
+                    dispatcher = InlineDispatcher(
+                        work_dir=work_dir, campaign=campaign, timeout=timeout,
+                    )
+                else:
+                    dispatcher = LLMDispatcher(
+                        work_dir=work_dir, campaign=campaign,
+                        model=resolved,
+                    )
+                dispatcher.dispatch(
+                    "summarizer", "summarize-gate",
+                    output_path=gate_summary_path,
+                    iteration=i,
+                    perspective="continue",
                 )
-            dispatcher.dispatch(
-                "summarizer", "summarize-gate",
-                output_path=gate_summary_path,
-                iteration=i,
-                perspective="continue",
-            )
         except (RuntimeError, FileNotFoundError, OSError) as exc:
             logger.warning("Continue gate summary generation failed: %s", exc)
             print(f"  (Continue gate summary skipped: {exc})")
