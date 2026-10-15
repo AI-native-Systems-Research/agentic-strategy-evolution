@@ -112,6 +112,40 @@ judge load.
 **Claude $5 pilot (2026-10-14, `gen/pilot_c5.sh`):** p181, p26, p58 all scored 0 at $5. p26 and p58 never
 submitted a solution (each $5 went into one or two long reasoning turns). Taken as evidence these are hard.
 
+## Focus set at $50: Nous v7 vs Claude Code (2026-10-14, opus-4-6, final)
+
+Nous v7 (aiopslab 4bb8787, `gen/nous_v7_c50.sh`, `--design-profile v7`, default v7 budgets) vs the Claude Code
+baseline below. Same model, CLI, sandbox, judge daemon, exploit audit and cost ruler. Nous stops by finishing the
+iteration in progress at $50 (ceiling $57); "at $50" is the best judged solution reached by $50 on the ruler.
+Re-judge: both agents' final solutions, 3 judge runs each under the same load (`artifacts/rejudge_focus_c50.json`).
+
+| task | Nous at $50 | Nous final (re-judged mean) | Claude final (re-judged mean) | Nous spend | winner |
+|---|---|---|---|---|---|
+| p0 polyomino packing | 68.36 | 68.24 | 20.45 (26.43 in-run) | $35.00 (4 h wall limit) | Nous |
+| p58 inverse counting path | 61.71 | 59.71 | 0 (no solution) | $37.14 (operator stop, see notes) | Nous |
+| p26 OgreSort | 9.90 | 7.09 (0.49, 10.40, 10.40) | 0 (no solution) | $60.86 | Nous |
+| p181 binary QAP | 49.13 | 49.55 | 50.44 (56.00 in-run) | $53.95 | Claude, within judge noise |
+| p5 Hamiltonian path | 44.00 | 43.00 | 55.00 (57.00 in-run) | $57.41 | Claude |
+
+Nous wins 3 of 5 (two where Claude never produced a solution), loses p5, and p181 is within judge noise.
+All 12+9+5+2+15 Nous candidates passed the exploit audit (0 rejected); no run read test data or other runs.
+
+What decided it (details: `NOUS_V7_RUN_NOTES.md`):
+- Competing families + measure-first worked where Claude stalled: p58 binary-gadget chain 61.71 at ~$16 while
+  Claude crashed on 64k-output turns; p0 bottom-left-fill 67.61 at ~$9.5 (Claude 26.43 at $51); p26 the evaluator
+  found the seed at 6 s vs a 2 s limit.
+- p5 lost because the winner session was starved: arms used each $12 iteration budget, so the winner got the $2
+  floor, and matching-based path cover (the likely route to 90+) was dropped after its first build segfaulted.
+- Per-arm caps were overrun by Claude Code's hidden 64k-output internal retries (p5 metrics $36 vs transcripts
+  $57; one p58 arm $15.19 on a $2 cap). The $50 ruler is unaffected (it reads transcripts).
+- Operational: gateway "Request timed out" loops on long requests (p58 stopped by operator at $37, $0 burned
+  while looping); the launcher's 4 h wall limit ended p0 at $35. Both only cost Nous budget.
+
+Fixes for the next v7 revision (not applied mid-run): enforce caps from transcripts; reserve a real winner share
+and scale the iteration budget with the campaign budget; one cheap repair try for a crashed or invalid arm;
+catch any SDK exception per arm and a hang watchdog that ignores periodic api_error events; drop design.md from
+arm sessions' cached system prompt (~67k-token context per arm turn).
+
 ## Focus set at $50: Claude Code baseline (2026-10-14, opus-4-6, done)
 
 Same runner, sandbox, judge daemon, exploit audit and cost ruler as the $25 runs (`gen/claude_c50.sh`,
