@@ -146,13 +146,37 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
     # infeasible, the constrained optimum is inside the range and "widen" would
     # walk the next epoch into the constraint (found on a real campaign: a write
     # cache whose upper edge broke the durability SLA on every row).
+    from orchestrator.optimize.stage_runner import _this_epoch_runs
+
     rows = []
-    for rj in glob.glob(str(work_dir / "runs" / "iter-*" / "runs.jsonl")):
+    for rj in _this_epoch_runs(work_dir):
         for line in Path(rj).read_text().splitlines():
             try:
                 rows.append(json.loads(line))
             except ValueError:
                 continue
+    primary = ((campaign.get("optimization") or {}).get("response") or {}).get("primary") or {}
+    sign = -1.0 if primary.get("direction") == "minimize" else 1.0
+
+    def _measured_peak(fid):
+        """The level of ``fid`` with the best MEASURED marginal mean, if any.
+
+        The stationary point is an extrapolation of a fitted quadratic; when
+        the measurements themselves peak at an interior level, "extend" or
+        "pin the edge" would follow the fit's artefact (found on a real Go
+        campaign: the fit put concurrency's optimum below 1 while its measured
+        mean at 1 was not the best).
+        """
+        by_level: dict = {}
+        for r in rows:
+            v = (r.get("response") or {}).get(primary.get("metric"))
+            lv = (r.get("levels") or {}).get(fid)
+            if r.get("status") != "complete" or lv is None \
+                    or not isinstance(v, (int, float)) or v != v:
+                continue
+            by_level.setdefault(lv, []).append(float(v))
+        means = {lv: sum(vs) / len(vs) for lv, vs in by_level.items() if len(vs) >= 2}
+        return max(means, key=lambda lv: sign * means[lv]) if len(means) >= 2 else None
 
     def _edge_status(fid, edge):
         at = [r for r in rows if (r.get("levels") or {}).get(fid) == edge]
@@ -171,6 +195,14 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
         suggest = _from_axis(f, mid + math.copysign(2.0, coded) * half)
         edge = f.screen_levels[1] if (coded > 0) == (hi > lo) else f.screen_levels[0]
         n_at, n_bad = _edge_status(fid, edge)
+        peak = _measured_peak(fid) if primary.get("metric") else None
+        if peak is not None and peak != edge and not (n_at and n_bad == n_at):
+            out.append(
+                f"- **{fid}**: the fitted surface extrapolates past {edge}, but the "
+                f"measured means peak INSIDE the range, at {fid}={_fmt(peak)}. "
+                f"Keep `{fid}`'s range; if anything, add levels around {_fmt(peak)}."
+            )
+            continue
         if n_at and n_bad == n_at:
             out.append(
                 f"- **{fid}**: the PRIMARY surface keeps rising past {edge}, but "

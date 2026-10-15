@@ -151,3 +151,36 @@ def test_a_downward_suggestion_never_leaves_the_log_domain(tmp_path, coded):
     [line] = _out_of_hull_axes(_out_of_hull_work_dir(tmp_path, [batch], {"BATCH": coded}))
     suggested = float(re.search(r"e\.g\. to ([0-9.e+]+)", line).group(1))
     assert 1 <= suggested < 4
+
+
+def _with_rows(work_dir, fid, means_by_level):
+    import yaml
+
+    doc = yaml.safe_load((work_dir / "campaign.yaml").read_text())
+    doc["optimization"]["response"] = {"primary": {"metric": "m", "direction": "maximize"}}
+    (work_dir / "campaign.yaml").write_text(yaml.safe_dump(doc))
+    rows = [json.dumps({"levels": {fid: lv}, "status": "complete", "response": {"m": m + d}})
+            for lv, m in means_by_level.items() for d in (-0.5, 0.5)]
+    (work_dir / "runs" / "iter-1" / "runs.jsonl").write_text("\n".join(rows) + "\n")
+    return work_dir
+
+
+def test_advice_follows_the_measurements_when_they_peak_inside_the_range(tmp_path):
+    """The fit put concurrency's optimum below 1 on a real campaign; the
+    measured means did not agree. Measurements outrank an extrapolation."""
+    from orchestrator.optimize.report_md import _out_of_hull_axes
+
+    wd = _with_rows(_out_of_hull_work_dir(tmp_path, [_COUNT], {"CONC": -2.5}),
+                    "CONC", {1: 100.0, 2: 120.0, 4: 90.0})
+    [line] = _out_of_hull_axes(wd)
+    assert "peak INSIDE the range, at CONC=2" in line
+    assert "Pin" not in line and "Extend" not in line
+
+
+def test_advice_extends_when_the_measurements_agree_with_the_fit(tmp_path):
+    from orchestrator.optimize.report_md import _out_of_hull_axes
+
+    wd = _with_rows(_out_of_hull_work_dir(tmp_path, [_PROCS], {"PROCS": 3.0}),
+                    "PROCS", {1: 50.0, 2: 80.0, 8: 120.0})
+    [line] = _out_of_hull_axes(wd)
+    assert "Extend `PROCS`" in line
