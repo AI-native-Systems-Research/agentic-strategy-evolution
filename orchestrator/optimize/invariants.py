@@ -1114,6 +1114,20 @@ _ENTRIES: tuple[Invariant, ...] = (
                    "_type_name, but the prose 'must not fingerprint alike' reads wider than "
                    "what holds."),
 
+    Invariant("INV-SEM13", "A measured row whose observation contradicts a locked_parameters "
+                           "value at its declared optimization.locked_observables path (or "
+                           "omits that path) ABORTS the campaign regardless of auto-approve: "
+                           "every row would otherwise measure an unregistered experiment.",
+              "SEM", "campaign", "locked.check_row / LockedParameterDeviation docstrings; "
+              "stage_runner hard-fail #4; #246 (F1)", ALWAYS, None,
+              note="Enforced by the exception TYPE (LockedParameterDeviation -> "
+                   "OptimizationAborted), raised from the sweep's on_row. Covered "
+                   "end to end by a metamorphic pair in "
+                   "tests/test_optimize_locked_parameters.py "
+                   "(test_a_target_that_ignores_the_locked_value_aborts_the_campaign / "
+                   "test_a_target_that_honours_the_locked_value_is_unaffected). A lock "
+                   "with NO declared observable is not enforceable and is only WARNed "
+                   "by validate_optimization_campaign."),
     # ── statistical ───────────────────────────────────────────────────────
     Invariant("INV-STAT01", "One fitted coefficient per ALIAS CLASS, not per two-factor "
                             "interaction: a resolution-IV design must not make XtX singular.",

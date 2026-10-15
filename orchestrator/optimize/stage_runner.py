@@ -22,7 +22,7 @@ and how EXECUTE_ANALYZE runs it:
                   the compiled epoch. ZERO model calls.
   * ``report`` / ``exception`` — inline terminal states. ZERO model calls.
 
-Three checks hard-fail regardless of gate approval, because auto-approve is
+Four checks hard-fail regardless of gate approval, because auto-approve is
 this kind's default (spec §7.1) and removing the human must not remove the
 checks:
 
@@ -32,16 +32,14 @@ checks:
      overstate what it can estimate.
   2. A held-out metric reaching a fitting input.
   3. A ``correctness`` relation violation.
-
-NOT YET WIRED — ``locked_parameters`` deviation. The spec lists it as a
-fourth such check, and ``validate._validate_locked_parameters`` exists, but
-it is reached only from bundle validation and this path has no
-``bundle.yaml`` / ``experiment_spec`` to compare against. An earlier version
-of this docstring claimed the check; it did not exist, which is worse than
-omitting it, because the claim would stop the next reader from adding it.
-Wiring it needs a locked-parameters-vs-executed-config comparison built for
-the matrix path. Tracked as a follow-up; do not re-add the claim until the
-code is there.
+  4. A ``locked_parameters`` deviation (#246 / F1, matrix-path form): a
+     measured row whose observation, at the parameter's declared
+     ``optimization.locked_observables`` path, differs from the locked value
+     (or omits it). The reflective kind compares against
+     ``bundle.experiment_spec.verified_parameters``; this kind has no bundle,
+     so the evidence is what the target reports it ran with
+     (``locked.check_row``). A lock with no declared observable cannot be
+     enforced here, and ``validate_optimization_campaign`` warns naming it.
 
 A ``behavioral`` relation violation is NOT in that list. A monotonicity
 break is a discovery — the motivating case is a lever measured -9.5% alone
@@ -157,6 +155,7 @@ from orchestrator.optimize import (
     runner,
 )
 from orchestrator.optimize import design as design_mod
+from orchestrator.optimize import locked as locked_mod
 from orchestrator.optimize import policy as policy_mod
 from orchestrator.optimize.effects import fit_effects, solve_stationary_point
 from orchestrator.optimize.factors import is_refinable, parse_factors
@@ -2711,6 +2710,18 @@ def run_stage(
         constant_fields=set(response_spec.get("constant_fields") or ()),
     )
 
+    # The fourth hard-fail: a measured row whose observation contradicts a
+    # `locked_parameters` value at its declared `locked_observables` path
+    # (orchestrator/optimize/locked.py). Checked in `on_row`, AFTER the row is
+    # appended, so the row that exposed the deviation is on disk as evidence --
+    # the same "rows already written stay" property contract drift relies on.
+    # It fires on the first offending row rather than after the sweep, because
+    # every further row would spend budget on an experiment nobody registered.
+    def _record_row(outcome) -> None:
+        artifacts.append_run(iter_dir, _run_row(by_index[outcome.row_index], outcome))
+        locked_mod.check_row(campaign, outcome.response,
+                             row_index=outcome.row_index, stage=stage_name)
+
     try:
         outcomes = runner.execute_design(
             exec_rows, runner=config_runner, response_spec=response_spec,
@@ -2718,10 +2729,12 @@ def run_stage(
             integrity_check=integrity_check,
             max_parallel=max_parallel,
             adapter_guard=adapter_guard,
-            on_row=lambda outcome: artifacts.append_run(
-                iter_dir, _run_row(by_index[outcome.row_index], outcome),
-            ),
+            on_row=_record_row,
         )
+    except locked_mod.LockedParameterDeviation as exc:
+        # A campaign-level abort for the same reason as contract drift below:
+        # there is no row-level repair, and no surface to certify.
+        raise OptimizationAborted(str(exc)) from exc
     except adapter_contract.AdapterContractDrift as exc:
         # Converted here so it lands on exactly the path a `policy.sha256`
         # mismatch does: a campaign-level hard abort, not a row failure and not a

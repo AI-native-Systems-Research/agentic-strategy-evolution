@@ -1164,6 +1164,29 @@ properties:
                 op: { type: string, enum: ["==", "!=", ">", ">=", "<", "<="] }
                 value: {}
 
+      locked_observables:
+        type: object
+        minProperties: 1
+        additionalProperties: { type: string, minLength: 1 }
+        description: >
+          Issue #246 (F1) on the matrix path: WHERE the target reports the
+          value it actually used for each top-level ``locked_parameters``
+          entry, as ``{locked_parameter: <dotted path into the run
+          observation>}``. The value stays in ``locked_parameters`` (one
+          source of truth); this map only says where to read it back.
+          Every measured row is compared with ``==`` (the same comparator
+          and dotted-path convention as ``manipulation``), and a deviation
+          -- or a declared path the target does not emit -- is a HARD
+          ABORT of the campaign regardless of ``--auto-approve``, because
+          every row would otherwise measure a different experiment than
+          the one pre-registered. ``nous validate campaign --smoke``
+          evaluates the same check on the configuration it runs. A key
+          that is not in ``locked_parameters`` is a validation error (a
+          typo would leave the intended lock unenforced); a locked
+          parameter with no entry here is NOT enforced at run time, and
+          validation warns naming each one. Example:
+          ``{max_seq_len: engine.max_seq_len, model: config.model}``.
+
       guidance:
         type: object
         additionalProperties: false

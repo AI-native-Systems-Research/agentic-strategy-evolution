@@ -541,6 +541,15 @@ bundle whose ``experiment_spec.verified_parameters`` deviates from
 closes the spec-fidelity gap that allowed paper-memorytime-mirage
 iter-1 to silently rewrite four locked workload parameters.
 
+``kind: optimization`` has no bundle, so the equivalent check reads what
+the target REPORTS it ran with: ``optimization.locked_observables`` maps
+each locked parameter to a dotted path in the run observation, and a
+measured row that deviates (or omits the path) aborts the campaign
+regardless of ``--auto-approve`` (``orchestrator/optimize/locked.py``).
+A lock with no declared observable is NOT enforced on this path —
+``nous validate campaign`` warns naming each one — and a lock that is
+also a declared factor is a validation error.
+
 Authoring discipline lives in ``docs/campaign-authoring-guide.md``
 (the "what to lock" inventory + the rehearsal-as-instrument
 worked example). The full friction-report resolution map is in

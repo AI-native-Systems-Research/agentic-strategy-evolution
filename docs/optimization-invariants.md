@@ -190,6 +190,7 @@ about the presence of a cause.
 | `INV-SEM10` | A declared relation absent from the results is a FAILURE, never a pass. A typo'd `native_test` must not silently disable a correctness gate. | function | `relations.py` ("The load-bearing rule") | `always` | — |
 | `INV-SEM11` | Contract drift is a campaign ABORT, not a row failure: re-running a row against a changed instrument produces a number that still cannot be compared to rows measured before the change. | epoch | `adapter_contract.AdapterContractDrift` docstring | `always` | — |
 | `INV-SEM12` | `null` is its own fingerprint type. `{"slope": 0.4}` and `{"slope": null}` must not fingerprint alike. | function | `adapter_contract._type_name` ("that is the whole point") | `always` | **yes** — defect 4 |
+| `INV-SEM13` | A measured row whose observation contradicts a `locked_parameters` value at its declared `optimization.locked_observables` path — or omits that path — ABORTS the campaign, regardless of `--auto-approve`. A lock with no declared observable is unenforceable and `nous validate campaign` WARNs naming it; a lock that is also a factor is a validation error. | campaign | `locked.check_row`; `stage_runner` hard-fail #4; #246 (F1) | `always` — `tests/test_optimize_locked_parameters.py::test_a_target_that_ignores_the_locked_value_aborts_the_campaign` (metamorphic partner: `::test_a_target_that_honours_the_locked_value_is_unaffected`) | — |
 
 **`INV-SEM02` — the violation.** `certificate.model_regret_bound` returns
 `RegretBound(None, ..., method="none")` when `pure_error_df <= 0`, correctly
@@ -437,7 +438,7 @@ accomplish**.
 |---|---|---|---|
 | **Discriminator** | No further measurement INSIDE this epoch can repair it. The condition is about MEANING — the interface, the objective, or the design's range is wrong. | Re-running the configuration repairs it. Nothing semantic has been discovered. | The apparatus or the pre-registration is broken, so no measurement in this work-dir is interpretable. |
 | **Scope** | Ends the EPOCH. Campaign continues and still returns an action. | Ends the ROW. | Ends the CAMPAIGN. |
-| **Examples** | `stationary_in_hull: false` (the fitted optimum is an extrapolation past the declared range); `nan_response: true` (the objective and the instrumentation disagree about what is measurable there); an observation key outside `OBSERVATION_KEYS`. | Timeout; non-zero exit; unparseable output; manipulation retry exhausted; freshness violation; self-check violation. | `policy.sha256` mismatch; adapter contract drift; `primary` also declared `held_out`; a held-out metric reaching a fitting input; a non-numeric-but-not-NaN primary metric; fewer than 2 rows surviving exclusion. |
+| **Examples** | `stationary_in_hull: false` (the fitted optimum is an extrapolation past the declared range); `nan_response: true` (the objective and the instrumentation disagree about what is measurable there); an observation key outside `OBSERVATION_KEYS`. | Timeout; non-zero exit; unparseable output; manipulation retry exhausted; freshness violation; self-check violation. | `policy.sha256` mismatch; adapter contract drift; a `locked_parameters` deviation at a declared `locked_observables` path (`INV-SEM13`); `primary` also declared `held_out`; a held-out metric reaching a fitting input; a non-numeric-but-not-NaN primary metric; fewer than 2 rows surviving exclusion. |
 | **Artifact** | `epoch_end-<epoch>.json` (why + `next_epoch_requires`) plus `report.json` on the strongest non-model rung. | `runs.jsonl` row with `status` and `failure_kind`. | Nothing new. **This is `INV-TMP08`'s gap** — the audit trail records nothing. |
 | **Recovery** | Revise the campaign out of band; `nous run --resume` recompiles and starts a fresh epoch at `initial`. | Re-run the row. | Fix the apparatus; an apparatus change is an epoch boundary. |
 | **Test** | `BEH-EXC-01` | `BEH-EXC-02` | `BEH-EXC-03` |
@@ -461,16 +462,16 @@ they disagree.
 |---|---|---|---|---|---|
 | Structural (`INV-ST`) | 10 | 10 | 0 | 0 | 0 |
 | Closed vocabulary (`INV-VOC`) | 8 | 7 | 0 | 1 | 0 |
-| Semantic (`INV-SEM`) | 12 | 11 | 0 | 1 | 0 |
+| Semantic (`INV-SEM`) | 13 | 12 | 0 | 1 | 0 |
 | Statistical (`INV-STAT`) | 11 | 7 | 0 | 4 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
 | Provenance (`INV-PROV`) | 5 | 4 | 0 | 1 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **63** | **50** | **0** | **11** | **2** |
+| **Total** | **64** | **51** | **0** | **11** | **2** |
 
-By level: `function` 24, `module` 6, `artifact` 20, `iteration` 5, `epoch` 6, `campaign` 2. Checkable (a
-checker function exists): 41 of 63. The 22 without one are
+By level: `function` 24, `module` 6, `artifact` 20, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
+checker function exists): 41 of 64. The 23 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check

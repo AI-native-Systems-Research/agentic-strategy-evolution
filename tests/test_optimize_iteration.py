@@ -621,21 +621,21 @@ def test_a_partially_failed_sweep_refits_rather_than_emitting_nan_or_aborting(
     assert "failed_to_measure" in fx["excluded_by_reason"], fx
 
 
-def test_locked_parameters_is_not_claimed_as_a_wired_check():
-    """The docstring must not advertise a guarantee the code lacks.
+def test_locked_parameters_is_claimed_only_because_it_is_wired():
+    """The docstring's hard-fail list must match the code.
 
-    An earlier version listed locked_parameters as one of four hard-fails.
-    It was never wired — the check lives in bundle validation and this path
-    has no bundle. A docstring that overstates the guarantees is worse than
-    an omission, because it stops the next reader from adding the check.
+    An earlier version listed locked_parameters as one of four hard-fails
+    before it existed, then replaced the claim with a NOT YET WIRED note. The
+    check is now wired (``optimize/locked.py``, exercised end to end in
+    ``tests/test_optimize_locked_parameters.py``), so the stale note must be
+    gone and the fourth check listed.
     """
     import orchestrator.optimize.stage_runner as sr
 
     doc = sr.__doc__ or ""
-    assert "NOT YET WIRED" in doc
-    assert "locked_parameters" in doc
-    # and it must not be counted among the active checks
-    assert "Four checks hard-fail" not in doc
+    assert "NOT YET WIRED" not in doc
+    assert "Four checks hard-fail" in doc
+    assert "locked_observables" in doc
 
 
 def test_infeasible_and_rejected_rows_do_not_block_the_fit(tmp_path):

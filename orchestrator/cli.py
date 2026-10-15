@@ -888,6 +888,7 @@ def _smoke_check_optimization(
     try:
         problems.extend(_smoke_probe_one_config(
             opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
+            locked=campaign.get("locked_parameters"),
         ))
         # 2b. The GENERATED CENTER POINT, when the design asks for one.
         #
@@ -913,6 +914,7 @@ def _smoke_check_optimization(
                 problems.extend(_smoke_probe_one_config(
                     opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
                     levels=centre, label="generated center point",
+                    locked=campaign.get("locked_parameters"),
                 ))
         # 5. Per-level abort sweep + liveness (opt-in). Gated behind
         # `--liveness` because it costs REAL runs -- one per declared level plus
@@ -954,6 +956,35 @@ def _report_unexercised_levels(factors) -> list[str]:
         f"each factor's effect against the workload's noise floor.",
     )
     return []
+
+
+def _check_declared_locked(opt: dict, locked: dict | None, obs: dict, *,
+                           where: str) -> list[str]:
+    """Evaluate the enforceable ``locked_parameters`` against one observation.
+
+    The SAME comparison the epoch makes on every row
+    (``optimization.locked.deviations``), so a mismatch -- a target that ignores
+    the pinned value -- surfaces before the policy hash is written instead of
+    as an abort on the first measured row. A smoke FAILURE, not a warning: the
+    epoch would hard-abort on it.
+    """
+    from orchestrator.optimize import locked as locked_mod
+
+    view = {"locked_parameters": locked or {}, "optimization": opt}
+    n = len(locked_mod.enforced(view))
+    if not n:
+        return []
+    bad = locked_mod.deviations(view, obs)
+    print(f"  smoke: {n - len(bad)}/{n} locked parameter(s) hold at {where}")
+    if not bad:
+        return []
+    return [
+        f"locked_parameters deviate at {where}: " + "; ".join(bad)
+        + ". The target ran with a value other than the one this campaign "
+        "pinned, so every epoch row would measure an unregistered experiment "
+        "and the campaign would abort on its first row. Make the target honour "
+        "the locked value, or fix optimization.locked_observables."
+    ]
 
 
 def _check_declared_self_checks(opt: dict, obs: dict, *, where: str) -> list[str]:
@@ -1444,9 +1475,13 @@ def _center_levels(factors) -> dict:
 
 def _smoke_probe_one_config(
     opt: dict, factors, *, repo: Path, probe_dir: Path,
-    levels: dict | None = None, label: str = "",
+    levels: dict | None = None, label: str = "", locked: dict | None = None,
 ) -> list[str]:
     """Run ONE configuration and check everything that run makes answerable.
+
+    ``locked`` is the campaign's top-level ``locked_parameters`` (this function
+    otherwise sees only the ``optimization`` block); see
+    ``_check_declared_locked``.
 
     Split out of ``_smoke_check_optimization`` so ``probe_dir`` — where any
     ``config_patch`` copy materialized for the probe lands, and which check 2b
@@ -1611,6 +1646,7 @@ def _smoke_probe_one_config(
     # value: the real defect this closes produced 8 bad rows out of 12, all
     # biased in the flattering direction, and was found only after the epoch.
     problems.extend(_check_declared_self_checks(opt, obs, where=f"corner {levels}"))
+    problems.extend(_check_declared_locked(opt, locked, obs, where=f"corner {levels}"))
 
     # 3. Is the objective metric present?
     metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")

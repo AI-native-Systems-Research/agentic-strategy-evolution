@@ -1669,6 +1669,10 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule21_concurrency_declaration(opt))
     errors.extend(_rule22_completion_budgets(opt, factors))
     errors.extend(_check_mechanism_paths_are_literal(opt))
+    # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
+    # locked_observables keys, and a WARN naming every unenforceable lock.
+    from orchestrator.optimize.locked import validation_findings as _locked_rules
+    errors.extend(_locked_rules(campaign))
     return errors
 
 

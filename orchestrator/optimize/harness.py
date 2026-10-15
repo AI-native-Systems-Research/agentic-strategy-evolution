@@ -165,6 +165,7 @@ def _latest_iter_dirs(work_dir: Path) -> list[Path]:
 
 def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
                            campaign_overrides: dict | None = None,
+                           campaign_top_level: dict | None = None,
                            max_iterations: int = 8) -> SyntheticResult:
     """Run every stage of a synthetic campaign and report the answer.
 
@@ -172,6 +173,10 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
     call, so the work_dir lands under the caller's tmp_path rather than in
     the target repo. The variable is restored afterwards: leaking it would
     silently relocate every later campaign in the same process.
+
+    ``campaign_top_level`` sets top-level campaign keys (``campaign_overrides``
+    only reaches the ``optimization`` block) -- e.g. ``locked_parameters``,
+    which lives beside ``optimization`` rather than inside it.
     """
     import os
 
@@ -180,6 +185,7 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
     from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
 
     campaign = synthetic_campaign(surface, **(campaign_overrides or {}))
+    campaign.update(campaign_top_level or {})
     # The synthetic target honours the campaign's own `workload.seed_env` when
     # one is declared. Reading it from the CAMPAIGN rather than taking it as a
     # separate harness argument is what keeps the instrument honest: a mismatch

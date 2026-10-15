@@ -676,7 +676,10 @@ def test_rule10_knob_covered_by_locked_parameters_is_not_warned():
     campaign["target_system"]["controllable_knobs"] = ["queue_count", "warmup_seconds"]
     campaign["locked_parameters"] = {"warmup_seconds": 30}
     errors = validate_optimization_campaign(campaign)
-    assert not any("warmup_seconds" in e for e in errors)
+    # Rule 10's message is about controllable_knobs; the separate
+    # unenforced-lock WARN (no locked_observables entry) may still name it.
+    assert not any("warmup_seconds" in e and "controllable_knobs" in e
+                   for e in errors)
 
 
 # ---------------------------------------------------------------------------
