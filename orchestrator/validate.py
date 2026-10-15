@@ -234,7 +234,7 @@ def _rule1_kind_optimization_block(campaign: dict) -> list[str]:
         return [
             "kind: optimization requires a top-level 'optimization' block "
             "(response, factors, design). Add one -- see "
-            "docs/optimization-campaign-guide.md -- or set kind: reflective "
+            "`nous docs guide` -- or set kind: reflective "
             "if this campaign doesn't need a pre-registered design matrix."
         ]
     if kind == "reflective" and has_block:

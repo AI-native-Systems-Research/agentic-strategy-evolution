@@ -840,7 +840,7 @@ def test_validate_campaign_reports_schema_errors_with_the_field_path(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "[schema] max_turns" in err
-    assert "campaign-guide" in err        # points at the authoring guide
+    assert "nous docs guide" in err       # points at the authoring guide, reachable from any install
 
 
 def test_validate_campaign_reports_cross_field_rule_violations(tmp_path, capsys):

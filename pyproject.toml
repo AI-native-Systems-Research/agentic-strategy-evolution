@@ -62,7 +62,7 @@ filterwarnings = [
 include = ["orchestrator*", "prompts*"]
 
 [tool.setuptools.package-data]
-orchestrator = ["schemas/*.yaml", "schemas/*.json", "templates/*.json", "templates/*.yaml", "templates/*.md", "defaults.yaml"]
+orchestrator = ["schemas/*.yaml", "schemas/*.json", "templates/*.json", "templates/*.yaml", "templates/*.md", "defaults.yaml", "docs/*.md"]
 prompts = ["**/*.md"]
 
 [build-system]

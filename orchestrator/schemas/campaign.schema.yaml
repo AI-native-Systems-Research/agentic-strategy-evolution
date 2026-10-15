@@ -43,8 +43,8 @@ properties:
       mechanism-discovery flow: an LLM designs each iteration, runs it,
       and interprets the result to build causal claims. ``optimization``
       is a factorial/response-surface flow (see
-      ``docs/optimization-authoring-quickstart.md`` and
-      ``docs/optimization-campaign-guide.md``): the campaign AUTHOR (a
+      ``nous docs quickstart`` and
+      ``nous docs guide``): the campaign AUTHOR (a
       human, or an AI writing this YAML) declares the factors and their
       levels; ``verify`` runs the declared native tests and compiles a
       content-hashed policy; Python drives the pre-registered design
@@ -721,7 +721,7 @@ properties:
       pre-registered design matrix, applying levels mechanically via each
       factor's ``apply``, and checking ``manipulation`` /
       ``design_space.invariants`` / ``response.constraints`` on every
-      run. See ``docs/optimization-campaign-guide.md`` for the field-by-
+      run. See ``nous docs guide`` for the field-by-
       field walkthrough and worked examples. Cross-field rules this
       schema cannot express (leakage, refinability, resolution feasibility,
       trivial predicates, ...) are enforced by
@@ -822,7 +822,7 @@ properties:
               ``nous validate campaign --smoke`` / ``--liveness`` on the
               configurations they run, so a violated invariant surfaces
               BEFORE the policy hash is written. See
-              ``docs/optimization-campaign-guide.md`` §7.7.
+              ``nous docs guide`` §7.7.
             items: { "$ref": "#/$defs/comparison" }
           constant_fields:
             type: array
@@ -885,7 +885,7 @@ properties:
           design matrix. Example: a ``numeric`` factor ``queue_count``
           with ``levels: [2, 4, 8, 16]``, or a ``choice`` factor
           ``batching`` with ``levels: [off, on]``. See
-          ``docs/optimization-campaign-guide.md`` for the full
+          ``nous docs guide`` for the full
           "declare as factor vs lock" inventory.
         items:
           type: object
@@ -1169,7 +1169,7 @@ properties:
           prose. Where a violation is statically determinable from the
           matrix row, the row is rejected before it runs; otherwise it
           hard-fails after running. See
-          ``docs/optimization-campaign-guide.md``'s "would you be upset
+          ``nous docs guide``'s "would you be upset
           to find this violated after 60 runs?" test for what belongs
           here versus in ``guidance``.
         properties:
@@ -1614,7 +1614,7 @@ properties:
           per-run copy of each patched file. Have the adapter write its build
           output, metrics file and temp data under ``NOUS_RUN_DIR``: two rows
           sharing one ``go build -o`` path is a real defect that produced
-          plausible numbers from the wrong binary. See ``docs/targets.md``.
+          plausible numbers from the wrong binary. See ``nous docs targets``.
 
           CPU PINNING IS DELIBERATELY NOT OFFERED. A disjoint cpu set partitions
           time slices and per-core L1/L2 and leaves L3, memory bandwidth, disk
@@ -1746,7 +1746,7 @@ properties:
           the variable into the workload generator's seed before declaring
           this block, and verify it took effect: same seed twice should
           reproduce the trace, different seeds should measurably change it
-          (see ``docs/targets.md``).
+          (see ``nous docs targets``).
         properties:
           seed_env:
             type: string

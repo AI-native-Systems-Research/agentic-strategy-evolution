@@ -324,6 +324,28 @@ def _cmd_run(args):
     )
 
 
+#: `nous docs <topic>` -> the packaged copy under orchestrator/docs/. The repo's
+#: docs/ files are canonical; tests/test_docs_command.py fails if a packaged copy
+#: drifts from its source, so the two can never disagree.
+DOC_TOPICS = {
+    "quickstart": ("quickstart.md", "docs/optimization-authoring-quickstart.md"),
+    "guide": ("guide.md", "docs/optimization-campaign-guide.md"),
+    "targets": ("targets.md", "docs/targets.md"),
+    "invariants": ("invariants.md", "docs/optimization-invariants.md"),
+}
+
+
+def _cmd_docs(args):
+    from importlib.resources import files
+
+    res = files("orchestrator") / "docs" / DOC_TOPICS[args.topic][0]
+    if args.path:
+        print(res)
+    else:
+        sys.stdout.write(res.read_text(encoding="utf-8"))
+    return 0
+
+
 def _cmd_resume(args):
     import logging
 
@@ -747,7 +769,7 @@ def _validate_campaign_file(
 
             print(
                 f"\nSee {QUICKSTART_DOC} (the authoring loop and the traps "
-                f"checklist), then docs/optimization-campaign-guide.md for the "
+                f"checklist), then `nous docs guide` for the "
                 f"field-by-field walkthrough.", file=sys.stderr,
             )
         else:
@@ -2527,7 +2549,7 @@ def build_parser():
             "                        calls unless plan/build are enabled.\n"
             "                        Start: nous create-campaign --kind optimization\n"
             "                        --to campaign.yaml, then read\n"
-            "                        docs/optimization-authoring-quickstart.md\n"
+            "                        `nous docs quickstart`\n"
             "\n"
             "Then: nous validate campaign FILE [--smoke | --liveness] until clean,\n"
             "and nous run FILE. `nous schema campaign` lists every field."
@@ -2927,6 +2949,17 @@ def build_parser():
     p_clean.set_defaults(func=_cmd_clean)
 
     # #263 (F18): paper-artifact tarball.
+    p_docs = subparsers.add_parser(
+        "docs",
+        help="Print a bundled kind: optimization doc (quickstart, guide, targets, "
+             "invariants) -- available from any install, no checkout needed.",
+    )
+    p_docs.add_argument("topic", nargs="?", default="quickstart",
+                        choices=sorted(DOC_TOPICS))
+    p_docs.add_argument("--path", action="store_true",
+                        help="Print the installed file's path instead of its text.")
+    p_docs.set_defaults(func=_cmd_docs)
+
     p_package = subparsers.add_parser(
         "package",
         help="Tarball a work_dir + reproduce.sh + Dockerfile + README "

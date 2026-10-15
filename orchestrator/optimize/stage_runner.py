@@ -218,7 +218,7 @@ def _opt_block(campaign: dict) -> dict:
     if not isinstance(opt, dict):
         raise OptimizationAborted(
             "kind: optimization requires an 'optimization' block; "
-            "see docs/optimization-campaign-guide.md",
+            "see `nous docs guide`",
         )
     return opt
 

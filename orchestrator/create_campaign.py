@@ -355,7 +355,10 @@ def scaffold_campaign(
 #: the template cannot drift.
 PLACEHOLDER_TOKEN = "TODO-"
 
-QUICKSTART_DOC = "docs/optimization-authoring-quickstart.md"
+#: How an author reaches the quickstart from ANY install. The repo path is not
+#: enough: a pip-installed `nous` ships no `docs/` tree, so pointing a user (or a
+#: Claude session) outside the checkout at a relative path was a dead end.
+QUICKSTART_DOC = "`nous docs quickstart` (docs/optimization-authoring-quickstart.md in the repo)"
 
 _OPT_TEMPLATE = """\
 # ─────────────────────────────────────────────────────────────────────────
