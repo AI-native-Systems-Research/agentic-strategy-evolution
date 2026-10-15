@@ -241,9 +241,15 @@ optional but load-bearing when present.
 What the campaign is optimizing, and the guardrails that keep a winning
 candidate honest.
 
-- **`primary`** (required) — `{metric, direction}`. The single response
-  the design matrix fits. `direction` is `maximize` or `minimize`.
+- **`primary`** (this **or** `objectives`, never both) — `{metric,
+  direction}`. The single response the design matrix fits. `direction` is
+  `maximize` or `minimize`.
   Example: `{metric: throughput_gbps, direction: maximize}`.
+- **`objectives`** (this **or** `primary`) — two or more `{metric,
+  direction}` entries optimized together; the campaign reports the
+  trade-off front between them. With **`preference`** (`knee` by default,
+  `weights`, or `lexicographic`) choosing the one recommended point. See
+  "Multi-objective: finding the trade-off frontier" below.
 - **`constraints`** — admissibility filters over the same observation every
   config produces. A config that violates any constraint is marked
   infeasible: it is never *returned* — not recommended, not seated as a
@@ -318,7 +324,92 @@ candidate honest.
   output-freshness guard's byte-identity comparison, which makes that check
   *stricter* on what remains. See "Guarding the adapter" below.
 - **`noise_estimate_pct`** — rough expected measurement noise as a percent
-  of the primary metric, used to size replicate counts.
+  of the primary metric, used to size replicate counts. With `objectives`,
+  one number applies to every objective, or give a map
+  `{<objective metric>: pct}` when they differ.
+
+### Multi-objective: finding the trade-off frontier
+
+Use this when the honest answer to "which configuration is best?" is "it
+depends what you are willing to pay": throughput vs memory, compression
+ratio vs speed, latency vs cost. A single `primary` plus constraints answers
+*is this admissible?*; `objectives` answers *what can I buy with what?*, and
+picking scalar weights up front would hide exactly that.
+
+> Status: this section describes the contract in
+> `docs/superpowers/specs/2026-10-15-pareto-front-design.md`. The authoring
+> surface — schema, validator, `--smoke` / `--liveness` / design preview,
+> `create-campaign --objectives N` — is what this release checks; the front
+> estimation, confirm seating and `report.json["pareto"]` rendering are the
+> estimation core described by the same spec.
+
+**What to declare.**
+
+```yaml
+response:
+  objectives:                       # >= 2 distinct metrics; replaces primary
+    - {metric: ops_per_cpu_s, direction: maximize}
+    - {metric: peak_rss_mib,  direction: minimize}
+  preference: {method: knee}        # optional; knee is the default
+  constraints:                      # unchanged: admissibility, not objectives
+    - {metric: error_rate, op: "<=", value: 0.0}
+  noise_estimate_pct: {ops_per_cpu_s: 3.0, peak_rss_mib: 0.5}   # or one number
+policy:
+  epsilon: {ops_per_cpu_s: {pct: 2}, peak_rss_mib: {abs: 5}}     # or one spec
+```
+
+Scaffold it with `nous create-campaign --kind optimization --objectives 2`.
+The design matrices do not change: a factorial design measures every
+response it is given, so a second objective costs no extra runs.
+
+**How to read the front.** Every objective is fitted on the same rows. The
+report's `pareto.front` lists the measured configurations no other measured
+configuration beats on every objective at once, sorted by the first
+objective, each with a mean and interval per objective and a status:
+`confidently_nondominated` (the claim survives the measurement uncertainty)
+or `possibly_dominated` (something may beat it; the data cannot rule it out).
+Dominance is a claim with a bound, never a comparison of point estimates. The
+preferred point is marked, and `hypervolume` (the area the front encloses
+against the baseline, normalized) and `gaps_remaining` say how well the front
+is covered; `report.md`'s "What to do next" names how to widen or refine it.
+
+**Preference: picking one point.** A recommendation is always produced.
+
+| `method` | Picks | Needs |
+|---|---|---|
+| `knee` (default) | the front point furthest (normalized) from the line between the two extremes — the "best bang for the buck" corner; for 3+ objectives, the point maximizing the minimum normalized improvement over the baseline | nothing |
+| `weights` | the maximum weighted sum of range-normalized objectives. A weighted sum can never select a point in a *concave* region of the front | `weights: {<metric>: w > 0, ...}` for every objective |
+| `lexicographic` | best on `order[0]`, ties within its epsilon broken by `order[1]`, ... | `order`: a permutation of the objective metrics |
+
+The validator refuses `weights`/`order` under a method that would ignore
+them, keys that are not objectives, a non-positive weight, and an `order`
+that is not a permutation.
+
+**Epsilon per objective.** `policy.epsilon` is each objective's indifference
+width: a difference smaller than it is not dominance. One spec applies to
+every objective; when they live in different units, give a map keyed by
+objective metric (an objective it omits takes `{pct: 2.0}`, with a warning).
+`--liveness` prints the screen's minimum detectable effect per objective
+against that objective's epsilon, and warns for each one below its MDE.
+
+**Constraint or objective?** Prefer a **constraint** when you already know
+the acceptable bound (an SLA, a memory budget, "ratio must stay >= 3"): the
+campaign then optimizes inside it and you get one answer. Prefer an
+**objective** when the bound is what you are trying to decide — you want to
+see what each extra unit of one costs in the other. Never both for the same
+metric: the validator refuses it, because the constraint would cut off the
+part of the front the objective asks to explore. An objective may not be
+`held_out` or a `self_check` metric either.
+
+**Before pre-registering**, run `--liveness`: it prints one effect table per
+objective (and per constraint metric), lists **trade-off candidates** —
+factors with a level change that improves one objective beyond 2x its noise
+while worsening another (or a constraint metric) beyond 2x its noise, the
+knobs a front is made of — and warns when an objective is constant across
+the sweep (no trade-off to discover on it). A run of `--liveness` that finds
+no trade-off candidate is worth reading carefully: the front may come only
+from interactions, or collapse to a single point best on everything, in
+which case `primary` plus constraints is the simpler campaign.
 
 ### Guarding the adapter: the three checks Nous applies to your `run_command`
 
@@ -1577,6 +1668,7 @@ It runs every declared level of every factor once, holding the other factors at
 |---|---|
 | a level whose run exits non-zero, times out, or emits unparseable output | **smoke FAILURE**, naming the factor *and* the level |
 | each factor's effect — the objective's **range across all its measured levels**, a superset of the extreme-levels difference — against the noise floor from `--liveness-repeats` baseline runs varying only the workload seed | **reported**, and flagged `not demonstrably live` under `2 x` the noise CV |
+| the same effect on every **numeric constraint metric** (and on every objective of a multi-objective campaign), each against its own noise floor from the same baseline runs | a factor is flagged droppable only when it is dead on **every** objective **and every** constraint metric; one that moves only a constraint is labelled `drives constraint <m> only — keep (it decides feasibility)` |
 
 The asymmetry is deliberate. A level the target cannot execute is a hole in the
 design matrix, and (if a harness reuses a stale metrics file on non-zero exit) it
@@ -1596,6 +1688,16 @@ at the base configuration. Before dropping a flagged factor, check whether its
 levels bracket a regime the base corner is not in; for the cap above, levels
 `[8, 16, 32]` bind. Probing at the base corner stays the default: it is the
 only corner the sweep can afford.
+
+**Constraint metrics count.** A knob can barely move the objective and still
+decide which configurations are admissible: on a real compression campaign
+the compression level moved throughput by under 2x noise (serialization
+dominated the CPU) while moving the ratio that a `ratio >= 3.0` constraint
+bounds by 300x noise. Calling that knob droppable from the objective alone
+would have been wrong advice, so `--liveness` measures every numeric
+constraint metric too, and also reports a factor whose level change buys the
+objective at the cost of a constraint metric's margin as a trade-off
+candidate.
 
 Both readings share the same runs on purpose: a level that aborts cannot produce
 an effect size. `--liveness` requires `known_valid_baseline`, since it is both
