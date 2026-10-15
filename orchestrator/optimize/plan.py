@@ -315,6 +315,7 @@ def run_plan(
     model: str | None = None,
     max_turns: int = DEFAULT_MAX_TURNS,
     sdk_runner: Callable | None = None,
+    retry_sleep: Callable[[float], None] | None = None,
     **_ignored,
 ) -> dict:
     """Spend one agent call designing the mechanism. Write the plan; return metrics.
@@ -328,7 +329,6 @@ def run_plan(
     ``build`` reads this file as its specification, so a half-formed plan on disk
     is worse than none.
     """
-    from orchestrator.metrics import log_metrics
     from orchestrator.sdk_dispatch import (
         _default_sdk_runner_factory,
         _load_methodology_preamble,
@@ -367,40 +367,31 @@ def run_plan(
         repo, max_turns, resolved_model,
     )
 
-    result = runner(
-        prompt=prompt,
-        model=resolved_model,
-        cwd=Path(repo),
-        max_turns=max_turns,
-        system_prompt=system_prompt,
-        event_log_path=iter_dir / "plan_events.jsonl",
-        permission_mode=permission_mode,
-    )
+    from orchestrator.optimize.build import agent_failure_message, run_agent_call
+    from orchestrator.sdk_dispatch import SDKCallFailed
 
-    row = {
-        "dispatcher": "sdk",
-        "role": "planner",
-        "phase": "plan",
-        "model": resolved_model,
-        "input_tokens": getattr(result, "input_tokens", 0),
-        "output_tokens": getattr(result, "output_tokens", 0),
-        "cache_creation_input_tokens": getattr(
-            result, "cache_creation_input_tokens", 0,
-        ),
-        "cache_read_input_tokens": getattr(result, "cache_read_input_tokens", 0),
-        "cost_usd": getattr(result, "cost_usd", 0.0),
-        "duration_ms": getattr(result, "duration_ms", 0),
-        "num_turns": getattr(result, "num_turns", 1),
-    }
-    # Logged BEFORE the structural check: the call was made and the tokens were
-    # spent whether or not the plan survives, and the cost axis must see it.
-    log_metrics(Path(work_dir) / "llm_metrics.jsonl", row)
-
-    if getattr(result, "is_error", False):
-        raise PlanRejected(
-            f"plan stage agent call failed: "
-            f"{getattr(result, 'error_message', '') or 'unknown error'}",
+    # Retried like `build` (see `build.run_agent_call`); every attempt's tokens
+    # are logged BEFORE any check, because they were spent whether or not the
+    # plan survives. A failed or exhausted call still writes NO plan.
+    try:
+        result, row = run_agent_call(
+            runner,
+            campaign=campaign, work_dir=work_dir, phase="plan", role="planner",
+            iteration=iteration, model=resolved_model, prompt=prompt,
+            runner_kwargs=dict(
+                model=resolved_model,
+                cwd=Path(repo),
+                max_turns=max_turns,
+                system_prompt=system_prompt,
+                event_log_path=iter_dir / "plan_events.jsonl",
+                permission_mode=permission_mode,
+            ),
+            retry_sleep=retry_sleep,
         )
+    except ValueError as exc:
+        raise PlanRejected(f"plan stage misconfigured: {exc}") from exc
+    except SDKCallFailed as exc:
+        raise PlanRejected(agent_failure_message("plan", exc)) from exc
 
     plan = _extract_json(getattr(result, "text", "") or "")
     errors = check_plan(plan)

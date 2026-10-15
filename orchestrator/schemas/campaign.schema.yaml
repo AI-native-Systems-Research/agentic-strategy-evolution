@@ -216,11 +216,16 @@ properties:
               design: { type: number, minimum: 0 }
               execute_analyze: { type: number, minimum: 0 }
               report: { type: number, minimum: 0 }
+              plan: { type: number, minimum: 0 }
+              build: { type: number, minimum: 0 }
         description: >
           Live mid-turn watchdog (#205). Scalar form applies globally.
           Map form applies per-phase — default when unset: 600s for all
           phases. Phases not listed in the map fall back to
           ``silence_threshold_seconds`` (or 600 if also unset).
+          ``plan`` / ``build`` key the ``kind: optimization`` agent calls;
+          unlisted, they default to 600s (the DESIGN value — both are
+          heavy-reasoning turns).
 
   sandbox:
     type: string
@@ -1355,6 +1360,20 @@ properties:
           ``runs/iter-N/reuse_manifest.json``, and each reused row carries a
           ``reused_from`` marker in ``runs.jsonl`` so a reader can never
           mistake reuse for fresh measurement.
+
+      agent_retries:
+        type: integer
+        minimum: 0
+        description: >
+          Retries (beyond the first attempt) for the ``plan`` and ``build``
+          agent calls. Defaults to 2 (three attempts). Retried: transient
+          SDK failures (network drops, a live silence-watchdog trip) and
+          ``is_error`` results that report context exhaustion ("Prompt is
+          too long") or provider overload / 5xx. Every other error (auth,
+          invalid request, quota, max turns) fails fast. Each retry is a
+          fresh session told to continue from the repo's current state, and
+          every attempt's tokens are logged to ``llm_metrics.jsonl``. Kept
+          small on purpose: one build attempt can cost tens of dollars.
 
       max_wall_clock_hours:
         type: number

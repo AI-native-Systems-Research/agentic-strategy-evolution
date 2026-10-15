@@ -1135,6 +1135,38 @@ Those tests are native to the target's language and live in the target repo,
 using its own tooling. Nous never grows a property-testing dependency for
 this; `hypothesis`, `rapid`, and `proptest` belong to target repos.
 
+#### Retries and the live watchdog (`plan` and `build`)
+
+Both agent calls run under the same retry loop as the reflective kind's
+dispatcher (`sdk_dispatch.call_sdk_with_retry`), with a budget sized for a call
+that can cost tens of dollars:
+
+```yaml
+optimization:
+  agent_retries: 2          # optional; default 2 retries = 3 attempts
+sdk_timeouts:
+  turn_silence_threshold_seconds:
+    plan: 600               # optional; both default to 600 (the DESIGN value)
+    build: 600
+```
+
+- **Retried:** transient SDK failures (stream drop, network error, a live
+  silence-watchdog trip) and `is_error` results that report context exhaustion
+  (`Prompt is too long`) or provider overload / 5xx. Each retry is a **fresh
+  session** with the original prompt plus a note to *continue from the repo's
+  current state* — never to restart — which is also the recovery from context
+  exhaustion.
+- **Fails fast:** every other `is_error` (authentication, invalid request,
+  quota, max turns). Retrying those only multiplies the bill.
+- **Recorded:** every failure appends a `retry_log.jsonl` row (`phase: plan` /
+  `build`), and **every attempt**, failed or not, appends an `llm_metrics.jsonl`
+  row, so the cost of retrying is on the cost axis.
+- **Exhaustion** raises `BuildFailed` / `PlanRejected` naming the attempt count
+  and the last error. `plan` still fails closed: no `mechanism_plan.json` is
+  written for a failed call.
+- The watchdog threshold accepts the scalar form too (applies to every phase);
+  `0` disables it. `--max-cli-retries` does not apply to these calls.
+
 ### `build_checks` — and `mechanism_paths`, which every campaign should declare
 
 `build_checks` tunes the oracles that keep a mechanism honest. Three of its
