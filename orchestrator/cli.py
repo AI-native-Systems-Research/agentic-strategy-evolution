@@ -1185,6 +1185,7 @@ def _print_design_preview(campaign: dict, measured: dict) -> None:
         pv = build_preview(
             campaign, noise_sd=measured.get("noise_sd"),
             mean=measured.get("mean"), run_secs=measured.get("run_secs"),
+            objectives=measured.get("objectives"),
         )
     except Exception as exc:  # noqa: BLE001 -- a preview must never mask results
         print(f"  DESIGN PREVIEW unavailable: {type(exc).__name__}: {exc}")
@@ -1403,11 +1404,43 @@ def _smoke_liveness_sweep(
             "an effect measured against an arbitrary corner would not be "
             "attributable to the factor.",
         ]
-    metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")
-    if not metric:
+    from orchestrator.optimize.objectives import (
+        declared_objectives,
+        is_multi_objective,
+    )
+
+    multi = is_multi_objective(opt)
+    objectives = declared_objectives(opt)
+    metrics = [o["metric"] for o in objectives]
+    direction_of = {o["metric"]: o["direction"] for o in objectives}
+    if not metrics:
         return [
+            "--liveness needs response.objectives metrics to compare levels on."
+            if multi else
             "--liveness needs response.primary.metric to compare levels on.",
         ]
+    metric = metrics[0]
+    # CONSTRAINT metrics are measured too. A knob can be dead for the
+    # objective and still decide FEASIBILITY (a compression level that barely
+    # moves throughput but moves the ratio a constraint bounds); calling it
+    # droppable from the objective alone is wrong advice. Tracked tolerantly:
+    # a constraint metric that is not numeric on some run (a boolean flag, an
+    # absent field) is simply not tracked, never a run failure.
+    constraint_dir: dict[str, str | None] = {}
+    for c in ((opt.get("response") or {}).get("constraints") or []):
+        if not isinstance(c, dict):
+            continue
+        cm = c.get("metric") or c.get("observable")
+        if not isinstance(cm, str) or not cm or cm in metrics:
+            continue
+        # Which way is SAFER: away from the bound. `==`/`!=` have no side.
+        side = {">": "maximize", ">=": "maximize",
+                "<": "minimize", "<=": "minimize"}.get(c.get("op"))
+        if cm in constraint_dir and constraint_dir[cm] != side:
+            side = None
+        constraint_dir[cm] = side
+    cmetrics = list(constraint_dir)
+    untracked: set[str] = set()
     seed_env = ((opt.get("workload") or {}).get("seed_env")) or None
 
     # Every run's wall clock, in the order the sweep made them, keyed by the
@@ -1416,9 +1449,13 @@ def _smoke_liveness_sweep(
     # binding constraint" is a claim about the whole sweep and a level that died
     # AT the ceiling is its strongest evidence.
     observed_sec: list[tuple[str, float, bool]] = []
+    # Every objective value every successful run reported, per metric: the
+    # input to the "constant objective" warning (multi-objective only).
+    all_values: dict[str, list[float]] = {m: [] for m in metrics}
+    cvalues_ok: dict[str, bool] = {m: True for m in cmetrics}
 
     def _run(levels: dict, *, seed: int | None, label: str):
-        """One configuration. Returns ``(objective, error_text)``.
+        """One configuration. Returns ``({metric: objective}, error_text)``.
 
         Any ``response.self_check`` violation is appended to ``problems``
         directly rather than returned as this run's ``error_text``. The two are
@@ -1440,16 +1477,27 @@ def _smoke_liveness_sweep(
         problems.extend(_check_declared_self_checks(
             opt, obs, where=f"liveness run {label}",
         ))
-        value = obs.get(metric)
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            return None, (
-                f"the run emitted no numeric {metric!r} (got {value!r}), so no "
-                f"effect size is computable"
-            )
-        return float(value), None
+        values: dict[str, float] = {}
+        for m in metrics:
+            value = obs.get(m)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return None, (
+                    f"the run emitted no numeric {m!r} (got {value!r}), so no "
+                    f"effect size is computable"
+                )
+            values[m] = float(value)
+        for m, v in values.items():
+            all_values[m].append(v)
+        for m in cmetrics:
+            value = obs.get(m)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                values[m] = float(value)
+            else:
+                untracked.add(m)
+        return values, None
 
     # 1. Noise floor: the baseline, `repeats` times, varying ONLY the seed.
-    samples: list[float] = []
+    samples: list[dict[str, float]] = []
     for i in range(max(1, int(repeats or 1))):
         # A campaign with no `workload.seed_env` gets seed=None: the repeats
         # still measure whatever run-to-run variation the target has (process
@@ -1472,18 +1520,36 @@ def _smoke_liveness_sweep(
             )
             return problems
         samples.append(val)
-    mean = sum(samples) / len(samples)
-    if len(samples) > 1:
-        var = sum((s - mean) ** 2 for s in samples) / (len(samples) - 1)
-        sd = var ** 0.5
-    else:
-        sd = 0.0
-    cv = (sd / abs(mean)) if mean else 0.0
+
+    # Per objective: (mean, sd, noise_abs, threshold). A single-objective
+    # campaign is the K = 1 case and prints exactly what it always printed.
+    floor: dict[str, tuple[float, float, float, float]] = {}
+    cmetrics = [m for m in cmetrics if m not in untracked]
+    for m in metrics + cmetrics:
+        xs = [s[m] for s in samples]
+        mean = sum(xs) / len(xs)
+        if len(xs) > 1:
+            var = sum((x - mean) ** 2 for x in xs) / (len(xs) - 1)
+            sd = var ** 0.5
+        else:
+            sd = 0.0
+        cv = (sd / abs(mean)) if mean else 0.0
+        noise_abs = abs(cv * mean) if mean else sd
+        floor[m] = (mean, sd, noise_abs, 2.0 * noise_abs)
+        tag = " (constraint metric)" if m in constraint_dir else ""
+        print(f"  liveness: noise floor from {len(samples)} baseline run(s): "
+              f"mean {m}={mean:.6g}, sd={sd:.6g}, CV={cv * 100:.2f}%{tag}")
     if measured_out is not None:
-        # Handed to the DESIGN PREVIEW; nothing here re-measures.
-        measured_out.update(noise_sd=sd, mean=mean, n_samples=len(samples))
-    print(f"  liveness: noise floor from {len(samples)} baseline run(s): "
-          f"mean {metric}={mean:.6g}, sd={sd:.6g}, CV={cv * 100:.2f}%")
+        # Handed to the DESIGN PREVIEW; nothing here re-measures. The
+        # top-level keys are the first objective's (the single-objective
+        # contract); `objectives` carries every objective's floor.
+        mean0, sd0 = floor[metric][0], floor[metric][1]
+        measured_out.update(noise_sd=sd0, mean=mean0, n_samples=len(samples))
+        if multi:
+            measured_out["objectives"] = {
+                m: {"noise_sd": floor[m][1], "mean": floor[m][0]}
+                for m in metrics
+            }
     if len(samples) < 2:
         print("  liveness: NOTE — one baseline sample cannot estimate a noise "
               "floor; the CV is reported as 0 and every non-zero effect will "
@@ -1492,9 +1558,12 @@ def _smoke_liveness_sweep(
     # 2. Every declared level once, other factors at baseline.
     #    Both bullets above read this ONE sweep: an aborting level is a hard
     #    failure, and the surviving extremes give the effect size.
-    noise_abs = abs(cv * mean) if mean else sd
-    threshold = 2.0 * noise_abs
-    rows: list[tuple[str, float | None, float | None]] = []
+    # rows[m]: (factor id, effect, ratio) per objective.
+    rows: dict[str, list[tuple[str, float | None, float | None]]] = {
+        m: [] for m in metrics + cmetrics}
+    live_on_constraint: dict[str, set[str]] = {}
+    live_for: dict[str, set[str]] = {}       # factor id -> objectives it moves
+    per_factor_levels: dict[str, dict] = {}  # factor id -> {level: values}
     dead: list[str] = []
     for f in factors:
         levels = list(getattr(f, "levels", ()) or ())
@@ -1524,42 +1593,91 @@ def _smoke_liveness_sweep(
                 continue
             measured[level] = val
         if len(measured) < 2:
-            rows.append((f.id, None, None))
+            for m in metrics + cmetrics:
+                rows[m].append((f.id, None, None))
             continue
+        per_factor_levels[f.id] = measured
         # The objective's full RANGE across the levels actually measured, not
         # just the difference between the two extreme LEVELS. A strict superset
         # of the latter, and the right criterion: a factor whose endpoints
         # happen to coincide but whose middle level moves the objective IS live,
         # and an endpoints-only comparison would call it dead. For a two-level
         # factor the two definitions coincide.
-        lo = min(measured.values())
-        hi = max(measured.values())
-        effect = hi - lo
-        rows.append((f.id, effect, (effect / noise_abs) if noise_abs else None))
-        if abs(effect) < threshold and f.id not in build_authored:
+        live_for[f.id] = set()
+        live_on_constraint[f.id] = set()
+        for m in metrics + cmetrics:
+            _mean, _sd, noise_abs, threshold = floor[m]
+            vals = [v[m] for v in measured.values() if m in v]
+            if len(vals) < 2:
+                rows[m].append((f.id, None, None))
+                continue
+            effect = max(vals) - min(vals)
+            rows[m].append(
+                (f.id, effect, (effect / noise_abs) if noise_abs else None))
+            if m in constraint_dir:
+                # Strictly positive too: a constraint metric that never moved
+                # (sd 0, effect 0) is not evidence the knob drives it.
+                if effect > 0 and effect >= threshold:
+                    live_on_constraint[f.id].add(m)
+            elif abs(effect) >= threshold:
+                live_for[f.id].add(m)
+        # Live for ANY objective OR ANY constraint metric is live: a knob that
+        # moves only one side of the trade-off, or only feasibility, is still a
+        # knob the answer depends on.
+        if (not live_for[f.id] and not live_on_constraint[f.id]
+                and f.id not in build_authored):
             dead.append(f.id)
 
-    print(f"  liveness: effect (objective range across measured levels) vs "
-          f"noise (threshold: |effect| >= 2 x {noise_abs:.6g} = "
-          f"{threshold:.6g})")
-    for fid, effect, ratio in rows:
-        if fid in build_authored:
-            print(f"    {fid:<20} authored by build; liveness not applicable "
-                  f"pre-build")
-            continue
-        if effect is None:
-            print(f"    {fid:<20} effect: n/a (fewer than 2 levels measured)")
-            continue
-        flag = "  <-- not demonstrably live" if fid in dead else ""
-        shown = "inf" if ratio is None else f"{ratio:.2f}x"
-        print(f"    {fid:<20} effect: {effect:.6g}   ({shown} noise){flag}")
+    def _constraint_only(fid: str) -> str:
+        names = ", ".join(f"`{c}`" for c in sorted(live_on_constraint.get(fid, ())))
+        return (f"  <-- drives constraint {names} only — keep (it decides "
+                f"feasibility)")
+
+    for m in metrics + cmetrics:
+        noise_abs, threshold = floor[m][2], floor[m][3]
+        if m in constraint_dir:
+            what = f"constraint metric {m} range"
+        elif multi:
+            what = f"objective {m} ({direction_of[m]}) range"
+        else:
+            what = "objective range"
+        print(f"  liveness: effect ({what} across measured levels) vs "
+              f"noise (threshold: |effect| >= 2 x {noise_abs:.6g} = "
+              f"{threshold:.6g})")
+        for fid, effect, ratio in rows[m]:
+            if fid in build_authored:
+                print(f"    {fid:<20} authored by build; liveness not "
+                      f"applicable pre-build")
+                continue
+            if effect is None:
+                print(f"    {fid:<20} effect: n/a (fewer than 2 levels measured)")
+                continue
+            if m in constraint_dir:
+                flag = ("" if m in live_on_constraint.get(fid, set())
+                        else "  <-- does not move this constraint metric")
+            elif fid in dead:
+                flag = "  <-- not demonstrably live"
+            elif not live_for.get(fid) and live_on_constraint.get(fid):
+                flag = _constraint_only(fid)
+            elif multi and m not in live_for.get(fid, set()):
+                flag = "  <-- not demonstrably live on this objective"
+            else:
+                flag = ""
+            shown = "inf" if ratio is None else f"{ratio:.2f}x"
+            if ratio is None and effect == 0 and m in constraint_dir:
+                shown = "0.00x"
+            print(f"    {fid:<20} effect: {effect:.6g}   ({shown} noise){flag}")
     if dead:
         # REPORTED, never refused: a small-but-real effect is the author's
         # call, and the point of the check is to make that call informed.
+        moved = ("across all their measured levels, they moved no objective "
+                 "and no constraint metric by more than 2x its own run-to-run "
+                 "variation. " if multi or cmetrics else
+                 "the objective moved less across all their measured levels "
+                 "than 2x the workload's own run-to-run variation. ")
         print(
             f"  liveness: {len(dead)} factor(s) NOT demonstrably live "
-            f"({', '.join(dead)}): the objective moved less across all their "
-            f"measured levels than 2x the workload's own run-to-run variation. "
+            f"({', '.join(dead)}): {moved}"
             f"Such a factor consumes its share of the design, contributes only "
             f"variance to the fit, and makes the policy hash a "
             f"pre-registration of a knob nothing reads. Confirm the knob "
@@ -1577,6 +1695,27 @@ def _smoke_liveness_sweep(
             "parallelism -- reads as dead here. Before dropping it, check "
             "whether its levels bracket a regime the base corner is not in.",
         )
+    keep = [fid for fid in live_on_constraint
+            if live_on_constraint[fid] and not live_for.get(fid)
+            and fid not in build_authored]
+    if keep:
+        print(
+            f"  liveness: {len(keep)} factor(s) move no objective beyond noise "
+            f"but DO move a constraint metric ({', '.join(keep)}): keep them. "
+            f"A constraint decides which configurations are admissible, so a "
+            f"knob that moves it changes where the feasible optimum is even "
+            f"when it cannot move the objective directly.",
+        )
+    if multi or any(d is not None for d in constraint_dir.values()):
+        directional = {**direction_of,
+                       **{c: d for c, d in constraint_dir.items()
+                          if d is not None and c in cmetrics}}
+        _report_tradeoff_candidates(
+            per_factor_levels, floor, directional,
+            objectives=metrics, build_authored=build_authored,
+        )
+    if multi:
+        _report_constant_objectives(all_values, live_for, metrics)
 
     # 3. GAP 1: the ceiling, against the per-level wall clock this sweep just
     #    measured and used to throw away.
@@ -1604,6 +1743,103 @@ def _smoke_liveness_sweep(
     if measured_out is not None:
         measured_out["run_secs"] = [secs for _lbl, secs, ok in observed_sec if ok]
     return problems
+
+
+def _report_tradeoff_candidates(
+    per_factor_levels: dict, floor: dict, directional: dict, *,
+    objectives: list[str], build_authored=frozenset(),
+) -> None:
+    """Print the factors whose levels TRADE one objective against another.
+
+    A factor is a trade-off candidate when some pair of its measured levels
+    ``a -> b`` improves an objective by more than 2x that objective's noise
+    floor while WORSENING another objective -- or a directional constraint
+    metric (``>=``/``<=`` bound: worse means towards the bound) -- by more than
+    2x ITS noise floor. Those are the knobs a Pareto front is made of; a knob
+    that improves everything at once only moves the front, it does not shape
+    it. Measured one factor at a time around ``known_valid_baseline``, so a
+    trade-off that exists only through an interaction is invisible here.
+    """
+    import math
+
+    from orchestrator.optimize.objectives import improves
+
+    multi = len(objectives) > 1
+    found: list[str] = []
+    for fid, measured in per_factor_levels.items():
+        if fid in build_authored:
+            continue
+        best = None   # (score, line)
+        levels = list(measured)
+        for a in levels:
+            for b in levels:
+                if a == b:
+                    continue
+                va, vb = measured[a], measured[b]
+                for i in objectives:
+                    thr_i = floor[i][3]
+                    gain = improves(directional[i], vb[i] - va[i])
+                    if not (gain > 0 and gain >= thr_i):
+                        continue
+                    for j, dj in directional.items():
+                        if j == i or j not in va or j not in vb:
+                            continue
+                        thr_j = floor[j][3]
+                        loss = -improves(dj, vb[j] - va[j])
+                        if not (loss > 0 and loss >= thr_j):
+                            continue
+                        score = min(gain / thr_i if thr_i else math.inf,
+                                    loss / thr_j if thr_j else math.inf)
+                        kind = ("objective" if j in objectives
+                                else "constraint metric")
+                        line = (
+                            f"    {fid:<20} {fid}={a!r} -> {fid}={b!r} improves "
+                            f"{i} by {abs(vb[i] - va[i]):.6g} ({directional[i]}) "
+                            f"but worsens {kind} {j} by "
+                            f"{abs(vb[j] - va[j]):.6g} ({dj})"
+                        )
+                        if best is None or score > best[0]:
+                            best = (score, line)
+        if best is not None:
+            found.append(best[1])
+    if found:
+        what = ("the factors a trade-off front is made of" if multi else
+                "the objective is bought at the cost of feasibility margin")
+        print(f"  liveness: {len(found)} trade-off candidate(s) — a level "
+              f"change that improves an objective beyond 2x its noise while "
+              f"worsening another objective or a constraint metric beyond 2x "
+              f"its noise ({what}):")
+        for line in found:
+            print(line)
+    elif multi:
+        print("  liveness: no trade-off candidate — no single factor moved two "
+              "objectives (or an objective and a constraint metric) in "
+              "opposite directions beyond noise at the base configuration. The "
+              "front may still come from interactions, or collapse to a single "
+              "point that is best on every objective.")
+
+
+def _report_constant_objectives(
+    all_values: dict, live_for: dict, metrics: list[str],
+) -> None:
+    """Warn on an objective with nothing to trade: constant, or moved by nothing."""
+    for m in metrics:
+        vals = all_values.get(m) or []
+        if len(vals) >= 2 and max(vals) == min(vals):
+            print(
+                f"  liveness: WARNING — objective {m} was constant ({vals[0]:.6g}) "
+                f"across all {len(vals)} liveness run(s): no trade-off to "
+                f"discover on it. Either the adapter reports a fixed value "
+                f"(check it measures this configuration) or no declared factor "
+                f"reaches it; then it belongs in constraints or nowhere, not in "
+                f"objectives.",
+            )
+        elif not any(m in s for s in live_for.values()):
+            print(
+                f"  liveness: NOTE — no factor moved objective {m} beyond 2x "
+                f"its noise floor at the base configuration; the front may be "
+                f"flat along it.",
+            )
 
 
 def _report_liveness_durations(
@@ -1681,11 +1917,11 @@ def _liveness_run_one(
     from orchestrator.optimize.matrix import render_apply
     from orchestrator.optimize.stage_runner import resolve_run_timeout
 
+    from orchestrator.optimize.objectives import objective_metrics as _om
+
     cfg_runner = runner.make_config_runner(
         opt["run_command"], cwd=repo,
-        metric_path=((opt.get("response") or {}).get("primary") or {}).get(
-            "metric", "",
-        ),
+        metric_path=(_om(opt) or [""])[0],
         timeout=resolve_run_timeout(opt),
         log_dir=probe_dir / "failed_runs",
     )
@@ -1789,11 +2025,11 @@ def _smoke_probe_one_config(
     # quietly ran at 600 while the epoch runs at 5400 (or the reverse) would turn
     # the one check that catches those into a source of them.
     timeout = resolve_run_timeout(opt)
+    from orchestrator.optimize.objectives import objective_metrics as _om
+
     cfg_runner = runner.make_config_runner(
         opt["run_command"], cwd=repo,
-        metric_path=((opt.get("response") or {}).get("primary") or {}).get(
-            "metric", "",
-        ),
+        metric_path=(_om(opt) or [""])[0],
         timeout=timeout,
         log_dir=probe_dir / "failed_runs",
     )
@@ -1925,14 +2161,44 @@ def _smoke_probe_one_config(
     problems.extend(_check_declared_self_checks(opt, obs, where=f"corner {levels}"))
     problems.extend(_check_declared_locked(opt, locked, obs, where=f"corner {levels}"))
 
-    # 3. Is the objective metric present?
-    metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")
-    if metric and metric not in obs:
-        problems.append(
-            f"response.primary.metric {metric!r} is absent from the run's "
-            f"output, so every configuration would score NaN. Emitted keys: "
-            f"{', '.join(sorted(str(k) for k in obs)[:8])}",
-        )
+    # 3. Is the objective metric present? With response.objectives, EVERY
+    # objective must be present AND numeric: a front fitted with one objective
+    # NaN on every row is a front over the others with that axis silently
+    # missing.
+    from orchestrator.optimize.objectives import (
+        is_multi_objective,
+        objective_metrics,
+    )
+
+    if not is_multi_objective(opt):
+        metric = ((opt.get("response") or {}).get("primary") or {}).get("metric")
+        if metric and metric not in obs:
+            problems.append(
+                f"response.primary.metric {metric!r} is absent from the run's "
+                f"output, so every configuration would score NaN. Emitted keys: "
+                f"{', '.join(sorted(str(k) for k in obs)[:8])}",
+            )
+    else:
+        shown: list[str] = []
+        for metric in objective_metrics(opt):
+            value = obs.get(metric)
+            if metric not in obs:
+                problems.append(
+                    f"response.objectives metric {metric!r} is absent from the "
+                    f"run's output, so every configuration would score NaN on "
+                    f"it and the front would silently lose that axis. Emitted "
+                    f"keys: {', '.join(sorted(str(k) for k in obs)[:8])}",
+                )
+            elif not isinstance(value, (int, float)) or isinstance(value, bool):
+                problems.append(
+                    f"response.objectives metric {metric!r} is {value!r} "
+                    f"({type(value).__name__}), not a number: it cannot be "
+                    f"fitted or compared for dominance. Emit it as a JSON number.",
+                )
+            else:
+                shown.append(f"{metric}={value:.6g}")
+        if shown:
+            print(f"  smoke: objectives at this corner: {', '.join(shown)}")
 
     # 4. Do the manipulation predicates hold at this corner?
     # Build the scope the way run_stage does: the target's OWN echo of its
@@ -2283,6 +2549,10 @@ def _cmd_create_campaign(args):
         print("Error: --adapter-stub applies to --kind optimization only.",
               file=sys.stderr)
         sys.exit(2)
+    if getattr(args, "objectives", 1) != 1:
+        print("Error: --objectives applies to --kind optimization only.",
+              file=sys.stderr)
+        sys.exit(2)
 
     kwargs: dict = {"force": args.force}
     if args.target_name:
@@ -2334,6 +2604,14 @@ def _create_optimization_campaign(args):
         kwargs["run_id"] = args.run_id
     if args.target_repo_path is not None:
         kwargs["target_repo_path"] = args.target_repo_path
+    n_obj = getattr(args, "objectives", 1)
+    if n_obj < 1:
+        print(f"Error: --objectives must be >= 1 (got {n_obj}); 1 writes "
+              f"response.primary, 2+ writes response.objectives.",
+              file=sys.stderr)
+        sys.exit(2)
+    if n_obj != 1:
+        kwargs["objectives"] = n_obj
     try:
         path = scaffold_optimization_campaign(args.to, **kwargs)
         stub = (write_adapter_stub(args.adapter_stub, force=args.force)
@@ -2914,6 +3192,13 @@ def build_parser():
              "adapter skeleton at PATH honouring docs/targets.md (one JSON "
              "object on stdout, echo effective cfg, NOUS_WORKLOAD_SEED, "
              "NOUS_RUN_DIR).",
+    )
+    p_create.add_argument(
+        "--objectives", type=int, default=1, metavar="N",
+        help="With --kind optimization: how many objectives. 1 (default) "
+             "writes response.primary; N >= 2 writes a response.objectives "
+             "block of N TODO- metrics plus a commented preference block, for "
+             "a campaign that reports the trade-off (Pareto) front.",
     )
     p_create.add_argument(
         "--force", action="store_true",
