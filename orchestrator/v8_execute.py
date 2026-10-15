@@ -51,6 +51,7 @@ from orchestrator.v7_execute import (
 logger = logging.getLogger(__name__)
 
 BASELINE_PATCH = "baseline.patch"
+CAP_OVERSHOOT_USD = 1.0  # a cap stops after the reply that crosses it
 MAX_HANG_RESTARTS = 1
 NOISE_RUNS = 3  # official measures of the baseline that the orchestrator takes for instrument.json
 MAX_NOISE_ATTEMPTS = NOISE_RUNS + 2
@@ -70,6 +71,14 @@ def v8_screening_cap(s: V7Settings, s8: V8Settings, remaining: float, sessions_l
     """Target for the next screening session: its share above the winner's reserve, never below the floor."""
     share = (remaining - winner_reserve(s, s8)) / max(1, sessions_left)
     return round(max(MIN_SESSION_USD, s8.arm_floor_usd, min(s.arm_budget_usd, share)), 2)
+
+
+def screening_hard_cap(s: V7Settings, s8: V8Settings, cap: float, remaining: float, waiting: int) -> float:
+    """Hard stop for a screening arm: up to 2x its target, never into the winner's reserve or the floor of
+    an arm still waiting. A cap trips after the reply that crosses it, so a margin covers that overshoot
+    (live p5: $0.30 over left $3.86, under the $4 floor, and the second family was skipped)."""
+    room = remaining - winner_reserve(s, s8) - waiting * (s8.arm_floor_usd + CAP_OVERSHOOT_USD)
+    return round(max(cap, min(cap * 2.0, room)), 2)
 
 
 def arm_funded(s: V7Settings, s8: V8Settings, remaining: float) -> bool:
@@ -571,10 +580,7 @@ def _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, ke
     if (state["sessions"].get(key) or {}).get("status") != "ended":
         _start_session(repo, iteration, state, key, cap, extras)
         _save_state(adir, state)
-        # The hard stop may exceed the target, but never into the winner's reserve or the floor of an
-        # arm still waiting to be screened.
-        room = remaining() - winner_reserve(s, s8) - waiting * s8.arm_floor_usd
-        hard = round(max(cap, min(cap * 2.0, room)), 2)
+        hard = screening_hard_cap(s, s8, cap, remaining(), waiting)
         print(f"  v8 execute-arm `{key}` (target ${cap:.2f}, hard cap ${hard:.2f})")
         outcome = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key,
                             "execute-arm-v8", label=key, target=cap, hard=hard, resume=None, extras=extras,

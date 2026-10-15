@@ -1133,6 +1133,13 @@ class TestFundedArms:
         s, s8 = v7_settings(campaign), v8_settings(campaign)
         assert main["max_cost_usd"] <= s.iteration_budget_usd - winner_reserve(s, s8) - s8.arm_floor_usd + 1e-6
 
+    def test_first_arm_overshooting_its_hard_cap_still_leaves_the_second_its_floor(self):
+        from orchestrator.v8_execute import CAP_OVERSHOOT_USD, arm_funded, screening_hard_cap
+        s, s8 = v7_settings(_v8()), v8_settings(_v8())
+        remaining = 20.18  # live p5 smoke 4 before h-main: $22 + evaluator credit - spend so far
+        hard = screening_hard_cap(s, s8, 5.68, remaining, waiting=1)
+        assert arm_funded(s, s8, remaining - hard - CAP_OVERSHOOT_USD * 0.9)  # a $0.90 overshoot is fine
+
     def test_an_arm_the_iteration_cannot_fund_is_skipped_not_starved(self, tmp_path, monkeypatch):
         # $7: the evaluator's spend is credited back, but after h-main the floor no longer fits above
         # the winner reserve
