@@ -219,7 +219,8 @@ prose findings do not.
 The block is required when `kind: optimization`, and forbidden otherwise
 (the validator's rule 1). Its three required top-level keys are `response`,
 `factors`, and `design`; everything else — `design_space`, `guidance`,
-`test_command`, `integrity_command`, `run_timeout_sec`, `stages` — is
+`test_command`, `integrity_command`, `run_timeout_sec`, `test_timeout_sec`,
+`stages` — is
 optional but load-bearing when present.
 
 ### `response`
@@ -528,10 +529,77 @@ artifact of which YAML field the author happened to choose.
 
 ### `test_command` / `integrity_command`
 
-- **`test_command`** — shell command that runs every declared relation's
-  `native_test` and exits clean iff all pass.
+- **`test_command`** — the command that runs every declared relation's
+  `native_test` and exits clean iff all pass. It must print **per-test**
+  results (`-v` for `go test` and pytest, or `-json` / `--json-report`): a
+  package-level `ok` is not evidence that a specific relation's test ran.
 - **`integrity_command`** — optional, independent of any single relation
   (a checksum or reconciliation script).
+
+**`test_command` and `run_command` are argv, not shell commands.** Each is
+split into an argument vector by `shlex.split` and executed directly, with the
+working directory set to `target_system.repo_path`. Nothing interprets shell
+syntax, so `cd`, `&&`, `||`, `|`, `;`, `>`/`<` redirects, `$(...)`/backticks,
+globs (`tests/prop_*.py`) and a leading `VAR=value` all reach the program as
+**literal arguments**. The natural workaround for a path problem —
+`cd /abs/repo && python -m pytest tests/ -v` — therefore does nothing useful:
+pytest receives `cd` and `&&` as file names, exits non-zero, and reports no
+tests. `nous validate campaign` rejects these forms with an error naming the
+offending syntax. If you genuinely need a shell, ask for one explicitly —
+`sh -c 'make fixtures && python -m pytest tests/ -v'` — and use `env VAR=value
+cmd` for an environment variable.
+
+**Pass test paths relative to `target_system.repo_path`.** A `native_test` is
+matched against the identifiers the runner *prints*, and runners print them
+relative to how they were invoked — one field report saw pytest given
+`/abs/repo/tests/test_x.py` print `test_x.py::test_a`, where given
+`tests/test_x.py` it printed `tests/test_x.py::test_a`. Since the command already runs in the repo, the
+relative form needs no `cd` and prints the identifier you would naturally
+declare. When identifiers do not match, `--smoke` and the verify abort print
+each declared identifier next to the closest one the command actually reported,
+and say so explicitly when the two differ only by a path prefix.
+
+### `test_timeout_sec`
+
+Wall-clock ceiling, in seconds, on **one** invocation of `test_command` — at
+`nous validate campaign --smoke` and at the verify gate alike, so the ceiling
+you meet first is the one the campaign runs under. Defaults to **900**, which
+is what every campaign authored before this field existed ran at.
+
+The suite for a `kind: optimization` campaign is usually more expensive than it
+looks. The natural correctness relation for a performance knob is "this lever
+moves the measured quantity", which means **running the target**, so the
+suite's cost is a multiple of one measurement and grows with every factor. A
+13-factor campaign's suite needed ~1,100 s and was killed at the fixed 900 s
+ceiling. Two remedies, in order of preference:
+
+1. **Make each relation cheap without weakening it.** A relation proves a lever
+   *moves* the response, not *by how much*, so run it at the cheapest operating
+   point that still exercises the mechanism — a small concurrency, a short
+   trace slice. On that campaign this took one relation from 54 s to 4 s and the
+   whole suite from ~1,100 s to 95 s, with every relation still asserting the
+   same mechanism. The campaign itself keeps measuring at the real operating
+   point; only the gate uses the slice.
+2. **Declare the real ceiling** when the suite legitimately needs it:
+
+```yaml
+optimization:
+  test_command: "python -m pytest tests/test_relations.py -v"
+  test_timeout_sec: 2400     # measured: suite takes ~1,100 s; 2x headroom
+```
+
+Like `run_timeout_sec`, it is a hard failure, not a budget. A killed suite
+certifies nothing — tests it reported before the kill do **not** count — so
+every declared relation fails closed. The failure says so in those words:
+
+    test_command was KILLED at the 900s timeout after reporting 6 test(s)
+    (6 of 14 declared identifier(s) among them). This is a budget problem,
+    not an identifier problem: ...
+
+rather than reporting `0 test(s); 0/14 matched` and advising you to check the
+identifier spelling. The partial output, which names the test that was running
+when the ceiling arrived, is saved to the iteration's `test_output.log` (and,
+under `--smoke`, to the temporary path the message names).
 
 ### `run_timeout_sec`
 

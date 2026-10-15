@@ -991,84 +991,66 @@ def parse_test_results(payload: Any) -> dict[str, bool]:
 # They live here rather than in stage_runner so the injected seam stays the
 # contract: tests pass fakes, production passes these.
 
-def run_test_command(
-    command: str, *, cwd: Path, timeout: int = 900,
-    log_path: Path | None = None,
-) -> dict[str, bool]:
-    """Execute a campaign's ``test_command`` and map native tests to verdicts.
+#: The ceiling one ``test_command`` invocation runs under when the campaign
+#: declares no ``optimization.test_timeout_sec``. 900 is exactly what this seam
+#: was hard-coded to before the field existed, so an existing campaign's gate
+#: behaves identically. It is larger than ``DEFAULT_RUN_TIMEOUT_SEC`` on purpose:
+#: the natural correctness relation for a performance knob is "this lever moves
+#: the measured quantity", so a relation suite is usually SEVERAL measurements,
+#: and one test run is commonly a multiple of one ``run_command``.
+DEFAULT_TEST_TIMEOUT_SEC = 900
 
-    The target's own runner produces the verdict — Nous only checks the
-    contract, so this needs no knowledge of Go, pytest, or any other
-    ecosystem. It records a pass for each declared test the command reports
-    as passing.
 
-    Go's ``go test`` has no machine-readable report by default, so this
-    prefers ``-json`` output when the command already asks for it and
-    otherwise falls back to scanning per-test ``--- PASS/FAIL`` lines, which
-    both ``go test -v`` and pytest's default output emit. On any failure to
-    run at all, returns ``{}`` — which ``reconcile`` treats as "declared but
-    not executed", i.e. fails closed rather than silently passing.
+class NativeTestResults(dict):
+    """Per-test verdicts from one ``test_command`` run, plus HOW the run ended.
 
-    ``log_path`` preserves the command's full stdout/stderr verbatim. The
-    boolean verdicts are what the gate needs, but they are useless for *fixing*
-    anything: a failed assertion's expected-vs-actual, a Go panic and its
-    stack, a compile error naming a file and line, a timeout's partial output
-    all live in the text and were previously discarded the moment the verdicts
-    were parsed. Since a verify abort ends the campaign, that output is the
-    only record of why — and re-running it by hand may not reproduce a
-    timeout or an ordering-dependent failure.
+    Still a plain ``dict[str, bool]`` to every existing caller -- the verdicts
+    ``match_declared_tests`` and ``reconcile`` consume are unchanged -- with the
+    run's ending attached as attributes, because an empty dict alone could not
+    say WHY it was empty. Three very different events all produced ``{}``:
+
+      * the command was KILLED at its ceiling (a budget problem);
+      * it ran and printed nothing per-test, typically because it failed
+        before running anything -- e.g. ``cd repo && pytest ...`` handed ``cd``
+        to pytest as a file argument, since nothing here is shell-run;
+      * it could not be executed at all.
+
+    A real campaign's smoke output described only the second-most-likely of
+    these and recommended checking identifier spelling, and the author spent
+    three gate cycles on the wrong hypothesis before reading the source.
+
+    ``partial`` holds what a killed run DID report before the kill. It is kept
+    off the verdicts on purpose: a suite that never finished certifies nothing,
+    and fail-closed is the existing contract (every declared relation reconciles
+    as "declared but not executed"). It exists for the diagnosis -- "killed after
+    6 of 14" says budget; "killed after 0" says hang -- never for the gate.
+
+    ``log_path`` is where the full output was saved, if anywhere, so a message
+    can point at the text instead of telling the reader to go find it.
+    """
+
+    def __init__(self, verdicts=(), *, timed_out: bool = False,
+                 timeout_sec: int | None = None, returncode: int | None = None,
+                 exec_error: str | None = None,
+                 partial: dict[str, bool] | None = None,
+                 log_path: Path | None = None):
+        super().__init__(verdicts)
+        self.log_path = log_path
+        self.timed_out = timed_out
+        self.timeout_sec = timeout_sec
+        self.returncode = returncode
+        self.exec_error = exec_error
+        self.partial = dict(partial or {})
+
+
+def _parse_test_output(text: str) -> dict[str, bool]:
+    """Per-test verdicts from a test runner's combined stdout/stderr.
+
+    Factored out so a KILLED run's partial output is parsed by exactly the
+    same rules as a completed one -- a diagnosis that counted tests differently
+    from the gate would report numbers the gate never saw.
     """
     import re
-    import shlex
-    import subprocess
-
-    def _persist(stdout: str, stderr: str, note: str = "") -> None:
-        if log_path is None:
-            return
-        try:
-            Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-            body = (
-                f"$ {command}\n"
-                f"# cwd: {cwd}\n"
-                + (f"# {note}\n" if note else "")
-                + "\n--- stdout ---\n" + (stdout or "")
-                + "\n--- stderr ---\n" + (stderr or "")
-            )
-            Path(log_path).write_text(body)
-        except OSError as exc:  # never let logging break the gate
-            logger.warning("could not write test log to %s: %s", log_path, exc)
-
-    try:
-        proc = subprocess.run(
-            shlex.split(command), cwd=str(cwd), capture_output=True,
-            text=True, timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
-        # A timeout still carries the partial output, and that is often the
-        # most informative artifact of all (which test hung).
-        _persist(
-            exc.stdout if isinstance(exc.stdout, str) else "",
-            exc.stderr if isinstance(exc.stderr, str) else "",
-            note=f"TIMED OUT after {timeout}s",
-        )
-        logger.warning(
-            "test_command timed out after %ss: every declared relation will "
-            "reconcile as 'declared but not executed', which fails closed.%s",
-            timeout,
-            f" Partial output saved to {log_path}." if log_path else "",
-        )
-        return {}
-    except OSError as exc:
-        _persist("", str(exc), note="FAILED TO EXECUTE")
-        logger.warning(
-            "test_command failed to run (%s): every declared relation will "
-            "reconcile as 'declared but not executed', which fails closed.",
-            exc,
-        )
-        return {}
-
-    _persist(proc.stdout or "", proc.stderr or "", note=f"exit={proc.returncode}")
-    text = (proc.stdout or "") + "\n" + (proc.stderr or "")
 
     # go test -json / pytest --json-report: try the structured shapes first.
     if '"Action"' in text or '"outcome"' in text:
@@ -1097,6 +1079,120 @@ def run_test_command(
         results[m.group(2)] = m.group(1) == "PASS"
     for m in re.finditer(r"^(\S+::\S+)\s+(PASSED|FAILED|ERROR)", text, re.M):
         results[m.group(1)] = m.group(2) == "PASSED"
+    return results
+
+
+def _as_text(stream) -> str:
+    """``TimeoutExpired`` output as text, whatever type it arrived as.
+
+    On POSIX ``subprocess.run`` re-raises the timeout with the partial output
+    as BYTES even under ``text=True`` (the decode happens only on normal
+    completion). The previous ``isinstance(..., str)`` guard therefore dropped
+    the partial output of every killed run on Linux and macOS -- the one
+    artifact that says which test was running when the ceiling arrived.
+    """
+    if isinstance(stream, bytes):
+        return stream.decode("utf-8", errors="replace")
+    return stream if isinstance(stream, str) else ""
+
+
+def run_test_command(
+    command: str, *, cwd: Path, timeout: int = DEFAULT_TEST_TIMEOUT_SEC,
+    log_path: Path | None = None,
+) -> NativeTestResults:
+    """Execute a campaign's ``test_command`` and map native tests to verdicts.
+
+    The target's own runner produces the verdict — Nous only checks the
+    contract, so this needs no knowledge of Go, pytest, or any other
+    ecosystem. It records a pass for each declared test the command reports
+    as passing.
+
+    ``command`` is NOT run in a shell: it is split into an argv by
+    ``shlex.split`` and executed with ``cwd`` (the target's
+    ``target_system.repo_path``). ``cd``, ``&&``, pipes, redirects and globs
+    reach the program as literal arguments; ``validate`` rejects the obvious
+    cases before a campaign gets here.
+
+    Go's ``go test`` has no machine-readable report by default, so this
+    prefers ``-json`` output when the command already asks for it and
+    otherwise falls back to scanning per-test ``--- PASS/FAIL`` lines, which
+    both ``go test -v`` and pytest's default output emit. On any failure to
+    run at all, returns an empty result — which ``reconcile`` treats as
+    "declared but not executed", i.e. fails closed rather than silently
+    passing. The returned ``NativeTestResults`` says which failure it was, so
+    a caller can explain it instead of guessing.
+
+    ``timeout`` is ``optimization.test_timeout_sec`` resolved by
+    ``stage_runner.resolve_test_timeout`` -- the same resolution at ``--smoke``
+    and at the production gate, so the ceiling an author meets first is the
+    one the campaign runs under.
+
+    ``log_path`` preserves the command's full stdout/stderr verbatim. The
+    boolean verdicts are what the gate needs, but they are useless for *fixing*
+    anything: a failed assertion's expected-vs-actual, a Go panic and its
+    stack, a compile error naming a file and line, a timeout's partial output
+    all live in the text and were previously discarded the moment the verdicts
+    were parsed. Since a verify abort ends the campaign, that output is the
+    only record of why — and re-running it by hand may not reproduce a
+    timeout or an ordering-dependent failure.
+    """
+    import shlex
+    import subprocess
+
+    def _persist(stdout: str, stderr: str, note: str = "") -> None:
+        if log_path is None:
+            return
+        try:
+            Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+            body = (
+                f"$ {command}\n"
+                f"# cwd: {cwd}\n"
+                + (f"# {note}\n" if note else "")
+                + "\n--- stdout ---\n" + (stdout or "")
+                + "\n--- stderr ---\n" + (stderr or "")
+            )
+            Path(log_path).write_text(body)
+        except OSError as exc:  # never let logging break the gate
+            logger.warning("could not write test log to %s: %s", log_path, exc)
+
+    try:
+        proc = subprocess.run(
+            shlex.split(command), cwd=str(cwd), capture_output=True,
+            text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # A timeout still carries the partial output, and that is often the
+        # most informative artifact of all (which test hung).
+        out, err = _as_text(exc.stdout), _as_text(exc.stderr)
+        _persist(out, err, note=f"TIMED OUT after {timeout}s")
+        logger.warning(
+            "test_command was KILLED at the %ss timeout: every declared "
+            "relation will reconcile as 'declared but not executed', which "
+            "fails closed. Raise optimization.test_timeout_sec if the suite "
+            "legitimately needs longer.%s",
+            timeout,
+            f" Partial output saved to {log_path}." if log_path else "",
+        )
+        return NativeTestResults(
+            timed_out=True, timeout_sec=timeout,
+            partial=_parse_test_output(out + "\n" + err), log_path=log_path,
+        )
+    except (OSError, ValueError) as exc:
+        # ValueError: shlex.split on an unbalanced quote. Validation reports it
+        # statically; this keeps a hand-edited campaign failing closed with the
+        # reason attached instead of crashing the gate with a traceback.
+        _persist("", str(exc), note="FAILED TO EXECUTE")
+        logger.warning(
+            "test_command failed to run (%s): every declared relation will "
+            "reconcile as 'declared but not executed', which fails closed.",
+            exc,
+        )
+        return NativeTestResults(
+            exec_error=str(exc), timeout_sec=timeout, log_path=log_path,
+        )
+
+    _persist(proc.stdout or "", proc.stderr or "", note=f"exit={proc.returncode}")
+    results = _parse_test_output((proc.stdout or "") + "\n" + (proc.stderr or ""))
 
     if not results and proc.returncode == 0:
         # The command succeeded but emitted nothing per-test (e.g. `go test`
@@ -1109,7 +1205,156 @@ def run_test_command(
             "identifiers can be matched; a package-level 'ok' is not evidence "
             "that a specific relation's test ran.",
         )
-    return results
+    return NativeTestResults(
+        results, returncode=proc.returncode, timeout_sec=timeout,
+        log_path=log_path,
+    )
+
+
+def explain_killed(raw: NativeTestResults, factors) -> str:
+    """The user-facing sentence for a ``test_command`` killed at its ceiling.
+
+    Shared by ``--smoke`` and the verify abort so the two never disagree about
+    what happened. Leads with KILLED and the ceiling because that is the fact
+    the old message omitted, and states outright that this is not an
+    identifier problem: the old advice (spelling, selection, output format)
+    was the wrong answer every time it appeared for this cause.
+    """
+    seen = len(raw.partial)
+    declared = _declared_native_tests(factors)
+    reached = match_declared_tests(factors, raw.partial)
+    return (
+        f"test_command was KILLED at the {raw.timeout_sec}s timeout after "
+        f"reporting {seen} test(s) ({len(reached)} of {len(declared)} declared "
+        f"identifier(s) among them). This is a budget problem, not an "
+        f"identifier problem: a suite that did not finish certifies nothing, "
+        f"so every declared relation fails closed. Make the suite cheaper -- a "
+        f"relation proves a lever MOVES the response, not by how much, so run "
+        f"it at the cheapest operating point that still exercises the "
+        f"mechanism -- or raise optimization.test_timeout_sec (default "
+        f"{DEFAULT_TEST_TIMEOUT_SEC})."
+        + (f" The partial output -- which test was running -- is saved in "
+           f"{raw.log_path}." if raw.log_path else "")
+    )
+
+
+def _declared_native_tests(factors) -> list[str]:
+    seen: list[str] = []
+    for f in factors:
+        for rel in getattr(f, "relations", ()) or ():
+            t = rel.get("native_test") if isinstance(rel, dict) else None
+            if t and t not in seen:
+                seen.append(str(t))
+    return seen
+
+
+def _path_prefix_variant(declared: str, observed: list[str]) -> str | None:
+    """An observed id equal to ``declared`` up to a leading path, if any.
+
+    "Differs only by path prefix" means one is the other with directories
+    prepended: ``tests/test_x.py::t`` vs ``test_x.py::t`` or
+    ``r2/tests/test_x.py::t``. Anchored at a ``/`` so ``mytest_x.py::t`` is not
+    mistaken for a prefixed ``test_x.py::t``.
+    """
+    for obs in observed:
+        if obs != declared and (
+            obs.endswith("/" + declared) or declared.endswith("/" + obs)
+        ):
+            return obs
+    return None
+
+
+def explain_unmatched(
+    missing: list[str], observed: list[str], *,
+    returncode: int | None = None, exec_error: str | None = None,
+    log_path: Path | None = None, limit: int = 4,
+) -> str:
+    """Why declared identifiers did not match: declared vs OBSERVED, side by side.
+
+    The old message listed only what the gate wanted and offered three possible
+    causes, which an author can only test one gate cycle at a time. Showing what
+    the command actually printed next to each declared identifier distinguishes
+    them at a glance:
+
+      * nothing observed at all -- a COMMAND problem (it failed before running
+        anything, or prints no per-test lines), never a spelling problem;
+      * a near-identical observed id -- a typo;
+      * an observed id that differs only by a leading path -- the invocation
+        shapes what the runner prints (pytest prints node ids relative to how it
+        was invoked), so the fix is in ``test_command`` or the declaration.
+        ``match_declared_tests`` already bridges most of these through the
+        trailing ``::`` identifier, so this branch is a backstop: it keeps the
+        explanation right for any identifier shape the tail rule does not
+        cover, rather than falling through to "check the spelling".
+
+    Diagnosis only: matching stays as ``match_declared_tests`` defines it.
+    General path-suffix matching was considered and rejected (#317) -- it would
+    weaken "the declared identifier is exactly the test that ran" and let two
+    same-named tests in different directories collide.
+    """
+    import difflib
+
+    not_shell = (
+        "test_command is not run in a shell: it is split into an argv by "
+        "shlex.split and executed with cwd=target_system.repo_path, so `cd`, "
+        "`&&`, pipes, redirects and globs reach the program as literal "
+        "arguments (wrap in sh -c '...' if a shell is really needed)."
+    )
+    if not observed:
+        if exec_error:
+            exit_note = f": it could not be executed ({exec_error})"
+        elif returncode not in (None, 0):
+            exit_note = (
+                f" and exited {returncode}, so it most likely failed before "
+                f"running any test"
+                + (f" -- its output is saved in {log_path}" if log_path else "")
+            )
+        else:
+            exit_note = ""
+        return (
+            f"The command reported NO per-test results at all{exit_note}. That "
+            f"is a problem with the command, not with the identifiers. "
+            f"{not_shell} It must also print per-test results (-v for go test "
+            f"and pytest, or -json / --json-report)."
+        )
+
+    lines: list[str] = []
+    prefix_pairs = 0
+    for d in missing[:limit]:
+        variant = _path_prefix_variant(d, observed)
+        if variant is not None:
+            prefix_pairs += 1
+            lines.append(f"  declared: {d}\n  observed: {variant}")
+            continue
+        close = difflib.get_close_matches(d, observed, n=1, cutoff=0.6)
+        lines.append(
+            f"  declared: {d}\n  observed: "
+            + (f"{close[0]}  (closest)" if close else "(nothing similar)")
+        )
+    if len(missing) > limit:
+        lines.append(f"  (+{len(missing) - limit} more declared)")
+    shown = ", ".join(observed[:6]) + (
+        "" if len(observed) <= 6 else f" (+{len(observed) - 6} more)"
+    )
+    parts = [
+        "Declared vs observed:\n" + "\n".join(lines),
+        f"\n  The command reported: {shown}.",
+    ]
+    if prefix_pairs:
+        parts.append(
+            " The two differ only by a path prefix: a test runner prints "
+            "identifiers relative to how it was invoked (pytest's node ids "
+            "follow the paths it was given), so an absolute or differently "
+            "rooted path in test_command changes them. Pass test paths "
+            "relative to target_system.repo_path, or declare the identifier "
+            "as the command prints it."
+        )
+    else:
+        parts.append(
+            " Check the identifier spelling against the reported names, and "
+            "that the command selects the test."
+        )
+    return "".join(parts)
 
 
 def match_declared_tests(

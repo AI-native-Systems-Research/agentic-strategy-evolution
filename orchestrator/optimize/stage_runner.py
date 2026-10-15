@@ -235,6 +235,32 @@ def resolve_run_timeout(opt: dict | None) -> int:
     return runner.DEFAULT_RUN_TIMEOUT_SEC
 
 
+def resolve_test_timeout(opt: dict | None) -> int:
+    """The wall-clock ceiling one ``test_command`` invocation runs under.
+
+    ``resolve_run_timeout``'s twin, public for the same reason: ``--smoke``
+    (``cli._smoke_check_optimization``) and the production gate here must run
+    the suite under the SAME ceiling, or the check an author runs first would
+    pass a suite the campaign then kills at verify.
+
+    Absence resolves to ``runner.DEFAULT_TEST_TIMEOUT_SEC`` (900), the value the
+    seam was hard-coded to before ``optimization.test_timeout_sec`` existed, so
+    no existing campaign's gate changes. A real 13-factor campaign needed
+    ~1,100s: each correctness relation for a performance knob drives the target,
+    so the suite's cost is a multiple of one measurement, and a fixed ceiling
+    penalised precisely the thorough campaigns the kind is built for.
+
+    A non-integer or non-positive value is treated as absent, on
+    ``resolve_run_timeout``'s convention: it cannot reach here from a
+    schema-valid campaign, and a 0-second ceiling would fail every relation
+    closed while blaming the tests.
+    """
+    raw = (opt or {}).get("test_timeout_sec")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return runner.DEFAULT_TEST_TIMEOUT_SEC
+
+
 def resolve_max_parallel(opt: dict | None, *, stage_name: str,
                         measured=None) -> int:
     """The EFFECTIVE ceiling on simultaneous in-flight runs at ``stage_name``.
@@ -1957,6 +1983,8 @@ def run_stage(
     # reason. `stage_name`/`pol` below are these same values.
     stage_name, pol = _resolve_state(campaign, work_dir, iteration, stage)
     _is_build = stage_name == Stage.BUILD.value
+    # Set only when the test command runs HERE; None when verdicts were injected.
+    test_run: "runner.NativeTestResults | None" = None
 
     if test_results is None and opt.get("test_command") and repo:
         # Runs on the BUILD iteration too, and deliberately so (oracle 2(b),
@@ -1977,8 +2005,13 @@ def run_stage(
         # ordering-dependent failure.
         raw = runner.run_test_command(
             opt["test_command"], cwd=Path(repo),
+            timeout=resolve_test_timeout(opt),
             log_path=Path(work_dir) / "runs" / f"iter-{iteration}" / "test_output.log",
         )
+        # Kept beside the verdicts so a verify abort can say HOW the run ended:
+        # `match_declared_tests` returns a plain dict, and an empty one reads
+        # the same whether the suite was killed, crashed, or printed nothing.
+        test_run = raw
         test_results = runner.match_declared_tests(parse_factors(opt["factors"]), raw)
         logger.info(
             "test_command reported %d test(s); %d matched a declared "
@@ -2264,7 +2297,9 @@ def run_stage(
                 iter_dir, relations.reconcile(factors, test_results or {}),
             )
         if correctness_failures:
-            raise OptimizationAborted(_verify_abort_message(correctness_failures))
+            raise OptimizationAborted(_verify_abort_message(
+                correctness_failures, test_run=test_run, factors=factors,
+            ))
         # ── oracle 2(b)/(c): the two build claims that "tests pass" cannot make ──
         #
         # Run BEFORE the policy is compiled, deliberately. A compiled policy is
@@ -3505,7 +3540,7 @@ def run_stage(
     )
 
 
-def _verify_abort_message(failures) -> str:
+def _verify_abort_message(failures, *, test_run=None, factors=()) -> str:
     """Explain a verify abort in terms of the fix it needs.
 
     "Relation R_X failed" is not actionable, and after a ``build`` stage it is
@@ -3522,15 +3557,26 @@ def _verify_abort_message(failures) -> str:
       real defect in the mechanism -- or in the relation itself, which is
       worth considering when a metamorphic direction was asserted without
       checking the algebra.
+
+    ``test_run`` (the ``runner.NativeTestResults`` of the command run this
+    iteration, or None when verdicts were injected) adds the third cause, which
+    the old message could not see: the command was KILLED at its ceiling. That
+    reads as NEVER EXECUTED for every relation, and the never-executed advice --
+    check names, paths, selection -- is exactly wrong for it.
     """
     missing, failed = [], []
+    missing_ids: list[str] = []
     for v in failures:
         detail = str(getattr(v, "detail", "") or "")
         entry = (
             f"{getattr(v, 'relation_id', '?')} "
             f"({getattr(v, 'native_test', '?')})"
         )
-        (missing if "not executed" in detail else failed).append(entry)
+        if "not executed" in detail:
+            missing.append(entry)
+            missing_ids.append(str(getattr(v, "native_test", "") or ""))
+        else:
+            failed.append(entry)
 
     parts = [
         f"verify failed: {len(missing) + len(failed)} correctness relation(s) "
@@ -3545,7 +3591,28 @@ def _verify_abort_message(failures) -> str:
             "mechanism is right, re-check the relation itself -- a metamorphic "
             "direction asserted without doing the algebra fails correct code.",
         )
-    if missing:
+    if missing and test_run is not None and getattr(test_run, "timed_out", False):
+        parts.append(
+            "\nNEVER EXECUTED (" + str(len(missing)) + ") -- not reached "
+            "before the test command was killed:\n  " + "\n  ".join(missing)
+            + "\n  " + runner.explain_killed(test_run, factors),
+        )
+    elif missing and test_run is not None:
+        parts.append(
+            "\nNEVER EXECUTED (" + str(len(missing)) + ") -- the test command "
+            "did not report this identifier, which counts as a failure because "
+            "'not run' is not evidence of correctness:\n  "
+            + "\n  ".join(missing) + "\n  "
+            + runner.explain_unmatched(
+                missing_ids, sorted(test_run),
+                returncode=getattr(test_run, "returncode", None),
+                exec_error=getattr(test_run, "exec_error", None),
+                log_path=getattr(test_run, "log_path", None),
+            )
+            + "\n  Note `go test -run <pattern>` exits 0 when the pattern "
+            "matches nothing, so a green shell here proves nothing.",
+        )
+    elif missing:
         parts.append(
             "\nNEVER EXECUTED (" + str(len(missing)) + ") -- the test command "
             "did not run this identifier, which counts as a failure because "

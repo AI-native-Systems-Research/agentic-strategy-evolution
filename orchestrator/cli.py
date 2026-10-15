@@ -855,7 +855,20 @@ def _smoke_check_optimization(
 
     # 1. Test command: do the declared identifiers actually resolve?
     if opt.get("test_command"):
-        raw = runner.run_test_command(opt["test_command"], cwd=Path(repo))
+        from orchestrator.optimize.stage_runner import resolve_test_timeout
+
+        # The SAME ceiling the verify gate will use: a smoke that ran the suite
+        # under a different one could pass a suite the campaign then kills.
+        # Saved, because both failure messages below point at the output: a
+        # killed run's partial output names the test that was running, and a
+        # crashed one's stderr names why. Outside the target repo, so the probe
+        # leaves nothing behind for the mechanism-drift hash to see.
+        test_log = Path(tempfile.mkdtemp(prefix="nous-smoke-tests-")) / "test_output.log"
+        problems_before = len(problems)
+        raw = runner.run_test_command(
+            opt["test_command"], cwd=Path(repo),
+            timeout=resolve_test_timeout(opt), log_path=test_log,
+        )
         matched = runner.match_declared_tests(factors, raw)
         declared = {
             r.get("native_test")
@@ -863,16 +876,28 @@ def _smoke_check_optimization(
             if isinstance(r, dict) and r.get("native_test")
         }
         missing = sorted(str(x) for x in (declared - set(matched)) if x)
-        print(f"  smoke: test command reported {len(raw)} test(s); "
-              f"{len(matched)}/{len(declared)} declared identifier(s) matched")
-        if missing:
+        if raw.timed_out:
+            # Said FIRST and instead of the identifier advice. A killed suite
+            # reports "0 test(s); 0/N matched" exactly like a misspelled one,
+            # and the old message only described the latter -- one real author
+            # chased spelling, selection and output format, a gate cycle each,
+            # before finding a hard-coded ceiling in the source.
+            print(f"  smoke: test command KILLED at the {raw.timeout_sec}s "
+                  f"timeout after reporting {len(raw.partial)} test(s)")
+            problems.append(runner.explain_killed(raw, factors))
+        else:
+            print(f"  smoke: test command reported {len(raw)} test(s); "
+                  f"{len(matched)}/{len(declared)} declared identifier(s) "
+                  f"matched")
+        if missing and not raw.timed_out:
             problems.append(
                 f"{len(missing)} declared native_test(s) did not appear in the "
-                f"test command's output, so they would fail closed at verify: "
-                f"{', '.join(str(m) for m in missing[:4])}"
-                + ("" if len(missing) <= 4 else f" (+{len(missing)-4} more)")
-                + ". Check the identifier spelling, that the command selects "
-                "them, and that it prints per-test results (-v / --json-report)."
+                f"test command's output, so they would fail closed at verify. "
+                + runner.explain_unmatched(
+                    missing, sorted(raw),
+                    returncode=raw.returncode, exec_error=raw.exec_error,
+                    log_path=raw.log_path,
+                ),
             )
         failed = sorted(k for k, v in matched.items() if not v)
         if failed:
@@ -880,6 +905,9 @@ def _smoke_check_optimization(
                 f"{len(failed)} declared native_test(s) ran and FAILED: "
                 f"{', '.join(failed[:4])}",
             )
+        # Kept only when a problem above points at it.
+        if len(problems) == problems_before:
+            shutil.rmtree(test_log.parent, ignore_errors=True)
 
     # 2. One configuration at every factor's first level.
     if not opt.get("run_command"):

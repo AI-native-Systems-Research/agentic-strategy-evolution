@@ -1623,6 +1623,136 @@ def _check_mechanism_paths_are_literal(opt: dict) -> list[str]:
     return errors
 
 
+#: Interpreters whose ``-c`` argument IS a shell script. A command that starts
+#: with one of these and passes ``-c`` asked for a shell on purpose, so its
+#: script's metacharacters are the shell's to interpret, not ours to flag.
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash"})
+
+#: Unquoted operators that only a shell gives meaning to, longest first so
+#: ``&&`` is reported as ``&&`` rather than as two ``&``.
+_SHELL_OPERATORS = ("&&", "||", "$(", ">>", "|", ";", ">", "<", "`", "&")
+
+
+def _unquoted_shell_syntax(command: str) -> list[str]:
+    """Shell operators appearing OUTSIDE quotes in ``command``, in order.
+
+    Scanned by hand rather than read off ``shlex.split``'s tokens, because the
+    tokens lose exactly the distinction that matters: ``-run 'TestA|TestB'`` and
+    ``a | b`` both yield a token containing ``|``, but only the second is a
+    pipe, and ``\\;`` (``find -exec``'s terminator) splits to the same ``;`` a
+    real separator does. Tracking quotes and backslashes keeps every
+    deliberately quoted metacharacter -- a regex, a filter expression, a
+    ``python -c`` one-liner -- out of the error.
+
+    Double quotes are NOT a shelter for ``$(`` and backticks: a shell would
+    still substitute inside them, so an author who wrote ``"$(date)"`` expected
+    a substitution that ``shlex`` will never perform.
+    """
+    found: list[str] = []
+    i, n = 0, len(command)
+    single = double = False
+    while i < n:
+        c = command[i]
+        if single:
+            single = c != "'"
+            i += 1
+            continue
+        if c == "\\":
+            i += 2  # the escaped character is literal, in or out of quotes
+            continue
+        if c == "'" and not double:
+            single = True
+            i += 1
+            continue
+        if c == '"':
+            double = not double
+            i += 1
+            continue
+        for op in _SHELL_OPERATORS:
+            if not command.startswith(op, i):
+                continue
+            if double and op not in ("$(", "`"):
+                continue
+            # `2>` / `2>&1`: report the redirect, not a stray background `&`.
+            if op == "&" and i > 0 and command[i - 1] == ">":
+                break
+            if op not in found:
+                found.append(op)
+            i += len(op) - 1
+            break
+        i += 1
+    return found
+
+
+def _rule23_commands_are_argv_not_shell(opt: dict) -> list[str]:
+    """Rule 23: ``test_command`` / ``run_command`` must not use shell syntax.
+
+    Neither is run in a shell. ``runner.run_test_command`` and
+    ``runner.make_config_runner`` both ``shlex.split`` the string and exec the
+    argv with ``cwd=target_system.repo_path``. So shell syntax is not an error
+    the target reports -- it is silently passed through as ARGUMENTS:
+    ``cd /abs/r2 && python -m pytest tests/ -v`` runs the program ``cd`` (or, as
+    a ``test_command`` prefixed by a runner, hands ``cd`` and ``&&`` to pytest
+    as file names), and the campaign then reports every declared relation as
+    unmatched with nothing pointing at the real cause. A real author rewrote a
+    ``test_command`` into exactly that shape -- after the guide had described
+    the field as a "shell command" -- and spent a full gate cycle learning it.
+
+    HARD ERROR, because no reading of such a command is the one the author
+    meant: a pipe, a redirect, a chain or a substitution cannot have its shell
+    meaning under ``shlex``. Two prefix forms are flagged too, for the same
+    reason: a leading ``cd`` (a shell builtin; there is no ``cd`` program to do
+    what was intended, and ``cwd`` is already the repo) and a leading
+    ``VAR=value`` (exec'd as the binary name -- ``env VAR=value ...`` is the
+    argv spelling).
+
+    Deliberately NOT flagged: globs (``*`` is a legitimate argument to ``go test
+    -run`` and ``pytest -k``, so a glob check would refuse working commands),
+    anything quoted or escaped, and an explicit ``sh -c '...'``, which is the
+    supported way to ask for a shell. ``integrity_command`` is not checked
+    because nothing in this branch executes it.
+    """
+    import shlex
+
+    errors: list[str] = []
+    for field in ("test_command", "run_command"):
+        cmd = opt.get(field)
+        if not isinstance(cmd, str) or not cmd.strip():
+            continue
+        where = f"optimization.{field}"
+        try:
+            argv = shlex.split(cmd)
+        except ValueError as exc:
+            errors.append(
+                f"{where} cannot be parsed by shlex.split ({exc}): {cmd!r}. It "
+                f"is split into an argv exactly that way before it runs, so fix "
+                f"the quoting.",
+            )
+            continue
+        if not argv:
+            continue
+        if os.path.basename(argv[0]) in _SHELLS and "-c" in argv[1:]:
+            continue
+        found = _unquoted_shell_syntax(cmd)
+        if argv[0] == "cd":
+            found.insert(0, "a leading `cd`")
+        elif re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
+            found.insert(0, f"a leading `{argv[0]}` assignment (use `env {argv[0]} ...`)")
+        if not found:
+            continue
+        named = ", ".join(f if f.startswith("a leading") else f"`{f}`" for f in found)
+        errors.append(
+            f"{where} uses shell syntax ({named}) but is not run in a shell: it "
+            f"is split into an argv by shlex.split and executed with "
+            f"cwd=target_system.repo_path, so these reach the program as "
+            f"literal arguments and the command does not do what it says: "
+            f"{cmd!r}. Drop the shell syntax -- the working directory is "
+            f"already the repo, so pass paths relative to it -- or, if a shell "
+            f"is really needed, wrap the whole command: sh -c '...'.",
+        )
+    return errors
+
+
 def validate_optimization_campaign(campaign: dict) -> list[str]:
     """Cross-field rules for ``kind: optimization`` campaigns that JSON
     Schema cannot express (Task 10).
@@ -1668,6 +1798,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule20_self_check_is_a_real_invariant(opt))
     errors.extend(_rule21_concurrency_declaration(opt))
     errors.extend(_rule22_completion_budgets(opt, factors))
+    errors.extend(_rule23_commands_are_argv_not_shell(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     return errors
 
