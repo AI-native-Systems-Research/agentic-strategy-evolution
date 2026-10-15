@@ -126,7 +126,7 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
 
     import yaml
 
-    from orchestrator.optimize.factors import _from_axis, _to_axis, parse_factors
+    from orchestrator.optimize.factors import _from_axis, _to_axis, parse_factors, snap_to_grid
 
     recs = sorted(glob.glob(str(work_dir / "runs" / "iter-*" / "recommendation.json")),
                   key=lambda p: int(Path(p).parent.name.split("-")[1]))
@@ -179,12 +179,36 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
                 f"extend `{fid}`; if anything, add interior levels below {edge}."
             )
             continue
+        # The suggestion must be a level the target can run: on the grid, and
+        # inside the domain the factor's scale admits (a log axis is > 0, and an
+        # integral log knob -- a count -- is >= one grid step). Found on a real
+        # campaign: "extend concurrency downward to about 0.5" and "GOMAXPROCS
+        # to about 22.6".
+        floor = (f.grid or 0.0) if f.scale == "log" else None
+        suggest = snap_to_grid(suggest, f.grid)
+        if f.grid and suggest == edge:  # snapping fell back onto the edge
+            step = f.grid if float(edge) >= max(map(float, f.screen_levels)) else -f.grid
+            suggest = snap_to_grid(float(edge) + step, f.grid)
+        at_floor = (side == "below" and floor is not None and floor > 0
+                    and float(edge) <= floor)
+        if at_floor:
+            out.append(
+                f"- **{fid}**: the fitted optimum lies below {edge}, the smallest "
+                f"valid value of `{fid}`: the edge IS the answer for this factor. "
+                f"Pin `{fid}={edge}` (or drop it) and spend the next epoch's runs "
+                f"on the other factors."
+            )
+            continue
+        if side == "below" and floor is not None and floor > 0 and suggest < floor:
+            suggest = snap_to_grid(floor, f.grid)
         out.append(
             f"- **{fid}**: the fitted optimum is at about "
             f"{_fmt(_from_axis(f, mid + coded * half))} (coded {coded:+.2f}), "
             f"{side} the declared range {list(f.levels)}. Extend `{fid}`'s levels "
-            f"{'upward' if side == 'above' else 'downward'}, e.g. to about "
-            f"{_fmt(suggest)}."
+            f"{'upward' if side == 'above' else 'downward'}, e.g. to {_fmt(suggest)}"
+            f" -- unless {edge} is already a hard limit of the system (a core "
+            f"count, a memory budget, a protocol maximum), in which case the edge "
+            f"is the answer: pin `{fid}={edge}`."
         )
     return out
 

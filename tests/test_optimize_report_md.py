@@ -90,3 +90,63 @@ def test_an_out_of_hull_end_names_the_axis_in_real_levels_and_the_command(tmp_pa
         pytest.skip("this seed did not end on an exception")
     assert "## What to do next" in md and "nous resume" in md
     assert "Extend `" in md or "Do not extend" in md
+
+
+def _out_of_hull_work_dir(tmp_path, factors, stationary_point):
+    import yaml
+
+    (tmp_path / "campaign.yaml").write_text(yaml.safe_dump(
+        {"kind": "optimization", "optimization": {"factors": factors}}))
+    it = tmp_path / "runs" / "iter-1"
+    it.mkdir(parents=True)
+    (it / "recommendation.json").write_text(json.dumps(
+        {"stationary_point": stationary_point}))
+    return tmp_path
+
+
+_COUNT = {"id": "CONC", "name": "concurrency", "type": "numeric", "levels": [1, 2, 4],
+          "grid": 1, "scale": "log", "apply": "--c={level}",
+          "manipulation": {"observable": "cfg.x", "op": "==", "value": "{level}"},
+          "relations": [{"id": "R1", "kind": "correctness", "statement": "s", "native_test": "t"}]}
+_PROCS = {"id": "PROCS", "name": "procs", "type": "numeric", "levels": [1, 2, 8],
+          "grid": 1, "scale": "log", "apply": "--p={level}",
+          "manipulation": {"observable": "cfg.x", "op": "==", "value": "{level}"},
+          "relations": [{"id": "R1", "kind": "correctness", "statement": "s", "native_test": "t"}]}
+
+
+def test_a_count_already_at_its_floor_is_pinned_not_extended_below_one(tmp_path):
+    """Found on a real Go campaign: 'extend concurrency downward to about 0.5'."""
+    from orchestrator.optimize.report_md import _out_of_hull_axes
+
+    [line] = _out_of_hull_axes(_out_of_hull_work_dir(tmp_path, [_COUNT], {"CONC": -2.5}))
+    assert "Pin `CONC=1`" in line and "Extend" not in line
+
+
+@pytest.mark.parametrize("coded", [1.2, 2.0, 3.0, 6.0])
+def test_every_extension_suggestion_is_a_runnable_level_past_the_edge(tmp_path, coded):
+    """'GOMAXPROCS to about 22.6' is not a level the target can run: the
+    suggestion must sit on the grid and strictly beyond the edge it extends."""
+    import re
+
+    from orchestrator.optimize.report_md import _out_of_hull_axes
+
+    [line] = _out_of_hull_axes(_out_of_hull_work_dir(tmp_path, [_PROCS], {"PROCS": coded}))
+    suggested = re.search(r"e\.g\. to ([0-9.e+]+)", line).group(1)
+    assert float(suggested).is_integer() and "." not in suggested
+    assert float(suggested) > 8
+    assert "hard limit" in line and "pin `PROCS=8`" in line
+
+
+@pytest.mark.parametrize("coded", [-1.5, -3.0])
+def test_a_downward_suggestion_never_leaves_the_log_domain(tmp_path, coded):
+    import re
+
+    from orchestrator.optimize.report_md import _out_of_hull_axes
+
+    batch = {"id": "BATCH", "name": "batch", "type": "numeric", "levels": [4, 16, 64],
+             "grid": 1, "scale": "log", "apply": "--b={level}",
+             "manipulation": {"observable": "cfg.x", "op": "==", "value": "{level}"},
+          "relations": [{"id": "R1", "kind": "correctness", "statement": "s", "native_test": "t"}]}
+    [line] = _out_of_hull_axes(_out_of_hull_work_dir(tmp_path, [batch], {"BATCH": coded}))
+    suggested = float(re.search(r"e\.g\. to ([0-9.e+]+)", line).group(1))
+    assert 1 <= suggested < 4
