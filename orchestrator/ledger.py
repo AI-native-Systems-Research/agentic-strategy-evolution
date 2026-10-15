@@ -59,16 +59,24 @@ def append_ledger_row(work_dir: Path, iteration: int) -> None:
     """
     work_dir = Path(work_dir)
     iter_dir = work_dir / "runs" / f"iter-{iteration}"
+    # A `kind: optimization` work_dir (it has a compiled policy.json) never
+    # writes bundle.yaml, and its verify iteration writes relations.json rather
+    # than findings.json. Both absences are by design there, so warning about
+    # them on every iteration -- twice, since two callers append -- only taught
+    # authors to skim past WARNING lines that matter.
+    by_design = (work_dir / "policy.json").exists()
+    level = logging.DEBUG if by_design else logging.WARNING
 
     findings_path = iter_dir / "findings.json"
     if not findings_path.exists():
-        logger.warning(
+        logger.log(
+            level,
             "No findings.json for iteration %d — skipping ledger append.", iteration,
         )
         return
 
     findings = json.loads(findings_path.read_text())
-    bundle = _read_bundle(iter_dir / "bundle.yaml")
+    bundle = _read_bundle(iter_dir / "bundle.yaml", level=level)
     principles = _read_principles(work_dir / "principles.json")
 
     row = _build_row(iteration, findings, bundle, principles)
@@ -89,9 +97,9 @@ def append_ledger_row(work_dir: Path, iteration: int) -> None:
     logger.info("Appended ledger row for iteration %d.", iteration)
 
 
-def _read_bundle(path: Path) -> dict:
+def _read_bundle(path: Path, *, level: int = logging.WARNING) -> dict:
     if not path.exists():
-        logger.warning("No bundle.yaml at %s — ledger row will use family='unknown'.", path)
+        logger.log(level, "No bundle.yaml at %s — ledger row will use family='unknown'.", path)
         return {}
     return yaml.safe_load(path.read_text()) or {}
 
