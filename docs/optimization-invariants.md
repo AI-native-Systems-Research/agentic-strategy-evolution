@@ -470,10 +470,10 @@ they disagree.
 | Provenance (`INV-PROV`) | 6 | 4 | 0 | 2 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **65** | **51** | **0** | **12** | **2** |
+| **Total** | **66** | **51** | **0** | **13** | **2** |
 
-By level: `function` 25, `module` 6, `artifact` 20, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
-checker function exists): 41 of 65. The 24 without one are
+By level: `function` 26, `module` 6, `artifact` 20, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
+checker function exists): 41 of 66. The 25 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check
