@@ -215,15 +215,24 @@ def test_a_successful_rows_duration_tracks_the_real_wall_clock(tmp_path: Path):
     about a second. Without this, an implementation that hardcoded ``1`` at
     every site would satisfy every "> 0" assertion in this file.
     """
-    fast = _execute(_subprocess_runner(tmp_path, _sleepy(tmp_path, 0.1, "fast"),
-                                       timeout=30))
-    slow = _execute(_subprocess_runner(tmp_path, _sleepy(tmp_path, 1.3, "slow"),
-                                       timeout=30))
-    assert fast.status == slow.status == "complete"
-    assert slow.duration_ms - fast.duration_ms >= 700, (
-        f"fast={fast.duration_ms}ms slow={slow.duration_ms}ms — a duration that "
-        f"does not move with real elapsed time is not a measurement"
-    )
+    import time
+
+    # Bounded on BOTH sides by facts load cannot change: a run cannot take less
+    # wall clock than the sleep it performs, and cannot report more than the
+    # wall clock that elapsed around it. (An earlier form compared two launches'
+    # DIFFERENCE, which a busy machine's interpreter start-up skew broke.) A
+    # hardcoded constant fails one bound or the other for one of the two sleeps.
+    for sleep_s, tag in ((0.1, "fast"), (1.3, "slow")):
+        t0 = time.perf_counter()
+        o = _execute(_subprocess_runner(tmp_path, _sleepy(tmp_path, sleep_s, tag),
+                                        timeout=30))
+        outer_ms = (time.perf_counter() - t0) * 1000.0
+        assert o.status == "complete"
+        assert sleep_s * 1000 <= o.duration_ms <= outer_ms + 1, (
+            f"{tag}: duration_ms={o.duration_ms} outside [{sleep_s * 1000:.0f}, "
+            f"{outer_ms:.0f}] — a duration that does not track real elapsed time "
+            f"is not a measurement"
+        )
 
 
 def _all_status_paths(tmp_path: Path):
