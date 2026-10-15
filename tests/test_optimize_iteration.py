@@ -639,14 +639,14 @@ def test_locked_parameters_is_claimed_only_because_it_is_wired():
 
 
 def test_infeasible_and_rejected_rows_do_not_block_the_fit(tmp_path):
-    """They are excluded from fitting, not treated as measurement failures.
+    """Neither is treated as a measurement failure that blocks the fit.
 
     An `infeasible` row RAN and produced trustworthy numbers; it just
     violated a declared constraint, which is real information about the
-    design space (spec §6.4). A constrained design will routinely have
-    inadmissible corners, so aborting on one would make constraints
-    unusable. `rejected` is likewise excluded rather than fatal. Only a row
-    that produced no usable measurement blocks.
+    design space (spec §6.4). Since INV-STAT15 its primary IS fitted -- a
+    valid measurement of a configuration that is only inadmissible to RETURN
+    -- and a missing or non-numeric primary on it excludes it rather than
+    aborting. `rejected` is untrustworthy and stays excluded (NaN), not fatal.
     """
     import math
 
@@ -657,16 +657,26 @@ def test_infeasible_and_rejected_rows_do_not_block_the_fit(tmp_path):
             self.row_index, self.status, self.response = idx, status, resp
 
     spec = {"primary": {"metric": "m", "direction": "maximize"}}
-    for tolerated in ("infeasible", "rejected"):
+    values = _fitting_responses(
+        [_O(0, "complete", {"m": 1.0}), _O(1, "rejected", {"m": 2.0})],
+        spec, "m",
+    )
+    assert not math.isnan(values[0])
+    assert math.isnan(values[1]), (
+        "a rejected row must be excluded from the fit, which the NaN "
+        "carries — not abort the campaign"
+    )
+    values = _fitting_responses(
+        [_O(0, "complete", {"m": 1.0}), _O(1, "infeasible", {"m": 2.0})],
+        spec, "m",
+    )
+    assert values == [1.0, 2.0], values
+    for bad in ("fast", None, {}, float("nan")):
         values = _fitting_responses(
-            [_O(0, "complete", {"m": 1.0}), _O(1, tolerated, {"m": 2.0})],
+            [_O(0, "complete", {"m": 1.0}), _O(1, "infeasible", {"m": bad})],
             spec, "m",
         )
-        assert not math.isnan(values[0])
-        assert math.isnan(values[1]), (
-            f"a {tolerated} row must be excluded from the fit, which the NaN "
-            f"carries — not abort the campaign"
-        )
+        assert math.isnan(values[1]), (bad, values)
 
     # A `failed` row is ALSO carried as NaN rather than aborting. It means
     # something different scientifically — a repairable hole in the design

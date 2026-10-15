@@ -235,12 +235,36 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_policy_provenance", "check_transitions_epoch_scoped",
         "check_audit_trail_records_spending", "check_duration_reserved_zero",
         "check_no_model_call_reachable_from_epoch", "check_compile_policy_is_pure",
+        "check_fit_coordinates_are_actual", "check_fitted_statuses",
     }
     registered = {i.checker.__name__ for i in inv.checkable()}
     assert registered <= exercised, (
         f"checker(s) registered with no teeth test in this file: "
         f"{sorted(registered - exercised)}"
     )
+
+
+def test_fit_coordinate_checkers_accept_the_recoded_fit_and_reject_the_nominal_one():
+    """INV-STAT14 / INV-STAT15: teeth. A fit on the nominal clamped-axial
+    coordinates, and a fitted `rejected` row, are both violations."""
+    from orchestrator.optimize.design import central_composite
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.matrix import coded_as_run, expand, fit_coordinates_record
+    from orchestrator.optimize.synthetic import _numeric
+
+    facs = parse_factors([_numeric("A", levels=(2, 4, 8, 16)),
+                          _numeric("B", levels=(2, 4, 8, 16))])
+    d = central_composite(["A", "B"], center_points=2)
+    lv = [dict(r.levels) for r in expand(d, facs)]
+    run, _ = coded_as_run(d, facs, lv)
+    good = fit_coordinates_record(d, run, statuses=["complete"] * (len(lv) - 1) + ["infeasible"])
+    assert inv.check_fit_coordinates_are_actual(good, lv, facs) == []
+    assert inv.check_fitted_statuses(good) == []
+    bad = fit_coordinates_record(d, d, statuses=["complete"] * (len(lv) - 1) + ["rejected"])
+    errs = inv.check_fit_coordinates_are_actual(bad, lv, facs)
+    assert errs and all("never run" in e for e in errs), errs      # the +-1.41 axials
+    assert inv.check_fitted_statuses(bad) == [
+        f"fitted row {len(lv) - 1} has status 'rejected', which must never be fitted"]
 
 
 # ── structural / vocabulary ───────────────────────────────────────────────

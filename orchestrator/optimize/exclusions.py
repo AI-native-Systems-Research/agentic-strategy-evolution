@@ -67,15 +67,17 @@ whether concentration means anything at all:
     over a biased subset of the space it claims to describe. Concentration here
     is evidence of bias.
   * ``infeasible`` — the configuration RAN, produced trustworthy numbers, and
-    violated a declared constraint. It is excluded from the fit by design (spec
-    §6.4) and it is not missing information: it is information, namely that the
+    violated a declared constraint. Since INV-STAT15 its primary is FITTED, so
+    an infeasible row reaches this analysis only when it carried no usable
+    primary value; either way it is not missing information: it is information, namely that the
     point is outside ``X_valid``. A CONSTRAINED design routinely has every
     inadmissible corner on one level of one factor — that is what a constraint
     boundary looks like — so treating concentration here as bias would flag
     every constrained campaign ever run and would be wrong about all of them.
-    Measured: on ``SURFACES["sla"]`` the refine fit excludes both infeasible
-    rows at ``A=16``, a perfect concentration that means only "the p99 ceiling
-    binds at high A".
+    Measured (before INV-STAT15, when infeasible rows were excluded): on
+    ``SURFACES["sla"]`` the refine fit excluded both infeasible rows at
+    ``A=16``, a perfect concentration that means only "the p99 ceiling binds at
+    high A".
   * ``rejected`` — the row ran and its numbers are untrustworthy. Neither a
     measurement nor information about the space. Treated like ``infeasible``
     here (not counted as bias evidence) because a rejected row is usually a
@@ -510,7 +512,8 @@ def _rank(cols: list[list[float]], *, tol: float = 1e-9) -> int:
     return rank
 
 
-def model_is_full_rank(design, *, include_interactions: bool = True) -> bool:
+def model_is_full_rank(design, *, include_interactions: bool = True,
+                       omit_terms=()) -> bool:
     """Can the model ``fit_effects`` would build be solved on THIS design?
 
     WHY THE PER-FACTOR LEVEL CHECK IS NOT ENOUGH, and this is a defect the
@@ -530,35 +533,58 @@ def model_is_full_rank(design, *, include_interactions: bool = True) -> bool:
     to drop the interaction block, exactly as it uses ``identifiable_factors`` to
     decide whether to drop a factor.
 
-    Mirrors ``fit_effects``' column construction, including its ALIAS-CLASS
-    collapse (a duplicate or negated column is not added), so the rank computed
-    here is the rank of the matrix that will actually be solved.
+    Built from ``effects.model_matrix`` -- the very columns ``fit_effects``
+    solves, including its ALIAS-CLASS collapse and any ``omit_terms`` -- so the
+    rank computed here is the rank of the matrix that will actually be solved.
     """
-    import itertools as _it
+    from orchestrator.optimize.effects import model_matrix
 
-    pts = design.points
-    ids = tuple(design.factor_ids)
-    if not pts:
+    if not design.points:
         return False
-    cols: list[list[float]] = [[1.0] * len(pts)]
-    seen: dict[tuple[float, ...], int] = {}
-    for j in range(len(ids)):
-        col = [p.coded[j] for p in pts]
-        seen.setdefault(tuple(col), len(cols))
-        cols.append(col)
-    if include_interactions and len(ids) >= 2:
-        for i, j in _it.combinations(range(len(ids)), 2):
-            col = [p.coded[i] * p.coded[j] for p in pts]
-            key = tuple(col)
-            neg = tuple(-v for v in col)
-            if key in seen or neg in seen:
-                continue          # aliased: fit_effects adds no column either
-            seen[key] = len(cols)
-            cols.append(col)
-    if any(p.role == "axial" for p in pts):
-        for j in range(len(ids)):
-            cols.append([p.coded[j] ** 2 for p in pts])
+    _, _, cols, _, _ = model_matrix(
+        design, design.factor_ids, include_interactions=include_interactions,
+        omit_terms=omit_terms,
+    )
     return _rank(cols) == len(cols)
+
+
+def non_estimable_terms(design) -> list[tuple[str, ...]]:
+    """Higher-order terms whose column lies in the span of intercept + mains.
+
+    INV-STAT14 makes this reachable: fitted on the coded ACTUAL levels, a term
+    can be a literal function of lower-order terms on the retained rows. Two
+    cases, both measured on a real end-to-end campaign:
+
+      * ``A^2`` when an exclusion leaves only two distinct levels of ``A``
+        (refine kept ``BS`` in {8, 20}: coded {-1, 0}, so ``BS^2 = -BS``). The
+        nominal coding hid this by placing the axial row at -1.41, a level that
+        never ran -- i.e. it "estimated" curvature from a coordinate fiction.
+      * ``AB`` when an exclusion removes one cell of the ``A x B`` square
+        (every ``BS=32, CMP=on`` row infeasible): on the three surviving cells
+        ``BS*CMP = -1 - BS - CMP``. The nominal coding separated it only
+        through a choice factor's mis-coded centre row.
+
+    This is the alias-class collapse generalised from "identical column" to
+    "column in the span of the lower-order terms": such a term carries no
+    information these rows can give, so it is OMITTED and named, and every
+    other term is kept. A deficiency involving several higher-order terms at
+    once (no single one is in that span) is NOT resolved here -- choosing which
+    to drop would be arbitrary -- and is left to the caller's whole-block
+    fallback. Returns ``[]`` when the main-effects model itself is deficient
+    (the caller aborts on that).
+    """
+    from orchestrator.optimize.effects import model_matrix
+
+    if not design.points:
+        return []
+    ids = tuple(design.factor_ids)
+    _, terms, cols, _, _ = model_matrix(design, ids, include_interactions=True)
+    base = [cols[i] for i, t in enumerate(terms) if len(t) <= 1]
+    r0 = _rank(base)
+    if r0 != len(base):
+        return []
+    return [t for t, c in zip(terms, cols)
+            if len(t) == 2 and _rank(base + [c]) == r0]
 
 
 def identifiable_factors(kept_levels: list[dict], factor_ids) -> Identifiability:

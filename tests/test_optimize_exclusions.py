@@ -664,11 +664,16 @@ def test_the_blis_surface_reports_the_level_correlated_exclusion(tmp_path):
 def test_a_balanced_loss_does_not_withhold_certification(tmp_path):
     """The mirror: the consequence must not fire when the loss is balanced.
 
-    `sla`'s refine fit excludes two INFEASIBLE rows (a constraint boundary,
-    perfectly concentrated at A=16). If `infeasible` counted as bias evidence,
-    this campaign could never certify — and every constrained campaign would
-    carry a false caveat. It certifies at confirm_max_rounds 3, which is the
-    existing behaviour this change must not have broken.
+    `sla`'s refine has two INFEASIBLE rows (a constraint boundary, perfectly
+    concentrated at A=16). Since INV-STAT15 they are fitted rather than
+    excluded, and even an excluded infeasible row is not bias evidence. If
+    `infeasible` counted as bias evidence, this campaign could never certify —
+    and every constrained campaign would carry a false caveat. It certifies at confirm_max_rounds 4, which is the
+    existing behaviour this change must not have broken. (3 rounds sufficed
+    while the refine fit regressed on the NOMINAL axial coordinates; fitted on
+    the coordinates that ran (INV-STAT14) the model correctly ranks the
+    infeasible {A: 14, B: 14} above {A: 16, B: 7}, so one more round is spent
+    measuring it -- see test_sla_surface_never_recommends_an_invalid_point.)
     """
     s = SURFACES["sla"]()
     res = run_synthetic_campaign(
@@ -676,7 +681,7 @@ def test_a_balanced_loss_does_not_withhold_certification(tmp_path):
         campaign_overrides={
             "response": {"primary": {"metric": "m", "direction": "maximize"},
                          "constraints": [{"metric": "p99_ms", "op": "<=", "value": 40}]},
-            "policy": {"confirm_max_rounds": 3},
+            "policy": {"confirm_max_rounds": 4},
         },
         max_iterations=12,
     )
@@ -955,7 +960,9 @@ def test_each_excluded_row_keeps_its_own_reason_not_the_majority_reason(
 
     Built here with a constraint that makes one corner infeasible AND a runner
     that fails a different corner, so the same fit_exclusions.json must carry
-    both labels.
+    both labels. The infeasible corner reports NO primary: since INV-STAT15 an
+    infeasible row WITH a usable primary is fitted (a valid measurement of an
+    inadmissible configuration), so only one without a number is excluded.
     """
     from orchestrator.optimize.stage_runner import run_stage
     from orchestrator.optimize.harness import _all_pass, synthetic_campaign
@@ -974,12 +981,15 @@ def test_each_excluded_row_keeps_its_own_reason_not_the_majority_reason(
         lv = row.levels
         if row.row_index == 5:
             raise RuntimeError("this corner never measured")
-        return {
+        out = {
             "cfg": {k.lower(): v for k, v in lv.items()},
             # row 3 runs fine but violates the declared constraint
             "guard": 99 if row.row_index == 3 else 0,
             "m": 10.0 + 0.2 * float(lv["B"]),
         }
+        if row.row_index == 3:
+            out["m"] = None
+        return out
 
     prior = os.environ.get("NOUS_CAMPAIGN_PARENT")
     os.environ["NOUS_CAMPAIGN_PARENT"] = str(tmp_path)

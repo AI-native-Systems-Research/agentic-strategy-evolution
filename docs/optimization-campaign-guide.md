@@ -238,10 +238,20 @@ candidate honest.
   Example: `{metric: throughput_gbps, direction: maximize}`.
 - **`constraints`** — admissibility filters over the same observation every
   config produces. A config that violates any constraint is marked
-  infeasible: excluded from fitting, but *retained* in `runs.jsonl` as real
-  data about the space (it is not thrown away — a config that turns a
-  feature off entirely and thereby "wins" trivially is exactly the case
-  this catches). Example: `{metric: trigger_rate_pct, op: ">", value: 0.0}`.
+  infeasible: it is never *returned* — not recommended, not seated as a
+  confirm finalist that can win, not the best-observed answer — but it is
+  *retained* in `runs.jsonl` as real data about the space (a config that
+  turns a feature off entirely and thereby "wins" trivially is exactly the
+  case this catches), and its primary metric **is fitted** (INV-STAT15): the
+  configuration ran and the instrument worked, so its throughput is a valid
+  measurement; it is only inadmissible to return. Excluding those rows used
+  to truncate the design exactly at the constraint boundary, where
+  constrained optima live — a real campaign fitted refine on 3 of 12 rows,
+  and a re-run aborted with 2. `rejected` and `failed` rows (including a
+  `self_check` violation, which says the measurement itself is invalid) are
+  never fitted. `effects.json["fit_coordinates"]["rows_by_status"]` says how
+  many of each the fit used. Example:
+  `{metric: trigger_rate_pct, op: ">", value: 0.0}`.
 
   **Constraints are also modelled.** Every fitting stage (screen, foldover,
   refine) fits each numeric constraint metric with the same design and model
@@ -492,7 +502,13 @@ not chosen freely.
   with any main effect or other interaction). The validator warns (not
   blocks) at `resolution < 5` with more than one factor — see anti-pattern
   §6.3. `center_points` are replicated runs at the center of the design,
-  giving the pure-error estimate the lack-of-fit test needs.
+  giving the pure-error estimate the lack-of-fit test needs. A `choice`
+  factor has no centre, so its centre runs sit at its **first** declared
+  level — every centre row is still one configuration (true replicates, which
+  is what pure error needs), and the fit codes that factor at the level it
+  ran (`-1`), not at the design's nominal `0`. Pure error with 2 df (3 centre
+  points) is very noisy; a lack-of-fit verdict resting on it is weak either
+  way, so prefer 4–6 centre points when the constraint models matter.
 - **`refine`** — `{kind: central_composite, center_points}`. Runs only
   when at least two `numeric` factors with more than 2 levels survive
   screening (the validator's rule 4). Omit this key entirely when your
@@ -509,6 +525,34 @@ not chosen freely.
   comparison; omit `max_runs` if you have not first checked that your
   `(factor count, resolution)` pair is one Nous has a published generator
   for.
+
+#### What the fit regresses on: the levels that ran (INV-STAT14)
+
+`design_matrix.json` is the pre-registration: it records what was **planned**,
+and `matrix.check_fidelity` holds every run to it. The **fit** is coded from
+the levels that actually **ran** (`factors.code_actual`):
+
+- a central composite's axial point (`|coded| = 1.41` at k=2, `1.68` at k=3) is
+  clamped by `decode_coded` to the declared range, so it runs at the range
+  edge and is fitted at `±1` — not at the nominal `±1.68`, a coordinate that
+  was never run. Fitting the nominal value is an errors-in-variables bias:
+  measured, a truly linear surface on a clamped CCD failed lack of fit on
+  essentially every seed, and at ~α once fitted on what ran;
+- a `choice` factor's centre row is fitted at the level it ran (`-1`);
+- a grid-snapped point is fitted at its snapped level.
+
+The same coordinates drive the constraint models, and they are the coding the
+candidate ranking scores at. `effects.json["fit_coordinates"]` lists, per
+fitted row, the `planned` coding beside the `fitted` one (and the row's
+status), so you can audit the difference without refitting.
+
+Honest coordinates can reveal a term the surviving rows cannot estimate — a
+quadratic of a factor with only two levels left after an exclusion, or an
+interaction over three surviving cells of a 2×2. Such a term's column lies in
+the span of the intercept and main effects; it is **omitted** and named in
+`effects.json["omitted_terms"]`, and every other term is kept (the nominal
+coding used to "estimate" these from coordinates that never ran). A deficiency
+no single term explains still drops the interaction block, as before.
 
 ### `design_space`
 

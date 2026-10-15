@@ -66,6 +66,37 @@
       "items": { "type": "string" },
       "description": "Factor ids whose main effect confidence interval contains zero (orchestrator.optimize.effects.dropped_factors) -- measured null, not merely unmeasured."
     },
+    "omitted_terms": {
+      "type": "array",
+      "description": "GENUINELY OPTIONAL: present only when non-empty. Higher-order model terms (two-factor interactions as [A, B], quadratics as [A, A]) NOT fitted because, on the fitted rows' coded actual levels, each one's column lies in the span of the intercept and main effects (orchestrator.optimize.exclusions.non_estimable_terms) -- e.g. a quadratic of a factor with only two levels left after an exclusion, or an interaction over three surviving cells of a 2x2. Such a term carries no information these rows can give; omitting it is the alias-class collapse generalised.",
+      "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 }
+    },
+    "fit_coordinates": {
+      "type": "object",
+      "description": "INV-STAT14: the coordinates the regression was fitted on. The fit's design matrix is the CODED ACTUAL LEVELS (orchestrator.optimize.matrix.coded_as_run), not the design's nominal coordinates: a central composite's axial point is clamped to the declared range by decode_coded and so RUNS at the range edge (+-1, not +-1.41/1.68), and a choice factor's centre row runs at its FIRST level (coded -1, not 0). design_matrix.json still records the PLAN; this records, per fitted row, the planned coding beside the fitted one so a reader can audit the difference without refitting. Optional: absent on artifacts written before it existed.",
+      "required": ["basis", "factor_ids", "rows"],
+      "additionalProperties": false,
+      "properties": {
+        "basis": { "const": "coded_actual_levels" },
+        "rows_by_status": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 }, "description": "Fitted rows counted by run status. INV-STAT15: `infeasible` rows (a response.constraints violation -- a valid measurement of an inadmissible configuration) ARE fitted; `rejected` and `failed` rows never are." },
+        "factor_ids": { "type": "array", "items": { "type": "string" }, "description": "Column order of planned/fitted (the fitted factor set)." },
+        "rows": {
+          "type": "array",
+          "description": "One entry per FITTED row, in fit order (excluded rows are absent).",
+          "items": {
+            "type": "object",
+            "required": ["role", "planned", "fitted"],
+            "additionalProperties": false,
+            "properties": {
+              "role": { "type": "string" },
+              "status": { "type": "string", "description": "The row's run status (complete or infeasible)." },
+              "planned": { "type": "array", "items": { "type": "number" } },
+              "fitted": { "type": "array", "items": { "type": "number" } }
+            }
+          }
+        }
+      }
+    },
     "exclusion_balance": {
       "type": "object",
       "description": "GENUINELY OPTIONAL, not nullable: present ONLY when rows were excluded from this fit (its mere presence says the design was partial), and then it answers whether the loss was INDEPENDENT of the factor levels. From orchestrator.optimize.exclusions.ExclusionBalance.as_dict. A BALANCED loss costs degrees of freedom and therefore widens every interval above, which the arithmetic already reports honestly; a LEVEL-CORRELATED loss moves a point estimate while leaving its interval exactly as tight as before, because the interval is computed from the retained rows and knows nothing about the missing region. That is why the caveat lives on THIS artifact next to the coefficients it qualifies rather than only in the sibling fit_exclusions.json. An effect for a factor named in flagged_factors must not be read as certified.",

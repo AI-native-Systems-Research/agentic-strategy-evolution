@@ -47,7 +47,7 @@
         "infeasible",
         "rejected"
       ],
-      "description": "complete: ran cleanly and is usable for fitting. failed: the runner crashed or the manipulation predicate never engaged after retry. infeasible: a response.constraints entry was violated -- excluded from fitting but retained here as real data about the space. rejected: a design_space invariant was violated, the response exceeded response.ceiling, or the integrity_command failed -- never used for fitting."
+      "description": "complete: ran cleanly and is usable for fitting. failed: the runner crashed or the manipulation predicate never engaged after retry. infeasible: a response.constraints entry was violated -- never returned as an answer, retained here as real data about the space, and its primary IS fitted (INV-STAT15: a valid measurement of an inadmissible configuration). rejected: a design_space invariant was violated, the response exceeded response.ceiling, or the integrity_command failed -- never used for fitting."
     },
     "response": {
       "type": "object",

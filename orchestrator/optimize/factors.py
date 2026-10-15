@@ -179,6 +179,31 @@ def code_level(f: Factor, level: Any) -> int:
     )
 
 
+def code_actual(f: Factor, level: Any) -> float:
+    """The coded coordinate of a level that ACTUALLY RAN (INV-STAT14).
+
+    The inverse of ``decode_coded`` over everything ``decode_coded`` can
+    return, which ``code_level`` (screen pair only) is not:
+
+      * ``choice``: ``-1`` / ``+1`` for the screen pair. A categorical has no
+        interior, so a centre point -- which ``matrix._decode_level`` runs at
+        the FIRST level -- codes ``-1``, not the design's nominal ``0``.
+      * ``numeric``: ``(level - mid) / half`` over the screen pair. A clamped
+        axial point codes at the range edge it ran at (``+-1``), not at the
+        nominal ``+-1.41`` / ``+-1.68``; a grid-snapped point codes at the
+        snapped level. This is the same formula ``decide._axis`` scores
+        candidates at, so the fit and the argmax share one coordinate system.
+    """
+    low, high = f.screen_levels
+    if f.type == "choice":
+        return float(code_level(f, level))
+    half = (float(high) - float(low)) / 2.0
+    if half == 0.0:
+        raise ValueError(f"factor {f.id!r}: screen pair {f.screen_levels!r} has no width")
+    mid = (float(low) + float(high)) / 2.0
+    return (float(level) - mid) / half
+
+
 def snap_to_grid(value: float, grid: float | None) -> float | int:
     """Round ``value`` to the nearest multiple of ``grid``.
 

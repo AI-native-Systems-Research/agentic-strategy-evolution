@@ -138,6 +138,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -434,9 +435,10 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
 
     ``rejected`` rows are untrustworthy (invariant violation, above the
     physical ceiling, failed integrity check) and are excluded.
-    ``infeasible`` rows are trustworthy — they say the config is
-    inadmissible, which is real information about the space — but they are
-    still excluded from the fit, per spec §6.4.
+    ``infeasible`` rows are trustworthy — the config ran and its primary is a
+    valid measurement; it is only inadmissible to RETURN — so their primary IS
+    fitted (``_PRIMARY_FIT_STATUSES``, INV-STAT15; amends spec §6.4's original
+    "exclude from fitting"). Admissibility is enforced at the return points.
 
     THE NaN-ON-A-COMPLETE-ROW CASE NO LONGER REACHES HERE. ``run_stage`` checks
     for it before calling this function and routes it to the policy's
@@ -469,8 +471,9 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
             f"would be optimizing against its own generalization check",
         )
     values: list[float] = []
+    fit_statuses = _PRIMARY_FIT_STATUSES
     for o in outcomes:
-        if o.status != "complete":
+        if o.status not in fit_statuses:
             values.append(float("nan"))
             continue
         resp = o.response or {}
@@ -487,6 +490,16 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
             # statistic will realistically do. Carry NaN so the row is
             # excluded, and let the guard below report it by row index.
             values.append(float("nan"))
+            continue
+        if o.status != "complete":
+            # An infeasible row is fitted only when it carries a usable number:
+            # its primary is a bonus measurement, never a reason to abort. A
+            # missing or non-numeric value leaves it excluded, as it always was.
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                v = float("nan")
+            values.append(v if math.isfinite(v) else float("nan"))
             continue
         try:
             values.append(float(raw))
@@ -687,6 +700,32 @@ def _fit_exclusion_reasons(outcomes, stage_name: str, dropped, *, n_total: int,
 #: campaign already knows to be inadmissible. It exists so the metamorphic
 #: oracle tests can run the same campaign with and without the models.
 _MODEL_CONSTRAINTS = True
+
+#: Row statuses whose PRIMARY metric enters the primary fit (INV-STAT15).
+#:
+#: ``infeasible`` IS FITTED. An infeasible row violated a declared
+#: ``response.constraints`` threshold: the configuration ran, the instrument
+#: worked, and the primary it reports is a valid measurement of that
+#: configuration -- it is merely inadmissible to RETURN. Excluding it (the rule
+#: before constraint models existed, spec 2026-08-13 "exclude from fitting")
+#: truncates the design non-randomly exactly at the constraint boundary, where
+#: constrained optima live, and routinely left too few rows to fit at all.
+#: Measured on the oracle (16 seeds, a bowl whose optimum sits past a noisy
+#: ``A + B <= 18`` constraint): excluding aborted 4/16 campaigns with a
+#: rank-deficient refine and certified 0, fitting them aborted none and
+#: certified 3, with worst-case regret 0.2 vs 2.7; identical on ``sla``,
+#: ``infeasible_corner_interior`` and ``bowl``.
+#:
+#: Admissibility is enforced where a configuration can be RETURNED, not here:
+#: ``_measured_infeasible`` removes every measured-infeasible configuration
+#: from the candidate space, ``_best_observed`` reads ``complete`` rows only,
+#: ``_finish_confirm`` strikes an infeasible finalist, and the constraint models
+#: exclude confidently-infeasible candidates.
+#:
+#: ``rejected`` (design-space invariant, physical ceiling, integrity check) and
+#: ``failed`` (incl. a ``self_check`` violation: the measurement itself is not
+#: valid) stay OUT -- those rows are not trustworthy measurements.
+_PRIMARY_FIT_STATUSES = frozenset({"complete", "infeasible"})
 
 
 def _fit_row_records(work_dir: Path, outcomes, stage_name: str,
@@ -3132,14 +3171,37 @@ def run_stage(
         outcomes, stage_name, dropped, n_total=len(ys), n_fold=fold_n,
         work_dir=work_dir, screen_iter=screen_iter,
     )
+    # ── INV-STAT14: fit the coordinates that RAN, not the ones planned ──────
+    #
+    # `design` is the pre-registered plan (what `design_matrix.json` records and
+    # `check_fidelity` holds the runs to). Two of its coordinates are not what
+    # ran: a clamped axial point runs at the range edge, and a choice factor's
+    # centre row runs at its first level. Regressing on the plan is an
+    # errors-in-variables bias -- measured on the oracle, a truly linear surface
+    # on a clamped CCD failed lack of fit on every seed, and `additive` (linear,
+    # with a choice factor) failed it at screen on every seed. So every fitting
+    # stage (screen, foldover, refine) and the constraint models below are fitted
+    # on `coded_as_run`, and `effects.json["fit_coordinates"]` records both
+    # codings per fitted row. See `matrix.coded_as_run` for the choice-centre
+    # decision.
+    design_run, nominal_pos = matrix.coded_as_run(design, factors, levels_by_pos)
+    _unrecoded = sorted(set(nominal_pos) - set(dropped))
+    if _unrecoded:
+        raise OptimizationAborted(
+            f"{stage_name}: fitted position(s) {_unrecoded} have no recorded "
+            f"level for every factor in {list(design.factor_ids)}, so the fit "
+            f"cannot be coded from the levels that actually ran. That is an "
+            f"inconsistency between the design and runs.jsonl, not a datum.",
+        )
+    design_for_fit = design_run
     # Third element: is this exclusion BIAS-RELEVANT? Only a row that was
     # admissible-but-unmeasurable leaves a hole in X_valid that can bias a
     # coefficient. An `infeasible` row is not missing information — it IS
     # information, namely that the point is outside X_valid — and a constrained
     # design has every inadmissible corner on one level of one factor by
-    # construction (measured on SURFACES["sla"]: both refine exclusions at
-    # A=16, a perfect concentration meaning only "the p99 ceiling binds at high
-    # A"). Counting those as bias would flag every constrained campaign and be
+    # construction (measured on SURFACES["sla"] before INV-STAT15 fitted them:
+    # both exclusions at A=16, a perfect concentration meaning only "the p99
+    # ceiling binds at high A"). Counting those as bias would flag every constrained campaign and be
     # wrong about all of them. `rejected` is grouped with `infeasible` for the
     # conservative reason the exclusions module states.
     _bias_reasons = {"failed_to_measure", "no_metric"}
@@ -3199,7 +3261,7 @@ def run_stage(
                         non_identifiable_held[fid] = lv[fid]
                         break
             design_for_fit = dataclasses.replace(
-                design,
+                design_run,
                 factor_ids=tuple(ident.estimable),
                 points=tuple(
                     dataclasses.replace(
@@ -3209,7 +3271,7 @@ def run_stage(
                             if design.factor_ids[j] in set(ident.estimable)
                         ),
                     )
-                    for p in design.points
+                    for p in design_run.points
                 ),
             )
         design_for_fit = dataclasses.replace(
@@ -3218,38 +3280,6 @@ def run_stage(
         )
         ys_for_fit = [ys[i] for i in keep]
 
-        # ── floor (c): is the model FULL RANK on what is left? ──────────────
-        #
-        # Six corners cannot support seven terms. That is arithmetic, and the
-        # principled response is the one `effects.py` already takes for aliased
-        # columns: FIT FEWER TERMS AND SAY SO. Dropping the interaction block
-        # keeps every main effect — which is what `dropped_factors`, the stage
-        # rule and the argmax all read — where aborting would discard them to
-        # protect interactions the surviving rows never could have estimated.
-        if not exclusions.model_is_full_rank(design_for_fit):
-            if exclusions.model_is_full_rank(
-                design_for_fit, include_interactions=False,
-            ):
-                interactions_dropped = True
-                logger.warning(
-                    "%s: the retained %d row(s) cannot support the full model "
-                    "(intercept + main effects + two-factor interactions) — it "
-                    "is rank-deficient. Fitting MAIN EFFECTS ONLY and recording "
-                    "the reduced model, rather than aborting and discarding "
-                    "every main effect to protect interactions the surviving "
-                    "rows never could have estimated. fit_exclusions.json "
-                    "records interactions_dropped.",
-                    stage_name, len(keep),
-                )
-            else:
-                raise OptimizationAborted(
-                    f"the {len(keep)} retained row(s) cannot support even a "
-                    f"main-effects-only model over {list(fitted_ids)}: the "
-                    f"model matrix is rank-deficient, so no coefficient is "
-                    f"estimable. Re-run the excluded configurations, or narrow "
-                    f"the design to the region that measures.",
-                )
-
         logger.warning(
             "%s: fitting on %d of %d rows; %d row(s) excluded (%s). The fit's "
             "resolution is reduced accordingly — a single NaN row would "
@@ -3257,6 +3287,62 @@ def run_stage(
             stage_name, len(keep), len(ys), len(dropped),
             ", ".join(f"pos {i}: {excluded_reasons[i]}" for i in dropped),
         )
+
+    # ── floor (c): is the model FULL RANK on what is left? ──────────────────
+    #
+    # Six corners cannot support seven terms. That is arithmetic, and the
+    # principled response is the one `effects.py` already takes for aliased
+    # columns: FIT FEWER TERMS AND SAY SO, keeping every main effect — which is
+    # what `dropped_factors`, the stage rule and the argmax all read — where
+    # aborting would discard them to protect terms the surviving rows never
+    # could have estimated. Two steps, most specific first:
+    #
+    #   1. OMIT each higher-order term whose column lies in the span of the
+    #      intercept and main effects on these rows
+    #      (`exclusions.non_estimable_terms`) -- unambiguous: such a term is a
+    #      function of lower-order terms here, like an alias of a main effect.
+    #   2. If the model is still deficient (several interactions jointly
+    #      dependent, so which to drop would be arbitrary), drop the whole
+    #      interaction block.
+    #
+    # Checked for every fit, not only one with exclusions: fitted on the coded
+    # ACTUAL levels (INV-STAT14) the matrix is the one that ran, and nothing
+    # guarantees a hand-built or recoded design is full rank.
+    omitted_terms = exclusions.non_estimable_terms(design_for_fit)
+    if omitted_terms:
+        logger.warning(
+            "%s: term(s) %s are not estimable from the %d fitted row(s) -- each "
+            "column lies in the span of the intercept and main effects there "
+            "(e.g. a quadratic of a factor with only two levels left, or an "
+            "interaction over three surviving cells of a 2x2). Omitting them "
+            "and recording omitted_terms in effects.json.",
+            stage_name, [f"{t[0]}^2" if t[0] == t[1] else f"{t[0]}{t[1]}"
+                         for t in omitted_terms],
+            len(ys_for_fit),
+        )
+    if not exclusions.model_is_full_rank(design_for_fit, omit_terms=omitted_terms):
+        if exclusions.model_is_full_rank(
+            design_for_fit, include_interactions=False, omit_terms=omitted_terms,
+        ):
+            interactions_dropped = True
+            logger.warning(
+                "%s: the %d fitted row(s) cannot support the full model "
+                "(intercept + main effects + two-factor interactions) — it "
+                "is rank-deficient. Fitting MAIN EFFECTS ONLY and recording "
+                "the reduced model, rather than aborting and discarding "
+                "every main effect to protect interactions the surviving "
+                "rows never could have estimated. fit_exclusions.json "
+                "records interactions_dropped.",
+                stage_name, len(ys_for_fit),
+            )
+        else:
+            raise OptimizationAborted(
+                f"the {len(ys_for_fit)} retained row(s) cannot support even a "
+                f"main-effects-only model over {list(fitted_ids)}: the "
+                f"model matrix is rank-deficient, so no coefficient is "
+                f"estimable. Re-run the excluded configurations, or narrow "
+                f"the design to the region that measures.",
+            )
 
     # ── a level-correlated loss is not a widened one ────────────────────────
     #
@@ -3279,10 +3365,30 @@ def run_stage(
     fit = fit_effects(
         design_for_fit, ys_for_fit, factor_ids=fitted_ids,
         include_interactions=not interactions_dropped,
+        omit_terms=omitted_terms,
+    )
+    _fit_pos = keep if dropped else list(range(len(ys)))
+    _fit_records = _fit_row_records(work_dir, outcomes, stage_name, screen_iter,
+                                    n_total=len(ys), n_fold=fold_n)
+    _fit_cols = [design.factor_ids.index(fid) for fid in design_for_fit.factor_ids]
+    _planned_for_fit = dataclasses.replace(
+        design_for_fit,
+        points=tuple(
+            dataclasses.replace(
+                design.points[i],
+                coded=tuple(design.points[i].coded[j] for j in _fit_cols),
+            )
+            for i in _fit_pos
+        ),
     )
     artifacts.write_effects(
         iter_dir, fit, factors=factors, stage=stage_name,
         exclusion_balance=(balance.as_dict() if dropped else None),
+        fit_coordinates=matrix.fit_coordinates_record(
+            _planned_for_fit, design_for_fit,
+            statuses=[_fit_records[i][0] for i in _fit_pos],
+        ),
+        omitted_terms=omitted_terms,
     )
     if dropped:
         _write_json(iter_dir / "fit_exclusions.json", {
@@ -3304,6 +3410,7 @@ def run_stage(
             },
             "non_identifiable_factors": sorted(non_identifiable_held),
             "interactions_dropped": interactions_dropped,
+            "omitted_terms": [list(t) for t in omitted_terms],
             "fitted_ids": list(fitted_ids),
             "exclusion_balance": balance.as_dict(),
             # Kept for backward compatibility with readers (and one test)
@@ -3379,9 +3486,8 @@ def run_stage(
     cmods: list = []
     if _MODEL_CONSTRAINTS and (response_spec.get("constraints") or []):
         cmods = cmodels.fit_constraint_models(
-            response_spec.get("constraints") or [], design,
-            _fit_row_records(work_dir, outcomes, stage_name, screen_iter,
-                             n_total=len(ys), n_fold=fold_n),
+            response_spec.get("constraints") or [], design_run,
+            _fit_records,
             fitted_ids=fitted_ids, held_levels=non_identifiable_held,
             levels_by_pos=levels_by_pos,
         )
@@ -3963,7 +4069,7 @@ def _screen_responses(work_dir: Path, screen_iter: int, primary: str,
     for i in range(n_expected):
         row = by_index.get(i)
         raw = None if row is None else (row.get("response") or {}).get(primary)
-        if row is None or row.get("status") != "complete" or raw is None:
+        if row is None or row.get("status") not in _PRIMARY_FIT_STATUSES or raw is None:
             ys.append(float("nan"))
             saw_nan = True
             continue
@@ -4259,8 +4365,13 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # three rounds. On `SURFACES["bowl"]` cutting it discards the interior
         # optimum `{A: 9, B: 11}` that the refine stage was spent to find and
         # confirms the centre point instead. Note also what an "inadequate" verdict
-        # here actually is: a statistical one, F ~ 1000 on these near-noiseless
-        # surfaces because center-point replication under-states the variance the
+        # here actually is: a statistical one. It used to read F ~ 1000 on these
+        # near-noiseless surfaces, and most of that was NOT the model class: the
+        # fit regressed on the nominal axial coordinates (+-1.41/1.68) that
+        # `decode_coded` clamps to the range edge, and coded a choice factor's
+        # centre row 0 where it ran at -1 -- an errors-in-variables bias that
+        # INV-STAT14 removed (a truly linear surface now rejects at ~alpha). What
+        # remains is centre-point replication under-stating the variance the
         # campaign faces (spec §3.5's own warning). Seating the measured leaders
         # ABOVE the ranking discounts it; discarding the ranking would treat that
         # F as proof the ordering carries no information at all.

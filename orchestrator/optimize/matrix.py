@@ -28,6 +28,7 @@ same vocabulary as ``manipulation`` and ``response.constraints``.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import random
@@ -35,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from orchestrator.optimize.design import Design, DesignPoint, alias_pairs
-from orchestrator.optimize.factors import Factor, decode_coded
+from orchestrator.optimize.factors import Factor, code_actual, decode_coded
 from orchestrator.optimize.predicates import evaluate
 
 
@@ -72,6 +73,89 @@ def _decode_level(f: Factor, point: DesignPoint, idx: int) -> Any:
     if coded == 1:
         return high
     return decode_coded(f, coded)
+
+
+def coded_as_run(design: Design, factors, levels_by_pos) -> tuple[Design, list[int]]:
+    """``design`` with every row re-coded from the levels that ACTUALLY RAN.
+
+    INV-STAT14: the fit's design matrix is the coded actual levels. Two ways
+    the nominal coordinates lie about what ran, both measured on the oracle:
+
+      * AXIAL CLAMPING. ``decode_coded`` clamps a central composite's axial
+        point (|coded| = 1.41 at k=2, 1.68 at k=3) to the declared range, so
+        it RUNS at the edge (``+-1``). Regressing on the nominal ``+-1.68`` is
+        an errors-in-variables bias: a truly linear surface then fails lack
+        of fit (measured: ~100% rejection on a clamped k=2 CCD; ~alpha once
+        recoded) and every coefficient touching the axis shrinks.
+      * CHOICE CENTRE POINTS. A categorical has no centre. ``_decode_level``
+        runs a choice factor's centre row at its FIRST level, so that row is
+        coded ``-1`` for the choice factor and ``0`` for every numeric. The
+        alternatives were weighed against spec §3.2 and standard mixed-design
+        RSM practice:
+
+          - replicating centre points at EACH choice level (the textbook
+            mixed-design layout) changes the pre-registered design, its run
+            count and its budget, and splits the pure-error estimate across
+            several configurations; it is a design change, not a fitting fix.
+          - dropping the choice columns from centre rows is not expressible
+            in a single least-squares matrix without inventing a value.
+          - coding the level that ran keeps the centre rows TRUE REPLICATES of
+            ONE configuration (numerics at mid, choices at their first level),
+            which is exactly what the pure-error estimate requires, and costs
+            only orthogonality of the choice column with the intercept -- an
+            honest non-orthogonality the general least-squares solve handles.
+
+        So the principle is one rule for both defects: code what ran.
+
+    ``levels_by_pos`` holds one levels dict per POSITION of ``design`` (the
+    fit's positional convention). A position whose levels are missing any of
+    the design's factors keeps its nominal coding and is returned in the
+    second element, so the caller decides whether that is admissible (it is
+    for a row the fit drops anyway) rather than this function guessing.
+
+    ``design_matrix.json`` is untouched: it records what was PLANNED, and
+    ``check_fidelity`` still compares planned levels to recorded levels.
+    """
+    by_id = {f.id: f for f in factors}
+    nominal: list[int] = []
+    pts = []
+    for i, p in enumerate(design.points):
+        lv = levels_by_pos[i] if i < len(levels_by_pos) else None
+        if not lv or any(fid not in lv for fid in design.factor_ids):
+            nominal.append(i)
+            pts.append(p)
+            continue
+        pts.append(DesignPoint(
+            coded=tuple(code_actual(by_id[fid], lv[fid]) for fid in design.factor_ids),
+            role=p.role, replicate=p.replicate,
+        ))
+    return dataclasses.replace(design, points=tuple(pts)), nominal
+
+
+def fit_coordinates_record(planned: Design, fitted: Design,
+                           statuses=None) -> dict:
+    """What ``effects.json`` records about the rows and coordinates the fit used.
+
+    One entry per FITTED row: the planned (nominal) coding beside the coding
+    the regression used, so a reader can audit INV-STAT14 without refitting,
+    and -- when ``statuses`` is given -- the row's run status, so a reader can
+    see that ``infeasible`` rows were fitted (INV-STAT15) and how many.
+    """
+    rows = []
+    for i, (p, f) in enumerate(zip(planned.points, fitted.points)):
+        row = {"role": f.role, "planned": [float(v) for v in p.coded],
+               "fitted": [float(v) for v in f.coded]}
+        if statuses is not None:
+            row["status"] = str(statuses[i])
+        rows.append(row)
+    out = {"basis": "coded_actual_levels", "factor_ids": list(fitted.factor_ids),
+           "rows": rows}
+    if statuses is not None:
+        counts: dict[str, int] = {}
+        for st in statuses:
+            counts[str(st)] = counts.get(str(st), 0) + 1
+        out["rows_by_status"] = dict(sorted(counts.items()))
+    return out
 
 
 def _render_apply(f: Factor, level: Any) -> dict:

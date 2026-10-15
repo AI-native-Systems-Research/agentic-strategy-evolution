@@ -692,6 +692,60 @@ def check_exclusions_independent_of_levels(rows, factor_ids) -> list[str]:
     return out
 
 
+def check_fit_coordinates_are_actual(fit_coordinates: dict, levels_rows,
+                                     factors) -> list[str]:
+    """INV-STAT14: the fit's design matrix is the coded ACTUAL levels.
+
+    ``fit_coordinates`` is ``effects.json["fit_coordinates"]``; ``levels_rows``
+    the levels that ran for each fitted row, in the same order; ``factors``
+    the parsed factors. Every fitted coordinate must equal
+    ``factors.code_actual`` of the level that ran -- the clamped axial point at
+    the range edge it ran at, a choice factor's centre row at the level it ran.
+    """
+    from orchestrator.optimize.factors import code_actual
+
+    out: list[str] = []
+    if (fit_coordinates or {}).get("basis") != "coded_actual_levels":
+        return [f"fit_coordinates.basis is {(fit_coordinates or {}).get('basis')!r}, "
+                f"not 'coded_actual_levels'"]
+    by_id = {f.id: f for f in factors}
+    ids = list(fit_coordinates.get("factor_ids") or [])
+    rows = list(fit_coordinates.get("rows") or [])
+    if len(rows) != len(levels_rows):
+        return [f"{len(rows)} fitted row(s) recorded but {len(levels_rows)} level row(s) given"]
+    for i, (row, lv) in enumerate(zip(rows, levels_rows)):
+        for j, fid in enumerate(ids):
+            want = code_actual(by_id[fid], lv[fid])
+            got = row["fitted"][j]
+            if abs(float(got) - want) > 1e-9:
+                out.append(
+                    f"fitted row {i} factor {fid!r}: coded {got} but the level that "
+                    f"ran ({lv[fid]!r}) codes {want} -- the fit regressed on a "
+                    f"coordinate that was never run",
+                )
+    return out
+
+
+#: Statuses whose primary may enter the primary fit (INV-STAT15).
+_FITTABLE_STATUSES = frozenset({"complete", "infeasible"})
+
+
+def check_fitted_statuses(fit_coordinates: dict) -> list[str]:
+    """INV-STAT15: only ``complete`` and ``infeasible`` rows inform the primary fit.
+
+    An ``infeasible`` row is a valid measurement of an inadmissible
+    configuration and IS fitted; ``rejected`` (invariant / ceiling / integrity)
+    and ``failed`` (incl. a self_check violation) are not trustworthy
+    measurements and never are.
+    """
+    out: list[str] = []
+    for i, row in enumerate((fit_coordinates or {}).get("rows") or []):
+        st = row.get("status")
+        if st is not None and st not in _FITTABLE_STATUSES:
+            out.append(f"fitted row {i} has status {st!r}, which must never be fitted")
+    return out
+
+
 # ── temporal / provenance ─────────────────────────────────────────────────
 
 def check_preregistration_precedes_measurement(work_dir: Path) -> list[str]:
@@ -1227,6 +1281,45 @@ _ENTRIES: tuple[Invariant, ...] = (
                    "which restates the bound from the definition rather than reading the "
                    "verdict back from the code under test (mutation-verified: excluding on "
                    "the point prediction fails it)."),
+
+    Invariant("INV-STAT14", "The fit's design matrix is the coded ACTUAL levels: every "
+                            "fitted row is coded from the levels that ran "
+                            "(factors.code_actual), never from the design's nominal "
+                            "coordinates -- a clamped axial point at the range edge it ran "
+                            "at, a choice factor's centre row at the level it ran (-1). "
+                            "design_matrix.json still records the plan.",
+              "STAT", "artifact",
+              "matrix.coded_as_run; stage_runner fit block; constraint_models; "
+              "effects.json fit_coordinates",
+              TEST, check_fit_coordinates_are_actual,
+              violated_by="the nominal coding regressed on axial coordinates +-1.41/1.68 "
+                          "that decode_coded clamps to +-1, and coded a choice factor's "
+                          "centre row 0 where it ran at its first level. Measured: a truly "
+                          "linear surface on a clamped CCD failed lack of fit ~100% of "
+                          "seeds (~alpha once recoded); `additive` failed it at screen on "
+                          "every seed; a real campaign's exactly-linear p99 constraint "
+                          "model was rejected at p=2.7e-05 and its BS x CMP interaction "
+                          "was 'estimated' (127.5) only through a mis-coded centre row.",
+              note="tests/test_optimize_coded_as_run.py: oracle properties (LOF ~uniform "
+                   "under a correct model, CI coverage, unbiased mixed interaction) and "
+                   "the checker against a recorded fit_coordinates."),
+
+    Invariant("INV-STAT15", "infeasible rows (a response.constraints violation) inform the "
+                            "PRIMARY fit; rejected and failed rows never do. Admissibility is "
+                            "enforced where a configuration can be RETURNED (measured-"
+                            "infeasible exclusion, best-observed reads complete only, "
+                            "confirm strikes an infeasible finalist), not by truncating the "
+                            "fit at the constraint boundary.",
+              "STAT", "artifact",
+              "stage_runner._PRIMARY_FIT_STATUSES; effects.json fit_coordinates.rows_by_status",
+              TEST, check_fitted_statuses,
+              violated_by="excluding infeasible rows truncated the design exactly at the "
+                          "constraint boundary: a real sqlite-utils campaign fitted refine "
+                          "on 3 of 12 rows (9 infeasible), a re-run aborted with 2 retained "
+                          "rows; on the constrained-bowl oracle 4/16 campaigns aborted.",
+              note="tests/test_optimize_coded_as_run.py::"
+                   "test_fitting_infeasible_rows_is_never_worse_on_the_constrained_oracle "
+                   "(metamorphic, both rules per seed) and the checker over fit_coordinates."),
 
     # ── temporal ──────────────────────────────────────────────────────────
     Invariant("INV-TMP01", "policy.json + policy.sha256 are written BEFORE the first "

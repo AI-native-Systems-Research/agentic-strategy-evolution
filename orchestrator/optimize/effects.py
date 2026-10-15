@@ -118,6 +118,17 @@ def pure_error(center_responses) -> tuple[float | None, int]:
     return variance(vals), len(vals) - 1
 
 
+def alias_rows(points) -> list[int]:
+    """Row indices over which two model columns are compared for aliasing.
+
+    Every non-centre row, or every row when the design has nothing but
+    centres. Shared with ``exclusions.model_is_full_rank`` so the rank it
+    checks is the rank of the matrix ``fit_effects`` will solve.
+    """
+    idx = [r for r, p in enumerate(points) if p.role != "center"]
+    return idx or list(range(len(points)))
+
+
 def _solve_normal_equations(cols: list[list[float]], ys: list[float]) -> list[float]:
     """Least squares via the normal equations, Gaussian elimination."""
     p = len(cols)
@@ -144,51 +155,16 @@ def _solve_normal_equations(cols: list[list[float]], ys: list[float]) -> list[fl
     return [b[i] / a[i][i] for i in range(p)]
 
 
-def fit_effects(design: Design, responses, *, factor_ids,
-                include_interactions: bool = True,
-                alpha: float = 0.05) -> Fit:
-    """Fit main effects (+ 2-factor interactions, + curvature when present)."""
+def model_matrix(design: Design, factor_ids, *, include_interactions: bool = True,
+                 omit_terms=()):
+    """The columns ``fit_effects`` solves: ``(labels, terms, cols, quad_start,
+    alias_classes)``.
+
+    One implementation, shared with ``exclusions.model_is_full_rank`` and
+    ``exclusions.non_estimable_terms``, so the rank they check is the rank of
+    the matrix that will actually be solved.
+    """
     ids = tuple(factor_ids)
-    ys = [float(v) for v in responses]
-    if len(ys) != len(design.points):
-        raise ValueError(
-            f"responses length {len(ys)} != design length "
-            f"{len(design.points)}; every planned run needs exactly one "
-            f"response value",
-        )
-
-    # A NaN RESPONSE IS REFUSED HERE, at the module boundary, and not only by the
-    # caller that happens to remember. The normal equations propagate a single NaN
-    # into the intercept and EVERY coefficient -- verified: one NaN among eight
-    # runs turns all six effects and the intercept into NaN -- and the result is
-    # still a structurally valid `Fit`. That is the dangerous part: every
-    # comparison against NaN is False, so an all-NaN surface does not raise, does
-    # not warn, and reads downstream as "no factor is significant", which is a
-    # plausible scientific finding rather than an obvious defect. A campaign can
-    # emit a schema-valid effects.json describing nothing at all.
-    #
-    # `stage_runner` does pre-filter (spec §4 D2: fit on the complete-row subset
-    # and record the exclusions in fit_exclusions.json), and that remains the
-    # right place for the POLICY decision about which rows are admissible --
-    # including the identifiability and rank floors, which need the design.
-    # But D2 was implemented at that one call site, leaving the module itself
-    # willing to return nonsense to any other caller: the harness, a test, a
-    # future stage, or a notebook. Refusing at the boundary makes the invariant
-    # "a returned Fit never contains a NaN coefficient" true of the FUNCTION
-    # rather than of one of its callers.
-    nan_at = [i for i, v in enumerate(ys) if v != v]
-    if nan_at:
-        raise ValueError(
-            f"response(s) at index {nan_at} are NaN. Fitting would return a "
-            f"structurally valid Fit whose intercept and every coefficient are "
-            f"NaN, and because every comparison against NaN is False that result "
-            f"reads as 'no factor is significant' rather than as an error. The "
-            f"caller must decide which rows are admissible and fit on that subset "
-            f"-- see stage_runner's exclusion handling, which drops non-complete "
-            f"rows, enforces the identifiability and rank floors, and records what "
-            f"it dropped in fit_exclusions.json.",
-        )
-
     k = len(ids)
     pts = design.points
     has_axial = any(p.role == "axial" for p in pts)
@@ -245,18 +221,28 @@ def fit_effects(design: Design, responses, *, factor_ids,
     #     `A` in the full matrix; verified that corner-only agrees there (k=2..5,
     #     no spurious alias either way), so nothing is lost by using every row.
     #
-    # Centre rows cannot manufacture a false alias: they contribute a matching
-    # 0.0 to every column, so two columns that differ on any other row still
-    # differ, and two that agree everywhere else still agree.
+    # THE COMPARISON SKIPS CENTRE ROWS (when anything else exists). Under the
+    # nominal coding a centre row contributed a matching 0.0 to every column,
+    # so it could never make or break an alias. Under INV-STAT14 the fit is
+    # handed the coded ACTUAL levels, and a choice factor's centre row codes
+    # -1 (the level it ran) -- so on the centre rows a choice main effect
+    # reads -1 where the interaction it is aliased with reads 0. Comparing
+    # every row would then call the pair "distinct" and fit both, separating
+    # them ONLY through the centre replicates: the split would be estimated
+    # from the centre-vs-corner contrast, which is exactly what curvature
+    # also moves, and the confounding the fraction cannot resolve would be
+    # reported as resolved. Aliasing is a property of the factorial and
+    # axial part of the design; centre rows are there for pure error.
+    akeys = alias_rows(pts)
     alias_classes: dict[str, tuple[tuple[tuple[str, ...], float], ...]] = {}
     if include_interactions and k >= 2:
         seen: dict[tuple[float, ...], int] = {}
         for j2, fid in enumerate(ids):          # main-effect columns already added
-            seen.setdefault(tuple(p.coded[j2] for p in pts), 1 + j2)
+            seen.setdefault(tuple(pts[r].coded[j2] for r in akeys), 1 + j2)
         for i, j in itertools.combinations(range(k), 2):
             col = [p.coded[i] * p.coded[j] for p in pts]
-            key = tuple(col)
-            neg = tuple(-v for v in col)
+            key = tuple(col[r] for r in akeys)
+            neg = tuple(-v for v in key)
             hit = seen.get(key)
             sign = 1.0
             if hit is None:
@@ -283,10 +269,102 @@ def fit_effects(design: Design, responses, *, factor_ids,
             terms.append((fid, fid))
             cols.append([p.coded[j] ** 2 for p in pts])
 
+    # OMITTED TERMS: higher-order terms the caller has established are not
+    # estimable from these rows (``exclusions.non_estimable_terms``: the
+    # column lies in the span of the intercept and main effects, e.g. ``A^2``
+    # when only two levels of A survived an exclusion). Never a main effect.
+    if omit_terms:
+        omit = {tuple(t) for t in omit_terms}
+        if any(len(t) == 1 for t in omit):
+            raise ValueError(f"omit_terms may not name a main effect: {sorted(omit)}")
+        keep_idx = [i for i, t in enumerate(terms) if t not in omit]
+        n_lin = sum(1 for i in keep_idx if i < quad_start)
+        labels = [labels[i] for i in keep_idx]
+        terms = [terms[i] for i in keep_idx]
+        cols = [cols[i] for i in keep_idx]
+        quad_start = n_lin
+
+    return labels, terms, cols, quad_start, alias_classes
+
+
+def fit_effects(design: Design, responses, *, factor_ids,
+                include_interactions: bool = True,
+                alpha: float = 0.05, omit_terms=()) -> Fit:
+    """Fit main effects (+ 2-factor interactions, + curvature when present)."""
+    ids = tuple(factor_ids)
+    ys = [float(v) for v in responses]
+    if len(ys) != len(design.points):
+        raise ValueError(
+            f"responses length {len(ys)} != design length "
+            f"{len(design.points)}; every planned run needs exactly one "
+            f"response value",
+        )
+
+    # A NaN RESPONSE IS REFUSED HERE, at the module boundary, and not only by the
+    # caller that happens to remember. The normal equations propagate a single NaN
+    # into the intercept and EVERY coefficient -- verified: one NaN among eight
+    # runs turns all six effects and the intercept into NaN -- and the result is
+    # still a structurally valid `Fit`. That is the dangerous part: every
+    # comparison against NaN is False, so an all-NaN surface does not raise, does
+    # not warn, and reads downstream as "no factor is significant", which is a
+    # plausible scientific finding rather than an obvious defect. A campaign can
+    # emit a schema-valid effects.json describing nothing at all.
+    #
+    # `stage_runner` does pre-filter (spec §4 D2: fit on the complete-row subset
+    # and record the exclusions in fit_exclusions.json), and that remains the
+    # right place for the POLICY decision about which rows are admissible --
+    # including the identifiability and rank floors, which need the design.
+    # But D2 was implemented at that one call site, leaving the module itself
+    # willing to return nonsense to any other caller: the harness, a test, a
+    # future stage, or a notebook. Refusing at the boundary makes the invariant
+    # "a returned Fit never contains a NaN coefficient" true of the FUNCTION
+    # rather than of one of its callers.
+    nan_at = [i for i, v in enumerate(ys) if v != v]
+    if nan_at:
+        raise ValueError(
+            f"response(s) at index {nan_at} are NaN. Fitting would return a "
+            f"structurally valid Fit whose intercept and every coefficient are "
+            f"NaN, and because every comparison against NaN is False that result "
+            f"reads as 'no factor is significant' rather than as an error. The "
+            f"caller must decide which rows are admissible and fit on that subset "
+            f"-- see stage_runner's exclusion handling, which drops non-complete "
+            f"rows, enforces the identifiability and rank floors, and records what "
+            f"it dropped in fit_exclusions.json.",
+        )
+
+    labels, terms, cols, quad_start, alias_classes = model_matrix(
+        design, ids, include_interactions=include_interactions,
+        omit_terms=omit_terms,
+    )
+    pts = design.points
+
     coefs = _solve_normal_equations(cols, ys)
 
-    centers = [y for p, y in zip(pts, ys) if p.role == "center"]
-    pe_var, pe_df = pure_error(centers)
+    # Pure error from the centre rows, POOLED WITHIN IDENTICAL COORDINATES.
+    # Pure error is only pure if every row in a group is a replicate of ONE
+    # configuration. Under the nominal coding every centre row was the origin
+    # by construction; under INV-STAT14 the coordinates are the coded actual
+    # levels, so this is checked rather than assumed. Every design this kind
+    # generates still yields one group (``_decode_level`` runs every centre at
+    # the same levels -- numerics at mid, choices at their first level), so
+    # the pooled estimate is exactly the plain sample variance there; a
+    # hand-built or recoded design whose centres differ gets the textbook
+    # pooled within-group estimate instead of a variance that would silently
+    # include a factor effect.
+    groups: dict[tuple[float, ...], list[float]] = {}
+    for p, y in zip(pts, ys):
+        if p.role == "center":
+            groups.setdefault(tuple(p.coded), []).append(y)
+    if len(groups) <= 1:
+        pe_var, pe_df = pure_error(next(iter(groups.values()), []))
+    else:
+        ss_g = df_g = 0
+        for g in groups.values():
+            if len(g) >= 2:
+                v, d = pure_error(g)
+                ss_g += v * d
+                df_g += d
+        pe_var, pe_df = (ss_g / df_g, df_g) if df_g else (None, 0)
 
     n = len(pts)
     tcrit = None
