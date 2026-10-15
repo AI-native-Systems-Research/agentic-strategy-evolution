@@ -166,13 +166,11 @@ def recover_result(campaign: dict, work_dir: Path, result_path: Path, *, arm_key
     score = float(best["score"])
     need = _needs_score(result, campaign)
     why = "the session ended without recording a score."
-    if not need and stale_before is not None:
-        try:
-            old = result_path.stat().st_mtime < stale_before
-        except OSError:
-            old = True
-        need = old and score > arm_score(result, campaign)
-        why = "the winner session measured a better version than its result file records."
+    if not need and score > (arm_score(result, campaign) or 0.0):
+        # The judge's record wins over the agent's notes. Live p181: an arm scored 49.55 officially but
+        # its result.json still said 12.46, so the wrong arm won the screening.
+        need = True
+        why = "an official measure in this arm's sessions beat the score its result file records."
     if not need:
         return best
     code_note = _write_best_code(campaign, best, worktree, patch, base, extras, save_worktree_diff)

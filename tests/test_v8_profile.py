@@ -1262,6 +1262,26 @@ class TestResultsCannotBeLost:
         assert "repair:h-main" in fake.names()
         assert seen["result"]["metrics"]["score"] == 0 and seen["result"]["validity_check"]["passed"] is None
 
+    def test_an_arm_that_reports_less_than_it_measured_still_wins(self, tmp_path, monkeypatch):
+        j, script, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch,
+                                                                   {"h-main": 12, "h-alternative-1": 12})
+        orig = fake._arm
+        seen = {}
+
+        def arm(key, prompt, cwd):
+            if key != "h-alternative-1":
+                return orig(key, prompt, cwd)
+            (cwd / "solution.py").write_text("v = 49\n")
+            seen["official"] = _measure_in_session(script, cwd)  # live p181: officially 49.55 ...
+            fake._result(key, 12)             # ... but its result file still said 12.46
+            return SDKResult(text="done", output_tokens=1000, session_id="sess-alt")
+        fake._arm = arm
+        _execute(repo, work, it, campaign, d)
+        state = json.loads((it / "arms" / "state.json").read_text())
+        assert state["winner"]["key"] == "h-alternative-1"
+        r = json.loads((it / "arms" / "h-alternative-1" / "result.json").read_text())
+        assert r["metrics"]["score"] >= seen["official"] > 12  # (the winner session may improve it further)
+
     def test_capped_winner_keeps_its_best_measured_code(self, tmp_path, monkeypatch):
         j, script, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
 
