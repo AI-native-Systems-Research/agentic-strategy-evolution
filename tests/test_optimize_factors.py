@@ -225,3 +225,51 @@ def test_decoded_levels_render_as_integers_for_an_integral_grid():
             f"coded={coded} produced {value!r}; a float renders as "
             f"'--flag=160.0', which many targets reject"
         )
+
+
+# ── integral points of an all-integer factor render as integers ─────────────
+#
+# Found by a real end-to-end campaign: levels [8, 20, 32] with no `grid` put the
+# generated centre point on the command line as `--batch-size=20.0`, which an
+# argparse `type=int` target rejects. The same trap failed 16 of 80 refine runs
+# on an earlier live target. An all-integer level list says what the knob takes.
+
+from hypothesis import given, strategies as st  # noqa: E402
+
+from orchestrator.optimize.matrix import render_apply  # noqa: E402
+
+
+def _int_factor(levels, **over):
+    raw = _numeric_raw(levels=list(levels), **over)
+    raw.pop("grid", None)
+    raw.update(over)
+    return parse_factors([raw])[0]
+
+
+def test_the_centre_of_an_all_integer_factor_renders_as_an_integer_flag():
+    f = _int_factor([8, 20, 32], apply="--batch-size={level}")
+    centre = decode_coded(f, 0.0)
+    assert centre == 20 and isinstance(centre, int)
+    assert render_apply([f], {f.id: centre})["cli_args"] == ["--batch-size=20"]
+
+
+@given(lo=st.integers(-50, 50), span=st.integers(2, 100),
+       coded=st.floats(-2.0, 2.0, allow_nan=False))
+def test_an_integral_decoded_value_of_an_integer_factor_is_an_int(lo, span, coded):
+    f = _int_factor([lo, lo + span])
+    v = decode_coded(f, coded)
+    if float(v).is_integer():
+        assert isinstance(v, int), f"{v!r} is integral but rendered as {type(v).__name__}"
+
+
+def test_a_fractional_point_of_an_integer_factor_is_left_alone_without_a_grid():
+    # Without `grid`, Nous does not decide the knob is integer-only: a threshold
+    # declared [2, 4] may legitimately run at 3.5. The validator warns instead.
+    f = _int_factor([2, 4])
+    assert decode_coded(f, 0.5) == 3.5
+
+
+def test_a_float_level_list_keeps_float_points():
+    f = _int_factor([0.5, 1.5])
+    v = decode_coded(f, 0.0)
+    assert v == 1.0 and isinstance(v, float)

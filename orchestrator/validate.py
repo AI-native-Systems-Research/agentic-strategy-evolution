@@ -1799,12 +1799,43 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule21_concurrency_declaration(opt))
     errors.extend(_rule22_completion_budgets(opt, factors))
     errors.extend(_rule23_commands_are_argv_not_shell(opt))
+    errors.extend(_rule24_integer_levels_without_grid(factors))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
     # locked_observables keys, and a WARN naming every unenforceable lock.
     from orchestrator.optimize.locked import validation_findings as _locked_rules
     errors.extend(_locked_rules(campaign))
     return errors
+
+
+def _rule24_integer_levels_without_grid(factors: list[dict]) -> list[str]:
+    """Rule 24 (WARNING): an all-integer refinable factor with no ``grid``.
+
+    ``refine`` places interior and axial points by interpolation, so a factor
+    declared ``[8, 20, 32]`` can be asked to run at 23.4. Whole numbers already
+    render as integers (``factors._integral_as_int``), but a fractional point
+    still reaches the command line as a float, and an integer-only target
+    rejects it as a usage error -- one failed row per such point, discovered
+    mid-epoch. Nous cannot know whether the knob accepts fractions (a threshold
+    may), so this warns rather than guessing; ``grid: 1`` is the declaration
+    that settles it.
+    """
+    warnings: list[str] = []
+    for f in factors:
+        levels = f.get("levels") or []
+        if (f.get("type") != "numeric" or f.get("grid") is not None
+                or len(levels) <= 2):
+            continue
+        if all(isinstance(lv, int) and not isinstance(lv, bool) for lv in levels):
+            warnings.append(
+                f"WARN: factor {f.get('id')!r} declares only integer levels "
+                f"{levels} and no grid, so refine can run it at a fractional "
+                f"value (e.g. {(levels[0] + levels[1]) / 2 + 0.4:g}), which an "
+                f"integer-only target rejects as a usage error. Add `grid: 1` "
+                f"if the knob takes integers; leave it out only if fractional "
+                f"values are genuinely runnable.",
+            )
+    return warnings
 
 
 def _rule21_concurrency_declaration(opt: dict) -> list[str]:

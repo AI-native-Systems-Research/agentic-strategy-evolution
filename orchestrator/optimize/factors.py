@@ -238,7 +238,28 @@ def decode_coded(f: Factor, coded: float) -> Any:
     hi_bound = max(float(low), float(high))
     clamped = min(max(float(value), lo_bound), hi_bound)
     if clamped != float(value):
-        return snap_to_grid(clamped, f.grid)
+        value = snap_to_grid(clamped, f.grid)
+    return _integral_as_int(f, value)
+
+
+def _integral_as_int(f: Factor, value: Any) -> Any:
+    """An integral point of an all-integer factor is an ``int``, not ``20.0``.
+
+    The value is rendered straight onto the target's command line, and
+    ``decode_coded``'s float arithmetic turned the centre of ``[8, 20, 32]`` into
+    ``--batch-size=20.0`` -- which an integer-parsing target rejects as a usage
+    error. Observed on a live target (16 of 80 refine runs failed) and again on
+    the first end-to-end run of this kind. An all-integer level list is the
+    author's statement of what the knob takes, so a whole number keeps that
+    type. A FRACTIONAL point is left as-is: without ``grid`` Nous does not
+    decide the knob is integer-only (a threshold declared ``[2, 4]`` may run
+    at 3.5); ``validate`` warns about that case instead of guessing.
+    """
+    integer_levels = all(
+        isinstance(lv, int) and not isinstance(lv, bool) for lv in f.levels
+    )
+    if integer_levels and float(value).is_integer():
+        return int(value)
     return value
 
 

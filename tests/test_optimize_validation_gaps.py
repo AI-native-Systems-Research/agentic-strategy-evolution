@@ -778,3 +778,39 @@ def test_liveness_still_measures_the_effect_of_a_self_contradicting_level(
     assert not any("could not be run" in i for i in issues), issues
     # The effect line is still printed for P: both levels were measured.
     assert "P " in capsys.readouterr().out
+
+
+# ───── rule 24: all-integer refinable levels with no grid (WARNING) ─────
+
+
+def _rule24_findings(levels, **extra) -> list[str]:
+    from orchestrator.validate import validate_optimization_campaign
+
+    f = {"id": "BS", "name": "batch_size", "type": "numeric",
+         "levels": levels, "apply": "--batch-size={level}",
+         "manipulation": {"observable": "cfg.batch_size", "op": "==",
+                          "value": "{level}"},
+         "relations": _relations("BS"), **extra}
+    campaign = {
+        "kind": "optimization", "run_id": "r24", "research_question": "q",
+        "target_system": {"name": "T", "repo_path": "/tmp"},
+        "optimization": {"response": {"primary": {"metric": "m",
+                                                  "direction": "maximize"}},
+                         "factors": [f], "design": {"screen": {"resolution": 3}}},
+    }
+    return [m for m in validate_optimization_campaign(campaign)
+            if "declares only integer levels" in m]
+
+
+def test_rule24_warns_on_integer_levels_without_grid():
+    (msg,) = _rule24_findings([8, 20, 32])
+    assert msg.startswith("WARN:") and "grid: 1" in msg and "'BS'" in msg
+
+
+@pytest.mark.parametrize("levels,extra", [
+    ([8, 20, 32], {"grid": 1}),       # the author settled it
+    ([8, 32], {}),                    # two levels: never interpolated
+    ([0.5, 1.0, 1.5], {}),            # fractional values are runnable
+])
+def test_rule24_is_silent_when_the_question_is_already_settled(levels, extra):
+    assert _rule24_findings(levels, **extra) == []
