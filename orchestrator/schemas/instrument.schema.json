@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["max_cpu_s", "time_limit_s", "speed_first", "noise"],
   "properties": {
-    "max_cpu_s": {"type": "number", "minimum": 0, "description": "Max CPU seconds of the current solution on the largest allowed inputs."},
+    "max_cpu_s": {"type": ["number", "null"], "minimum": 0, "description": "Max CPU seconds of the current solution on the largest allowed inputs; null when not measured locally (v8 writes the file from official measures only)."},
     "time_limit_s": {"type": ["number", "null"], "exclusiveMinimum": 0, "description": "Time limit from the statement; null when the statement gives none."},
     "time_limit_source": {"type": "string"},
     "speed_first": {"type": "boolean", "description": "max_cpu_s is over 50% of time_limit_s: fix speed before tuning."},

@@ -493,6 +493,7 @@ def _validate_alternative_arms(arms: list) -> list[str]:
 
 
 V7_MAX_ALTERNATIVES = 2
+V8_MAX_ALTERNATIVES = 1
 
 
 def _normalize_v7_bundle(bundle_path: Path, campaign: dict | None) -> None:
@@ -532,7 +533,11 @@ def _validate_v7_bundle(bundle: dict, campaign: dict | None) -> list[str]:
         if arm.get("type") in ("h-main", "h-alternative") and not str(arm.get("validity_check") or "").strip():
             errors.append(f"arms[{i}] ({arm.get('type')}) needs a validity_check (v7)")
     n_alt = sum(1 for a in arms if a.get("type") == "h-alternative")
-    if n_alt > V7_MAX_ALTERNATIVES:
+    if campaign.get("design_profile") == "v8":
+        if n_alt > V8_MAX_ALTERNATIVES:
+            errors.append(f"v8 allows at most {V8_MAX_ALTERNATIVES} h-alternative arm (got {n_alt}); keep the "
+                          "family you expect to win as h-main and the best competitor as the h-alternative")
+    elif n_alt > V7_MAX_ALTERNATIVES:
         errors.append(f"v7 allows at most {V7_MAX_ALTERNATIVES} h-alternative arms (got {n_alt})")
     if n_alt == 0 and not str(bundle.get("single_family_reason") or "").strip():
         errors.append("v7 bundle has no h-alternative arm: add one or set single_family_reason")

@@ -2,8 +2,9 @@
 
 Differences from v7 (``orchestrator.v7_execute``, whose helpers this module reuses):
 
-1. The evaluator session first gets an official score: when the seed scores 0 it writes the simplest
+1. The evaluator session only gets an official score: when the seed scores 0 it writes the simplest
    valid solution (``patches/baseline.patch``), which is committed to the target so arms start from it.
+   The orchestrator then measures that baseline officially 3 times and writes ``instrument.json``.
 2. Screening sessions keep their worktree and session id. An arm that crashed, failed its validity
    check, or scored 0 gets one small repair turn in the same session before it is ranked.
 3. The winner continues in its own session (resumed by id, same worktree) with the rest of the
@@ -15,6 +16,11 @@ Differences from v7 (``orchestrator.v7_execute``, whose helpers this module reus
    When the incumbent arm left a ``next_step``, the orchestrator writes that bundle without a design call.
 6. Any exception in a session marks it failed instead of stopping the campaign; a hung session (no
    reply while only API errors arrive) restarts once in a fresh worktree from its last saved patch.
+7. Bundles have ``h-main`` and at most one ``h-alternative``; every screening target is at least
+   ``v8.arm_floor_usd``, and an arm the iteration cannot fund at that floor is skipped, not starved.
+8. A session that ends without a scored ``result.json`` gets one written by the orchestrator from the
+   official measures in its time window, with the best measured solution as its patch
+   (``orchestrator.official_measure``). The repair turn runs only when no official score > 0 exists.
 
 Every v8 session sees the judge profile (``orchestrator.judge_profile``).
 """
@@ -23,18 +29,20 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import time
 from pathlib import Path
 
 import yaml
 
 from orchestrator.design_profile import EVALUATOR_DIR, V7Settings, V8Settings, is_v8, v7_settings, v8_settings
-from orchestrator.instrument import add_to_handoff, check_instrument
+from orchestrator.instrument import INSTRUMENT_FILE, add_to_handoff, check_instrument
 from orchestrator.judge_profile import (
-    SUMMARY_FILE, best_official, judge_summary, local_log_path, noise_spread, watch_session,
+    SUMMARY_FILE, best_official, judge_summary, local_log_path, noise_spread, stated_time_limit, watch_session,
 )
+from orchestrator.official_measure import measure_command, recover_result, run_measure
 from orchestrator.util import atomic_write
 from orchestrator.v7_execute import (
-    ARMS_DIR, ASSUMED_ARMS, EVALUATOR_KEY, MIN_SESSION_USD, STATE_FILE, _arm_entry, _git, _load_bundle,
+    ARMS_DIR, EVALUATOR_KEY, MIN_SESSION_USD, STATE_FILE, _arm_entry, _git, _load_bundle,
     _load_json, _passed, _save_state, _valid, arm_score, fill_missing_artifacts, iteration_spent,
     mark_iteration_start, mechanism_arms, pick_winner, record_screened_arms, save_worktree_diff,
     session_context,
@@ -43,8 +51,10 @@ from orchestrator.v7_execute import (
 logger = logging.getLogger(__name__)
 
 BASELINE_PATCH = "baseline.patch"
-V8_EVALUATOR_MIN_USD = 3.0
 MAX_HANG_RESTARTS = 1
+NOISE_RUNS = 3  # official measures of the baseline that the orchestrator takes for instrument.json
+MAX_NOISE_ATTEMPTS = NOISE_RUNS + 2
+SKIPPED = "skipped"
 WINNER_LABEL = "winner"
 EXPLOIT, EXPLORE = "exploit", "explore"
 
@@ -57,8 +67,14 @@ def winner_reserve(s: V7Settings, s8: V8Settings) -> float:
 
 
 def v8_screening_cap(s: V7Settings, s8: V8Settings, remaining: float, sessions_left: int) -> float:
+    """Target for the next screening session: its share above the winner's reserve, never below the floor."""
     share = (remaining - winner_reserve(s, s8)) / max(1, sessions_left)
-    return round(max(MIN_SESSION_USD, min(s.arm_budget_usd, share)), 2)
+    return round(max(MIN_SESSION_USD, s8.arm_floor_usd, min(s.arm_budget_usd, share)), 2)
+
+
+def arm_funded(s: V7Settings, s8: V8Settings, remaining: float) -> bool:
+    """True when what is left above the winner's reserve still funds one arm at the floor."""
+    return remaining - winner_reserve(s, s8) >= s8.arm_floor_usd - 1e-9
 
 
 # ─── best judged score and the exploit / explore decision ────────────────────────────────────
@@ -80,6 +96,21 @@ def _state(iter_dir: Path) -> dict:
     state = _load_json(Path(iter_dir) / ARMS_DIR / STATE_FILE, {})
     state.setdefault("sessions", {})
     return state
+
+
+def close_open_windows(state: dict, now: float | None = None) -> bool:
+    """End the time windows a killed run left open, so later measures are not credited to that session.
+
+    Sessions run one at a time, so nothing ran between the kill and this resume.
+    """
+    now = time.time() if now is None else now
+    changed = False
+    for rec in state.get("sessions", {}).values():
+        for w in (rec or {}).get("windows") or []:
+            if isinstance(w, dict) and w.get("end") is None:
+                w["end"], w["closed_on_resume"] = now, True
+                changed = True
+    return changed
 
 
 def _iter_dir(work_dir: Path, iteration: int) -> Path:
@@ -197,9 +228,14 @@ def _notes(state: dict) -> dict:
 
 def screening_lines(campaign: dict, iter_dir: Path) -> str:
     adir = Path(iter_dir) / ARMS_DIR
+    sessions = _state(iter_dir)["sessions"]
     lines = ["Screening results:"]
     for key, arm in mechanism_arms(_load_bundle(iter_dir)):
         r = _load_json(adir / key / "result.json", None)
+        if (sessions.get(key) or {}).get("outcome") == SKIPPED:
+            lines.append(f"- `{key}` ({arm.get('mechanism_family', '?')}): skipped, "
+                         f"{sessions[key].get('skip_reason') or 'not funded'}")
+            continue
         if r is None:
             lines.append(f"- `{key}` ({arm.get('mechanism_family', '?')}): no result file")
             continue
@@ -289,11 +325,20 @@ def _dispatch(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, iterat
         if left < MIN_SESSION_USD and restarts:
             return "failed"
         dispatcher.last_session_id = None
+        # The session's time window: official measures inside it belong to this arm (result recovery).
+        window = {"label": label, "start": time.time(), "end": None}
+        rec.setdefault("windows", []).append(window)
+        _save_state(adir, state)
         try:
-            with watch_session(campaign, work_dir, label), dispatcher.override_cwd(wt), \
-                    dispatcher.session_budget(left, label=label, target_usd=min(target, left)), \
-                    dispatcher.resume_session(resume):
-                dispatcher.dispatch("executor", phase, output_path=log, iteration=iteration, perspective=key)
+            try:
+                with watch_session(campaign, work_dir, label), dispatcher.override_cwd(wt), \
+                        dispatcher.session_budget(left, label=label, target_usd=min(target, left)), \
+                        dispatcher.resume_session(resume):
+                    dispatcher.dispatch("executor", phase, output_path=log, iteration=iteration,
+                                        perspective=key)
+            finally:
+                window["end"] = time.time()
+                _save_state(adir, state)
             if dispatcher.last_session_id:
                 rec["session_id"] = dispatcher.last_session_id
             _notes(state).pop(key, None)
@@ -337,6 +382,8 @@ def _start_session(repo: Path, iteration: int, state: dict, key: str, cap: float
     wt, eid = create_experiment_worktree(repo, iteration, extras=extras or [])
     state["sessions"][key] = {"status": "running", "experiment_id": eid, "budget_usd": cap,
                               "base": _git(wt, "rev-parse", "HEAD").stdout.strip()}
+    if rec.get("windows"):  # an interrupted attempt's official measures still count for this arm
+        state["sessions"][key]["windows"] = rec["windows"]
     return wt
 
 
@@ -358,23 +405,95 @@ def commit_baseline(repo: Path, patch: Path, state: dict) -> bool:
     return ok
 
 
-def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, cap, extras) -> None:
+def _write_evaluator_readme(campaign: dict, work_dir: Path, runs: list[float]) -> None:
+    """A short evaluator README when the session left none, so later iterations do not rebuild it."""
+    readme = Path(work_dir) / EVALUATOR_DIR / "README.md"
+    if readme.is_file() and readme.read_text().strip():
+        return
+    limit = stated_time_limit(campaign)
+    lines = ["# Evaluator (v8, written by the orchestrator)", "",
+             "No local evaluator was kept. Decide on the official measure command:", "",
+             f"`{measure_command(campaign) or '(none found in the campaign)'}`", "",
+             f"Time limit from the statement: {f'{limit:g} s' if limit else 'none given'}."]
+    if runs:
+        lines += ["", f"Baseline (what every arm starts from), {len(runs)} official measures: "
+                      + ", ".join(f"{r:g}" for r in runs) + "."]
+    else:
+        lines += ["", "The orchestrator could not measure the baseline officially."]
+    readme.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(readme, "\n".join(lines) + "\n")
+
+
+def write_orchestrator_instrument(campaign: dict, work_dir: Path, iter_dir: Path, iteration: int, repo: Path,
+                                  state: dict, extras) -> str:
+    """Measure the committed baseline officially ``NOISE_RUNS`` times and write ``instrument.json``.
+
+    Zero LLM tokens. Each measure is saved in the state as it finishes, so a crash resumes the count.
+    """
+    from orchestrator.worktree import create_experiment_worktree, remove_experiment_worktree
+    adir = Path(iter_dir) / ARMS_DIR
+    rec = state["sessions"][EVALUATOR_KEY]
+    runs = [float(r) for r in rec.get("noise_runs") or []]
+    cmd = measure_command(campaign)
+    if cmd and len(runs) < NOISE_RUNS and int(rec.get("measure_attempts") or 0) < MAX_NOISE_ATTEMPTS:
+        wt, eid = create_experiment_worktree(repo, iteration, extras=extras or [])
+        print(f"  v8 orchestrator: {NOISE_RUNS} official measures of the baseline (no LLM)")
+        try:
+            while len(runs) < NOISE_RUNS and int(rec.get("measure_attempts") or 0) < MAX_NOISE_ATTEMPTS:
+                score = run_measure(campaign, wt)
+                rec["measure_attempts"] = int(rec.get("measure_attempts") or 0) + 1
+                if score is not None:
+                    runs.append(score)
+                    rec["noise_runs"] = runs
+                _save_state(adir, state)
+        finally:
+            remove_experiment_worktree(repo, eid)
+    _write_evaluator_readme(campaign, work_dir, runs)
+    if not cmd:
+        logger.warning("v8: no official measure command in the campaign; instrument.json not written")
+        return "missing: no official measure command"
+    if len(runs) < NOISE_RUNS:
+        logger.warning("v8: only %d of %d official baseline measures returned a score", len(runs), NOISE_RUNS)
+        return f"missing: {len(runs)} of {NOISE_RUNS} official measures returned a score"
+    limit = stated_time_limit(campaign)
+    data = {"max_cpu_s": None, "time_limit_s": limit,
+            "time_limit_source": "statement" if limit else "none in the statement",
+            "speed_first": False,
+            "noise": {"runs": runs, "min": min(runs), "max": max(runs), "spread": round(max(runs) - min(runs), 6),
+                      "command": cmd},
+            "knobs": [], "written_by": "orchestrator"}
+    atomic_write(Path(iter_dir) / INSTRUMENT_FILE, json.dumps(data, indent=2) + "\n")
+    print(f"  v8 orchestrator: baseline official scores {', '.join(f'{r:g}' for r in runs)}")
+    return check_instrument(iter_dir)
+
+
+def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, extras) -> None:
+    """Evaluator session (official score and baseline only), then the orchestrator's instrument checks.
+
+    State ``running`` -> ``measuring`` (session over, baseline committed) -> ``done``; a crash while
+    measuring resumes the measures without another session.
+    """
     from orchestrator.worktree import remove_experiment_worktree
     adir = Path(iter_dir) / ARMS_DIR
-    cap = max(cap, V8_EVALUATOR_MIN_USD)  # v7 evaluators really cost $2.7-4.7 on the ruler
-    _start_session(repo, iteration, state, EVALUATOR_KEY, cap, extras)
-    _save_state(adir, state)
-    hard = round(cap * 2.0, 2)
-    print(f"  v8 build-evaluator (target ${cap:.2f}, hard cap ${hard:.2f})")
     patch = Path(iter_dir) / "patches" / BASELINE_PATCH
-    outcome = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, EVALUATOR_KEY,
-                        "build-evaluator-v8", label=EVALUATOR_KEY, target=cap, hard=hard, resume=None,
-                        extras=extras, patch=patch)
-    rec = state["sessions"][EVALUATOR_KEY]
-    remove_experiment_worktree(repo, rec["experiment_id"])
-    state["sessions"][EVALUATOR_KEY] = {"status": "done", "outcome": outcome, "budget_usd": cap,
-                                        "instrument": check_instrument(iter_dir)}
-    commit_baseline(repo, patch, state)
+    rec = state["sessions"].get(EVALUATOR_KEY) or {}
+    if rec.get("status") != "measuring":
+        cap = v8_settings(campaign).evaluator_budget_usd
+        _start_session(repo, iteration, state, EVALUATOR_KEY, cap, extras)
+        _save_state(adir, state)
+        hard = round(cap * 2.0, 2)
+        print(f"  v8 build-evaluator (target ${cap:.2f}, hard cap ${hard:.2f})")
+        outcome = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, EVALUATOR_KEY,
+                            "build-evaluator-v8", label=EVALUATOR_KEY, target=cap, hard=hard, resume=None,
+                            extras=extras, patch=patch)
+        rec = state["sessions"][EVALUATOR_KEY]
+        remove_experiment_worktree(repo, rec["experiment_id"])
+        commit_baseline(repo, patch, state)
+        state["sessions"][EVALUATOR_KEY] = {"status": "measuring", "outcome": outcome, "budget_usd": cap,
+                                            "noise_runs": []}
+        _save_state(adir, state)
+    instrument = write_orchestrator_instrument(campaign, work_dir, iter_dir, iteration, repo, state, extras)
+    state["sessions"][EVALUATOR_KEY].update({"status": "done", "instrument": instrument})
     _save_state(adir, state)
     add_to_handoff(campaign, work_dir, iter_dir, iteration)
 
@@ -386,36 +505,67 @@ def run_v8_evaluator(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path,
     work_dir, iter_dir = Path(work_dir), Path(iter_dir)
     if not evaluator_before_design(campaign, work_dir, iter_dir):
         return
-    s, s8 = v7_settings(campaign), v8_settings(campaign)
     (iter_dir / ARMS_DIR).mkdir(parents=True, exist_ok=True)
     (iter_dir / "patches").mkdir(parents=True, exist_ok=True)
     mark_iteration_start(campaign, work_dir, iter_dir)
     state = _state(iter_dir)
-    left = s.iteration_budget_usd - iteration_spent(campaign, work_dir, iter_dir) - s.design_budget_usd
-    cap = v8_screening_cap(s, s8, left, 1 + ASSUMED_ARMS)
-    _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, Path(repo_path), state, cap, extras)
+    _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, Path(repo_path), state, extras)
+
+
+def _worktree(repo: Path, rec: dict) -> Path | None:
+    from orchestrator.worktree import _EXPERIMENTS_DIRNAME
+    return Path(repo) / _EXPERIMENTS_DIRNAME / rec["experiment_id"] if rec.get("experiment_id") else None
+
+
+def _recover(campaign, work_dir, iter_dir, repo, state, key, extras, *, stale_before=None) -> float | None:
+    """Rebuild a missing or unscored result (and patch) from official measures; the best score or None."""
+    rec = state["sessions"].get(key) or {}
+    iter_dir = Path(iter_dir)
+    try:
+        best = recover_result(
+            campaign, work_dir, iter_dir / ARMS_DIR / key / "result.json", arm_key=key,
+            arm=dict(mechanism_arms(_load_bundle(iter_dir))).get(key, {}), windows=rec.get("windows"),
+            worktree=_worktree(repo, rec), patch=iter_dir / "patches" / f"{key}.patch", base=rec.get("base"),
+            extras=extras, stale_before=stale_before)
+    except Exception as exc:  # noqa: BLE001 - recovery must never stop the campaign
+        logger.warning("v8: could not rebuild the result of %s from official measures: %s", key, exc)
+        return None
+    if best is None:
+        return None
+    rec["best_official"] = float(best["score"])
+    _save_state(iter_dir / ARMS_DIR, state)
+    return float(best["score"])
 
 
 def _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key, cap, extras,
             remaining) -> None:
-    """Screen one arm in a fresh worktree (kept for the winner), then its one repair turn if needed."""
+    """Screen one arm in a fresh worktree (kept for the winner), then its one repair turn if needed.
+
+    State ``running`` -> ``ended`` (session over, patch saved) -> ``done``; a crash after the session
+    resumes at the result recovery instead of screening again.
+    """
     adir = Path(iter_dir) / ARMS_DIR
-    s8 = v8_settings(campaign)
-    _start_session(repo, iteration, state, key, cap, extras)
-    _save_state(adir, state)
-    # The hard stop may exceed the target, but never into the winner's reserve.
-    hard = round(max(cap, min(cap * 2.0, remaining() - winner_reserve(v7_settings(campaign), s8))), 2)
+    s, s8 = v7_settings(campaign), v8_settings(campaign)
     patch = Path(iter_dir) / "patches" / f"{key}.patch"
-    print(f"  v8 execute-arm `{key}` (target ${cap:.2f}, hard cap ${hard:.2f})")
-    outcome = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key, "execute-arm-v8",
-                        label=key, target=cap, hard=hard, resume=None, extras=extras, patch=patch)
+    if (state["sessions"].get(key) or {}).get("status") != "ended":
+        _start_session(repo, iteration, state, key, cap, extras)
+        _save_state(adir, state)
+        # The hard stop may exceed the target, but never into the winner's reserve.
+        hard = round(max(cap, min(cap * 2.0, remaining() - winner_reserve(s, s8))), 2)
+        print(f"  v8 execute-arm `{key}` (target ${cap:.2f}, hard cap ${hard:.2f})")
+        outcome = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key,
+                            "execute-arm-v8", label=key, target=cap, hard=hard, resume=None, extras=extras,
+                            patch=patch)
+        rec = state["sessions"][key]
+        _ensure_patch(_worktree(repo, rec), patch, rec.get("base") or "HEAD", extras)
+        rec.update({"outcome": outcome, "status": "ended"})
+        _save_state(adir, state)
     rec = state["sessions"][key]
-    from orchestrator.worktree import _EXPERIMENTS_DIRNAME
-    wt = Path(repo) / _EXPERIMENTS_DIRNAME / rec["experiment_id"]
-    _ensure_patch(wt, patch, rec.get("base") or "HEAD", extras)
-    rec["outcome"] = outcome
-    reason = _repair_reason(outcome, _load_json(adir / key / "result.json", None), campaign)
-    s = v7_settings(campaign)
+    best = _recover(campaign, work_dir, iter_dir, repo, state, key, extras)
+    reason = _repair_reason(rec.get("outcome") or "failed", _load_json(adir / key / "result.json", None), campaign)
+    if reason and best is not None and best > 0:
+        logger.info("v8: %s needs no repair: an official measure scored %s", key, best)
+        reason = None
     if reason and not rec.get("repaired") and s8.repair_budget_usd > 0 \
             and remaining() - s8.repair_budget_usd >= winner_reserve(s, s8):
         rec.update({"repaired": True, "repair_reason": reason})
@@ -425,8 +575,9 @@ def _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, ke
             dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key, "repair-arm",
             label=f"{key}-repair", target=s8.repair_budget_usd, hard=s8.repair_budget_usd,
             resume=rec.get("session_id"), extras=extras, patch=patch)
-        wt = Path(repo) / _EXPERIMENTS_DIRNAME / rec["experiment_id"]
-        _ensure_patch(wt, patch, rec.get("base") or "HEAD", extras)
+        rec = state["sessions"][key]
+        _ensure_patch(_worktree(repo, rec), patch, rec.get("base") or "HEAD", extras)
+        _recover(campaign, work_dir, iter_dir, repo, state, key, extras)
     rec["status"] = "done"
     _save_state(adir, state)
 
@@ -500,6 +651,8 @@ def run_v8_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
     (iter_dir / "patches").mkdir(parents=True, exist_ok=True)
     mark_iteration_start(campaign, work_dir, iter_dir)
     state = _state(iter_dir)
+    if close_open_windows(state):
+        _save_state(adir, state)
     arms = mechanism_arms(_load_bundle(iter_dir))
     if not arms:
         raise RuntimeError(f"v8 EXECUTE: {iter_dir / 'bundle.yaml'} has no h-main or h-alternative arm")
@@ -512,14 +665,27 @@ def run_v8_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
 
     add_to_handoff(campaign, work_dir, iter_dir, iteration)  # the designer rewrote the handoff
     ev = state["sessions"].get(EVALUATOR_KEY) or {}
-    need_eval = ev.get("status") != "done" and (ev.get("status") == "running"
+    need_eval = ev.get("status") != "done" and (ev.get("status") in ("running", "measuring")
                                                 or not (work_dir / EVALUATOR_DIR / "README.md").is_file())
     todo = [k for k, _ in arms if (state["sessions"].get(k) or {}).get("status") != "done"]
     if need_eval:
-        cap = v8_screening_cap(s, s8, remaining(), len(todo) + 1)
-        _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, cap, extras)
+        _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, extras)
     for key, _arm in arms:
-        if (state["sessions"].get(key) or {}).get("status") == "done":
+        rec = state["sessions"].get(key) or {}
+        if rec.get("status") == "done":
+            continue
+        screened = any((state["sessions"].get(k) or {}).get("status") == "done"
+                       and (state["sessions"].get(k) or {}).get("outcome") != SKIPPED for k, _ in arms)
+        # The first arm always runs; a later one is skipped when the floor no longer fits above the reserve.
+        if not rec.get("status") and screened and not arm_funded(s, s8, remaining()):
+            left = round(remaining(), 2)
+            state["sessions"][key] = {
+                "status": "done", "outcome": SKIPPED,
+                "skip_reason": (f"${left:.2f} was left in the iteration, below the ${s8.arm_floor_usd:.2f} arm "
+                                f"floor on top of the ${winner_reserve(s, s8):.2f} winner reserve")}
+            _save_state(adir, state)
+            print(f"  v8 skip `{key}`: {state['sessions'][key]['skip_reason']}")
+            todo.remove(key)
             continue
         cap = v8_screening_cap(s, s8, remaining(), len(todo))
         todo.remove(key)
@@ -575,6 +741,10 @@ def run_v8_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
             wt = repo / _EXPERIMENTS_DIRNAME / eid
             (iter_dir / ".experiment_id").write_text(eid)
             _ensure_patch(wt, patch, rec.get("base") or "HEAD", extras)
+        rec = state["sessions"][key]
+        starts = [w.get("start") for w in rec.get("windows") or [] if w.get("label") == WINNER_LABEL]
+        _recover(campaign, work_dir, iter_dir, repo, state, key, extras,
+                 stale_before=min(starts) if starts else None)
         write_artifacts(campaign, iter_dir, iteration, key)
         final = _load_json(adir / key / "result.json", None)
         scores = [arm_score(r, campaign) for k, r in

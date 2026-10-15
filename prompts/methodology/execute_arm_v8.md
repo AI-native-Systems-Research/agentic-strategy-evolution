@@ -15,8 +15,9 @@ you improve. If this arm wins, you continue in this same session later.
 
 - Problem framing: `{{iter_dir}}/problem.md`. Design handoff: `{{iter_dir}}/handoff_snapshot.md`.
 - Target: {{system_description}}
-- Local evaluator: `{{evaluator_dir}}` (read its README.md). Use it for the validity check and for
-  per-instance, per-size-group measurement; report the score from the official measure command.
+- Local evaluator: `{{evaluator_dir}}` (read its README.md; it says when no local helper exists). Use
+  a helper there for the validity check and per size group measurement; report the score from the
+  official measure command.
 - Earlier iterations: `{{iter_dir}}/../iter-*/` holds every arm's patch (`patches/`), result
   (`arms/*/result.json`) and findings. Read them when useful, for example to reuse working code.
 

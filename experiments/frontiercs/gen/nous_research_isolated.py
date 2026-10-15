@@ -190,6 +190,8 @@ def main():
     allow = [rr(ws), rr(ws.parent/"nous_runs"/run_slug), rr(ws.parent/f"fmeasure_{a.slug}.sh"),
              rr(ws.parent/f"campaign_{a.slug}.yaml"), rr(prof)]
     if official_log is not None: allow.append(rr(official_log.parent) + "/" + official_log.name)
+    # v8: the orchestrator (inside the sandbox) reads this run's own measured solutions to rebuild results
+    if a.design_profile == "v8": allow.append(rr(measured))
     proj_key = re.sub(r"[^A-Za-z0-9]", "-", rr(ws))
     prof.write_text('(version 1)\n(allow default)\n'
                     + "".join(f'(deny file-read* (subpath "{rr(d)}"))\n' for d in deny)
@@ -241,7 +243,8 @@ def main():
     if a.design_profile == "v7" and v7:
         spec["v7"] = v7
     if a.design_profile == "v8":
-        spec["v8"] = {**v7, "official_log": str(official_log)}
+        spec["v8"] = {**v7, "official_log": str(official_log), "measured_archive": str(measured),
+                      "measure_command": f"bash {fm} $PWD/{sol_name(pid)}"}
     camp = ws.parent/f"campaign_{a.slug}.yaml"; camp.write_text(yaml.safe_dump(spec, sort_keys=False))
     env = dict(os.environ); env["NOUS_CAMPAIGN_PARENT"] = str(ws.parent/"nous_runs")
     # agents call `nous validate`; make sure it is this Nous checkout, not another one on PATH

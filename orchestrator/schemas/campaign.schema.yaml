@@ -326,6 +326,18 @@ properties:
       official_log:
         type: string
         description: "JSONL of official measures ({ts, sha256, score}) written by the judge. Default <work_dir>/official_measures.jsonl."
+      measure_command:
+        type: string
+        description: "The sanctioned official measure command, run by the orchestrator in a worktree (prints 'SCORE: <n>'; $PWD is the worktree). Default: the command after 'MEASURE only with this command:' in the target description."
+      measure_timeout_s: { type: number, exclusiveMinimum: 0, description: "Timeout of one orchestrator measure. Default 1500." }
+      measured_archive:
+        type: string
+        description: "Directory where the judge keeps a copy of every measured solution; files are matched to official measures by sha256."
+      solution_file:
+        type: string
+        description: "Solution path relative to a worktree. Default: the $PWD/<file> argument of the measure command."
+      evaluator_budget_usd: { type: number, exclusiveMinimum: 0, description: "Target for the evaluator session (hard stop twice that). Default 2." }
+      arm_floor_usd: { type: number, exclusiveMinimum: 0, description: "Smallest screening target; arms the iteration cannot fund at this floor are skipped. Default 4." }
   sdk_options:
     type: object
     additionalProperties: false

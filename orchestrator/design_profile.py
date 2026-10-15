@@ -126,6 +126,32 @@ V7_ARMS = (
     "evaluator columns (per size group, largest sizes, CPU time). `h-ablation` and `h-super-additivity` only "
     "after a multi-part win (tier 2 or higher).\n"
 )
+# v8: h-main plus at most one h-alternative, so each screened arm gets a real budget.
+V8_ARMS = (
+    "- **Competing mechanisms:** write `h-main` plus at most one `h-alternative` arm from a genuinely "
+    "different algorithm family, both measured against the same incumbent. Every mechanism arm sets "
+    "`mechanism_family`; the `h-alternative` also sets `differs_from_main`, one line on why its family "
+    "differs from `h-main`'s. If the problem allows only one sensible family, use `h-main` alone and say why "
+    "in the bundle's top-level `single_family_reason`. Describe each arm in a few lines: the mechanism, why "
+    "it should beat the incumbent, and its validity check.\n"
+    "- **Validity check:** every mechanism arm sets `validity_check`: a cheap test on a tiny case showing the "
+    "mechanism is correct (for example, the output is feasible), run before the executor builds on it.\n"
+    "- **Arm roles:** `h-main` and `h-alternative` are the only arms with their own executor session: each is "
+    "screened in a fresh session, then the winner continues in its own session. An arm the iteration budget "
+    "cannot fund is skipped, so put the arm you expect to win first, as `h-main`. `h-dose-response` is a "
+    "scripted sweep on the winning arm. `h-robustness` and `h-tradeoff` are not sessions: report them in "
+    "the arm's per size group results. `h-ablation` and `h-super-additivity` only after a multi-part win (tier 2 or "
+    "higher).\n"
+)
+V8_DESIGN_EXTRA = (
+    "- **Target per-instance gaps:** from the second iteration on, pick mechanisms that attack the largest "
+    "loss per instance and size group in the executor's gap analysis (score lost, CPU time against the time "
+    "limit, timeouts), not just the aggregate score.\n"
+    "- **Iteration 1:** name 1-2 algorithm families in a few lines each with a validity check; do not "
+    "derive, prove, or fully specify them; the executor works the details out by building and measuring.\n"
+    "- **Short steps:** write `bundle.yaml` early. Keep each reasoning step short (a few paragraphs). If "
+    "you need more, write code or notes to a file, run them, and continue from the result.\n"
+)
 V7_DESIGN_EXTRA = (
     "- **Target per-instance gaps:** from the second iteration on, pick mechanisms that attack the largest "
     "loss per instance and size group in the executor's gap analysis (score lost, CPU time against the time "
@@ -214,6 +240,8 @@ V8_DEFAULT_REPAIR_BUDGET_USD = 1.0
 V8_DEFAULT_HANG_MINUTES = 15.0
 V8_DEFAULT_ASSUMED_TIME_LIMIT_S = 1.0
 V8_NOISE_UNKNOWN = 0.5  # improvement threshold when the judge's noise is unknown
+V8_DEFAULT_EVALUATOR_BUDGET_USD = 2.0
+V8_DEFAULT_ARM_FLOOR_USD = 4.0
 
 
 @dataclass(frozen=True)
@@ -223,6 +251,8 @@ class V8Settings:
     hang_minutes: float = V8_DEFAULT_HANG_MINUTES
     assumed_time_limit_s: float = V8_DEFAULT_ASSUMED_TIME_LIMIT_S
     official_log: str | None = None  # JSONL of official measures; default <work_dir>/official_measures.jsonl
+    evaluator_budget_usd: float = V8_DEFAULT_EVALUATOR_BUDGET_USD  # target; the hard stop is twice that
+    arm_floor_usd: float = V8_DEFAULT_ARM_FLOOR_USD  # smallest screening target; fewer arms, never starved
 
 
 def v8_settings(campaign: dict) -> V8Settings:
@@ -233,6 +263,8 @@ def v8_settings(campaign: dict) -> V8Settings:
         hang_minutes=float(cfg.get("hang_minutes", V8_DEFAULT_HANG_MINUTES)),
         assumed_time_limit_s=float(cfg.get("assumed_time_limit_s", V8_DEFAULT_ASSUMED_TIME_LIMIT_S)),
         official_log=cfg.get("official_log") or None,
+        evaluator_budget_usd=float(cfg.get("evaluator_budget_usd", V8_DEFAULT_EVALUATOR_BUDGET_USD)),
+        arm_floor_usd=float(cfg.get("arm_floor_usd", V8_DEFAULT_ARM_FLOOR_USD)),
     )
 
 
@@ -363,11 +395,13 @@ def design_guidance(campaign: dict, max_turns: int, mode: str = "real") -> str:
         "- **Do not implement or measure:** do not edit the target or solution files and do not run candidate "
         "solutions. In the first iteration you may run the baseline command once to confirm it works; later, "
         "cite the last measured score from the handoff or executor update as the baseline validation.\n"
-        + (V7_ARMS if profile_for(campaign) in V7_FAMILY else LIGHT_ARMS)
+        + (V8_ARMS if profile_for(campaign) == V8 else V7_ARMS if profile_for(campaign) in V7_FAMILY
+           else LIGHT_ARMS)
         + "- **Seeds:** use a single seed when the measurement is deterministic.\n"
         + (V4_DESIGN_EXTRA if profile_for(campaign) == V4 else "")
         + (V5_DESIGN_EXTRA if profile_for(campaign) in CARRY_PROFILES else "")
-        + (V7_DESIGN_EXTRA if profile_for(campaign) in V7_FAMILY else "")
+        + (V8_DESIGN_EXTRA if profile_for(campaign) == V8 else V7_DESIGN_EXTRA
+           if profile_for(campaign) in V7_FAMILY else "")
         + "\n"
     )
 

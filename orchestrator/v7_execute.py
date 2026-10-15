@@ -460,7 +460,8 @@ def evaluator_before_design(campaign: dict, work_dir: Path, iter_dir: Path) -> b
     rec = _load_json(Path(iter_dir) / ARMS_DIR / STATE_FILE, {}).get("sessions", {}).get(EVALUATOR_KEY) or {}
     if rec.get("status") == "done":
         return False
-    return rec.get("status") == "running" or not (Path(work_dir) / EVALUATOR_DIR / "README.md").is_file()
+    # "measuring" is v8's state between its evaluator session and the orchestrator's baseline measures.
+    return rec.get("status") in ("running", "measuring") or not (Path(work_dir) / EVALUATOR_DIR / "README.md").is_file()
 
 
 def run_v7_evaluator(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, iteration: int,

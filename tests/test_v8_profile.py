@@ -51,8 +51,10 @@ class TestProfile:
             0.4, 1.0, 15.0, 1.0)
 
     def test_v8_uses_the_v7_guidance_and_bundle_rules(self, tmp_path):
-        for fn in (lambda c: design_guidance(c, 30), execute_guidance):
-            assert fn(_v8()) == fn(_campaign(design_profile="v7"))
+        assert execute_guidance(_v8()) == execute_guidance(_campaign(design_profile="v7"))
+        v8, v7 = design_guidance(_v8(), 30), design_guidance(_campaign(design_profile="v7"), 30)
+        assert "at most one `h-alternative`" in v8 and "one or two `h-alternative`" not in v8
+        assert "one or two `h-alternative`" in v7 and "at most one `h-alternative`" not in v7
         d = _design_dir(tmp_path, _bundle({k: v for k, v in MAIN.items() if k != "validity_check"}))
         errors = validate_design(d, campaign=_v8())["errors"]
         assert any("validity_check" in e for e in errors)
@@ -907,3 +909,335 @@ def test_instrument_summary_judges_speed_against_the_assumed_limit(tmp_path):
     assert "time limit 1 s (assumed" in v8 and "make it faster" in v8
     v7 = instrument_summary(_campaign(design_profile="v7"), tmp_path, 1)
     assert "time limit unknown" in v7 and "make it faster" not in v7
+
+
+# ─── v8 robustness: official-first evaluator, funded arms, results never lost ──────────────
+
+_FAKE_MEASURE = '''
+import hashlib, json, re, sys, time
+from pathlib import Path
+log, archive, noise = Path({log!r}), Path({archive!r}), Path({noise!r})
+code = Path(sys.argv[1]).read_bytes()
+m = re.search(rb"v = (-?[0-9]+)", code)
+score = float(m.group(1)) if m else 0.0
+if noise.exists():  # optional per-call offsets, consumed in order
+    offs = json.loads(noise.read_text())
+    if offs:
+        score += offs.pop(0)
+        noise.write_text(json.dumps(offs))
+archive.mkdir(parents=True, exist_ok=True)
+(archive / "m{{:04d}}_score{{}}.py".format(len(list(archive.iterdir())), score)).write_bytes(code)
+with open(log, "a") as f:
+    f.write(json.dumps({{"ts": time.time(), "sha256": hashlib.sha256(code).hexdigest(), "score": score}}) + "\\n")
+print("compiling...")
+print("SCORE: %s" % score)
+'''
+
+
+def _fake_judge(tmp_path):
+    """A local stand-in for the official judge: scores `v = N` as N, logs and archives like the daemon."""
+    j = tmp_path / "judge"
+    j.mkdir()
+    script = j / "fmeasure.py"
+    script.write_text(_FAKE_MEASURE.format(log=str(j / "official.jsonl"), archive=str(j / "measured"),
+                                           noise=str(j / "noise.json")))
+    cfg = {"official_log": str(j / "official.jsonl"), "measured_archive": str(j / "measured"),
+           "measure_command": f"{sys.executable} {script} $PWD/solution.py"}
+    return j, script, cfg
+
+
+def _measure_in_session(script, cwd):
+    out = subprocess.run([sys.executable, str(script), str(Path(cwd) / "solution.py")], capture_output=True,
+                         text=True, check=True).stdout
+    return float(out.strip().splitlines()[-1].split(":")[1])
+
+
+def _official_rows(j):
+    return [json.loads(x) for x in (j / "official.jsonl").read_text().splitlines()] \
+        if (j / "official.jsonl").exists() else []
+
+
+CAP_STOP = dict(text="", is_error=True, error_message="cap", subtype="error_max_budget_usd")
+
+
+class TestOfficialMeasureCommand:
+    def test_command_and_solution_file_come_from_the_campaign_or_the_description(self):
+        from orchestrator.official_measure import measure_command, parse_score, solution_file
+        c = _v8()
+        c["target_system"]["description"] = ("Edit solution.cpp.\n\nMEASURE only with this command: bash "
+                                             "/x/fmeasure_p5.sh $PWD/solution.cpp  (prints 'SCORE: <n>'; one "
+                                             "call takes 30s).")
+        assert measure_command(c) == "bash /x/fmeasure_p5.sh $PWD/solution.cpp"
+        assert solution_file(c) == "solution.cpp"
+        c["v8"] = {"measure_command": "bash /y/m.sh $PWD/sol/a.py"}
+        assert measure_command(c) == "bash /y/m.sh $PWD/sol/a.py" and solution_file(c) == "sol/a.py"
+        assert measure_command(_v8()) is None
+        assert parse_score("SCORE: 1\nwarn\nSCORE: 42.5\n") == 42.5 and parse_score("no score") is None
+
+    def test_run_measure_runs_the_command_in_the_given_directory(self, tmp_path):
+        from orchestrator.official_measure import run_measure
+        j, _script, cfg = _fake_judge(tmp_path)
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        (wt / "solution.py").write_text("v = 17\n")
+        assert run_measure(_v8(v8=cfg), wt) == 17.0
+        assert [r["score"] for r in _official_rows(j)] == [17.0]
+        assert run_measure(_v8(v8={"measure_command": "echo nothing"}), wt) is None
+        assert run_measure(_v8(), wt) is None
+
+
+class TestOfficialFirstEvaluator:
+    def _setup(self, tmp_path, monkeypatch, scores=SCORES, **cfg):
+        j, script, jcfg = _fake_judge(tmp_path)
+        out = _setup(tmp_path, monkeypatch, scores, **{**jcfg, **cfg})
+        out[3]["target_system"]["description"] += "\nTime limit: 2 seconds\n"
+        return (j, script) + out
+
+    def test_evaluator_writes_no_instrument_and_the_orchestrator_does(self, tmp_path, monkeypatch):
+        from orchestrator.instrument import validate_instrument
+        j, _s, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
+        fake.baseline = True
+        (j / "noise.json").write_text(json.dumps([0.0, 0.5, -0.25]))
+        _execute(repo, work, it, campaign, d)
+        prompt = dict(fake.calls)["evaluator"]["prompt"]
+        assert "Do not write `instrument.json`" in prompt and "{{" not in prompt
+        assert "simplest correct solution" in prompt and "toolchain" in prompt
+        assert dict(fake.calls)["evaluator"]["max_cost_usd"] == pytest.approx(4.0)  # $2 target, 2x hard
+        inst = json.loads((it / "instrument.json").read_text())
+        assert not validate_instrument(inst)
+        assert inst["noise"]["runs"] == [5.0, 5.5, 4.75] and inst["noise"]["spread"] == pytest.approx(0.75)
+        assert inst["time_limit_s"] == 2.0 and inst["max_cpu_s"] is None and inst["knobs"] == []
+        assert inst["speed_first"] is False
+        state = json.loads((it / "arms" / "state.json").read_text())
+        assert state["sessions"]["evaluator"]["instrument"] == "valid"
+        # the 3 orchestrator measures ran on the committed baseline, through the same command
+        assert [r["score"] for r in _official_rows(j)][:3] == [5.0, 5.5, 4.75]
+        assert "Noise: 3 runs" in dict(fake.calls)["h-main"]["prompt"]
+
+    def test_orchestrator_writes_the_readme_when_the_session_wrote_none(self, tmp_path, monkeypatch):
+        from orchestrator.v8_execute import run_v8_evaluator
+        j, _s, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
+        fake._evaluator = lambda name, prompt, cwd: SDKResult(**CAP_STOP)  # cap stop, wrote nothing
+        run_v8_evaluator(d, campaign, work, it, 1, repo, extras=[])
+        readme = (work / "evaluator" / "README.md").read_text()
+        assert "written by the orchestrator" in readme and "fmeasure.py" in readme
+        assert json.loads((it / "instrument.json").read_text())["noise"]["runs"] == [0.0, 0.0, 0.0]
+        n = len(fake.calls)
+        it2 = work / "runs" / "iter-2"
+        it2.mkdir(parents=True)
+        run_v8_evaluator(d, campaign, work, it2, 2, repo, extras=[])
+        assert len(fake.calls) == n  # the evaluator is not rebuilt next iteration
+
+    def test_crash_while_measuring_resumes_the_measures_without_a_session(self, tmp_path, monkeypatch):
+        from orchestrator.v8_execute import run_v8_evaluator
+        j, _s, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
+        fake.baseline = True
+        run_v8_evaluator(d, campaign, work, it, 1, repo, extras=[])
+        state = json.loads((it / "arms" / "state.json").read_text())
+        ev = state["sessions"]["evaluator"]
+        ev.update({"status": "measuring", "noise_runs": [5.0], "measure_attempts": 1})
+        (it / "arms" / "state.json").write_text(json.dumps(state))
+        (it / "instrument.json").unlink()
+        n_calls, n_measures = len(fake.calls), len(_official_rows(j))
+        run_v8_evaluator(d, campaign, work, it, 1, repo, extras=[])
+        assert len(fake.calls) == n_calls
+        assert len(_official_rows(j)) == n_measures + 2
+        assert json.loads((it / "instrument.json").read_text())["noise"]["runs"] == [5.0, 5.0, 5.0]
+
+    def test_without_a_measure_command_the_run_goes_on_without_instrument(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _setup(tmp_path, monkeypatch, SCORES)
+        _execute(repo, work, it, campaign, d)
+        state = json.loads((it / "arms" / "state.json").read_text())
+        assert state["sessions"]["evaluator"]["instrument"].startswith("missing")
+        assert not (it / "instrument.json").exists() and (it / "findings.json").exists()
+
+
+class TestFundedArms:
+    def test_screening_target_never_below_the_floor(self):
+        from orchestrator.v8_execute import arm_funded, v8_screening_cap
+        c = _v8()
+        s, s8 = v7_settings(c), v8_settings(c)
+        assert s8.arm_floor_usd == 4.0 and s8.evaluator_budget_usd == 2.0
+        assert v8_screening_cap(s, s8, 11.0, 2) == 4.0  # share (11 - 8.8) / 2 would be $1.10
+        assert v8_screening_cap(s, s8, 30.0, 2) == 6.0  # never above the arm budget
+        assert arm_funded(s, s8, 12.8) and not arm_funded(s, s8, 12.7)
+
+    def test_an_arm_the_iteration_cannot_fund_is_skipped_not_starved(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _setup(tmp_path, monkeypatch, {"h-main": 50, "h-alternative-1": 90},
+                                                   iteration_budget_usd=10)
+        _execute(repo, work, it, campaign, d)
+        assert fake.names() == ["evaluator", "h-main", "winner:h-main"]
+        main = dict(fake.calls)["h-main"]
+        assert main["max_cost_usd"] >= 4.0
+        state = json.loads((it / "arms" / "state.json").read_text())
+        alt = state["sessions"]["h-alternative-1"]
+        assert alt["outcome"] == "skipped" and "floor" in alt["skip_reason"]
+        findings = json.loads((it / "findings.json").read_text())
+        assert [a["metadata"]["candidate_id"] for a in findings["arms"]] == ["h-main"]  # not a failed arm
+        assert "skipped" in (it / "handoff_update.md").read_text()
+        n = len(fake.calls)
+        _execute(repo, work, it, campaign, d)  # resumed: the skip is kept, nothing reruns
+        assert len(fake.calls) == n
+
+    def test_v8_allows_at_most_one_alternative_v7_two(self, tmp_path):
+        alt2 = dict(ALT, mechanism_family="simulated annealing", differs_from_main="random restarts")
+        d = _design_dir(tmp_path, _bundle(MAIN, ALT, alt2))
+        v8 = validate_design(d, campaign=_v8())["errors"]
+        assert any("v8 allows at most 1 h-alternative" in e for e in v8)
+        v7 = validate_design(d, campaign=_campaign(design_profile="v7"))
+        assert not any("allows at most" in e for e in v7.get("errors", []))
+        (tmp_path / "one").mkdir()
+        d1 = _design_dir(tmp_path / "one", _bundle(MAIN, ALT))
+        assert validate_design(d1, campaign=_v8())["status"] == "pass"
+
+
+class TestResultsCannotBeLost:
+    def _setup(self, tmp_path, monkeypatch, scores=SCORES, **cfg):
+        j, script, jcfg = _fake_judge(tmp_path)
+        return (j, script) + _setup(tmp_path, monkeypatch, scores, **{**jcfg, **cfg})
+
+    def test_capped_arm_without_result_gets_one_from_its_official_measures(self, tmp_path, monkeypatch):
+        j, script, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch,
+                                                                   {"h-main": 50, "h-alternative-1": 0})
+        orig = fake._arm
+
+        def arm(key, prompt, cwd):
+            if key != "h-main":
+                return orig(key, prompt, cwd)
+            (cwd / "solution.py").write_text("v = 63\n")
+            assert _measure_in_session(script, cwd) == 63
+            (cwd / "solution.py").write_text("v = 1  # half-done edit when the cap hit\n")
+            return SDKResult(**CAP_STOP, session_id="sess-h-main")  # no result.json, no patch
+        fake._arm = arm
+        seen = {}
+        orig_winner = fake._winner
+
+        def winner(name, prompt, cwd):
+            seen["result"] = json.loads((it / "arms" / "h-main" / "result.json").read_text())
+            seen["patch"] = (it / "patches" / "h-main.patch").read_text()
+            return orig_winner(name, prompt, cwd)
+        fake._winner = winner
+        _execute(repo, work, it, campaign, d)
+        r = seen["result"]
+        assert r["metrics"]["score"] == 63 and r["validity_check"]["passed"] is True
+        assert r["written_by"] == "orchestrator" and "orchestrator" in r["orchestrator_note"]
+        assert "+v = 63" in seen["patch"]  # the best measured code, not the half-done edit
+        assert "repair:h-main" not in fake.names()  # an official score > 0 exists
+        assert fake.names()[-1] == "winner:h-main" and fake.winner_saw == "v = 63\n"
+
+    def test_arm_whose_measures_all_scored_zero_is_recorded_and_repaired(self, tmp_path, monkeypatch):
+        j, script, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
+        orig = fake._arm
+        seen = {}
+
+        def arm(key, prompt, cwd):
+            if key != "h-main":
+                return orig(key, prompt, cwd)
+            (cwd / "solution.py").write_text("v = 0\n")
+            _measure_in_session(script, cwd)
+            seen["result"] = None
+            return SDKResult(**CAP_STOP, session_id="sess-h-main")
+        fake._arm = arm
+        orig_repair = fake._repair
+
+        def repair(name, prompt, cwd):
+            seen["result"] = json.loads((it / "arms" / "h-main" / "result.json").read_text())
+            return orig_repair(name, prompt, cwd)
+        fake._repair = repair
+        _execute(repo, work, it, campaign, d)
+        assert "repair:h-main" in fake.names()
+        assert seen["result"]["metrics"]["score"] == 0 and seen["result"]["validity_check"]["passed"] is None
+
+    def test_capped_winner_keeps_its_best_measured_code(self, tmp_path, monkeypatch):
+        j, script, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
+
+        def winner(name, prompt, cwd):
+            (cwd / "solution.py").write_text("v = 99\n")
+            _measure_in_session(script, cwd)
+            (cwd / "solution.py").write_text("v = 3\n")
+            return SDKResult(**CAP_STOP, session_id="sess-w")
+        fake._winner = winner
+        _execute(repo, work, it, campaign, d)
+        r = json.loads((it / "arms" / "h-alternative-1" / "result.json").read_text())
+        assert r["metrics"]["score"] == 99 and r["written_by"] == "orchestrator"
+        assert "v = 99" in (it / "patches" / "h-alternative-1.patch").read_text()
+        findings = json.loads((it / "findings.json").read_text())
+        assert findings["arms"][0]["metadata"]["score"] == 99
+
+    def test_measures_outside_the_window_do_not_count(self, tmp_path, monkeypatch):
+        j, script, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
+        _write_jsonl(j / "official.jsonl", [{"ts": 1.0, "sha256": "x", "score": 1000}])
+        orig = fake._arm
+
+        def arm(key, prompt, cwd):
+            if key == "h-main":
+                return SDKResult(**CAP_STOP, session_id="sess-h-main")  # measured nothing
+            return orig(key, prompt, cwd)
+        fake._arm = arm
+        fake.repair_scores["h-main"] = 10
+        _execute(repo, work, it, campaign, d)
+        assert "repair:h-main" in fake.names()  # no official score in its window, so it is repaired
+        r = json.loads((it / "arms" / "h-main" / "result.json").read_text())
+        assert r["metrics"]["score"] == 10 and "written_by" not in r
+
+    def test_crash_after_a_screen_resumes_without_screening_again(self, tmp_path, monkeypatch):
+        class _Die(BaseException):
+            pass
+        j, script, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch,
+                                                                   {"h-main": 50, "h-alternative-1": 0})
+        fake.raise_in["repair:h-alternative-1"] = _Die()
+        with pytest.raises(_Die):
+            _execute(repo, work, it, campaign, d)
+        n = len(fake.calls)
+        _execute(repo, work, it, campaign, d)
+        assert fake.names()[n:] == ["winner:h-main"]  # no second screen and no second repair
+
+
+def test_run_iteration_v8_two_iterations_with_an_official_first_evaluator(tmp_path, monkeypatch):
+    """Iteration 1 (evaluator capped before writing anything) then an exploit iteration 2."""
+    from orchestrator.engine import Engine
+    from orchestrator.iteration import IterationOutcome, _maybe_carry_forward, run_iteration
+    repo, work, campaign, fake = _iteration_setup(tmp_path, monkeypatch)
+    j, _script, cfg = _fake_judge(tmp_path)
+    campaign["v8"] = cfg
+    fake._evaluator = lambda name, prompt, cwd: SDKResult(**CAP_STOP)
+    fake.next_step = "tune the window size"
+    assert run_iteration(campaign, work, iteration=1, auto_approve=True) == IterationOutcome.COMPLETED
+    it1 = work / "runs" / "iter-1"
+    assert json.loads((it1 / "instrument.json").read_text())["written_by"] == "orchestrator"
+    assert "Baseline, measured before this design" in dict(fake.calls)["design"]["prompt"]
+    state1 = json.loads((it1 / "arms" / "state.json").read_text())
+    state1["best_before"] = 50
+    (it1 / "arms" / "state.json").write_text(json.dumps(state1))
+    _maybe_carry_forward(campaign, work, str(repo))
+    Engine(work).transition("DESIGN")
+    fake.iter_dir = work / "runs" / "iter-2"
+    fake.scores["h-main"] = 7011
+    n = len(fake.calls)
+    assert run_iteration(campaign, work, iteration=2, auto_approve=True) == IterationOutcome.COMPLETED
+    assert fake.names()[n:] == ["h-main", "winner:h-main"]  # no evaluator rebuild, no design call
+
+
+def test_a_window_left_open_by_a_killed_run_is_closed_on_resume(tmp_path, monkeypatch):
+    """After a hard kill mid-session, later arms' measures must not be credited to the dead session."""
+    j, script, cfg = _fake_judge(tmp_path)
+    repo, work, it, campaign, fake, d = _setup(tmp_path, monkeypatch, SCORES, **cfg)
+    (it / "arms").mkdir(parents=True, exist_ok=True)
+    (it / "arms" / "state.json").write_text(json.dumps({"sessions": {
+        "evaluator": {"status": "done"},
+        "h-main": {"status": "ended", "outcome": "failed", "repaired": True, "experiment_id": "gone",
+                   "windows": [{"label": "h-main-repair", "start": time.time() - 5, "end": None}]}}}))
+    (work / "evaluator").mkdir()
+    (work / "evaluator" / "README.md").write_text("x\n")
+    orig = fake._arm
+
+    def arm(key, prompt, cwd):
+        out = orig(key, prompt, cwd)
+        (cwd / "solution.py").write_text("v = 500\n")
+        _measure_in_session(script, cwd)  # the alternative's measure, after the resume
+        return out
+    fake._arm = arm
+    _execute(repo, work, it, campaign, d)
+    assert not (it / "arms" / "h-main" / "result.json").exists()
+    w = json.loads((it / "arms" / "state.json").read_text())["sessions"]["h-main"]["windows"][0]
+    assert w["closed_on_resume"] is True

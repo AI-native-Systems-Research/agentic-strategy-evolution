@@ -73,16 +73,23 @@ def format_summary(source: str, data: dict, assumed_limit_s: float | None = None
 
     ``assumed_limit_s`` (v8): the limit to judge speed against when the statement gives none.
     """
-    cpu, limit = float(data["max_cpu_s"]), data.get("time_limit_s")
+    cpu, limit = data["max_cpu_s"], data.get("time_limit_s")
     assumed = not limit and assumed_limit_s
     if assumed:
         limit = assumed_limit_s
-    if limit:
+    if cpu is None:  # v8: written from official measures only, no local CPU time
+        speed_first = False
+        worst = (f"not measured locally; time limit {_num(float(limit))} s"
+                 f"{' (assumed: the statement gives none)' if assumed else ''}." if limit else
+                 "not measured locally; time limit unknown.")
+    elif limit:
+        cpu = float(cpu)
         speed_first = cpu > SPEED_FIRST_FRACTION * float(limit)
         worst = (f"max CPU {_num(cpu)} s on the largest inputs, time limit {_num(float(limit))} s"
                  f"{' (assumed: the statement gives none)' if assumed else ''} "
                  f"({100 * cpu / float(limit):.0f}%).")
     else:
+        cpu = float(cpu)
         speed_first = bool(data.get("speed_first"))
         worst = f"max CPU {_num(cpu)} s on the largest inputs, time limit unknown."
     if speed_first:
