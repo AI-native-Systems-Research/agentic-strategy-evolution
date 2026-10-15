@@ -2176,6 +2176,23 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     # recompiled would report `screen -> screen -> confirm -> report`, naming a
     # state transition that never happened in the epoch the report describes.
     trans = policy_mod.epoch_transitions(pol, work_dir)
+    # The registered boundary branch (policy `out_of_hull: confirm`) fired:
+    # refine's optimum lies past the declared ranges, so whatever confirm
+    # certified is the best configuration INSIDE them. Say so in the report,
+    # with the axes, so a certificate is never read as covering more space
+    # than was declared.
+    boundary = next((t for t in trans if t.get("from") == "refine"
+                     and ((t.get("rule") or {}).get("when") or {}).get(
+                         "stationary_in_hull") is False
+                     and t.get("to") != "exception"), None)
+    boundary_block = None
+    if boundary is not None:
+        sp = (_read_recommendation(work_dir) or {}).get("stationary_point") or {}
+        boundary_block = {
+            "axes": sorted(k for k, v in sp.items()
+                           if isinstance(v, (int, float)) and abs(v) > 1.0),
+            "certificate_scope": "declared_ranges",
+        }
     # The held-out generalization check, READ only now that every decision
     # above is made, so it can inform a reader and nothing else
     # (orchestrator/optimize/held_out.py).
@@ -2231,6 +2248,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         **({"pareto": mo_front} if mo_front is not None else {}),
         **({"certification_caveats": list(conf["certification_caveats"])}
            if conf and conf.get("certification_caveats") else {}),
+        **({"boundary_optimum": boundary_block} if boundary_block else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
     })
@@ -6236,8 +6254,12 @@ def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
     runs could disagree on the filter (which statuses count, whether a NaN counts
     as a value) while both looked reasonable.
 
-    DEDUPLICATED BY LEVELS, keeping the best measurement of each configuration.
-    Without that, a confirm round's three replicates of one winner would fill a
+    DEDUPLICATED BY LEVELS and ranked by each configuration's MEAN over its
+    complete rows, never by its single best row. Ranking by the max is the
+    winner's curse: on a real Go campaign one lucky row (140.6) out-ranked a
+    configuration whose five confirm replicates then averaged 116.2, and
+    confirm warned that its genuinely better winner was "10.56% worse than the
+    best observed". Without deduplication, a confirm round's three replicates of one winner would fill a
     shortlist of three with the SAME configuration and the terminal comparison
     would have nothing to discriminate between — which is the failure mode the
     shortlist exists to retire.
@@ -6249,11 +6271,17 @@ def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
     leader is the largest noisy observation, and re-measuring it alone only says
     how repeatable it is. Several of them, compared freshly against each other,
     is a model-free answer to which is better.
+
+    SCOPED TO THE CURRENT EPOCH (``_this_epoch_runs``). A previous epoch's row
+    names levels of factors this epoch may no longer declare: seating it ran the
+    configuration with that factor at whatever the run command now fixes, while
+    the finalist still CLAIMED the old level (found on the same campaign: an
+    epoch-1 ``CONC=2`` seated in epoch 2, where concurrency was pinned to 1).
     """
     sign = 1.0 if direction != "minimize" else -1.0
-    best: dict[str, tuple[dict, float]] = {}
+    seen: dict[str, tuple[dict, list[float]]] = {}
     invalid = _measured_infeasible(work_dir)
-    for path in sorted(Path(work_dir).glob("runs/iter-*/runs.jsonl")):
+    for path in _this_epoch_runs(work_dir):
         for line in path.read_text().splitlines():
             if not line.strip():
                 continue
@@ -6281,11 +6309,38 @@ def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
             if not _config_admissible(work_dir, levels, invalid=invalid):
                 continue
             key = json.dumps(levels, sort_keys=True, default=str)
-            prior = best.get(key)
-            if prior is None or sign * numeric > sign * prior[1]:
-                best[key] = (levels, numeric)
-    ranked = sorted(best.values(), key=lambda pair: -sign * pair[1])
-    return [{"levels": lv, primary: v} for lv, v in ranked[:max(1, int(k))]]
+            seen.setdefault(key, (levels, []))[1].append(numeric)
+    means = [(lv, sum(vs) / len(vs), len(vs)) for lv, vs in seen.values()]
+    ranked = sorted(means, key=lambda t: -sign * t[1])
+    return [{"levels": lv, primary: m, "n": n} for lv, m, n in ranked[:max(1, int(k))]]
+
+
+def _this_epoch_runs(work_dir) -> list[Path]:
+    """``runs.jsonl`` of the iterations that ran under the CURRENT policy.
+
+    An iteration's ``design_matrix.json`` records the ``policy_hash`` it was
+    built under; a recompiled epoch has a different hash. An iteration with no
+    matrix or no recorded hash (pre-field work dirs, hand-built test fixtures)
+    is kept, which reproduces the old behaviour exactly where the epoch cannot
+    be told.
+    """
+    try:
+        current = policy_mod.policy_hash(policy_mod.read_policy(Path(work_dir)))
+    except Exception:  # no policy yet: nothing to scope by
+        current = None
+    out = []
+    for path in sorted(Path(work_dir).glob("runs/iter-*/runs.jsonl"),
+                       key=lambda p: int(p.parent.name.split("-")[1])):
+        if current is not None:
+            dm = path.parent / "design_matrix.json"
+            try:
+                h = json.loads(dm.read_text()).get("policy_hash") if dm.exists() else None
+            except (OSError, ValueError):
+                h = None
+            if h and h != current:
+                continue
+        out.append(path)
+    return out
 
 
 def _read_recommendation(work_dir) -> dict | None:

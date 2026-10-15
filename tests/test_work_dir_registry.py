@@ -50,3 +50,25 @@ def test_an_unknown_campaign_says_how_to_find_it(tmp_path):
     r = _nous(["status", str(f)], {k: v for k, v in os.environ.items()
                                     if k != "NOUS_CAMPAIGN_PARENT"})
     assert "Work directory not found" in r.stderr and "inline" in r.stderr
+
+
+def test_validate_points_an_existing_campaign_at_resume_not_a_fresh_run(tmp_path):
+    """Revising a campaign for epoch 2 and re-validating said `nous run` with a
+    new NOUS_CAMPAIGN_PARENT -- which would start the campaign over elsewhere."""
+    import yaml
+
+    from orchestrator.cli import _run_hint
+    from orchestrator.work_dir_resolver import record_work_dir
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    camp = tmp_path / "c.yaml"
+    camp.write_text(yaml.safe_dump({"run_id": "r1", "target_system": {"repo_path": str(repo)}}))
+    assert "nous run" in _run_hint(camp)
+
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    (wd / "state.json").write_text("{}")
+    record_work_dir("r1", repo, wd)
+    hint = _run_hint(camp)
+    assert "nous resume" in hint and str(wd) in hint and "nous run" not in hint

@@ -138,7 +138,7 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
 
     import yaml
 
-    from orchestrator.optimize.factors import _from_axis, _to_axis, parse_factors
+    from orchestrator.optimize.factors import _from_axis, _to_axis, parse_factors, snap_to_grid
 
     recs = sorted(glob.glob(str(work_dir / "runs" / "iter-*" / "recommendation.json")),
                   key=lambda p: int(Path(p).parent.name.split("-")[1]))
@@ -158,13 +158,37 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
     # infeasible, the constrained optimum is inside the range and "widen" would
     # walk the next epoch into the constraint (found on a real campaign: a write
     # cache whose upper edge broke the durability SLA on every row).
+    from orchestrator.optimize.stage_runner import _this_epoch_runs
+
     rows = []
-    for rj in glob.glob(str(work_dir / "runs" / "iter-*" / "runs.jsonl")):
+    for rj in _this_epoch_runs(work_dir):
         for line in Path(rj).read_text().splitlines():
             try:
                 rows.append(json.loads(line))
             except ValueError:
                 continue
+    primary = ((campaign.get("optimization") or {}).get("response") or {}).get("primary") or {}
+    sign = -1.0 if primary.get("direction") == "minimize" else 1.0
+
+    def _measured_peak(fid):
+        """The level of ``fid`` with the best MEASURED marginal mean, if any.
+
+        The stationary point is an extrapolation of a fitted quadratic; when
+        the measurements themselves peak at an interior level, "extend" or
+        "pin the edge" would follow the fit's artefact (found on a real Go
+        campaign: the fit put concurrency's optimum below 1 while its measured
+        mean at 1 was not the best).
+        """
+        by_level: dict = {}
+        for r in rows:
+            v = (r.get("response") or {}).get(primary.get("metric"))
+            lv = (r.get("levels") or {}).get(fid)
+            if r.get("status") != "complete" or lv is None \
+                    or not isinstance(v, (int, float)) or v != v:
+                continue
+            by_level.setdefault(lv, []).append(float(v))
+        means = {lv: sum(vs) / len(vs) for lv, vs in by_level.items() if len(vs) >= 2}
+        return max(means, key=lambda lv: sign * means[lv]) if len(means) >= 2 else None
 
     def _edge_status(fid, edge):
         at = [r for r in rows if (r.get("levels") or {}).get(fid) == edge]
@@ -183,6 +207,14 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
         suggest = _from_axis(f, mid + math.copysign(2.0, coded) * half)
         edge = f.screen_levels[1] if (coded > 0) == (hi > lo) else f.screen_levels[0]
         n_at, n_bad = _edge_status(fid, edge)
+        peak = _measured_peak(fid) if primary.get("metric") else None
+        if peak is not None and peak != edge and not (n_at and n_bad == n_at):
+            out.append(
+                f"- **{fid}**: the fitted surface extrapolates past {edge}, but the "
+                f"measured means peak INSIDE the range, at {fid}={_fmt(peak)}. "
+                f"Keep `{fid}`'s range; if anything, add levels around {_fmt(peak)}."
+            )
+            continue
         if n_at and n_bad == n_at:
             out.append(
                 f"- **{fid}**: the PRIMARY surface keeps rising past {edge}, but "
@@ -191,12 +223,36 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
                 f"extend `{fid}`; if anything, add interior levels below {edge}."
             )
             continue
+        # The suggestion must be a level the target can run: on the grid, and
+        # inside the domain the factor's scale admits (a log axis is > 0, and an
+        # integral log knob -- a count -- is >= one grid step). Found on a real
+        # campaign: "extend concurrency downward to about 0.5" and "GOMAXPROCS
+        # to about 22.6".
+        floor = (f.grid or 0.0) if f.scale == "log" else None
+        suggest = snap_to_grid(suggest, f.grid)
+        if f.grid and suggest == edge:  # snapping fell back onto the edge
+            step = f.grid if float(edge) >= max(map(float, f.screen_levels)) else -f.grid
+            suggest = snap_to_grid(float(edge) + step, f.grid)
+        at_floor = (side == "below" and floor is not None and floor > 0
+                    and float(edge) <= floor)
+        if at_floor:
+            out.append(
+                f"- **{fid}**: the fitted optimum lies below {edge}, the smallest "
+                f"valid value of `{fid}`: the edge IS the answer for this factor. "
+                f"Pin `{fid}={edge}` (or drop it) and spend the next epoch's runs "
+                f"on the other factors."
+            )
+            continue
+        if side == "below" and floor is not None and floor > 0 and suggest < floor:
+            suggest = snap_to_grid(floor, f.grid)
         out.append(
             f"- **{fid}**: the fitted optimum is at about "
             f"{_fmt(_from_axis(f, mid + coded * half))} (coded {coded:+.2f}), "
             f"{side} the declared range {list(f.levels)}. Extend `{fid}`'s levels "
-            f"{'upward' if side == 'above' else 'downward'}, e.g. to about "
-            f"{_fmt(suggest)}."
+            f"{'upward' if side == 'above' else 'downward'}, e.g. to {_fmt(suggest)}"
+            f" -- unless {edge} is already a hard limit of the system (a core "
+            f"count, a memory budget, a protocol maximum), in which case the edge "
+            f"is the answer: pin `{fid}={edge}`."
         )
     return out
 
@@ -393,6 +449,19 @@ def render_report_markdown(work_dir: Path) -> str:
             f"`{report['epoch_ended']}`. The `model` rung is suppressed because "
             f"the exception is evidence against the fitted surface; see "
             f"`epoch_end-{report.get('epoch')}.json`.",
+            "",
+        ]
+        lines += _next_epoch_section(work_dir, report)
+    elif report.get("boundary_optimum"):
+        b = report["boundary_optimum"]
+        lines += [
+            f"> **Boundary optimum.** The fitted optimum lies past the declared "
+            f"range on {', '.join(f'`{a}`' for a in b.get('axes') or []) or 'some axis'}"
+            f", so the recommendation is the best configuration INSIDE the "
+            f"declared ranges"
+            + (" and the certificate covers only those ranges." if report.get("certified")
+               else ".")
+            + " Widening the axes below may find a better one.",
             "",
         ]
         lines += _next_epoch_section(work_dir, report)

@@ -414,8 +414,8 @@ def test_an_empty_carry_over_is_costed_at_the_full_shortlist_not_at_one():
     assert _next_round_finalists(crowded, shortlist_size=2) == 2
 
 
-def test_bowl_out_of_hull_ends_the_epoch(tmp_path):
-    """FLIPPED BY TASK 11 (was xfail(strict=True)).
+def test_bowl_out_of_hull_ends_the_epoch_under_end_epoch(tmp_path):
+    """FLIPPED BY TASK 11 (was xfail(strict=True)); opt-in since `out_of_hull`.
 
     The stationary point of ``20 - 0.05(A-30)^2 - 0.05(B-11)^2`` sits at A=30,
     outside the declared hull [2, 16]. That is a defect in the FACTOR's
@@ -428,7 +428,10 @@ def test_bowl_out_of_hull_ends_the_epoch(tmp_path):
     configuration clamped to the boundary, which is a certificate over the wrong
     space.
     """
-    res = run_synthetic_campaign(SURFACES["bowl_out_of_hull"](), seed=6, parent_dir=tmp_path)
+    res = run_synthetic_campaign(
+        SURFACES["bowl_out_of_hull"](), seed=6, parent_dir=tmp_path,
+        campaign_overrides={"policy": {"out_of_hull": "end_epoch"}},
+    )
     assert res.path[-1] == "exception"
     # The discriminating half: an ended epoch still returns an ACTION, on a rung
     # that does not rest on the surface the exception just impeached.

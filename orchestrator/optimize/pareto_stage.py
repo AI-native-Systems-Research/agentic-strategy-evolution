@@ -74,6 +74,7 @@ def measured_points(work_dir, objs) -> list[MeasuredPoint]:
     from orchestrator.optimize.stage_runner import (
         _config_admissible,
         _measured_infeasible,
+        _this_epoch_runs,
     )
 
     runs = Path(work_dir) / "runs"
@@ -82,7 +83,11 @@ def measured_points(work_dir, objs) -> list[MeasuredPoint]:
     invalid = _measured_infeasible(work_dir)
     pts: dict[str, MeasuredPoint] = {}
     fresh: dict[str, dict] = {}
-    for d in sorted((p for p in runs.iterdir() if p.is_dir()), key=_iter_index):
+    # EPOCH-SCOPED, like `_top_measured`: a previous epoch measured a
+    # different declared space (or mechanism), so its rows are not this
+    # epoch's evidence. Feasibility stays sticky across epochs
+    # (`_measured_infeasible`), as everywhere else.
+    for d in (p.parent for p in _this_epoch_runs(work_dir)):
         rows = artifacts.read_runs(d)
         if not rows:
             continue

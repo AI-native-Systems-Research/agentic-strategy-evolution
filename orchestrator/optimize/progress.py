@@ -348,6 +348,25 @@ def write_halt(work_dir: Path, payload: dict) -> Path:
     return target
 
 
+def archive_halt(work_dir: Path) -> None:
+    """Move a standing ``halt.json`` into ``halt_history.jsonl``.
+
+    Called when the campaign loop starts again, so ``halt.json`` always means
+    "the CURRENT run stopped here" and never a previous run's stop.
+    """
+    work_dir = Path(work_dir)
+    current = work_dir / HALT_FILE
+    if not current.exists():
+        return
+    try:
+        payload = json.loads(current.read_text())
+    except (OSError, ValueError):
+        payload = {"unreadable": current.read_text(errors="replace")}
+    with open(work_dir / "halt_history.jsonl", "a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True) + "\n")
+    current.unlink()
+
+
 # ─────────────────────────── wall-clock budget ──────────────────────────────
 
 @dataclass(frozen=True)

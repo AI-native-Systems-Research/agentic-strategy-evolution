@@ -122,9 +122,12 @@ gate stopped the campaign: report its stage and reason verbatim.
 
 ## 8. Iterate
 
-If the epoch ended on an exception (e.g. the optimum lies outside the declared
-range) or certification was withheld, `report.md`'s **What to do next** names
-the change in real units. Edit the campaign, re-run `nous validate`, then:
+If the report shows a **boundary optimum** (the fitted optimum lies past a
+declared edge; the answer is the best configuration inside the ranges), the
+epoch ended on an exception, or certification was withheld, `report.md`'s
+**What to do next** names the change as runnable levels. Do not widen a knob
+whose edge is a hard limit (concurrency 1, the core count, a memory budget):
+pin it there and spend the next epoch on the others. Edit the campaign, re-run `nous validate`, then:
 
 ```bash
 nous resume campaign.yaml --auto-approve   # recompiles into a new epoch

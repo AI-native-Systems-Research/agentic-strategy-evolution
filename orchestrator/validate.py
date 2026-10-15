@@ -1096,7 +1096,7 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
         return []
     if not isinstance(pol, dict):
         return ["optimization.policy must be a mapping (epsilon, delta_screen, "
-                "delta_terminal, confirm_max_rounds)."]
+                "delta_terminal, confirm_max_rounds, out_of_hull)."]
     errors: list[str] = []
     for key in ("delta_screen", "delta_terminal"):
         if key not in pol:
@@ -1147,6 +1147,13 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
                         f"neither, the indifference width falls to the pct: 2.0 "
                         f"default rather than to anything you stated."
                     )
+    if "out_of_hull" in pol and pol["out_of_hull"] not in ("confirm", "end_epoch"):
+        errors.append(
+            f"optimization.policy.out_of_hull={pol['out_of_hull']!r} must be "
+            f"'confirm' (confirm the best configuration inside the declared "
+            f"ranges -- the default) or 'end_epoch' (end the epoch so the ranges "
+            f"can be widened first)."
+        )
     if "confirm_max_rounds" in pol:
         raw = pol["confirm_max_rounds"]
         if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:

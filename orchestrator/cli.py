@@ -840,9 +840,32 @@ def _validate_campaign_file(
 
 
 def _run_hint(target: Path) -> str:
-    """The launch command, with artifacts kept OUT of the target (#239)."""
+    """The launch command, with artifacts kept OUT of the target (#239).
+
+    When this campaign already has a work_dir (the registry knows its run_id
+    and repo), the next step is `nous resume`, which recompiles a revised
+    campaign into a new epoch over the SAME work_dir. Suggesting `nous run`
+    with a fresh parent there would start the campaign over somewhere else
+    (found revising a real campaign for its second epoch).
+    """
     import os
 
+    try:
+        import yaml
+
+        from orchestrator.work_dir_resolver import recorded_work_dir
+
+        doc = yaml.safe_load(Path(target).read_text()) or {}
+        existing = recorded_work_dir(
+            str(doc.get("run_id") or ""),
+            (doc.get("target_system") or {}).get("repo_path"),
+        ) if doc.get("run_id") else None
+    except (OSError, ValueError, yaml.YAMLError, AttributeError):
+        existing = None
+    if existing is not None:
+        return (f"`nous resume {target} --auto-approve` -- this campaign already "
+                f"has a work_dir at {existing}; resume continues it (a revised "
+                f"campaign recompiles into a new epoch there)")
     parent = os.environ.get("NOUS_CAMPAIGN_PARENT") or "~/nous-campaigns"
     return f"`NOUS_CAMPAIGN_PARENT={parent} nous run {target}`"
 
