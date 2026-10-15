@@ -107,9 +107,13 @@ under investigation, or the space of plausible interventions isn't known
 up front.
 
 ```bash
-nous validate campaign optimization-campaign.yaml --smoke   # do this before every run
-nous run optimization-campaign.yaml --auto-approve
+nous create-campaign --kind optimization --to optimization-campaign.yaml  # scaffold
+nous validate campaign optimization-campaign.yaml --liveness   # do this before every run
+NOUS_CAMPAIGN_PARENT=~/nous-campaigns nous run optimization-campaign.yaml --auto-approve
 ```
+
+Start with [docs/optimization-authoring-quickstart.md](docs/optimization-authoring-quickstart.md):
+the authoring loop and the traps checklist, written for humans and for Claude.
 
 `--smoke` runs the test command and one real configuration against the
 target before spending the full budget — catching declared-but-unresolvable

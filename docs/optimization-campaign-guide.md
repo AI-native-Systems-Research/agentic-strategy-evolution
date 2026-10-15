@@ -1,5 +1,11 @@
 # Optimization campaign guide (`kind: optimization`)
 
+> **Authoring a campaign now?** Start with the
+> [authoring quickstart](optimization-authoring-quickstart.md) and
+> `nous create-campaign --kind optimization`. It covers the
+> scaffold → validate → `--smoke` → `--liveness` → run loop and the traps
+> checklist. This guide is the field-by-field reference behind it.
+
 This guide is the authoring interface for `kind: optimization` campaigns.
 It exists alongside [`docs/campaign-authoring-guide.md`](campaign-authoring-guide.md)
 (the reflective kind's guide) but is not a variant of it: the two kinds

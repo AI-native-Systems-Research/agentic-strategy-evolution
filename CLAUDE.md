@@ -158,6 +158,12 @@ silently leap from tier 1 to tier 3.
 
 ## Optimization campaigns (kind: optimization)
 
+**Authoring one for a user?** Start from
+`docs/optimization-authoring-quickstart.md` and
+`nous create-campaign --kind optimization --to FILE`, then iterate with
+`nous validate campaign FILE`, `--smoke` and `--liveness` (each one prints a
+`next:` line) until they are clean. Only then run `nous run`.
+
 `kind: optimization` is a second campaign type alongside the default
 `reflective` one: a factorial/response-surface flow where the campaign
 author (human or an AI writing the YAML) declares factors; `verify`
