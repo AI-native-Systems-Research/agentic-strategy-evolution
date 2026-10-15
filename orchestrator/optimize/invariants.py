@@ -1304,6 +1304,20 @@ _ENTRIES: tuple[Invariant, ...] = (
               "PROV", "function", "adapter_contract.contract_hash comment", TEST, None,
               note="VERIFIED: reordered contracts hash identically and diff_contract returns "
                    "([], [], [])."),
+    Invariant("INV-PROV06", "The mechanism hash never covers Nous's own outputs: .nous/, "
+                            ".nous-experiments/ and the campaign work_dir (when inside the "
+                            "target) are excluded from BOTH halves of the drift text, so "
+                            "Nous's writes during an epoch cannot read as mechanism drift.",
+              "PROV", "function", "build._mechanism_text; build.NOUS_OWNED_PATHS", TEST, None,
+              violated_by="default layout (NOUS_CAMPAIGN_PARENT unset): the work_dir at "
+                          "<target>/.nous/<run_id>/ was hashed, including the "
+                          "mechanism.patch the snapshot itself wrote, so iter-2 of every "
+                          "such campaign aborted 'mechanism drifted since compile'. "
+                          "REPRODUCED with a real git repo, then fixed.",
+              note="VERIFIED by tests/test_optimize_build_oracles.py's default-layout tests: "
+                   "runs.jsonl appends, a .nous/repo cache and a .nous-experiments worktree "
+                   "leave the hash unchanged; a mech.py edit still aborts. A hash recorded "
+                   "before the exclusion is still accepted (mechanism_hash_matches)."),
 
     # ── resource / isolation ──────────────────────────────────────────────
     Invariant("INV-RES01", "A per-run config patch is a COPY: the input document is never "

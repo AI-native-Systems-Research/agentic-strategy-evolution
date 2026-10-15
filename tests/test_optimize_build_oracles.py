@@ -1343,3 +1343,137 @@ def test_a_prebuild_measurement_without_recorded_seeds_degrades_to_unpaired(
     be = json.loads((wd / "baseline_equivalence.json").read_text())
     assert be["paired"] is False, "a pairing that never happened must not be claimed"
     assert any("UNPAIRED" in r.getMessage() for r in caplog.records), caplog.text
+
+
+# ── Nous's own outputs are never "the mechanism" ─────────────────────────────
+#
+# Every drift test above sets NOUS_CAMPAIGN_PARENT, so the campaign work_dir
+# lives OUTSIDE the target. Unset it and the work_dir is the legacy
+# `<target>/.nous/<run_id>/` — untracked, not ignored — and the whole-tree hash
+# used to include it: `mechanism.patch` itself (written by the snapshot, so the
+# very next reading differed), then every `runs.jsonl` / `transitions.jsonl`
+# append. Same for the `.nous/repo/` cache `_write_repo_cache` writes on the
+# aborted path and the `.nous-experiments/` arm worktrees. The tests below run
+# the default layout against a real git repo.
+
+
+def _legacy_setup(tmp_path, monkeypatch, name: str, campaign_edit=None):
+    """`_drift_setup`, but in the DEFAULT layout: work_dir inside the target."""
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import SURFACES, make_synthetic_runner
+    monkeypatch.delenv("NOUS_CAMPAIGN_PARENT", raising=False)
+    repo = _git_repo(tmp_path)
+    s = SURFACES["additive"]()
+    c = synthetic_campaign(s); c["target_system"]["repo_path"] = str(repo)
+    if campaign_edit is not None:
+        campaign_edit(c)
+    wd = setup_work_dir(name, repo_path=str(repo), campaign=c)
+    assert Path(wd).resolve().is_relative_to(repo.resolve())   # the premise
+    (repo / "mech.py").write_text("X = 2\n")
+    recorded = snapshot_mechanism(repo, wd, allowlist=_mechanism_paths_of(c))
+    assert recorded
+    run_stage(c, wd, iteration=1, stage="verify",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: True for t in _declared_ids(c)})
+    return c, wd, repo, recorded, s
+
+
+def test_default_layout_hash_is_stable_across_nous_own_writes(tmp_path, monkeypatch):
+    """The work_dir, `.nous/repo/` and `.nous-experiments/` never move the hash."""
+    c, wd, repo, recorded, _s = _legacy_setup(tmp_path, monkeypatch, "legacy-stable")
+    patch = (Path(wd) / "mechanism.patch").read_text()
+    assert "X = 2" in patch and ".nous" not in patch
+    assert current_mechanism_hash(repo, work_dir=wd) == recorded
+    with open(Path(wd) / "runs.jsonl", "a") as f:
+        f.write('{"row": 99}\n')
+    (repo / ".nous" / "repo").mkdir(parents=True, exist_ok=True)
+    (repo / ".nous" / "repo" / "build.yaml").write_text("cmd: make\n")
+    (repo / ".nous-experiments" / "legacy-stable" / "arm-a").mkdir(parents=True)
+    (repo / ".nous-experiments" / "legacy-stable" / "arm-a" / "x.py").write_text("Z = 1\n")
+    assert current_mechanism_hash(repo, work_dir=wd) == recorded
+
+
+def test_default_layout_epoch_proceeds_past_its_own_artifacts(tmp_path, monkeypatch):
+    """Before the fix, iter-2 of EVERY default-layout campaign aborted here."""
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    c, wd, repo, _rec, s = _legacy_setup(tmp_path, monkeypatch, "legacy-epoch")
+    (repo / ".nous" / "repo").mkdir(parents=True, exist_ok=True)
+    (repo / ".nous" / "repo" / "knobs.yaml").write_text("k: 1\n")   # abort-path cache
+    run_stage(c, wd, iteration=2,
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: True for t in _declared_ids(c)})
+    run_stage(c, wd, iteration=3,
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: True for t in _declared_ids(c)})
+    assert (Path(wd) / "runs" / "iter-3").exists()
+
+
+def test_default_layout_still_catches_a_real_mechanism_edit(tmp_path, monkeypatch):
+    """The exclusion must not blind the oracle to the mechanism itself."""
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    c, wd, repo, _rec, s = _legacy_setup(tmp_path, monkeypatch, "legacy-edit")
+    (repo / "mech.py").write_text("X = 99\n")
+    with pytest.raises(OptimizationAborted, match="drifted since compile"):
+        run_stage(c, wd, iteration=2,
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in _declared_ids(c)})
+
+
+def test_a_new_file_outside_nous_paths_still_counts_in_default_layout(tmp_path, monkeypatch):
+    """Only Nous-owned prefixes are dropped — a sibling `.nousy/` is not one."""
+    _c, wd, repo, recorded, _s = _legacy_setup(tmp_path, monkeypatch, "legacy-sibling")
+    (repo / ".nousy").mkdir()
+    (repo / ".nousy" / "m.py").write_text("M = 1\n")
+    assert current_mechanism_hash(repo, work_dir=wd) != recorded
+
+
+def test_hash_recorded_before_the_exclusion_is_still_honoured(tmp_path, monkeypatch):
+    """An in-flight campaign must not false-abort on resume after upgrading.
+
+    Work_dir outside the target (the only layout whose old hash was usable),
+    with a `.nous/repo/` cache already present when the old code snapshotted:
+    the old hash covered that cache. The sidecar is re-stamped with the
+    old-form hash — computed here from git directly, the way the old code
+    did — before verify compiles the policy, exactly as an old campaign's
+    work_dir would look. The epoch must proceed on the unchanged tree, and
+    still abort once the mechanism really changes.
+    """
+    import hashlib
+
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import SURFACES, make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "parent"))
+    repo = _git_repo(tmp_path)
+    s = SURFACES["additive"]()
+    c = synthetic_campaign(s); c["target_system"]["repo_path"] = str(repo)
+    wd = setup_work_dir("oldhash", repo_path=str(repo), campaign=c)
+    (repo / ".nous" / "repo").mkdir(parents=True)
+    (repo / ".nous" / "repo" / "build.yaml").write_text("cmd: make\n")
+    (repo / "mech.py").write_text("X = 2\n")
+    new = snapshot_mechanism(repo, wd)
+    diff = subprocess.run(["git", "diff", "HEAD", "--no-color"], cwd=repo,
+                          capture_output=True, text=True, check=True).stdout
+    others = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
+                            cwd=repo, capture_output=True, text=True, check=True).stdout
+    old_text = diff + "".join(
+        f"+++ untracked: {p}\n" + (repo / p).read_text()
+        for p in sorted(x for x in others.splitlines() if x.strip()))
+    old = hashlib.sha256(old_text.encode()).hexdigest()
+    assert old != new                       # the exclusion DID change the hash
+    (Path(wd) / "mechanism.sha256").write_text(old + "\n")
+    ids = {t: True for t in _declared_ids(c)}
+    run_stage(c, wd, iteration=1, stage="verify",
+              config_runner=make_synthetic_runner(s, seed=1), test_results=ids)
+    run_stage(c, wd, iteration=2, config_runner=make_synthetic_runner(s, seed=1),
+              test_results=ids)
+    assert (Path(wd) / "runs" / "iter-2").exists()
+    (repo / "mech.py").write_text("X = 99\n")
+    with pytest.raises(OptimizationAborted, match="drifted since compile"):
+        run_stage(c, wd, iteration=3, config_runner=make_synthetic_runner(s, seed=1),
+                  test_results=ids)

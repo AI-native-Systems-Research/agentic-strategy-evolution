@@ -331,7 +331,42 @@ def _in_allowlist(rel: str, allowlist: list[str]) -> bool:
     return False
 
 
-def _mechanism_text(repo: Path, *, allowlist: list[str] | None = None) -> str | None:
+#: Repo-root directories Nous itself writes into a target tree. Never part of
+#: a mechanism: ``.nous/`` holds the legacy campaign work_dirs
+#: (``<target>/.nous/<run_id>/``, the default when ``NOUS_CAMPAIGN_PARENT`` is
+#: unset) and the ``.nous/repo/`` cache ``campaign._write_repo_cache`` writes at
+#: campaign end AND on the aborted path; ``.nous-experiments/`` holds the
+#: per-arm worktrees (#133). See ``orchestrator/work_dir_resolver.py``.
+NOUS_OWNED_PATHS: tuple[str, ...] = (".nous", ".nous-experiments")
+
+
+def _nous_owned_prefixes(repo: Path, work_dir: Path | None) -> list[str]:
+    """Repo-relative prefixes of Nous's own outputs under ``repo``.
+
+    The fixed :data:`NOUS_OWNED_PATHS`, plus the campaign ``work_dir`` itself
+    when it resolves inside ``repo`` (a ``NOUS_CAMPAIGN_PARENT`` pointed into
+    the target, or a hand-chosen work_dir there). Both sides are resolved so a
+    symlinked tmp dir (macOS ``/var`` -> ``/private/var``) still compares equal.
+    """
+    out = list(NOUS_OWNED_PATHS)
+    if work_dir is not None:
+        try:
+            rel = Path(work_dir).resolve().relative_to(Path(repo).resolve())
+        except (ValueError, OSError):
+            rel = None
+        if rel is not None:
+            r = rel.as_posix().strip("/")
+            # `relative_to` == "." means the work_dir IS the repo; excluding
+            # that would exclude everything, which is never what it means.
+            if r and r != "." and not _in_allowlist(r, out):
+                out.append(r)
+    return out
+
+
+def _mechanism_text(
+    repo: Path, *, allowlist: list[str] | None = None,
+    work_dir: Path | None = None, exclude_nous_owned: bool = True,
+) -> str | None:
     """Canonical text of everything the build stage changed under ``repo``.
 
     ``git diff HEAD`` covers tracked edits; new files are invisible to it, and
@@ -347,8 +382,8 @@ def _mechanism_text(repo: Path, *, allowlist: list[str] | None = None) -> str | 
     artifact through the other channel.
 
     ``allowlist=None`` (the default) is Task 12's original whole-tree
-    behaviour, byte-for-byte: no ``--`` pathspec is passed to git and no
-    untracked path is filtered, so an existing campaign's recorded hash stays
+    behaviour: no target path is filtered from either half (only Nous's own
+    outputs are — see below), so an existing campaign's recorded hash stays
     valid across this change. That default is deliberate. Whole-tree hashing
     has a real defect — Nous runs the target's own ``test_command`` with the
     repo as cwd, so a ``.pytest_cache/`` or ``run.log`` that git does not
@@ -358,6 +393,24 @@ def _mechanism_text(repo: Path, *, allowlist: list[str] | None = None) -> str | 
     misleads. So the narrowing is opt-in, via
     ``optimization.build_checks.mechanism_paths``.
 
+    NOUS'S OWN OUTPUTS ARE ALWAYS EXCLUDED (``exclude_nous_owned``, default
+    True), from BOTH halves, allowlist or not: ``.nous/`` and
+    ``.nous-experiments/`` at the repo root, and ``work_dir`` when it resolves
+    inside ``repo`` (:func:`_nous_owned_prefixes`). This is NOT the "silently
+    narrowing an author's oracle" warned against above. That warning is about
+    the target's files — which of them the experiment is about is the author's
+    call, and only the author can make it. These paths are not the target's:
+    Nous creates them, Nous appends to them during the epoch, and no mechanism
+    can live in them. Including them was not a stricter oracle but a broken
+    one: in the default layout (``NOUS_CAMPAIGN_PARENT`` unset, work_dir at
+    ``<target>/.nous/<run_id>/``) the snapshot wrote ``mechanism.patch`` into
+    the very tree it had just hashed, so the first epoch iteration of every
+    such campaign aborted with "mechanism drifted", and every ``runs.jsonl``
+    append would have done it again. ``exclude_nous_owned=False`` reproduces
+    the pre-exclusion text exactly; it exists only so
+    :func:`mechanism_hash_matches` can honour a hash recorded before this
+    change.
+
     Returns None — not "" — when ``repo`` is not a git work tree or git is
     absent. The distinction matters: "" is a legitimate hash input (a git repo
     with no changes at all), while None means "no oracle available here", which
@@ -366,9 +419,12 @@ def _mechanism_text(repo: Path, *, allowlist: list[str] | None = None) -> str | 
     import subprocess
 
     paths = [p for p in (allowlist or []) if str(p).strip()]
+    owned = _nous_owned_prefixes(repo, work_dir) if exclude_nous_owned else []
     diff_cmd = ["git", "diff", "HEAD", "--no-color"]
-    if paths:
-        diff_cmd += ["--", *paths]
+    if paths or owned:
+        # An exclude-only pathspec means "everything except", so the
+        # no-allowlist case still diffs the whole tree minus Nous's outputs.
+        diff_cmd += ["--", *paths, *(f":(exclude){o}" for o in owned)]
     try:
         diff = subprocess.run(
             diff_cmd, cwd=str(repo),
@@ -386,6 +442,8 @@ def _mechanism_text(repo: Path, *, allowlist: list[str] | None = None) -> str | 
     for rel in sorted(p for p in others.stdout.splitlines() if p.strip()):
         if paths and not _in_allowlist(rel, paths):
             continue
+        if owned and _in_allowlist(rel, owned):
+            continue
         try:
             parts.append(f"+++ untracked: {rel}\n" + (repo / rel).read_text())
         except (OSError, UnicodeDecodeError):
@@ -393,7 +451,10 @@ def _mechanism_text(repo: Path, *, allowlist: list[str] | None = None) -> str | 
     return "".join(parts)
 
 
-def current_mechanism_hash(repo: Path, *, allowlist: list[str] | None = None) -> str:
+def current_mechanism_hash(
+    repo: Path, *, allowlist: list[str] | None = None,
+    work_dir: Path | None = None,
+) -> str:
     """Hash the target's current working tree the same way ``snapshot_mechanism`` did.
 
     Recomputed from the tree on every call — never cached, never read back from
@@ -405,11 +466,44 @@ def current_mechanism_hash(repo: Path, *, allowlist: list[str] | None = None) ->
     the comparison is between two different questions and every iteration
     "drifts". Both call sites resolve it from one place —
     ``stage_runner._mechanism_paths(campaign)`` — for that reason.
+
+    ``work_dir`` likewise must be the campaign's work_dir, so the same
+    Nous-owned paths are excluded on both sides (see :func:`_mechanism_text`).
     """
     import hashlib
 
-    text = _mechanism_text(Path(repo), allowlist=allowlist)
+    text = _mechanism_text(Path(repo), allowlist=allowlist, work_dir=work_dir)
     return "" if text is None else hashlib.sha256(text.encode()).hexdigest()
+
+
+def mechanism_hash_matches(
+    repo: Path, recorded: str, *, allowlist: list[str] | None = None,
+    work_dir: Path | None = None,
+) -> tuple[bool, str]:
+    """Does the tree still hash to ``recorded``? Returns ``(ok, current)``.
+
+    ``current`` is always the CURRENT-form hash (Nous-owned paths excluded),
+    for the abort message. On a mismatch, the pre-exclusion form is computed
+    too and accepted if it equals ``recorded``: a campaign snapshotted before
+    the exclusion existed recorded that form, and must not false-abort on the
+    resume that first runs this code. Accepting it is safe — the old form
+    covers a strict superset of the new one, so equality there implies the
+    mechanism is byte-identical. (An old hash recorded with the work_dir
+    INSIDE the target never matched anything, since it covered the
+    ``mechanism.patch`` written after it; that campaign could not resume
+    before this change either, and after it a fresh campaign is the remedy.)
+    """
+    import hashlib
+
+    current = current_mechanism_hash(repo, allowlist=allowlist, work_dir=work_dir)
+    if current == recorded:
+        return True, current
+    legacy = _mechanism_text(
+        Path(repo), allowlist=allowlist, exclude_nous_owned=False,
+    )
+    if legacy is not None and hashlib.sha256(legacy.encode()).hexdigest() == recorded:
+        return True, current
+    return False, current
 
 
 def snapshot_mechanism(
@@ -433,7 +527,7 @@ def snapshot_mechanism(
     gets no drift oracle, and the absence of the file is what disables the
     check rather than a hash that would never match.
     """
-    text = _mechanism_text(Path(repo), allowlist=allowlist)
+    text = _mechanism_text(Path(repo), allowlist=allowlist, work_dir=work_dir)
     if text is None:
         return ""
     import hashlib

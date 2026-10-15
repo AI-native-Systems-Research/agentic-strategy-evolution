@@ -291,6 +291,7 @@ the condition is at least detectable from a finished work-dir.
 | `INV-PROV03` | `adapter_contract.json` must have a sidecar and agree with it. Inherits `INV-PROV01`'s conditional hole — `read_contract` guards with the same `sidecar.exists() and`. | artifact | `adapter_contract.read_contract` | `always` | — |
 | `INV-PROV04` | Every `transitions.jsonl` row carries the `policy_hash` it ran under, so "which policy scheduled this design?" is answerable for every epoch, not only the current one. | artifact | `_close_iteration`; `_load_or_compile_policy` | `always` | — |
 | `INV-PROV05` | A fingerprint's hash equality does not depend on dict insertion order. | function | `adapter_contract.build_cache_key` comment | `test` (property) | — |
+| `INV-PROV06` | The mechanism hash never covers Nous's own outputs: `.nous/`, `.nous-experiments/`, and the campaign work_dir when it resolves inside the target are excluded from BOTH halves (tracked diff and untracked listing), with or without `mechanism_paths`. Nous's own writes during an epoch must not read as mechanism drift. | function | `build._mechanism_text`; `build.NOUS_OWNED_PATHS` | `test` | **yes** — fixed: in the default layout the snapshot hashed the work_dir it then wrote `mechanism.patch` into, so iter-2 always aborted |
 | `INV-RES01` | A per-run config patch is a COPY. The input document is never mutated, so a caller holding the parsed doc is safe. | function | `config_patch` ("Pure: the input document is never mutated") | `always` | — |
 | `INV-RES02` | A level is serialized in its native type, never through `str()`. An int level stays an int. | function | `config_patch` ("never stringified"); the bool/int mismatch that failed 67 of 67 runs | `always` | — |
 | `INV-RES03` | `config_patch` never CREATES structure: a pointer that does not exist is a `ConfigPatchError`, never a silent no-op. | function | `config_patch` line ~107 | `always` | — |
@@ -465,10 +466,10 @@ they disagree.
 | Semantic (`INV-SEM`) | 13 | 12 | 0 | 1 | 0 |
 | Statistical (`INV-STAT`) | 11 | 7 | 0 | 4 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
-| Provenance (`INV-PROV`) | 5 | 4 | 0 | 1 | 0 |
+| Provenance (`INV-PROV`) | 6 | 4 | 0 | 2 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **64** | **51** | **0** | **11** | **2** |
+| **Total** | **65** | **51** | **0** | **12** | **2** |
 
 By level: `function` 24, `module` 6, `artifact` 20, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
 checker function exists): 41 of 64. The 23 without one are
