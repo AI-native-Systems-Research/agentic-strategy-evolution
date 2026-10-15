@@ -95,7 +95,9 @@ def _instrument(campaign: dict, work_dir: Path) -> dict:
 def noise_spread(campaign: dict, work_dir: Path) -> float | None:
     runs = (_instrument(campaign, work_dir).get("noise") or {}).get("runs") or []
     vals = [v for v in (_num(r) for r in runs) if v is not None]
-    return (max(vals) - min(vals)) if len(vals) >= 2 else None
+    if len(vals) < 2 or max(vals) <= 0:  # repeats of a 0-score stub say nothing about the judge's noise
+        return None
+    return max(vals) - min(vals)
 
 
 def _load(work_dir: Path) -> dict:

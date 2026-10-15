@@ -456,15 +456,32 @@ def write_orchestrator_instrument(campaign: dict, work_dir: Path, iter_dir: Path
         logger.warning("v8: only %d of %d official baseline measures returned a score", len(runs), NOISE_RUNS)
         return f"missing: {len(runs)} of {NOISE_RUNS} official measures returned a score"
     limit = stated_time_limit(campaign)
+    noise = {"runs": runs, "min": min(runs), "max": max(runs), "spread": round(max(runs) - min(runs), 6),
+             "command": cmd}
+    if max(runs) <= 0:  # a 0-score baseline says nothing about the judge's noise
+        noise["note"] = "unknown: the baseline scored 0"
     data = {"max_cpu_s": None, "time_limit_s": limit,
             "time_limit_source": "statement" if limit else "none in the statement",
             "speed_first": False,
-            "noise": {"runs": runs, "min": min(runs), "max": max(runs), "spread": round(max(runs) - min(runs), 6),
-                      "command": cmd},
+            "noise": noise,
             "knobs": [], "written_by": "orchestrator"}
     atomic_write(Path(iter_dir) / INSTRUMENT_FILE, json.dumps(data, indent=2) + "\n")
     print(f"  v8 orchestrator: baseline official scores {', '.join(f'{r:g}' for r in runs)}")
     return check_instrument(iter_dir)
+
+
+def _baseline_from_official(campaign, work_dir, repo, rec, patch, extras) -> None:
+    """The evaluator stopped before saving its baseline: use its best official measure (> 0) instead."""
+    from orchestrator.official_measure import _write_best_code, best_measure, measures_in
+    from orchestrator.v7_execute import save_worktree_diff
+    rows = [r for r in measures_in(campaign, work_dir, rec.get("windows")) if float(r.get("score") or 0) > 0]
+    best = best_measure(rows)
+    if best is None:
+        return
+    note = _write_best_code(campaign, best, _worktree(repo, rec), patch, rec.get("base"), extras,
+                            save_worktree_diff)
+    logger.warning("v8: the evaluator saved no baseline; using its best official measure %s. %s",
+                   best.get("score"), note)
 
 
 def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, extras) -> None:
@@ -488,6 +505,8 @@ def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, st
                             "build-evaluator-v8", label=EVALUATOR_KEY, target=cap, hard=hard, resume=None,
                             extras=extras, patch=patch)
         rec = state["sessions"][EVALUATOR_KEY]
+        if not (patch.is_file() and patch.stat().st_size > 0):
+            _baseline_from_official(campaign, work_dir, repo, rec, patch, extras)
         remove_experiment_worktree(repo, rec["experiment_id"])
         commit_baseline(repo, patch, state)
         state["sessions"][EVALUATOR_KEY] = {

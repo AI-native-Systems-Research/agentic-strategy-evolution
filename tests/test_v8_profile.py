@@ -1029,6 +1029,29 @@ class TestOfficialFirstEvaluator:
         out[3]["target_system"]["description"] += "\nTime limit: 2 seconds\n"
         return (j, script) + out
 
+    def test_capped_evaluator_without_a_saved_baseline_uses_its_best_official_measure(self, tmp_path,
+                                                                                         monkeypatch):
+        j, script, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
+
+        def evaluator(name, prompt, cwd):  # improves and measures, then is capped before `git diff >`
+            (cwd / "solution.py").write_text("v = 37\n")
+            _measure_in_session(script, cwd)
+            (cwd / "solution.py").write_text("v = 12\n")  # left in a worse state
+            return SDKResult(**CAP_STOP, session_id="sess-evaluator")
+        fake._evaluator = evaluator
+        _execute(repo, work, it, campaign, d)
+        assert _git(repo, "show", "HEAD:solution.py") == "v = 37\n"  # committed baseline = best measured
+        inst = json.loads((it / "instrument.json").read_text())
+        assert inst["noise"]["runs"][:1] == [37.0]  # noise measured on it, not on the 0 seed
+
+    def test_noise_of_a_zero_score_baseline_is_unknown(self, tmp_path):
+        from orchestrator.judge_profile import noise_spread
+        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
+        (tmp_path / "runs" / "iter-1" / "instrument.json").write_text(json.dumps(
+            {"max_cpu_s": None, "time_limit_s": 1.0, "speed_first": False,
+             "noise": {"runs": [0.0, 0.0, 0.0], "min": 0.0, "max": 0.0, "spread": 0.0}, "knobs": []}))
+        assert noise_spread(_v8(), tmp_path) is None
+
     def test_evaluator_writes_no_instrument_and_the_orchestrator_does(self, tmp_path, monkeypatch):
         from orchestrator.instrument import validate_instrument
         j, _s, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
