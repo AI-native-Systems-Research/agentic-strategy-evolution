@@ -349,6 +349,13 @@ class TestJudgeProfile:
         _instrument(tmp_path, limit=2.0)
         assert update_judge_profile(_v8(), tmp_path)["assumed_time_limit_s"] == 2.0
 
+    def test_reads_the_time_limit_from_the_statement_before_the_evaluator_runs(self, tmp_path):
+        from orchestrator.judge_profile import update_judge_profile
+        c = _v8()
+        c["target_system"]["description"] = "PROBLEM STATEMENT ... Time Limit: 4 second  \nMemory Limit: 512 MB"
+        p = update_judge_profile(c, tmp_path)  # no instrument.json yet
+        assert p["assumed_time_limit_s"] == 4.0 and p["time_limit_source"] == "statement"
+
     def test_longest_accepted_runtime_and_likely_timeouts(self, tmp_path):
         from orchestrator.judge_profile import SUMMARY_FILE, update_judge_profile
         _instrument(tmp_path)

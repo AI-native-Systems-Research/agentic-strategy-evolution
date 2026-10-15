@@ -127,13 +127,23 @@ def _trust(sessions: list[dict], pairs: list[dict], threshold: float, previous: 
     return checked or {"trusted": None, "threshold": round(threshold, 3)}
 
 
+def stated_time_limit(campaign: dict) -> float | None:
+    """The time limit written in the problem statement (part of the campaign's target description)."""
+    import json as _json
+    import re as _re
+    text = _json.dumps((campaign or {}).get("target_system") or {})
+    m = _re.search(r"(?i)time limit[^0-9]{0,10}([0-9]+(?:\.[0-9]+)?)\s*(?:s\b|sec|second)", text)
+    return float(m.group(1)) if m else None
+
+
 def update_judge_profile(campaign: dict, work_dir: Path) -> dict:
     """Recompute and write ``judge_profile.json`` and ``judge_profile.md``; return the profile."""
     from orchestrator.design_profile import v8_settings
     work_dir = Path(work_dir)
     old = _load(work_dir)
     inst = _instrument(campaign, work_dir)
-    stated = _num(inst.get("time_limit_s"))
+    # the statement is read directly so the limit is right before the evaluator writes instrument.json
+    stated = _num(inst.get("time_limit_s")) or stated_time_limit(campaign)
     noise = noise_spread(campaign, work_dir)
     local = _local_by_sha(work_dir)
     accepted, timeouts, pairs = None, [], []
