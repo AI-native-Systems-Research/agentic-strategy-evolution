@@ -61,7 +61,7 @@ DOCUMENTED_NON_BRANCHING = frozenset({
     "runs_needed_confirm",          # magnitude behind confirm_affordable
     "residual_regret", "epsilon",   # reported into report.json
     "model_adequate",               # read by _confirm_rows, not by a `when`
-    "all_within_noise", "lack_of_fit",   # reach findings.json / effects.json
+    "all_within_noise",             # reaches findings.json
     "correctness_failed",           # set explicitly; abort happens upstream
     "certified",                    # reported; Task 9 owns making it True
     "round", "budget_remaining",    # read by guards on some policies only
@@ -237,6 +237,8 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_no_model_call_reachable_from_epoch", "check_compile_policy_is_pure",
         "check_recommendation_admissible_per_configuration",
         "check_epsilon_has_a_reference",
+        "check_curvature_routes_to_refine",
+        "check_certificate_rests_on_adequate_model",
         "check_fit_coordinates_are_actual", "check_fitted_statuses",
     }
     registered = {i.checker.__name__ for i in inv.checkable()}
@@ -587,6 +589,32 @@ def test_epsilon_must_name_its_reference_and_never_be_zero_for_want_of_one():
         {"epsilon": None, "epsilon_reference": {"source": "none"}}) == []
     assert inv.check_epsilon_has_a_reference(
         {"epsilon": 0.37, "epsilon_reference": {"source": "best_observed"}}) == []
+
+
+def test_curvature_invariant_has_teeth():
+    """INV-SEM16: teeth. A policy with refine but no curvature route fails."""
+    from orchestrator.optimize.policy import compile_policy as _compile
+    pol = _compile(synthetic_campaign(SURFACES["geometric_knob"]()))
+    assert inv.check_curvature_routes_to_refine(pol) == []
+    stripped = dict(pol, transitions=[
+        t for t in pol["transitions"] if not (t.get("when") or {}).get("lack_of_fit")])
+    errs = inv.check_curvature_routes_to_refine(stripped)
+    assert errs and "lack_of_fit" in errs[0], errs
+    # No refine state -> nothing to require.
+    no_ref = _compile(synthetic_campaign(SURFACES["interaction_only"]()))
+    assert inv.check_curvature_routes_to_refine(no_ref) == []
+
+
+def test_certificate_invariant_has_teeth():
+    """INV-SEM17: teeth. A certificate over a rejected model fails."""
+    rep = {"certified": True, "certification_withheld": []}
+    assert inv.check_certificate_rests_on_adequate_model(rep, {"model_adequate": False})
+    assert inv.check_certificate_rests_on_adequate_model(rep, {"model_adequate": True}) == []
+    # Absent key: recommendations predating the field are read as adequate.
+    assert inv.check_certificate_rests_on_adequate_model(rep, {}) == []
+    withheld = {"certified": False, "certification_withheld": ["model_inadequate"]}
+    assert inv.check_certificate_rests_on_adequate_model(
+        withheld, {"model_adequate": False}) == []
 
 
 def test_alias_sign_is_load_bearing():

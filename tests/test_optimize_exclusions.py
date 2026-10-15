@@ -675,9 +675,12 @@ def test_a_balanced_loss_does_not_withhold_certification(tmp_path):
     infeasible {A: 14, B: 14} above {A: 16, B: 7}, so one more round is spent
     measuring it -- see test_sla_surface_never_recommends_an_invalid_point.)
     """
+    # Seed 4, not 5: at seed 5 refine's lack-of-fit test falsely rejects
+    # (p=0.030) and INV-SEM17 withholds the certificate for THAT reason, which
+    # is not the consequence this test is about.
     s = SURFACES["sla"]()
     res = run_synthetic_campaign(
-        s, seed=5, parent_dir=tmp_path,
+        s, seed=4, parent_dir=tmp_path,
         campaign_overrides={
             "response": {"primary": {"metric": "m", "direction": "maximize"},
                          "constraints": [{"metric": "p99_ms", "op": "<=", "value": 40}]},

@@ -196,6 +196,10 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
     Next stage:
       * REFINE if at least one surviving factor is refinable (numeric,
         more than two levels) -- there is curvature to fit.
+      * REFINE, too, when the lack-of-fit test rejects and ANY factor is
+        refinable, survivor or not: centre-point curvature with null corner
+        main effects is the signature of an interior optimum, and mirrors the
+        compiled policy's registered curvature branch.
       * CONFIRM otherwise -- either nothing survived, or everything that
         survived is a choice factor or a 2-level numeric factor, neither of
         which can carry curvature. Spending a refine stage on factors that
@@ -257,7 +261,13 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
         triggers.append(Trigger.BEHAVIORAL_VIOLATION)
 
     refinable_survivors = [fid for fid in surviving if is_refinable(by_id[fid])]
-    if blocking_triggers:
+    if (Trigger.LACK_OF_FIT in blocking_triggers
+            and any(is_refinable(f) for f in factors)):
+        # Centre-point curvature: the registered second-order augmentation
+        # (policy.CURVATURE_ACCOUNTING) over every refinable factor, survivor
+        # or not -- an interior optimum leaves the corners with no main effect.
+        next_stage = Stage.REFINE
+    elif blocking_triggers:
         next_stage = None
     elif refinable_survivors:
         next_stage = Stage.REFINE

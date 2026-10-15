@@ -67,14 +67,15 @@ otherwise tell apart:
   (``runs_needed_foldover``, ``runs_needed_confirm``);
 * it is a REPORTED number a downstream artifact consumes rather than a branch
   (``residual_regret`` / ``epsilon`` in ``report.json``; ``model_adequate``,
-  which ``recommendation.json`` carries and ``_confirm_rows`` reads to decide
-  whether the fitted argmax may anchor the shortlist; ``all_within_noise`` /
-  ``lack_of_fit``, which reach ``findings.json`` through
-  ``StageDecision.triggers`` and ``effects.json`` through ``lack_of_fit_p``,
-  and whose branching consequence the policy expresses through
-  ``refinable_survivors`` and confirm's registered augmentation instead — see
-  the "DELIBERATELY NOT a ``lack_of_fit`` rule" note on refine's transitions
-  below);
+  which ``recommendation.json`` carries, ``_confirm_rows`` reads to decide
+  whether the fitted argmax may anchor the shortlist, and ``_finish_confirm``
+  reads to withhold certification (``model_inadequate``); ``all_within_noise``,
+  which reaches ``findings.json`` through ``StageDecision.triggers``);
+  ``lack_of_fit`` is BRANCHING at ``screen``/``foldover`` only -- the
+  registered curvature branch to ``refine`` (``CURVATURE_ACCOUNTING``) -- and
+  deliberately non-branching at ``refine``, where model inadequacy is answered
+  by confirm's fresh measurements instead (see the "DELIBERATELY NOT a
+  ``lack_of_fit`` rule" note on refine's transitions below);
 * it is DELIBERATELY non-branching by design, as ``behavioral_violation``'s
   note above records.
 
@@ -137,6 +138,61 @@ def _enabled(campaign: dict) -> set[str]:
 
 def _canonical(obj) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
+
+CURVATURE_ACCOUNTING = (
+    "lack-of-fit F on pure error (the centre-point curvature contrast) at "
+    "alpha=0.05; registered second-order augmentation: refine's central "
+    "composite spans EVERY refinable factor, because curvature detected by a "
+    "2-level design's centre points is one contrast that no factor can be "
+    "credited with"
+)
+"""The accounting rule of the registered CURVATURE branch (screen/foldover -> refine).
+
+WHY THE BRANCH EXISTS. A response whose optimum is INTERIOR has ~zero main
+effects at a 2-level screen's corners -- every corner sits about as far from
+the optimum as every other -- so no numeric factor survives the screen and
+``refinable_survivors > 0`` cannot fire. The screen's centre points are the one
+part of the design that sees such a response: the centre-vs-corner contrast is
+what the lack-of-fit F on pure error measures when the screen model is mains +
+two-factor interactions. Routing that screen to ``confirm`` seated a shortlist
+from corners and centre and CERTIFIED the best of it: 26% below the true
+optimum on ``synthetic.SURFACES["geometric_knob"]`` on every seed, and 1.0 below
+it (2.5x epsilon) on the pure-curvature ``bowl_centred``. The textbook response
+to significant curvature in a centre-pointed 2-level design is to augment it to
+a second-order (central composite) design, which is exactly what ``refine`` is.
+
+WHY ALL REFINABLE FACTORS, NOT A SUBSET. With a 2-level design, every pure
+quadratic column equals the intercept on the corners, so the curvature
+contrast is the SUM of the pure quadratic effects and cannot be attributed to
+any one factor. ``_build_design`` already builds refine's composite over every
+refinable factor (not over the survivors), so no selection rule is needed and
+none is invented here. Non-refinable factors are held at the screen's
+recommendation (``stage_runner``'s held-fixed rule): pure quadratic terms are
+aliased only with the intercept in a 2-level factorial plus centre points, so
+the main-effect and interaction coefficients that recommendation is the argmax
+of are unbiased by the curvature the test detected.
+
+WHY NO NEW OBSERVATION KEY. "Is at least one factor refinable?" is a fact about
+the campaign's DECLARATION, known at compile time, and the rule is registered
+only when it holds (``refine_on``). A runtime ``refinable_factors`` count would
+put the same fact in two places and let them drift -- the argument the foldover
+registration makes about resolution.
+
+WHY IT IS NOT ADAPTIVE SEARCH (spec §5). The branch is pre-registered, fires on
+one named test at a stated alpha, and leads to a fixed design family; it reads
+one closed-vocabulary boolean. Its error is accounted at the test's alpha, and
+what follows it is the refine stage's own registered accounting.
+
+ORDER. After the consequential-alias foldover (resolve confounded linear terms
+first) and after the survivors rule (which also routes to refine and keeps its
+own accounting label when both hold).
+"""
+
+
+def _curvature_rule(state: str) -> dict:
+    return {"from": state, "when": {"lack_of_fit": True}, "to": "refine",
+            "accounting": CURVATURE_ACCOUNTING}
 
 
 def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1) -> dict:
@@ -260,6 +316,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
     if refine_on:
         transitions.append({"from": "screen", "when": {"refinable_survivors": {">": 0}}, "to": "refine",
                             "accounting": "screen selection at alpha=0.05 per main effect (Task 8 adds regret)"})
+        transitions.append(dict(_curvature_rule("screen")))
     transitions.append({"from": "screen", "default": ("confirm" if confirm_on else "report")})
     if fold_on:
         # Foldover carries SCREEN's rules MINUS the foldover rule — one fold per
@@ -277,6 +334,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                 "to": "refine",
                 "accounting": "screen selection at alpha=0.05 per main effect on the combined fit",
             })
+            transitions.append(dict(_curvature_rule("foldover")))
         transitions.append(
             {"from": "foldover", "default": ("confirm" if confirm_on else "report")},
         )
@@ -291,7 +349,11 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # semantic exception, not a branch: the epoch ends, an agent may
             # widen the ranges, and recompilation starts a new epoch.
             #
-            # DELIBERATELY NOT a `lack_of_fit` rule. Model inadequacy IS named
+            # DELIBERATELY NOT a `lack_of_fit` rule HERE (screen and foldover
+            # do carry one -- CURVATURE_ACCOUNTING -- because their first-order
+            # design has a registered second-order augmentation; refine's design
+            # IS that augmentation, and there is no higher registered family to
+            # climb to). Model inadequacy IS named
             # by the policy — refine's registered augmentation is confirm's
             # fresh measurements — so it routes to `confirm` on the default with
             # `recommendation.json["model_adequate"] = false`, which is what
@@ -372,6 +434,13 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
     }
     _sanity = {t["from"] for t in transitions if "default" in t}
     assert {s for s, v in states.items() if not v.get("terminal")} <= _sanity
+    from orchestrator.optimize.invariants import (
+        InvariantViolation,
+        check_curvature_routes_to_refine,
+    )
+    curvature_errs = check_curvature_routes_to_refine(policy)
+    if curvature_errs:  # INV-SEM16
+        raise InvariantViolation("INV-SEM16", curvature_errs)
     return policy
 
 

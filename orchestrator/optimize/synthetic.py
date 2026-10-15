@@ -21,6 +21,10 @@ Each surface is named for the historical failure it catches:
   * ``bowl_out_of_hull`` — the stationary point lies outside the declared
     level hull, so extrapolating to it is the failure and clamping to the
     boundary is the honest answer.
+  * ``bowl_centred`` — a symmetric bowl centred on the design centre, so the
+    corners carry no main effect at all and only the screen's centre-point
+    curvature test says where the optimum is; routing that screen to confirm
+    certifies an uninformed shortlist.
   * ``saddle`` — a stationary point that is NOT the argmax; solving
     ``grad = 0`` and reporting it is the bug.
   * ``choice_x_numeric`` — the numeric optimum flips sign with the choice
@@ -164,6 +168,28 @@ def _bowl(a0=9.0, b0=11.0, name="bowl") -> Surface:
     return Surface(
         name=name, noise_sd=0.05, factors=(_numeric("A"), _numeric("B")),
         fn=lambda lv: 20 - 0.05 * (lv["A"] - a0) ** 2 - 0.05 * (lv["B"] - b0) ** 2,
+    )
+
+
+def _bowl_centred() -> Surface:
+    """A symmetric bowl centred EXACTLY on the screen's design centre.
+
+    Pure curvature: every 2-level corner sits at the same distance from the
+    optimum, so every numeric main effect (and the A x B interaction) is zero
+    at the corners and no numeric factor survives the screen. The ONLY
+    evidence of where the optimum lives is the centre-point curvature contrast
+    -- the lack-of-fit F on pure error. A policy whose only screen -> refine
+    route is ``refinable_survivors > 0`` goes straight to confirm, seats a
+    shortlist from the measured corners and centre, and certifies a point that
+    was never informed by an adequate model. The choice factor C carries a
+    real additive effect, so the held-fixed level refine uses for it is part
+    of what the oracle judges: the optimum is (A=9, B=9, C=on).
+    """
+    return Surface(
+        name="bowl_centred", noise_sd=0.05,
+        factors=(_numeric("A"), _numeric("B"), _choice("C")),
+        fn=lambda lv: (20 - 0.05 * (lv["A"] - 9) ** 2 - 0.05 * (lv["B"] - 9) ** 2
+                       + (1.0 if lv["C"] == "on" else 0.0)),
     )
 
 
@@ -367,6 +393,7 @@ SURFACES: dict[str, Callable[[], Surface]] = {
     "interaction_only": _interaction_only,
     "bowl": _bowl,
     "bowl_out_of_hull": lambda: _bowl(a0=30.0, name="bowl_out_of_hull"),
+    "bowl_centred": _bowl_centred,
     "saddle": _saddle,
     "choice_x_numeric": _choice_x_numeric,
     "drift": _drift,

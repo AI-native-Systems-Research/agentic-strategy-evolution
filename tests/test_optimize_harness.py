@@ -284,13 +284,19 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     ``confirm_max_rounds: 1`` the campaign still returns a feasible
     configuration and labels it ``terminal_best``, uncertified — an honest
     answer rather than a wrong certificate. Both halves are asserted below.
+
+    SEED 4, not 5 (INV-SEM17). This surface's primary is linear, so refine's
+    lack-of-fit F is pure noise; at seed 5 it rejects at p=0.030 -- an
+    alpha-rate false rejection, shared by every in-class surface at that seed --
+    and a certificate is withheld (`model_inadequate`) whenever the fit behind
+    the shortlist fails that test. Seed 4 measures the same four-round path.
     """
     s = SURFACES["sla"]()
     constrained = {"response": {"primary": {"metric": "m", "direction": "maximize"},
                                 "constraints": [{"metric": "p99_ms", "op": "<=", "value": 40}]}}
 
     res = run_synthetic_campaign(
-        s, seed=5, parent_dir=tmp_path / "looped",
+        s, seed=4, parent_dir=tmp_path / "looped",
         campaign_overrides={**constrained, "policy": {"confirm_max_rounds": 4}},
         max_iterations=12,
     )
@@ -301,7 +307,7 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     # One round is not enough on this surface, and the report must say so rather
     # than certifying the lone survivor of its own exclusions.
     single = run_synthetic_campaign(
-        s, seed=5, parent_dir=tmp_path / "one_round",
+        s, seed=4, parent_dir=tmp_path / "one_round",
         campaign_overrides=constrained,
     )
     assert not s.invalid(single.recommendation), single.recommendation
@@ -330,7 +336,7 @@ def test_confirm_declines_a_round_the_budget_cannot_finish(tmp_path):
     """
     s = SURFACES["sla"]()
     res = run_synthetic_campaign(
-        s, seed=5, parent_dir=tmp_path,
+        s, seed=4, parent_dir=tmp_path,
         campaign_overrides={
             "response": {"primary": {"metric": "m", "direction": "maximize"},
                          "constraints": [{"metric": "p99_ms", "op": "<=", "value": 40}]},

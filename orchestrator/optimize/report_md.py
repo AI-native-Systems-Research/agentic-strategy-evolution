@@ -65,6 +65,9 @@ WITHHELD_MEANING = {
                            "shortlist was never fully compared -- re-run it",
     "fit_exclusions_level_correlated": "the fit behind the shortlist lost rows "
                                        "correlated with factor levels",
+    "model_inadequate": "the fit behind the shortlist failed its lack-of-fit "
+                        "test, so nothing supports the claim that screening "
+                        "did not exclude the optimum",
     "no_terminal_discrimination": "no terminal discrimination ran",
 }
 

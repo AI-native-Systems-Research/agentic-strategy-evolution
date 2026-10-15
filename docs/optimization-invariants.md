@@ -193,6 +193,8 @@ about the presence of a cause.
 | `INV-SEM13` | A measured row whose observation contradicts a `locked_parameters` value at its declared `optimization.locked_observables` path — or omits that path — ABORTS the campaign, regardless of `--auto-approve`. A lock with no declared observable is unenforceable and `nous validate campaign` WARNs naming it; a lock that is also a factor is a validation error. | campaign | `locked.check_row`; `stage_runner` hard-fail #4; #246 (F1) | `always` — `tests/test_optimize_locked_parameters.py::test_a_target_that_ignores_the_locked_value_aborts_the_campaign` (metamorphic partner: `::test_a_target_that_honours_the_locked_value_is_unaffected`) | — |
 | `INV-SEM14` | Feasibility is per CONFIGURATION, not per row: the report never returns — and no shortlist seed or best-observed selector picks — a configuration that ANY row measured `infeasible`/`rejected`, however many of its other rows completed. The same sticky rule `_finish_confirm` applies to a finalist's replicates; one shared predicate (`_config_admissible`) serves the model and measured rungs, `_top_measured`/`_best_observed`, and confirm's epsilon reference. `baseline` is exempt (the author's declared last resort). A row that merely failed to measure does not strike a configuration off. | artifact | `stage_runner._config_admissible`; `_run_report`; field campaign with a constraint noisy around its bound | `always` — `tests/test_optimize_no_admissible_finalist.py` (property over seeds and round caps) | **yes** — the measured rung returned a finalist confirm had struck off |
 | `INV-SEM15` | Confirm's epsilon records the reference its percentage was taken of (`epsilon_reference`) and is never 0 for want of one. With no admissible finalist it is the declared percentage of the best measured ADMISSIBLE configuration (`best_observed`), else `recommendation.json`'s epsilon, else null (unknown). | artifact | `stage_runner._confirm_epsilon`; spec §3.3 | `always` — `tests/test_optimize_no_admissible_finalist.py` | **yes** — every finalist inadmissible gave `epsilon: 0.0` |
+| `INV-SEM16` | Whenever the policy registers `refine`, `screen` and `foldover` each carry a registered `{lack_of_fit: true} -> refine` rule naming its accounting (`policy.CURVATURE_ACCOUNTING`: lack-of-fit F on pure error at alpha=0.05). Centre-point curvature with no refinable survivor augments to the second-order design over EVERY refinable factor, never to `confirm`. | artifact | `policy.CURVATURE_ACCOUNTING`; `compile_policy` raises `InvariantViolation` on it | `always` — `tests/test_optimize_curvature_branch.py` | **yes** — `geometric_knob` (linear coding) certified a point 26% below the optimum on every seed |
+| `INV-SEM17` | No global certificate rests on a model the data rejected: when the latest fitting stage reported `model_adequate: false`, `certified` is false and `certification_withheld` names `model_inadequate`. The within-shortlist bound is still reported. | artifact | `stage_runner._finish_confirm`; spec §3.6 rung 3, §3.3 | `always` — `tests/test_optimize_curvature_branch.py` (every surface) | **yes** — same campaign: screen and refine both rejected for lack of fit, confirm certified anyway |
 
 **`INV-SEM02` — the violation.** `certificate.model_regret_bound` returns
 `RegretBound(None, ..., method="none")` when `pure_error_df <= 0`, correctly
@@ -477,16 +479,16 @@ they disagree.
 |---|---|---|---|---|---|
 | Structural (`INV-ST`) | 10 | 10 | 0 | 0 | 0 |
 | Closed vocabulary (`INV-VOC`) | 8 | 7 | 0 | 1 | 0 |
-| Semantic (`INV-SEM`) | 15 | 14 | 0 | 1 | 0 |
+| Semantic (`INV-SEM`) | 17 | 16 | 0 | 1 | 0 |
 | Statistical (`INV-STAT`) | 14 | 7 | 0 | 7 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
 | Provenance (`INV-PROV`) | 6 | 4 | 0 | 2 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **70** | **53** | **0** | **15** | **2** |
+| **Total** | **72** | **55** | **0** | **15** | **2** |
 
-By level: `function` 26, `module` 6, `artifact` 24, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
-checker function exists): 45 of 70. The 25 without one are
+By level: `function` 26, `module` 6, `artifact` 26, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
+checker function exists): 47 of 72. The 25 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check
