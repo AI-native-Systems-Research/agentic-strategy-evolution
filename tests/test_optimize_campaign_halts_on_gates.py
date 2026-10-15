@@ -84,3 +84,49 @@ def test_a_passing_gate_does_not_halt(tmp_path, monkeypatch):
     wd = _run(tmp_path, monkeypatch, relation_passes=True)
     assert not (wd / "halt.json").exists()
     assert (wd / "report.json").exists()
+
+
+# ── resume after a mid-epoch halt (found resuming a real Go campaign) ───────
+#
+# Re-entering the halted iteration re-ran its stage into the same runs/iter-N/
+# and APPENDED to its runs.jsonl; the design-fidelity gate then refused the
+# duplicate rows, so the campaign could never be resumed.
+
+def _drifting_target(tmp_path: Path) -> Path:
+    repo = tmp_path / "target"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "bench.py").write_text(
+        "import json, os, sys\n"
+        "a = dict(x.lstrip('-').split('=') for x in sys.argv[1:])\n"
+        "k = int(a['k'])\n"
+        "n = len(os.listdir(os.environ['COUNT_DIR']))\n"
+        "open(os.path.join(os.environ['COUNT_DIR'], str(n)), 'w').close()\n"
+        "bad = os.path.exists(os.environ['DRIFT_FLAG']) and n >= 2\n"
+        "m = 'oops' if bad else 10.0 - (k - 3) ** 2\n"
+        "print(json.dumps({'m': m, 'cfg': {'k': k}}))\n")
+    (repo / "tests" / "test_rel.py").write_text("def test_k_moves_m():\n    assert True\n")
+    return repo
+
+
+def test_a_campaign_halted_mid_epoch_resumes_and_reuses_its_rows(tmp_path, monkeypatch):
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "runs"))
+    repo = _drifting_target(tmp_path)
+    flag, counts = tmp_path / "drift.flag", tmp_path / "counts"
+    flag.write_text("x")
+    counts.mkdir()
+    monkeypatch.setenv("DRIFT_FLAG", str(flag))
+    monkeypatch.setenv("COUNT_DIR", str(counts))
+    campaign = _campaign(repo)
+    wd = Path(setup_work_dir("halt-gate", repo_path=str(repo), campaign=campaign))
+    run_campaign(campaign, wd, max_iterations=6, auto_approve=True)
+    assert json.loads((wd / "halt.json").read_text())["kind"] == "gate_failed"
+
+    flag.unlink()                                   # the author fixes the cause
+    run_campaign(campaign, wd, max_iterations=6, auto_approve=True)   # = nous resume
+    assert (wd / "report.json").exists(), "resume never reached the report"
+    for rj in wd.glob("runs/iter-*/runs.jsonl"):
+        idx = [json.loads(l)["row_index"] for l in rj.read_text().splitlines() if l.strip()]
+        assert len(idx) == len(set(idx)), f"{rj}: duplicate rows {idx}"
+    reused = [json.loads(l) for rj in wd.glob("runs/iter-*/runs.jsonl")
+              for l in rj.read_text().splitlines() if l.strip() and "reused_from" in l]
+    assert reused, "the rows measured before the halt were re-measured, not reused"

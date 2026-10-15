@@ -316,7 +316,37 @@ def read_persisted_max_iterations(work_dir: Path) -> int | None:
     return val
 
 
-def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
+def _failed_epoch_iteration(work_dir: Path, campaign: dict | None, iteration: int) -> bool:
+    """True when ``iteration`` is a FAILED kind: optimization EPOCH iteration.
+
+    Such an iteration must be retried as the NEXT iteration, never re-entered:
+    re-entering it re-ran its stage into the same ``runs/iter-N/`` and APPENDED
+    to the runs.jsonl already there, which the design-fidelity gate then refused
+    as duplicate rows -- so a campaign halted mid-epoch could never be resumed
+    (found resuming a real campaign after a fix). As iteration N+1 the stage
+    re-registers the same design and row reuse carries the measured rows
+    forward under the same pre-registration. Pre-epoch stages (plan / build /
+    verify) are chosen by iteration INDEX, so those are re-entered as before.
+    """
+    if not isinstance(campaign, dict):
+        return False
+    from orchestrator.validate import campaign_kind
+
+    if campaign_kind(campaign) != "optimization":
+        return False
+    if _optimization_stage_of(campaign, iteration) != "epoch":
+        return False
+    try:
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return any(isinstance(r, dict) and r.get("iteration") == iteration
+               and r.get("status") == "FAILED"
+               for r in (ledger.get("iterations") or []))
+
+
+def _resume_completed_campaign(work_dir: Path, max_iterations: int,
+                               campaign: dict | None = None) -> int:
     """Decide where to resume a campaign and, if DONE, advance it.
 
     Returns the iteration number to start the campaign loop from:
@@ -354,6 +384,14 @@ def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
                 start, max_iterations,
             )
             return start
+        if _failed_epoch_iteration(work_dir, campaign, start):
+            logger.info(
+                "iteration %d failed mid-epoch; resuming at iteration %d, which "
+                "re-registers the same design and reuses the rows already "
+                "measured", start, start + 1,
+            )
+            engine.force_phase("DESIGN")
+            return start + 1
         logger.info(
             "Resuming mid-flight campaign at iteration %d "
             "(phase=%s, max_iterations=%d)",
@@ -486,7 +524,7 @@ def run_campaign(
     # source of truth across run/resume invocations.
     _persist_max_iterations(work_dir, max_iterations)
 
-    start_iter = _resume_completed_campaign(work_dir, max_iterations)
+    start_iter = _resume_completed_campaign(work_dir, max_iterations, campaign)
 
     # ── campaign-loop robustness: the breaker, the budget, the progress file ──
     #
