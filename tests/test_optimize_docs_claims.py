@@ -27,4 +27,21 @@ def test_docs_do_not_claim_verify_or_confirm_model_calls():
 
 def test_claude_md_states_the_true_call_count():
     text = (ROOT / "CLAUDE.md").read_text()
-    assert "the only substantive model call in the kind is `build`" in text
+    assert ("the only model calls\nin the kind are the opt-in `plan` and `build` stages"
+            in text)
+
+
+SCHEMA_RETIRED = [
+    "the model proposes",
+    "model interprets the fitted",
+    "when the model proposes factors",
+    "~3 model calls",
+]
+
+
+def test_schema_does_not_claim_a_model_proposes_or_interprets():
+    """Factors are author-declared and report/gate surfaces are rendered with
+    zero tokens; the schema descriptions an authoring agent reads must say so."""
+    text = (ROOT / "orchestrator/schemas/campaign.schema.yaml").read_text()
+    for phrase in SCHEMA_RETIRED:
+        assert phrase.lower() not in text.lower(), f"schema still says {phrase!r}"

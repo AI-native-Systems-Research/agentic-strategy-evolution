@@ -578,6 +578,55 @@ def _identifier_is_defined(repo: Path, ident: str) -> bool:
     return False
 
 
+def locate_native_tests(
+    repo: Path, declared_all: list[str],
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Classify each declared ``native_test`` against the target tree.
+
+    Returns ``(present, missing, unknown, command_style)``: found now, not
+    found (a path that does not exist / an identifier defined nowhere),
+    un-checkable locator style, and command-style locators (which resolve
+    here but fail the runner's contract check). The ONE locator logic shared
+    by rule 12 and ``--smoke``'s pre-build partition, so the two cannot
+    disagree about which tests ``build`` is expected to author.
+    """
+    present: list[str] = []
+    missing: list[str] = []
+    unknown: list[str] = []
+    # A command-style locator that RESOLVES here can still fail the contract
+    # check: `runner.match_declared_tests` matches on trailing identifiers and
+    # never parses a command line, so `go test ./pkg -run TestFoo` passes this
+    # rule and is then reported as "declared but not executed" by the fail-closed
+    # reconcile. Endorsing a locator that verify will reject is worse than the
+    # silence this rule was fixed to remove, so it is called out explicitly.
+    command_style: list[str] = []
+    # Definitions are looked up once per distinct identifier: the walk is over
+    # the whole target tree, and a campaign routinely declares the same test
+    # against several factors.
+    defined: dict[str, bool] = {}
+    for declared in declared_all:
+        kind, subject = _native_test_identifier(declared)
+        if kind == "path":
+            if not (Path(repo) / str(subject)).exists():
+                missing.append(declared)
+            else:
+                present.append(declared)
+        elif kind == "ident":
+            if subject not in defined:
+                defined[str(subject)] = _identifier_is_defined(
+                    Path(repo), str(subject),
+                )
+            if not defined[str(subject)]:
+                missing.append(declared)
+            else:
+                present.append(declared)
+        else:
+            unknown.append(declared)
+        if kind == "ident" and any(c.isspace() for c in declared.strip()):
+            command_style.append(declared)
+    return present, missing, unknown, command_style
+
+
 def _rule12_missing_native_tests_need_build(
     campaign: dict, opt: dict, factors: list[dict],
 ) -> list[str]:
@@ -629,35 +678,9 @@ def _rule12_missing_native_tests_need_build(
             if isinstance(declared, str) and declared:
                 declared_all.append(declared)
 
-    missing: list[str] = []
-    unknown: list[str] = []
-    # A command-style locator that RESOLVES here can still fail the contract
-    # check: `runner.match_declared_tests` matches on trailing identifiers and
-    # never parses a command line, so `go test ./pkg -run TestFoo` passes this
-    # rule and is then reported as "declared but not executed" by the fail-closed
-    # reconcile. Endorsing a locator that verify will reject is worse than the
-    # silence this rule was fixed to remove, so it is called out explicitly.
-    command_style: list[str] = []
-    # Definitions are looked up once per distinct identifier: the walk is over
-    # the whole target tree, and a campaign routinely declares the same test
-    # against several factors.
-    defined: dict[str, bool] = {}
-    for declared in declared_all:
-        kind, subject = _native_test_identifier(declared)
-        if kind == "path":
-            if not (Path(repo) / str(subject)).exists():
-                missing.append(declared)
-        elif kind == "ident":
-            if subject not in defined:
-                defined[str(subject)] = _identifier_is_defined(
-                    Path(repo), str(subject),
-                )
-            if not defined[str(subject)]:
-                missing.append(declared)
-        else:
-            unknown.append(declared)
-        if kind == "ident" and any(c.isspace() for c in declared.strip()):
-            command_style.append(declared)
+    _present, missing, unknown, command_style = locate_native_tests(
+        Path(repo), declared_all,
+    )
 
     out: list[str] = []
     if missing:

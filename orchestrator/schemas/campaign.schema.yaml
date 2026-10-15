@@ -43,10 +43,16 @@ properties:
       mechanism-discovery flow: an LLM designs each iteration, runs it,
       and interprets the result to build causal claims. ``optimization``
       is a factorial/response-surface flow (see
-      ``docs/optimization-campaign-guide.md``): the model proposes
-      factors once, Python drives a pre-registered design matrix through
-      screen -> refine -> confirm with zero LLM calls in between, and the
-      model interprets the fitted surface at the end. Omitting this field
+      ``docs/optimization-authoring-quickstart.md`` and
+      ``docs/optimization-campaign-guide.md``): the campaign AUTHOR (a
+      human, or an AI writing this YAML) declares the factors and their
+      levels; ``verify`` runs the declared native tests and compiles a
+      content-hashed policy; Python drives the pre-registered design
+      through screen -> [foldover] -> [refine] -> confirm; and report.json,
+      report.md, gate summaries and the deployment verdict are RENDERED
+      from the artifacts with zero model tokens. The only model calls the
+      kind makes are the opt-in ``plan`` and ``build`` stages (before the
+      epoch); without them a campaign makes zero model calls. Omitting this field
       is identical to ``kind: reflective`` -- every campaign written
       before this field existed is unaffected. ``kind: optimization``
       requires the top-level ``optimization`` block; ``kind: reflective``
@@ -708,9 +714,10 @@ properties:
     additionalProperties: false
     description: >
       The ``kind: optimization`` authoring surface: a factorial /
-      response-surface campaign spec. The model proposes ``factors``
-      once (stage ``verify``); Python then drives ``screen`` -> ``refine``
-      -> ``confirm`` with zero further LLM calls, expanding a
+      response-surface campaign spec. The AUTHOR declares ``factors``
+      (no model proposes them); ``verify`` certifies the declared relations
+      and compiles the policy; Python then drives ``screen`` -> ``refine``
+      -> ``confirm`` with zero LLM calls, expanding a
       pre-registered design matrix, applying levels mechanically via each
       factor's ``apply``, and checking ``manipulation`` /
       ``design_space.invariants`` / ``response.constraints`` on every
@@ -1196,28 +1203,36 @@ properties:
         type: object
         additionalProperties: false
         description: >
-          Structured prose for the two model-facing stages -- exactly two
-          named slots, because they're consumed at different times and
-          blending them wastes tokens in both. Contrast with
-          ``design_space.invariants``: guidance shapes what the model
-          PROPOSES, invariants bound what Python EXECUTES. An enforceable
-          directive belongs in ``invariants``, not here -- prose here is
-          not read during ``screen`` / ``refine``.
+          Author prose for the opt-in model-facing stages (``plan`` /
+          ``build``). Without either stage no model reads it at all. Contrast
+          with ``design_space.invariants``: guidance can only steer what a
+          ``plan``/``build`` agent AUTHORS, invariants bound what Python
+          EXECUTES. An enforceable directive belongs in ``invariants``, not
+          here -- prose here is never read during ``verify`` / ``screen`` /
+          ``refine`` / ``confirm`` / ``report``.
         properties:
           factor_nomination:
             type: string
             minLength: 1
             description: >
-              Read at ``verify``, when the model proposes factors and
-              levels. Example: "Scheduling policy is the highest-value
+              Passed to the ``plan`` and ``build`` prompts (the only
+              readers; see ``orchestrator/optimize/plan.py`` and
+              ``build.py``) as the author's steer on the MECHANISM those
+              stages design and author. Factors and levels are always
+              author-declared; no model proposes them. Without a ``plan`` or
+              ``build`` stage this field reaches no model. Example: "Scheduling policy is the highest-value
               axis here. Consider at minimum: shortest-job-first, FCFS,
               EA-WFQ, priority-FCFS."
           interpretation:
             type: string
             minLength: 1
             description: >
-              Read at ``confirm``, when the model interprets the fitted
-              surface. Example: "A win that depends on multi-tier
+              NOT READ BY ANY STAGE today. No model runs at ``confirm`` or
+              ``report`` (both are pure Python), and ``plan``/``build``
+              withhold it deliberately so the authoring agent is not steered
+              by how results will be read. Accepted so an author can record
+              the interpretation rule beside the pre-registration; it
+              changes no behaviour. Example: "A win that depends on multi-tier
               workloads is out of scope for this campaign; report it as
               a lead, not a result."
 
@@ -1671,7 +1686,8 @@ properties:
           and makes no correctness judgement; ``verify`` remains the gate, so
           the stage that writes the code is never the stage that certifies
           it. Omit ``build`` when every factor maps to a knob the target
-          already exposes --- then the campaign stays at ~3 model calls.
+          already exposes --- then the campaign makes ZERO model calls
+          (``plan``, also opt-in, is the only other model-facing stage).
         items:
           type: string
           enum: [plan, build, verify, screen, refine, confirm]

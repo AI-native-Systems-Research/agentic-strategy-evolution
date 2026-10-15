@@ -81,9 +81,10 @@ candidates and measures them fresh, and `report` writes the recommendation
 with a residual-regret certificate. Every intermediate decision is a lookup
 in `policy.json`, not a model call.
 
-**Substantive model calls per campaign: 0 by default, 1 if the optional
-`build` stage is used** to author a mechanism that doesn't exist in the
-target yet. Measured on a real campaign: 115 configurations certified for
+**Model calls per campaign: 0 by default** — only the opt-in `plan` and
+`build` stages call a model (to design and author a mechanism that doesn't
+exist in the target yet); `report.md` and gate summaries are rendered with
+zero tokens. Measured on a real campaign: 115 configurations certified for
 about $0.38.
 
 This is not the `reflective` loop with a factorial front end — it is a
@@ -106,9 +107,13 @@ under investigation, or the space of plausible interventions isn't known
 up front.
 
 ```bash
-nous validate campaign optimization-campaign.yaml --smoke   # do this before every run
-nous run optimization-campaign.yaml --auto-approve
+nous create-campaign --kind optimization --to optimization-campaign.yaml  # scaffold
+nous validate campaign optimization-campaign.yaml --liveness   # do this before every run
+NOUS_CAMPAIGN_PARENT=~/nous-campaigns nous run optimization-campaign.yaml --auto-approve
 ```
+
+Start with [docs/optimization-authoring-quickstart.md](docs/optimization-authoring-quickstart.md):
+the authoring loop and the traps checklist, written for humans and for Claude.
 
 `--smoke` runs the test command and one real configuration against the
 target before spending the full budget — catching declared-but-unresolvable

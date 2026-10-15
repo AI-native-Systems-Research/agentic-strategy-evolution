@@ -1,7 +1,8 @@
 # The target adapter contract (`kind: optimization`)
 
 A `kind: optimization` campaign spends **zero** model calls inside its epoch
-(one, for `build`, if the mechanism does not exist yet). Everything the
+(and none outside it either, unless the opt-in `plan`/`build` stages are
+declared to design and author a mechanism that does not exist yet). Everything the
 campaign learns, it learns from two commands your repo supplies:
 
 | Campaign field | Your script | What Nous does with it |

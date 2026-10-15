@@ -220,6 +220,22 @@ def _cmd_run(args):
         print(f"Campaign validation error: {exc.message}", file=sys.stderr)
         sys.exit(1)
 
+    # A `nous create-campaign --kind optimization` scaffold is schema-valid by
+    # design; its TODO- placeholders are what stop it from launching unedited.
+    from orchestrator.validate import campaign_kind as _campaign_kind
+    if _campaign_kind(campaign) == "optimization":
+        from orchestrator.create_campaign import find_placeholders
+
+        _holes = find_placeholders(campaign)
+        if _holes:
+            print(f"Refusing to run: {campaign_path} still has "
+                  f"{len(_holes)} scaffold placeholder(s):", file=sys.stderr)
+            for where, value in _holes:
+                print(f"  x {where}: {value!r}", file=sys.stderr)
+            print(f"next: fill them, then `nous validate campaign "
+                  f"{campaign_path} --liveness`", file=sys.stderr)
+            sys.exit(1)
+
     run_id = args.run_id or campaign.get("run_id") or (campaign_path.parent.name + "-run")
     repo_path = campaign["target_system"].get("repo_path")
 
@@ -611,7 +627,8 @@ def _cmd_validate(args):
             sys.exit(2)
         _validate_campaign_file(
             args.file,
-            smoke=getattr(args, 'smoke', False),
+            # --liveness runs inside the smoke pass; asking for it implies it.
+            smoke=getattr(args, 'smoke', False) or getattr(args, 'liveness', False),
             liveness=getattr(args, 'liveness', False),
             liveness_repeats=getattr(args, 'liveness_repeats', 3),
         )
@@ -687,15 +704,34 @@ def _validate_campaign_file(
         where = ".".join(str(p) for p in err.absolute_path) or "(top level)"
         errors.append(f"[schema] {where}: {err.message}")
 
+    # Placeholders left by `nous create-campaign --kind optimization`. Checked
+    # regardless of schema validity, so the author gets the whole fill-in list
+    # in one pass.
+    if kind == "optimization":
+        from orchestrator.create_campaign import find_placeholders
+
+        for where, value in find_placeholders(campaign):
+            errors.append(f"[placeholder] {where} = {value!r} — fill in")
+
     warnings: list[str] = []
-    if not schema_errors:
-        # Cross-field rules assume a shape-valid document; running them on a
-        # malformed one produces confusing secondary errors.
-        for item in validate_optimization_campaign(campaign):
-            if item.startswith("WARN:"):
-                warnings.append(item[len("WARN:"):].strip())
-            else:
-                errors.append(f"[rules] {item}")
+    # Cross-field rules run on EVERY pass, so one run reports every static
+    # problem. On a schema-invalid file they may report consequences of the
+    # schema errors (hence the label), and a crash on a malformed shape is
+    # reported rather than hiding the schema errors above it.
+    rule_tag = "[rules]" if not schema_errors else "[rules, provisional]"
+    try:
+        rule_items = validate_optimization_campaign(campaign)
+    except Exception as exc:  # noqa: BLE001 -- a malformed shape
+        rule_items = []
+        errors.append(
+            f"{rule_tag} cross-field rules could not run on this shape "
+            f"({type(exc).__name__}: {exc}); fix the schema errors and re-run",
+        )
+    for item in rule_items:
+        if item.startswith("WARN:"):
+            warnings.append(item[len("WARN:"):].strip())
+        else:
+            errors.append(f"{rule_tag} {item}")
 
     if warnings:
         print(f"\n{len(warnings)} warning(s) — not fatal, but worth reading:")
@@ -706,58 +742,74 @@ def _validate_campaign_file(
         print(f"\n{len(errors)} error(s):", file=sys.stderr)
         for e in errors:
             print(f"  x {e}", file=sys.stderr)
-        guide = (
-            "docs/optimization-campaign-guide.md"
-            if kind == "optimization"
-            else "docs/campaign-authoring-guide.md"
-        )
-        print(f"\nSee {guide} for the field-by-field walkthrough.", file=sys.stderr)
+        if kind == "optimization":
+            from orchestrator.create_campaign import QUICKSTART_DOC
+
+            print(
+                f"\nSee {QUICKSTART_DOC} (the authoring loop and the traps "
+                f"checklist), then docs/optimization-campaign-guide.md for the "
+                f"field-by-field walkthrough.", file=sys.stderr,
+            )
+        else:
+            print("\nSee docs/campaign-authoring-guide.md for the field-by-field "
+                  "walkthrough.", file=sys.stderr)
+        print(f"\nnext: fix the {len(errors)} error(s) above, then re-run "
+              f"`nous validate campaign {target}`", file=sys.stderr)
         sys.exit(1)
 
     print(f"\nOK — no errors. {len(warnings)} warning(s).")
-    if kind == "optimization":
-        opt = campaign.get("optimization") or {}
-        n_factors = len(opt.get("factors") or [])
-        tests = [
-            r.get("native_test")
-            for f in (opt.get("factors") or [])
-            for r in (f.get("relations") or [])
-            if r.get("native_test")
-        ]
-        print(f"  {n_factors} factor(s), {len(tests)} declared native test(s).")
+    if kind != "optimization":
+        print(f"\nnext: {_run_hint(target)}")
+        return
+    opt = campaign.get("optimization") or {}
+    n_factors = len(opt.get("factors") or [])
+    tests = [
+        r.get("native_test")
+        for f in (opt.get("factors") or [])
+        for r in (f.get("relations") or [])
+        if r.get("native_test")
+    ]
+    print(f"  {n_factors} factor(s), {len(tests)} declared native test(s).")
+    if not smoke:
         print(
-            "  NOTE: a native_test identifier that does not exist in the target "
-            "repo counts as a FAILED correctness relation (reconcile treats "
-            "'declared but not executed' as failure), which aborts the campaign "
-            "at its verify stage. Confirm each one runs under "
-            "optimization.test_command before starting a run."
+            "  Static checks only. --smoke executes the test command and ONE "
+            "configuration: the only way to catch a manipulation predicate "
+            "whose type never matches, an unmatched native_test, or a "
+            "run_command that cannot exec. --liveness (implies --smoke) also "
+            "runs EVERY declared level once, measures the noise floor, and "
+            "prints a design preview (run counts, wall clock, screen MDE)."
         )
-        if not smoke:
-            print(
-                "  Static checks only. Re-run with --smoke to execute the test "
-                "command and ONE configuration: that is the only way to catch a "
-                "manipulation predicate whose type never matches, an unmatched "
-                "native_test, or a run_command that cannot exec. Add --liveness "
-                "to also run EVERY declared level once, which is the only way to "
-                "catch a level that aborts the target and a factor whose levels "
-                "move the objective by less than run-to-run noise."
-            )
-        else:
-            print("\n  --smoke: executing the contract against the target...")
-            issues = _smoke_check_optimization(
-                campaign, liveness=liveness,
-                liveness_repeats=liveness_repeats,
-            )
-            if issues:
-                print(f"\n{len(issues)} smoke failure(s):", file=sys.stderr)
-                for i in issues:
-                    print(f"  x {i}", file=sys.stderr)
-                print(
-                    "\nThese would each have cost a full campaign to discover. "
-                    "Fix them before launching.", file=sys.stderr,
-                )
-                sys.exit(1)
-            print("  smoke: OK — the campaign/target contract holds.")
+        print(f"\nnext: `nous validate campaign {target} --smoke`")
+        return
+    print("\n  --smoke: executing the contract against the target...")
+    issues = _smoke_check_optimization(
+        campaign, liveness=liveness, liveness_repeats=liveness_repeats,
+    )
+    if issues:
+        print(f"\n{len(issues)} smoke failure(s):", file=sys.stderr)
+        for i in issues:
+            print(f"  x {i}", file=sys.stderr)
+        print(
+            "\nThese would each have cost a full campaign to discover. "
+            "Fix them before launching.", file=sys.stderr,
+        )
+        flag = "--liveness" if liveness else "--smoke"
+        print(f"\nnext: fix the {len(issues)} failure(s) above, then re-run "
+              f"`nous validate campaign {target} {flag}`", file=sys.stderr)
+        sys.exit(1)
+    print("  smoke: OK — the campaign/target contract holds.")
+    if not liveness:
+        print(f"\nnext: `nous validate campaign {target} --liveness`")
+    else:
+        print(f"\nnext: {_run_hint(target)}")
+
+
+def _run_hint(target: Path) -> str:
+    """The launch command, with artifacts kept OUT of the target (#239)."""
+    import os
+
+    parent = os.environ.get("NOUS_CAMPAIGN_PARENT") or "~/nous-campaigns"
+    return f"`NOUS_CAMPAIGN_PARENT={parent} nous run {target}`"
 
 
 def _smoke_check_optimization(
@@ -853,8 +905,45 @@ def _smoke_check_optimization(
                 "for a file -- not globs."
             )
 
+    # 0b. With `build` declared, some declared tests do not exist YET: build
+    # authors them. Partition with rule 12's locator logic (one source of
+    # truth), so smoke neither fails on them nor pushes the author to delete
+    # them from test_command -- which would make verify fail closed after build.
+    declared_all = sorted({
+        str(r.get("native_test"))
+        for f in factors for r in (getattr(f, "relations", ()) or [])
+        if isinstance(r, dict) and r.get("native_test")
+    })
+    to_author: set[str] = set()
+    if "build" in stage_names and declared_all:
+        from orchestrator.validate import locate_native_tests
+
+        _present, not_yet, _unk, _cmd = locate_native_tests(Path(repo), declared_all)
+        to_author = set(not_yet)
+        if to_author:
+            print(f"  smoke: {len(to_author)} declared test(s) are expected to "
+                  f"be authored by build: {', '.join(sorted(to_author))}; "
+                  f"verify will require them")
+    # Tests build must make true: not written yet, or written and failing
+    # pre-build (filled in by the test run below). A factor relating to any of
+    # them has no mechanism yet, so its liveness is not measurable pre-build.
+    prebuild_failing: set[str] = set()
+
     # 1. Test command: do the declared identifiers actually resolve?
-    if opt.get("test_command"):
+    test_command = opt.get("test_command")
+    skip_tests = False
+    if test_command and to_author:
+        test_command, dropped, skip_tests = _drop_unbuilt_test_paths(
+            test_command, Path(repo), to_author,
+        )
+        if dropped:
+            print(f"  smoke: pre-build, dropped {len(dropped)} test path "
+                  f"argument(s) build will author ({', '.join(dropped)}) from "
+                  f"THIS smoke run only; verify runs test_command unchanged")
+        if skip_tests:
+            print("  smoke: every test path in test_command is to be authored "
+                  "by build, so the test command is not run pre-build")
+    if test_command and not skip_tests:
         from orchestrator.optimize.stage_runner import resolve_test_timeout
 
         # The SAME ceiling the verify gate will use: a smoke that ran the suite
@@ -866,15 +955,17 @@ def _smoke_check_optimization(
         test_log = Path(tempfile.mkdtemp(prefix="nous-smoke-tests-")) / "test_output.log"
         problems_before = len(problems)
         raw = runner.run_test_command(
-            opt["test_command"], cwd=Path(repo),
+            test_command, cwd=Path(repo),
             timeout=resolve_test_timeout(opt), log_path=test_log,
         )
         matched = runner.match_declared_tests(factors, raw)
+        # Tests build will author are not expected pre-build (reported above).
+        matched = {k: v for k, v in matched.items() if k not in to_author}
         declared = {
             r.get("native_test")
             for f in factors for r in (getattr(f, "relations", ()) or [])
             if isinstance(r, dict) and r.get("native_test")
-        }
+        } - to_author
         missing = sorted(str(x) for x in (declared - set(matched)) if x)
         if raw.timed_out:
             # Said FIRST and instead of the identifier advice. A killed suite
@@ -900,6 +991,36 @@ def _smoke_check_optimization(
                 ),
             )
         failed = sorted(k for k, v in matched.items() if not v)
+        if failed and "build" in stage_names:
+            # Pre-build, a correctness test is SUPPOSED to fail (oracle 2(b)):
+            # build exists to make it pass, and verify requires that it does.
+            print(f"  smoke: {len(failed)} declared test(s) FAIL pre-build — "
+                  f"expected while the mechanism does not exist; verify will "
+                  f"require them to pass after build: {', '.join(failed[:4])}"
+                  + ("" if len(failed) <= 4 else f" (+{len(failed) - 4} more)"))
+            prebuild_failing = set(failed)
+            failed = []
+        if "build" in stage_names and not (
+            (opt.get("build_checks") or {}).get("allow_preexisting_tests")
+        ):
+            correctness = {
+                r.get("native_test")
+                for f in factors for r in (getattr(f, "relations", ()) or [])
+                if isinstance(r, dict) and r.get("kind") == "correctness"
+            }
+            already = sorted(k for k, v in matched.items() if v and k in correctness)
+            if already:
+                print(
+                    f"  smoke: WARNING — {len(already)} declared correctness "
+                    f"test(s) already PASS pre-build: {', '.join(already[:4])}"
+                    + ("" if len(already) <= 4 else f" (+{len(already) - 4} more)")
+                    + ". verify's oracle 2(b) aborts on a correctness test that "
+                    "passed before build ran (it proves nothing about the "
+                    "mechanism). If these cover pre-existing behaviour (a knob "
+                    "the target already has), set "
+                    "optimization.build_checks.allow_preexisting_tests: true; "
+                    "otherwise strengthen them so they fail pre-build."
+                )
         if failed:
             problems.append(
                 f"{len(failed)} declared native_test(s) ran and FAILED: "
@@ -908,6 +1029,13 @@ def _smoke_check_optimization(
         # Kept only when a problem above points at it.
         if len(problems) == problems_before:
             shutil.rmtree(test_log.parent, ignore_errors=True)
+
+    build_authored = {
+        f.id for f in factors
+        if any(isinstance(r, dict)
+               and r.get("native_test") in (to_author | prebuild_failing)
+               for r in (getattr(f, "relations", ()) or []))
+    }
 
     # 2. One configuration at every factor's first level.
     if not opt.get("run_command"):
@@ -950,15 +1078,71 @@ def _smoke_check_optimization(
         # total. Plain `--smoke` reports the size of the gap instead of closing
         # it, so an author can see what was not exercised and decide.
         if liveness:
+            measured: dict = {}
             problems.extend(_smoke_liveness_sweep(
                 opt, factors, repo=Path(repo), probe_dir=Path(probe_dir),
-                repeats=liveness_repeats,
+                repeats=liveness_repeats, build_authored=build_authored,
+                measured_out=measured,
             ))
+            _print_design_preview(campaign, measured)
         else:
             problems.extend(_report_unexercised_levels(factors))
     finally:
         shutil.rmtree(probe_dir, ignore_errors=True)
     return problems
+
+
+def _drop_unbuilt_test_paths(
+    command: str, repo: Path, to_author: set[str],
+) -> tuple[str, list[str], bool]:
+    """``test_command`` minus path arguments naming files build will author.
+
+    Pre-build, ``pytest a.py b.py`` with ``b.py`` not yet written exits 4 and
+    runs NOTHING, so even ``a.py``'s existing relations look unmatched. For the
+    smoke run only, drop each argument whose path does not exist and is the
+    file of a to-be-authored test. Returns ``(command, dropped, skip)``;
+    ``skip`` is True when every path argument was dropped -- running the bare
+    runner would execute the whole suite instead, which is not the contract.
+    """
+    import shlex
+
+    from orchestrator.validate import _TEST_SOURCE_SUFFIXES
+
+    files = {t.split("::", 1)[0].strip() for t in to_author}
+    argv = shlex.split(command)
+    kept: list[str] = argv[:1]
+    dropped: list[str] = []
+    path_args = 0
+    for tok in argv[1:]:
+        head = tok.split("::", 1)[0]
+        is_path = not tok.startswith("-") and (
+            "/" in head or head.endswith(_TEST_SOURCE_SUFFIXES))
+        if is_path:
+            path_args += 1
+            if head in files and not (repo / head).exists():
+                dropped.append(tok)
+                continue
+        kept.append(tok)
+    skip = bool(dropped) and len(dropped) == path_args
+    return shlex.join(kept), dropped, skip
+
+
+def _print_design_preview(campaign: dict, measured: dict) -> None:
+    """Print the zero-token DESIGN PREVIEW from what --liveness measured."""
+    from orchestrator.optimize.preview import build_preview, format_preview
+
+    if "noise_sd" not in measured:
+        return  # the sweep stopped before the noise floor existed
+    try:
+        pv = build_preview(
+            campaign, noise_sd=measured.get("noise_sd"),
+            mean=measured.get("mean"), run_secs=measured.get("run_secs"),
+        )
+    except Exception as exc:  # noqa: BLE001 -- a preview must never mask results
+        print(f"  DESIGN PREVIEW unavailable: {type(exc).__name__}: {exc}")
+        return
+    for line in format_preview(pv):
+        print(line)
 
 
 def _report_unexercised_levels(factors) -> list[str]:
@@ -1128,6 +1312,8 @@ def _timeout_headroom_problem(
 
 def _smoke_liveness_sweep(
     opt: dict, factors, *, repo: Path, probe_dir: Path, repeats: int = 3,
+    build_authored: set[str] | frozenset = frozenset(),
+    measured_out: dict | None = None,
 ) -> list[str]:
     """Run every declared level once, then report effect size against noise.
 
@@ -1245,6 +1431,9 @@ def _smoke_liveness_sweep(
     else:
         sd = 0.0
     cv = (sd / abs(mean)) if mean else 0.0
+    if measured_out is not None:
+        # Handed to the DESIGN PREVIEW; nothing here re-measures.
+        measured_out.update(noise_sd=sd, mean=mean, n_samples=len(samples))
     print(f"  liveness: noise floor from {len(samples)} baseline run(s): "
           f"mean {metric}={mean:.6g}, sd={sd:.6g}, CV={cv * 100:.2f}%")
     if len(samples) < 2:
@@ -1269,6 +1458,12 @@ def _smoke_liveness_sweep(
             cfg[f.id] = level
             val, err = _run(cfg, seed=1 if seed_env else None,
                             label=f"{f.id}={level!r}")
+            if err is not None and f.id in build_authored:
+                # Its mechanism does not exist yet; a pre-build failure of
+                # this level says nothing about the post-build design.
+                print(f"  liveness: {f.id}={level!r} failed pre-build (its "
+                      f"mechanism is authored by build): {err}")
+                continue
             if err is not None:
                 problems.append(
                     f"factor {f.id} level {level!r} could not be run: {err}. "
@@ -1293,13 +1488,17 @@ def _smoke_liveness_sweep(
         hi = max(measured.values())
         effect = hi - lo
         rows.append((f.id, effect, (effect / noise_abs) if noise_abs else None))
-        if abs(effect) < threshold:
+        if abs(effect) < threshold and f.id not in build_authored:
             dead.append(f.id)
 
     print(f"  liveness: effect (objective range across measured levels) vs "
           f"noise (threshold: |effect| >= 2 x {noise_abs:.6g} = "
           f"{threshold:.6g})")
     for fid, effect, ratio in rows:
+        if fid in build_authored:
+            print(f"    {fid:<20} authored by build; liveness not applicable "
+                  f"pre-build")
+            continue
         if effect is None:
             print(f"    {fid:<20} effect: n/a (fewer than 2 levels measured)")
             continue
@@ -1354,6 +1553,8 @@ def _smoke_liveness_sweep(
     #    already fails for exactly this reason; this raises the evidence from one
     #    corner to every declared level rather than changing the verdict's kind.
     _report_liveness_durations(observed_sec, resolve_run_timeout(opt), problems)
+    if measured_out is not None:
+        measured_out["run_secs"] = [secs for _lbl, secs, ok in observed_sec if ok]
     return problems
 
 
@@ -2027,6 +2228,14 @@ def _cmd_create_campaign(args):
     """Scaffold a heavily-commented campaign.yaml (issue #89)."""
     from orchestrator.create_campaign import scaffold_campaign
 
+    if getattr(args, "kind", "reflective") == "optimization":
+        _create_optimization_campaign(args)
+        return
+    if getattr(args, "adapter_stub", None) is not None:
+        print("Error: --adapter-stub applies to --kind optimization only.",
+              file=sys.stderr)
+        sys.exit(2)
+
     kwargs: dict = {"force": args.force}
     if args.target_name:
         kwargs["target_name"] = args.target_name
@@ -2055,6 +2264,52 @@ def _cmd_create_campaign(args):
     print(f"     target_system.description (that's the channel the LLM reads).")
     print(f"  2. Skim the AUTHORING CHECKLIST near the top of the file.")
     print(f"  3. Run: nous run {path}")
+
+
+def _create_optimization_campaign(args):
+    from orchestrator.create_campaign import (
+        QUICKSTART_DOC,
+        scaffold_optimization_campaign,
+        write_adapter_stub,
+    )
+
+    kwargs: dict = {"force": args.force}
+    # The reflective defaults ("TODO-SET-...") are not used here: this kind's
+    # own TODO- defaults are what the placeholder scan reports.
+    if args.target_name and args.target_name != "TODO-SET-SYSTEM-NAME":
+        kwargs["target_name"] = args.target_name
+    if args.target_description:
+        kwargs["target_description"] = args.target_description
+    if args.research_question:
+        kwargs["research_question"] = args.research_question
+    if args.run_id and args.run_id != "TODO-SET-RUN-ID":
+        kwargs["run_id"] = args.run_id
+    if args.target_repo_path is not None:
+        kwargs["target_repo_path"] = args.target_repo_path
+    try:
+        path = scaffold_optimization_campaign(args.to, **kwargs)
+        stub = (write_adapter_stub(args.adapter_stub, force=args.force)
+                if args.adapter_stub is not None else None)
+    except FileExistsError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        print("Pass --force to overwrite.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Wrote {path}  (kind: optimization)")
+    if stub is not None:
+        print(f"Wrote {stub}  (run_command adapter skeleton)")
+    print()
+    print(f"Read first: {QUICKSTART_DOC}")
+    print()
+    print("Next steps:")
+    print(f"  1. Fill every TODO- value in {path}"
+          + (f" and {stub}" if stub else "") + ".")
+    print(f"  2. nous validate campaign {path}            "
+          f"# lists every TODO- left, by field path")
+    print(f"  3. nous validate campaign {path} --smoke")
+    print(f"  4. nous validate campaign {path} --liveness "
+          f"# + design preview")
+    print(f"  5. NOUS_CAMPAIGN_PARENT=~/nous-campaigns nous run {path}")
 
 
 def _cmd_lineage(args):
@@ -2245,12 +2500,26 @@ def build_parser():
         prog="nous",
         description=(
             "Nous — hypothesis-driven experimentation framework for "
-            "software systems. Author a campaign.yaml describing your "
-            "target system, then run iterative DESIGN → EXECUTE_ANALYZE "
-            "→ REPORT cycles with a Claude Agent SDK-driven inner loop. "
-            "Use `nous schema` to discover the campaign.yaml shape and "
-            "`nous create-campaign --to ./campaign.yaml` to scaffold one."
+            "software systems. A campaign.yaml declares one of two kinds."
         ),
+        epilog=(
+            "campaign kinds:\n"
+            "  reflective (default)  WHY does the system behave this way? An agent\n"
+            "                        runs DESIGN -> EXECUTE_ANALYZE -> REPORT\n"
+            "                        iterations to build causal claims.\n"
+            "                        Start: nous create-campaign --to campaign.yaml\n"
+            "  optimization          WHICH setting of knobs you already know is\n"
+            "                        best, and how sure? A pre-registered factorial\n"
+            "                        design (screen -> refine -> confirm), zero model\n"
+            "                        calls unless plan/build are enabled.\n"
+            "                        Start: nous create-campaign --kind optimization\n"
+            "                        --to campaign.yaml, then read\n"
+            "                        docs/optimization-authoring-quickstart.md\n"
+            "\n"
+            "Then: nous validate campaign FILE [--smoke | --liveness] until clean,\n"
+            "and nous run FILE. `nous schema campaign` lists every field."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true",
@@ -2412,7 +2681,7 @@ def build_parser():
     )
     p_validate.add_argument(
         "--liveness", action="store_true",
-        help="With --smoke: also run EVERY declared level of every factor once "
+        help="Implies --smoke. Also run EVERY declared level of every factor once "
              "(other factors at known_valid_baseline) and measure each factor's "
              "effect against the workload's noise floor. Opt-in because it is "
              "the only check whose cost scales with the design: "
@@ -2425,7 +2694,9 @@ def build_parser():
              "reports each run's observed WALL CLOCK and fails when "
              "run_timeout_sec leaves under 2x headroom over the slowest "
              "completed run — a lower bound on the slowest CORNER, since the "
-             "sweep varies one factor at a time and never runs a corner.",
+             "sweep varies one factor at a time and never runs a corner. Ends "
+             "with a zero-token DESIGN PREVIEW: runs per stage, expected wall "
+             "clock, and the screen's minimum detectable effect vs epsilon.",
     )
     p_validate.add_argument(
         "--liveness-repeats", type=int, default=3, metavar="N",
@@ -2581,6 +2852,20 @@ def build_parser():
              "is written — which is almost always the right answer "
              "since authors typically scaffold from inside the target "
              "repo. Override with this flag for cross-repo authoring.",
+    )
+    p_create.add_argument(
+        "--kind", choices=["reflective", "optimization"], default="reflective",
+        help="Campaign kind to scaffold. 'optimization' writes a structurally "
+             "complete factorial campaign whose TODO- placeholders `nous "
+             "validate campaign` lists by field path (and `nous run` refuses "
+             "until filled). Default: reflective.",
+    )
+    p_create.add_argument(
+        "--adapter-stub", type=Path, default=None, metavar="PATH",
+        help="With --kind optimization: also write a minimal run_command "
+             "adapter skeleton at PATH honouring docs/targets.md (one JSON "
+             "object on stdout, echo effective cfg, NOUS_WORKLOAD_SEED, "
+             "NOUS_RUN_DIR).",
     )
     p_create.add_argument(
         "--force", action="store_true",
