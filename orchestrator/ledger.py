@@ -64,7 +64,7 @@ def append_ledger_row(work_dir: Path, iteration: int) -> None:
     # than findings.json. Both absences are by design there, so warning about
     # them on every iteration -- twice, since two callers append -- only taught
     # authors to skim past WARNING lines that matter.
-    by_design = (work_dir / "policy.json").exists()
+    by_design = (work_dir / "policy.json").exists() or _is_optimization_work_dir(work_dir)
     level = logging.DEBUG if by_design else logging.WARNING
 
     findings_path = iter_dir / "findings.json"
@@ -95,6 +95,23 @@ def append_ledger_row(work_dir: Path, iteration: int) -> None:
     ledger["iterations"].append(row)
     atomic_write(ledger_path, json.dumps(ledger, indent=2) + "\n")
     logger.info("Appended ledger row for iteration %d.", iteration)
+
+
+def _is_optimization_work_dir(work_dir: Path) -> bool:
+    """True when the work_dir's own campaign.yaml copy declares kind: optimization.
+
+    The plan/build iterations run before verify compiles ``policy.json``, so
+    the policy file alone misses them; the campaign copy that ``setup_work_dir``
+    writes is there from the first iteration.
+    """
+    path = work_dir / "campaign.yaml"
+    if not path.exists():
+        return False
+    try:
+        doc = yaml.safe_load(path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    return isinstance(doc, dict) and doc.get("kind") == "optimization"
 
 
 def _read_bundle(path: Path, *, level: int = logging.WARNING) -> dict:

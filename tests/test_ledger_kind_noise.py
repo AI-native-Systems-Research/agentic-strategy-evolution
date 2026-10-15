@@ -43,3 +43,13 @@ def test_a_reflective_iteration_still_warns(tmp_path, caplog):
     with caplog.at_level(logging.DEBUG):
         append_ledger_row(wd, 2)
     assert any("bundle.yaml" in m for m in _warnings(caplog))
+
+
+def test_a_pre_policy_optimization_iteration_appends_quietly(tmp_path, caplog):
+    """plan/build run before verify compiles policy.json; the campaign copy
+    still says what kind this is."""
+    wd = _iteration(tmp_path, optimization=False, findings=False)
+    (wd / "campaign.yaml").write_text("kind: optimization\n")
+    with caplog.at_level(logging.DEBUG):
+        append_ledger_row(wd, 1)
+    assert not any("findings.json" in m for m in _warnings(caplog))
