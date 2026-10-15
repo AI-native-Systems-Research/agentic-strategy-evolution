@@ -395,7 +395,10 @@ It is a facility plus a contract, and honouring it is what makes
   after a `build`. Every level it names must be a declared level of that factor.
 - **`locked_parameters`** pins everything you are *not* varying (model,
   corpus, node count, thread pool). A campaign that silently re-picks these is
-  not the experiment you designed.
+  not the experiment you designed. Have the adapter echo each locked value in
+  its JSON and declare the path in `optimization.locked_observables`; only then
+  is a deviation enforced (a hard campaign abort), otherwise validation warns
+  that the lock is unenforced.
 
 ### Picking an epsilon that can actually certify
 

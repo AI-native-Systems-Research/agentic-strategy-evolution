@@ -493,6 +493,49 @@ see §5 for the full rationale and the decision test for what belongs here.
   after running. Either way, the guarantee holds across all 60-90 runs,
   not just the two the model sees.
 
+### `locked_observables` — making `locked_parameters` enforceable
+
+`locked_parameters` (top level, beside `optimization`) pins the knobs whose
+deviation would invalidate the experiment. The reflective kind enforces it
+against the bundle's `verified_parameters`; this kind has no bundle, so the
+only evidence of what the target actually ran with is the observation each
+row returns. `optimization.locked_observables` says WHERE in that
+observation each locked value is reported:
+
+```yaml
+locked_parameters:
+  max_seq_len: 2048
+  model: m-7b
+optimization:
+  locked_observables:
+    max_seq_len: engine.max_seq_len   # dotted path, same convention as manipulation
+    model: config.model
+```
+
+The value lives only in `locked_parameters`; the map only names the path.
+On **every measured row** the observed value is compared with `==` (the
+manipulation comparator), and a deviation — or a declared path the target
+does not emit — **aborts the campaign** (`OptimizationAborted`, naming the
+parameter, the locked value, the observed value, and the row), regardless of
+`--auto-approve`. It is an abort rather than a rejected row because the lock
+is a property of the whole experiment: a target that ignores it measures an
+unregistered experiment on every row, so there is nothing to exclude around.
+The row that exposed the deviation stays in `runs.jsonl` as evidence.
+`--smoke` runs the same comparison on its probe configuration (and the
+generated center point), so a target that ignores a lock fails pre-flight
+instead of on the first epoch row.
+
+Validation rules:
+
+- A locked parameter that is also a declared factor (by `id` or `name`) is an
+  **error** — it cannot be both held fixed and varied.
+- A `locked_observables` key that is not in `locked_parameters` is an
+  **error** — a typo would leave the intended lock unenforced.
+- A locked parameter with **no** `locked_observables` entry is a **warning**
+  naming it: Nous cannot see what the target used, so the lock is a
+  declaration to the build prompt and the reader, not a check. Make the
+  adapter echo the value (see §7.7) and declare its path.
+
 ### `guidance`
 
 Structured prose in two named slots. The two are read very differently, and the
@@ -3090,7 +3133,7 @@ knob that could plausibly affect the outcome lands in exactly one of:
 | Mechanism | Question it answers | Who checks it | Violation means |
 |---|---|---|---|
 | `optimization.factors` | Should the campaign learn this knob's effect? | Python fits it | (not a violation — it's the thing being measured) |
-| `locked_parameters` | Is this input pinned so it can never drift? | Validator, every bundle | The spec was silently rewritten (#246) |
+| `locked_parameters` | Is this input pinned so it can never drift? | Validator (no factor may share its name); Python on every run, for each lock with an `optimization.locked_observables` path | The target ran an experiment other than the registered one (#246) — campaign aborts |
 | `design_space.invariants` | Does a *property of the resulting system* hold on every config? | Python, on every run in every stage | The campaign left its declared design space |
 
 **The decision test: would you be upset to discover this was violated
@@ -4250,6 +4293,7 @@ runs against a budget of 60–90.
 | # | Check | Cost | Fails if |
 |---|---|---|---|
 | 1 | `nous validate campaign FILE --smoke` | 1 run | predicates unsatisfiable, tests unmatched, `run_command` cannot exec, a declared `response.self_check` violated at the probe corner |
+| 1a | Every `locked_parameters` entry has an `optimization.locked_observables` path (`nous validate campaign` warns, naming each one that does not); `--smoke` then checks the probe ran with the locked values | 0 runs (part of #1) | a lock the target cannot report is a lock nothing enforces; a target that ignores one fails `--smoke` rather than aborting the epoch on row 1 |
 | 2 | Mechanism is active (§7.5) | 1 run | the mechanism's own metric is zero |
 | 3+4 | `nous validate campaign FILE --smoke --liveness` (§7.2, §7.3) | `sum(len(levels)) + N` runs | any declared level the target cannot execute, or one whose row violates a declared `response.self_check` — and it *reports* every factor under 2x the noise CV |
 | 5 | Objective is monotone and uncensored (§7.4) | 4–6 runs | orders-of-magnitude swings, or values pinned at a deadline |
