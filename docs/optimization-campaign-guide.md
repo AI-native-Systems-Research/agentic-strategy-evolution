@@ -1278,6 +1278,23 @@ The predicate check builds its scope the way `run_stage` does — the target's o
 levels would make `applied.X == "{level}"` trivially true and hide the exact
 mismatch worth finding.
 
+A failing predicate is reported with a hint that names the failure's **shape**,
+because each shape has a different fix:
+
+| Observed vs. level | Hint |
+|---|---|
+| the observable is absent from the output | the target did not emit it — check the dotted path |
+| present but `''` or `null`, against a non-empty level | **not** a type mismatch: the target emitted no value at this corner |
+| a different type (a bool or int echoed for a string level) | check the observable's TYPE |
+| the same type, a different value | the target ran a configuration other than the one requested |
+
+The empty shape is the one to recognise. An adapter that reports a field
+**conditionally** — `dcp_comm_backend` only when a related width exceeds 1,
+reasoning that the knob is inert at width 1 — records `''` at every corner where
+the condition is false, and every such row is rejected. Record the level the
+design matrix asked for, unconditionally; what the knob *does* at that level is a
+finding, not a reason to omit it from the row.
+
 It costs one test run plus one configuration, and each of those failures
 otherwise costs a full campaign to discover. Make it the last thing you do
 before launching.
@@ -1304,6 +1321,19 @@ design matrix, and (if a harness reuses a stale metrics file on non-zero exit) i
 reads downstream as a measurement *identical to baseline* — that is a hard
 failure. A small effect, by contrast, may be small and real; the number is what
 was missing, so the flag informs the author's call rather than overriding it.
+
+**A flag is relative to the base configuration.** Every factor's levels are
+probed with the others held at `known_valid_baseline`, so "not demonstrably live"
+means "does nothing *here*", not "does nothing". A threshold-bound knob — a
+sequence cap at `[64, 256, 512]` when the base corner keeps only 32 sessions
+resident, or a backend that matters only at a wider parallelism than the base —
+genuinely cannot move the objective at the base corner, and is flagged. Those
+two readings call for opposite actions (drop the factor, versus move its
+levels), so when any factor is flagged the report says once that the probe ran
+at the base configuration. Before dropping a flagged factor, check whether its
+levels bracket a regime the base corner is not in; for the cap above, levels
+`[8, 16, 32]` bind. Probing at the base corner stays the default: it is the
+only corner the sweep can afford.
 
 Both readings share the same runs on purpose: a level that aborts cannot produce
 an effect size. `--liveness` requires `known_valid_baseline`, since it is both

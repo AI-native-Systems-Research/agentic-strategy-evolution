@@ -966,6 +966,32 @@ def test_smoke_catches_a_predicate_type_mismatch(tmp_path: Path):
     assert any("TYPE" in i for i in issues), "must name the type mismatch"
 
 
+def test_smoke_names_an_empty_observable_as_empty_not_as_a_type_mismatch(
+    tmp_path: Path,
+):
+    """An adapter that reports a field only under some condition records ''.
+
+    Both sides are strings, so the TYPE advice points at the wrong cause. The
+    real one is that the target emitted no value at this corner (issue #318).
+    """
+    from orchestrator.cli import _smoke_check_optimization
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    campaign = _smoke_campaign(
+        repo,
+        predicate={"observable": "applied.flag", "op": "==", "value": "{level}"},
+        run_cmd="""python3 -c 'import json;print(json.dumps({"applied":{"flag":""},"m":1.0}))'""",
+    )
+    issues = _smoke_check_optimization(campaign)
+    failure = [i for i in issues if "manipulation predicate fails" in i]
+    assert failure, issues
+    assert "PRESENT but EMPTY" in failure[0], failure
+    assert "not a type mismatch" in failure[0], failure
+    assert "unconditionally" in failure[0], failure
+    assert "Check the observable's TYPE" not in failure[0], failure
+
+
 def test_smoke_catches_a_missing_objective_metric(tmp_path: Path):
     """A metric the target never emits makes every run score NaN."""
     from orchestrator.cli import _smoke_check_optimization
