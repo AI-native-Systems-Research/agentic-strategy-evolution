@@ -163,10 +163,10 @@ silently leap from tier 1 to tier 3.
 author (human or an AI writing the YAML) declares factors; `verify`
 certifies them and compiles the policy; Python drives the epoch; `report`
 writes the recommendation and its residual-regret certificate.
-**Substantive model calls per campaign: 0 without `build`, 1 with it —
-the only substantive model call in the kind is `build`.** Gate summaries and
-the end-of-campaign report use the existing shared machinery and are not part
-of the epoch. Compilation of the experimental policy is deterministic Python;
+**Model calls per campaign: 0 without `plan`/`build` — the only model calls
+in the kind are the opt-in `plan` and `build` stages.** Gate summaries,
+`report.md` and the deployment verdict are rendered from artifacts with zero
+tokens. Compilation of the experimental policy is deterministic Python;
 every state inside the compiled epoch is tokenless.
 
 ### 🔒 The compiled experimental policy — read this before touching `orchestrator/optimize/`
@@ -409,7 +409,7 @@ artifact before writing any code. 87% of that kind's design bundle was experimen
 design this kind already pre-registers and hashes — `plan` captures only the
 remaining fraction, which is the part that mattered.
 It spends **one** agent call authoring the mechanism plus the native tests
-its `relations` declare — the campaign's only substantive model call. `build`
+its `relations` declare — with `plan`, the campaign's only model calls. `build`
 makes no
 correctness judgement — `verify` remains the gate, so the stage that writes
 the code is never the stage that certifies it.

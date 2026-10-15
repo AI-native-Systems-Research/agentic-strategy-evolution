@@ -175,22 +175,24 @@ budget.
 
 ### Where the tokens go
 
-Substantive model calls per campaign: **0** when every factor maps to a knob
-the target already exposes, and **1** when the campaign must author the
-mechanism first — the only substantive model call in the kind is `build`.
-Gate summaries and the end-of-campaign report use the existing shared
-machinery and are not part of the epoch. Against either: 60-90 benchmark
-runs, all of them tokenless.
+Model calls per campaign: **0** when every factor maps to a knob the target
+already exposes, **1** when the campaign must author the mechanism first
+(`build`), and **2** with the optional `plan` stage in front of it — the only
+model calls in the kind are the opt-in `plan` and `build`. Gate summaries,
+`report.md`, and the deployment verdict are rendered from the artifacts with
+zero tokens (`orchestrator/optimize/report_md.py`). Against any of these:
+60-90 benchmark runs, all of them tokenless.
 
 | Stage | Model calls | What it costs |
 |---|---|---|
+| `plan` (opt-in) | 1 | designs the mechanism `build` then authors; no code |
 | `build` (opt-in) | 1 | authors the mechanism + its native tests in the target repo |
 | `verify` | 0 | runs the target's test command; pure Python reconciliation |
 | `screen` | 0 | pre-registered design matrix; tokenless |
 | `refine` | 0 | tokenless |
 | `confirm` | 0 | tokenless |
 | `report` state (Tasks 4+) | 0 | pure Python: recommendation + certificate |
-| gate summaries | 1 per iteration | existing machinery, small |
+| gate summaries, `report.md` | 0 | rendered from `report.json` / progress, zero tokens |
 
 **Model.** Every phase of a `kind: optimization` campaign resolves to
 `claude-opus-5` (`orchestrator.campaign.OPTIMIZATION_MODEL`), not to the
@@ -569,13 +571,14 @@ Validation rules:
 Structured prose in two named slots. The two are read very differently, and the
 difference matters:
 
-- **`factor_nomination`** — **passed verbatim to the `build` stage's prompt**
-  when `build` is declared (as "AUTHOR'S GUIDANCE ON THE MECHANISM"), and
-  otherwise unread. Domain knowledge about which axes matter, which mechanisms
+- **`factor_nomination`** — **passed verbatim to the `plan` and `build`
+  prompts** when either is declared (as "AUTHOR'S GUIDANCE ON THE MECHANISM"),
+  and otherwise unread. It does not nominate factors — factors are always
+  author-declared. Domain knowledge about which axes matter, which mechanisms
   already exist in the target, which plumbing path to use, and which failure mode
   to avoid belongs here. **This is the channel for anything the agent writing the
   mechanism needs to know.** Without `build` in `stages`, nothing consumes it —
-  the tokenless stages have no prompt to put it in.
+  the tokenless stages have no prompt to put it in (`plan` reads it too).
 - **`interpretation`** — **reserved, not read by any stage.** Scope limitations
   and "report X as a lead, not a result" belong here. It is deliberately NOT
   passed to `build`: it steers how *results* are read, and `build` makes no
@@ -3410,7 +3413,8 @@ consequential mistake an author can make (anti-pattern §6.6).
 
 | Channel | Consumed by | When | Shapes |
 |---|---|---|---|
-| `guidance.factor_nomination` / `guidance.interpretation` | Nothing — **reserved, not read by any stage** | never | Author intent, for human readers |
+| `guidance.factor_nomination` | The model | `plan` / `build`, when present (never otherwise) | What the mechanism-authoring agent knows |
+| `guidance.interpretation` | Nothing — **reserved, not read by any stage** | never | Author intent, for human readers |
 | `design_space.invariants` | Python | Every run, every stage, including `screen` and `refine` | What Python **executes** |
 | `target_system.description` | The model | `build`, when present | Narrative framing, domain context |
 
