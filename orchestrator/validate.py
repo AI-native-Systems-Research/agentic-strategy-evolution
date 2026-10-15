@@ -1823,12 +1823,55 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule22_completion_budgets(opt, factors))
     errors.extend(_rule23_commands_are_argv_not_shell(opt))
     errors.extend(_rule24_integer_levels_without_grid(factors))
+    errors.extend(_rule25_geometric_levels_without_log_scale(factors))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
     # locked_observables keys, and a WARN naming every unenforceable lock.
     from orchestrator.optimize.locked import validation_findings as _locked_rules
     errors.extend(_locked_rules(campaign))
     return errors
+
+
+def _rule25_geometric_levels_without_log_scale(factors: list[dict]) -> list[str]:
+    """Rule 25 (WARNING): levels that look geometric, coded linearly.
+
+    Every numeric knob in three real campaigns was geometric (batch 100..5000,
+    cache 2,000..64,000, interval 1..64), and linear coding put each centre
+    point at the arithmetic midpoint -- 32.5 for [1, 64] -- so the design
+    probed one end of the range and barely touched the region where the
+    answer was. "Geometric" here: all levels positive, the range spans at
+    least 10x, and the interior levels sit closer to the geometric mean than
+    to the arithmetic one (or there are only two levels). It is a warning
+    because a genuinely additive knob can span 10x too; ``scale: linear``
+    states that explicitly and silences it.
+    """
+    import math
+
+    warnings: list[str] = []
+    for f in factors:
+        levels = f.get("levels") or []
+        if f.get("type") != "numeric" or "scale" in f or len(levels) < 2:
+            continue
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                   and v > 0 for v in levels):
+            continue
+        lo, hi = min(levels), max(levels)
+        if hi / lo < 10:
+            continue
+        geo, ari = math.sqrt(lo * hi), (lo + hi) / 2
+        interior = [v for v in levels if lo < v < hi]
+        if interior and not all(abs(math.log(v / geo)) < abs(math.log(v / ari))
+                                for v in interior):
+            continue
+        warnings.append(
+            f"WARN: factor {f.get('id')!r} levels {levels} span {hi / lo:g}x and "
+            f"look geometric, but are coded linearly: the centre point would be "
+            f"{ari:g} (arithmetic), not {geo:.4g} (geometric), so the design "
+            f"spends its interior on one end of the range. Declare `scale: log` "
+            f"for a size / batch / interval knob, or `scale: linear` to keep "
+            f"linear coding deliberately.",
+        )
+    return warnings
 
 
 def _rule24_integer_levels_without_grid(factors: list[dict]) -> list[str]:

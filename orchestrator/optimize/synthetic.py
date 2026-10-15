@@ -332,6 +332,36 @@ def _stochastic_constraint_boundary() -> Surface:
     )
 
 
+def _geometric_knob(*, scale: str | None = None) -> Surface:
+    """Two geometric knobs whose optimum sits at the geometric interior.
+
+    Named for a real campaign: an access-update interval declared [1, 8, 64]
+    was coded linearly, so its centre point ran at 32 and refine explored
+    32..64 while the answer lived near 8. The response is a smooth bowl in
+    log(level) -- how a size / interval knob usually acts -- peaking at
+    INT=8 and BUF=2048. ``scale`` is written onto both factors so the same
+    surface can be run with and without ``scale: log``.
+    """
+    import math
+
+    def fac(fid, levels):
+        f = _numeric(fid, levels=levels, grid=1)
+        if scale:
+            f["scale"] = scale
+        return f
+
+    def fn(lv):
+        a = math.log2(float(lv["INT"]) / 8.0)
+        b = math.log2(float(lv["BUF"]) / 2048.0)
+        return 100.0 - 4.0 * a * a - 3.0 * b * b + 0.5 * a * b
+
+    return Surface(
+        name="geometric_knob" if scale is None else f"geometric_knob_{scale}",
+        factors=(fac("INT", (1, 8, 64)), fac("BUF", (256, 2048, 16384))),
+        fn=fn, noise_sd=0.3,
+    )
+
+
 SURFACES: dict[str, Callable[[], Surface]] = {
     "additive": _additive,
     "interaction_only": _interaction_only,
@@ -345,6 +375,8 @@ SURFACES: dict[str, Callable[[], Surface]] = {
     "nan_at_corner": _nan_at_corner,
     "fails_at_one_level": _fails_at_one_level,
     "stochastic_constraint_boundary": _stochastic_constraint_boundary,
+    "geometric_knob": _geometric_knob,
+    "geometric_knob_log": lambda: _geometric_knob(scale="log"),
 }
 
 

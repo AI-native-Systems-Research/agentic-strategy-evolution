@@ -38,7 +38,7 @@ import math
 from dataclasses import dataclass
 
 from orchestrator.optimize.effects import Fit
-from orchestrator.optimize.factors import Factor, decode_coded, is_refinable
+from orchestrator.optimize.factors import Factor, code_actual, decode_coded, is_refinable
 
 
 @dataclass(frozen=True)
@@ -98,13 +98,13 @@ def _axis(f: Factor, *, max_points: int = 9) -> list[tuple[float, object]]:
     # that test and its space-level sibling are what fail now.
     if f.type == "choice" or not is_refinable(f):
         return [(-1.0, low), (1.0, high)]
-    mid = (float(low) + float(high)) / 2.0
-    half = (float(high) - float(low)) / 2.0 or 1.0
     seen: dict = {}
     for i in range(max_points):
         coded = -1.0 + 2.0 * i / (max_points - 1)
         level = decode_coded(f, coded)
-        seen.setdefault(level, (float(level) - mid) / half)
+        # `code_actual` owns the coordinate transform (linear or log), so the
+        # candidate is scored in exactly the space the fit was coded in.
+        seen.setdefault(level, code_actual(f, level))
     return sorted(((c, lv) for lv, c in seen.items()), key=lambda p: p[0])
 
 

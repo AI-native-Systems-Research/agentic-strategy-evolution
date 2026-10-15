@@ -429,6 +429,15 @@ else has a default.
 - **`levels`** — every runnable setting, as a flat list, `>= 2` entries.
   Screening uses the pair from `screen_levels` (default: `levels[0]` and
   `levels[-1]`); interior levels are explored only in `refine`.
+- **`scale`** (numeric only; `linear` default, or `log`) — the space the
+  design's ±1 coding is linear in. Declare `log` for a geometric knob — a
+  cache/buffer size, a batch size, an interval spanning orders of magnitude.
+  The centre point is then the geometric mean (`[1, 8, 64]` → 8, not 32.5) and
+  refine's points are equal *ratios* apart. Measured on the `geometric_knob`
+  oracle (a bowl in log(level)): linear coding certified an answer 26% below
+  the optimum on every seed; `scale: log` returned the optimum on every seed.
+  `nous validate` warns (rule 25) when levels look geometric and no `scale` is
+  declared; `scale: linear` states the choice and silences it.
 - **`grid`** (numeric only) — snaps a fitted interior optimum to the
   nearest multiple of this step, so `confirm` never has to run a value the
   target can't actually take (`K = 4.7` becomes `K = 5` with `grid: 1`).

@@ -273,3 +273,58 @@ def test_a_float_level_list_keeps_float_points():
     f = _int_factor([0.5, 1.5])
     v = decode_coded(f, 0.0)
     assert v == 1.0 and isinstance(v, float)
+
+
+# ── scale: log -- geometric knobs are coded in log space ────────────────────
+#
+# Every numeric knob in three real campaigns was geometric (batch 100..5000,
+# cache 2000..64000, interval 1..64). Coded linearly, the centre of [1, 64]
+# is 32.5, so the design probed 32..64 and barely touched the region (2..8)
+# where the answer was. In log space the centre is the geometric mean, 8.
+
+import math as _m  # noqa: E402
+
+from orchestrator.optimize.factors import code_actual  # noqa: E402
+
+
+def _log_factor(levels, **over):
+    return _int_factor(levels, scale="log", **over)
+
+
+def test_the_centre_of_a_log_factor_is_the_geometric_mean():
+    f = _log_factor([1, 8, 64], grid=1)
+    assert decode_coded(f, 0.0) == 8
+    assert code_actual(f, 8) == pytest.approx(0.0)
+    assert code_actual(f, 1) == pytest.approx(-1.0) and code_actual(f, 64) == pytest.approx(1.0)
+
+
+@given(lo=st.floats(0.01, 100), ratio=st.floats(2.0, 1000.0),
+       coded=st.floats(-1.0, 1.0, allow_nan=False))
+def test_log_coding_round_trips(lo, ratio, coded):
+    f = parse_factors([{**_numeric_raw(), "levels": [lo, lo * ratio], "grid": None,
+                        "scale": "log"}])[0]
+    assert code_actual(f, decode_coded(f, coded)) == pytest.approx(coded, abs=1e-9)
+
+
+def test_equal_coded_steps_are_equal_RATIOS_in_log_scale():
+    f = _log_factor([1, 64])
+    a, b, c = (decode_coded(f, x) for x in (-1.0, 0.0, 1.0))
+    assert b / a == pytest.approx(c / b)
+
+
+def test_linear_is_the_default_and_unchanged():
+    f = _int_factor([1, 8, 64])
+    assert decode_coded(f, 0.0) == 32.5
+
+
+@pytest.mark.parametrize("levels", [[0, 8, 64], [-1, 8, 64]])
+def test_log_scale_needs_positive_levels(levels):
+    with pytest.raises(ValueError, match="positive"):
+        _log_factor(levels)
+
+
+def test_log_scale_is_numeric_only():
+    raw = {**_numeric_raw(), "type": "choice", "levels": ["a", "b"], "scale": "log"}
+    raw.pop("grid", None)
+    with pytest.raises(ValueError, match="numeric"):
+        parse_factors([raw])

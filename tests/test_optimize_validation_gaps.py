@@ -814,3 +814,28 @@ def test_rule24_warns_on_integer_levels_without_grid():
 ])
 def test_rule24_is_silent_when_the_question_is_already_settled(levels, extra):
     assert _rule24_findings(levels, **extra) == []
+
+
+# ───── rule 25: geometric levels coded linearly (WARNING) ─────
+
+
+def _rule25(levels, **extra):
+    from orchestrator.validate import _rule25_geometric_levels_without_log_scale
+    return _rule25_geometric_levels_without_log_scale(
+        [{"id": "C", "type": "numeric", "levels": levels, **extra}])
+
+
+@pytest.mark.parametrize("levels", [[1, 8, 64], [256, 2048, 16384], [100, 5000]])
+def test_rule25_warns_on_geometric_levels(levels):
+    (msg,) = _rule25(levels)
+    assert "scale: log" in msg
+
+
+@pytest.mark.parametrize("levels,extra", [
+    ([1, 8, 64], {"scale": "log"}), ([1, 8, 64], {"scale": "linear"}),
+    ([10, 20, 30], {}),                 # < 10x
+    ([1, 50, 64], {}),                  # interior is arithmetic, not geometric
+    ([0, 8, 64], {}),                   # not positive: log impossible
+])
+def test_rule25_is_silent_otherwise(levels, extra):
+    assert _rule25(levels, **extra) == []

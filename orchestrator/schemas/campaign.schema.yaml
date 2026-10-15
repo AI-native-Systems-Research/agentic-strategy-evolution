@@ -930,6 +930,21 @@ properties:
                 actually take (e.g. K=4.7). Example: ``grid: 1`` for an
                 integer-valued knob. Omit when any real value ships
                 (thresholds, ratios). Ignored for ``type: choice``.
+            scale:
+              type: string
+              enum: [linear, log]
+              default: linear
+              description: >
+                For ``numeric`` factors: the space the design's ±1 coding is
+                linear in. Declare ``log`` for a geometric knob -- a cache or
+                buffer size, a batch size, an interval or rate that spans
+                orders of magnitude (levels like ``[1, 8, 64]`` or
+                ``[256, 2048, 16384]``). The centre point is then the
+                geometric mean (8, not 32.5), axial and refine points are
+                equal RATIOS apart, and the fitted surface is a function of
+                log(level), which is how such knobs usually act. Levels must
+                be strictly positive. ``nous validate`` warns when a numeric
+                factor's levels look geometric and no scale is declared.
             screen_levels:
               type: array
               minItems: 2

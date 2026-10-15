@@ -17,6 +17,8 @@ how fitting works, and the fitting question is fully determined by
 """
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,6 +39,11 @@ class Factor:
     apply_spec: dict
     manipulation: dict
     relations: tuple[dict, ...]
+    #: ``"linear"`` (default) or ``"log"``: the space the ±1 coding is linear
+    #: in. A geometric knob (a cache size, a batch size, an interval spanning
+    #: orders of magnitude) is coded in log space, so the centre point is the
+    #: geometric mean and equal coded steps are equal RATIOS.
+    scale: str = "linear"
 
 
 def _normalise_apply(raw: Any, factor_id: str) -> dict:
@@ -147,6 +154,23 @@ def parse_factors(raw: list[dict]) -> list[Factor]:
                 )
 
         grid = entry.get("grid")
+        scale = str(entry.get("scale") or "linear")
+        if scale not in ("linear", "log"):
+            raise ValueError(
+                f"factor {fid!r}: scale must be 'linear' or 'log' (got {scale!r})",
+            )
+        if scale == "log":
+            if ftype != "numeric":
+                raise ValueError(
+                    f"factor {fid!r}: scale: log applies to numeric factors only "
+                    f"-- a choice factor has no axis to rescale",
+                )
+            if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                       and v > 0 for v in levels):
+                raise ValueError(
+                    f"factor {fid!r}: scale: log needs strictly positive levels "
+                    f"(got {list(levels)!r}); log space has no zero",
+                )
         out.append(Factor(
             id=fid,
             name=str(entry.get("name") or fid),
@@ -157,6 +181,7 @@ def parse_factors(raw: list[dict]) -> list[Factor]:
             apply_spec=_normalise_apply(entry.get("apply"), fid),
             manipulation=_check_manipulation(entry.get("manipulation"), fid),
             relations=_check_relations(entry.get("relations"), fid),
+            scale=scale,
         ))
     return out
 
@@ -179,6 +204,15 @@ def code_level(f: Factor, level: Any) -> int:
     )
 
 
+def _to_axis(f: Factor, value: Any) -> float:
+    """A numeric level in the space the coding is linear in."""
+    return math.log(float(value)) if f.scale == "log" else float(value)
+
+
+def _from_axis(f: Factor, y: float) -> float:
+    return math.exp(y) if f.scale == "log" else y
+
+
 def code_actual(f: Factor, level: Any) -> float:
     """The coded coordinate of a level that ACTUALLY RAN (INV-STAT14).
 
@@ -197,11 +231,12 @@ def code_actual(f: Factor, level: Any) -> float:
     low, high = f.screen_levels
     if f.type == "choice":
         return float(code_level(f, level))
-    half = (float(high) - float(low)) / 2.0
+    lo, hi = _to_axis(f, low), _to_axis(f, high)
+    half = (hi - lo) / 2.0
     if half == 0.0:
         raise ValueError(f"factor {f.id!r}: screen pair {f.screen_levels!r} has no width")
-    mid = (float(low) + float(high)) / 2.0
-    return (float(level) - mid) / half
+    mid = (lo + hi) / 2.0
+    return (_to_axis(f, level) - mid) / half
 
 
 def snap_to_grid(value: float, grid: float | None) -> float | int:
@@ -240,9 +275,10 @@ def decode_coded(f: Factor, coded: float) -> Any:
     low, high = f.screen_levels
     if f.type == "choice":
         return high if coded > 0 else low
-    mid = (float(low) + float(high)) / 2.0
-    half = (float(high) - float(low)) / 2.0
-    value = snap_to_grid(mid + coded * half, f.grid)
+    lo, hi = _to_axis(f, low), _to_axis(f, high)
+    mid = (lo + hi) / 2.0
+    half = (hi - lo) / 2.0
+    value = snap_to_grid(_from_axis(f, mid + coded * half), f.grid)
 
     # CLAMP to the declared range. A central composite places axial points at
     # |coded| = (2^k)^(1/4) > 1 -- 1.68 for k=3 -- so linear extrapolation
