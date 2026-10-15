@@ -2079,6 +2079,20 @@ def run_stage(
     # reason. `stage_name`/`pol` below are these same values.
     stage_name, pol = _resolve_state(campaign, work_dir, iteration, stage)
     _is_build = stage_name == Stage.BUILD.value
+    if _is_build and "plan" in (opt.get("stages") or []):
+        from orchestrator.optimize.plan import PLAN_FILENAME
+
+        if not (Path(work_dir) / PLAN_FILENAME).exists():
+            # Checked before the pre-build test run and control measurement, so a
+            # planless build spends nothing. Covers a resumed work_dir as well as
+            # the plan stage's own abort path.
+            raise OptimizationAborted(
+                f"build will not run: this campaign declares a `plan` stage but "
+                f"{PLAN_FILENAME} is absent from {work_dir}. Building without it "
+                f"would author a mechanism nobody planned. Re-run the plan stage, "
+                f"or seed a reviewed {PLAN_FILENAME} into the work_dir and drop "
+                f"`plan` from optimization.stages.",
+            )
     # Set only when the test command runs HERE; None when verdicts were injected.
     test_run: "runner.NativeTestResults | None" = None
 
@@ -2359,13 +2373,39 @@ def run_stage(
         # on a specification nobody can hold it to.
         from orchestrator.optimize import plan as plan_mod
 
-        plan_mod.run_plan(
-            campaign, work_dir,
-            iteration=iteration,
-            model=model,
-            max_turns=_plan_max_turns(campaign),
-            sdk_runner=sdk_runner,
-        )
+        # ONE repair attempt, then a campaign-level abort. A rejected plan used
+        # to escape as an ordinary iteration failure, after which the campaign
+        # loop's next index resolved to `build` -- which then authored the
+        # mechanism with NO plan, a different campaign from the one declared,
+        # having discarded the paid planning call. A structural rejection is
+        # usually repairable by naming the failed fields; a second rejection
+        # means the target description cannot support a plan, and building
+        # anyway is not an answer to that.
+        try:
+            plan_mod.run_plan(
+                campaign, work_dir,
+                iteration=iteration,
+                model=model,
+                max_turns=_plan_max_turns(campaign),
+                sdk_runner=sdk_runner,
+            )
+        except plan_mod.PlanRejected as first:
+            logger.warning("plan: rejected (%s); retrying once with the "
+                           "rejection as feedback", first)
+            try:
+                plan_mod.run_plan(
+                    campaign, work_dir,
+                    iteration=iteration,
+                    model=model,
+                    max_turns=_plan_max_turns(campaign),
+                    sdk_runner=sdk_runner,
+                    feedback=str(first),
+                )
+            except plan_mod.PlanRejected as second:
+                raise OptimizationAborted(
+                    f"plan stage rejected twice; build will not run without the "
+                    f"plan this campaign declares. Last rejection: {second}",
+                ) from second
         _enter_phase(engine, "DESIGN", work_dir)
         _enter_phase(engine, "HUMAN_DESIGN_GATE", work_dir)
         _enter_phase(engine, "EXECUTE_ANALYZE", work_dir)

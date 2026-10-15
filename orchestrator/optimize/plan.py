@@ -75,6 +75,13 @@ _LIST_SECTIONS = ("rejected", "failure_modes")
 #: alternative from a box ticked.
 _MIN_RATIONALE = 12
 
+#: Keys that NAME something rather than argue for it, so the rationale floor
+#: does not apply. ``cost_model.currency`` is the unit the cost is paid in --
+#: the objective's own metric is the ideal answer, and ``'ops_per_s'`` (9
+#: characters) was rejected as "too short to be an answer" on a real campaign,
+#: discarding a paid planning call over a correct reply.
+_NAME_KEYS = {("cost_model", "currency")}
+
 
 class PlanRejected(RuntimeError):
     """The planning call produced nothing a build could act on.
@@ -128,7 +135,8 @@ def check_plan(plan: Any) -> list[str]:
                     errors.append(
                         f"{section}[{i}].{key}: missing or empty.",
                     )
-                elif isinstance(got, str) and len(got.strip()) < _MIN_RATIONALE:
+                elif (isinstance(got, str) and len(got.strip()) < _MIN_RATIONALE
+                      and (section, key) not in _NAME_KEYS):
                     errors.append(
                         f"{section}[{i}].{key}: too short to be an answer "
                         f"({got.strip()!r}). State the reason, not a token.",
@@ -316,9 +324,14 @@ def run_plan(
     max_turns: int = DEFAULT_MAX_TURNS,
     sdk_runner: Callable | None = None,
     retry_sleep: Callable[[float], None] | None = None,
+    feedback: str | None = None,
     **_ignored,
 ) -> dict:
     """Spend one agent call designing the mechanism. Write the plan; return metrics.
+
+    ``feedback`` is the previous attempt's ``check_plan`` rejection, appended to
+    the prompt so a structurally incomplete reply can be repaired by naming
+    exactly which fields failed, rather than by re-asking blind.
 
     ``sdk_runner`` is the injection seam, matching ``SDKDispatcher`` and
     ``run_build``: tests pass a callable returning an ``SDKResult`` and never
@@ -346,6 +359,12 @@ def run_plan(
 
     resolved_model = model or _resolve_model(campaign, "plan", None)
     prompt = plan_prompt(campaign)
+    if feedback:
+        prompt += (
+            "\n\nYOUR PREVIOUS PLAN WAS REJECTED by the structural check, for "
+            "these reasons:\n" + feedback + "\nReply with the complete plan "
+            "again, fixing exactly these fields; keep everything that was right."
+        )
     runner = sdk_runner or _default_sdk_runner_factory()
 
     prompts_dir = ((campaign.get("prompts") or {}).get("methodology_layer"))

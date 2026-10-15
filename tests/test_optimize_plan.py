@@ -881,3 +881,68 @@ def test_models_plan_and_build_are_schema_valid_overrides():
     jsonschema.validate(campaign["models"], schema["properties"]["models"])
     assert _resolve_model(campaign, "plan", None) == "model-a"
     assert _resolve_model(campaign, "build", None) == "model-b[1m]"
+
+
+# --------------------------------------------------------------------------
+# A REJECTED plan is repaired once, then stops the campaign -- found by a real
+# campaign whose plan was rejected over `currency: 'ops_per_s'` and whose next
+# iteration then ran `build` with no plan at all.
+# --------------------------------------------------------------------------
+
+def test_a_metric_name_is_a_valid_currency():
+    plan = _valid_plan()
+    plan["cost_model"]["currency"] = "ops_per_s"
+    assert check_plan(plan) == []
+
+
+def _stage_env(tmp_path, monkeypatch, tag, stages):
+    from orchestrator.iteration import setup_work_dir
+    repo = tmp_path / "repo"
+    (repo / "tests").mkdir(parents=True, exist_ok=True)
+    campaign = _campaign(repo, stages=stages)
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / tag))
+    return campaign, setup_work_dir(tag, repo_path=str(repo), campaign=campaign)
+
+
+def _bad_plan() -> dict:
+    plan = _valid_plan()
+    plan["rejected"] = []
+    return plan
+
+
+def test_a_rejected_plan_is_repaired_from_the_named_rejection(tmp_path, monkeypatch):
+    from orchestrator.optimize import stage_runner
+    campaign, work = _stage_env(tmp_path, monkeypatch, "repair", ["plan", "build", "verify"])
+
+    def agent(**kw):
+        # A model that fixes what it is TOLD about, and only then.
+        told = "PREVIOUS PLAN WAS REJECTED" in kw["prompt"] and "rejected:" in kw["prompt"]
+        return _plan_result(_valid_plan() if told else _bad_plan())
+
+    real = plan_mod.run_plan
+    monkeypatch.setattr(plan_mod, "run_plan", lambda c, w, **kw: real(
+        c, w, sdk_runner=agent, **{k: v for k, v in kw.items() if k != "sdk_runner"}))
+    stage_runner.run_stage(campaign, work, iteration=1, stage="plan", test_results={})
+    assert read_plan(work) == _valid_plan()
+
+
+def test_a_plan_rejected_twice_stops_the_campaign(tmp_path, monkeypatch):
+    from orchestrator.optimize import stage_runner
+    campaign, work = _stage_env(tmp_path, monkeypatch, "twice", ["plan", "build", "verify"])
+    real = plan_mod.run_plan
+    monkeypatch.setattr(plan_mod, "run_plan", lambda c, w, **kw: real(
+        c, w, sdk_runner=_runner(_plan_result(_bad_plan())),
+        **{k: v for k, v in kw.items() if k != "sdk_runner"}))
+    with pytest.raises(stage_runner.OptimizationAborted, match="rejected twice"):
+        stage_runner.run_stage(campaign, work, iteration=1, stage="plan", test_results={})
+    assert not (work / PLAN_FILENAME).exists()
+
+
+def test_build_refuses_to_run_without_the_declared_plan(tmp_path, monkeypatch):
+    from orchestrator.optimize import stage_runner
+    campaign, work = _stage_env(tmp_path, monkeypatch, "planless", ["plan", "build", "verify"])
+    with pytest.raises(stage_runner.OptimizationAborted, match="declares a `plan` stage"):
+        stage_runner.run_stage(campaign, work, iteration=2, stage="build", test_results={})
+    # Nothing was spent: no control measurement, no build summary.
+    assert not (work / "baseline_equivalence.json").exists()
+    assert not (work / "runs" / "iter-2" / "build_summary.md").exists()
