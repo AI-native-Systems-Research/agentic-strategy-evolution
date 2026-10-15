@@ -1302,8 +1302,14 @@ properties:
         type: string
         minLength: 1
         description: >
-          Shell command that runs ONE configuration of the target and emits
-          the response metrics as JSON on stdout. Each factor's rendered
+          Command that runs ONE configuration of the target and emits
+          the response metrics as JSON on stdout. NOT run in a shell: it is
+          split into an argv by ``shlex.split`` and executed with
+          ``cwd=target_system.repo_path``, so ``cd``, ``&&``, pipes,
+          redirects, globs and a leading ``VAR=value`` reach the program as
+          literal arguments (``nous validate campaign`` rejects them; use
+          ``env VAR=value ...``, or ``sh -c '...'`` when a shell is really
+          needed). Each factor's rendered
           ``apply`` arguments are appended to this command, so it carries
           only the invariant part. Example: "./blis run --model qwen/qwen3-14b
           --num-instances 4 --seed 42". Without it, ``run_stage`` has no way
@@ -1314,9 +1320,14 @@ properties:
         type: string
         minLength: 1
         description: >
-          Shell command that runs every declared relation's
-          ``native_test`` and exits clean iff all pass. Example: "pytest
-          -q tests/prop_*.py --json-report".
+          Command that runs every declared relation's ``native_test`` and
+          exits clean iff all pass. Example: "python -m pytest
+          tests/test_props.py -v". Like ``run_command`` it is NOT run in a
+          shell: an argv parsed by ``shlex.split``, executed with
+          ``cwd=target_system.repo_path``. Pass test paths RELATIVE to that
+          directory -- runners print identifiers relative to how they were
+          invoked, and ``native_test`` is matched against what is printed.
+          A glob such as ``tests/prop_*.py`` is not expanded.
 
           Must emit PER-TEST results, not just a package-level pass: use
           ``-v`` for ``go test`` or ``--json-report`` for pytest. A green
@@ -1324,6 +1335,33 @@ properties:
           relation's test ran, so it fails closed — every declared relation
           reconciles as "declared but not executed", which aborts the
           campaign at its verify stage.
+
+          Runs under ``test_timeout_sec`` (default 900). A killed run is
+          reported as KILLED, never as unmatched identifiers.
+
+      test_timeout_sec:
+        type: integer
+        minimum: 1
+        description: >
+          Wall-clock ceiling, in seconds, on ONE invocation of
+          ``test_command`` -- at ``nous validate campaign --smoke`` and at
+          the verify gate alike. Defaults to 900 when absent, which is what
+          every campaign authored before this field existed ran at.
+
+          Raise it when the relation suite legitimately takes longer: the
+          natural correctness relation for a performance knob is "this
+          lever moves the measured quantity", which RUNS the target, so a
+          suite's cost is a multiple of one measurement and grows with the
+          number of factors. Prefer first to make each relation cheap -- it
+          proves a lever moves the response, not by how much, so it can run
+          at the cheapest operating point that still exercises the
+          mechanism.
+
+          Like ``run_timeout_sec`` the ceiling is a hard failure, not a
+          budget: a killed suite certifies nothing (tests it reported before
+          the kill do NOT count), so every declared relation fails closed
+          and verify aborts naming the timeout. The partial output is kept
+          in the iteration's ``test_output.log``.
 
       run_timeout_sec:
         type: integer
