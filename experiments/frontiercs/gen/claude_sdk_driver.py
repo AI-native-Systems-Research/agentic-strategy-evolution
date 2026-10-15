@@ -38,7 +38,7 @@ async def session(prompt, resume):
 
 
 async def main():
-    n = 0
+    n, crashes = 0, 0
     while True:
         n += 1
         before = C.transcript_cost(run)
@@ -48,7 +48,16 @@ async def main():
             b = best_measured()
             prompt = cfg["continue"].format(score=f"{b:g}" if b >= 0 else "0")
         print(f"[driver] session {n} start cost=${before:.2f}", flush=True)
-        turns = await session(prompt, resume=n > 1)
+        try:
+            turns = await session(prompt, resume=n > 1)
+        except Exception as e:  # only with continue_on_crash; the default baseline lets a CLI crash end the run
+            if not cfg.get("continue_on_crash"):
+                raise
+            crashes += 1
+            print(f"[driver] session {n} crashed ({type(e).__name__}: {str(e)[:160]}); crash {crashes}", flush=True)
+            if crashes >= 8:
+                print("[driver] 8 CLI crashes, stopping", flush=True); return
+            continue
         after = C.transcript_cost(run)
         print(f"[driver] session {n} ended turns={turns} cost=${after:.2f} best={best_measured()}", flush=True)
         if best_measured() >= cfg["max_score"]:

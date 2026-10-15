@@ -29,6 +29,8 @@ def main():
     ap.add_argument("--max-score", type=float, default=100.0)
     ap.add_argument("--max-turns", type=int, default=400)
     ap.add_argument("--out-dir", required=True); ap.add_argument("--out", required=True)
+    ap.add_argument("--continue-on-crash", action="store_true",
+                    help="robustness variant: a CLI crash is treated like a session end (resume with 'Continue.')")
     a = ap.parse_args(); pid = a.pid
     run = Path(a.out_dir).resolve(); run.mkdir(parents=True, exist_ok=True)
     (run / "trials").mkdir(exist_ok=True)
@@ -67,7 +69,8 @@ def main():
     # a session that ends on its own is resumed in the same conversation with no new information
     cont = "Continue."
     (run / "driver_cfg.json").write_text(json.dumps({"run_dir": str(run), "model": a.model, "max_turns": a.max_turns,
-        "max_score": a.max_score, "budget": a.budget, "prompt": prompt, "continue": cont}))
+        "max_score": a.max_score, "budget": a.budget, "prompt": prompt, "continue": cont,
+        "continue_on_crash": a.continue_on_crash}))
 
     home = os.path.expanduser("~"); rr = os.path.realpath
     paper = rr(HERE.parents[3])
