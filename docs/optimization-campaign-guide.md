@@ -1920,6 +1920,8 @@ Work-dir root:
 | File | Written by | Contains |
 |---|---|---|
 | `policy.json` + `policy.sha256` | end of `verify` | the compiled policy and its content hash |
+| `campaign.epoch-<epoch>.yaml` | each policy compile | the exact campaign that epoch pre-registered — diff two epochs to see what was revised; `report.md` decodes the epoch's results against it |
+| `report.md` | `report` | `report.json` rendered with zero tokens, plus **What to do next** when the epoch ended on an exception (out-of-hull axes in real levels, constraint-aware) |
 | `transitions.jsonl` | every `step()` | `epoch`, `iteration`, `from`, `to`, full `observations`, the `rule` that fired, `policy_hash` |
 | `report.json` | `report` | recommendation + `basis`, both bounds, both deltas, finalists, `path`, `certified` |
 | `epoch_end-<epoch>.json` | `exception` | why the epoch ended and what a new one would need |

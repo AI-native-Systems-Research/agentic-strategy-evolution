@@ -143,6 +143,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+import yaml
+
 from orchestrator.optimize import (
     adapter_contract,
     artifacts,
@@ -1455,7 +1457,19 @@ def _compile_and_write_policy(campaign: dict, work_dir: Path) -> dict:
         # (`policy_version` pinned to 1, the `epsilon` `abs`/`pct` `oneOf`, the
         # delta bounds). Both are pre-registration failures of the same class,
         # so both abort the campaign the same way.
-        raise OptimizationAborted(str(exc)) from exc
+        raise OptimizationGateFailed(str(exc)) from exc
+    # The exact campaign THIS epoch pre-registered, beside the policy compiled
+    # from it. `campaign.yaml` is written once, at first setup, so after an
+    # author revises levels and resumes into epoch 2 it describes epoch 1 -- and
+    # anything decoding epoch 2's coded results against it (report.md's "what
+    # to do next") would use the wrong ranges. Also a provenance record: diff
+    # two epochs' files to see what the author changed between them.
+    try:
+        _epoch_campaign = (Path(work_dir) / f"campaign.epoch-{pol['epoch']}.yaml")
+        _epoch_campaign.write_text(
+            yaml.safe_dump(campaign, default_flow_style=False, sort_keys=False))
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("could not record the epoch's campaign: %s", exc)
     return pol
 
 

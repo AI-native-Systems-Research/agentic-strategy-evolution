@@ -72,3 +72,21 @@ def test_gate_summary_validates_against_the_gate_summary_schema(finished):
     doc = json.loads(path.read_text())
     jsonschema.validate(doc, json.loads((SCHEMAS / "gate_summary.schema.json").read_text()))
     assert doc["gate_type"] == "continue"
+
+
+# ── "What to do next" when an epoch ends -- found on a real multi-repo run ──
+
+def test_an_out_of_hull_end_names_the_axis_in_real_levels_and_the_command(tmp_path):
+    """The epoch_end guidance said 'see recommendation.json's stationary_point',
+    which is in CODED units. report.md must say which knob, in its own units,
+    which way, and what to run."""
+    import dataclasses
+    from orchestrator.optimize.synthetic import SURFACES
+
+    res = run_synthetic_campaign(SURFACES["bowl_out_of_hull"](), seed=1,
+                                 parent_dir=tmp_path)
+    md = render_report_markdown(res.work_dir)
+    if not res.report.get("epoch_ended"):
+        pytest.skip("this seed did not end on an exception")
+    assert "## What to do next" in md and "nous resume" in md
+    assert "Extend `" in md or "Do not extend" in md

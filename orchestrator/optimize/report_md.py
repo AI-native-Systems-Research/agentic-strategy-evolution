@@ -106,6 +106,107 @@ def _fmt_levels(levels: dict | None) -> str:
     return ", ".join(f"`{k}={levels[k]}`" for k in sorted(levels))
 
 
+def _epoch_of(work_dir: Path):
+    rep = _read_json(work_dir / "report.json") or {}
+    return rep.get("epoch") or (_read_json(work_dir / "policy.json") or {}).get("epoch", 1)
+
+
+def _out_of_hull_axes(work_dir: Path) -> list[str]:
+    """Each axis of the latest fitted stationary point outside ±1, in REAL levels.
+
+    ``recommendation.json`` records the stationary point in coded units, which
+    tell an author nothing about what to type into ``levels``. Decoded here --
+    through the factor's own scale, unclamped -- with a concrete suggestion one
+    half-range past the current edge: an extrapolation is not a measurement, so
+    the next epoch should bracket the direction, not jump to the extrapolated
+    value.
+    """
+    import glob
+    import math
+
+    import yaml
+
+    from orchestrator.optimize.factors import _from_axis, _to_axis, parse_factors
+
+    recs = sorted(glob.glob(str(work_dir / "runs" / "iter-*" / "recommendation.json")),
+                  key=lambda p: int(Path(p).parent.name.split("-")[1]))
+    sp = (_read_json(Path(recs[-1])) or {}).get("stationary_point") if recs else None
+    # The campaign THIS epoch registered (stage_runner writes it at compile);
+    # campaign.yaml is the first epoch's and goes stale once levels are revised.
+    epoch_copy = work_dir / f"campaign.epoch-{_epoch_of(work_dir)}.yaml"
+    source = epoch_copy if epoch_copy.exists() else work_dir / "campaign.yaml"
+    try:
+        campaign = yaml.safe_load(source.read_text()) or {}
+        factors = {f.id: f for f in parse_factors(
+            (campaign.get("optimization") or {}).get("factors") or [])}
+    except (OSError, ValueError, yaml.YAMLError):
+        return []
+    # Constraint evidence at each edge. The stationary point is a property of
+    # the PRIMARY surface alone; when the edge it points past was measured
+    # infeasible, the constrained optimum is inside the range and "widen" would
+    # walk the next epoch into the constraint (found on a real campaign: a write
+    # cache whose upper edge broke the durability SLA on every row).
+    rows = []
+    for rj in glob.glob(str(work_dir / "runs" / "iter-*" / "runs.jsonl")):
+        for line in Path(rj).read_text().splitlines():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+
+    def _edge_status(fid, edge):
+        at = [r for r in rows if (r.get("levels") or {}).get(fid) == edge]
+        bad = [r for r in at if r.get("status") in ("infeasible", "rejected")]
+        return len(at), len(bad)
+
+    out = []
+    for fid, coded in sorted((sp or {}).items()):
+        f = factors.get(fid)
+        if f is None or f.type != "numeric" or not isinstance(coded, (int, float)) \
+                or abs(coded) <= 1.0 or not math.isfinite(coded):
+            continue
+        lo, hi = _to_axis(f, f.screen_levels[0]), _to_axis(f, f.screen_levels[1])
+        mid, half = (lo + hi) / 2.0, (hi - lo) / 2.0
+        side = "above" if (coded > 0) == (hi > lo) else "below"
+        suggest = _from_axis(f, mid + math.copysign(2.0, coded) * half)
+        edge = f.screen_levels[1] if (coded > 0) == (hi > lo) else f.screen_levels[0]
+        n_at, n_bad = _edge_status(fid, edge)
+        if n_at and n_bad == n_at:
+            out.append(
+                f"- **{fid}**: the PRIMARY surface keeps rising past {edge}, but "
+                f"all {n_at} row(s) measured at {fid}={edge} were infeasible: the "
+                f"constrained optimum lies inside the declared range. Do not "
+                f"extend `{fid}`; if anything, add interior levels below {edge}."
+            )
+            continue
+        out.append(
+            f"- **{fid}**: the fitted optimum is at about "
+            f"{_fmt(_from_axis(f, mid + coded * half))} (coded {coded:+.2f}), "
+            f"{side} the declared range {list(f.levels)}. Extend `{fid}`'s levels "
+            f"{'upward' if side == 'above' else 'downward'}, e.g. to about "
+            f"{_fmt(suggest)}."
+        )
+    return out
+
+
+def _next_epoch_section(work_dir: Path, report: dict) -> list[str]:
+    """What the author does next, stated where the author reads first."""
+    end = _read_json(work_dir / f"epoch_end-{report.get('epoch')}.json") or {}
+    needs = str(end.get("next_epoch_requires") or "").strip()
+    lines = ["## What to do next", ""]
+    if needs:
+        lines += [needs, ""]
+    axes = _out_of_hull_axes(work_dir)
+    if axes:
+        lines += axes + [""]
+    lines += [
+        "Edit the campaign file accordingly, then `nous resume <campaign.yaml>`: "
+        "the revised campaign recompiles into a new epoch, starting at `screen`.",
+        "",
+    ]
+    return lines
+
+
 def render_report_markdown(work_dir: Path) -> str:
     """Render ``report.md`` from ``report.json``. Pure; makes no model call.
 
@@ -156,6 +257,7 @@ def render_report_markdown(work_dir: Path) -> str:
             f"`epoch_end-{report.get('epoch')}.json`.",
             "",
         ]
+        lines += _next_epoch_section(work_dir, report)
 
     lines += [
         "## Bounds",
