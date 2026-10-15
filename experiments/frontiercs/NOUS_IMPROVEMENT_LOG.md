@@ -19,6 +19,8 @@ partly fits it to the benchmark.
 | v4 | `v4` | 0293c42 | + scripted sweeps of tunable values, 10 refine cycles, ranked gap analysis targeted by the next design | Claude scored ~490 settings on llm_router via scripts; Nous scored 5-10 per iteration |
 | v5 | `v5` | 4ca4882 | + carry-forward: the best arm's patch is committed to the target before each iteration (DESIGN and EXECUTE start from the best); 45-turn EXECUTE cap; edit-not-rewrite; sweep only tunable arms; re-measure on noisy judges | every iteration's worktree started from the seed, so iteration 2+ spent turns rebuilding; at $25 iteration 1 alone took $23 on p0 |
 | v6 | `v6` | 0f25a7a | v5 without the EXECUTE turn cap | v5 p5 (capped) 49 vs v4 p5 (uncapped) 58; long uninterrupted executor sessions are where v4 and Claude gain most |
+| v7 | `v7` | 85b04f2..4bb8787 | + local evaluator and instrument checks first (worst case, noise, knobs); designer names 2-3 competing families (h-main + h-alternative); each screened in a fresh capped session; winner deepened; losers become principles; output-limit resume; CLI killed on every early stop | every $25 run locked into one family early; timeouts on p0 looked like noise (section 9) |
+| v8 | `v8` | 774dcff..ced5e56 | see section 10 | v7 at $50: caps undercounted output ~10x, winner starved, crashed arm dropped, unknown time limits, gateway hangs (NOUS_V7_RUN_NOTES.md) |
 
 ## 2. Results (score at the budget; final re-judged in parentheses when different)
 
@@ -229,3 +231,25 @@ test.
   or just re-explore.
 
 Evaluation: on newly selected tasks fixed before any v7 run (not gf/p0/p5, which we tuned on).
+
+## 10. v8 (2026-10-15): what changed and why
+
+v7 at $50 (opus-4-6) won p0 (68 vs 20), p58 (60 vs 0) and p26 (7 vs 0), lost p5 (43 vs 55) and tied p181
+(49.6 vs 50.4). Analysis of all five runs (transcripts, judge archive, metrics; `NOUS_V7_RUN_NOTES.md`) gave the
+v8 changes below. Same model, CLI, effort and ruler as the Claude baseline; no thinking caps.
+
+| # | change | evidence from v7 |
+|---|---|---|
+| 1 | Per-session caps and the iteration budget are charged from the live Claude Code transcript (polled every 10 s; CLI killed at the hard cap) | the stream reports a few output tokens per reply: p5 h-main 469 seen vs 38,246 real; 16-37% of every run's spend was invisible to the budget logic, so a "$12 iteration" cost $20-24 |
+| 2 | Real-dollar defaults: iteration $22, design $8, arm $6, evaluator target at least $3; screening hard caps (2x target) never eat the winner's reserve | v7 defaults were set while undercounting; v7 evaluators really cost $2.7-4.7 and a design up to $12 |
+| 3 | Judge profile learned only from official results and local runs: time limit assumed 1 s when the statement gives none, longest accepted runtime, "likely timeout" when official is 0 but local > 0; shown to every session | p0 lost $18.6 after its best to timed-out submissions (blamed on "a daemon issue"); p181 arms scored 0 at 1 s while the local evaluator used 28.5 s |
+| 4 | The screening winner continues in its own session (resume, same worktree) with at least 40% of the iteration; from iteration 2, exploit (one h-main deepening the incumbent, no design call when the arm left a next step) while the best improves by more than max(noise, 0.5); explore (competing families) on a plateau | every gain came from a screening session; 7 fresh winner sessions ($23.5) and 8 h-alternative sessions ($62) never improved the best |
+| 5 | Evaluator writes and officially measures a simple valid baseline first and measures noise on it; the baseline is committed | noise was measured on 0-score stubs in 3/5 tasks; first real score came at $9-17 vs Claude's $0.7-7 |
+| 6 | One $1 repair turn (same session) for an arm that crashed, failed validity, or scored 0 before it is ranked | p5 matching path cover (the likely route to 90+) segfaulted and was ranked 32 |
+| 7 | Local vs official check: evaluator marked untrusted when they disagree by more than 2x noise + 5 | p26 local 91.8 vs official 10.4 was never flagged |
+| 8 | Robustness: every SDK exception marks the arm failed (never crashes the campaign); hang watchdog (>= 3 API errors and 15 min without a reply) restarts once from the session's latest edits; missing transcript logged loudly; launcher `--wall-hours` | gateway "Request timed out" loops (p58 idled 1.8 h, p0 2.2 h); the 4 h launcher limit ended p0 at $35 |
+| 9 | Orchestrator writes findings/results after a cap stop (no LLM wrap-up) | wrap-ups cost $17.5 across the five runs |
+
+Not taken: trimming design.md from the arm prompt (~$3-5 per task; Claude's context per turn is larger),
+task-specific hints, any cap on reasoning length. Tests: 1536 passed (52 v8 tests); shared prompts byte-identical;
+v4-v7 unchanged. Run with `gen/nous_research_cap.py --design-profile v8 --wall-hours`.

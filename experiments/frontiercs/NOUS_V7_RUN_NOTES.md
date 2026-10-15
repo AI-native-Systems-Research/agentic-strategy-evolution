@@ -89,3 +89,9 @@ Claude $50 finals to beat: p5 57.00, p181 56.00, p0 26.43, p26 0, p58 0.
 | p26 | 0.49, 10.40, 10.40 (mean 7.09) | no solution (0) |
 | p58 | 59.85, 59.94, 59.33 (mean 59.71) | no solution (0) |
 Result: Nous wins p0, p58, p26; Claude wins p5; p181 within judge noise (Claude +0.9).
+
+## 2026-10-15
+- 10:03 Claude continue-on-crash robustness runs (p26 vpc k1, p58 vpc k2, $50, gen/claude_c50cc.sh): Claude p26 is
+  in the same gateway "Request timed out" loop (SDK api_retry 3/9, transcript system/api_error) that hit Nous
+  yesterday. The gateway seems to cut requests longer than ~5 min (long reasoning turns). Shared environment
+  condition for both agents.
