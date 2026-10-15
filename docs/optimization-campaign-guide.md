@@ -1376,10 +1376,28 @@ optimization:
 **Oracle 2(b) — the tests must have been red before the build.** A declared
 `correctness` relation whose `native_test` *already passed* against a tree
 without the mechanism is green for some other reason, and it stays green if the
-build wires the mechanism to nothing. `verify` aborts on that. Set
-`allow_preexisting_tests: true` only when the relation genuinely covers
-pre-existing behaviour — a backward-compatibility test asserting an existing
-default did not change is the legitimate case.
+build wires the mechanism to nothing. `verify` aborts on that. The rule binds
+the factors the build is AUTHORING — those with at least one declared test that
+did not exist before the build. A factor whose tests all existed beforehand is a
+knob the target already had, so its tests passing pre-build is expected and is
+not flagged; that is what lets one campaign tune existing knobs beside a built
+mechanism. When no factor has an unwritten test, the build is changing existing
+behaviour and the rule applies to every factor. Set
+`allow_preexisting_tests: true` only when a relation of a built factor genuinely
+covers pre-existing behaviour — a backward-compatibility test asserting an
+existing default did not change is the legitimate case.
+
+**A failed gate stops the campaign.** Every oracle above, a failed correctness
+relation, a locked-parameter deviation, and drift of the mechanism, the adapter
+contract or the policy hash raise `OptimizationGateFailed`; so does a `plan`
+rejected twice. The campaign loop halts on it — regardless of auto-approve —
+and writes `halt.json` (`kind: gate_failed`, the stage, the reason), the
+progress snapshot, `meta_findings.json` and `report.md`. Any failure of a
+pre-epoch stage (`plan`, `build`, `verify`) halts the same way
+(`kind: pre_epoch_stage_failed`): those stages are selected by iteration index,
+so advancing would run the NEXT stage on an apparatus this one refused. Fix the
+cause, then `nous resume <campaign.yaml>`. Only epoch-state failures that a
+retry can repair (too few usable rows) take the retry-then-circuit-breaker path.
 
 **Oracle 2(c) — the control must be unchanged by the build.** Your
 `known_valid_baseline` is measured `baseline_replicates` times before the build
@@ -1925,7 +1943,7 @@ To start epoch 2:
    NaN response, repair the mechanism (or the relation, if the asserted
    algebra was wrong) for a correctness failure.
 3. Re-run `nous validate campaign FILE --smoke`.
-4. `nous run --resume`. The presence of `epoch_end-1.json` is what tells
+4. `nous resume <campaign.yaml>`. The presence of `epoch_end-1.json` is what tells
    Nous the next run is epoch 2, so it **recompiles** from the revised
    campaign rather than interpreting the stale policy.
 

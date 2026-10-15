@@ -510,7 +510,7 @@ identifiable.
 | `policy_hash` | The registration this epoch ran under |
 
 Its presence is also the signal that starts epoch 2: the next
-`nous run --resume` sees `epoch_end-1.json`, **recompiles** from the revised
+`nous resume <campaign.yaml>` sees `epoch_end-1.json`, **recompiles** from the revised
 campaign, and runs a fresh pre-registration. That is not an escape from the
 hash check — the check refuses a policy edited *inside* an epoch; recompiling
 *across* an epoch boundary is the opposite operation.

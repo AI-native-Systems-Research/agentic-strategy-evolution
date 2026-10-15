@@ -270,7 +270,7 @@ walk); spec §3.9's `alias_map.json` does **not exist** — its content is
 pre-registered policy that changed inside an epoch is not a pre-registration.
 The one legitimate way to change a design is to revise the campaign YAML and
 start a **new epoch**: the presence of `epoch_end-<e>.json` makes the next
-`nous run --resume` recompile from the revised campaign. Recompiling *across*
+`nous resume <campaign.yaml>` recompile from the revised campaign. Recompiling *across*
 an epoch boundary is the opposite operation from editing *inside* one — a new
 pre-registration, freshly hashed, whose `epoch` field says which execution it
 registers, with the previous epoch's registration preserved in

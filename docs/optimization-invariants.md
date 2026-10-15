@@ -446,7 +446,7 @@ accomplish**.
 | **Scope** | Ends the EPOCH. Campaign continues and still returns an action. | Ends the ROW. | Ends the CAMPAIGN. |
 | **Examples** | `stationary_in_hull: false` (the fitted optimum is an extrapolation past the declared range); `nan_response: true` (the objective and the instrumentation disagree about what is measurable there); an observation key outside `OBSERVATION_KEYS`. | Timeout; non-zero exit; unparseable output; manipulation retry exhausted; freshness violation; self-check violation. | `policy.sha256` mismatch; adapter contract drift; a `locked_parameters` deviation at a declared `locked_observables` path (`INV-SEM13`); `primary` also declared `held_out`; a held-out metric reaching a fitting input; a non-numeric-but-not-NaN primary metric; fewer than 2 rows surviving exclusion. |
 | **Artifact** | `epoch_end-<epoch>.json` (why + `next_epoch_requires`) plus `report.json` on the strongest non-model rung. | `runs.jsonl` row with `status` and `failure_kind`. | Nothing new. **This is `INV-TMP08`'s gap** — the audit trail records nothing. |
-| **Recovery** | Revise the campaign out of band; `nous run --resume` recompiles and starts a fresh epoch at `initial`. | Re-run the row. | Fix the apparatus; an apparatus change is an epoch boundary. |
+| **Recovery** | Revise the campaign out of band; `nous resume <campaign.yaml>` recompiles and starts a fresh epoch at `initial`. | Re-run the row. | Fix the apparatus; an apparatus change is an epoch boundary. |
 | **Test** | `BEH-EXC-01` | `BEH-EXC-02` | `BEH-EXC-03` |
 
 The `nan_response` case is the sharpest illustration of the boundary, and

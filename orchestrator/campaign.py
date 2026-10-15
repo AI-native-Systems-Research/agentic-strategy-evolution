@@ -177,6 +177,53 @@ def _write_metrics_summary(work_dir: Path) -> None:
         print(f"\n  Warning: could not write metrics summary: {exc}")
 
 
+def _optimization_stage_of(campaign: dict, iteration: int) -> str:
+    """The pre-epoch stage iteration ``iteration`` ran, else ``"epoch"``.
+
+    Pre-epoch stages (plan / build / verify) are selected by iteration index;
+    epoch states by the compiled policy, which records no transition for a
+    failed iteration -- so "epoch" is the most a caller can say there.
+    """
+    from orchestrator.optimize.policy import pre_epoch_stages
+
+    pre = pre_epoch_stages(campaign)
+    return pre[iteration - 1] if 1 <= iteration <= len(pre) else "epoch"
+
+
+def _optimization_halt_reason(campaign: dict, iteration: int,
+                              exc: BaseException) -> dict | None:
+    """``halt.json`` payload when this failure must stop the campaign, else None.
+
+    Two cases, both regardless of auto-approve:
+      * a hard gate (``OptimizationGateFailed``) -- retrying cannot legitimately
+        pass it; the apparatus is not the one pre-registered;
+      * ANY failure of a pre-epoch stage -- the next index would skip it.
+    Everything else (a plain ``OptimizationAborted`` such as too few usable
+    rows) keeps the retry-then-circuit-breaker path, which re-enters the same
+    epoch state and reuses the rows already measured.
+    """
+    from orchestrator.optimize.stage_runner import OptimizationGateFailed
+
+    stage = _optimization_stage_of(campaign, iteration)
+    if isinstance(exc, OptimizationGateFailed):
+        kind = "gate_failed"
+    elif stage != "epoch":
+        kind = "pre_epoch_stage_failed"
+    else:
+        return None
+    return {
+        "kind": kind,
+        "stage": stage,
+        "stopped_at_iteration": iteration,
+        "error_type": type(exc).__name__,
+        "reason": (
+            f"{stage} {'gate' if kind == 'gate_failed' else 'stage'} failed at "
+            f"iteration {iteration}: {exc}. Nothing after it ran. Fix the cause, "
+            f"then resume with `nous resume <campaign.yaml>`."
+        ),
+    }
+
+
 def _generate_report(
     campaign: dict, work_dir: Path, model: str | None,
     agent: str = "sdk", timeout: int = 1800,
@@ -500,7 +547,10 @@ def run_campaign(
 
             # ── the repeated-failure circuit breaker ──
             _verdict = _progress.check_breaker(
-                _progress.failures_from_ledger(work_dir),
+                _progress.failures_from_ledger(
+                    work_dir,
+                    stage_of=lambda it: _optimization_stage_of(campaign, it),
+                ),
                 threshold=_breaker_threshold,
             )
             if _verdict.tripped:
@@ -582,6 +632,22 @@ def run_campaign(
                 )
                 if _is_optimization:
                     _progress.write_progress(work_dir)
+                    halt = _optimization_halt_reason(campaign, i, exc)
+                    if halt is not None:
+                        # A gate, or a pre-epoch stage, cannot be advanced past:
+                        # the next iteration index would run the NEXT stage on an
+                        # apparatus this one just refused (screen after a failed
+                        # verify, build after a rejected plan). Halt through the
+                        # same terminal path the breaker uses.
+                        print(f"\n  CAMPAIGN HALTED — {halt['reason']}")
+                        _progress.write_halt(work_dir, halt)
+                        _progress.write_progress(work_dir)
+                        _emit_meta_findings(work_dir, campaign)
+                        _write_repo_cache(work_dir, campaign)
+                        _generate_report(campaign, work_dir, model, agent=agent,
+                                         timeout=timeout)
+                        _write_metrics_summary(work_dir)
+                        return
                 outcome = None
                 break
 

@@ -118,7 +118,7 @@ way back"). ``_close_iteration``'s ``exception`` branch writes
 ``epoch_end-<epoch>.json`` at the work_dir root, runs the report on the strongest
 rung that does NOT rest on the fitted surface, and returns COMPLETED. Because
 ``transitions.jsonl`` rows carry ``"epoch"`` and ``policy.current_state`` reads
-only this epoch's rows, a later ``nous run --resume`` over the same work_dir
+only this epoch's rows, a later ``nous resume <campaign.yaml>`` over the same work_dir
 recompiles (``_load_or_compile_policy`` sees ``_epoch_index`` has advanced) and
 starts a CLEAN epoch at ``initial`` — it does not resume at the terminal
 ``exception`` it just left.
@@ -174,6 +174,23 @@ logger = logging.getLogger(__name__)
 
 class OptimizationAborted(RuntimeError):
     """A hard-fail that must stop the campaign regardless of gate approval."""
+
+
+class OptimizationGateFailed(OptimizationAborted):
+    """A hard gate failed: retrying the same iteration cannot legitimately pass it.
+
+    Distinct from the parent because the campaign loop treats the two
+    differently. A plain ``OptimizationAborted`` (too few usable rows, a design
+    pre-flight problem) may be retried -- the next attempt reuses the rows it
+    already measured. A GATE (a failed correctness relation, a moved control
+    baseline, a locked-parameter deviation, drift of the mechanism / adapter
+    contract / policy hash, held-out leakage, a planless build) states that the
+    apparatus is not the one pre-registered, and every later measurement would
+    be about the wrong system. The loop HALTS on it, regardless of
+    auto-approve: before this type existed the loop logged the gate as one
+    failed iteration and advanced, so a campaign whose verify gate failed went
+    on to screen and refine an unverified mechanism.
+    """
 
 
 @dataclass(frozen=True)
@@ -466,7 +483,7 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
     """
     held_out = {str(m) for m in (response_spec.get("held_out") or [])}
     if primary in held_out:
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             f"primary metric {primary!r} is also declared held_out; the campaign "
             f"would be optimizing against its own generalization check",
         )
@@ -479,7 +496,7 @@ def _fitting_responses(outcomes, response_spec: dict, primary: str) -> list[floa
         resp = o.response or {}
         leaked = held_out & set(resp)
         if leaked:
-            raise OptimizationAborted(
+            raise OptimizationGateFailed(
                 f"held-out metric(s) {sorted(leaked)} reached a fitting input for "
                 f"row {o.row_index}; held-out values belong on RunOutcome.held_out",
             )
@@ -1112,7 +1129,7 @@ def _check_tests_failed_before_build(
     try:
         pre = json.loads(path.read_text())
     except (OSError, ValueError) as exc:
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             f"pre_build_tests.json exists but could not be read ({exc}). It is "
             f"the record of which declared tests passed BEFORE the mechanism "
             f"existed, and that question is unanswerable now that it does — "
@@ -1122,13 +1139,30 @@ def _check_tests_failed_before_build(
     already = set(pre.get("passed") or ())
     if not already:
         return
+    # WHICH factors the build is authoring. A factor whose declared correctness
+    # tests did not all exist before the build (absent from `ran`) is one whose
+    # mechanism the build writes, and a pre-existing test of it that already
+    # passed proves nothing about that mechanism. A factor whose tests ALL ran
+    # before the build is a knob the target already had -- its relation tests
+    # passing pre-build is the expected state, not evidence of a vacuous test.
+    # Without this split, every campaign that tunes existing knobs ALONGSIDE a
+    # built mechanism aborted at verify (found authoring a real one). When NO
+    # factor has an unwritten test, the build is changing existing behaviour and
+    # the strict rule applies to every factor, as before.
+    ran = set(pre.get("ran") or ())
+    built = {
+        f.id for f in factors
+        if any(r.get("kind") == "correctness" and r.get("native_test")
+               and r["native_test"] not in ran for r in f.relations)
+    }
     bad = sorted({
         v.native_test for v in relations.reconcile(factors, test_results or {})
         if v.kind == "correctness" and v.native_test in already
+        and (not built or v.factor_id in built)
     })
     if not bad:
         return
-    raise OptimizationAborted(
+    raise OptimizationGateFailed(
         f"native test(s) {', '.join(bad)} passed before the mechanism existed "
         f"— a test that passes without the mechanism does not test it, so it "
         f"cannot certify the apparatus every later measurement rests on. Either "
@@ -1178,7 +1212,7 @@ def _check_baseline_equivalence(
     try:
         rec = json.loads(path.read_text())
     except (OSError, ValueError) as exc:
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             f"baseline_equivalence.json exists but could not be read ({exc}). It "
             f"holds the pre-build control measurement, which cannot be retaken "
             f"now that the mechanism is in the tree — re-run the build stage "
@@ -1279,7 +1313,7 @@ def _check_baseline_equivalence(
             else "unpaired",
         )
         return
-    raise OptimizationAborted(
+    raise OptimizationGateFailed(
         f"build changed the baseline: control configuration {levels} moved from "
         f"{pre_mean:.6g} to {post_mean:.6g} on {metric or '<unset metric>'} "
         f"(> {tol:.3g}% tolerance, {len(pre)} replicate(s) each side, "
@@ -1398,7 +1432,7 @@ def _compile_and_write_policy(campaign: dict, work_dir: Path) -> dict:
     )
     errs = policy_mod.check_policy(pol)
     if errs:
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             "compiled policy is structurally invalid:\n  " + "\n  ".join(errs),
         )
     try:
@@ -1429,7 +1463,7 @@ def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
     paper's one way back: "an agent may then revise the mechanism or interface,
     and a new compilation starts a new epoch" — the revision happens out of
     band (a human or an agent widens a range, fixes the metric, redefines a
-    factor), and the NEXT ``nous run --resume`` is what has to notice. Notice it
+    factor), and the NEXT ``nous resume <campaign.yaml>`` is what has to notice. Notice it
     here, where the campaign dict and the work_dir are both in hand, and
     recompile from the revised campaign rather than interpreting the stale
     policy.
@@ -1481,7 +1515,7 @@ def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
     # file missing means it was removed after compilation.
     recorded = Path(work_dir) / "policy.sha256"
     if not recorded.exists():
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             f"policy.json exists but its hash sidecar {recorded.name} does not. "
             f"`write_policy` writes the pair together, so the sidecar was removed "
             f"after compilation, and without it this epoch's policy cannot be "
@@ -1492,7 +1526,7 @@ def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
             f"revised campaign gets a fresh, freshly-hashed pre-registration.",
         )
     if recorded.read_text().strip() != policy_mod.policy_hash(pol):
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             "policy.json was edited after compilation (hash mismatch with "
             "policy.sha256); a pre-registered policy cannot change inside an "
             "epoch",
@@ -1510,7 +1544,7 @@ def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
     sidecar = _read_mechanism_hash(work_dir)
     registered = str((pol.get("compiled_from") or {}).get("mechanism_patch_hash") or "")
     if sidecar and registered and sidecar != registered:
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             f"the policy's registered hash and the sidecar hash disagree: "
             f"policy.json was compiled for mechanism_patch_hash "
             f"{registered[:12]} but mechanism.sha256 now records "
@@ -1646,7 +1680,7 @@ def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool)
     # did not carry is worse than no seeds at all. Say so rather than KeyError.
     payload_indices = {row.get("row_index") for row in payload.get("rows", [])}
     if payload_indices != {r.row_index for r in rows}:
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             f"workload seeding: design_matrix payload rows "
             f"{sorted(i for i in payload_indices if i is not None)} do not match "
             f"the rows about to execute {sorted(r.row_index for r in rows)}, so "
@@ -1725,7 +1759,7 @@ def _close_iteration(engine, campaign, work_dir, iter_dir, iteration, state, pol
         # refinable, or a stage the `stages` list omits. `step` would raise a
         # bare ValueError about a missing default transition, which describes
         # the symptom rather than the mismatch.
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             f"state {state!r} was run but the compiled policy registers only "
             f"{sorted(pol.get('states') or {})}. A state outside the policy has "
             f"no registered transition, so nothing can decide what follows it — "
@@ -1802,7 +1836,7 @@ def _close_iteration(engine, campaign, work_dir, iter_dir, iteration, state, pol
             "SEMANTIC EXCEPTION at %s: %s. Epoch %d ends here — no further "
             "measurement inside it can repair a condition the policy did not "
             "name. %s Writing the report anyway on the strongest rung that does "
-            "not rest on the fitted surface; a revision plus `nous run --resume` "
+            "not rest on the fitted surface; a revision plus `nous resume <campaign.yaml>` "
             "starts epoch %d from %r.",
             state, reason, pol["epoch"],
             _epoch_end_remedy(rule.get("when") or {}),
@@ -2162,7 +2196,7 @@ def run_stage(
             # Checked before the pre-build test run and control measurement, so a
             # planless build spends nothing. Covers a resumed work_dir as well as
             # the plan stage's own abort path.
-            raise OptimizationAborted(
+            raise OptimizationGateFailed(
                 f"build will not run: this campaign declares a `plan` stage but "
                 f"{PLAN_FILENAME} is absent from {work_dir}. Building without it "
                 f"would author a mechanism nobody planned. Re-run the plan stage, "
@@ -2408,7 +2442,7 @@ def run_stage(
                     "optimization.build_checks.mechanism_paths naming only the "
                     "mechanism's own files"
                 )
-                raise OptimizationAborted(
+                raise OptimizationGateFailed(
                     f"mechanism drifted since compile: the target's working "
                     f"tree no longer matches mechanism.patch; measurements "
                     f"would describe a different system "
@@ -2478,7 +2512,7 @@ def run_stage(
                     feedback=str(first),
                 )
             except plan_mod.PlanRejected as second:
-                raise OptimizationAborted(
+                raise OptimizationGateFailed(
                     f"plan stage rejected twice; build will not run without the "
                     f"plan this campaign declares. Last rejection: {second}",
                 ) from second
@@ -2513,7 +2547,7 @@ def run_stage(
                 iter_dir, relations.reconcile(factors, test_results or {}),
             )
         if correctness_failures:
-            raise OptimizationAborted(_verify_abort_message(
+            raise OptimizationGateFailed(_verify_abort_message(
                 correctness_failures, test_run=test_run, factors=factors,
             ))
         # ── oracle 2(b)/(c): the two build claims that "tests pass" cannot make ──
@@ -2541,7 +2575,7 @@ def run_stage(
 
     if correctness_failures:
         ids = ", ".join(str(v.relation_id) for v in correctness_failures)
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             f"correctness relation(s) failed: {ids}; refusing to fit on "
             f"measurements from a broken apparatus",
         )
@@ -2978,7 +3012,7 @@ def run_stage(
     except locked_mod.LockedParameterDeviation as exc:
         # A campaign-level abort for the same reason as contract drift below:
         # there is no row-level repair, and no surface to certify.
-        raise OptimizationAborted(str(exc)) from exc
+        raise OptimizationGateFailed(str(exc)) from exc
     except adapter_contract.AdapterContractDrift as exc:
         # Converted here so it lands on exactly the path a `policy.sha256`
         # mismatch does: a campaign-level hard abort, not a row failure and not a
@@ -2988,7 +3022,7 @@ def run_stage(
         # instruments, so there is no action to certify. The rows already written
         # to runs.jsonl stay on disk (append-only), which is what lets an author
         # see which rows preceded the change.
-        raise OptimizationAborted(str(exc)) from exc
+        raise OptimizationGateFailed(str(exc)) from exc
 
     # Restore DESIGN order before anything reads these positionally.
     # `_fitting_responses` walks `outcomes` in sequence and `fit_effects` pairs
@@ -3034,7 +3068,7 @@ def run_stage(
     # even under auto-approve — the #246 discipline extended to the matrix.
     violations = matrix.check_fidelity(payload, artifacts.read_runs(iter_dir))
     if violations:
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             "executed configurations deviate from the pre-registered "
             "design_matrix.json:\n  " + "\n  ".join(violations),
         )
@@ -5887,7 +5921,7 @@ def _validate_artifact(name: str, payload) -> None:
     try:
         jsonschema.validate(payload, _schema_cache[schema_name])
     except jsonschema.ValidationError as exc:
-        raise OptimizationAborted(
+        raise OptimizationGateFailed(
             f"{name} does not conform to {schema_name}: "
             f"{exc.message} (at {'/'.join(str(p) for p in exc.absolute_path) or '<root>'})",
         ) from exc
