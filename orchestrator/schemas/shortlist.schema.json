@@ -28,8 +28,8 @@
       "description": "The per-challenger bounds against the winner, at delta_terminal with M=1 -- a screening level, not a certificate level. This is what round r+1 reads to decide who is still in contention."
     },
     "epsilon": {
-      "type": "number",
-      "description": "The resolved epsilon-optimality tolerance those bounds are read against."
+      "type": ["number", "null"],
+      "description": "The resolved epsilon-optimality tolerance those bounds are read against (confirmation.json's epsilon; null only when no reference existed -- see its epsilon_reference)."
     },
     "see": {
       "type": "string",

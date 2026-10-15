@@ -54,6 +54,10 @@
       "type": ["number", "null"],
       "description": "The resolved epsilon-optimality tolerance the bounds are compared against, from confirmation.json when a terminal stage ran, else from recommendation.json. Null when neither exists (e.g. an exception ended the epoch before any fit)."
     },
+    "epsilon_reference": {
+      "type": ["object", "null"],
+      "description": "Copied from confirmation.json's epsilon_reference: which reference a percentage epsilon was resolved against (best_finalist / best_observed / recommendation / declared_abs / none). Null when no terminal stage ran (epsilon then comes from recommendation.json)."
+    },
     "delta_screen": {
       "type": "number",
       "exclusiveMinimum": 0,
@@ -72,8 +76,8 @@
     },
     "certification_withheld": {
       "type": "array",
-      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "no_terminal_discrimination", "reason_not_recorded"] },
-      "description": "Why `certified` is false, so the report never pairs an unexplained `certified: false` with bounds that look as though they should certify. Empty exactly when certified is true. Copied from the latest confirmation.json's certification_withheld (see confirmation.schema.json for each reason); `no_terminal_discrimination` when no confirm state ran, so no certificate was attempted. `reason_not_recorded` when the confirmation.json it reads predates the reasons field. Optional here only so reports written before the field existed still validate; _run_report always writes it."
+      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "no_admissible_finalist", "no_terminal_discrimination", "reason_not_recorded"] },
+      "description": "Why `certified` is false, so the report never pairs an unexplained `certified: false` with bounds that look as though they should certify. Empty exactly when certified is true. Copied from the latest confirmation.json's certification_withheld (see confirmation.schema.json for each reason); `no_terminal_discrimination` when no confirm state ran, so no certificate was attempted. `reason_not_recorded` when the confirmation.json it reads predates the reasons field. `no_admissible_finalist` when every finalist was measured inadmissible (see confirmation.schema.json). Optional here only so reports written before the field existed still validate; _run_report always writes it."
     },
     "finalists": {
       "type": "array",

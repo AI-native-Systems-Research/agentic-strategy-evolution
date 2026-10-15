@@ -235,6 +235,8 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_policy_provenance", "check_transitions_epoch_scoped",
         "check_audit_trail_records_spending", "check_duration_reserved_zero",
         "check_no_model_call_reachable_from_epoch", "check_compile_policy_is_pure",
+        "check_recommendation_admissible_per_configuration",
+        "check_epsilon_has_a_reference",
     }
     registered = {i.checker.__name__ for i in inv.checkable()}
     assert registered <= exercised, (
@@ -528,6 +530,39 @@ def test_semantic_exception_removes_only_the_model_rung():
     # And a report with no basis at all fails: the ladder must always act.
     errs = inv.check_exception_removes_only_model_rung({"recommendation": {}})
     assert any("ALWAYS act" in e for e in errs), errs
+
+
+def test_recommendation_admissibility_is_judged_per_configuration():
+    """INV-SEM14: teeth. One infeasible row strikes the whole configuration off."""
+    lv = {"A": 16, "B": 14}
+    rows = [{"levels": lv, "status": "complete"}, {"levels": lv, "status": "infeasible"},
+            {"levels": {"A": 2, "B": 2}, "status": "complete"}]
+    rep = {"recommendation": {"levels": lv, "basis": "measured"}}
+    errs = inv.check_recommendation_admissible_per_configuration(rep, rows)
+    assert errs and "infeasible" in errs[0], errs
+    # Metamorphic partner: the same rows, the clean configuration recommended.
+    ok = {"recommendation": {"levels": {"A": 2, "B": 2}, "basis": "measured"}}
+    assert inv.check_recommendation_admissible_per_configuration(ok, rows) == []
+    # A failed (unmeasured) row is not evidence of inadmissibility.
+    assert inv.check_recommendation_admissible_per_configuration(
+        rep, [{"levels": lv, "status": "complete"}, {"levels": lv, "status": "failed"}],
+    ) == []
+    # The declared baseline is exempt: it is returned and labelled as a last resort.
+    base = {"recommendation": {"levels": lv, "basis": "baseline"}}
+    assert inv.check_recommendation_admissible_per_configuration(base, rows) == []
+
+
+def test_epsilon_must_name_its_reference_and_never_be_zero_for_want_of_one():
+    """INV-SEM15: teeth."""
+    assert inv.check_epsilon_has_a_reference({"epsilon": 0.0})  # no reference recorded
+    assert inv.check_epsilon_has_a_reference(
+        {"epsilon": 0.0, "epsilon_reference": {"source": "best_observed"}})
+    assert inv.check_epsilon_has_a_reference(
+        {"epsilon": 0.5, "epsilon_reference": {"source": "none"}})
+    assert inv.check_epsilon_has_a_reference(
+        {"epsilon": None, "epsilon_reference": {"source": "none"}}) == []
+    assert inv.check_epsilon_has_a_reference(
+        {"epsilon": 0.37, "epsilon_reference": {"source": "best_observed"}}) == []
 
 
 def test_alias_sign_is_load_bearing():
