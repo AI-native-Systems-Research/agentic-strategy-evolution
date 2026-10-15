@@ -184,17 +184,25 @@ def _threshold_agent(kwargs) -> SDKResult:
     return SDKResult(text=f"threshold={kwargs.get('turn_silence_threshold')}")
 
 
-@pytest.mark.parametrize("timeouts, expected", [
-    (None, "600.0"),                                            # DESIGN default
-    ({"turn_silence_threshold_seconds": 300}, "300.0"),         # scalar
-    ({"turn_silence_threshold_seconds": {"build": 900}}, "900.0"),
-    ({"turn_silence_threshold_seconds": {"design": 50}}, "600.0"),
+@pytest.mark.parametrize("timeouts, test_timeout, expected", [
+    # Undeclared: the build's default covers its own verification run -- the
+    # 900s default test budget plus a 120s margin -- not a flat 600s that a
+    # foreground test command (no SDK events until it returns) would trip.
+    (None, None, "1020.0"),
+    (None, 2400, "2520.0"),                                       # long suite
+    (None, 60, "600.0"),                                          # floor holds
+    ({"turn_silence_threshold_seconds": 300}, 2400, "300.0"),     # explicit wins
+    ({"turn_silence_threshold_seconds": {"build": 900}}, None, "900.0"),
+    ({"turn_silence_threshold_seconds": {"design": 50}}, None, "1020.0"),
 ])
-def test_build_runs_under_a_live_silence_watchdog(tmp_path: Path, timeouts, expected):
+def test_build_runs_under_a_live_silence_watchdog(tmp_path: Path, timeouts,
+                                                  test_timeout, expected):
     work = tmp_path / "work"
     campaign = _build_campaign(_repo(tmp_path))
     if timeouts is not None:
         campaign["sdk_timeouts"] = timeouts
+    if test_timeout is not None:
+        campaign["optimization"]["test_timeout_sec"] = test_timeout
     build_mod.run_build(
         campaign, work, iteration=1, declared_tests=[],
         sdk_runner=_scripted(_threshold_agent), retry_sleep=_no_sleep,
@@ -291,3 +299,18 @@ def test_campaign_schema_accepts_plan_and_build_watchdog_keys_and_agent_retries(
     jsonschema.validate(2, retries)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(-1, retries)
+
+
+@pytest.mark.parametrize("msg, retry", [
+    ("API Error: 529 overloaded_error", True),
+    ("HTTP 503 Service Unavailable", True),
+    ("upstream returned status code 502", True),
+    ("error 429: too many requests", True),
+    # A diagnostic counter that happens to equal a status code is not one.
+    ("authentication failed (subtype=error_during_execution duration_ms=500 "
+     "num_turns=429)", False),
+    ("invalid_request_error: max_tokens 503 exceeds limit", False),
+])
+def test_only_a_status_code_in_status_context_is_retryable(msg, retry):
+    assert build_mod.is_retryable_agent_error(
+        SDKResult(text="", is_error=True, error_message=msg)) is retry

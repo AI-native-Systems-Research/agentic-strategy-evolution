@@ -171,3 +171,29 @@ def test_the_empty_hint_says_to_record_the_level_unconditionally():
     assert ("Record the level the design matrix asked for, unconditionally; "
             "what the knob DOES at that level is a finding, not a reason to "
             "omit it from the row.") in v.hint
+
+
+# ── the hint depends on the OPERATOR (review of #318) ──────────────────────
+
+from orchestrator.optimize.predicates import evaluate as _evaluate  # noqa: E402
+
+
+def _hint(op, got, want):
+    v = _evaluate({"observable": "x", "op": op, "value": want}, {"x": got})
+    assert not v.ok
+    return v.hint
+
+
+def test_a_failed_not_equal_says_the_value_was_the_excluded_one():
+    h = _hint("!=", "x", "x")
+    assert "EQUALS" in h and "different value" not in h
+
+
+@given(got=st.floats(-1e6, 1e6, allow_nan=False), gap=st.floats(0.5, 1e3))
+def test_a_false_ordering_between_numbers_is_never_called_a_type_mismatch(got, gap):
+    h = _hint(">=", got, got + gap)
+    assert "TYPE" not in h and "was false" in h
+
+
+def test_an_ordering_against_a_bool_is_a_type_problem():
+    assert "TYPE" in _hint(">=", True, 8)

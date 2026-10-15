@@ -154,3 +154,61 @@ def test_making_a_finalist_unmeasurable_never_decreases_the_terminal_bound(
         assert treated["certified"] is False
         assert "finalist_unmeasured" in treated["certification_withheld"]
         assert "finalist_measured_infeasible" not in treated["certification_withheld"]
+
+
+def _drive_mixed(tmp_path, monkeypatch, tag: str, *, victim: int, infeasible_rep: int):
+    """``additive`` with an always-satisfiable `ok == 1` constraint; finalist
+    ``victim``'s replicate ``infeasible_rep`` reports ok=0 (inadmissible) and
+    every other replicate of it TIMES OUT."""
+    from orchestrator.engine import Engine
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.harness import _all_pass, synthetic_campaign
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+
+    surface = SURFACES["additive"]()
+    base = synthetic_campaign(surface)["optimization"]["response"]
+    response = {**base, "constraints": [{"metric": "ok", "op": "==", "value": 1}]}
+    campaign = synthetic_campaign(surface, stages=["verify", "screen", "confirm"],
+                                  response=response)
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / tag))
+    inner = make_synthetic_runner(surface, seed=5)
+
+    def runner(row):
+        apply = getattr(row, "apply", None) or {}
+        if apply.get("finalist") == victim:
+            if getattr(row, "replicate", 0) == infeasible_rep:
+                return {**inner(row), "ok": 0}
+            raise RuntimeError("synthetic timeout injected at confirm")
+        return {**inner(row), "ok": 1}
+
+    wd = setup_work_dir(f"mixed-{tag}", repo_path=None, campaign=campaign)
+    for it, stage in ((1, "verify"), (2, "screen")):
+        run_stage(campaign, wd, iteration=it, stage=stage, config_runner=runner,
+                  test_results=_all_pass(campaign), auto_approve=True)
+    eng = Engine(wd)
+    if eng.phase != "DONE":
+        eng.transition("DONE")
+    eng.transition("DESIGN")
+    run_stage(campaign, wd, iteration=3, stage="confirm", config_runner=runner,
+              test_results=_all_pass(campaign), auto_approve=True)
+    return json.loads((Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text())
+
+
+@pytest.mark.parametrize("infeasible_rep", [0, 2])
+def test_one_inadmissible_replicate_settles_a_finalist_whatever_the_order(
+    tmp_path, monkeypatch, infeasible_rep,
+):
+    """An infeasible replicate followed (or preceded) by timeouts is still a
+    MEASURED-INADMISSIBLE finalist: a timeout must never relabel it as an
+    unmeasured admissible rival, which would null R_terminal and tell the author
+    to re-run a configuration the data already struck off."""
+    control = _drive_confirm(tmp_path, monkeypatch, "ctl", fail_finalist=None)
+    victim = next(int(f["key"][1:]) for f in control["finalists"]
+                  if f["key"] != control["best"])
+    conf = _drive_mixed(tmp_path, monkeypatch, f"m{infeasible_rep}",
+                        victim=victim, infeasible_rep=infeasible_rep)
+    st = {f["key"]: f["status"] for f in conf["finalists"]}
+    assert st[f"f{victim}"] == "infeasible", st
+    assert "finalist_measured_infeasible" in conf["certification_withheld"]
+    assert "finalist_unmeasured" not in conf["certification_withheld"]

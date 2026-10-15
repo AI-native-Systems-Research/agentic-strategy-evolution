@@ -140,12 +140,23 @@ def render_report_markdown(work_dir: Path) -> str:
         "| quantity | value |",
         "|---|---|",
         f"| epsilon (acceptable regret) | {_fmt(report.get('epsilon'))} |",
-        f"| residual regret, model | {_fmt(report.get('residual_regret_model'))} |",
+        f"| residual regret, model (at the fitted argmax) | {_fmt(report.get('residual_regret_model'))} |",
         f"| residual regret, terminal | {_fmt(report.get('residual_regret_terminal'))} |",
         f"| delta, screen | {_fmt(report.get('delta_screen'))} |",
         f"| delta, terminal | {_fmt(report.get('delta_terminal'))} |",
         "",
     ]
+    if basis != "model":
+        # The model bound is computed at the fitted argmax, which a fallback
+        # rung or a terminal winner need not be: printed bare under the
+        # recommendation it would read as THAT configuration's regret.
+        lines += [
+            "_The model bound is computed at the fitted argmax "
+            "(`recommendation.json`), not at the recommended configuration; "
+            f"under basis `{basis}` it does not bound the recommendation. "
+            "The terminal bound is the one that does, when it is present._",
+            "",
+        ]
 
     finalists = report.get("finalists") or []
     if finalists:

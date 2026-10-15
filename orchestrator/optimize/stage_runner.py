@@ -1880,7 +1880,11 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # as though they should certify. Empty exactly when certified.
         "certification_withheld": (
             [] if conf and conf.get("certified")
-            else list(conf.get("certification_withheld") or [])
+            # A confirmation.json written before the field existed carries no
+            # reasons; an uncertified report with an EMPTY list would break the
+            # "empty exactly when certified" rule, so say the reason is unknown.
+            else (list(conf.get("certification_withheld") or [])
+                  or ["reason_not_recorded"])
             if conf else ["no_terminal_discrimination"]
         ),
         "finalists": (conf.get("finalists") if conf else []) or [],
@@ -4541,10 +4545,18 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             # and a re-run may well repair it. An author reading "excluded as
             # infeasible" strikes the configuration off; an author reading
             # "failed to measure" re-runs it with a larger budget.
-            status[key] = (
-                "infeasible" if o.status in ("infeasible", "rejected")
-                else "unmeasured"
-            )
+            #
+            # STICKY toward `infeasible`: one inadmissible replicate settles the
+            # question for the configuration, and a later replicate that merely
+            # timed out must not downgrade it to "unmeasured" -- that relabel
+            # turned a measured inadmissible finalist into an unmeasured
+            # admissible rival, nulled R_terminal, and told the author to re-run
+            # a configuration the data had already struck off.
+            if status.get(key) != "infeasible":
+                status[key] = (
+                    "infeasible" if o.status in ("infeasible", "rejected")
+                    else "unmeasured"
+                )
         else:
             samples[key].append(float(y))
     # Any non-"ok" status is out of the running, whatever its reason: the

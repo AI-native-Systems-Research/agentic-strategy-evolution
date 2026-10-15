@@ -1260,8 +1260,8 @@ optimization:
   agent_retries: 2          # optional; default 2 retries = 3 attempts
 sdk_timeouts:
   turn_silence_threshold_seconds:
-    plan: 600               # optional; both default to 600 (the DESIGN value)
-    build: 600
+    plan: 600               # optional; default 600 (the DESIGN value)
+    build: 1020             # optional; default max(600, test_timeout_sec + 120)
 ```
 
 - **Retried:** transient SDK failures (stream drop, network error, a live

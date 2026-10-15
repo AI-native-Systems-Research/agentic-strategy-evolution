@@ -72,8 +72,8 @@
     },
     "certification_withheld": {
       "type": "array",
-      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "no_terminal_discrimination"] },
-      "description": "Why `certified` is false, so the report never pairs an unexplained `certified: false` with bounds that look as though they should certify. Empty exactly when certified is true. Copied from the latest confirmation.json's certification_withheld (see confirmation.schema.json for each reason); `no_terminal_discrimination` when no confirm state ran, so no certificate was attempted. Optional here only so reports written before the field existed still validate; _run_report always writes it."
+      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "no_terminal_discrimination", "reason_not_recorded"] },
+      "description": "Why `certified` is false, so the report never pairs an unexplained `certified: false` with bounds that look as though they should certify. Empty exactly when certified is true. Copied from the latest confirmation.json's certification_withheld (see confirmation.schema.json for each reason); `no_terminal_discrimination` when no confirm state ran, so no certificate was attempted. `reason_not_recorded` when the confirmation.json it reads predates the reasons field. Optional here only so reports written before the field existed still validate; _run_report always writes it."
     },
     "finalists": {
       "type": "array",

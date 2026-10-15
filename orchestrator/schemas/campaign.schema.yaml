@@ -223,9 +223,11 @@ properties:
           Map form applies per-phase — default when unset: 600s for all
           phases. Phases not listed in the map fall back to
           ``silence_threshold_seconds`` (or 600 if also unset).
-          ``plan`` / ``build`` key the ``kind: optimization`` agent calls;
-          unlisted, they default to 600s (the DESIGN value — both are
-          heavy-reasoning turns).
+          ``plan`` / ``build`` key the ``kind: optimization`` agent calls.
+          Unlisted, ``plan`` defaults to 600s (the DESIGN value) and
+          ``build`` to max(600, optimization.test_timeout_sec + 120): the
+          build verifies itself with ``test_command``, and a foreground test
+          run streams no events until it returns.
 
   sandbox:
     type: string

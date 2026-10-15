@@ -77,7 +77,11 @@ _RETRYABLE_ERROR_PATTERNS = (
     "rate_limit",
     "internal server error",
     "api_error",
-    r"\b(429|500|502|503|504|529)\b",
+    # A status code only in a STATUS context. A bare `\b500\b` matched
+    # `build_error_message`'s own diagnostics (`duration_ms=500`,
+    # `num_turns=429`), turning a fail-fast authentication error into a paid
+    # retry whenever a counter happened to land on one of these numbers.
+    r"(status|http|error|code)\W{0,3}(code\W{0,3})?(429|500|502|503|504|529)\b",
 )
 
 
@@ -102,6 +106,34 @@ def resolve_agent_retries(campaign: dict) -> int:
     return raw
 
 
+#: Headroom above the declared test budget for the build's own verification run.
+_BUILD_SILENCE_MARGIN_SECONDS = 120.0
+
+
+def _default_silence(campaign: dict, phase: str) -> float:
+    """The watchdog default when the campaign declares none.
+
+    For ``build`` it is at least ``test_timeout_sec`` plus a margin, not a flat
+    600s. The build prompt tells the agent to verify its work with the exact
+    ``test_command`` before finishing, and a foreground tool call streams NO SDK
+    events until it returns -- so on a campaign whose relation suite runs for
+    1,100s (and declares ``test_timeout_sec`` to match), a 600s watchdog trips
+    inside the agent's own verification, retries a fresh ~$20 session, and trips
+    again. The suite budget the author declared is the honest lower bound on a
+    silent stretch this call can legitimately have.
+    """
+    if phase != "build":
+        return DEFAULT_AGENT_SILENCE_SECONDS
+    from orchestrator.optimize.runner import DEFAULT_TEST_TIMEOUT_SEC
+
+    opt = campaign.get("optimization") or {}
+    test_budget = opt.get("test_timeout_sec")
+    if not isinstance(test_budget, (int, float)) or isinstance(test_budget, bool):
+        test_budget = DEFAULT_TEST_TIMEOUT_SEC
+    return max(DEFAULT_AGENT_SILENCE_SECONDS,
+               float(test_budget) + _BUILD_SILENCE_MARGIN_SECONDS)
+
+
 def resolve_agent_silence_threshold(campaign: dict, phase: str) -> float:
     """Live watchdog threshold for the ``plan`` / ``build`` call.
 
@@ -109,17 +141,18 @@ def resolve_agent_silence_threshold(campaign: dict, phase: str) -> float:
     scalar-or-per-phase-map shape ``SDKDispatcher`` accepts: a scalar applies
     to every phase; a map is looked up by ``phase``. Unset (or a map without
     this phase) falls back to ``silence_threshold_seconds`` when the scalar
-    form is absent, else :data:`DEFAULT_AGENT_SILENCE_SECONDS`. ``0`` disables
+    form is absent, else the default from :func:`_default_silence`. ``0`` disables
     the watchdog, as for the reflective kind.
     """
     timeouts = campaign.get("sdk_timeouts") or {}
     raw = timeouts.get("turn_silence_threshold_seconds")
     label = "campaign.sdk_timeouts.turn_silence_threshold_seconds"
+    default = _default_silence(campaign, phase)
     if isinstance(raw, dict):
-        raw = raw.get(phase, DEFAULT_AGENT_SILENCE_SECONDS)
+        raw = raw.get(phase, default)
         label += f".{phase}"
     elif raw is None:
-        raw = timeouts.get("silence_threshold_seconds", DEFAULT_AGENT_SILENCE_SECONDS)
+        raw = timeouts.get("silence_threshold_seconds", default)
         label = "campaign.sdk_timeouts.silence_threshold_seconds"
     if isinstance(raw, bool):
         raise ValueError(f"{label} must be a non-negative number, got {raw!r}")

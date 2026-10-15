@@ -74,10 +74,45 @@ def _empty(value: Any) -> bool:
     return value is None or value == ""
 
 
-def _failure_hint(got: Any, want: Any) -> str:
-    """Name the one shape a failed comparison of ``got`` against ``want`` has."""
+def _incomparable(got: Any, want: Any) -> bool:
+    """Types an ordering comparison cannot meaningfully relate.
+
+    ``6.0 >= 8`` is a comparison that ran and was false; ``"6" >= 8`` and a
+    bool against a number are not comparisons of quantities at all.
+    """
+    num = (int, float)
+    if isinstance(got, bool) or isinstance(want, bool):
+        return type(got) is not type(want)
+    return isinstance(got, num) != isinstance(want, num)
+
+
+def _failure_hint(got: Any, want: Any, op: str = "==") -> str:
+    """Name the one shape a failed ``got <op> want`` comparison has.
+
+    Shape depends on the OPERATOR. The equality shapes (empty / type / value)
+    only make sense for ``==``; reading a failed ``!=`` as "a different value"
+    or a failed ``6.0 >= 8`` as a type mismatch points the author at a cause
+    that is not there -- the misdirection these hints exist to remove.
+    """
+    if op == "!=":
+        return (
+            f"The observable EQUALS {want!r}, the one value this predicate "
+            f"excludes: the target ran the configuration the check rules out."
+        )
     if _empty(got) and not _empty(want):
         return _HINT_EMPTY
+    if op != "==":
+        if _incomparable(got, want):
+            return (
+                f"Check the observable's TYPE -- the target emitted "
+                f"{type(got).__name__} {got!r}, which cannot be ordered against "
+                f"the {type(want).__name__} {want!r} this predicate compares to."
+            )
+        return (
+            f"The comparison ran and was false: {got!r} is not {op} {want!r}. "
+            f"The observable is the right kind of value; the target's reading "
+            f"is on the wrong side of the declared bound at this level."
+        )
     if type(got) is not type(want):
         return (
             f"Check the observable's TYPE -- the target emitted "
@@ -150,7 +185,7 @@ def evaluate(pred: dict, observed: dict, *, level: Any = None) -> Verdict:
     return Verdict(
         ok=ok,
         detail=f"{path} = {got!r} {op_name} {want!r} -> {'ok' if ok else 'FAIL'}",
-        hint="" if ok else _failure_hint(got, want),
+        hint="" if ok else _failure_hint(got, want, op_name),
     )
 
 
