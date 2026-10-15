@@ -241,6 +241,8 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_certificate_rests_on_adequate_model",
         "check_fit_coordinates_are_actual", "check_fitted_statuses",
         "check_supported_feasible_candidate",
+        "check_pareto_front", "check_pareto_certificate", "check_gap_fill_branch",
+        "check_single_objective_untouched",
     }
     registered = {i.checker.__name__ for i in inv.checkable()}
     assert registered <= exercised, (
@@ -1469,3 +1471,68 @@ def test_property_vocabulary_drift_is_symmetric_and_exact(produced, consumed):
     )
     assert len(errs) == len(consumed - produced) + len(produced - consumed)
     assert (not errs) == (produced == consumed)
+
+
+# ── multi-objective (spec 2026-10-15-pareto-front-design.md) ─────────────────
+
+
+def _mo_report(tmp_path):
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import PARETO_SURFACES
+
+    r = run_synthetic_campaign(PARETO_SURFACES["pareto_convex"](), seed=1, parent_dir=tmp_path)
+    return r.report, json.loads((Path(r.work_dir) / "policy.json").read_text())
+
+
+def test_pareto_front_and_certificate_checkers_hold_and_have_teeth(tmp_path):
+    """INV-STAT17 / INV-SEM18 on a real multi-objective report, then mutated."""
+    rep, _ = _mo_report(tmp_path)
+    assert rep["certified"] is True
+    assert inv.check_pareto_front(rep["pareto"]) == []
+    assert inv.check_pareto_certificate(rep) == []
+    assert inv.check_pareto_front({}) == [] and inv.check_pareto_certificate({}) == []
+    # Teeth: a front point beaten by epsilon on every objective by another.
+    bad = json.loads(json.dumps(rep["pareto"]))
+    worse = json.loads(json.dumps(bad["front"][0]))
+    worse["levels"] = {"A": -1, "B": -1}
+    worse["mean"] = {k: v - 10.0 for k, v in worse["mean"].items()}
+    bad["front"].append(worse)
+    assert any("eps-dominated" in e for e in inv.check_pareto_front(bad))
+    bad = json.loads(json.dumps(rep["pareto"]))
+    bad["front"][0]["status"] = "possibly_dominated"
+    assert any("names no rival" in e for e in inv.check_pareto_front(bad))
+    # Teeth: certified with the regret above epsilon / a possibly-dominated pick.
+    bad = json.loads(json.dumps(rep))
+    bad["pareto"]["preference"]["scalar_regret"] = 1e9
+    assert any("scalar regret" in e for e in inv.check_pareto_certificate(bad))
+    bad = json.loads(json.dumps(rep))
+    bad["pareto"]["preference"]["chosen_status_at_certification"] = "possibly_dominated"
+    assert inv.check_pareto_certificate(bad)
+
+
+def test_gap_fill_branch_checker_holds_and_has_teeth(tmp_path):
+    """INV-VOC09: the compiled multi-objective policy passes; a gap-fill rule
+    without its accounting, or one in a single-objective policy, does not."""
+    _, pol = _mo_report(tmp_path)
+    assert inv.check_gap_fill_branch(pol) == []
+    bad = json.loads(json.dumps(pol))
+    for t in bad["transitions"]:
+        if "front_gap_large" in (t.get("when") or {}):
+            t["accounting"] = "vibes"
+    assert any("accounting" in e for e in inv.check_gap_fill_branch(bad))
+    single = compile_policy(_campaign())
+    assert inv.check_gap_fill_branch(single) == []
+    leaked = json.loads(json.dumps(single))
+    leaked["transitions"].insert(0, {"from": "confirm", "to": "confirm",
+                                     "when": {"front_gap_large": True},
+                                     "accounting": "front gap fill, Bonferroni over rounds"})
+    assert any("single-objective" in e for e in inv.check_gap_fill_branch(leaked))
+
+
+def test_single_objective_untouched_checker_holds_and_has_teeth(tmp_path):
+    """INV-ST11."""
+    single = compile_policy(_campaign())
+    assert inv.check_single_objective_untouched(single, {"recommendation": {}}) == []
+    assert inv.check_single_objective_untouched(single, {"pareto": {}})
+    _, pol = _mo_report(tmp_path)
+    assert inv.check_single_objective_untouched(pol, {"pareto": {}}) == []

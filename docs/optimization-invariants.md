@@ -116,6 +116,7 @@ they are the ones that went unnoticed for 14 hours.
 | `INV-ST08` | A `RunOutcome` with `status != "complete"` carries a non-empty `failure_kind`; a `complete` row carries `""`. | function | `runner.RunOutcome.failure_kind` docstring | `always` | — |
 | `INV-ST09` | `report.json` always carries a `recommendation.basis`, and it is one of the six declared values. | artifact | `stage_runner._run_report` ladder; CLAUDE.md | `always` | — |
 | `INV-ST10` | Every field the producer writes is declared by the consumer's schema — verified against a row from the REAL code path, never a hand-written dict. | artifact | `runs_row.schema.json`'s `additionalProperties: false` vs what `_run_row` writes | `always` | **yes** |
+| `INV-ST11` | A single-objective campaign carries no multi-objective vocabulary: no `objective.objectives` in its policy, no `front_gap_large` guard, no `pareto` block in `report.json`. The structural half of the byte-identity property. | artifact | `pareto_stage` gating on `pareto.policy_objectives`; spec 2026-10-15 ("single-objective campaigns are byte-identical") | `test` — `tests/test_optimize_pareto.py` + `check_single_objective_untouched`; the full half diffs every `SURFACES` campaign's artifacts against the pre-Pareto commit | — |
 
 ## 3. Closed vocabulary (`INV-VOC`)
 
@@ -129,6 +130,7 @@ they are the ones that went unnoticed for 14 hours.
 | `INV-VOC06` | Every `RunOutcome.status` is one of `complete`/`failed`/`infeasible`/`rejected`. | function | `runner.RunOutcome.status`; spec §6.4 | `always` | — |
 | `INV-VOC07` | `behavioral_violation` is in `OBSERVATION_KEYS` and is read by NO `when` clause — it is a reporting key, deliberately non-branching. | artifact | `policy.py`'s `behavioral_violation` note; `stage.decide_after_screen` | `always` | — |
 | `INV-VOC08` | A closed vocabulary's producers and consumers agree: no consumer compares against a value no producer can emit, and no produced value falls through every consumer. | module | the `n_excluded == "excluded"` regression in `_finish_confirm` | `always` | **yes** |
+| `INV-VOC09` | `front_gap_large` is read only by the registered gap-fill branch — `confirm -> confirm`, accounting `front gap fill, Bonferroni over rounds`, guarded by the round cap and `confirm_affordable` — and only in a multi-objective policy. | artifact | `policy.FRONT_GAP_ACCOUNTING`; `compile_policy` | `test` — `check_gap_fill_branch` | — |
 
 **`INV-VOC08` — the defect class, and why it needs its own invariant.** A
 status literal produced in one place and compared in another is a reference
@@ -195,6 +197,7 @@ about the presence of a cause.
 | `INV-SEM15` | Confirm's epsilon records the reference its percentage was taken of (`epsilon_reference`) and is never 0 for want of one. With no admissible finalist it is the declared percentage of the best measured ADMISSIBLE configuration (`best_observed`), else `recommendation.json`'s epsilon, else null (unknown). | artifact | `stage_runner._confirm_epsilon`; spec §3.3 | `always` — `tests/test_optimize_no_admissible_finalist.py` | **yes** — every finalist inadmissible gave `epsilon: 0.0` |
 | `INV-SEM16` | Whenever the policy registers `refine`, `screen` and `foldover` each carry a registered `{lack_of_fit: true} -> refine` rule naming its accounting (`policy.CURVATURE_ACCOUNTING`: lack-of-fit F on pure error at alpha=0.05). Centre-point curvature with no refinable survivor augments to the second-order design over EVERY refinable factor, never to `confirm`. | artifact | `policy.CURVATURE_ACCOUNTING`; `compile_policy` raises `InvariantViolation` on it | `always` — `tests/test_optimize_curvature_branch.py` | **yes** — `geometric_knob` (linear coding) certified a point 26% below the optimum on every seed |
 | `INV-SEM17` | No global certificate rests on a model the data rejected: when the latest fitting stage reported `model_adequate: false`, `certified` is false and `certification_withheld` names `model_inadequate`. The within-shortlist bound is still reported. | artifact | `stage_runner._finish_confirm`; spec §3.6 rung 3, §3.3 | `always` — `tests/test_optimize_curvature_branch.py` (every surface) | **yes** — same campaign: screen and refine both rejected for lack of fit, confirm certified anyway |
+| `INV-SEM18` | A multi-objective certificate rests on the front: when `certified`, the preferred point is on the measured front, `confidently_nondominated` at `δ_t / max_rounds`, and the preference scalarisation's regret bound is known and within `epsilon_scalar`; the report recommends that point. | artifact | `stage_runner._finish_confirm_pareto`; spec 2026-10-15 step 7 | `test` — `tests/test_optimize_pareto.py` (every oracle campaign) + `check_pareto_certificate` | — |
 
 **`INV-SEM02` — the violation.** `certificate.model_regret_bound` returns
 `RegretBound(None, ..., method="none")` when `pure_error_df <= 0`, correctly
@@ -229,6 +232,7 @@ either. See `INV-STAT05`.
 | `INV-STAT14` | The fit's design matrix is the coded ACTUAL levels: every fitted row is coded from the levels that ran (`factors.code_actual`), never from the design's nominal coordinates — a clamped axial point at the range edge it ran at, a choice factor's centre row at the level it ran (−1). `design_matrix.json` still records the plan; `effects.json["fit_coordinates"]` records both. | artifact | `matrix.coded_as_run`; `stage_runner` fit block; `constraint_models`; nominal coding failed lack of fit on a truly linear clamped CCD ~100% of seeds and rejected a real campaign's exactly-linear p99 model at p=2.7e-05 | `test` — `tests/test_optimize_coded_as_run.py` (oracle properties + `check_fit_coordinates_are_actual`) | **yes** |
 | `INV-STAT15` | `infeasible` rows (a `response.constraints` violation) inform the PRIMARY fit; `rejected` and `failed` rows never do. Admissibility is enforced where a configuration can be RETURNED (measured-infeasible exclusion, best-observed reads `complete` only, confirm strikes an infeasible finalist), not by truncating the fit at the constraint boundary. | artifact | `stage_runner._PRIMARY_FIT_STATUSES`; `fit_coordinates.rows_by_status`; a real sqlite-utils campaign fitted refine on 3 of 12 rows; 4/16 constrained-bowl oracle campaigns aborted | `test` — metamorphic oracle pair + `check_fitted_statuses` | **yes** |
 | `INV-STAT16` | When `response.constraints` are declared and the confirm shortlist has ≥ 2 seats, a seat is reserved for the best-predicted SUPPORTED-FEASIBLE candidate when one exists: every modelled constraint confidently feasible at `delta_screen` (Bonferroni, as exclusion) and, for each unmodelled one, inside the per-factor span of measured-admissible configurations (a conservative interpolation heuristic, not a guarantee). The seat never duplicates a finalist and never displaces a measured one; with no constraints the shortlist is unchanged. | artifact | `constraint_models.supported_feasible`; `stage_runner._confirm_rows`; `recommendation.json["supported_feasible_candidate"]`; two field campaigns whose model-ranked finalists were all measured infeasible while a feasible improvement went untested | `test` — `tests/test_optimize_supported_feasible_seat.py` (oracle, metamorphic, property) + `check_supported_feasible_candidate` | **yes** |
+| `INV-STAT17` | The measured front is consistent: no front point is ε-dominated in point estimate by another, a `confidently_nondominated` point names no possible dominator and a `possibly_dominated` one names one, the front is sorted by the first objective, and the normalised hypervolume lies in [0, 1]. | artifact | `pareto.measured_front`; `pareto_stage.front_record` | `test` — `tests/test_optimize_pareto.py` (every oracle campaign) + `check_pareto_front`; the oracle properties (confident points within ε of the TRUE front, hypervolume floors) give the statuses their meaning | — |
 
 **`INV-STAT12` — a crash on the certification path, found by the property test.**
 The Welch degrees-of-freedom denominator is `(vk**2)/(nk-1) + (vb**2)/(nb-1)`,
@@ -478,18 +482,18 @@ they disagree.
 
 | Type | Count | `always` | `paranoid` | `test` | `audit` |
 |---|---|---|---|---|---|
-| Structural (`INV-ST`) | 10 | 10 | 0 | 0 | 0 |
-| Closed vocabulary (`INV-VOC`) | 8 | 7 | 0 | 1 | 0 |
-| Semantic (`INV-SEM`) | 17 | 16 | 0 | 1 | 0 |
-| Statistical (`INV-STAT`) | 15 | 7 | 0 | 8 | 0 |
+| Structural (`INV-ST`) | 11 | 10 | 0 | 1 | 0 |
+| Closed vocabulary (`INV-VOC`) | 9 | 7 | 0 | 2 | 0 |
+| Semantic (`INV-SEM`) | 18 | 16 | 0 | 2 | 0 |
+| Statistical (`INV-STAT`) | 16 | 7 | 0 | 9 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
 | Provenance (`INV-PROV`) | 6 | 4 | 0 | 2 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **73** | **55** | **0** | **16** | **2** |
+| **Total** | **77** | **55** | **0** | **20** | **2** |
 
-By level: `function` 26, `module` 6, `artifact` 27, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
-checker function exists): 48 of 73. The 25 without one are
+By level: `function` 26, `module` 6, `artifact` 31, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
+checker function exists): 52 of 77. The 25 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check

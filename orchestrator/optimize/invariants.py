@@ -923,6 +923,127 @@ def check_supported_feasible_candidate(recommendation: dict) -> list[str]:
 
 # ── temporal / provenance ─────────────────────────────────────────────────
 
+def check_pareto_front(pareto_block: dict) -> list[str]:
+    """INV-STAT17: the reported measured front is internally consistent.
+
+    From the ``pareto`` block of ``confirmation.json`` / ``report.json`` alone:
+    no front point is eps-dominated IN POINT ESTIMATE by another front point
+    (membership rule, per-objective epsilon honoured), a
+    ``confidently_nondominated`` point names no possible dominator and a
+    ``possibly_dominated`` one names at least one, the front is sorted
+    best-first by the first objective, and the normalised hypervolume lies in
+    [0, 1]. Vacuous for an absent block (single-objective).
+    """
+    par = pareto_block or {}
+    if not par:
+        return []
+    out: list[str] = []
+    objs = par.get("objectives") or []
+    eps = par.get("epsilon") or {}
+    front = par.get("front") or []
+
+    def vec(f):
+        return [(-1.0 if o["direction"] == "minimize" else 1.0) * f["mean"][o["metric"]]
+                for o in objs]
+    e = [eps.get(o["metric"]) or 0.0 for o in objs]
+    for i, a in enumerate(front):
+        for j, b in enumerate(front):
+            if i != j and all(x >= y for x, y in zip(vec(b), vec(a))) and any(
+                    x - y > ek for x, y, ek in zip(vec(b), vec(a), e)):
+                out.append(f"front point {i} {a['levels']} is eps-dominated in point "
+                           f"estimate by front point {j} {b['levels']}")
+        if a.get("status") == "confidently_nondominated" and a.get("dominated_by"):
+            out.append(f"front point {i} is confidently_nondominated but names "
+                       f"possible dominators")
+        if a.get("status") == "possibly_dominated" and not a.get("dominated_by"):
+            out.append(f"front point {i} is possibly_dominated but names no rival")
+    if objs and front:
+        first = [vec(f)[0] for f in front]
+        if first != sorted(first, reverse=True):
+            out.append("the front is not sorted best-first by the first objective")
+    hv = (par.get("hypervolume") or {}).get("value")
+    if hv is not None and (par.get("hypervolume") or {}).get("normalized") and not (
+            -1e-12 <= hv <= 1.0 + 1e-9):
+        out.append(f"normalised hypervolume {hv} is outside [0, 1]")
+    return out
+
+
+def check_pareto_certificate(certifying: dict) -> list[str]:
+    """INV-SEM18: a multi-objective certificate rests on the front.
+
+    ``certifying`` is a ``confirmation.json`` or ``report.json``. When it
+    carries a ``pareto`` block and ``certified`` is true, the preferred point is
+    a front member, is ``confidently_nondominated`` at the CERTIFICATION level
+    (delta_terminal / max_rounds), and the preference scalarisation's regret
+    bound is known and within its epsilon; a report's recommendation names that
+    point. Vacuous otherwise.
+    """
+    doc = certifying or {}
+    par = doc.get("pareto")
+    if not par or not doc.get("certified"):
+        return []
+    out: list[str] = []
+    pref = par.get("preference") or {}
+    chosen = pref.get("chosen") or {}
+    if not any(dict(f.get("levels") or {}) == dict(chosen) for f in par.get("front") or []):
+        out.append(f"certified preferred point {chosen} is not on the measured front")
+    if pref.get("chosen_status_at_certification") != "confidently_nondominated":
+        out.append("certified although the preferred point is not confidently "
+                   "nondominated at the certification level")
+    reg, eps = pref.get("scalar_regret"), pref.get("scalar_epsilon")
+    if reg is None or eps is None or reg > eps:
+        out.append(f"certified with scalar regret {reg!r} vs epsilon {eps!r}")
+    rec = (doc.get("recommendation") or {}).get("levels")
+    if rec is not None and dict(rec) != dict(chosen):
+        out.append(f"report recommends {rec}, not the certified preferred point {chosen}")
+    return out
+
+
+def check_gap_fill_branch(policy: dict) -> list[str]:
+    """INV-VOC09: ``front_gap_large`` is read only by the registered gap-fill
+    branch -- ``confirm -> confirm``, accounting ``FRONT_GAP_ACCOUNTING``,
+    guarded by the round cap and affordability -- and only in a policy that
+    registers objectives."""
+    from orchestrator.optimize.policy import FRONT_GAP_ACCOUNTING
+
+    pol = policy or {}
+    out: list[str] = []
+    mo = bool((pol.get("objective") or {}).get("objectives"))
+    cap = (((pol.get("states") or {}).get("confirm") or {}).get("design") or {}).get(
+        "max_rounds")
+    for t in pol.get("transitions") or []:
+        when = t.get("when") or {}
+        if "front_gap_large" not in when:
+            continue
+        where = f"{t.get('from')}->{t.get('to')}"
+        if not mo:
+            out.append(f"{where} reads front_gap_large in a single-objective policy")
+        if (t.get("from"), t.get("to")) != ("confirm", "confirm"):
+            out.append(f"{where}: the gap-fill branch must be confirm -> confirm")
+        if t.get("accounting") != FRONT_GAP_ACCOUNTING:
+            out.append(f"{where}: accounting {t.get('accounting')!r}, not "
+                       f"{FRONT_GAP_ACCOUNTING!r}")
+        if when.get("round") != {"<": cap} or when.get("confirm_affordable") is not True:
+            out.append(f"{where}: not guarded by the round cap and affordability")
+    return out
+
+
+def check_single_objective_untouched(policy: dict, report: dict | None = None) -> list[str]:
+    """INV-ST11: a single-objective campaign carries no multi-objective
+    vocabulary -- no ``objective.objectives``, no ``front_gap_large`` guard, no
+    ``pareto`` block in its report. The structural half of the metamorphic
+    byte-identity property."""
+    pol = policy or {}
+    if (pol.get("objective") or {}).get("objectives"):
+        return []
+    out: list[str] = []
+    if any("front_gap_large" in (t.get("when") or {}) for t in pol.get("transitions") or []):
+        out.append("single-objective policy registers a front_gap_large guard")
+    if report and "pareto" in report:
+        out.append("single-objective report.json carries a pareto block")
+    return out
+
+
 def check_preregistration_precedes_measurement(work_dir: Path) -> list[str]:
     """INV-TMP01: policy.json + policy.sha256 exist before the first row.
 
@@ -1219,6 +1340,16 @@ _ENTRIES: tuple[Invariant, ...] = (
                           "real row on disk was schema-invalid; the existing test validated "
                           "only hand-written dicts"),
 
+    Invariant("INV-ST11", "A single-objective campaign carries no multi-objective "
+                          "vocabulary: no objective.objectives in its policy, no "
+                          "front_gap_large guard, no pareto block in report.json.",
+              "ST", "artifact", "pareto_stage gating on pareto.policy_objectives; spec "
+              "2026-10-15 'single-objective campaigns are byte-identical'", TEST,
+              check_single_objective_untouched,
+              note="The structural half of the metamorphic byte-identity oracle; the "
+                   "full half diffs every artifact of every SURFACES campaign against "
+                   "the pre-Pareto commit (see the spec's Decisions)."),
+
     # ── closed vocabulary ─────────────────────────────────────────────────
     Invariant("INV-VOC01", "Every `when` clause's observation key is in OBSERVATION_KEYS.",
               "VOC", "artifact", "policy.check_policy; spec 3.2", ALWAYS,
@@ -1259,6 +1390,13 @@ _ENTRIES: tuple[Invariant, ...] = (
                           "withheld certification, the registered confirm->confirm top-up "
                           "never fired, and the sla surface CERTIFIED an answer 6.12% off "
                           "the true constrained optimum. Only the synthetic oracle caught it."),
+
+    Invariant("INV-VOC09", "front_gap_large is read only by the registered gap-fill "
+                           "branch (confirm -> confirm, accounting 'front gap fill, "
+                           "Bonferroni over rounds', guarded by the round cap and "
+                           "confirm_affordable), and only in a multi-objective policy.",
+              "VOC", "artifact", "policy.FRONT_GAP_ACCOUNTING; compile_policy", TEST,
+              check_gap_fill_branch),
 
     # ── semantic / accounting ─────────────────────────────────────────────
     Invariant("INV-SEM01", "residual_regret_model and residual_regret_terminal are separate "
@@ -1393,6 +1531,13 @@ _ENTRIES: tuple[Invariant, ...] = (
               violated_by="SURFACES['geometric_knob']: screen and refine both rejected "
                           "for lack of fit, and confirm certified the best of a "
                           "measured-only shortlist 26% below the optimum"),
+    Invariant("INV-SEM18", "A multi-objective certificate rests on the front: when "
+                           "certified, the preferred point is on the measured front, "
+                           "confidently nondominated at delta_terminal / max_rounds, and "
+                           "the preference scalarisation's regret bound is known and "
+                           "within epsilon_scalar; the report recommends that point.",
+              "SEM", "artifact", "stage_runner._finish_confirm_pareto; spec 2026-10-15 "
+              "step 7", TEST, check_pareto_certificate),
     # ── statistical ───────────────────────────────────────────────────────
     Invariant("INV-STAT01", "One fitted coefficient per ALIAS CLASS, not per two-factor "
                             "interaction: a resolution-IV design must not make XtX singular.",
@@ -1555,6 +1700,18 @@ _ENTRIES: tuple[Invariant, ...] = (
                    "constraints, a property restating (a)/(b) from the definition, and the "
                    "checker over every recommendation.json. The admissible-region rule is a "
                    "conservative interpolation heuristic, not a feasibility guarantee."),
+
+    Invariant("INV-STAT17", "The measured front is consistent: no front point is "
+                            "eps-dominated in point estimate by another, a confidently "
+                            "nondominated point names no possible dominator and a possibly "
+                            "dominated one names one, the front is sorted by the first "
+                            "objective, and the normalised hypervolume is in [0, 1].",
+              "STAT", "artifact", "pareto.measured_front; pareto_stage.front_record",
+              TEST, check_pareto_front,
+              note="tests/test_optimize_pareto.py runs the checker over every oracle "
+                   "campaign's report.json; the oracle properties (every confident point "
+                   "within epsilon of the TRUE front, hypervolume floors) are what make "
+                   "the statuses mean something."),
 
     # ── temporal ──────────────────────────────────────────────────────────
     Invariant("INV-TMP01", "policy.json + policy.sha256 are written BEFORE the first "

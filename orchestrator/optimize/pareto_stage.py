@@ -19,6 +19,13 @@ from orchestrator.optimize.pareto import MeasuredPoint, PredictedPoint
 
 logger = logging.getLogger(__name__)
 
+#: Whether round r > 1 seats GAP-FILL candidates when the previous round
+#: reported ``front_gap_large``. Not a campaign knob (the branch is registered
+#: by the compiled policy); it exists so the metamorphic oracle can run the same
+#: campaign with and without the gap fill and check that filling gaps never
+#: lowers the hypervolume (spec oracle property 5).
+_FRONT_GAP_FILL = True
+
 
 def objectives(pol) -> list:
     return pareto.policy_objectives(pol)
@@ -55,7 +62,14 @@ def measured_points(work_dir, objs) -> list[MeasuredPoint]:
     per objective (``stage_runner._config_admissible``: one infeasible or
     rejected row anywhere strikes the configuration off). ``source`` is
     ``confirm`` when any of its rows came from a confirm round, otherwise the
-    first fitting stage that measured it."""
+    first fitting stage that measured it.
+
+    A configuration confirm measured is represented by its CONFIRM rows only.
+    Its fitting-stage rows are what nominated it (a measured extreme is seated
+    BECAUSE its screen value was high), so pooling them in would carry the
+    winner's curse into the mean -- the reason single-objective terminal
+    discrimination compares fresh replicates only. Fitting-stage-only
+    configurations keep their fitting rows; they were not selected by them."""
     from orchestrator.optimize import artifacts
     from orchestrator.optimize.stage_runner import (
         _config_admissible,
@@ -67,6 +81,7 @@ def measured_points(work_dir, objs) -> list[MeasuredPoint]:
         return []
     invalid = _measured_infeasible(work_dir)
     pts: dict[str, MeasuredPoint] = {}
+    fresh: dict[str, dict] = {}
     for d in sorted((p for p in runs.iterdir() if p.is_dir()), key=_iter_index):
         rows = artifacts.read_runs(d)
         if not rows:
@@ -86,13 +101,17 @@ def measured_points(work_dir, objs) -> list[MeasuredPoint]:
             p = pts.get(key)
             if p is None:
                 p = pts[key] = MeasuredPoint(dict(lv), {o.metric: [] for o in objs}, src)
+                fresh[key] = {o.metric: [] for o in objs}
             elif src == "confirm":
                 p.source = "confirm"
             resp = row.get("response") or {}
             for o in objs:
                 v = resp.get(o.metric)
                 if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
-                    p.samples[o.metric].append(float(v))
+                    (fresh[key] if role == "confirm" else p.samples)[o.metric].append(float(v))
+    for key, p in pts.items():
+        if p.source == "confirm" and all(fresh[key][o.metric] for o in objs):
+            p.samples = fresh[key]
     return [p for p in pts.values() if all(p.samples[o.metric] for o in objs)]
 
 
@@ -228,6 +247,35 @@ def _z_of(frame, values: dict) -> list[float]:
     return frame.z(values)
 
 
+def _resolution_margin(pol, par: dict, objs, eps: dict) -> dict:
+    """Per objective, ``t * se(difference) - eps``: how far apart two points
+    measured with confirm's replicate count must be on an objective for the
+    dominance test to separate them (the same t the front uses)."""
+    reps = max(1, int(((pol.get("states") or {}).get("confirm") or {}).get(
+        "design", {}).get("replicates", 3) or 3))
+    n = max(2, int(par.get("n_measured_configurations") or 2))
+    out = {}
+    for o in objs:
+        pv = (par.get("pooled_variance") or {}).get(o.metric) or {}
+        v, df = pv.get("variance"), int(pv.get("df") or 0)
+        if v is None or df <= 0:
+            out[o.metric] = 0.0
+            continue
+        t = pareto.tcrit(float(par.get("delta_front") or 0.05) / ((n - 1) * len(objs)), df)
+        out[o.metric] = max(0.0, t * math.sqrt(2.0 * v / reps) - (eps.get(o.metric) or 0.0))
+    return out
+
+
+def _resolvable(cand: dict, endpoint: dict, margin: dict, objs) -> bool:
+    ahead = behind = False
+    for o in objs:
+        d = pareto.sign(o.direction) * (float(cand[o.metric]) - float(endpoint[o.metric]))
+        m = margin.get(o.metric, 0.0)
+        ahead = ahead or d > m
+        behind = behind or d < -m
+    return ahead and behind
+
+
 def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
     """The ordered seat nominations for a multi-objective confirm round.
 
@@ -283,20 +331,33 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
         nominate(chosen, "previous round's preferred point", True,
                  measured_values(chosen or {}))
         front = par.get("front") or []
-        if par.get("front_gap_large"):
+        if par.get("front_gap_large") and _FRONT_GAP_FILL:
+            margin = _resolution_margin(pol, par, objs, eps)
             for g in par.get("gaps_remaining") or []:
                 i, j = g["between"]
                 if i >= len(front) or j >= len(front):
                     continue
                 za, zb = frame.z(front[i]["mean"]), frame.z(front[j]["mean"])
                 mid = [(a + b) / 2 for a, b in zip(za, zb)]
-                inside = [p for p in pf if all(
+                inside = [p for p in sorted(pf, key=lambda p: p.status != "nondominated")
+                          if all(
                     isinstance(p.predicted.get(o.metric), (int, float)) for o in objs)
                     and pareto.in_gap(frame.z(p.predicted), za, zb)
                     and json.dumps(p.levels, sort_keys=True, default=str)
                     not in {json.dumps(f["levels"], sort_keys=True, default=str) for f in front}]
+                # Only a candidate the next round could tell apart from BOTH
+                # endpoints: ahead of each on some objective and behind it on
+                # another by the resolution margin t * se - eps (predicted
+                # values, the replicate count confirm uses). An unresolvable
+                # fill only adds a rival that strips its neighbours' status.
+                inside = [p for p in inside
+                          if _resolvable(p.predicted, front[i]["mean"], margin, objs)
+                          and _resolvable(p.predicted, front[j]["mean"], margin, objs)]
                 if inside:
-                    best = min(inside, key=lambda p: math.dist(frame.z(p.predicted), mid))
+                    # A point-NONDOMINATED prediction first: a merely possibly-
+                    # nondominated one inside the gap is predicted to be beaten.
+                    tier = [p for p in inside if p.status == "nondominated"] or inside
+                    best = min(tier, key=lambda p: math.dist(frame.z(p.predicted), mid))
                     nominate(best.levels, f"gap fill between front points {i} and {j} "
                                           f"(size {g['size']:.3g})", False, best.predicted)
         for f in front:
@@ -323,11 +384,24 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
         nominate(rec.get("levels"), f"preferred point of the predicted front "
                                     f"({preference(pol).method})", False,
                  pred_values(rec.get("levels") or {}))
+    # Round r > 1 spends its seats on what the campaign has NOT measured
+    # freshly yet. Re-seating an already-confirmed point the front is sure of
+    # buys nothing for the front, and on a noisy constraint boundary it is how
+    # an admissible point gets struck off by one unlucky replicate (measured on
+    # `pareto_with_constraint`: a third round re-measured two confident front
+    # points and lost both). Points still `possibly_dominated` were already
+    # nominated above, on purpose.
+    confirmed = ({json.dumps(p.levels, sort_keys=True, default=str)
+                  for p in pts if p.source == "confirm"} if rnd > 1 else set())
+
+    def fresh(levels) -> bool:
+        return json.dumps(levels, sort_keys=True, default=str) not in confirmed
+
     # Spread over the point-NONDOMINATED predictions first; only then over the
     # merely possibly-nondominated ones, so a seat is never spent on a point the
     # models predict is beaten while a predicted front point is still unseated.
     for tier in ("nondominated", "possibly_nondominated"):
-        pool = [p for p in pf if p.status == tier and all(
+        pool = [p for p in pf if p.status == tier and fresh(p.levels) and all(
             isinstance(p.predicted.get(o.metric), (int, float)) for o in objs)]
         for i in pareto.spread_order([frame.z(p.predicted) for p in pool], seated_z):
             nominate(pool[i].levels, "spread along the predicted front", False,
@@ -348,7 +422,16 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     delta_t = float(pol["objective"]["delta_terminal"])
     max_rounds = int(((pol.get("states") or {}).get("confirm") or {}).get(
         "design", {}).get("max_rounds", 1) or 1)
-    delta_front = delta_t / max(1, max_rounds)
+    # Two levels, two looks. The front's STATUSES (and the hypervolume over the
+    # confident points) are a claim made once, at the end, over the measured
+    # points: delta_terminal. CERTIFICATION is a stopping rule evaluated every
+    # round -- certified -> report -- so it pays for every registered look:
+    # delta_terminal / max_rounds ("front gap fill, Bonferroni over rounds").
+    # Charging the round count to the statuses too made every extra registered
+    # round shrink the confident set even when it bought new points (measured
+    # on `pareto_noisy`).
+    delta_front = delta_t
+    delta_cert = delta_t / max(1, max_rounds)
     pool = pooled(pts, objs)
     eps = pareto.resolve_eps(objs, best_reference(pts, objs))
     eps_known = {m: (e if e is not None else 0.0) for m, e in eps.items()}
@@ -378,6 +461,13 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
         i = pareto.preferred_index(pref, objs, zs, [pts[e.index].levels for e in choose_from],
                                    eps_z, ref_z)
         chosen_entry = choose_from[i] if i is not None else None
+    # The preferred point's status at the CERTIFICATION level (see above).
+    chosen_cert_status = None
+    if chosen_entry is not None:
+        at_cert = pareto.measured_front(pts, objs, eps_known, delta=delta_cert,
+                                        pooled=pool, predicted=predicted)
+        chosen_cert_status = next((e.status for e in at_cert
+                                   if e.index == chosen_entry.index), None)
     regret, regret_method = None, "no front"
     # The regret is taken over EVERY measured admissible configuration, not
     # only the front: a point the front eps-dominates in point estimate can
@@ -388,17 +478,35 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
         if pref.method == "knee" and len(objs) > 2:
             regret, regret_method = pareto.min_improvement_regret(
                 objs, pts, chosen_entry.index, list(range(len(pts))), frame,
-                ref_z, pool, delta=delta_front)
+                ref_z, pool, delta=delta_cert)
         else:
             a = pareto.scalar_direction(pref, objs, zs_all, ci, ref_z)
             regret, regret_method = pareto.scalar_regret(
                 objs, pts, chosen_entry.index, list(range(len(pts))), a,
-                frame, pool, delta=delta_front)
+                frame, pool, delta=delta_cert)
     eps_scalar = pareto.scalar_epsilon(pref, objs, eps_z)
     hv, hv_method = pareto.hypervolume(
         [frame.z(pts[e.index].means()) for e in confident], ref_z)
     gaps = pareto.front_gaps(zs_all)
-    threshold = 2.0 * max(eps_z) if eps_z else 0.0
+    # The spec's threshold is 2 x max_k(eps_k / range_k). A gap is also only
+    # worth a round when a point placed at its midpoint could be told apart
+    # from BOTH neighbours at the replicate count confirm uses: on its
+    # trade-off coordinate it differs from each by about gap / 2, and the
+    # dominance test resolves a pair once that difference exceeds
+    # t * se(difference) - eps. Below that a fill only adds an unresolvable
+    # rival -- which can LOWER the confident hypervolume (measured on
+    # `pareto_noisy`) -- so the threshold is the larger of the two.
+    reps = max(1, int(((pol.get("states") or {}).get("confirm") or {}).get(
+        "design", {}).get("replicates", 3) or 3))
+    resolvable = []
+    for o, ez in zip(objs, eps_z):
+        v, df = pool.get(o.metric, (None, 0))
+        if v is None or df <= 0:
+            continue
+        t = pareto.tcrit(delta_front / max(1, (len(pts) - 1) * len(objs)), df)
+        se_z = math.sqrt(2.0 * v / reps) / frame.range[o.metric]
+        resolvable.append(2.0 * max(0.0, t * se_z - ez))
+    threshold = max([2.0 * max(eps_z)] + resolvable) if eps_z else 0.0
     gap_large = bool(gaps) and gaps[0]["size"] > threshold
 
     def _ci(p, o):
@@ -431,6 +539,7 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
         "preference": {"method": pref.method,
                        "chosen": dict(pts[chosen_entry.index].levels) if chosen_entry else {},
                        "chosen_status": chosen_entry.status if chosen_entry else None,
+                       "chosen_status_at_certification": chosen_cert_status,
                        "scalar_regret": regret, "scalar_epsilon": eps_scalar,
                        "scalar_regret_method": regret_method},
         "rounds": rnd,
@@ -439,13 +548,16 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
         "front_gap_large": gap_large,
         "epsilon": eps,
         "delta_front": delta_front,
+        "delta_certification": delta_cert,
         "pooled_variance": {m: {"variance": v, "df": df} for m, (v, df) in pool.items()},
         "frame": frame.as_dict(),
         "n_measured_configurations": len(pts),
         "dominance_method": (
             "pooled within-configuration variance per objective (one-way ANOVA "
             "mean square), one-sided t at delta_front / ((N - 1) * K), Bonferroni "
-            "over rivals and objectives; delta_front = delta_terminal / max_rounds"),
+            "over rivals and objectives; delta_front = delta_terminal. The "
+            "preferred point's certificate (its status and the scalar regret) "
+            "is re-taken at delta_certification = delta_terminal / max_rounds"),
     }
 
 

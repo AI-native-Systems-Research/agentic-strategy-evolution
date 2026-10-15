@@ -365,6 +365,8 @@ def evaluate_pareto_campaign(surface: Surface, *, seed: int, parent_dir: Path,
         return False
 
     hv_rep, hv_true = true_front_hypervolume(surface, confident)
+    hv_all, _ = true_front_hypervolume(
+        surface, [dict(f["levels"]) for f in par.get("front") or []])
     rec = res.recommendation
     rec_ok = (bool(rec) and not (surface.invalid is not None and surface.invalid(rec))
               and within_eps_of_front(surface, rec, eps, front=tf))
@@ -377,6 +379,9 @@ def evaluate_pareto_campaign(surface: Surface, *, seed: int, parent_dir: Path,
         "n_confident": len(confident), "n_confident_off_front": len(off),
         "off_front": off,
         "hv_ratio": (hv_rep / hv_true) if hv_true else 0.0,
+        # Over EVERY reported front point (both statuses): the front the
+        # campaign reports, scored in truth.
+        "hv_ratio_front": (hv_all / hv_true) if hv_true else 0.0,
         "hv_reported_measured": (par.get("hypervolume") or {}).get("value"),
         "recommended": rec, "recommended_within_eps": rec_ok,
         "basis": res.basis, "certified": bool(res.report.get("certified")),

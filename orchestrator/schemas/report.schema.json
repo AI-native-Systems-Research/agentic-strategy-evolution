@@ -258,6 +258,12 @@
                 "null"
               ]
             },
+            "chosen_status_at_certification": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "scalar_regret": {
               "type": [
                 "number",

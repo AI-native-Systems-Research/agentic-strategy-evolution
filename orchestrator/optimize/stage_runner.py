@@ -4113,6 +4113,9 @@ def run_stage(
         ),
         stationary_in_hull=(
             None if stage_name != Stage.REFINE.value
+            # Multi-objective: not computed (see the override below), so the
+            # first objective's out-of-hull diagnosis is not logged as one.
+            else None if mo_record is not None
             else _stationary_in_hull(fit, stationary, direction)
         ),
     )
@@ -5675,7 +5678,11 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # variation, not a bug.)
     maximize = direction != "minimize"
     best_obs = (
-        _best_observed(work_dir, metric, direction=direction) if metric else None
+        _best_observed(work_dir, metric, direction=direction)
+        # Multi-objective: "the winner beat the best observed first objective"
+        # is a single-objective question; the measured front answers the real
+        # one, so the comparison (and its mis-specification warning) is skipped.
+        if metric and "pareto" not in summary else None
     )
     if best_obs is not None and summary["mean"] is not None:
         best_val = best_obs.get(metric)
@@ -5866,7 +5873,9 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
     )
     pref = par["preference"]
     reg, eps_s = pref["scalar_regret"], pref["scalar_epsilon"]
-    chosen_ok = pref["chosen_status"] == "confidently_nondominated"
+    # Confident at the CERTIFICATION level (delta_terminal / max_rounds), which
+    # is stricter than the level the front's statuses are reported at.
+    chosen_ok = pref.get("chosen_status_at_certification") == "confidently_nondominated"
     within = reg is not None and eps_s is not None and reg <= eps_s
     n_inf = sum(1 for v in status.values() if v == "infeasible")
     caveat = bool(_INFEASIBLE_FINALIST_CAVEAT and n_inf and len(ok) >= 2

@@ -609,6 +609,10 @@ def measured_front(points: list[MeasuredPoint], objectives, eps: dict, *,
             if not resolved:
                 unresolved.append({"levels": dict(points[j].levels), "kind": "measured"})
         for pp in predicted or ():
+            if pp.levels == points[i].levels:
+                # The model's prediction AT c is not a rival of c's own
+                # measurement; the measurement is the better evidence there.
+                continue
             if all(isinstance(pp.predicted.get(m), (int, float))
                    and math.isfinite(pp.predicted[m]) for m in metrics) and all(
                     sign(o.direction) * (pp.predicted[o.metric] - points[i].mean(o.metric))

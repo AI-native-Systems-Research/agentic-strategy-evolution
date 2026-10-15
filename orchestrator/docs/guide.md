@@ -336,12 +336,9 @@ ratio vs speed, latency vs cost. A single `primary` plus constraints answers
 *is this admissible?*; `objectives` answers *what can I buy with what?*, and
 picking scalar weights up front would hide exactly that.
 
-> Status: this section describes the contract in
-> `docs/superpowers/specs/2026-10-15-pareto-front-design.md`. The authoring
-> surface — schema, validator, `--smoke` / `--liveness` / design preview,
-> `create-campaign --objectives N` — is what this release checks; the front
-> estimation, confirm seating and `report.json["pareto"]` rendering are the
-> estimation core described by the same spec.
+> Contract: `docs/superpowers/specs/2026-10-15-pareto-front-design.md`
+> (its "Decisions" section records how the estimation core resolved what the
+> contract left open, with the oracle results).
 
 **What to declare.**
 
@@ -372,6 +369,23 @@ Dominance is a claim with a bound, never a comparison of point estimates. The
 preferred point is marked, and `hypervolume` (the area the front encloses
 against the baseline, normalized) and `gaps_remaining` say how well the front
 is covered; `report.md`'s "What to do next" names how to widen or refine it.
+
+**Confirm, gap fill and certification.** With `objectives`, confirm seats the
+best measured configuration per objective, the predicted extremes, the
+preferred point of the predicted front and then points spread along it
+(`shortlist_size` defaults to `2K + 2`, i.e. 6 for two objectives), and
+`confirm_max_rounds` defaults to 2. When the measured front has a gap wider
+than twice the largest normalised epsilon (and wide enough for a point in it
+to be told apart from its neighbours at your replicate count), the registered
+`confirm -> confirm` branch (`front gap fill, Bonferroni over rounds`) seats
+predicted-front candidates inside the largest gaps. `certified` means the
+preferred point is `confidently_nondominated` at `delta_terminal /
+max_rounds` and the preference's scalar regret bound is within its epsilon;
+otherwise `certification_withheld` names why (`front_point_possibly_dominated`
+among them) and the basis is `terminal_best`. With noise close to epsilon,
+neighbouring front points cannot be separated by a few replicates and stay
+`possibly_dominated`: that is the honest answer, and more `replicates` (or a
+wider epsilon) is the remedy.
 
 **Preference: picking one point.** A recommendation is always produced.
 

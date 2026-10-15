@@ -167,3 +167,127 @@ the true front; the reported front's hypervolume ≥ X% of the true front's
 
 Model-based acquisition beyond the registered gap-fill branch (expected
 hypervolume improvement); interactive preference elicitation.
+
+## Decisions (estimation core, recorded where the contract was ambiguous)
+
+Implemented in `orchestrator/optimize/pareto.py` (pure arithmetic),
+`orchestrator/optimize/pareto_stage.py` (artifact glue), and gated call sites
+in `stage_runner.py` / `policy.py`. Every call site is gated on the compiled
+policy registering `objective.objectives`, so a single-objective campaign takes
+none of these paths.
+
+1. **The primary role.** A multi-objective campaign has no `primary`; its FIRST
+   objective plays that role wherever the single-objective machinery needs one
+   metric (the stage rule's fit and `effects.json`, the NaN guard, the adapter's
+   metric path, `top_candidates`, `residual_regret_model`). The policy records
+   it as `objective.metric/direction`, with every objective (and its own
+   epsilon spec, map-valued `policy.epsilon` resolved per metric) under
+   `objective.objectives` and the preference under `objective.preference`.
+2. **Objective models** reuse the constraint models' row selection and
+   reduction (`constraint_models._fit_one`). A model is *rejected* for lack of
+   fit (`lack_of_fit` observation, curvature branch) or when not estimable
+   (`model_adequate: false` only); a model with no pure error is NOT rejected
+   (no test to fail), but its bounds are infinite, so nothing is confidently
+   dominated through it.
+3. **`stationary_in_hull` is not observed** in a multi-objective epoch: the
+   first objective's stationary point leaves the hull whenever that objective is
+   monotone in a knob the other pays for, which is the normal shape of a
+   trade-off, not a defect in the ranges. `report.md`'s What-to-do-next names a
+   factor whose range edge an objective's extreme sits on instead.
+4. **Refine carries the other branches.** Refine holds a choice factor at the
+   preferred point's level, so its predicted front sees one branch; entries of
+   the previous stage's predicted front at another level of a held factor are
+   appended (with their `stage`). Oracle `pareto_choice_split`.
+5. **"Within epsilon of the front"** is additive epsilon-approximate Pareto
+   optimality: `c` is within epsilon iff no configuration beats it by at least
+   `eps_k` on EVERY objective. Front membership (point estimates) honours
+   epsilon: `d` removes `c` only if no worse anywhere and better by MORE than
+   `eps_k` somewhere.
+6. **Confident status.** `c` is `confidently_nondominated` iff for EVERY other
+   measured admissible configuration `d` some objective's one-sided upper bound
+   on `d - c` is below `eps_k` (Bonferroni over rivals x objectives), and no
+   ADEQUATE-model prediction (other than at `c`'s own levels) beats `c`'s
+   measured mean by `eps_k` on every objective.
+7. **Variance: pooled pure error**, not per-pair Welch. The within-configuration
+   mean square per objective over every configuration with >= 2 complete rows.
+   With the default 3 replicates a per-pair Welch t has 2-4 df and a Bonferroni
+   quantile above 10, so nothing could ever be claimed; the pooled estimate is
+   the variance the fits and constraint models already rest on. Pairing is not
+   used (valid, wider when seeds were shared).
+8. **Fresh replicates only for finalists.** A configuration confirm measured is
+   represented by its confirm rows only (its fitting rows are what nominated it,
+   so pooling them carries the winner's curse); fitting-only configurations keep
+   their fitting rows.
+9. **Two levels, two looks.** Front statuses and the hypervolume are one claim at
+   the end: `delta_terminal`. Certification is a stopping rule evaluated every
+   round, so it pays for every registered look: the preferred point must be
+   confident at `delta_terminal / max_rounds` ("Bonferroni over rounds") and the
+   scalar regret is taken at that level. Charging rounds to the statuses made
+   every extra registered round shrink the confident set.
+10. **Scalar regret.** Rivals are EVERY measured admissible configuration, not
+    only the front. Weights apply to objectives normalised by the measured range
+    (`epsilon_scalar = sum_k w_k eps_k / range_k`); knee (K = 2) uses the unit
+    normal of the line through the extremes (linear once they are fixed);
+    lexicographic uses `order[0]`; knee (K > 2, `min_k` improvement over the
+    baseline) bounds `max_r min_k U_k(r) - min_k L_k(c)` with simultaneous
+    bounds on normalised means. `epsilon_scalar` for knee is `min_k eps_k /
+    range_k` as stated above.
+11. **Hypervolume** over the confident points in the measured-range frame;
+    reference = `known_valid_baseline`'s measured means when it was measured,
+    else the worst measured value per objective.
+12. **Gaps.** K = 2: adjacency along the front sorted by the first objective;
+    K > 2: the edges of the Euclidean minimum spanning tree. Size is L-infinity
+    in normalised units. A gap is "large" above `max(2 x max_k eps_k / range_k,
+    2 x max_k (t se_k - eps_k) / range_k)`: the second term is the separation a
+    midpoint fill needs to be told apart from both neighbours at confirm's
+    replicate count. A gap-fill candidate must itself be predicted resolvable
+    from both endpoints; round r > 1 never re-seats an already-confirmed point
+    except a `possibly_dominated` one (re-measuring a confident point on a noisy
+    constraint boundary is how it gets struck off by one unlucky replicate).
+13. **Defaults.** Multi-objective `shortlist_size` defaults to `2K + 2` and
+    `confirm_max_rounds` to 2 (the gap-fill branch needs a second round to
+    exist); explicit declarations win. The gap-fill rule is registered BEFORE
+    `certified -> report`: the epoch's product is the front.
+14. **Noise map.** `build_checks` baseline tolerance with a map-valued
+    `noise_estimate_pct` uses the first objective's entry.
+
+### Oracle results (seeds 1-8, default multi-objective campaign)
+
+| surface | front coverage | hypervolume ratio (confident) | recommended on front | certified | false cert | runs |
+|---|---|---|---|---|---|---|
+| `pareto_convex` | 1.00 | 0.996 | 8/8 | 8/8 | 0 | 56 |
+| `pareto_concave` | 1.00 | 0.993 | 8/8 | 8/8 | 0 | 56 |
+| `pareto_with_constraint` | 0.70-1.00 | 0.859-0.974 | 8/8 | 1/8 | 0 | 56 |
+| `pareto_three` | 0.42-0.59 | 0.836-0.860 | 8/8 | 7/8 | 0 | 78 |
+| `pareto_choice_split` | 0.84-0.95 | 0.950-0.957 | 8/8 | 7/8 | 0 | 52 |
+| `pareto_noisy` (noise ~ epsilon) | 0.40-1.00 | 0.781-0.967 | 8/8 | 1/8 | 0 | 56 |
+
+Property 1 (every confident point within epsilon of the true front and truly
+admissible): 0 violations everywhere. Property 5 (raising `confirm_max_rounds`
+1 -> 2 -> 3 never lowers the true hypervolume): holds on every surface for the
+whole reported front, and for the confident points on every surface except
+`pareto_noisy`, where a fill closer than the replicates can resolve honestly
+strips its neighbours' confidence. Coverage on `pareto_three` is low because
+its true front is a 2-D surface of ~200 grid points measured with 78 runs.
+
+### The infeasible-finalist rule (evaluated, kept)
+
+Alternative (b): an infeasible finalist is a caveat (`certification_caveats`)
+rather than a veto when >= 2 admissible finalists remain, their bound is within
+epsilon and the model is adequate. Certified / false-certified (truly gap >
+epsilon OR truly inadmissible), seeds 1-8:
+
+| surface | rounds | (a) today | (b) caveat |
+|---|---|---|---|
+| `sla` (p99 <= 40) | 1 / 3 | 0/0, 0/0 | 0/0, 5/0 |
+| `infeasible_corner_interior` | 1 / 3 | 3/0, 3/0 | 3/0, 3/0 |
+| `stochastic_constraint_boundary` | 1 / 3 | 0/0, 0/0 | 0/0, **1/1** |
+| `deterministic_constraint_axis` | 1 / 3 | 0/0, 0/0 | 8/0, 8/0 |
+| `pareto_with_constraint` | 2 / 3 | 1/0, 7/0 | 7/0, 7/0 |
+
+(b) raises certification sharply but adds a false certificate: on
+`stochastic_constraint_boundary` it certified a truly inadmissible
+configuration that passed its own replicates by luck while a sibling in the
+same stochastic region did not -- exactly the evidence the veto reads. Today's
+rule is kept (`stage_runner._INFEASIBLE_FINALIST_CAVEAT = False`, pinned by
+`tests/test_optimize_pareto.py::test_an_infeasible_finalist_still_withholds_certification`).
