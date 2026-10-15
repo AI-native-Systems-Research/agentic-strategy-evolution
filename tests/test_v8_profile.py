@@ -1183,7 +1183,7 @@ class TestResultsCannotBeLost:
         def arm(key, prompt, cwd):
             if key != "h-main":
                 return orig(key, prompt, cwd)
-            (cwd / "solution.py").write_text("v = 0\n")
+            (cwd / "solution.py").write_text("v = 0\n# the arm's own (broken) version\n")
             _measure_in_session(script, cwd)
             seen["result"] = None
             return SDKResult(**CAP_STOP, session_id="sess-h-main")
