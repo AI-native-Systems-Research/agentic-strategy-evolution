@@ -986,6 +986,42 @@ class TestOfficialMeasureCommand:
         assert run_measure(_v8(), wt) is None
 
 
+    def test_a_judge_that_never_answered_is_no_score(self, tmp_path):
+        from orchestrator.official_measure import run_measure
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        slow = {"measure_command": "sleep 1.2; echo 'SCORE: 0.0'", "measure_wait_s": 16}
+        assert run_measure(_v8(v8=slow), wt) is None  # the script's own fallback after its wait
+        assert run_measure(_v8(v8={"measure_command": "echo 'SCORE: 0.0'"}), wt) == 0.0  # a real 0
+
+    def test_a_measure_belongs_to_the_session_that_submitted_it(self, tmp_path):
+        from orchestrator.official_measure import measures_in
+        j, _script, cfg = _fake_judge(tmp_path)
+        _write_jsonl(j / "official.jsonl", [{"ts": 150.0, "submitted_ts": 95.0, "sha256": "a", "score": 7}])
+        c = _v8(v8=cfg)
+        assert [r["sha256"] for r in measures_in(c, tmp_path, [{"start": 50.0, "end": 100.0}])] == ["a"]
+        assert measures_in(c, tmp_path, [{"start": 120.0, "end": 200.0}]) == []
+
+    def test_re_measuring_the_unchanged_incumbent_is_not_the_arms_result(self, tmp_path):
+        import hashlib
+        from orchestrator.official_measure import recover_result
+        repo = tmp_path / "wt"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        (repo / "solution.py").write_text("v = 41\n")
+        _git(repo, "add", "solution.py")
+        _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+        base = _git(repo, "rev-parse", "HEAD").strip()
+        j, _script, cfg = _fake_judge(tmp_path)
+        sha = hashlib.sha256(b"v = 41\n").hexdigest()
+        _write_jsonl(j / "official.jsonl", [{"ts": 60.0, "sha256": sha, "score": 41}])
+        c = _v8(v8={**cfg, "measure_command": "bash x.sh $PWD/solution.py"})
+        out = recover_result(c, tmp_path, tmp_path / "result.json", arm_key="h-main", arm={},
+                             windows=[{"start": 50.0, "end": 100.0}], worktree=repo,
+                             patch=tmp_path / "h-main.patch", base=base)
+        assert out is None and not (tmp_path / "result.json").exists()
+
+
 class TestOfficialFirstEvaluator:
     def _setup(self, tmp_path, monkeypatch, scores=SCORES, **cfg):
         j, script, jcfg = _fake_judge(tmp_path)

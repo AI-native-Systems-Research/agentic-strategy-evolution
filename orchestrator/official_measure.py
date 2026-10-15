@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from orchestrator.util import atomic_write
@@ -62,11 +63,18 @@ def run_measure(campaign: dict, cwd: Path, timeout_s: float | None = None) -> fl
         timeout_s = float(((campaign or {}).get("v8") or {}).get("measure_timeout_s") or 1500)
     env = dict(os.environ)
     env["PWD"] = str(Path(cwd).resolve())  # the command names the solution as $PWD/<file>
+    t0 = time.time()
     try:
         res = subprocess.run(["/bin/bash", "-c", cmd], cwd=str(cwd), env=env, capture_output=True,
                              text=True, timeout=timeout_s)
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.warning("v8: official measure failed: %s", exc)
+        return None
+    # The measure script prints "SCORE: 0.0" when the judge never answered within its wait; that is
+    # not a score.
+    wait_s = float(((campaign or {}).get("v8") or {}).get("measure_wait_s") or 1200)
+    if time.time() - t0 >= wait_s - 15:
+        logger.warning("v8: official measure waited %.0f s for the judge; treated as no score", time.time() - t0)
         return None
     score = parse_score(res.stdout + "\n" + res.stderr)
     if score is None:
@@ -89,7 +97,7 @@ def measures_in(campaign: dict, work_dir: Path, windows) -> list[dict]:
         return []
     out = []
     for r in official_measures(campaign, work_dir):
-        ts = _num(r.get("ts"))
+        ts = _num(r.get("submitted_ts")) or _num(r.get("ts"))  # attribute a measure to who submitted it
         if ts is not None and any(ts >= s and (e is None or ts <= e) for s, e in spans):
             out.append(r)
     return out
@@ -123,6 +131,15 @@ def find_code(campaign: dict, sha: str, extra_files=()) -> bytes | None:
     return None
 
 
+def _base_solution_sha(campaign: dict, worktree: Path | None, base: str | None) -> str | None:
+    """sha256 of the solution file (named in the measure command as $PWD/<file>) at the arm's base commit."""
+    m = re.search(r"\$PWD/(\S+)", measure_command(campaign) or "")
+    if not (m and worktree and base and Path(worktree).is_dir()):
+        return None
+    res = subprocess.run(["git", "show", f"{base}:{m.group(1)}"], cwd=str(worktree), capture_output=True)
+    return hashlib.sha256(res.stdout).hexdigest() if res.returncode == 0 else None
+
+
 def _needs_score(result, campaign: dict) -> bool:
     from orchestrator.v7_execute import arm_score
     return not isinstance(result, dict) or arm_score(result, campaign) is None
@@ -139,6 +156,9 @@ def recover_result(campaign: dict, work_dir: Path, result_path: Path, *, arm_key
     """
     from orchestrator.v7_execute import _load_json, _metric_keys, arm_score, save_worktree_diff
     rows = measures_in(campaign, work_dir, windows)
+    base_sha = _base_solution_sha(campaign, worktree, base)
+    if base_sha:  # re-measuring the unchanged incumbent is not the arm's result
+        rows = [r for r in rows if str(r.get("sha256") or "") != base_sha]
     best = best_measure(rows)
     if best is None:
         return None

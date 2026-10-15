@@ -109,11 +109,16 @@ def reconstruct(patch):
     return "\n".join(res) + "\n"
 
 # ---- out-of-sandbox scoring daemon (thread) ----
-def record_official(log, code_bytes, score, rejected=False):
-    """Append one official measure ({ts, sha256, score}) for Nous v8's judge profile. Never raises."""
+def record_official(log, code_bytes, score, rejected=False, submitted_ts=None):
+    """Append one official measure ({ts, submitted_ts, sha256, score}) for Nous v8's judge profile. Never raises.
+
+    ``submitted_ts`` is when the file reached the inbox: scoring is serial and takes 30-60 s, so a file
+    submitted by one session can finish scoring inside the next session's window.
+    """
     if log is None: return
     try:
         rec = {"ts": time.time(), "sha256": hashlib.sha256(code_bytes).hexdigest(), "score": score}
+        if submitted_ts is not None: rec["submitted_ts"] = submitted_ts
         if rejected: rec["rejected"] = True
         with open(log, "a") as f: f.write(json.dumps(rec) + "\n")
     except OSError: pass
@@ -138,10 +143,13 @@ def start_daemon(pid, root, stop_evt, archive, official_log=None):
         while not stop_evt.is_set():
             for f in sorted(glob.glob(str(inbox/f"*{ext(pid)}"))):
                 tok = Path(f).stem
+                try: submitted = os.path.getmtime(f)
+                except OSError: submitted = None
                 try: s = score_file(f)
                 except Exception: s = 0.0
                 code = Path(f).read_bytes() if Path(f).exists() else b""
-                record_official(official_log, code, s, rejected=bool(exploit_hits(code.decode(errors="ignore"), pid)))
+                record_official(official_log, code, s, rejected=bool(exploit_hits(code.decode(errors="ignore"), pid)),
+                                submitted_ts=submitted)
                 try:
                     n = len(list(archive.glob(f"*{ext(pid)}")))
                     Path(archive/f"m{n:04d}_{time.strftime('%H%M%S')}_score{s:.2f}{ext(pid)}").write_text(Path(f).read_text(errors="ignore"))
