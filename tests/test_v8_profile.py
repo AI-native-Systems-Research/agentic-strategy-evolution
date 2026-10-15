@@ -1044,6 +1044,20 @@ class TestOfficialFirstEvaluator:
         inst = json.loads((it / "instrument.json").read_text())
         assert inst["noise"]["runs"][:1] == [37.0]  # noise measured on it, not on the 0 seed
 
+    def test_saved_baseline_worse_than_its_best_measure_is_replaced(self, tmp_path, monkeypatch):
+        j, script, repo, work, it, campaign, fake, d = self._setup(tmp_path, monkeypatch)
+
+        def evaluator(name, prompt, cwd):  # live p0: saved a 45.98 version, best measure was 63.51
+            (cwd / "solution.py").write_text("v = 63\n")
+            _measure_in_session(script, cwd)
+            (cwd / "solution.py").write_text("v = 46\n")
+            _measure_in_session(script, cwd)
+            fake._patch(cwd, re.search(r"git diff > (\S+baseline\.patch)", prompt).group(1))
+            return SDKResult(text="done", output_tokens=1000, session_id="sess-evaluator")
+        fake._evaluator = evaluator
+        _execute(repo, work, it, campaign, d)
+        assert _git(repo, "show", "HEAD:solution.py") == "v = 63\n"
+
     def test_noise_of_a_zero_score_baseline_is_unknown(self, tmp_path):
         from orchestrator.judge_profile import noise_spread
         (tmp_path / "runs" / "iter-1").mkdir(parents=True)

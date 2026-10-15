@@ -480,7 +480,11 @@ def write_orchestrator_instrument(campaign: dict, work_dir: Path, iter_dir: Path
 
 
 def _baseline_from_official(campaign, work_dir, repo, rec, patch, extras) -> None:
-    """The evaluator stopped before saving its baseline: use its best official measure (> 0) instead."""
+    """The baseline is the evaluator's best official measure (> 0), whatever patch it saved.
+
+    Live p0: the evaluator saved a 45.98 version while its best official measure was 63.51; live p5: 26
+    saved, 40 measured. The saved patch is kept only when nothing scored above 0.
+    """
     from orchestrator.official_measure import _write_best_code, best_measure, measures_in
     from orchestrator.v7_execute import save_worktree_diff
     rows = [r for r in measures_in(campaign, work_dir, rec.get("windows")) if float(r.get("score") or 0) > 0]
@@ -489,8 +493,7 @@ def _baseline_from_official(campaign, work_dir, repo, rec, patch, extras) -> Non
         return
     note = _write_best_code(campaign, best, _worktree(repo, rec), patch, rec.get("base"), extras,
                             save_worktree_diff)
-    logger.warning("v8: the evaluator saved no baseline; using its best official measure %s. %s",
-                   best.get("score"), note)
+    logger.warning("v8: baseline = the evaluator's best official measure %s. %s", best.get("score"), note)
 
 
 def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, extras) -> None:
@@ -514,8 +517,7 @@ def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, st
                             "build-evaluator-v8", label=EVALUATOR_KEY, target=cap, hard=hard, resume=None,
                             extras=extras, patch=patch)
         rec = state["sessions"][EVALUATOR_KEY]
-        if not (patch.is_file() and patch.stat().st_size > 0):
-            _baseline_from_official(campaign, work_dir, repo, rec, patch, extras)
+        _baseline_from_official(campaign, work_dir, repo, rec, patch, extras)
         remove_experiment_worktree(repo, rec["experiment_id"])
         commit_baseline(repo, patch, state)
         state["sessions"][EVALUATOR_KEY] = {
