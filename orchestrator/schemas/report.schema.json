@@ -48,7 +48,7 @@
     },
     "residual_regret_terminal": {
       "type": ["number", "null"],
-      "description": "R_delta(x) from TERMINAL DISCRIMINATION at delta_terminal (design spec 3.5), copied from the latest confirmation.json. Carries nothing but the fresh measurements of the realized shortlist -- no response model. Null when no confirm state ran, or when no finalist produced a valid measurement. SEPARATE FROM residual_regret_model BY CONSTRUCTION; see that property."
+      "description": "R_delta(x) from TERMINAL DISCRIMINATION at delta_terminal (design spec 3.5), copied from the latest confirmation.json. Carries nothing but the fresh measurements of the realized shortlist -- no response model. Null when no confirm state ran, when no finalist produced a valid measurement, when the bound was not estimable, or when any admissible finalist went unmeasured (an unknown rival makes the max unknown, and an unknown is not a zero; confirmation.json's terminal_bound_measured_only keeps the survivors-only number). SEPARATE FROM residual_regret_model BY CONSTRUCTION; see that property."
     },
     "epsilon": {
       "type": ["number", "null"],
@@ -68,7 +68,12 @@
     },
     "certified": {
       "type": "boolean",
-      "description": "True only when terminal discrimination ran AND certified globally. A within-shortlist bound at or below epsilon is NOT enough: an inadmissible finalist is evidence against the delta_screen premise, so confirm withholds certification while still reporting residual_regret_terminal."
+      "description": "True only when terminal discrimination ran AND certified globally. A bound at or below epsilon is NOT enough: an inadmissible or unmeasured finalist, or a fit whose exclusions were level-correlated, withholds certification -- certification_withheld names which."
+    },
+    "certification_withheld": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "no_terminal_discrimination"] },
+      "description": "Why `certified` is false, so the report never pairs an unexplained `certified: false` with bounds that look as though they should certify. Empty exactly when certified is true. Copied from the latest confirmation.json's certification_withheld (see confirmation.schema.json for each reason); `no_terminal_discrimination` when no confirm state ran, so no certificate was attempted. Optional here only so reports written before the field existed still validate; _run_report always writes it."
     },
     "finalists": {
       "type": "array",

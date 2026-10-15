@@ -648,9 +648,16 @@ def test_the_blis_surface_reports_the_level_correlated_exclusion(tmp_path):
     assert conf is not None, "no confirmation.json"
     assert conf["certified"] is False, conf
     assert "fit_exclusions_level_correlated" in conf["certification_withheld"], conf
-    # The WITHIN-SHORTLIST bound is untouched: suppressing it would hide the
-    # comparison that genuinely did happen.
-    assert conf["residual_regret_terminal"] is not None, conf
+    # The comparison among the MEASURED finalists is kept: suppressing it would
+    # hide the comparison that genuinely did happen. On this surface the lost
+    # corner is also a finalist that never measured, so R_terminal itself is
+    # unknown (an unmeasured rival makes the max over the shortlist unknown);
+    # the survivors-only number is recorded under a name that says so. The
+    # level-correlated bias ALONE leaves R_terminal untouched -- see
+    # test_a_level_correlated_fit_alone_withholds_global_certification.
+    assert conf["residual_regret_terminal"] is None, conf
+    assert "finalist_unmeasured" in conf["certification_withheld"], conf
+    assert conf["terminal_bound_measured_only"]["value"] is not None, conf
     assert res.report["certified"] is False, res.report
 
 

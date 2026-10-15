@@ -1835,6 +1835,14 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         "delta_screen": pol["objective"]["delta_screen"],
         "delta_terminal": pol["objective"]["delta_terminal"],
         "certified": bool(conf and conf.get("certified")),
+        # WHY `certified` is false, carried up from confirmation.json so the
+        # report never states an unexplained boolean next to bounds that look
+        # as though they should certify. Empty exactly when certified.
+        "certification_withheld": (
+            [] if conf and conf.get("certified")
+            else list(conf.get("certification_withheld") or [])
+            if conf else ["no_terminal_discrimination"]
+        ),
         "finalists": (conf.get("finalists") if conf else []) or [],
         "known_valid_baseline": pol.get("known_valid_baseline"),
         "path": [t["from"] for t in trans] + ([trans[-1]["to"]] if trans else []),
@@ -4458,6 +4466,39 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         bound = certificate.terminal_regret_bound(
             ok, best, delta=delta_t, direction=direction, paired=paired,
         )
+
+    # AN UNMEASURED FINALIST MAKES THE TERMINAL BOUND UNKNOWN, NOT SMALLER.
+    #
+    # `R_t = max_{z in S} U_t(z, x)`. An INADMISSIBLE finalist is outside X_valid,
+    # so dropping it from the max is correct (the bound is over valid rivals). An
+    # UNMEASURED one is not: it is an admissible member of S whose `U_t` the
+    # instrument never produced, and the max over a set containing an unknown
+    # term is unknown. Taking the max over the survivors instead UNDERSTATES the
+    # regret exactly when it matters -- on `SURFACES["fails_at_one_level"]` the
+    # unmeasured finalist IS the true optimum, and the survivors-only bound read
+    # 0.0 while the recommended configuration sat 0.64 below it. It is also the
+    # contract `terminal_regret_bound` itself states ("value=None when any
+    # finalist has fewer than two replicates"), which filtering to `ok` first
+    # used to bypass. An unknown is not a zero (INV-SEM02).
+    #
+    # The survivors-only bound is still a real comparison that happened, so it
+    # is kept -- under a name that says what it covers, never as the bound.
+    unmeasured = sorted(
+        k for k in samples
+        if status[k] == "unmeasured" or (status[k] == "ok" and not samples[k])
+    )
+    measured_only = None
+    if unmeasured and bound.value is not None:
+        measured_only = bound
+        bound = certificate.RegretBound(
+            None, None, delta_t, "none",
+            f"finalist(s) {unmeasured} in the shortlist produced no usable "
+            f"measurement, so their terminal bound -- and hence the max over "
+            f"the shortlist -- is unknown, and an unknown is not a zero. Over "
+            f"the measured finalists only, the bound is {measured_only.value!r} "
+            f"(terminal_bound_measured_only); that number is silent about the "
+            f"unmeasured rival(s) and is not R_terminal.",
+        )
     eps = certificate.resolve_epsilon(
         pol["objective"]["epsilon"], mean(ok[best]) if best else 0.0,
     )
@@ -4561,9 +4602,11 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # premise that screening did not exclude the true optimum. An UNMEASURED one
     # leaves the terminal comparison with no fresh samples for that candidate at
     # all, so the shortlist it was drawn from was never actually compared. Either
-    # way the global epsilon-optimality claim over X_valid is unearned, even
-    # though `residual_regret_terminal` remains a valid WITHIN-shortlist number
-    # over whoever did survive.
+    # way the global epsilon-optimality claim over X_valid is unearned. After an
+    # inadmissible finalist `residual_regret_terminal` remains a valid number
+    # over the admissible shortlist; after an unmeasured one it is None (see the
+    # `unmeasured` block above), and the survivors-only number is recorded as
+    # `terminal_bound_measured_only`.
     n_excluded = sum(1 for v in status.values() if v != "ok")
     certified = (
         bound.value is not None and bound.value <= eps
@@ -4641,19 +4684,22 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         # needs to know whether to spend more replicates (wide bound) or to
         # re-measure a region in a new epoch (broken premise).
         #
-        # NOTE: `finalist_measured_infeasible` is derived from `n_excluded`,
-        # which another agent's status-vocabulary split has left computing 0 —
-        # see the FIXME at that line. This list is therefore currently complete
-        # for every reason EXCEPT that one.
+        # `finalist_measured_infeasible` and `finalist_unmeasured` are kept
+        # apart for the same reason the finalist statuses are: one says strike
+        # the configuration off, the other says re-run it.
         "certification_withheld": [
             r for r, hit in (
                 ("bound_not_computable", bound.value is None),
                 ("bound_above_epsilon",
                  bound.value is not None and bound.value > eps),
-                ("finalist_measured_infeasible", bool(n_excluded)),
+                ("finalist_measured_infeasible",
+                 any(s == "infeasible" for s in status.values())),
+                ("finalist_unmeasured", bool(unmeasured)),
                 ("fit_exclusions_level_correlated", fit_bias),
             ) if hit
         ],
+        **({"terminal_bound_measured_only": measured_only.as_dict()}
+           if measured_only is not None else {}),
         "paired": paired,
         "delta_terminal": delta_t,
         # Name kept for the readers that already exist, and now it is TRUE:

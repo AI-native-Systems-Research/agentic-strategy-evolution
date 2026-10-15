@@ -35,9 +35,9 @@ from orchestrator.optimize import progress as _progress
 BASIS_MEANING = {
     "certified": "terminal discrimination ran and the residual regret bound is "
                  "within epsilon -- this is a certificate",
-    "terminal_best": "terminal discrimination ran but the bound stayed wider "
-                     "than epsilon -- the best measured finalist against "
-                     "measured rivals, NOT a certificate",
+    "terminal_best": "terminal discrimination ran but did not certify -- "
+                     "the best measured finalist against measured rivals, "
+                     "NOT a certificate",
     "model": "no terminal stage ran -- the fitted surface's argmax, standing "
              "on its model bound only",
     "measured": "the best measured valid configuration -- the fitted surface "
@@ -46,6 +46,21 @@ BASIS_MEANING = {
                 "beat or replaced it",
     "none": "no legal configuration survived and no baseline was declared -- "
             "there is nothing to recommend",
+}
+
+
+#: Plain-language reading of each ``certification_withheld`` reason
+#: (``report.schema.json``), so ``Certified: no`` is never unexplained.
+WITHHELD_MEANING = {
+    "bound_above_epsilon": "the terminal bound is wider than epsilon",
+    "bound_not_computable": "the terminal bound could not be estimated "
+                            "(unknown, not zero)",
+    "finalist_measured_infeasible": "a finalist was measured inadmissible",
+    "finalist_unmeasured": "a finalist produced no usable measurement, so the "
+                           "shortlist was never fully compared -- re-run it",
+    "fit_exclusions_level_correlated": "the fit behind the shortlist lost rows "
+                                       "correlated with factor levels",
+    "no_terminal_discrimination": "no terminal discrimination ran",
 }
 
 
@@ -103,8 +118,13 @@ def render_report_markdown(work_dir: Path) -> str:
         f"- **Value:** {_fmt(rec.get('value'))}",
         f"- **Basis:** `{basis}` — {BASIS_MEANING.get(basis, 'unknown rung')}",
         f"- **Certified:** {'yes' if report.get('certified') else 'no'}",
-        "",
     ]
+    withheld = report.get("certification_withheld") or []
+    if withheld and not report.get("certified"):
+        lines.append("- **Certification withheld because:** " + "; ".join(
+            f"`{r}` ({WITHHELD_MEANING.get(r, 'unrecognised reason')})"
+            for r in withheld))
+    lines.append("")
     if report.get("epoch_ended"):
         lines += [
             f"> **The epoch ended on a semantic exception:** "
