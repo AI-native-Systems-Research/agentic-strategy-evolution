@@ -19,7 +19,7 @@ Usage:
   nous_research_isolated.py grammar_fuzzing/seed/sql --slug gf_seed_sql_iso --niters 8 \
      --out preds/gf_seed_sql.nous.research.json
 """
-import argparse, glob, json, os, re, shlex, subprocess, tempfile, threading, time
+import argparse, glob, hashlib, json, os, re, shlex, subprocess, tempfile, threading, time
 from pathlib import Path
 
 import judge_sandbox as J
@@ -109,7 +109,20 @@ def reconstruct(patch):
     return "\n".join(res) + "\n"
 
 # ---- out-of-sandbox scoring daemon (thread) ----
-def start_daemon(pid, root, stop_evt, archive):
+def record_official(log, code_bytes, score, rejected=False):
+    """Append one official measure ({ts, sha256, score}) for Nous v8's judge profile. Never raises."""
+    if log is None: return
+    try:
+        rec = {"ts": time.time(), "sha256": hashlib.sha256(code_bytes).hexdigest(), "score": score}
+        if rejected: rec["rejected"] = True
+        with open(log, "a") as f: f.write(json.dumps(rec) + "\n")
+    except OSError: pass
+
+def wall_timeout_s(wall_hours):
+    """Wall-clock limit for `nous run`: 4 h unless --wall-hours is passed (bare flag = 6 h)."""
+    return int(float(wall_hours) * 3600) if wall_hours is not None else 14400
+
+def start_daemon(pid, root, stop_evt, archive, official_log=None):
     inbox = Path(root)/"inbox"; outbox = Path(root)/"outbox"
     inbox.mkdir(parents=True, exist_ok=True); outbox.mkdir(parents=True, exist_ok=True)
     # Nous deletes arm worktrees and its patches miss untracked files, so keep every measured solution here.
@@ -127,6 +140,8 @@ def start_daemon(pid, root, stop_evt, archive):
                 tok = Path(f).stem
                 try: s = score_file(f)
                 except Exception: s = 0.0
+                code = Path(f).read_bytes() if Path(f).exists() else b""
+                record_official(official_log, code, s, rejected=bool(exploit_hits(code.decode(errors="ignore"), pid)))
                 try:
                     n = len(list(archive.glob(f"*{ext(pid)}")))
                     Path(archive/f"m{n:04d}_{time.strftime('%H%M%S')}_score{s:.2f}{ext(pid)}").write_text(Path(f).read_text(errors="ignore"))
@@ -148,7 +163,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("problem_id"); ap.add_argument("--slug", required=True)
     ap.add_argument("--niters", type=int, default=8)
-    ap.add_argument("--design-profile", choices=["standard", "lightweight", "v4", "v5", "v6", "v7"], default="lightweight"); ap.add_argument("--model", default="claude-opus-4-6")
+    ap.add_argument("--design-profile", choices=["standard", "lightweight", "v4", "v5", "v6", "v7", "v8"], default="lightweight"); ap.add_argument("--model", default="claude-opus-4-6")
+    ap.add_argument("--wall-hours", type=float, nargs="?", const=6.0, default=None,
+                    help="wall-clock limit for `nous run` in hours (bare flag = 6); 4 h when omitted")
     ap.add_argument("--arm-budget", type=float, default=None); ap.add_argument("--iteration-budget", type=float, default=None)
     ap.add_argument("--out", required=True); ap.add_argument("--logdir", default=os.path.expanduser("~/frontier/gen_logs"))
     a = ap.parse_args(); pid = a.problem_id; stmt = statement(pid)
@@ -159,7 +176,10 @@ def main():
     # daemon
     djroot = f"/tmp/fcs_rjudge2/{a.slug}"; stop = threading.Event()
     measured = Path(a.logdir)/f"research_{a.slug}_measured_{time.strftime('%Y%m%d_%H%M%S')}"
-    start_daemon(pid, djroot, stop, measured)
+    # v8 reads official measures (time, file hash, score) from here; nothing about tests or judge config
+    official_log = ws.parent/f"official_{a.slug}.jsonl" if a.design_profile == "v8" else None
+    if official_log is not None and official_log.exists(): official_log.unlink()
+    start_daemon(pid, djroot, stop, measured, official_log)
     # sandbox profile
     prof = Path(a.logdir)/f"sandbox_{a.slug}.sb"
     # Deny the benchmark, other runs' artifacts/transcripts, experiment results and other agents' repos;
@@ -169,6 +189,7 @@ def main():
     deny = [f"{home}/frontier", rr(Path(__file__).resolve().parents[1]), f"{home}/engram_repo", f"{home}/.claude/projects"]
     allow = [rr(ws), rr(ws.parent/"nous_runs"/run_slug), rr(ws.parent/f"fmeasure_{a.slug}.sh"),
              rr(ws.parent/f"campaign_{a.slug}.yaml"), rr(prof)]
+    if official_log is not None: allow.append(rr(official_log.parent) + "/" + official_log.name)
     proj_key = re.sub(r"[^A-Za-z0-9]", "-", rr(ws))
     prof.write_text('(version 1)\n(allow default)\n'
                     + "".join(f'(deny file-read* (subpath "{rr(d)}"))\n' for d in deny)
@@ -219,6 +240,8 @@ def main():
     v7 = {k: v for k, v in (("arm_budget_usd", a.arm_budget), ("iteration_budget_usd", a.iteration_budget)) if v is not None}
     if a.design_profile == "v7" and v7:
         spec["v7"] = v7
+    if a.design_profile == "v8":
+        spec["v8"] = {**v7, "official_log": str(official_log)}
     camp = ws.parent/f"campaign_{a.slug}.yaml"; camp.write_text(yaml.safe_dump(spec, sort_keys=False))
     env = dict(os.environ); env["NOUS_CAMPAIGN_PARENT"] = str(ws.parent/"nous_runs")
     # agents call `nous validate`; make sure it is this Nous checkout, not another one on PATH
@@ -228,7 +251,8 @@ def main():
            "--sandbox", "bypass", "--max-iterations", str(a.niters), "--timeout", "2400"]
     t0 = time.time()
     with open(log, "w") as lf:
-        try: subprocess.run(cmd, cwd=NOUS_REPO, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True, timeout=14400)
+        try: subprocess.run(cmd, cwd=NOUS_REPO, env=env, stdout=lf, stderr=subprocess.STDOUT, text=True,
+                            timeout=wall_timeout_s(a.wall_hours))
         except subprocess.TimeoutExpired: pass
     stop.set()
     # harvest: reconstruct every iter's solution from patches; audit + judge CLEAN ones

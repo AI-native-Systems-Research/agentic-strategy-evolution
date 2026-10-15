@@ -501,7 +501,7 @@ def _normalize_v7_bundle(bundle_path: Path, campaign: dict | None) -> None:
     Designers often label every competing family ``h-main``; relabeling here saves the turns spent
     fixing it after a validation error.
     """
-    if (campaign or {}).get("design_profile") != "v7":
+    if (campaign or {}).get("design_profile") not in ("v7", "v8"):
         return
     try:
         bundle = yaml.safe_load(bundle_path.read_text())
@@ -524,7 +524,7 @@ def _normalize_v7_bundle(bundle_path: Path, campaign: dict | None) -> None:
 
 def _validate_v7_bundle(bundle: dict, campaign: dict | None) -> list[str]:
     """design_profile v7: validity checks on mechanism arms, 1-2 alternatives or a single-family reason."""
-    if (campaign or {}).get("design_profile") != "v7":
+    if (campaign or {}).get("design_profile") not in ("v7", "v8"):
         return []
     arms = [a for a in (bundle.get("arms") or []) if isinstance(a, dict)]
     errors: list[str] = []

@@ -237,7 +237,7 @@ properties:
 
   design_profile:
     type: string
-    enum: [standard, lightweight, v4, v5, v6, v7]
+    enum: [standard, lightweight, v4, v5, v6, v7, v8]
     description: >-
       Methodology weight. `standard` (default) keeps the full design. `lightweight`
       caps the DESIGN phase at 30 turns (unless campaign.max_turns.design is set),
@@ -251,6 +251,10 @@ properties:
       plus competing `h-alternative` mechanism arms, each screened in its own fresh
       executor session under a dollar cap, then one long session for the winner; a local
       evaluator built in the first iteration; and a per-iteration dollar cap (see `v7`).
+      `v8` is v7 plus caps from the session transcripts, a judge profile learned from
+      official measures, the screening winner continuing in its own session, exploit
+      iterations while the best improves, a measured baseline, one repair pass per failed
+      arm, hang recovery, and orchestrator-written artifacts after a cap stop (see `v8`).
       The design model is unchanged.
   v7:
     type: object
@@ -283,6 +287,45 @@ properties:
           output: { type: number, minimum: 0 }
           cache_write: { type: number, minimum: 0 }
           cache_read: { type: number, minimum: 0 }
+  v8:
+    type: object
+    additionalProperties: false
+    description: >-
+      Settings for design_profile v8. The dollar caps take the same keys as `v7` (read from
+      this block, falling back to `v7`).
+    properties:
+      arm_budget_usd: { type: number, exclusiveMinimum: 0, description: "Cap per screening session. Default 4." }
+      iteration_budget_usd: { type: number, exclusiveMinimum: 0, description: "Cap per iteration. Default 12." }
+      design_budget_usd: { type: number, exclusiveMinimum: 0, description: "Cap for the DESIGN session. Default 4." }
+      winner_min_usd: { type: number, minimum: 0, description: "Smallest winner budget. Default 2." }
+      cost_rates_per_mtok:
+        type: object
+        additionalProperties: false
+        properties:
+          input: { type: number, minimum: 0 }
+          output: { type: number, minimum: 0 }
+          cache_write: { type: number, minimum: 0 }
+          cache_read: { type: number, minimum: 0 }
+      winner_share:
+        type: number
+        minimum: 0
+        maximum: 1
+        description: "Share of the iteration budget reserved for the winner's continuation. Default 0.4."
+      repair_budget_usd:
+        type: number
+        minimum: 0
+        description: "Cap for the one repair attempt of a crashed, invalid, or zero-score arm (0 disables). Default 1."
+      hang_minutes:
+        type: number
+        exclusiveMinimum: 0
+        description: "Minutes without an assistant reply, while only API errors arrive, before a session is restarted. Default 15."
+      assumed_time_limit_s:
+        type: number
+        exclusiveMinimum: 0
+        description: "Time limit assumed when the statement gives none. Default 1."
+      official_log:
+        type: string
+        description: "JSONL of official measures ({ts, sha256, score}) written by the judge. Default <work_dir>/official_measures.jsonl."
   sdk_options:
     type: object
     additionalProperties: false

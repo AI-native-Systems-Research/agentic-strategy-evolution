@@ -571,7 +571,7 @@ def _v7_campaign_for(iter_dir) -> dict | None:
         campaign = yaml.safe_load(path.read_text())
     except (OSError, yaml.YAMLError):
         return None
-    return campaign if isinstance(campaign, dict) and campaign.get("design_profile") == "v7" else None
+    return campaign if isinstance(campaign, dict) and campaign.get("design_profile") in ("v7", "v8") else None
 
 
 def _cmd_validate(args):

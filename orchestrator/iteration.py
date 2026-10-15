@@ -196,10 +196,10 @@ def _maybe_carry_forward(campaign: dict, work_dir: Path, repo_path) -> None:
 
 def _v7_flow(campaign: dict, iteration: int, cli_dispatcher, repo_path, agent: str) -> bool:
     """v7 multi-session EXECUTE needs the SDK dispatcher and a worktree target; otherwise v7 runs like v6."""
-    from orchestrator.design_profile import is_v7
+    from orchestrator.design_profile import is_v7_family
     from orchestrator.iteration_mode import iteration_mode_for
     ts = campaign.get("target_system", {})
-    return (is_v7(campaign) and agent == "sdk" and repo_path is not None
+    return (is_v7_family(campaign) and agent == "sdk" and repo_path is not None
             and hasattr(cli_dispatcher, "session_budget") and not ts.get("live_target")
             and not campaign.get("derived_from") and iteration_mode_for(campaign, iteration) == "real")
 
@@ -1293,6 +1293,10 @@ def run_iteration(
             print(f"  DESIGN — exploring system and creating hypothesis bundle")
             print(f"{'='*60}")
         design_dispatcher = cli_dispatcher or llm_dispatcher
+        if v7_flow and not _skip_design_dispatch:
+            # v8: an exploit iteration whose incumbent named its next step needs no design call.
+            from orchestrator.v8_execute import maybe_write_exploit_bundle
+            _skip_design_dispatch = maybe_write_exploit_bundle(campaign, work_dir, iter_dir, iteration)
         if _skip_design_dispatch:
             pass  # already finished above
         elif cli_dispatcher:
@@ -1302,7 +1306,10 @@ def run_iteration(
             if v7_flow:
                 # v7 iteration 1: build the evaluator and measure the incumbent first, so the
                 # designer works from numbers. A no-op once the evaluator exists.
+                from orchestrator.design_profile import is_v8
                 from orchestrator.v7_execute import evaluator_before_design, run_v7_evaluator
+                if is_v8(campaign):
+                    from orchestrator.v8_execute import run_v8_evaluator as run_v7_evaluator
                 if evaluator_before_design(campaign, work_dir, iter_dir):
                     cli_dispatcher.model = _model_for("execute_analyze")
                     cli_dispatcher.max_turns = _max_turns_for("execute_analyze")
@@ -1316,13 +1323,19 @@ def run_iteration(
                         cli_dispatcher.model = _model_for("design")
                         cli_dispatcher.max_turns = _max_turns_for("design")
                         cli_dispatcher._effort = _effort_for("design")
-            budget_ctx = (cli_dispatcher.session_budget(v7_settings(campaign).design_budget_usd, label="design")
-                          if v7_flow else contextlib.nullcontext())
-            with budget_ctx:
-                design_dispatcher.dispatch(
-                    "planner", "design",
-                    output_path=iter_dir / "design_log.md", iteration=iteration,
-                )
+            from orchestrator.design_profile import is_v8
+            if v7_flow and is_v8(campaign):
+                from orchestrator.v8_execute import run_v8_design
+                run_v8_design(cli_dispatcher, campaign, work_dir, iter_dir, iteration)
+            else:
+                budget_ctx = (cli_dispatcher.session_budget(v7_settings(campaign).design_budget_usd,
+                                                            label="design")
+                              if v7_flow else contextlib.nullcontext())
+                with budget_ctx:
+                    design_dispatcher.dispatch(
+                        "planner", "design",
+                        output_path=iter_dir / "design_log.md", iteration=iteration,
+                    )
         else:
             # LLM API path or stub: dispatch and check if files were written directly
             output_file = iter_dir / "design_raw.md"
@@ -1434,7 +1447,10 @@ def run_iteration(
         if v7_flow:
             # v7: screen each mechanism arm in its own capped session, then one long session for the winner.
             from orchestrator.worktree import remove_experiment_worktree
+            from orchestrator.design_profile import is_v8
             from orchestrator.v7_execute import run_v7_execute
+            if is_v8(campaign):
+                from orchestrator.v8_execute import run_v8_execute as run_v7_execute
             _maybe_carry_forward(campaign, work_dir, repo_path)  # idempotent backstop (resumed runs)
             experiment_dir, experiment_id = run_v7_execute(
                 cli_dispatcher, campaign, work_dir, iter_dir, iteration, repo_path,

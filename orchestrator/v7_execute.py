@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yaml
 
-from orchestrator.design_profile import EVALUATOR_DIR, V7Settings, is_v7, v7_settings
+from orchestrator.design_profile import EVALUATOR_DIR, V7Settings, is_v7_family, v7_settings
 from orchestrator.instrument import INSTRUMENT_FILE, add_to_handoff, check_instrument, instrument_summary
 from orchestrator.metrics import spent_usd
 from orchestrator.util import atomic_write
@@ -311,7 +311,7 @@ def _load_bundle(iter_dir: Path) -> dict:
 
 def screening_summary(campaign: dict, iter_dir: Path) -> str:
     """Winner-session note listing every screened arm; empty unless v7 screening ran for this iteration."""
-    if not is_v7(campaign):
+    if not is_v7_family(campaign):
         return ""
     adir = Path(iter_dir) / ARMS_DIR
     state = _load_json(adir / STATE_FILE, {})
@@ -455,7 +455,7 @@ def evaluator_before_design(campaign: dict, work_dir: Path, iter_dir: Path) -> b
 
     That is while no evaluator exists, or while this iteration's evaluator session was interrupted.
     """
-    if not is_v7(campaign):
+    if not is_v7_family(campaign):
         return False
     rec = _load_json(Path(iter_dir) / ARMS_DIR / STATE_FILE, {}).get("sessions", {}).get(EVALUATOR_KEY) or {}
     if rec.get("status") == "done":

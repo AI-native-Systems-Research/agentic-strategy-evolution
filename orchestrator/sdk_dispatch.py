@@ -31,6 +31,7 @@ import logging
 import os
 import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +69,156 @@ class SDKTransientError(RuntimeError):
     """
 
     usage: dict = {}
+
+
+class SDKHangError(RuntimeError):
+    """A session sent no assistant reply for too long while only API errors arrived (v8 hang watchdog).
+
+    Not retried by the dispatcher: the caller restarts the work from its last saved state in a fresh
+    session. ``usage``: what the killed session had spent (transcript); ``session_id``: the hung session.
+    """
+
+    usage: dict = {}
+    session_id: str | None = None
+
+
+# ─── v8: session cost and liveness from the Claude Code transcript ────────────────────────────
+
+_TRANSCRIPT_POLL_S = 10.0
+
+
+def project_key(cwd) -> str:
+    """Claude Code's project directory name for ``cwd`` (every non-alphanumeric character becomes ``-``)."""
+    import re as _re
+    return _re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(cwd)))
+
+
+def default_transcript_paths(cwd, session_ids, config_dir=None) -> list[Path]:
+    """Transcript files of ``session_ids`` (with their subagent files) under ``<config>/projects``.
+
+    Tries the exact project directory for ``cwd`` first: a sandbox may allow reading it but not
+    listing ``projects/``. Then globs project directories that start with that name, then all of
+    them (Claude Code shortens very long project names, and session ids are unique).
+    """
+    import glob as _glob
+    import re as _re
+    root = Path(config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    keys = list(dict.fromkeys([project_key(cwd), _re.sub(r"[^A-Za-z0-9]", "-", str(cwd))])) if cwd else []
+    out: list[Path] = []
+    for sid in sorted(s for s in session_ids if s):
+        found: list[Path] = []
+        for key in keys:
+            main, sub = root / key / f"{sid}.jsonl", root / key / sid
+            if main.is_file():
+                found.append(main)
+            if sub.is_dir():
+                found += [Path(f) for f in _glob.glob(str(sub / "**" / "*.jsonl"), recursive=True)]
+            if found:
+                break
+        sid_g = _glob.escape(sid)
+        for proj in ([_glob.escape(k) + "*" for k in keys] + ["*"]) if not found else []:
+            found = [Path(f) for f in (_glob.glob(str(root / proj / f"{sid_g}.jsonl"))
+                                       + _glob.glob(str(root / proj / sid_g / "**" / "*.jsonl"), recursive=True))]
+            if found:
+                break
+        out += found
+    return out
+
+
+def _iso_ts(value) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+class TranscriptMeter:
+    """Incremental reader of a session's transcript files: true usage per reply, and liveness.
+
+    One reply is written as several lines repeating its usage, so each message id counts once, with
+    its largest usage (same rule as ``gen/cost_meter.py``). Lines older than ``since`` (copied history
+    of a resumed session) are ignored. Thread-safe.
+    """
+
+    def __init__(self, locator, cwd, since: float, rates: dict | None = None):
+        self._locator, self._cwd, self._since = locator, cwd, float(since)
+        self._rates = rates
+        self._offsets: dict[str, int] = {}
+        self._per_msg: dict[str, dict] = {}
+        self.session_ids: set[str] = set()
+        self.last_assistant_ts: float | None = None
+        self.last_api_error_ts: float | None = None
+        self._lock = threading.Lock()
+        self._paths: list = []
+        self._located: tuple[frozenset, float] | None = None
+
+    _RELOCATE_S = 5.0  # known files are read on every poll; new ones (subagents) are looked for this often
+
+    def _locate(self) -> list:
+        ids = frozenset(self.session_ids)
+        last = self._located
+        if self._paths and last is not None and last[0] == ids and time.time() - last[1] < self._RELOCATE_S:
+            return self._paths
+        try:
+            found = list(self._locator(self._cwd, set(ids)))
+        except Exception as exc:  # noqa: BLE001 - a locator failure must not stop the session
+            logger.debug("transcript locator failed: %s", exc)
+            return self._paths
+        self._paths = list(dict.fromkeys([*self._paths, *found]))
+        self._located = (ids, time.time())
+        return self._paths
+
+    def poll(self) -> None:
+        import json as _json
+        with self._lock:
+            for path in self._locate():
+                key = str(path)
+                try:
+                    with open(path, "rb") as f:
+                        f.seek(self._offsets.get(key, 0))
+                        chunk = f.read()
+                except OSError:
+                    continue
+                end = chunk.rfind(b"\n")
+                if end < 0:
+                    continue
+                self._offsets[key] = self._offsets.get(key, 0) + end + 1
+                for raw in chunk[:end].splitlines():
+                    try:
+                        d = _json.loads(raw)
+                    except ValueError:
+                        continue
+                    if isinstance(d, dict):
+                        self._take(d, key)
+
+    def _take(self, d: dict, path: str) -> None:
+        ts = _iso_ts(d.get("timestamp"))
+        if ts is not None and ts < self._since - 1.0:
+            return
+        now = ts if ts is not None else time.time()
+        kind = d.get("type")
+        if kind == "system" and (d.get("subtype") == "api_error" or d.get("level") == "error"):
+            self.last_api_error_ts = max(self.last_api_error_ts or 0.0, now)
+        msg = d.get("message") if isinstance(d.get("message"), dict) else None
+        if kind == "assistant":
+            self.last_assistant_ts = max(self.last_assistant_ts or 0.0, now)
+        usage = msg.get("usage") if msg else None
+        if not isinstance(usage, dict):
+            return
+        mid = msg.get("id") or f"{path}:{d.get('uuid')}"
+        prev = self._per_msg.get(mid)
+        if prev is None or usage_cost(usage, self._rates) > usage_cost(prev, self._rates):
+            self._per_msg[mid] = usage
+
+    def totals(self) -> dict:
+        with self._lock:
+            return {k: sum(int(u.get(k, 0) or 0) for u in self._per_msg.values()) for k in _USAGE_KEYS}
+
+    def cost(self) -> float:
+        return usage_cost(self.totals(), self._rates)
 
 
 def _load_methodology_preamble(methodology_dir: Path) -> str | None:
@@ -547,12 +698,19 @@ class SDKRunner(Protocol):
         ...
 
 
-def _default_sdk_runner_factory() -> SDKRunner:
+def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
+                                poll_s: float | None = None) -> SDKRunner:
     """Return a runner that calls the real ``claude_agent_sdk``.
 
     Resolved lazily so that tests (and environments without the SDK
     installed) don't fail at import time.
+
+    ``transcript_locator(cwd, session_ids) -> [paths]`` finds a session's Claude Code transcript files
+    (default ``default_transcript_paths``); ``poll_s`` is how often a v8 session's transcript is read
+    in the background. Both are seams for tests.
     """
+    locate = transcript_locator or default_transcript_paths
+    poll_every = _TRANSCRIPT_POLL_S if poll_s is None else float(poll_s)
 
     def _runner(
         *,
@@ -569,6 +727,8 @@ def _default_sdk_runner_factory() -> SDKRunner:
         resume: str | None = None,
         max_cost_usd: float | None = None,
         cost_rates: dict | None = None,
+        transcript_caps: bool = False,
+        hang_after_s: float | None = None,
     ) -> SDKResult:
         try:
             import anyio
@@ -585,15 +745,93 @@ def _default_sdk_runner_factory() -> SDKRunner:
             ) from exc
 
         cli: dict = {}  # the transport whose CLI process _run must not leave running
+        # v8: the transcript is the cost truth (the stream reports a few output tokens per reply), and
+        # its system/api_error lines show a session stuck in gateway timeouts.
+        meter = (TranscriptMeter(locate, cwd, since=time.time(), rates=cost_rates)
+                 if transcript_caps or hang_after_s else None)
+        if meter is not None and resume:
+            meter.session_ids.add(resume)
+        live = {"reply": time.time(), "api_error": 0.0, "stream_usd": 0.0}
+        stop: dict = {}  # {"why": "cap" | "hang"} once the watcher decided to end the session
+        watcher_done = threading.Event()
+
+        def _check() -> str | None:
+            if meter is None:
+                return None
+            meter.poll()
+            if transcript_caps and max_cost_usd is not None:
+                if max(meter.cost(), live["stream_usd"]) >= max_cost_usd:
+                    return "cap"
+            if hang_after_s:
+                last_reply = max(live["reply"], meter.last_assistant_ts or 0.0)
+                last_err = max(live["api_error"], meter.last_api_error_ts or 0.0)
+                if time.time() - last_reply > hang_after_s and last_err > last_reply:
+                    return "hang"
+            return None
+
+        def _kill_cli() -> None:
+            pid = getattr(getattr(cli.get("transport"), "_process", None), "pid", None)
+            if pid is not None:
+                kill_process_tree(pid)
+
+        def _watch() -> None:
+            while not watcher_done.wait(poll_every):
+                why = _check()
+                if why:
+                    stop.setdefault("why", why)
+                    logger.warning("v8: stopping session (%s) from its transcript", why)
+                    _kill_cli()
+                    return
+
+        def _best_usage(stream_usage: dict) -> dict:
+            """The larger (on the ruler) of the stream's usage and the transcript's."""
+            if meter is None or not transcript_caps:
+                return stream_usage
+            meter.poll()
+            tu = meter.totals()
+            return tu if usage_cost(tu, cost_rates) > usage_cost(stream_usage, cost_rates) else stream_usage
+
+        def _with_transcript_usage(res: SDKResult) -> SDKResult:
+            if meter is None or not transcript_caps:
+                return res
+            best = _best_usage(_usage_of(res))
+            if usage_cost(best, cost_rates) <= usage_cost(_usage_of(res), cost_rates):
+                return res
+            import dataclasses as _dc
+            return _dc.replace(res, cost_usd=usage_cost(best, cost_rates),
+                               **{k: int(best.get(k, 0) or 0) for k in _USAGE_KEYS})
 
         async def _run() -> SDKResult:
             # Every exit (cap stop, error result, watchdog, STOP_IMMEDIATE, exception) kills the CLI
             # tree; otherwise it keeps working unattended, editing worktrees and spending.
+            watcher = None
+            if meter is not None:
+                watcher = threading.Thread(target=_watch, daemon=True, name="nous-transcript-watch")
+                watcher.start()
             try:
-                return await _session()
+                res = await _session()
             finally:
+                watcher_done.set()
                 if cli.get("transport") is not None:
                     await _stop_cli(cli["transport"], exit_wait_s=5.0 if cli.get("result_seen") else 0.0)
+                if watcher is not None:
+                    watcher.join(timeout=5)
+            return _with_transcript_usage(res)
+
+        def _stopped_result(text: str, session_id: str | None, t0: float, n: int) -> SDKResult:
+            """The cap or hang outcome after the watcher (or the loop) ended the session."""
+            totals = _best_usage(_partial_totals())
+            spent = usage_cost(totals, cost_rates)
+            if stop.get("why") == "hang":
+                err = SDKHangError(f"no assistant reply for over {hang_after_s:.0f}s while only API errors "
+                                   "arrived; session killed")
+                err.usage, err.session_id = totals, session_id
+                raise err
+            return SDKResult(text=text, is_error=True,
+                             error_message=f"session cost ${spent:.2f} reached the ${max_cost_usd:.2f} cap",
+                             subtype="error_max_budget_usd", cost_usd=spent,
+                             duration_ms=int((time.time() - t0) * 1000), num_turns=n, session_id=session_id,
+                             **{k: int(totals.get(k, 0) or 0) for k in _USAGE_KEYS})
 
         async def _session() -> SDKResult:
             # #193: ``permission_mode`` controls the Claude Code SDK
@@ -684,86 +922,115 @@ def _default_sdk_runner_factory() -> SDKRunner:
             last_mid: str | None = None
             stream_session_id: str | None = None
             stream = aiter_with_silence_watchdog(aiter, turn_silence_threshold)
-            async for message in stream:
-                if stop_immediate_path is not None and stop_immediate_path.exists():
-                    raise SDKTransientError(
-                        "STOP_IMMEDIATE sentinel detected; aborting SDK turn "
-                        "at event boundary (#250 / F5)."
-                    )
-                cls = type(message).__name__
-                message_class_counts[cls] = message_class_counts.get(cls, 0) + 1
-                # #127 Phase B: tee every SDK message as a JSONL event so
-                # `nous status --watch` can render live progress.
-                _tee_event(event_log_path, message, cls)
-                if cls == "AssistantMessage":
-                    for block in getattr(message, "content", []):
-                        if hasattr(block, "text"):
-                            text_chunks.append(block.text)
-                    stream_session_id = getattr(message, "session_id", None) or stream_session_id
-                    if max_cost_usd is not None and isinstance(getattr(message, "usage", None), dict):
-                        # One reply streams as several messages repeating its usage: count it once.
-                        mid = getattr(message, "message_id", None) or f"#{len(reply_usage)}"
-                        prev = reply_usage.get(mid)
-                        if prev is None or usage_cost(message.usage, cost_rates) >= usage_cost(prev, cost_rates):
-                            reply_usage[mid] = message.usage
-                        last_mid = mid
-                        spent = sum(usage_cost(u, cost_rates) for u in reply_usage.values())
-                        if spent >= max_cost_usd:
-                            with contextlib.suppress(Exception):
-                                await stream.aclose()
-                            totals = {k: sum(int(u.get(k, 0) or 0) for u in reply_usage.values())
-                                      for k in ("input_tokens", "output_tokens",
-                                                "cache_read_input_tokens", "cache_creation_input_tokens")}
+            try:
+                async for message in stream:
+                    if stop.get("why"):
+                        break
+                    if stop_immediate_path is not None and stop_immediate_path.exists():
+                        raise SDKTransientError(
+                            "STOP_IMMEDIATE sentinel detected; aborting SDK turn "
+                            "at event boundary (#250 / F5)."
+                        )
+                    cls = type(message).__name__
+                    message_class_counts[cls] = message_class_counts.get(cls, 0) + 1
+                    # #127 Phase B: tee every SDK message as a JSONL event so
+                    # `nous status --watch` can render live progress.
+                    _tee_event(event_log_path, message, cls)
+                    if cls == "AssistantMessage":
+                        live["reply"] = time.time()
+                        for block in getattr(message, "content", []):
+                            if hasattr(block, "text"):
+                                text_chunks.append(block.text)
+                        stream_session_id = getattr(message, "session_id", None) or stream_session_id
+                        if meter is not None and stream_session_id:
+                            meter.session_ids.add(stream_session_id)
+                        if max_cost_usd is not None and isinstance(getattr(message, "usage", None), dict):
+                            # One reply streams as several messages repeating its usage: count it once.
+                            mid = getattr(message, "message_id", None) or f"#{len(reply_usage)}"
+                            prev = reply_usage.get(mid)
+                            if prev is None or usage_cost(message.usage, cost_rates) >= usage_cost(prev, cost_rates):
+                                reply_usage[mid] = message.usage
+                            last_mid = mid
+                            spent = sum(usage_cost(u, cost_rates) for u in reply_usage.values())
+                            live["stream_usd"] = spent
+                            if spent >= max_cost_usd:
+                                with contextlib.suppress(Exception):
+                                    await stream.aclose()
+                                totals = {k: sum(int(u.get(k, 0) or 0) for u in reply_usage.values())
+                                          for k in ("input_tokens", "output_tokens",
+                                                    "cache_read_input_tokens", "cache_creation_input_tokens")}
+                                return SDKResult(
+                                    text="".join(text_chunks),
+                                    is_error=True,
+                                    error_message=(f"session cost ${spent:.2f} reached the "
+                                                   f"${max_cost_usd:.2f} cap"),
+                                    subtype="error_max_budget_usd",
+                                    cost_usd=spent,
+                                    duration_ms=int((time.time() - t0) * 1000),
+                                    num_turns=len(reply_usage),
+                                    session_id=stream_session_id,
+                                    last_turn_cost_usd=usage_cost(reply_usage[last_mid], cost_rates),
+                                    **totals,
+                                )
+                    elif cls == "SystemMessage":
+                        data = getattr(message, "data", None)
+                        if isinstance(data, dict) and data.get("session_id"):
+                            stream_session_id = stream_session_id or data["session_id"]
+                            if meter is not None:
+                                meter.session_ids.add(stream_session_id)
+                        sub = str(getattr(message, "subtype", "") or "").lower()
+                        if "error" in sub or "retry" in sub:
+                            live["api_error"] = time.time()
+                    elif cls == "ResultMessage":
+                        cli["result_seen"] = True
+                        usage = getattr(message, "usage", {}) or {}
+                        cost_usd = float(getattr(message, "total_cost_usd", 0.0) or 0.0)
+                        duration_ms = int(getattr(message, "duration_ms", 0) or 0)
+                        num_turns = int(getattr(message, "num_turns", 0) or 0)
+                        session_id = getattr(message, "session_id", None) or None
+                        if meter is not None and session_id:
+                            meter.session_ids.add(session_id)
+                        if getattr(message, "is_error", False):
                             return SDKResult(
                                 text="".join(text_chunks),
+                                # #216: build a diagnostic-rich error_message
+                                # so retry_log rows aren't literally "None".
+                                error_message=build_error_message(
+                                    message,
+                                    message_class_counts=message_class_counts,
+                                ),
                                 is_error=True,
-                                error_message=(f"session cost ${spent:.2f} reached the "
-                                               f"${max_cost_usd:.2f} cap"),
-                                subtype="error_max_budget_usd",
-                                cost_usd=spent,
-                                duration_ms=int((time.time() - t0) * 1000),
-                                num_turns=len(reply_usage),
-                                session_id=stream_session_id,
-                                last_turn_cost_usd=usage_cost(reply_usage[last_mid], cost_rates),
-                                **totals,
+                                input_tokens=int(usage.get("input_tokens", 0) or 0),
+                                output_tokens=int(usage.get("output_tokens", 0) or 0),
+                                cache_read_input_tokens=int(
+                                    usage.get("cache_read_input_tokens", 0) or 0
+                                ),
+                                cache_creation_input_tokens=int(
+                                    usage.get("cache_creation_input_tokens", 0) or 0
+                                ),
+                                cost_usd=cost_usd,
+                                duration_ms=duration_ms,
+                                num_turns=num_turns,
+                                session_id=session_id,
+                                subtype=getattr(message, "subtype", None),
+                                last_turn_cost_usd=(usage_cost(reply_usage[last_mid], cost_rates)
+                                                    if last_mid else 0.0),
                             )
-                elif cls == "SystemMessage":
-                    data = getattr(message, "data", None)
-                    if isinstance(data, dict) and data.get("session_id"):
-                        stream_session_id = stream_session_id or data["session_id"]
-                elif cls == "ResultMessage":
-                    cli["result_seen"] = True
-                    usage = getattr(message, "usage", {}) or {}
-                    cost_usd = float(getattr(message, "total_cost_usd", 0.0) or 0.0)
-                    duration_ms = int(getattr(message, "duration_ms", 0) or 0)
-                    num_turns = int(getattr(message, "num_turns", 0) or 0)
-                    session_id = getattr(message, "session_id", None) or None
-                    if getattr(message, "is_error", False):
-                        return SDKResult(
-                            text="".join(text_chunks),
-                            # #216: build a diagnostic-rich error_message
-                            # so retry_log rows aren't literally "None".
-                            error_message=build_error_message(
-                                message,
-                                message_class_counts=message_class_counts,
-                            ),
-                            is_error=True,
-                            input_tokens=int(usage.get("input_tokens", 0) or 0),
-                            output_tokens=int(usage.get("output_tokens", 0) or 0),
-                            cache_read_input_tokens=int(
-                                usage.get("cache_read_input_tokens", 0) or 0
-                            ),
-                            cache_creation_input_tokens=int(
-                                usage.get("cache_creation_input_tokens", 0) or 0
-                            ),
-                            cost_usd=cost_usd,
-                            duration_ms=duration_ms,
-                            num_turns=num_turns,
-                            session_id=session_id,
-                            subtype=getattr(message, "subtype", None),
-                            last_turn_cost_usd=(usage_cost(reply_usage[last_mid], cost_rates)
-                                                if last_mid else 0.0),
-                        )
+                    if meter is not None and not stop.get("why"):
+                        why = _check()  # also at every stream message, not only every poll interval
+                        if why:
+                            stop.setdefault("why", why)
+                            _kill_cli()
+                            break
+            except Exception:
+                if not stop.get("why"):
+                    raise
+                # the watcher killed the CLI, which ends its stream with an error: that is the stop
+            if stop.get("why"):
+                with contextlib.suppress(Exception):
+                    await stream.aclose()
+                return _stopped_result("".join(text_chunks), stream_session_id or session_id, t0,
+                                       len(reply_usage))
             return SDKResult(
                 text="".join(text_chunks),
                 input_tokens=int(usage.get("input_tokens", 0) or 0),
@@ -791,7 +1058,9 @@ def _default_sdk_runner_factory() -> SDKRunner:
         try:
             return anyio.run(_run)
         except SDKTransientError as exc:
-            exc.usage = _partial_totals()  # what the aborted turn already spent, for dollar caps
+            exc.usage = _best_usage(_partial_totals())  # what the aborted turn already spent, for caps
+            raise
+        except SDKHangError:
             raise
         except Exception as exc:
             cls_name = type(exc).__name__
@@ -805,7 +1074,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
             )
             if any(sig in cls_name for sig in transient_signals):
                 err = SDKTransientError(f"{cls_name}: {exc}")
-                err.usage = _partial_totals()
+                err.usage = _best_usage(_partial_totals())
                 raise err from exc
             raise
 
@@ -958,6 +1227,22 @@ class SDKDispatcher(CLIDispatcher):
         # Budget the session is told to aim for; the hard cap (budget_usd) may be looser.
         self.target_usd: float | None = None
         self._session_label: str | None = None
+        # Session id of the last SDK result (or hang); v8 resumes a screened arm's session from it.
+        self.last_session_id: str | None = None
+        self._initial_resume: str | None = None
+
+    @contextlib.contextmanager
+    def resume_session(self, session_id: str | None):
+        """The first SDK turn of the next dispatch inside the block continues ``session_id``.
+
+        If that resume fails, the normal retry starts a fresh session with the same prompt.
+        """
+        old = self._initial_resume
+        self._initial_resume = session_id or None
+        try:
+            yield
+        finally:
+            self._initial_resume = old
 
     @contextlib.contextmanager
     def session_budget(self, usd: float | None, label: str | None = None, target_usd: float | None = None):
@@ -1100,9 +1385,18 @@ class SDKDispatcher(CLIDispatcher):
         failure_count = 0
         original_prompt = prompt
         wrap_ups_left = max_wrap_ups(self.campaign)
-        from orchestrator.design_profile import is_v7
-        output_limit_resumes_left = 2 if is_v7(self.campaign or {}) else 0
-        resume_id: str | None = None
+        from orchestrator.design_profile import is_v7_family, is_v8, v8_settings
+        output_limit_resumes_left = 2 if is_v7_family(self.campaign or {}) else 0
+        v8 = is_v8(self.campaign or {})
+        # v8: a capped session's spend comes from its transcript, and a hung session is stopped.
+        v8_kw: dict = {}
+        if v8:
+            v8_kw["hang_after_s"] = v8_settings(self.campaign).hang_minutes * 60.0
+        # v8: after a dollar cap the orchestrator writes the artifacts from disk; only the design
+        # session (whose bundle nothing else can write) keeps its wrap-up.
+        cap_wrap_up = not (v8 and self._session_label != "design")
+        resume_id: str | None = self._initial_resume
+        self._initial_resume = None
         # Dollar cap (v7): ``limit`` is what this whole dispatch may spend on the token ruler, across
         # retries; ``spent`` counts every attempt, including the partial usage of transient aborts.
         # Retries only get ``limit - spent``. The only extension is a wrap-up after a cap or turn limit.
@@ -1136,7 +1430,18 @@ class SDKDispatcher(CLIDispatcher):
                     **({"resume": resume_id} if resume_id else {}),
                     **({"max_cost_usd": budget, "cost_rates": self._cost_rates()}
                        if cap is not None else {}),
+                    **({"transcript_caps": True} if v8 and cap is not None else {}),
+                    **v8_kw,
                 )
+            except SDKHangError as exc:
+                # Not retried here: a resumed or fresh retry would replay the request that hangs. The
+                # caller restarts the work from its last saved state.
+                self._log_retry("hang", failure_count + 1, exc)
+                if cap is not None:
+                    self._charge_partial(exc, budget)
+                if getattr(exc, "session_id", None):
+                    self.last_session_id = exc.session_id
+                raise
             except SDKTransientError as exc:
                 failure_count += 1
                 self._log_retry("transient", failure_count, exc)
@@ -1152,6 +1457,8 @@ class SDKDispatcher(CLIDispatcher):
                 continue
 
             self._log_metrics_row(result, budget if cap is not None else None)
+            if result.session_id:
+                self.last_session_id = result.session_id
             if cap is not None:
                 spent += usage_cost(_usage_of(result), self._cost_rates())
                 last_text = result.text or last_text
@@ -1160,7 +1467,7 @@ class SDKDispatcher(CLIDispatcher):
             # wrap-up sized from the last turn so the session writes its artifacts, then stop.
             if result.is_error and (result.subtype == "error_max_budget_usd"
                                     or "error_max_budget_usd" in result.error_message):
-                if result.session_id and not budget_wrap_up_done:
+                if result.session_id and not budget_wrap_up_done and cap_wrap_up:
                     budget_wrap_up_done = True
                     self._log_retry("max_budget_wrap_up", failure_count + 1,
                                     RuntimeError(result.error_message))
@@ -1249,8 +1556,9 @@ class SDKDispatcher(CLIDispatcher):
         if not any(usage.values()):
             return 0.0
         cost = usage_cost(usage, self._cost_rates())
+        kind = "hang" if isinstance(exc, SDKHangError) else "transient abort"
         self._log_metrics_row(SDKResult(text="", cost_usd=cost, num_turns=0, is_error=True,
-                                        error_message=f"transient abort: {exc}"[:200], **usage), budget)
+                                        error_message=f"{kind}: {exc}"[:200], **usage), budget)
         return cost
 
     def _cost_rates(self) -> dict:

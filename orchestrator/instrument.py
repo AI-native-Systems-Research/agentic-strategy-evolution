@@ -99,8 +99,8 @@ def format_summary(source: str, data: dict) -> str:
 
 def instrument_summary(campaign: dict, work_dir: Path, iteration: int | None = None) -> str:
     """Summary of the newest valid instrument.json; empty for other profiles or when there is none."""
-    from orchestrator.design_profile import is_v7
-    if not is_v7(campaign):
+    from orchestrator.design_profile import is_v7_family
+    if not is_v7_family(campaign):
         return ""
     found = latest_instrument(work_dir, iteration)
     return format_summary(*found) if found else ""

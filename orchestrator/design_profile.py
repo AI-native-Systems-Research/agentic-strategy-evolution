@@ -25,8 +25,14 @@ V6 = "v6"
 # v7 = v6 + competing mechanism arms (h-alternative) screened in fresh dollar-capped sessions, one long session
 # for the winner, a local evaluator built in the first iteration, and a per-iteration dollar cap.
 V7 = "v7"
-CARRY_PROFILES = (V5, V6, V7)
-LIGHT_PROFILES = (LIGHTWEIGHT, V4, V5, V6, V7)
+# v8 = v7 + caps from the session transcripts, a judge profile learned from official measures (time limit,
+# likely timeouts, local-evaluator trust), the screening winner continuing in its own session, exploit
+# iterations while the best improves, a measured baseline, one repair pass per failed arm, hang recovery,
+# and orchestrator-written artifacts after a cap stop.
+V8 = "v8"
+V7_FAMILY = (V7, V8)  # profiles that run the v7 multi-session EXECUTE machinery
+CARRY_PROFILES = (V5, V6, V7, V8)
+LIGHT_PROFILES = (LIGHTWEIGHT, V4, V5, V6, V7, V8)
 V4_ARM_REFINE_CYCLES = 10
 V5_EXECUTE_MAX_TURNS = 45
 LIGHTWEIGHT_DESIGN_MAX_TURNS = 30
@@ -166,8 +172,24 @@ def is_v7(campaign: dict) -> bool:
     return profile_for(campaign) == V7
 
 
+def is_v7_family(campaign: dict) -> bool:
+    """True for v7 and v8, which share the screening machinery."""
+    return profile_for(campaign) in V7_FAMILY
+
+
+def is_v8(campaign: dict) -> bool:
+    return profile_for(campaign) == V8
+
+
+def _settings_block(campaign: dict) -> dict:
+    """The profile's settings block: ``v8`` (falling back to ``v7``) for v8, else ``v7``."""
+    if is_v8(campaign):
+        return campaign.get("v8") or campaign.get("v7") or {}
+    return campaign.get("v7") or {}
+
+
 def v7_settings(campaign: dict) -> V7Settings:
-    cfg = campaign.get("v7") or {}
+    cfg = _settings_block(campaign)
     return V7Settings(
         arm_budget_usd=float(cfg.get("arm_budget_usd", V7_DEFAULT_ARM_BUDGET_USD)),
         iteration_budget_usd=float(cfg.get("iteration_budget_usd", V7_DEFAULT_ITERATION_BUDGET_USD)),
@@ -177,14 +199,50 @@ def v7_settings(campaign: dict) -> V7Settings:
     )
 
 
+V8_DEFAULT_WINNER_SHARE = 0.4
+V8_DEFAULT_REPAIR_BUDGET_USD = 1.0
+V8_DEFAULT_HANG_MINUTES = 15.0
+V8_DEFAULT_ASSUMED_TIME_LIMIT_S = 1.0
+V8_NOISE_UNKNOWN = 0.5  # improvement threshold when the judge's noise is unknown
+
+
+@dataclass(frozen=True)
+class V8Settings:
+    winner_share: float = V8_DEFAULT_WINNER_SHARE
+    repair_budget_usd: float = V8_DEFAULT_REPAIR_BUDGET_USD
+    hang_minutes: float = V8_DEFAULT_HANG_MINUTES
+    assumed_time_limit_s: float = V8_DEFAULT_ASSUMED_TIME_LIMIT_S
+    official_log: str | None = None  # JSONL of official measures; default <work_dir>/official_measures.jsonl
+
+
+def v8_settings(campaign: dict) -> V8Settings:
+    cfg = campaign.get("v8") or {}
+    return V8Settings(
+        winner_share=float(cfg.get("winner_share", V8_DEFAULT_WINNER_SHARE)),
+        repair_budget_usd=float(cfg.get("repair_budget_usd", V8_DEFAULT_REPAIR_BUDGET_USD)),
+        hang_minutes=float(cfg.get("hang_minutes", V8_DEFAULT_HANG_MINUTES)),
+        assumed_time_limit_s=float(cfg.get("assumed_time_limit_s", V8_DEFAULT_ASSUMED_TIME_LIMIT_S)),
+        official_log=cfg.get("official_log") or None,
+    )
+
+
 def v7_design_context(campaign: dict, work_dir: Path, iteration: int | None = None) -> str:
     """v7 DESIGN note on the local evaluator: plan it while missing, otherwise point at its README.
 
     Once an instrument.json exists, its summary follows unless the campaign handoff already carries it.
     When this iteration's evaluator ran before the design (iteration 1), the baseline score follows too.
     """
-    if not is_v7(campaign):
+    if not is_v7_family(campaign):
         return ""
+    if is_v8(campaign):
+        from orchestrator.v8_execute import v8_design_note
+        extra = v8_design_note(campaign, work_dir, iteration)
+    else:
+        extra = ""
+    return _v7_evaluator_note(campaign, work_dir, iteration) + extra
+
+
+def _v7_evaluator_note(campaign: dict, work_dir: Path, iteration: int | None) -> str:
     ev = Path(work_dir).resolve() / EVALUATOR_DIR
     readme = ev / "README.md"
     if readme.is_file() and readme.read_text().strip():
@@ -295,11 +353,11 @@ def design_guidance(campaign: dict, max_turns: int, mode: str = "real") -> str:
         "- **Do not implement or measure:** do not edit the target or solution files and do not run candidate "
         "solutions. In the first iteration you may run the baseline command once to confirm it works; later, "
         "cite the last measured score from the handoff or executor update as the baseline validation.\n"
-        + (V7_ARMS if profile_for(campaign) == V7 else LIGHT_ARMS)
+        + (V7_ARMS if profile_for(campaign) in V7_FAMILY else LIGHT_ARMS)
         + "- **Seeds:** use a single seed when the measurement is deterministic.\n"
         + (V4_DESIGN_EXTRA if profile_for(campaign) == V4 else "")
         + (V5_DESIGN_EXTRA if profile_for(campaign) in CARRY_PROFILES else "")
-        + (V7_DESIGN_EXTRA if profile_for(campaign) == V7 else "")
+        + (V7_DESIGN_EXTRA if profile_for(campaign) in V7_FAMILY else "")
         + "\n"
     )
 
@@ -331,7 +389,7 @@ def execute_guidance(campaign: dict, mode: str = "real") -> str:
         "step. The next designer starts from this file instead of re-exploring the system.\n"
         + (V4_EXECUTE_EXTRA if profile_for(campaign) == V4 else "")
         + (V5_EXECUTE_EXTRA if profile_for(campaign) in CARRY_PROFILES else "")
-        + (V7_EXECUTE_EXTRA if profile_for(campaign) == V7 else "")
+        + (V7_EXECUTE_EXTRA if profile_for(campaign) in V7_FAMILY else "")
         + "\n"
     )
 

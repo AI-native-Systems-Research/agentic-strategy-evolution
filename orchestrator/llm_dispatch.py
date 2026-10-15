@@ -575,6 +575,11 @@ class LLMDispatcher:
         ("executor", "execute-analyze"): ("execute_analyze", "json", "execute_analyze.schema.json"),
         ("executor", "execute-arm"): ("execute_arm", None, None),
         ("executor", "build-evaluator"): ("build_evaluator", None, None),
+        # design_profile v8 sessions
+        ("executor", "execute-arm-v8"): ("execute_arm_v8", None, None),
+        ("executor", "build-evaluator-v8"): ("build_evaluator_v8", None, None),
+        ("executor", "continue-arm"): ("continue_arm", None, None),
+        ("executor", "repair-arm"): ("repair_arm", None, None),
         ("summarizer", "summarize-gate"): ("summarize_gate", "json", "gate_summary.schema.json"),
         ("extractor", "report"): ("report", None, None),
     }
@@ -777,6 +782,11 @@ class LLMDispatcher:
             ctx.update(session_context(self.campaign, self.work_dir, iteration, perspective,
                                        budget_usd=getattr(self, "target_usd", None)
                                        or getattr(self, "budget_usd", None)))
+        if phase in ("execute-arm-v8", "build-evaluator-v8", "continue-arm", "repair-arm"):
+            from orchestrator.v8_execute import v8_session_context
+            ctx.update(v8_session_context(self.campaign, self.work_dir, iteration, perspective, phase,
+                                          budget_usd=getattr(self, "target_usd", None)
+                                          or getattr(self, "budget_usd", None)))
 
         if perspective is not None:
             ctx["perspective_name"] = perspective
