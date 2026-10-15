@@ -130,7 +130,7 @@
         "number",
         "null"
       ],
-      "description": "R_delta(x) from terminal discrimination at delta_terminal (design spec 3.5) -- the simultaneous max over challengers, carrying nothing but the fresh measurements of the realized shortlist. Null when no finalist produced a valid measurement. DELIBERATELY UNAFFECTED by an exclusion: it is a valid WITHIN-SHORTLIST number even when the shortlist shrank, and suppressing it would hide the comparison that genuinely did happen. It is `certified` that an exclusion suppresses, not this. Never collapsed with recommendation.json's residual_regret_model, which is a different number at a different delta from disjoint inputs."
+      "description": "R_delta(x) from terminal discrimination at delta_terminal (design spec 3.5) -- the simultaneous max over the ADMISSIBLE members of the realized shortlist, carrying nothing but their fresh measurements. Null when no finalist produced a valid measurement, when the bound was not estimable, or when ANY admissible finalist went unmeasured: that rival's U_t is unknown, so the max over the shortlist is unknown, and an unknown is not a zero (INV-SEM02) -- a survivors-only max would UNDERSTATE the regret against exactly the rival nobody measured. The survivors-only number is then recorded as terminal_bound_measured_only. UNAFFECTED by an INADMISSIBLE finalist: that one is outside X_valid, the bound over the admissible shortlist is still valid, and it is `certified` that the exclusion suppresses. Never collapsed with recommendation.json's residual_regret_model, which is a different number at a different delta from disjoint inputs."
     },
     "terminal_bound": {
       "type": "object",
@@ -175,8 +175,17 @@
     },
     "certification_withheld": {
       "type": "array",
-      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "fit_exclusions_level_correlated"] },
-      "description": "Why `certified` is false, as named reasons rather than an unexplained boolean -- so a reader can tell a bound that was simply too wide from a GLOBAL claim withheld because the delta_screen premise was broken. Empty exactly when certified is true. `finalist_measured_infeasible` and `fit_exclusions_level_correlated` are the two premise-breaking reasons: both are evidence that the model's ranking is not tracking the constrained objective, so epsilon-optimality over X_valid is unearned even though residual_regret_terminal (a WITHIN-SHORTLIST number resting on fresh measurements and no model) remains valid and is still reported.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "bound_above_epsilon",
+          "bound_not_computable",
+          "finalist_measured_infeasible",
+          "finalist_unmeasured",
+          "fit_exclusions_level_correlated"
+        ]
+      },
+      "description": "Why `certified` is false, as named reasons rather than an unexplained boolean -- so a reader can tell a bound that was simply too wide from a GLOBAL claim withheld because the delta_screen premise was broken, or from a shortlist that was never fully compared. Empty exactly when certified is true. `finalist_measured_infeasible` and `fit_exclusions_level_correlated` are the two premise-breaking reasons: both are evidence that the model's ranking is not tracking the constrained objective, so epsilon-optimality over X_valid is unearned even though residual_regret_terminal (a number over the admissible shortlist resting on fresh measurements and no model) remains valid and is still reported. `finalist_unmeasured` means an admissible finalist produced no usable measurement (timeout, crash, unparseable output): the comparison is incomplete, residual_regret_terminal is null, and the remedy is to re-run it rather than strike it off.",
       "default": []
     },
     "certified": {
@@ -273,6 +282,10 @@
           "type": "number"
         }
       }
+    },
+    "terminal_bound_measured_only": {
+      "$ref": "#/properties/terminal_bound",
+      "description": "PRESENT ONLY when a finalist went unmeasured while the measured finalists still yielded a bound: that bound, over the measured finalists alone. Recorded because the comparison among the survivors genuinely happened; NOT residual_regret_terminal, because it is silent about the unmeasured rival(s) and would understate the regret."
     }
   }
 }
