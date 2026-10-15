@@ -1094,6 +1094,22 @@ def _baseline_equivalent(
     return abs(post_mean - pre_mean) / abs(pre_mean) <= frac
 
 
+def built_factor_ids(factors, ran: set) -> set[str]:
+    """Factors the build is AUTHORING: some declared correctness test did not run.
+
+    ``ran`` is the set of declared native tests that executed against the
+    pre-build tree. The single owner of this rule, shared by verify's oracle
+    2(b) and ``nous validate --smoke`` so the warning an author sees before
+    launching is the verdict verify will reach.
+    """
+    return {
+        f.id for f in factors
+        if any(isinstance(r, dict) and r.get("kind") == "correctness"
+               and r.get("native_test") and r["native_test"] not in ran
+               for r in (f.relations or ()))
+    }
+
+
 def _check_tests_failed_before_build(
     campaign: dict, work_dir: Path, factors, test_results: dict | None,
 ) -> None:
@@ -1149,12 +1165,7 @@ def _check_tests_failed_before_build(
     # built mechanism aborted at verify (found authoring a real one). When NO
     # factor has an unwritten test, the build is changing existing behaviour and
     # the strict rule applies to every factor, as before.
-    ran = set(pre.get("ran") or ())
-    built = {
-        f.id for f in factors
-        if any(r.get("kind") == "correctness" and r.get("native_test")
-               and r["native_test"] not in ran for r in f.relations)
-    }
+    built = built_factor_ids(factors, set(pre.get("ran") or ()))
     bad = sorted({
         v.native_test for v in relations.reconcile(factors, test_results or {})
         if v.kind == "correctness" and v.native_test in already

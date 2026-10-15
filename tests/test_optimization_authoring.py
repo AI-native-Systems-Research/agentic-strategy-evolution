@@ -346,8 +346,25 @@ def test_smoke_with_build_does_not_fail_on_tests_build_will_author(tmp_path, cap
     assert "dropped 1 test path argument(s)" in out and "tests/test_new.py" in out
     # The existing relation still had to resolve and match.
     assert "1/1 declared identifier(s) matched" in out
-    # ...and it already passes pre-build, which verify's oracle 2(b) rejects.
-    assert "already PASS pre-build" in out and "allow_preexisting_tests" in out
+    # ...and it already passes pre-build -- but it belongs to a knob the target
+    # already has (all its tests ran), so oracle 2(b) does not bind it and smoke
+    # must not push the author toward allow_preexisting_tests.
+    assert "already PASS pre-build" not in out
+
+
+def test_smoke_warns_when_a_built_factors_test_already_passes(tmp_path, capsys):
+    """The case oracle 2(b) exists for: a factor the build AUTHORS also declares
+    a test that is green before the mechanism exists. Smoke must say so, with
+    exactly the verdict verify will reach."""
+    camp = _build_campaign(tmp_path, capsys, new_file_exists=False)
+    doc = yaml.safe_load(camp.read_text())
+    factors = doc["optimization"]["factors"]
+    existing = factors[0]["relations"][0]["native_test"]
+    factors[1]["relations"].append({"id": "B-R2", "kind": "correctness",
+                                    "statement": "s", "native_test": existing})
+    camp.write_text(yaml.safe_dump(doc, sort_keys=False))
+    code, out, err = _nous(["validate", "campaign", str(camp), "--smoke"], capsys)
+    assert "already PASS pre-build" in out and existing in out, err + out
 
 
 def test_smoke_with_build_still_fails_an_unmatched_existing_test(tmp_path, capsys):

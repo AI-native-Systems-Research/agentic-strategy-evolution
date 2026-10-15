@@ -1008,7 +1008,20 @@ def _smoke_check_optimization(
                 for f in factors for r in (getattr(f, "relations", ()) or [])
                 if isinstance(r, dict) and r.get("kind") == "correctness"
             }
-            already = sorted(k for k, v in matched.items() if v and k in correctness)
+            # The same factor-scoped rule verify applies: only a BUILT factor's
+            # pre-existing passing test is vacuous; an existing knob's is not.
+            from orchestrator.optimize.stage_runner import built_factor_ids
+
+            built = built_factor_ids(factors, set(matched) - set(to_author))
+            factor_of = {
+                r.get("native_test"): f.id
+                for f in factors for r in (getattr(f, "relations", ()) or [])
+                if isinstance(r, dict)
+            }
+            already = sorted(
+                k for k, v in matched.items()
+                if v and k in correctness and (not built or factor_of.get(k) in built)
+            )
             if already:
                 print(
                     f"  smoke: WARNING — {len(already)} declared correctness "
@@ -1016,10 +1029,10 @@ def _smoke_check_optimization(
                     + ("" if len(already) <= 4 else f" (+{len(already) - 4} more)")
                     + ". verify's oracle 2(b) aborts on a correctness test that "
                     "passed before build ran (it proves nothing about the "
-                    "mechanism). If these cover pre-existing behaviour (a knob "
-                    "the target already has), set "
-                    "optimization.build_checks.allow_preexisting_tests: true; "
-                    "otherwise strengthen them so they fail pre-build."
+                    "mechanism being built). Strengthen them so they fail "
+                    "against the pre-build tree; set "
+                    "optimization.build_checks.allow_preexisting_tests: true "
+                    "only if one genuinely covers pre-existing behaviour."
                 )
         if failed:
             problems.append(
