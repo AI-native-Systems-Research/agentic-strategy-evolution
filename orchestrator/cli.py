@@ -111,10 +111,19 @@ def resolve_work_dir(target):
             print(f"Campaign location resolution failed: {exc}", file=sys.stderr)
             sys.exit(1)
         if work_dir is None:
+            # Launched with `NOUS_CAMPAIGN_PARENT=... nous run FILE` from another
+            # shell: the variable is gone here, but the work_dir was recorded.
+            from orchestrator.work_dir_resolver import recorded_work_dir
+
+            work_dir = recorded_work_dir(run_id, repo_path)
+        if work_dir is None:
             print(
                 f"Work directory not found for run_id={run_id!r} "
-                f"(checked {ENV_VAR} location and "
-                f"{repo_path!s}/.nous/{run_id}/ if applicable).",
+                f"(checked {ENV_VAR} location, "
+                f"{repo_path!s}/.nous/{run_id}/ if applicable, and the work_dirs "
+                f"Nous has recorded). If the campaign was launched with "
+                f"{ENV_VAR}=... set inline, pass the same value here, or pass "
+                f"the work_dir itself.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -137,6 +146,10 @@ def resolve_work_dir(target):
     except ValueError as exc:
         print(f"Campaign location resolution failed: {exc}", file=sys.stderr)
         sys.exit(1)
+    if work_dir is None:
+        from orchestrator.work_dir_resolver import recorded_work_dir
+
+        work_dir = recorded_work_dir(run_id)
     if work_dir is None and not os.environ.get(ENV_VAR):
         # No env var set: fall through to legacy CWD-walk for
         # backward-compat with `nous status <run_id>` invoked from

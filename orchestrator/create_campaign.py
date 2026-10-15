@@ -358,7 +358,7 @@ PLACEHOLDER_TOKEN = "TODO-"
 #: How an author reaches the quickstart from ANY install. The repo path is not
 #: enough: a pip-installed `nous` ships no `docs/` tree, so pointing a user (or a
 #: Claude session) outside the checkout at a relative path was a dead end.
-QUICKSTART_DOC = "`nous docs quickstart` (docs/optimization-authoring-quickstart.md in the repo)"
+QUICKSTART_DOC = "`nous docs quickstart`"
 
 _OPT_TEMPLATE = """\
 # ─────────────────────────────────────────────────────────────────────────
@@ -378,6 +378,9 @@ _OPT_TEMPLATE = """\
 #   4. nous validate campaign FILE --liveness   # every level once + noise
 #                                               # floor + DESIGN PREVIEW
 #   5. NOUS_CAMPAIGN_PARENT=~/nous-campaigns nous run FILE
+#   6. monitor from any shell: nous progress FILE   (--json for tools,
+#      --line for one line); results: report.md / report.json in the
+#      work_dir, halt.json if a gate stopped it
 #
 # Model calls: ZERO unless you enable the opt-in `plan`/`build` stages
 # (bottom of file). Factors are declared HERE by you; no model proposes them.
@@ -417,7 +420,7 @@ optimization:
   # The interpreter you name must have your dependencies installed — use the
   # target's own venv path, e.g. ".venv/bin/python".
   # Each factor's rendered `apply` argument is APPENDED to this command.
-  # Contract (docs/targets.md): print ONE JSON object last on stdout, echo the
+  # Contract (`nous docs targets`): print ONE JSON object last on stdout, echo the
   # EFFECTIVE value of every factor under cfg.* on EVERY row (never omit a
   # field at some corners), read NOUS_WORKLOAD_SEED, write files only under
   # NOUS_RUN_DIR, exit non-zero on any failed measurement.
@@ -450,7 +453,7 @@ optimization:
 
   # Declare when the target is stochastic: replicate i of every finalist then
   # shares one seed, so confirm's comparison is PAIRED (much tighter). The
-  # adapter must actually read this variable (docs/targets.md §3).
+  # adapter must actually read this variable (`nous docs targets` §3).
   workload:
     seed_env: NOUS_WORKLOAD_SEED
 
@@ -472,7 +475,8 @@ optimization:
     # censored) — a violation means the row measured something else.
     self_check:
       - {{metric: TODO-completed-flag, op: "==", value: true}}
-    # Reported at confirm, NEVER optimized or fitted. Delete if none.
+    # Recorded on every row and summarised in report.json; NEVER optimized,
+    # fitted or ranked on -- the generalization check. Delete if none.
     held_out: [TODO-held-out-metric]
     # Run-to-run noise of the primary metric, percent (measure it:
     # --liveness prints the CV of repeated baseline runs).
@@ -481,11 +485,15 @@ optimization:
   factors:
     # Numeric factor. Integer-valued levels NEED `grid: 1`, or refine/centre
     # points may ask for 2.5. Levels must bracket the baseline (4 here).
+    # `scale: log` for a GEOMETRIC knob (a size, batch, interval spanning
+    # orders of magnitude): the centre point is then the geometric mean.
+    # Delete it for an additive knob (a ratio, a threshold).
     - id: A
       name: TODO-numeric-knob-name
       type: numeric
       levels: [1, 2, 4, 8]
       grid: 1
+      scale: log
       apply: "--TODO-numeric-flag={{level}}"
       # What the adapter ECHOES (a number, not "4"). Never trivially true.
       manipulation: {{observable: TODO-cfg.numeric_knob, op: "==", value: "{{level}}"}}
@@ -580,7 +588,7 @@ def scaffold_optimization_campaign(
 
 _ADAPTER_STUB = '''\
 #!/usr/bin/env python3
-"""Nous run_command adapter skeleton (contract: docs/targets.md).
+"""Nous run_command adapter skeleton (contract: `nous docs targets`).
 
 Nous invokes:  <run_command argv> + each factor's rendered `apply` argument,
 with cwd = target_system.repo_path. This script must:
@@ -635,7 +643,7 @@ if __name__ == "__main__":
 
 
 def write_adapter_stub(path: Path, *, force: bool = False) -> Path:
-    """Write the minimal adapter skeleton honouring docs/targets.md."""
+    """Write the minimal adapter skeleton honouring the `nous docs targets` contract."""
     path = Path(path)
     if path.exists() and not force:
         raise FileExistsError(

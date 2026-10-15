@@ -225,3 +225,67 @@ def ensure_self_ignored(directory: str | Path) -> None:
             "could not mark %s as ignored (%s); its contents will show in the "
             "target's git status", directory, exc,
         )
+
+
+# ─── where did that campaign go? (read-side registry) ─────────────────────
+#
+# `NOUS_CAMPAIGN_PARENT=... nous run FILE` -- the form the scaffold and the
+# `next:` line print -- sets the variable for that ONE command. A later
+# `nous progress FILE` from another shell (or another Claude session, which is
+# how most campaigns are monitored) does not have it, and used to answer "Work
+# directory not found". So every work_dir Nous sets up is recorded here, and the
+# READ-side lookups (status / progress / resume) fall back to it. Deliberately
+# NOT consulted by `find_existing_work_dir`, which `nous run` uses for collision
+# detection: what a fresh run may collide with is a question about the location
+# rules, not about history.
+
+STATE_HOME_ENV = "NOUS_STATE_HOME"
+
+
+def _registry_path() -> Path:
+    home = os.environ.get(STATE_HOME_ENV)
+    return (Path(home).expanduser() if home else Path.home() / ".nous") / "work_dirs.json"
+
+
+def _registry_key(run_id: str, repo_path) -> str:
+    rp = str(Path(repo_path).expanduser().resolve()) if repo_path else ""
+    return f"{rp}::{run_id}"
+
+
+def record_work_dir(run_id: str, repo_path, work_dir) -> None:
+    """Remember where ``run_id`` (for ``repo_path``) lives. Best-effort."""
+    path = _registry_path()
+    try:
+        doc = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(doc, dict):
+            doc = {}
+        doc[_registry_key(run_id, repo_path)] = str(Path(work_dir).resolve())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+        tmp.replace(path)
+    except (OSError, ValueError) as exc:
+        import logging
+
+        logging.getLogger(__name__).debug("could not record work_dir: %s", exc)
+
+
+def recorded_work_dir(run_id: str, repo_path=None) -> Path | None:
+    """The recorded work_dir for ``run_id``, if it still holds a campaign.
+
+    With ``repo_path`` the match is exact; without it (a bare run_id) the
+    run_id must be unambiguous across every recorded repo.
+    """
+    path = _registry_path()
+    try:
+        doc = json.loads(path.read_text()) if path.exists() else {}
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    if repo_path is not None:
+        hits = [doc.get(_registry_key(run_id, repo_path))]
+    else:
+        hits = [v for k, v in doc.items() if k.endswith(f"::{run_id}")]
+    live = [Path(h) for h in hits if h and (Path(h) / "state.json").exists()]
+    return live[0] if len(live) == 1 else None

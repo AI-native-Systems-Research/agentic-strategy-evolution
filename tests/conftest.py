@@ -30,6 +30,12 @@ class LiveLLMCallBlocked(RuntimeError):
 
 
 @pytest.fixture(autouse=True)
+def isolated_nous_state_home(tmp_path_factory, monkeypatch):
+    """Keep every test's work_dir registry out of the real ~/.nous."""
+    monkeypatch.setenv("NOUS_STATE_HOME", str(tmp_path_factory.mktemp("nous-state")))
+
+
+@pytest.fixture(autouse=True)
 def block_live_llm_calls(monkeypatch):
     """Auto-applied to every test: strip LLM API keys from env and refuse
     real network calls to known LLM hosts.

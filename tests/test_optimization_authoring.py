@@ -119,7 +119,7 @@ def _scaffold(tmp_path: Path, capsys, *extra: str) -> tuple[Path, Path]:
          "--target-repo-path", str(repo), *extra], capsys,
     )
     assert code == 0, err
-    assert "optimization-authoring-quickstart.md" in out
+    assert "nous docs quickstart" in out
     return camp, repo
 
 
@@ -138,7 +138,7 @@ def test_unedited_scaffold_fails_validate_naming_every_placeholder(tmp_path, cap
                  "optimization.locked_observables.TODO-locked-knob",
                  "target_system.name"):
         assert f"[placeholder] {path} =" in err, path
-    assert "docs/optimization-authoring-quickstart.md" in err
+    assert "nous docs quickstart" in err
     assert re.search(r"next: fix the \d+ error\(s\) above", err)
 
 

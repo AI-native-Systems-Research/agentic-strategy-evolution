@@ -106,6 +106,13 @@ says which step catches it. **[static]** = `nous validate campaign`,
 
 - **Integer levels need `grid: 1`**, or refine and the centre points can ask
   for `2.5`. [static warns]
+- **Geometric knobs need `scale: log`** — sizes, batches, intervals whose
+  levels span orders of magnitude (`[64, 512, 4096]`). Coded linearly, the
+  centre of `[1, 64]` runs at 32.5 and the design never looks near 8; on the
+  `geometric_knob` oracle that cost 26% on every seed. [static warns]
+- **Declare `refine` whenever you have ≥ 2 refinable factors**, even if you
+  expect no curvature: a screen whose centre points show curvature routes to
+  refine, and without it the campaign can only report the best corner. [static]
 - **`known_valid_baseline` must use declared levels for every factor**, and a
   numeric baseline should sit *inside* its levels. The preview says whether it
   brackets them. [static, live]
@@ -151,8 +158,33 @@ says which step catches it. **[static]** = `nous validate campaign`,
 ### Where artifacts go
 
 - **Export `NOUS_CAMPAIGN_PARENT`** so the state, ledger and reports land
-  outside the target repo. Without it they go to `<repo>/.nous/<run_id>/`.
-  [you]
+  outside the target repo. Without it they go to `<repo>/.nous/<run_id>/`,
+  which ignores itself in git. [you]
+
+### A system made of several repos
+
+Make the repo you run in a small **harness** that composes the others (install
+them editable from their clones into the harness's interpreter), put the
+adapter and relation tests there, and pin each component: have the adapter
+report each library's git commit, list them in `locked_parameters`, and map
+them in `locked_observables`. A run on any other commit then aborts the
+campaign instead of measuring a different system.
+
+## Running and monitoring (e.g. from a Claude session)
+
+- **Launch in the background**; a campaign outlives one shell. Pass
+  `NOUS_CAMPAIGN_PARENT` inline or exported — either way Nous records where
+  the work_dir went.
+- **Watch it from anywhere** with `nous progress FILE`: `--line` for one line,
+  `--json` for a tool (same shape as `progress.json`), `--watch` to redraw.
+  `nous status FILE` gives the phase; `nous stop FILE` halts cleanly at the
+  next boundary.
+- **When it ends, read three files** in the work_dir: `report.md` (the
+  answer, its basis on the fallback ladder, why it did or did not certify,
+  the held-out check), `halt.json` if a gate stopped it (the stage and the
+  reason; fix it, then `nous resume FILE`), and `meta_findings.json`.
+- **Only `plan` and `build` spend tokens.** `llm_metrics.jsonl` records every
+  attempt; `nous cost FILE` sums them.
 
 ## When the static check fails
 
@@ -164,9 +196,12 @@ repair.
 
 ## Further reading
 
-- [`optimization-campaign-guide.md`](optimization-campaign-guide.md) §2: every
-  field. §7.9: the full pre-flight checklist (corner timing, row-loss
-  robustness, objective fittability).
-- [`targets.md`](targets.md): the adapter contract, the seed verification
-  recipe, and choosing an epsilon that can certify.
-- `examples/optimization/*.yaml`: complete campaigns you can copy.
+All of these ship with every install: `nous docs <topic>`.
+
+- `nous docs guide` ([`optimization-campaign-guide.md`](optimization-campaign-guide.md))
+  §2: every field. §7.9: the full pre-flight checklist (corner timing,
+  row-loss robustness, objective fittability).
+- `nous docs targets` ([`targets.md`](targets.md)): the adapter contract, the
+  seed verification recipe, and choosing an epsilon that can certify.
+- `nous docs invariants`: what the kind guarantees, and the test that checks each.
+- `examples/optimization/*.yaml` in the repo: complete campaigns you can copy.
