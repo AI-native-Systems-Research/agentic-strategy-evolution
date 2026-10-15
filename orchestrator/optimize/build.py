@@ -54,6 +54,174 @@ logger = logging.getLogger(__name__)
 #: confused agent cannot spend a campaign's budget in one stage.
 DEFAULT_MAX_TURNS = 120
 
+#: Retries (beyond the first attempt) for the plan/build agent calls when
+#: ``optimization.agent_retries`` is unset. Deliberately SMALL, unlike the
+#: reflective dispatcher's 10: one real build attempt has cost ~$20 and ~30
+#: minutes, so the budget only has to ride out an infra hiccup, not an outage.
+DEFAULT_AGENT_RETRIES = 2
+
+#: Live silence-watchdog default for plan/build — the DESIGN-phase value,
+#: because both are heavy-reasoning turns with long gaps between tool calls.
+DEFAULT_AGENT_SILENCE_SECONDS = 600.0
+
+#: ``is_error`` results worth a fresh session. Kept small and explicit:
+#: context exhaustion (a fresh session with the resume hint IS the recovery)
+#: and provider-side overload / 5xx. Everything else — auth, invalid request,
+#: quota, max-turns — fails fast, because retrying it only multiplies the bill.
+_RETRYABLE_ERROR_PATTERNS = (
+    "prompt is too long",
+    "context length",
+    "context window",
+    "overloaded",
+    "rate limit",
+    "rate_limit",
+    "internal server error",
+    "api_error",
+    r"\b(429|500|502|503|504|529)\b",
+)
+
+
+def is_retryable_agent_error(result) -> bool:
+    """True when an ``is_error`` plan/build result is worth a fresh attempt."""
+    import re
+
+    msg = (getattr(result, "error_message", "") or "").lower()
+    return any(re.search(p, msg) for p in _RETRYABLE_ERROR_PATTERNS)
+
+
+def resolve_agent_retries(campaign: dict) -> int:
+    """``optimization.agent_retries``, else :data:`DEFAULT_AGENT_RETRIES`."""
+    raw = (campaign.get("optimization") or {}).get("agent_retries")
+    if raw is None:
+        return DEFAULT_AGENT_RETRIES
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ValueError(
+            f"optimization.agent_retries must be a non-negative integer, "
+            f"got {raw!r}"
+        )
+    return raw
+
+
+def resolve_agent_silence_threshold(campaign: dict, phase: str) -> float:
+    """Live watchdog threshold for the ``plan`` / ``build`` call.
+
+    Reads ``sdk_timeouts.turn_silence_threshold_seconds`` with the same
+    scalar-or-per-phase-map shape ``SDKDispatcher`` accepts: a scalar applies
+    to every phase; a map is looked up by ``phase``. Unset (or a map without
+    this phase) falls back to ``silence_threshold_seconds`` when the scalar
+    form is absent, else :data:`DEFAULT_AGENT_SILENCE_SECONDS`. ``0`` disables
+    the watchdog, as for the reflective kind.
+    """
+    timeouts = campaign.get("sdk_timeouts") or {}
+    raw = timeouts.get("turn_silence_threshold_seconds")
+    label = "campaign.sdk_timeouts.turn_silence_threshold_seconds"
+    if isinstance(raw, dict):
+        raw = raw.get(phase, DEFAULT_AGENT_SILENCE_SECONDS)
+        label += f".{phase}"
+    elif raw is None:
+        raw = timeouts.get("silence_threshold_seconds", DEFAULT_AGENT_SILENCE_SECONDS)
+        label = "campaign.sdk_timeouts.silence_threshold_seconds"
+    if isinstance(raw, bool):
+        raise ValueError(f"{label} must be a non-negative number, got {raw!r}")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{label} must be a non-negative number, got {raw!r}"
+        ) from exc
+    if value < 0:
+        raise ValueError(f"{label} must be >= 0, got {value}")
+    return value
+
+
+def run_agent_call(
+    runner: Callable,
+    *,
+    campaign: dict,
+    work_dir: Path,
+    phase: str,
+    role: str,
+    iteration: int,
+    model: str,
+    prompt: str,
+    runner_kwargs: dict,
+    retry_sleep: Callable[[float], None] | None = None,
+):
+    """One plan/build agent call under the shared SDK retry loop.
+
+    Wraps ``sdk_dispatch.call_sdk_with_retry`` — the same loop
+    ``SDKDispatcher`` uses — with this kind's policy: a small retry budget
+    (``optimization.agent_retries``), a live silence watchdog
+    (:func:`resolve_agent_silence_threshold`), fail-fast on non-retryable
+    ``is_error`` results, a ``retry_log.jsonl`` row per failure tagged with
+    ``phase``, and an ``llm_metrics.jsonl`` row for EVERY completed attempt.
+
+    Returns ``(result, metrics_row)`` for the successful attempt. Raises
+    ``sdk_dispatch.SDKCallFailed`` (or ``ValueError`` for bad config); the
+    caller translates that into its own ``BuildFailed`` / ``PlanRejected``.
+    """
+    from orchestrator.metrics import log_metrics
+    from orchestrator.sdk_dispatch import call_sdk_with_retry
+
+    metrics_path = Path(work_dir) / "llm_metrics.jsonl"
+    max_retries = resolve_agent_retries(campaign)
+    kwargs = dict(runner_kwargs)
+    kwargs["turn_silence_threshold"] = resolve_agent_silence_threshold(
+        campaign, phase,
+    )
+    rows: list[dict] = []
+
+    def _log(result) -> None:
+        row = {
+            "dispatcher": "sdk",
+            "role": role,
+            "phase": phase,
+            "model": model,
+            "input_tokens": getattr(result, "input_tokens", 0),
+            "output_tokens": getattr(result, "output_tokens", 0),
+            "cache_creation_input_tokens": getattr(
+                result, "cache_creation_input_tokens", 0,
+            ),
+            "cache_read_input_tokens": getattr(result, "cache_read_input_tokens", 0),
+            "cost_usd": getattr(result, "cost_usd", 0.0),
+            "duration_ms": getattr(result, "duration_ms", 0),
+            "num_turns": getattr(result, "num_turns", 1),
+        }
+        rows.append(row)
+        # Every attempt, BEFORE any error check: the tokens were spent whether
+        # or not the attempt succeeded, and the cost axis must see them.
+        log_metrics(metrics_path, row)
+
+    result = call_sdk_with_retry(
+        runner,
+        prompt=prompt,
+        runner_kwargs=kwargs,
+        max_retries=max_retries,
+        metrics_path=metrics_path,
+        retry_context={"role": role, "phase": phase, "iteration": iteration},
+        on_result=_log,
+        is_retryable_error=is_retryable_agent_error,
+        sleep=retry_sleep,
+    )
+    return result, rows[-1]
+
+
+def agent_failure_message(stage: str, exc: BaseException) -> str:
+    """Human message for an exhausted / fatal plan or build call."""
+    attempts = getattr(exc, "attempts", None)
+    last = getattr(exc, "last_error", None) or str(exc)
+    if attempts is None:
+        return f"{stage} stage agent call failed: {exc}"
+    if getattr(exc, "retryable", True):
+        return (
+            f"{stage} stage agent call failed after {attempts} attempt(s) "
+            f"(optimization.agent_retries exhausted); last error: {last}"
+        )
+    return (
+        f"{stage} stage agent call failed with a non-retryable error on "
+        f"attempt {attempts}: {last}"
+    )
+
 
 def check_build_touched_repo(repo: Path) -> str | None:
     """Return a warning if a git-tracked ``repo`` shows no local modifications.
@@ -496,14 +664,20 @@ def run_build(
     model: str | None = None,
     max_turns: int = DEFAULT_MAX_TURNS,
     sdk_runner: Callable | None = None,
+    retry_sleep: Callable[[float], None] | None = None,
     **_ignored,
 ) -> dict:
     """Spend one agent call authoring the mechanism. Return a metrics dict.
 
     ``sdk_runner`` is the injection seam, matching ``SDKDispatcher``: tests
     pass a callable returning an ``SDKResult`` and never touch the network.
+    ``retry_sleep`` replaces the backoff sleep (tests pass a no-op).
+
+    Transient failures and retryable ``is_error`` results are retried up to
+    ``optimization.agent_retries`` times (see :func:`run_agent_call`); each
+    retry is a fresh session told to CONTINUE from the repo's current state,
+    never to restart. Exhaustion raises :class:`BuildFailed`.
     """
-    from orchestrator.metrics import log_metrics
     from orchestrator.sdk_dispatch import (
         _default_sdk_runner_factory,
         _load_methodology_preamble,
@@ -557,41 +731,30 @@ def run_build(
         resolved_model,
     )
 
-    result = runner(
-        prompt=prompt,
-        model=resolved_model,
-        cwd=Path(repo),
-        max_turns=max_turns,
-        system_prompt=system_prompt,
-        event_log_path=iter_dir / "build_events.jsonl",
-        permission_mode=permission_mode,
-    )
+    from orchestrator.sdk_dispatch import SDKCallFailed
 
-    if getattr(result, "is_error", False):
-        raise BuildFailed(
-            f"build stage agent call failed: "
-            f"{getattr(result, 'error_message', '') or 'unknown error'}",
+    try:
+        result, row = run_agent_call(
+            runner,
+            campaign=campaign, work_dir=work_dir, phase="build", role="builder",
+            iteration=iteration, model=resolved_model, prompt=prompt,
+            runner_kwargs=dict(
+                model=resolved_model,
+                cwd=Path(repo),
+                max_turns=max_turns,
+                system_prompt=system_prompt,
+                event_log_path=iter_dir / "build_events.jsonl",
+                permission_mode=permission_mode,
+            ),
+            retry_sleep=retry_sleep,
         )
+    except ValueError as exc:
+        raise BuildFailed(f"build stage misconfigured: {exc}") from exc
+    except SDKCallFailed as exc:
+        raise BuildFailed(agent_failure_message("build", exc)) from exc
 
     text = (getattr(result, "text", "") or "").strip()
     (iter_dir / "build_summary.md").write_text(text or "(no summary returned)")
-
-    row = {
-        "dispatcher": "sdk",
-        "role": "builder",
-        "phase": "build",
-        "model": resolved_model,
-        "input_tokens": getattr(result, "input_tokens", 0),
-        "output_tokens": getattr(result, "output_tokens", 0),
-        "cache_creation_input_tokens": getattr(
-            result, "cache_creation_input_tokens", 0,
-        ),
-        "cache_read_input_tokens": getattr(result, "cache_read_input_tokens", 0),
-        "cost_usd": getattr(result, "cost_usd", 0.0),
-        "duration_ms": getattr(result, "duration_ms", 0),
-        "num_turns": getattr(result, "num_turns", 1),
-    }
-    log_metrics(Path(work_dir) / "llm_metrics.jsonl", row)
 
     if not text:
         # Not fatal: verify is the real gate. But an empty summary usually
