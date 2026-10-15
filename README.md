@@ -193,6 +193,28 @@ lands automatically — no separate install step. The legacy `--agent api`
 (claude -p subprocess) backend was removed in #183; `--agent sdk` is the
 default and only user-facing code-access path.
 
+### 1b. Use Nous from Claude Code (recommended)
+
+Most campaigns are authored, run and monitored from a Claude session. The
+`nous` plugin gives Claude the workflows as skills (`nous-optimize`,
+`nous-create-campaign`, `nous-run`, `nous-status`, `nous-resume`, …). With the
+`nous` CLI installed (step 1), add the plugin once:
+
+```
+/plugin install nous --marketplace AI-native-Systems-Research/agentic-strategy-evolution
+```
+
+or from a shell:
+
+```bash
+claude plugin marketplace add AI-native-Systems-Research/agentic-strategy-evolution
+claude plugin install nous@nous
+```
+
+Then ask Claude, for example, "tune the cache settings of this service with a
+Nous optimization campaign". `nous docs quickstart` prints the authoring
+quickstart from any install.
+
 ### 2. Configure models
 
 Two LLM calls per iteration, both via the Claude Agent SDK:

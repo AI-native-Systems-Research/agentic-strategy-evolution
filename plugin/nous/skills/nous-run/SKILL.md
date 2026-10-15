@@ -33,3 +33,11 @@ nous run "$CAMPAIGN" --max-iterations "$MAX" --agent "$AGENT" $([ "$AUTO_APPROVE
 
 - For unattended overnight runs, prefer `--agent sdk --auto-approve` and configure `channels:` in the campaign so gate approvals can come from Slack (#130).
 - If the campaign already has a state.json mid-flight, use `nous-resume` instead.
+- **From a Claude session, start it in the background** (the Bash tool's
+  `run_in_background`): a campaign runs for minutes to hours. Export or inline
+  `NOUS_CAMPAIGN_PARENT` so artifacts land outside the target repo, then
+  monitor with `nous progress CAMPAIGN --line` from any shell.
+- **`kind: optimization` campaigns**: validate first (`nous validate campaign
+  FILE`, then `--smoke`, then `--liveness`), and pass `--auto-approve`. They make
+  zero model calls unless `plan`/`build` are declared. See the `nous-optimize`
+  skill for the full loop.

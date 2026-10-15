@@ -1,0 +1,12 @@
+{
+  "name": "nous",
+  "owner": {"name": "AI-native Systems Research"},
+  "description": "Nous: hypothesis-driven experimentation and measured optimization campaigns for software systems, as Claude Code skills.",
+  "plugins": [
+    {
+      "name": "nous",
+      "source": "./plugin/nous",
+      "description": "Author, validate, run, monitor and interpret Nous campaigns (reflective and kind: optimization). Requires the `nous` CLI on PATH."
+    }
+  ]
+}
