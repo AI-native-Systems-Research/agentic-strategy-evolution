@@ -1747,6 +1747,18 @@ Also in `report.json`: `certified`, `epsilon`, `delta_screen`,
 `policy_hash`, and — only when a semantic exception ended the epoch —
 `epoch_ended`.
 
+**Three views of the same answer, none of them a model call.** `report.md` is
+`report.json` rendered as prose and tables; each continue gate's
+`gate_summary_continue.json` is rendered from the progress snapshot; and
+`meta_findings.json`'s `deployment_recommendation.verdict` is read off the
+same ladder — `certified` → `deploy`; `terminal_best` / `model` / `measured`
+→ `deploy_with_caveats`, with a caveat naming the rung and every
+`certification_withheld` reason; `baseline` / `none` →
+`fall_back_to_baseline`. They restate `report.json` and cannot disagree with
+it. (The reflective kind writes the first two with an LLM call and derives the
+verdict from `best_found.json`; this kind does neither, so its only model
+calls remain `plan` and `build`.)
+
 ### Artifacts the epoch writes
 
 Work-dir root:
