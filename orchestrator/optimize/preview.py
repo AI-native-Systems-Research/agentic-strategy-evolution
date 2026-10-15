@@ -132,8 +132,8 @@ def build_preview(
         ccd = len(_build_design(factors, design_cfg, Stage.REFINE.value).points)
         pv.stages.append(StageRuns(
             "refine", ccd, ccd, True,
-            "central composite over refinable factors; only if one survives "
-            "the screen",
+            "central composite over refinable factors; runs if one survives "
+            "the screen OR the screen's centre points show curvature",
         ))
 
     if "confirm" in states:
