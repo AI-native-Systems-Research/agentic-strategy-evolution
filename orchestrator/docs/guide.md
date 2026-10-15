@@ -1496,7 +1496,9 @@ progress snapshot, `meta_findings.json` and `report.md`. Any failure of a
 pre-epoch stage (`plan`, `build`, `verify`) halts the same way
 (`kind: pre_epoch_stage_failed`): those stages are selected by iteration index,
 so advancing would run the NEXT stage on an apparatus this one refused. Fix the
-cause, then `nous resume <campaign.yaml>`. Only epoch-state failures that a
+cause, then `nous resume <campaign.yaml>`: the resumed run moves `halt.json`
+into `halt_history.jsonl`, so `halt.json` always describes the CURRENT run,
+and the halted iteration's measured rows are reused. Only epoch-state failures that a
 retry can repair (too few usable rows) take the retry-then-circuit-breaker path.
 
 **Oracle 2(c) — the control must be unchanged by the build.** Your

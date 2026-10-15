@@ -545,6 +545,12 @@ def run_campaign(
     )
     _campaign_started = time.time()
     if _is_optimization:
+        # A previous halt is history once the campaign runs again: left in
+        # place, every progress line of the resumed run read "HALTED
+        # gate_failed" right through to a completed report (found resuming a
+        # real campaign). Archived, not deleted -- why it stopped is audit.
+        if start_iter <= max_iterations:
+            _progress.archive_halt(work_dir)
         _progress.write_progress(work_dir)
 
     max_redesigns = 3

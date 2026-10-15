@@ -130,3 +130,11 @@ def test_a_campaign_halted_mid_epoch_resumes_and_reuses_its_rows(tmp_path, monke
     reused = [json.loads(l) for rj in wd.glob("runs/iter-*/runs.jsonl")
               for l in rj.read_text().splitlines() if l.strip() and "reused_from" in l]
     assert reused, "the rows measured before the halt were re-measured, not reused"
+    # The earlier halt is history now: a completed resume must not still read
+    # HALTED in every progress line, and why it once stopped stays on record.
+    from orchestrator.optimize.progress import read_progress_snapshot
+
+    assert not (wd / "halt.json").exists()
+    assert not read_progress_snapshot(wd).halted
+    history = [json.loads(l) for l in (wd / "halt_history.jsonl").read_text().splitlines()]
+    assert [h["kind"] for h in history] == ["gate_failed"]
