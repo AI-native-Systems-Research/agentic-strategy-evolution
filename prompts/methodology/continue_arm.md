@@ -7,7 +7,8 @@ version, never special-case specific inputs or test cases.
 {{screening_results}}
 
 {{judge_profile}}
-After each official measure, re-read `{{judge_profile_path}}`.
+After each official measure, re-read `{{judge_profile_path}}`. Earlier iterations' patches, results and
+findings are in `{{iter_dir}}/../iter-*/`; read them when useful.
 
 Deepen the arm: sweeps of its tunable values, speedups where the judge profile shows time pressure,
 refinements of the mechanism. Whenever the kept version improves:

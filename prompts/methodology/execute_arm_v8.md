@@ -17,6 +17,8 @@ you improve. If this arm wins, you continue in this same session later.
 - Target: {{system_description}}
 - Local evaluator: `{{evaluator_dir}}` (read its README.md). Use it for the validity check and for
   per-instance, per-size-group measurement; report the score from the official measure command.
+- Earlier iterations: `{{iter_dir}}/../iter-*/` holds every arm's patch (`patches/`), result
+  (`arms/*/result.json`) and findings. Read them when useful, for example to reuse working code.
 
 {{instrument_summary}}
 

@@ -10,6 +10,8 @@ Arm (do not change the mechanism):
 ```
 
 {{judge_profile}}
+Earlier iterations' patches and results are in `{{iter_dir}}/../iter-*/` if working code there helps.
+
 1. Find the cause (crash, invalid output, timeout, or a 0 from the judge) on a tiny case with the local
    evaluator in `{{evaluator_dir}}`.
 2. Fix it in your worktree, run the arm's validity check, and measure once with the official measure
