@@ -224,6 +224,8 @@ either. See `INV-STAT05`.
 | `INV-STAT11` | Sign symmetry: negating every response and flipping `direction` yields the identical bound. | function | metamorphic property over `certificate` | `test` (property) | — |
 | `INV-STAT12` | The terminal bound never RAISES on an admissible sample: a variance it cannot estimate is `None`, not an exception. | function | `certificate.terminal_regret_bound`'s Welch df denominator | `test` | **yes** |
 | `INV-STAT13` | A fitted constraint model excludes a candidate only when the constraint's one-sided bound at `delta_screen` lies entirely on the violating side; a candidate whose bound admits feasibility is never removed from the argmax or `top_candidates`. | function | `constraint_models` docstring; `decide._scored`; field campaign that spent a confirm round on interior points of a measured-infeasible corner | `test` (property) — `tests/test_optimize_constraint_models.py::test_exclusion_never_removes_a_candidate_whose_bound_admits_feasibility` | **yes** |
+| `INV-STAT14` | The fit's design matrix is the coded ACTUAL levels: every fitted row is coded from the levels that ran (`factors.code_actual`), never from the design's nominal coordinates — a clamped axial point at the range edge it ran at, a choice factor's centre row at the level it ran (−1). `design_matrix.json` still records the plan; `effects.json["fit_coordinates"]` records both. | artifact | `matrix.coded_as_run`; `stage_runner` fit block; `constraint_models`; nominal coding failed lack of fit on a truly linear clamped CCD ~100% of seeds and rejected a real campaign's exactly-linear p99 model at p=2.7e-05 | `test` — `tests/test_optimize_coded_as_run.py` (oracle properties + `check_fit_coordinates_are_actual`) | **yes** |
+| `INV-STAT15` | `infeasible` rows (a `response.constraints` violation) inform the PRIMARY fit; `rejected` and `failed` rows never do. Admissibility is enforced where a configuration can be RETURNED (measured-infeasible exclusion, best-observed reads `complete` only, confirm strikes an infeasible finalist), not by truncating the fit at the constraint boundary. | artifact | `stage_runner._PRIMARY_FIT_STATUSES`; `fit_coordinates.rows_by_status`; a real sqlite-utils campaign fitted refine on 3 of 12 rows; 4/16 constrained-bowl oracle campaigns aborted | `test` — metamorphic oracle pair + `check_fitted_statuses` | **yes** |
 
 **`INV-STAT12` — a crash on the certification path, found by the property test.**
 The Welch degrees-of-freedom denominator is `(vk**2)/(nk-1) + (vb**2)/(nb-1)`,
@@ -476,15 +478,15 @@ they disagree.
 | Structural (`INV-ST`) | 10 | 10 | 0 | 0 | 0 |
 | Closed vocabulary (`INV-VOC`) | 8 | 7 | 0 | 1 | 0 |
 | Semantic (`INV-SEM`) | 15 | 14 | 0 | 1 | 0 |
-| Statistical (`INV-STAT`) | 12 | 7 | 0 | 5 | 0 |
+| Statistical (`INV-STAT`) | 14 | 7 | 0 | 7 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
 | Provenance (`INV-PROV`) | 6 | 4 | 0 | 2 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **68** | **53** | **0** | **13** | **2** |
+| **Total** | **70** | **53** | **0** | **15** | **2** |
 
-By level: `function` 26, `module` 6, `artifact` 22, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
-checker function exists): 43 of 68. The 25 without one are
+By level: `function` 26, `module` 6, `artifact` 24, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
+checker function exists): 45 of 70. The 25 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check

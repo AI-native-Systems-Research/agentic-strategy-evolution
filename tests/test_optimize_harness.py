@@ -239,7 +239,7 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     measured. Making the recommendation respect a constraint it can only
     predict is exactly Task 9's shortlist-confirm work.
 
-    TASK 9 FLIPS IT, and it takes THREE ROUNDS to flip — which is the finding,
+    TASK 9 FLIPS IT, and it takes FOUR ROUNDS to flip (three before INV-STAT14) — which is the finding,
     not a workaround. Round 1's shortlist is the model's top three, and on this
     surface all three violate the p99 constraint (the fit has no p99 term, so
     only a measurement can say so). One round therefore leaves exactly one
@@ -266,11 +266,21 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     topped up from deeper in the model's ranking — which is how the premise gets
     repaired: by finding candidates that survive measurement.
 
-    Measured path at ``confirm_max_rounds: 3``: round 1 excludes B=14/B=12 and
+    Measured path at ``confirm_max_rounds: 4``: round 1 excludes B=14/B=12 and
     keeps B=2 (uncertified); round 2 tops up with B=11 and A=14/B=16, both
-    excluded (uncertified); round 3 tops up with B=7 and B=6, both feasible, and
-    certifies B=7 at 19.37 — 1.02% off the true constrained optimum
-    ``{A: 16, B: 8}`` (19.6), which the grid cannot hit exactly. At the DEFAULT
+    excluded (uncertified); round 3 tops up with A=14/B=14 (excluded) and B=7
+    (feasible), still uncertified because of the exclusion; round 4 re-measures
+    B=7 alone and certifies it at 19.37 — 1.02% off the true constrained
+    optimum ``{A: 16, B: 8}`` (19.6), which the grid cannot hit exactly.
+
+    (Three rounds sufficed while the refine fit regressed on the NOMINAL axial
+    coordinates ``+-1.41``, which ``decode_coded`` clamps to the range edge. That
+    errors-in-variables bias happened to rank B=7/B=6 above A=14/B=14; fitted
+    on the coordinates that ran (INV-STAT14) the model ranks them by their true
+    primary values -- 19.8 for A=14/B=14 vs 19.4 for B=7 -- so the infeasible one
+    is nominated first and costs a round. The fix made the ranking right; the
+    constraint, being deterministic here, cannot be modelled, so only a
+    measurement can say A=14/B=14 is infeasible.) At the DEFAULT
     ``confirm_max_rounds: 1`` the campaign still returns a feasible
     configuration and labels it ``terminal_best``, uncertified — an honest
     answer rather than a wrong certificate. Both halves are asserted below.
@@ -281,7 +291,7 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
 
     res = run_synthetic_campaign(
         s, seed=5, parent_dir=tmp_path / "looped",
-        campaign_overrides={**constrained, "policy": {"confirm_max_rounds": 3}},
+        campaign_overrides={**constrained, "policy": {"confirm_max_rounds": 4}},
         max_iterations=12,
     )
     assert not s.invalid(res.recommendation), res.recommendation

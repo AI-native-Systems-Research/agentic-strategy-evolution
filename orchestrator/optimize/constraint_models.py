@@ -137,6 +137,12 @@ def fit_constraint_models(constraints, design, records, *, fitted_ids,
                           levels_by_pos=None) -> list[ConstraintModel]:
     """Fit every numeric constraint metric over the same design as the primary.
 
+    ``design`` is the design CODED FROM THE LEVELS THAT RAN
+    (``matrix.coded_as_run``, INV-STAT14) -- the same matrix the primary is
+    fitted on -- not the nominal plan: a clamped axial point or a choice
+    factor's centre row coded nominally biases the constraint model exactly as
+    it biases the primary, and a lack-of-fit rejection then disables the model.
+
     ``records`` is one ``(status, response)`` pair per POSITION of ``design``
     (the same positional convention as the primary's response vector). Rows
     whose status is ``complete`` or ``infeasible`` and whose metric is a finite
@@ -191,11 +197,18 @@ def fit_constraint_models(constraints, design, records, *, fitted_ids,
                 for i in pos
             ),
         )
+        # Same reduction the primary fit uses (stage_runner floor (c)): omit
+        # each higher-order term that is a function of the intercept and main
+        # effects on these rows, then fall back to main effects only.
+        from orchestrator.optimize.exclusions import non_estimable_terms
+
+        omit = non_estimable_terms(sub)
         fit = None
         for interactions in (True, False):
             try:
                 fit = fit_effects(sub, ys, factor_ids=keep_ids,
-                                  include_interactions=interactions)
+                                  include_interactions=interactions,
+                                  omit_terms=omit)
                 break
             except ValueError:
                 continue

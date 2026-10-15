@@ -494,7 +494,7 @@ How this differs from the two neighbouring mechanisms:
 |---|---|---|
 | `locked_parameters` | an **input** you set has a pinned value | the spec was rewritten (#246) |
 | `design_space.invariants` | a **property of the resulting system** holds | the campaign left its declared design space |
-| `response.constraints` | a **measured outcome** is admissible | this config is infeasible; exclude from fitting, keep exploring |
+| `response.constraints` | a **measured outcome** is admissible | this config is infeasible; never return it, keep exploring. *Amended (INV-STAT15):* its primary IS fitted — a valid measurement of an inadmissible configuration; excluding it truncated the design at the constraint boundary. |
 
 "The connector is P2P" is an invariant rather than a locked parameter because it
 may be an emergent consequence of several settings rather than one flag —
@@ -668,7 +668,7 @@ transfer.
 | `behavioral` relation violated | Recorded finding; campaign continues. |
 | Manipulation predicate fails | Hard-fail that **config**; retry once; if persistent, drop the factor, record it, refit on remaining factors with aliasing recomputed. |
 | `design_space` invariant violated | **Hard-fail.** Rejected before running when statically determinable from the matrix row; hard-fails the config after running when only observable post-hoc. The campaign has left its declared design space, so continuing would answer a different question than the one asked. |
-| Constraint violated | Config marked infeasible; excluded from fitting; retained in `runs.jsonl`. |
+| Constraint violated | Config marked infeasible; never returned (recommendation, shortlist winner, best-observed); retained in `runs.jsonl`. *Amended (INV-STAT15):* fitted for the primary and the constraint models; `rejected`/`failed` rows stay excluded. |
 | Response above `ceiling` | Hard-fail config — physically impossible means the instrumentation is lying. |
 | Executed config ≠ matrix row | **Hard-fail regardless of `--auto-approve`.** Same treatment as `locked_parameters` (#246). |
 | Held-out metric present in a fitting input | **Hard-fail.** Prevents the `holdout-selection` leakage class. |

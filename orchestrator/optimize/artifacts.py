@@ -179,7 +179,9 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
                    stage: str, exclusion_balance: dict | None = None,
                    work_dir: Path | str | None = None,
                    direction: str | None = None,
-                   noise_pct: float | None = None) -> Path:
+                   noise_pct: float | None = None,
+                   fit_coordinates: dict | None = None,
+                   omitted_terms=None) -> Path:
     """Write the fitted model: effects, pure error, lack-of-fit, aliases,
     dropped factors. ``factors`` supplies the factor-id universe that
     ``dropped_factors`` checks against -- the factors this fit was run
@@ -224,6 +226,17 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
     }
     if exclusion_balance is not None:
         payload["exclusion_balance"] = exclusion_balance
+    # INV-STAT14: the coordinates the regression was fitted on (the coded
+    # ACTUAL levels) beside the planned ones, per fitted row, so a reader can
+    # audit a clamped axial point or a choice factor's centre row without
+    # refitting. Optional so every caller that predates it is byte-identical.
+    if fit_coordinates is not None:
+        payload["fit_coordinates"] = fit_coordinates
+    # Higher-order terms left out because their column lies in the span of the
+    # intercept and main effects on the fitted rows (exclusions.non_estimable_terms).
+    # Present only when non-empty, so earlier payloads are byte-identical.
+    if omitted_terms:
+        payload["omitted_terms"] = [list(t) for t in omitted_terms]
 
     # Hold the `plan` stage to its own prediction, on the artifact that carries
     # the coefficient the prediction was about. Same reasoning as

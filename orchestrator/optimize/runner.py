@@ -21,7 +21,8 @@ The failure taxonomy is deliberately asymmetric (spec Sec 6.4):
     untrustworthy and is excluded from the fitting inputs entirely.
   * a ``response.constraints`` violation is INFEASIBLE -- the config is
     genuinely inadmissible, but that IS real, trustworthy data about the
-    space, so it is retained in the outcomes (just excluded from fitting).
+    space, so it is retained in the outcomes -- and its primary IS fitted
+    (INV-STAT15); it is only ineligible to be returned as an answer.
   * a manipulation-predicate failure retries once (the lever may not have
     engaged for a transient reason); if it still fails, the row FAILS.
     Dropping the offending FACTOR (not the whole campaign) and refitting

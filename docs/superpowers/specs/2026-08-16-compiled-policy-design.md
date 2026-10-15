@@ -302,6 +302,21 @@ schema-valid `Fit` whose every coefficient is NaN. The comment says "carry NaN s
 the row is excluded"; nothing downstream excludes it. Fixed in **T7** by fitting
 on the complete-row subset and recording the excluded rows.
 
+*Amendment (INV-STAT14, INV-STAT15).* Two later corrections to the fit D2
+produced. (1) The fit's design matrix is the coded ACTUAL levels
+(`matrix.coded_as_run`), not the plan's nominal coordinates: clamped axial
+points are fitted at the range edge they ran at, and a choice factor's centre
+row at the level it ran (`-1`); `design_matrix.json` still records the plan and
+`effects.json["fit_coordinates"]` records both. (2) `infeasible` rows are no
+longer part of the excluded subset: their primary is a valid measurement, so it
+is fitted, and admissibility is enforced where a configuration can be returned
+(`_measured_infeasible`, `_best_observed`, `_finish_confirm`, the constraint
+models). `rejected` and `failed` rows remain excluded and recorded in
+`fit_exclusions.json` as D2 specifies. Evidence: constrained-bowl oracle, 16
+seeds — excluding infeasible rows aborted 4 campaigns (rank-deficient refine)
+and certified 0 at one confirm round; fitting them aborted none, certified 3,
+worst-case regret 0.2 vs 2.7.
+
 ## 5. Non-goals
 
 - **No adaptive branch without an accounting rule.** The paper is explicit: an
