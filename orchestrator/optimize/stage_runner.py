@@ -2116,6 +2116,23 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     # recompiled would report `screen -> screen -> confirm -> report`, naming a
     # state transition that never happened in the epoch the report describes.
     trans = policy_mod.epoch_transitions(pol, work_dir)
+    # The registered boundary branch (policy `out_of_hull: confirm`) fired:
+    # refine's optimum lies past the declared ranges, so whatever confirm
+    # certified is the best configuration INSIDE them. Say so in the report,
+    # with the axes, so a certificate is never read as covering more space
+    # than was declared.
+    boundary = next((t for t in trans if t.get("from") == "refine"
+                     and ((t.get("rule") or {}).get("when") or {}).get(
+                         "stationary_in_hull") is False
+                     and t.get("to") != "exception"), None)
+    boundary_block = None
+    if boundary is not None:
+        sp = (_read_recommendation(work_dir) or {}).get("stationary_point") or {}
+        boundary_block = {
+            "axes": sorted(k for k, v in sp.items()
+                           if isinstance(v, (int, float)) and abs(v) > 1.0),
+            "certificate_scope": "declared_ranges",
+        }
     # The held-out generalization check, READ only now that every decision
     # above is made, so it can inform a reader and nothing else
     # (orchestrator/optimize/held_out.py).
@@ -2168,6 +2185,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # carries the full record next to it.
         **({"epoch_ended": epoch_ended} if epoch_ended else {}),
         **({"held_out": held_out_block} if held_out_block else {}),
+        **({"boundary_optimum": boundary_block} if boundary_block else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
     })

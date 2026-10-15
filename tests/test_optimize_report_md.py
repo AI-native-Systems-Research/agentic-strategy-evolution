@@ -84,7 +84,8 @@ def test_an_out_of_hull_end_names_the_axis_in_real_levels_and_the_command(tmp_pa
     from orchestrator.optimize.synthetic import SURFACES
 
     res = run_synthetic_campaign(SURFACES["bowl_out_of_hull"](), seed=1,
-                                 parent_dir=tmp_path)
+                                 parent_dir=tmp_path,
+                                 campaign_overrides={"policy": {"out_of_hull": "end_epoch"}})
     md = render_report_markdown(res.work_dir)
     if not res.report.get("epoch_ended"):
         pytest.skip("this seed did not end on an exception")

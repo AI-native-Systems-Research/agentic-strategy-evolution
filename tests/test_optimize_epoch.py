@@ -11,7 +11,8 @@ from orchestrator.optimize.synthetic import SURFACES
 
 
 def test_out_of_hull_optimum_ends_the_epoch_and_still_reports_an_action(tmp_path):
-    res = run_synthetic_campaign(SURFACES["bowl_out_of_hull"](), seed=31, parent_dir=tmp_path)
+    res = run_synthetic_campaign(SURFACES["bowl_out_of_hull"](), seed=31, parent_dir=tmp_path,
+                                 campaign_overrides={"policy": {"out_of_hull": "end_epoch"}})
     assert res.path[-1] == "exception"
     ends = list(res.work_dir.glob("epoch_end-*.json"))
     assert len(ends) == 1 and json.loads(ends[0].read_text())["state"] == "refine"

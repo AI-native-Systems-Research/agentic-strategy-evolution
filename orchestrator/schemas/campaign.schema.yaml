@@ -1424,6 +1424,17 @@ properties:
             description: >
               Error budget for the TERMINAL bound, computed from fresh
               finalist measurements only. Default 0.05.
+          out_of_hull:
+            type: string
+            enum: [confirm, end_epoch]
+            description: >
+              What refine does when the fitted optimum lies OUTSIDE the
+              declared ranges. ``confirm`` (default) confirms the best
+              configuration INSIDE them: a boundary optimum is still an
+              answer, and the certificate is scoped to the declared ranges;
+              report.md names the axes to widen. ``end_epoch`` treats it as
+              a semantic exception: the epoch ends uncertified so the ranges
+              can be widened first.
           confirm_max_rounds:
             type: integer
             minimum: 1

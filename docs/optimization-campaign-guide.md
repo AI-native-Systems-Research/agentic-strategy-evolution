@@ -1778,9 +1778,17 @@ optimization:
     delta_screen: 0.05        # error budget for the MODEL bound
     delta_terminal: 0.05      # error budget for the TERMINAL bound
     confirm_max_rounds: 1     # rounds of terminal discrimination before reporting uncertified
+    out_of_hull: confirm      # refine's optimum past a declared edge: confirm | end_epoch
 ```
 
-Every field is optional and has the default shown. All four are compiled
+Every field is optional and has the default shown. `out_of_hull: confirm`
+treats a fitted optimum past a declared edge as a **boundary optimum**: confirm
+replicates the best configuration INSIDE the declared ranges, `report.json`
+gains `boundary_optimum` (the axes, and `certificate_scope: declared_ranges`),
+and `report.md` says which axes to widen and to what, or to pin the edge when
+it is a hard limit of the system (concurrency 1, the core count, a memory
+budget). Use `end_epoch` when the ranges are a guess you want widened before
+anything is confirmed. All of them are compiled
 verbatim into `policy.json`'s `objective` block and covered by the policy
 hash, which is what makes them pre-registered rather than chosen after the
 fact.
@@ -2065,7 +2073,7 @@ Work-dir root:
 |---|---|---|
 | `policy.json` + `policy.sha256` | end of `verify` | the compiled policy and its content hash |
 | `campaign.epoch-<epoch>.yaml` | each policy compile | the exact campaign that epoch pre-registered — diff two epochs to see what was revised; `report.md` decodes the epoch's results against it |
-| `report.md` | `report` | `report.json` rendered with zero tokens, plus **What to do next** when the epoch ended on an exception (out-of-hull axes in real levels, constraint-aware) |
+| `report.md` | `report` | `report.json` rendered with zero tokens, plus **What to do next** when the epoch ended on an exception or the optimum is on the boundary (out-of-hull axes as runnable levels, constraint- and domain-aware) |
 | `transitions.jsonl` | every `step()` | `epoch`, `iteration`, `from`, `to`, full `observations`, the `rule` that fired, `policy_hash` |
 | `report.json` | `report` | recommendation + `basis`, both bounds, both deltas, finalists, `path`, `certified` |
 | `epoch_end-<epoch>.json` | `exception` | why the epoch ended and what a new one would need |
@@ -2107,8 +2115,8 @@ you will find on disk:
 
 A **semantic exception** is a measurement the compiled policy has no
 registered branch for: a `correctness` relation failed, the primary metric
-came back NaN, or the fitted stationary point landed outside the declared
-hull. No further measurement *inside* the epoch can repair it — the epoch's
+came back NaN, or (under `policy.out_of_hull: end_epoch`) the fitted
+stationary point landed outside the declared hull. No further measurement *inside* the epoch can repair it — the epoch's
 own vocabulary does not describe the situation — so the epoch **ends**.
 
 What does *not* happen: a model call to interpret the result. That is the

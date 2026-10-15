@@ -282,6 +282,19 @@ def render_report_markdown(work_dir: Path) -> str:
             "",
         ]
         lines += _next_epoch_section(work_dir, report)
+    elif report.get("boundary_optimum"):
+        b = report["boundary_optimum"]
+        lines += [
+            f"> **Boundary optimum.** The fitted optimum lies past the declared "
+            f"range on {', '.join(f'`{a}`' for a in b.get('axes') or []) or 'some axis'}"
+            f", so the recommendation is the best configuration INSIDE the "
+            f"declared ranges"
+            + (" and the certificate covers only those ranges." if report.get("certified")
+               else ".")
+            + " Widening the axes below may find a better one.",
+            "",
+        ]
+        lines += _next_epoch_section(work_dir, report)
 
     lines += [
         "## Bounds",

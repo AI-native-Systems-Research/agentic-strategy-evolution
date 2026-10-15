@@ -290,6 +290,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         }
 
     after_refine = "confirm" if confirm_on else "report"
+    out_of_hull = str(pol_cfg.get("out_of_hull") or "confirm")
     sem = "none: semantic exception ends the epoch, no inference is drawn"
     transitions: list[dict] = [
         {"from": "screen", "when": {"correctness_failed": True}, "to": "exception", "accounting": sem},
@@ -363,8 +364,25 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # noisy observation"). An out-of-hull optimum is different in kind:
             # no amount of remeasurement inside the hull finds a point outside
             # it.
-            {"from": "refine", "when": {"stationary_in_hull": False}, "to": "exception",
-             "accounting": sem},
+            #
+            # That reading holds when the declared ranges are an author's GUESS.
+            # When they are the system's LIMITS -- concurrency >= 1, GOMAXPROCS
+            # <= cores, a memory budget -- the optimum on the boundary IS the
+            # answer, and ending the epoch handed back one unreplicated row
+            # (found on a real multi-repo Go campaign, three axes at their
+            # edges). So the default `out_of_hull: confirm` registers a BRANCH:
+            # confirm the constrained argmax inside the hull, with a certificate
+            # whose scope is the declared ranges (report.md names the axes to
+            # widen). `end_epoch` keeps the exception.
+            ({"from": "refine", "when": {"stationary_in_hull": False}, "to": "exception",
+              "accounting": sem}
+             if out_of_hull == "end_epoch" else
+             {"from": "refine", "when": {"stationary_in_hull": False}, "to": after_refine,
+              "accounting": (
+                  "registered boundary branch: the fitted optimum lies past the "
+                  "declared ranges; the best configuration INSIDE them is "
+                  "confirmed, and any certificate is scoped to those ranges"
+              )}),
             {"from": "refine", "default": after_refine},
         ]
     if confirm_on:

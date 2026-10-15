@@ -103,6 +103,16 @@
       "minLength": 1,
       "description": "GENUINELY OPTIONAL, not nullable: _run_report includes this key ONLY when a semantic exception ended the epoch, and its value is the guard that fired (state plus the `when` clause). Its mere PRESENCE is the signal -- a reader can tell an ordinary report from one written on the way out of a failed epoch without reading the log, and epoch_end-<epoch>.json carries the full record next to it. Its presence also suppresses the `model` rung of the ladder."
     },
+    "boundary_optimum": {
+      "type": "object",
+      "required": ["axes", "certificate_scope"],
+      "additionalProperties": false,
+      "description": "GENUINELY OPTIONAL: present only when refine's fitted optimum lay OUTSIDE the declared ranges and the policy's registered boundary branch (optimization.policy.out_of_hull: confirm, the default) confirmed the best configuration inside them. Any certificate in this report is scoped to the declared ranges; `axes` are the factors whose stationary coordinate lay past [-1, 1] -- widen them (report.md says to what) unless the edge is a hard limit of the system.",
+      "properties": {
+        "axes": {"type": "array", "items": {"type": "string"}},
+        "certificate_scope": {"const": "declared_ranges"}
+      }
+    },
     "held_out": {
       "type": "object",
       "required": ["metrics", "recommendation", "finalists"],
