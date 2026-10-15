@@ -1336,6 +1336,18 @@ The whole-tree default is kept only for backward compatibility — an existing
 campaign's recorded hash stays valid across the change — not because it is the
 better setting.
 
+**Nous's own outputs are never part of the hash**, with or without
+`mechanism_paths` (`INV-PROV06`): `.nous/` and `.nous-experiments/` at the
+target's root, and the campaign work_dir itself if it resolves inside the
+target. Those hold the legacy work_dir (`<target>/.nous/<run_id>/`, the default
+when `NOUS_CAMPAIGN_PARENT` is unset), the `.nous/repo/` cache written at
+campaign end and on abort, and the per-arm worktrees. Before this exclusion, a
+default-layout campaign hashed its own `mechanism.patch` and `runs.jsonl`, so
+its first epoch iteration always aborted as drift. A hash recorded before the
+exclusion is still accepted on resume when the tree matches it by the old rule,
+so an in-flight campaign does not false-abort on upgrade. Anything else you
+keep inside the target is still hashed — do not put a mechanism under `.nous/`.
+
 **Entries are literal paths, not globs.** The matching rule is a plain
 path-component prefix:
 

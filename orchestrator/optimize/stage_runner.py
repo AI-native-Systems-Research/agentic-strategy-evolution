@@ -2212,10 +2212,14 @@ def run_stage(
             from orchestrator.optimize import build as build_mod
 
             _paths = _mechanism_paths(campaign)
-            current = build_mod.current_mechanism_hash(
-                Path(repo), allowlist=_paths,
+            # `work_dir` is passed so Nous's own outputs (this work_dir when it
+            # sits inside the target, `.nous/`, `.nous-experiments/`) are
+            # excluded exactly as `snapshot_mechanism` excluded them; a hash
+            # recorded before that exclusion existed is still honoured.
+            _ok, current = build_mod.mechanism_hash_matches(
+                Path(repo), recorded, allowlist=_paths, work_dir=Path(work_dir),
             )
-            if current != recorded:
+            if not _ok:
                 _scope = (
                     f"scope: {', '.join(_paths)}" if _paths else
                     "scope: the whole working tree — if the difference is an "
