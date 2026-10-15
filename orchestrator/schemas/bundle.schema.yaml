@@ -291,27 +291,20 @@ properties:
                 minItems: 1
                 description: "Names of apparatus checks invalidated by these depth overrides."
       timing_observations:
-        # #226: structured per-policy timing data captured during
-        # rehearsal feasibility probes. Fields are SCHEMA-LOCKED here
-        # (vs verified_parameters which is open by design — that's a
-        # knob namespace; this is a measurement record). Iter-2's
-        # SDKDispatcher reads ``recommended_turn_silence_threshold_seconds``
-        # to calibrate the live watchdog (#205).
         type: object
         additionalProperties: false
         description: >
           Per-policy wall-time observations from rehearsal feasibility
-          probes (#226). Used by the engine to calibrate iter-2's
-          watchdog thresholds and by the brief_amendments machinery
-          to surface recurring slow-policy patterns across runs.
+          probes (#226). Informational metadata for operators — the
+          dispatcher does NOT use these values to override watchdog
+          thresholds (removed in #305).
         properties:
           expected_wall_time_seconds_per_policy:
             type: object
             description: >
               Map of policy name → observed wall-time seconds. Recorded
               during the rehearsal feasibility probe at one canonical
-              seed. EXECUTE_ANALYZE's per-arm timeout (when the runner
-              supports one) and the watchdog threshold derive from this.
+              seed. Informational only.
             additionalProperties:
               type: number
               minimum: 0
@@ -326,31 +319,16 @@ properties:
                   execute_analyze: { type: number, minimum: 0 }
                   report: { type: number, minimum: 0 }
             description: >
-              Suggested override for ``campaign.sdk_timeouts.turn_silence_threshold_seconds``
-              for iter-2 / real iters. Computed by the rehearsal agent
-              as roughly 3× the slowest policy observed, with buffer.
-              ``SDKDispatcher`` reads this in preference to the
-              campaign-level default.
-
-              Issue #264 (F19): may be either a scalar (legacy: same
-              threshold for every phase) or a per-phase map
-              ``{design, execute_analyze, report}``. EXECUTE_ANALYZE-tuned
-              values silently broke DESIGN turns in
-              paper-memorytime-mirage iter-3 — DESIGN's heavy reasoning
-              between tool calls trips a 120s threshold that's
-              appropriate for EXECUTE_ANALYZE's frequent simulator
-              calls. Rehearsal-derived values that vary by phase MUST
-              use the map form; the scalar form is preserved for
-              backward compat with iter-1 rehearsals that ran one
-              phase only.
+              DEPRECATED (#305): this field is accepted for backward
+              compatibility with existing bundles but is no longer read
+              by the dispatcher. Watchdog thresholds are controlled
+              exclusively via campaign.sdk_timeouts.
           observation_method:
             type: string
             minLength: 1
             description: >
               How the observations were collected (e.g. "feasibility
               probe at seed=42, horizon=120s, single arm per policy").
-              Helps iter-2 / future runs interpret the numbers
-              correctly.
 
   arms:
     type: array

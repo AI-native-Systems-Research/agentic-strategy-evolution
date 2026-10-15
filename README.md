@@ -170,15 +170,15 @@ state.json's recorded `work_dir` will be stale until the campaign's next setup; 
 ### 1. Install Nous
 
 ```bash
-pip install "git+https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git@main"
+pip install "git+https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git"
 ```
 
-`main` is the integration branch — that's where new work lands. To pin to a release, replace `@main` with a tag (`@v0.4.0`).
+This installs from `main`, the active development branch. To pin to a specific release, append a tag (e.g., `@v0.4.0`).
 
 For development (editable install with test dependencies):
 
 ```bash
-git clone -b reflective https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git
+git clone https://github.com/AI-native-Systems-Research/agentic-strategy-evolution.git
 cd agentic-strategy-evolution
 pip install -e ".[dev]"
 ```
@@ -496,7 +496,16 @@ prompts/methodology/     Methodology prompt templates
 examples/                Example campaigns
 docs/                    Quickstart, protocol, data model, architecture
 tests/                   Comprehensive test suite
+s390x/                   Run Nous on IBM Z (s390x) via Podman — see s390x/README.md
 ```
+
+## Deployment
+
+Nous runs on your local machine as usual. In addition, it can now **also** run on
+IBM Z (s390x) mainframe hardware via Podman containers, orchestrated from your
+local machine over SSH. This is an optional, opt-in deployment target — it does
+not change how Nous runs on other platforms. See [s390x/README.md](s390x/README.md)
+for the setup steps.
 
 ## Contributing
 
