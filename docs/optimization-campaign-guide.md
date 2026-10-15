@@ -249,7 +249,10 @@ candidate honest.
   away. Example: `{id: burst, metric: improvement_burst_pct, op: ">",
   value: 0}` alongside a matching `steady` entry.
 - **`held_out`** — metric name(s) reserved purely as a generalization
-  check, recorded only at `confirm`, never an input to fitting. The
+  check: recorded on every row but split off the response, so never an
+  input to fitting, ranking or certification, and summarised in
+  `report.json`'s `held_out` block (the recommendation and each finalist,
+  beside the primary metric's mean over the same rows). The
   validator hard-fails if a `held_out` metric collides (case/whitespace-
   insensitively) with `primary`, any `constraints` entry, or any `regimes`
   entry. See the held-out anti-patterns in §6 for the failure mode this
@@ -472,8 +475,8 @@ not chosen freely.
   factors are all `choice`, or all binary numeric — there is no curvature
   to fit, and refine would have nothing to do.
 - **`confirm`** (required) — `{replicates}`. Replicates the predicted
-  optimum (snapped to each factor's `grid`) and evaluates `held_out`
-  metrics.
+  optimum (snapped to each factor's `grid`); the report then summarises
+  the `held_out` metrics at the configurations it names.
 - **`max_runs`** — your run budget. The validator fails with the two
   honest options — raise the budget, or accept a lower resolution and its
   named aliasing — rather than silently downgrading resolution to fit. If

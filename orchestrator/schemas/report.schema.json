@@ -99,6 +99,17 @@
       "minLength": 1,
       "description": "GENUINELY OPTIONAL, not nullable: _run_report includes this key ONLY when a semantic exception ended the epoch, and its value is the guard that fired (state plus the `when` clause). Its mere PRESENCE is the signal -- a reader can tell an ordinary report from one written on the way out of a failed epoch without reading the log, and epoch_end-<epoch>.json carries the full record next to it. Its presence also suppresses the `model` rung of the ladder."
     },
+    "held_out": {
+      "type": "object",
+      "required": ["metrics", "recommendation", "finalists"],
+      "additionalProperties": false,
+      "description": "GENUINELY OPTIONAL: present only when response.held_out is declared. The generalization check, READ after every decision in this report was made and fed to none of them (orchestrator/optimize/held_out.py). For the recommendation and each finalist: the held-out metric's mean over this epoch's complete rows at exactly those levels, and the primary metric's mean over the SAME rows, so the two are compared on equal footing. n = 0 means no complete row measured that configuration -- not a zero.",
+      "properties": {
+        "metrics": {"type": "array", "items": {"type": "string"}},
+        "recommendation": {"$ref": "#/$defs/held_out_entry"},
+        "finalists": {"type": "array", "items": {"$ref": "#/$defs/held_out_entry"}}
+      }
+    },
     "policy_hash": {
       "type": "string",
       "description": "Content hash of the compiled policy this epoch ran under -- the pre-registration this report is accountable to. Joins to transitions.jsonl's rows and to policy.sha256."
@@ -107,6 +118,31 @@
       "type": "integer",
       "minimum": 1,
       "description": "The iteration index at which the report was written. May be LATER than the confirm it describes (a budget-exhausted route to `report`, or a resumed work_dir), which is why the terminal rungs read confirmation.json off disk rather than trusting a threaded argument."
+    }
+  },
+  "$defs": {
+    "held_out_entry": {
+      "type": "object",
+      "required": ["levels", "n_rows", "metrics"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {"type": ["string", "null"]},
+        "levels": {"type": "object"},
+        "n_rows": {"type": "integer", "minimum": 0},
+        "metrics": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["n", "mean", "primary_mean_same_rows"],
+            "additionalProperties": false,
+            "properties": {
+              "n": {"type": "integer", "minimum": 0},
+              "mean": {"type": ["number", "null"]},
+              "primary_mean_same_rows": {"type": ["number", "null"]}
+            }
+          }
+        }
+      }
     }
   }
 }

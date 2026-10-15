@@ -1847,6 +1847,21 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     # recompiled would report `screen -> screen -> confirm -> report`, naming a
     # state transition that never happened in the epoch the report describes.
     trans = policy_mod.epoch_transitions(pol, work_dir)
+    # The held-out generalization check, READ only now that every decision
+    # above is made, so it can inform a reader and nothing else
+    # (orchestrator/optimize/held_out.py).
+    from orchestrator.optimize.held_out import held_out_summary
+
+    held_out_block = held_out_summary(
+        work_dir,
+        iterations={t.get("iteration") for t in trans
+                    if isinstance(t.get("iteration"), int)} | {iteration},
+        held_out=list(((_opt_block(campaign) or {}).get("response") or {})
+                      .get("held_out") or []),
+        primary=metric or "",
+        recommendation=levels,
+        finalists=(conf.get("finalists") if conf else []) or [],
+    )
     _write_json(Path(work_dir) / "report.json", {
         "recommendation": {
             "levels": levels, "basis": basis,
@@ -1878,6 +1893,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # log, which is the same reason `basis` exists — and `epoch_end-<e>.json`
         # carries the full record next to it.
         **({"epoch_ended": epoch_ended} if epoch_ended else {}),
+        **({"held_out": held_out_block} if held_out_block else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
     })

@@ -163,6 +163,30 @@ def render_report_markdown(work_dir: Path) -> str:
             )
         lines.append("")
 
+    held = report.get("held_out")
+    if isinstance(held, dict) and held.get("metrics"):
+        lines += [
+            "## Held-out check",
+            "",
+            "Recorded on every row, read by no decision above. Means over this "
+            "epoch's complete rows at exactly these levels; `n = 0` means no "
+            "complete row measured that configuration.",
+            "",
+            "| configuration | metric | held-out mean | primary mean (same rows) | n |",
+            "|---|---|---|---|---|",
+        ]
+        entries = [("recommendation", held.get("recommendation") or {})] + [
+            (str(f.get("key") or "finalist"), f) for f in held.get("finalists") or []
+        ]
+        for label, e in entries:
+            for m, v in (e.get("metrics") or {}).items():
+                lines.append(
+                    f"| {label}: {_fmt_levels(e.get('levels'))} | `{m}` | "
+                    f"{_fmt(v.get('mean'))} | {_fmt(v.get('primary_mean_same_rows'))} | "
+                    f"{v.get('n', 0)} |"
+                )
+        lines.append("")
+
     baseline = report.get("known_valid_baseline")
     lines += [
         "## Provenance",

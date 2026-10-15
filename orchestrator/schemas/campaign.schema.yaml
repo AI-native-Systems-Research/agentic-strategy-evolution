@@ -835,8 +835,11 @@ properties:
             minItems: 1
             items: { type: string, minLength: 1 }
             description: >
-              Metric name(s) reserved as a pure generalization check,
-              recorded only at ``confirm`` and NEVER an input to fitting.
+              Metric name(s) reserved as a pure generalization check:
+              recorded on every row but structurally split off the
+              response, so NEVER an input to fitting, ranking or
+              certification, and summarised in ``report.json``'s
+              ``held_out`` block for the recommendation and each finalist.
               Example: ``[held_out_score]``. The validator
               hard-fails if any held_out metric also equals
               ``response.primary.metric`` or appears in ``constraints``
