@@ -451,7 +451,13 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     entries.sort(key=lambda e: (-pareto.sign(objs[0].direction)
                                 * pts[e.index].mean(metrics[0]), e.index))
     confident = [e for e in entries if e.status == "confidently_nondominated"]
-    choose_from = confident or entries
+    # The preference runs over the WHOLE measured front; confidence decides
+    # certification (chosen_cert_status below), not which point is preferred.
+    # Restricting the choice to confident points made the knee degenerate on a
+    # real campaign: two confident points, both extremes of themselves, so the
+    # "knee" was the tie-break -- the lowest-memory point, 24% slower than a
+    # front point that gave up 4 MiB for +16% throughput.
+    choose_from = entries
     zs_all = [frame.z(pts[e.index].means()) for e in entries]
     ref_z = [0.0] * len(objs)
     ref_raw = {o.metric: frame.worst[o.metric] for o in objs}

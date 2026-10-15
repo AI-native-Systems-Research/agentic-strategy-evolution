@@ -406,3 +406,47 @@ def test_an_infeasible_finalist_still_withholds_certification(tmp_path, monkeypa
     assert caveat.report["certified"] and surface.invalid(caveat.recommendation)
     today = run(False, "today")
     assert not (today.report["certified"] and surface.invalid(today.recommendation))
+
+
+def _knee_distance_ranking(par):
+    """Each front point's signed distance from the line through the two
+    extremes, in the record's own normalisation frame (larger = more knee)."""
+    import math
+
+    objs = par["objectives"]
+    fr = par["frame"]
+
+    def z(mean):
+        return [(-1.0 if o["direction"] == "minimize" else 1.0)
+                * (mean[o["metric"]] - fr["worst"][o["metric"]]) / fr["range"][o["metric"]]
+                for o in objs]
+
+    zs = [z(f["mean"]) for f in par["front"]]
+    a = max(range(len(zs)), key=lambda i: (zs[i][0], zs[i][1]))
+    b = max(range(len(zs)), key=lambda i: (zs[i][1], zs[i][0]))
+    dx, dy = zs[b][0] - zs[a][0], zs[b][1] - zs[a][1]
+    n = [dy, -dx]
+    norm = math.hypot(*n) or 1.0
+    n = [n[0] / norm, n[1] / norm]
+    if n[0] + n[1] < 0:
+        n = [-n[0], -n[1]]
+    return [n[0] * (p[0] - zs[a][0]) + n[1] * (p[1] - zs[a][1]) for p in zs]
+
+
+@pytest.mark.parametrize("name", ["pareto_convex", "pareto_noisy",
+                                  "pareto_with_constraint", "pareto_choice_split"])
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_the_knee_is_the_knee_of_the_whole_measured_front(name, seed, oracle_runs):
+    """Found on a real Go campaign: with only two confidently-nondominated
+    points the knee was chosen among THEM -- degenerate, so the tie-break
+    picked an extreme 24% slower than an interior point. The preference ranges
+    over the whole measured front; confidence decides certification only."""
+    r = oracle_runs(name, seed)
+    par = json.loads((Path(r["work_dir"]) / "report.json").read_text())["pareto"]
+    if len(par["front"]) < 3:
+        pytest.skip("a front of fewer than three points has no interior")
+    d = _knee_distance_ranking(par)
+    chosen = [i for i, f in enumerate(par["front"])
+              if f["levels"] == par["preference"]["chosen"]]
+    assert chosen, "the preferred point is not on the reported front"
+    assert d[chosen[0]] >= max(d) - 1e-9
