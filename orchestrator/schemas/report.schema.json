@@ -44,7 +44,7 @@
     },
     "residual_regret_model": {
       "type": ["number", "null"],
-      "description": "R_delta(x) from the FITTED surface at delta_screen (design spec 3.5), copied from the latest recommendation.json's residual_regret_model.value. Rests on the registered response class. Null when no fitting stage ran, or when the bound was not computable (pure error exactly zero). SEPARATE FROM residual_regret_terminal BY CONSTRUCTION: the two rest on different assumptions and are computed from disjoint inputs (fitted coefficients and their standard errors vs finalist sample means and variances), so one is never the other under a different key."
+      "description": "R_delta(x) from the FITTED surface at delta_screen (design spec 3.5), copied from the latest recommendation.json's residual_regret_model.value. Rests on the registered response class. It is the bound AT THE FITTED ARGMAX (recommendation.json.levels), which may differ from recommendation.levels here -- a fallback rung can recommend a different configuration -- and it is not a bound on the recommendation when the fit was judged inadequate. Null when no fitting stage ran, or when the bound was not computable (pure error exactly zero). SEPARATE FROM residual_regret_terminal BY CONSTRUCTION: the two rest on different assumptions and are computed from disjoint inputs (fitted coefficients and their standard errors vs finalist sample means and variances), so one is never the other under a different key."
     },
     "residual_regret_terminal": {
       "type": ["number", "null"],
