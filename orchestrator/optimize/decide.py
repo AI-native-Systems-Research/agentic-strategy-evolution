@@ -158,17 +158,43 @@ def candidates(fit_ids, factors, *, held_fixed: dict,
 
 
 def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
-            exclude_levels) -> list[Candidate]:
-    return [
+            exclude_levels, constraint_models=(),
+            constraint_delta: float = 0.05) -> list[Candidate]:
+    """Every valid candidate, scored -- minus the CONFIDENTLY infeasible ones.
+
+    ``constraint_models`` (``constraint_models.fit_constraint_models``) removes a
+    candidate only when some modelled constraint's one-sided ``1 - delta``
+    bound lies entirely on the violating side; an uncertain candidate stays,
+    because only a measurement can settle it. Unmodelled constraints exclude
+    nothing. If the models would exclude EVERY candidate the exclusion is not
+    applied at all: spec §3.6 says always act, and a confirm round can still
+    measure what the model doubts, whereas an empty space can only abort.
+    """
+    scored = [
         Candidate(levels=c.levels, coded=c.coded, predicted=predict(fit, c.coded))
         for c in candidates(fitted_ids, factors, held_fixed=held_fixed,
                             exclude_levels=exclude_levels)
     ]
+    if not any(getattr(m, "modelled", False) for m in constraint_models or ()):
+        return scored
+    from orchestrator.optimize.constraint_models import confidently_infeasible
+
+    kept = [c for c in scored
+            if not confidently_infeasible(constraint_models, c.coded,
+                                          delta=constraint_delta)]
+    return kept or scored
 
 
 def recommend(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict,
-              exclude_levels=()) -> Candidate:
+              exclude_levels=(), constraint_models=(),
+              constraint_delta: float = 0.05) -> Candidate:
     """x-hat: the best-predicted valid candidate.
+
+    "Valid" excludes configurations measured inadmissible (``exclude_levels``)
+    and, when ``constraint_models`` are given, candidates some modelled
+    constraint predicts CONFIDENTLY infeasible at ``constraint_delta`` (see
+    ``_scored``). The argmax may still be UNCERTAIN on a constraint; the
+    fitting stage records that in ``recommendation.json``.
 
     Raises when every candidate was excluded — an empty X_valid is a fact
     about the campaign that must be reported where it is knowable, not a
@@ -177,7 +203,9 @@ def recommend(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict
     sign = 1.0 if direction != "minimize" else -1.0
     best = None
     for c in _scored(fit, factors, fitted_ids=fitted_ids, held_fixed=held_fixed,
-                     exclude_levels=exclude_levels):
+                     exclude_levels=exclude_levels,
+                     constraint_models=constraint_models,
+                     constraint_delta=constraint_delta):
         if best is None or sign * c.predicted > sign * best.predicted:
             best = c
     if best is None:
@@ -243,7 +271,8 @@ def alias_resolutions(fit: Fit) -> list[tuple[int, str, str, Fit]]:
 
 def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
                         held_fixed: dict, exclude_levels=(),
-                        epsilon_pct: float = 2.0) -> list[tuple[str, str]]:
+                        epsilon_pct: float = 2.0, constraint_models=(),
+                        constraint_delta: float = 0.05) -> list[tuple[str, str]]:
     """Aliased pairs whose resolution could change the recommended winner.
 
     Spec §3.4 / paper §Illustrative: "If every plausible resolution of an alias
@@ -309,7 +338,8 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
     own scale.
     """
     kw = dict(direction=direction, fitted_ids=fitted_ids, held_fixed=held_fixed,
-              exclude_levels=exclude_levels)
+              exclude_levels=exclude_levels, constraint_models=constraint_models,
+              constraint_delta=constraint_delta)
     base_all = ranked(fit, factors, top=None, **kw)
     if not base_all:
         return []
@@ -338,7 +368,8 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
 
 
 def ranked(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict,
-           exclude_levels=(), top: int | None = 5) -> list[Candidate]:
+           exclude_levels=(), top: int | None = 5, constraint_models=(),
+           constraint_delta: float = 0.05) -> list[Candidate]:
     """The best ``top`` candidates, best first; ``top=None`` for all of them.
 
     ``recommendation.json``'s ``top_candidates``: a reader can see how close
@@ -349,7 +380,9 @@ def ranked(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict,
     """
     sign = 1.0 if direction != "minimize" else -1.0
     scored = _scored(fit, factors, fitted_ids=fitted_ids, held_fixed=held_fixed,
-                     exclude_levels=exclude_levels)
+                     exclude_levels=exclude_levels,
+                     constraint_models=constraint_models,
+                     constraint_delta=constraint_delta)
     # DETERMINISTIC TIE-BREAK, and an honest account of what it does and does not
     # buy. Exact ties are real and common here -- 53 tie groups in a 45-candidate
     # 3-factor space on one fixture -- and they arise structurally: whenever a

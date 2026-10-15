@@ -221,6 +221,7 @@ either. See `INV-STAT05`.
 | `INV-STAT10` | A fit is refused rather than attempted when fewer than 2 rows survive exclusion. | function | `stage_runner`'s `len(keep) < 2` abort | `always` | — |
 | `INV-STAT11` | Sign symmetry: negating every response and flipping `direction` yields the identical bound. | function | metamorphic property over `certificate` | `test` (property) | — |
 | `INV-STAT12` | The terminal bound never RAISES on an admissible sample: a variance it cannot estimate is `None`, not an exception. | function | `certificate.terminal_regret_bound`'s Welch df denominator | `test` | **yes** |
+| `INV-STAT13` | A fitted constraint model excludes a candidate only when the constraint's one-sided bound at `delta_screen` lies entirely on the violating side; a candidate whose bound admits feasibility is never removed from the argmax or `top_candidates`. | function | `constraint_models` docstring; `decide._scored`; field campaign that spent a confirm round on interior points of a measured-infeasible corner | `test` (property) — `tests/test_optimize_constraint_models.py::test_exclusion_never_removes_a_candidate_whose_bound_admits_feasibility` | **yes** |
 
 **`INV-STAT12` — a crash on the certification path, found by the property test.**
 The Welch degrees-of-freedom denominator is `(vk**2)/(nk-1) + (vb**2)/(nb-1)`,
@@ -463,15 +464,15 @@ they disagree.
 | Structural (`INV-ST`) | 10 | 10 | 0 | 0 | 0 |
 | Closed vocabulary (`INV-VOC`) | 8 | 7 | 0 | 1 | 0 |
 | Semantic (`INV-SEM`) | 13 | 12 | 0 | 1 | 0 |
-| Statistical (`INV-STAT`) | 11 | 7 | 0 | 4 | 0 |
+| Statistical (`INV-STAT`) | 12 | 7 | 0 | 5 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
 | Provenance (`INV-PROV`) | 5 | 4 | 0 | 1 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **64** | **51** | **0** | **11** | **2** |
+| **Total** | **65** | **51** | **0** | **12** | **2** |
 
-By level: `function` 24, `module` 6, `artifact` 20, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
-checker function exists): 41 of 64. The 23 without one are
+By level: `function` 25, `module` 6, `artifact` 20, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
+checker function exists): 41 of 65. The 24 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check

@@ -463,6 +463,9 @@ _REFINE_UNSUPPORTED = {
     # way: a full 2^3 screen gives every cell a one-factor sibling, which is the
     # 2x2 separation `exclusions.cell_holes` reports.
     "fails_at_one_level": 0,
+    # BS and CMP are 2-level numerics (the corner the constraint closes); only
+    # PF is refinable. Its tests run verify -> screen -> confirm.
+    "infeasible_corner_interior": 1,
 }
 
 

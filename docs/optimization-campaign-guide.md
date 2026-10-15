@@ -242,6 +242,30 @@ candidate honest.
   data about the space (it is not thrown away — a config that turns a
   feature off entirely and thereby "wins" trivially is exactly the case
   this catches). Example: `{metric: trigger_rate_pct, op: ">", value: 0.0}`.
+
+  **Constraints are also modelled.** Every fitting stage (screen, foldover,
+  refine) fits each numeric constraint metric with the same design and model
+  family as the primary, on the complete *and* infeasible rows — an
+  infeasible row is a measurement of exactly where the boundary is. A
+  candidate is dropped from the recommendation and from `top_candidates`
+  (the confirm shortlist's pool) only when it is **confidently** infeasible:
+  the constraint's one-sided bound at `delta_screen` (Bonferroni over the
+  modelled constraints) lies entirely on the violating side — for
+  `p99_ms <= 90`, the *lower* bound is above 90. A point prediction alone
+  never excludes anything, so a candidate near the boundary stays and a
+  confirm measurement settles it. This is what stops the ranking from
+  nominating interior levels of a region every screen row measured
+  infeasible. A constraint falls back to measurement only (the previous
+  behaviour: exclusion by exact measured levels) when it cannot be modelled:
+  `==`/`!=`, a `when`/`when_not` guard, a non-numeric threshold, the metric
+  missing on a measured row, a singular model, **no pure error** (a
+  deterministic constraint metric — declare centre points and give the
+  metric real replicate variation if you want it modelled), or a lack-of-fit
+  rejection. `recommendation.json["constraint_models"]` records, per
+  constraint, whether it was modelled (or why not), how many candidates it
+  excluded, and its verdict at the recommendation; a recommendation that is
+  merely *uncertain* on a constraint is listed in
+  `recommendation_constraint_uncertain`.
 - **`regimes`** — a conjunction that must hold in *every* named regime, for
   responses that are a constrained trade-off rather than a scalar. A
   scalar objective lets a config win on the average while failing one
