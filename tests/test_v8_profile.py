@@ -858,6 +858,26 @@ class TestDesignHang:
         assert len(runner.calls) == 2 and runner.calls[1].get("resume") is None
         assert runner.calls[1]["max_cost_usd"] == pytest.approx(8.0 - 0.75)  # v8 design default $8
 
+    def test_design_that_writes_nothing_gets_a_valid_fallback_design(self, tmp_path, monkeypatch):
+        from orchestrator.v8_execute import run_v8_design
+        runner = _Runner([SDKResult(text="", is_error=True, error_message="cap", subtype="error_max_budget_usd")])
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        it = tmp_path / "runs" / "iter-1"
+        it.mkdir(parents=True)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=runner, max_retries=3)
+        run_v8_design(d, c, tmp_path, it, 1)  # live p58: the designer was capped mid-reasoning
+        assert validate_design(it, campaign=c)["status"] == "pass"
+        arms = yaml.safe_load((it / "bundle.yaml").read_text())["arms"]
+        assert [a["type"] for a in arms] == ["h-main"]
+
+    def test_a_valid_designer_bundle_is_left_alone(self, tmp_path):
+        from orchestrator.v8_execute import write_fallback_design
+        d = _design_dir(tmp_path, _bundle(MAIN, ALT))
+        before = (d / "bundle.yaml").read_text()
+        assert write_fallback_design(_v8(), tmp_path, d, 1) is False
+        assert (d / "bundle.yaml").read_text() == before
+
     def test_exploit_threshold_is_never_below_half_a_point(self, tmp_path):
         from orchestrator.v8_execute import EXPLORE, decide_mode
         _prev_iteration(tmp_path, 40.0, 40.2)  # +0.2 on a deterministic judge (noise 0) is not progress

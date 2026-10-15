@@ -790,6 +790,46 @@ def run_v8_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
     return wt, eid
 
 
+def write_fallback_design(campaign: dict, work_dir: Path, iter_dir: Path, iteration: int) -> bool:
+    """A design session that ended without a valid bundle (cap stop mid-reasoning) gets a minimal one.
+
+    Live p58: the designer hit its cap inside a long reasoning turn, wrote nothing, and the whole iteration
+    was abandoned. One h-main that builds, measures and improves in short steps keeps the iteration going.
+    Returns True when it wrote anything.
+    """
+    from orchestrator.validate import validate_design
+    iter_dir = Path(iter_dir)
+    bundle_ok = (iter_dir / "bundle.yaml").is_file() and \
+        validate_design(iter_dir, campaign=campaign).get("status") == "pass"
+    missing = [n for n in ("problem.md", "handoff_snapshot.md") if not (iter_dir / n).is_file()]
+    if bundle_ok and not missing:
+        return False
+    if not bundle_ok:
+        best = best_judged(campaign, work_dir)
+        bundle = {
+            "metadata": {"iteration": iteration, "family": "direct construction",
+                         "research_question": str(campaign.get("research_question") or "Improve the score")},
+            "single_family_reason": ("v8 fallback: the design session ended without a bundle, so one arm builds "
+                                     "and improves a solution directly."),
+            "arms": [{
+                "type": "h-main", "mechanism_family": "direct construction from the statement",
+                "prediction": f"A working solution built and measured in short steps scores above "
+                              f"{best if best is not None else 0}.",
+                "mechanism": ("Start from the current solution; work out the problem's structure in short steps, "
+                              "writing and measuring code after each step, and keep the best version."),
+                "diagnostic": "If it does not beat the incumbent, the next iteration screens competing families.",
+                "validity_check": "The output is valid on the smallest case and the official judge scores it above 0.",
+            }],
+        }
+        atomic_write(iter_dir / "bundle.yaml", yaml.safe_dump(bundle, sort_keys=False, allow_unicode=True))
+    for name in missing:
+        atomic_write(iter_dir / name, f"# {name}\n\nv8 fallback design for iteration {iteration}: the design "
+                                      "session ended without this file.\n")
+    logger.warning("v8: design ended without a valid bundle%s; wrote a fallback design",
+                   f" or {', '.join(missing)}" if missing else "")
+    return True
+
+
 def run_v8_design(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, iteration: int) -> None:
     """The capped DESIGN session; a hang restarts it once in a fresh session on what is left of its cap.
 
@@ -805,8 +845,11 @@ def run_v8_design(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, it
             with watch_session(campaign, work_dir, "design"), dispatcher.session_budget(left, label="design"):
                 dispatcher.dispatch("planner", "design", output_path=Path(iter_dir) / "design_log.md",
                                     iteration=iteration)
+            write_fallback_design(campaign, work_dir, iter_dir, iteration)
             return
         except SDKHangError as exc:
             logger.warning("v8 design session hung (attempt %d): %s", attempt + 1, exc)
             if attempt >= MAX_HANG_RESTARTS or left < MIN_SESSION_USD:
+                if write_fallback_design(campaign, work_dir, iter_dir, iteration):
+                    return
                 raise
