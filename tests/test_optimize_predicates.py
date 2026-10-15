@@ -102,3 +102,72 @@ def test_genuine_comparison_failure_has_missing_false():
                  {"telemetry": {"queue_count": 2}})
     assert v.missing is False
     assert v.ok is False
+
+
+# ───── a failed comparison names the SHAPE of its failure (issue #318) ─────
+#
+# Four shapes, four different author actions: an observable the target never
+# emitted, one it emitted EMPTY (an adapter that reports a field only under some
+# condition), one of the wrong TYPE (a bool echoed for a string level), and one
+# of the right type and the wrong value. The hint must name exactly one.
+
+from hypothesis import given, strategies as st  # noqa: E402
+
+_PRED = {"observable": "config.knob", "op": "==", "value": "{level}"}
+_HINT_MARKERS = {
+    "absent": "did not emit",
+    "empty": "PRESENT but EMPTY",
+    "type": "Check the observable's TYPE",
+    "value": "same type as the level",
+}
+
+_nonempty_text = st.text(min_size=1, max_size=8)
+_scalar = st.one_of(st.booleans(), st.integers(), _nonempty_text,
+                    st.floats(allow_nan=False))
+
+
+def _shape_of(hint: str) -> list[str]:
+    return [shape for shape, marker in _HINT_MARKERS.items() if marker in hint]
+
+
+@given(level=_nonempty_text)
+def test_an_absent_observable_gets_only_the_absent_hint(level):
+    v = evaluate(_PRED, {"config": {}}, level=level)
+    assert v.ok is False and _shape_of(v.hint) == ["absent"], v.hint
+
+
+@given(level=_nonempty_text, observed=st.sampled_from(["", None]))
+def test_an_empty_observable_gets_only_the_empty_hint(level, observed):
+    v = evaluate(_PRED, {"config": {"knob": observed}}, level=level)
+    assert v.ok is False and _shape_of(v.hint) == ["empty"], v.hint
+    assert "not a type mismatch" in v.hint
+
+
+@given(level=_nonempty_text, observed=st.one_of(st.booleans(), st.integers(),
+                                                 st.floats(allow_nan=False)))
+def test_a_non_string_observable_for_a_string_level_gets_only_the_type_hint(
+    level, observed,
+):
+    v = evaluate(_PRED, {"config": {"knob": observed}}, level=level)
+    assert v.ok is False and _shape_of(v.hint) == ["type"], v.hint
+
+
+@given(pair=st.tuples(_scalar, _scalar).filter(
+    lambda p: type(p[0]) is type(p[1]) and p[0] != p[1]))
+def test_a_same_type_unequal_observable_gets_only_the_value_hint(pair):
+    observed, level = pair
+    v = evaluate(_PRED, {"config": {"knob": observed}}, level=level)
+    assert v.ok is False and _shape_of(v.hint) == ["value"], v.hint
+
+
+@given(level=_scalar)
+def test_a_passing_comparison_carries_no_hint(level):
+    v = evaluate(_PRED, {"config": {"knob": level}}, level=level)
+    assert v.ok is True and v.hint == ""
+
+
+def test_the_empty_hint_says_to_record_the_level_unconditionally():
+    v = evaluate(_PRED, {"config": {"knob": ""}}, level="ag_rs")
+    assert ("Record the level the design matrix asked for, unconditionally; "
+            "what the knob DOES at that level is a finding, not a reason to "
+            "omit it from the row.") in v.hint

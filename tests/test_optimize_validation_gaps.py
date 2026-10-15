@@ -470,6 +470,50 @@ def test_liveness_report_names_the_dead_factor_and_not_the_live_one(
     assert live_line and "not demonstrably live" not in " ".join(live_line), out
 
 
+def test_liveness_explains_once_that_a_flag_is_relative_to_the_base_corner(
+    tmp_path: Path, capsys,
+):
+    """A threshold-bound knob reads as dead at the base corner (issue #318).
+
+    "Not demonstrably live" can mean "does nothing" or "does nothing HERE", and
+    those call for opposite actions -- drop the factor, or move its levels. The
+    report must say once which corner the probe ran at.
+    """
+    from orchestrator.cli import _smoke_check_optimization
+
+    campaign = _sweep_campaign(
+        tmp_path,
+        factors=[_numeric_factor("LIVE", [0, 10]),
+                 _numeric_factor("DEAD1", [0, 10]),
+                 _numeric_factor("DEAD2", [0, 10])],
+        effects={"LIVE": 5.0},
+        noise=2.0,
+        baseline={"LIVE": "0", "DEAD1": "0", "DEAD2": "0"},
+    )
+    _smoke_check_optimization(campaign, liveness=True)
+    out = capsys.readouterr().out
+    assert out.count("AT THE BASE CONFIGURATION") == 1, out
+    assert "bracket a regime the base corner is not in" in out, out
+
+
+def test_liveness_omits_the_base_corner_caveat_when_nothing_is_flagged(
+    tmp_path: Path, capsys,
+):
+    from orchestrator.cli import _smoke_check_optimization
+
+    campaign = _sweep_campaign(
+        tmp_path,
+        factors=[_numeric_factor("LIVE", [0, 10])],
+        effects={"LIVE": 5.0},
+        noise=2.0,
+        baseline={"LIVE": "0"},
+    )
+    _smoke_check_optimization(campaign, liveness=True)
+    out = capsys.readouterr().out
+    assert "not demonstrably live" not in out, out
+    assert "AT THE BASE CONFIGURATION" not in out, out
+
+
 def test_liveness_measures_a_noise_floor_from_repeated_baseline_runs(
     tmp_path: Path, capsys,
 ):

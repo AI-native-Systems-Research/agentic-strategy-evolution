@@ -1260,6 +1260,17 @@ def _smoke_liveness_sweep(
             f"reaches a mechanism (not just a config file), widen its levels, "
             f"or drop it before pre-registering.",
         )
+        # Printed once, not per factor: the caveat is about where the probe
+        # ran, which is the same corner for every factor (issue #318).
+        print(
+            "  liveness: a factor flagged here moved the objective by less "
+            "than 2x the workload's own variation AT THE BASE CONFIGURATION. "
+            "That is where every factor's levels are probed, so a knob whose "
+            "effect only appears away from the base corner -- a cap that binds "
+            "only above some load, a backend that matters only at a wider "
+            "parallelism -- reads as dead here. Before dropping it, check "
+            "whether its levels bracket a regime the base corner is not in.",
+        )
 
     # 3. GAP 1: the ceiling, against the per-level wall clock this sweep just
     #    measured and used to throw away.
@@ -1639,16 +1650,17 @@ def _smoke_probe_one_config(
             continue
         try:
             v = predicates.evaluate(man, scope, level=levels.get(f.id))
-            ok, detail = v.ok, v.detail
         except Exception as exc:  # noqa: BLE001
             problems.append(f"factor {f.id}: manipulation check raised: {exc}")
             continue
-        if not ok:
+        if not v.ok:
+            # The hint names the failure's SHAPE -- absent, empty, wrong type,
+            # wrong value -- because each calls for a different fix, and a
+            # blanket TYPE hint sent an author with '' == 'ag_rs' (two strings)
+            # looking for a type problem that was not there (issue #318).
             problems.append(
                 f"factor {f.id}: manipulation predicate fails at its first "
-                f"level ({detail}). Every run would be rejected. Check the "
-                f"observable's TYPE -- a level is a string, and a target that "
-                f"emits a bool or int for it can never compare equal.",
+                f"level ({v.detail}). Every run would be rejected. {v.hint}",
             )
     return problems
 

@@ -37,6 +37,55 @@ class Verdict:
     detail: str = ""
     skipped: bool = False
     missing: bool = False
+    #: On a failure, what the SHAPE of the failure says to fix -- empty on a pass.
+    hint: str = ""
+
+
+#: An observable the target never emitted. Distinct from an EMPTY one: here the
+#: key itself is missing, so the namespace or the dotted path is the suspect.
+_HINT_ABSENT = (
+    "The target did not emit this observable at all: check the dotted path and "
+    "that the target reports it on every run."
+)
+
+#: Present, but '' or None, against a non-empty level (issue #318). Not a type
+#: problem -- both sides are usually strings -- so the TYPE hint pointed at the
+#: wrong cause. The cause seen in practice is an adapter that reports a field
+#: only when some other knob enables it, reasoning that it is inert otherwise.
+_HINT_EMPTY = (
+    "The observable is PRESENT but EMPTY, and the level is non-empty, so this "
+    "is not a type mismatch: the target emitted no value for this field at this "
+    "corner. An adapter that reports a field conditionally -- only when some "
+    "other knob is enabled -- records '' at the corners where the condition is "
+    "false, and every such row is rejected. Record the level the design matrix "
+    "asked for, unconditionally; what the knob DOES at that level is a finding, "
+    "not a reason to omit it from the row."
+)
+
+_HINT_VALUE = (
+    "The observable is the same type as the level but a different value: the "
+    "target ran a configuration other than the one requested. Check that the "
+    "level actually reaches the target (its apply template, env, or "
+    "config_patch)."
+)
+
+
+def _empty(value: Any) -> bool:
+    return value is None or value == ""
+
+
+def _failure_hint(got: Any, want: Any) -> str:
+    """Name the one shape a failed comparison of ``got`` against ``want`` has."""
+    if _empty(got) and not _empty(want):
+        return _HINT_EMPTY
+    if type(got) is not type(want):
+        return (
+            f"Check the observable's TYPE -- the target emitted "
+            f"{type(got).__name__} {got!r} where the level is "
+            f"{type(want).__name__} {want!r}, and values of different types "
+            f"can never compare equal."
+        )
+    return _HINT_VALUE
 
 
 def _resolve(path: str, observed: dict) -> Any:
@@ -90,6 +139,7 @@ def evaluate(pred: dict, observed: dict, *, level: Any = None) -> Verdict:
             detail=(f"{path!r} not present in the observation — the target did "
                     f"not emit it, so the check cannot pass"),
             missing=True,
+            hint=_HINT_ABSENT,
         )
 
     want = pred.get("value")
@@ -100,6 +150,7 @@ def evaluate(pred: dict, observed: dict, *, level: Any = None) -> Verdict:
     return Verdict(
         ok=ok,
         detail=f"{path} = {got!r} {op_name} {want!r} -> {'ok' if ok else 'FAIL'}",
+        hint="" if ok else _failure_hint(got, want),
     )
 
 
