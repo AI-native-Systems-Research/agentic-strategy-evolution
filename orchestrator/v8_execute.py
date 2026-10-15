@@ -479,6 +479,7 @@ def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, st
     rec = state["sessions"].get(EVALUATOR_KEY) or {}
     if rec.get("status") != "measuring":
         cap = v8_settings(campaign).evaluator_budget_usd
+        spent_before = iteration_spent(campaign, work_dir, iter_dir)
         _start_session(repo, iteration, state, EVALUATOR_KEY, cap, extras)
         _save_state(adir, state)
         hard = round(cap * 2.0, 2)
@@ -489,8 +490,9 @@ def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, st
         rec = state["sessions"][EVALUATOR_KEY]
         remove_experiment_worktree(repo, rec["experiment_id"])
         commit_baseline(repo, patch, state)
-        state["sessions"][EVALUATOR_KEY] = {"status": "measuring", "outcome": outcome, "budget_usd": cap,
-                                            "noise_runs": []}
+        state["sessions"][EVALUATOR_KEY] = {
+            "status": "measuring", "outcome": outcome, "budget_usd": cap, "noise_runs": [],
+            "spent_usd": round(iteration_spent(campaign, work_dir, iter_dir) - spent_before, 4)}
         _save_state(adir, state)
     instrument = write_orchestrator_instrument(campaign, work_dir, iter_dir, iteration, repo, state, extras)
     state["sessions"][EVALUATOR_KEY].update({"status": "done", "instrument": instrument})
@@ -538,7 +540,7 @@ def _recover(campaign, work_dir, iter_dir, repo, state, key, extras, *, stale_be
 
 
 def _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key, cap, extras,
-            remaining) -> None:
+            remaining, waiting: int = 0) -> None:
     """Screen one arm in a fresh worktree (kept for the winner), then its one repair turn if needed.
 
     State ``running`` -> ``ended`` (session over, patch saved) -> ``done``; a crash after the session
@@ -550,8 +552,10 @@ def _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, ke
     if (state["sessions"].get(key) or {}).get("status") != "ended":
         _start_session(repo, iteration, state, key, cap, extras)
         _save_state(adir, state)
-        # The hard stop may exceed the target, but never into the winner's reserve.
-        hard = round(max(cap, min(cap * 2.0, remaining() - winner_reserve(s, s8))), 2)
+        # The hard stop may exceed the target, but never into the winner's reserve or the floor of an
+        # arm still waiting to be screened.
+        room = remaining() - winner_reserve(s, s8) - waiting * s8.arm_floor_usd
+        hard = round(max(cap, min(cap * 2.0, room)), 2)
         print(f"  v8 execute-arm `{key}` (target ${cap:.2f}, hard cap ${hard:.2f})")
         outcome = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key,
                             "execute-arm-v8", label=key, target=cap, hard=hard, resume=None, extras=extras,
@@ -661,7 +665,9 @@ def run_v8_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
         _save_state(adir, state)
 
     def remaining() -> float:
-        return s.iteration_budget_usd - iteration_spent(campaign, work_dir, iter_dir)
+        # The iteration-1 evaluator is one-time setup: it does not use up the iteration's screening money.
+        setup = float((state["sessions"].get(EVALUATOR_KEY) or {}).get("spent_usd") or 0.0)
+        return s.iteration_budget_usd + setup - iteration_spent(campaign, work_dir, iter_dir)
 
     add_to_handoff(campaign, work_dir, iter_dir, iteration)  # the designer rewrote the handoff
     ev = state["sessions"].get(EVALUATOR_KEY) or {}
@@ -689,7 +695,8 @@ def run_v8_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
             continue
         cap = v8_screening_cap(s, s8, remaining(), len(todo))
         todo.remove(key)
-        _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key, cap, extras, remaining)
+        _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key, cap, extras, remaining,
+                waiting=len(todo))
 
     results = {k: _load_json(adir / k / "result.json", None) for k, _ in arms}
     win = state.get("winner") or {}

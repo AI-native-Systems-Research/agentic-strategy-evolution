@@ -1062,9 +1062,23 @@ class TestFundedArms:
         assert v8_screening_cap(s, s8, 30.0, 2) == 6.0  # never above the arm budget
         assert arm_funded(s, s8, 12.8) and not arm_funded(s, s8, 12.7)
 
+    def test_default_budget_screens_both_families_and_leaves_the_waiting_arm_its_floor(self, tmp_path,
+                                                                                         monkeypatch):
+        repo, work, it, campaign, fake, d = _setup(tmp_path, monkeypatch, {"h-main": 50, "h-alternative-1": 90})
+        _execute(repo, work, it, campaign, d)
+        names = fake.names()
+        assert "h-main" in names and "h-alternative-1" in names  # the alternative is not skipped
+        main = dict(fake.calls)["h-main"]
+        from orchestrator.design_profile import v7_settings, v8_settings
+        from orchestrator.v8_execute import winner_reserve
+        s, s8 = v7_settings(campaign), v8_settings(campaign)
+        assert main["max_cost_usd"] <= s.iteration_budget_usd - winner_reserve(s, s8) - s8.arm_floor_usd + 1e-6
+
     def test_an_arm_the_iteration_cannot_fund_is_skipped_not_starved(self, tmp_path, monkeypatch):
+        # $7: the evaluator's spend is credited back, but after h-main the floor no longer fits above
+        # the winner reserve
         repo, work, it, campaign, fake, d = _setup(tmp_path, monkeypatch, {"h-main": 50, "h-alternative-1": 90},
-                                                   iteration_budget_usd=10)
+                                                   iteration_budget_usd=7)
         _execute(repo, work, it, campaign, d)
         assert fake.names() == ["evaluator", "h-main", "winner:h-main"]
         main = dict(fake.calls)["h-main"]
