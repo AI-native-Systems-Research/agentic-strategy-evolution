@@ -141,13 +141,20 @@ def constrained_chain(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def failing_chain(tmp_path_factory):
+    """A campaign that loses whole rows to a failing level — the partial-fit path."""
+    return _drive_or_skip("fails_at_one_level", seed=11,
+                          parent_dir=tmp_path_factory.mktemp("fail"))
+
+
+@pytest.fixture(scope="module")
 def nan_chain(tmp_path_factory):
     """A campaign with an unmeasurable corner — the semantic-exception path."""
     return _drive_or_skip("nan_at_corner", seed=7, parent_dir=tmp_path_factory.mktemp("nan"),
                   overrides={"stages": ["verify", "screen", "confirm"]})
 
 
-ALL_CHAINS = ("full_chain", "constrained_chain", "nan_chain")
+ALL_CHAINS = ("full_chain", "constrained_chain", "failing_chain", "nan_chain")
 
 
 # ── C1: every artifact on disk validates against its own schema ────────────
@@ -181,16 +188,6 @@ def test_every_whole_document_artifact_validates_against_its_schema(chain, reque
 
 
 @pytest.mark.mutation_sentinel
-@pytest.mark.xfail(
-    strict=False,
-    reason="BUG FOUND BY THIS LAYER: runs_row.schema.json's `role` enum is "
-           "['corner','center','axial'] and omits 'confirm', but every "
-           "confirm-round row is written with role='confirm'. Measured on "
-           "`bowl` seed 3: 9 of 29 rows fail their own schema. "
-           "design_matrix.schema.json DOES declare 'confirm' — the two "
-           "schemas describing the same row disagree. Flips to pass when the "
-           "enum is corrected.",
-)
 @pytest.mark.parametrize("chain", ALL_CHAINS)
 def test_every_runs_jsonl_row_validates_against_runs_row_schema(chain, request):
     """A REAL DEFECT this contract layer surfaced.
@@ -360,7 +357,7 @@ def test_every_planned_row_is_accounted_for_as_fitted_or_excluded(chain, request
         )
         fitted = eff.get("n_runs")
         excl = _read(it / "fit_exclusions.json")
-        n_excluded = len(excl.get("excluded") or []) if excl else 0
+        n_excluded = len(excl.get("excluded_row_indices") or []) if excl else 0
         if fitted is not None:
             assert fitted + n_excluded == planned, (
                 f"{it.name}: {planned} planned != {fitted} fitted + "
@@ -392,17 +389,20 @@ def test_every_excluded_row_index_names_a_row_that_actually_ran(chain, request):
             continue
         found += 1
         ran = {r["row_index"] for r in _rows(it / "runs.jsonl")}
-        for entry in excl.get("excluded") or []:
-            idx = entry.get("row_index") if isinstance(entry, dict) else entry
+        # Keys as `stage_runner` writes them -- an earlier draft read a retired
+        # `excluded` key, so this loop iterated nothing and passed vacuously.
+        indices = excl.get("excluded_row_indices")
+        assert indices, f"{it.name}: fit_exclusions.json names no excluded_row_indices"
+        reasons = excl.get("excluded_reasons") or {}
+        for idx in indices:
             assert idx in ran, (
                 f"{it.name}: excluded row_index {idx} appears in no runs.jsonl row "
                 f"(rows present: {sorted(ran)})"
             )
-            if isinstance(entry, dict):
-                assert entry.get("reason"), (
-                    f"{it.name}: row {idx} excluded with no reason — an "
-                    f"unexplained exclusion cannot be reviewed"
-                )
+            assert reasons.get(str(idx)), (
+                f"{it.name}: row {idx} excluded with no reason — an "
+                f"unexplained exclusion cannot be reviewed"
+            )
     if not found:
         pytest.skip(f"{chain} excluded no rows (no fit_exclusions.json)")
 
@@ -576,7 +576,7 @@ def test_a_successful_row_reports_a_response_that_is_actually_a_measurement(chai
     nan_seen: list[tuple[str, object]] = []
     for it in _iters(res.work_dir):
         for row in _rows(it / "runs.jsonl"):
-            if not row.get("ok", row.get("success", True)):
+            if row.get("status") != "complete":
                 continue
             seen += 1
             resp = row.get("response") or {}
@@ -656,10 +656,6 @@ def test_duration_ms_is_a_measurement_and_not_a_declared_zero(chain, request):
 
 @pytest.mark.mutation_sentinel
 @pytest.mark.pending_duration
-@pytest.mark.xfail(
-    strict=False,
-    reason="PENDING AGENT C: failed rows do not yet carry a `reason`.",
-)
 @pytest.mark.parametrize("chain", ALL_CHAINS)
 def test_every_failed_row_says_why_it_failed(chain, request):
     """A failed row with no cause is a row nobody can act on.
@@ -673,7 +669,7 @@ def test_every_failed_row_says_why_it_failed(chain, request):
     failed = 0
     for it in _iters(res.work_dir):
         for row in _rows(it / "runs.jsonl"):
-            if row.get("ok", row.get("success", True)):
+            if row.get("status") == "complete":
                 continue
             failed += 1
             cause = (row.get("reason") or row.get("failure_kind")
@@ -767,18 +763,10 @@ def test_the_adapter_contract_is_pinned_by_the_first_successful_row(chain, reque
     assert isinstance(fields, dict) and fields, "the contract fingerprints nothing"
 
 
-# ── C9: partial-design fitting (PENDING AGENT A) ─────────────────────────
+# ── C9: partial-design fitting ─────────────────────────
 
 
 @pytest.mark.mutation_sentinel
-@pytest.mark.pending_partial_fit
-@pytest.mark.xfail(
-    strict=False,
-    reason="PENDING AGENT A: an iteration where SOME rows fail must refit on "
-           "the complete subset and write fit_exclusions.json, rather than "
-           "aborting pre-fit. Until then this campaign aborts and writes "
-           "neither effects.json nor a transition row.",
-)
 def test_an_iteration_that_lost_some_rows_still_fits_and_still_records_a_transition(
         tmp_path):
     """THE FIELD FAILURE, end to end.
@@ -791,11 +779,11 @@ def test_an_iteration_that_lost_some_rows_still_fits_and_still_records_a_transit
     written.
 
     Asserted at the artifact level rather than on an exception type, so it stays
-    true under any implementation Agent A chooses: after a campaign in which some
+    true under any implementation: after a campaign in which some
     rows failed, there must be an `effects.json`, a `fit_exclusions.json`, and a
     non-empty `transitions.jsonl`.
     """
-    res = _drive_or_skip("nan_at_corner", seed=11, parent_dir=tmp_path,
+    res = _drive_or_skip("fails_at_one_level", seed=11, parent_dir=tmp_path,
                  overrides={"stages": ["verify", "screen", "confirm"]})
     trail = _rows(Path(res.work_dir) / "transitions.jsonl")
     assert trail, (

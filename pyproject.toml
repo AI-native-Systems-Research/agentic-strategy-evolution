@@ -47,7 +47,6 @@ markers = [
     "boundary: boundary-value / equivalence-partition cases around abort-vs-proceed decisions.",
     "combinatorial: pairwise covering-array sweep over campaign-configuration dimensions.",
     "mutation_sentinel: named as the catching test in the mutation matrix; breaking source here MUST fail it.",
-    "pending_partial_fit: needs partial-design fitting — an iteration that loses SOME rows must refit on the complete subset and write fit_exclusions.json instead of aborting pre-fit.",
     "pending_parallel: needs parallel execution at spending stages wired through the measured contention floor (orchestrator/optimize/concurrency.py).",
     "robustness: campaign-completion robustness — resume/reuse, circuit breaker, progress, orphan reaping, wall-clock budget.",
     "pending_duration: covers the per-row duration_ms clock and the failure `reason` on failed rows — the 'schema-valid but always the default value' contract.",
