@@ -280,6 +280,13 @@ def _rule2_held_out_leakage(opt: dict) -> list[str]:
     errors: list[str] = []
     primary_metric = (response.get("primary") or {}).get("metric")
     primary_norm = _norm_metric(primary_metric)
+    # Multi-objective: EVERY objective is fitted, so every one is a leakage
+    # target. (A campaign declaring both forms is reported by rule 26; checking
+    # both here keeps this rule honest on that shape too.)
+    objective_metrics = [
+        o.get("metric") for o in (response.get("objectives") or [])
+        if isinstance(o, dict) and o.get("metric")
+    ] if isinstance(response.get("objectives"), list) else []
     for metric in held_out:
         metric_norm = _norm_metric(metric)
         if primary_norm and metric_norm == primary_norm:
@@ -294,6 +301,18 @@ def _rule2_held_out_leakage(opt: dict) -> list[str]:
                 f"meant to be different metrics, make them unambiguously "
                 f"distinct."
             )
+        for omet in objective_metrics:
+            if metric_norm and _norm_metric(omet) == metric_norm:
+                errors.append(
+                    f"response.held_out contains {metric!r}, which collides "
+                    f"with the response.objectives metric {omet!r} (same "
+                    f"metric name, ignoring case/whitespace) -- this is data "
+                    f"leakage (the holdout-selection failure class): every "
+                    f"objective is fitted and ranked on, and a held_out "
+                    f"metric must never be an input the design matrix fits "
+                    f"against. Choose a different held_out metric, or drop "
+                    f"{omet!r} from objectives."
+                )
         for constraint in response.get("constraints") or []:
             cmetric = constraint.get("metric") or constraint.get("observable")
             if _norm_metric(cmetric) == metric_norm:
@@ -1102,6 +1121,8 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
             )
     eps = pol.get("epsilon")
     if eps is not None:
+        from orchestrator.optimize.objectives import is_epsilon_map
+
         if not isinstance(eps, dict):
             errors.append(
                 "optimization.policy.epsilon must be a mapping with exactly one "
@@ -1109,16 +1130,23 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
                 "value), e.g. {pct: 2.0}."
             )
         else:
-            has = [k for k in ("abs", "pct") if k in eps]
-            if len(has) != 1:
-                errors.append(
-                    f"optimization.policy.epsilon declares {has or 'neither'} of "
-                    f"abs/pct; it must declare EXACTLY ONE. With both, "
-                    f"resolve_epsilon uses abs and silently discards pct — one "
-                    f"of the two thresholds you wrote would never apply. With "
-                    f"neither, the indifference width falls to the pct: 2.0 "
-                    f"default rather than to anything you stated."
-                )
+            # The map form (objective metric -> spec) is checked entry by
+            # entry; whether its keys are objectives at all is rule 26's.
+            specs = (sorted(eps.items()) if is_epsilon_map(eps)
+                     else [(None, eps)])
+            for key, spec in specs:
+                where = ("optimization.policy.epsilon" if key is None
+                         else f"optimization.policy.epsilon.{key}")
+                has = [k for k in ("abs", "pct") if k in spec]
+                if len(has) != 1:
+                    errors.append(
+                        f"{where} declares {has or 'neither'} of "
+                        f"abs/pct; it must declare EXACTLY ONE. With both, "
+                        f"resolve_epsilon uses abs and silently discards pct — one "
+                        f"of the two thresholds you wrote would never apply. With "
+                        f"neither, the indifference width falls to the pct: 2.0 "
+                        f"default rather than to anything you stated."
+                    )
     if "confirm_max_rounds" in pol:
         raw = pol["confirm_max_rounds"]
         if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
@@ -1824,11 +1852,237 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule23_commands_are_argv_not_shell(opt))
     errors.extend(_rule24_integer_levels_without_grid(factors))
     errors.extend(_rule25_geometric_levels_without_log_scale(factors))
+    errors.extend(_rule26_objectives(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
     # locked_observables keys, and a WARN naming every unenforceable lock.
     from orchestrator.optimize.locked import validation_findings as _locked_rules
     errors.extend(_locked_rules(campaign))
+    return errors
+
+
+def _rule26_objectives(opt: dict) -> list[str]:
+    """Rule 26: a multi-objective ``response`` must be coherent.
+
+    ``response.objectives`` (spec ``2026-10-15-pareto-front-design.md``) asks
+    for the trade-off FRONT between two or more responses. Every check below
+    is a declaration that would otherwise run while meaning something other
+    than what was written:
+
+    * ``primary`` AND ``objectives`` -- which one is fitted is then a guess;
+      neither -- nothing is fitted at all.
+    * fewer than two DISTINCT objective metrics (ignoring case/whitespace):
+      a front over one metric is a ranking, and two spellings of one metric
+      make every point trivially non-dominated on one of them.
+    * an objective that is also a constraint: the constraint excludes the very
+      configurations that trade it away, so the front is cut where the author
+      asked for it to be explored. (held_out and self_check collisions are
+      rules 2 and 20.)
+    * ``preference.weights`` / ``order`` naming a non-objective, a weight that
+      is not > 0, an ``order`` that is not a permutation of the objectives, or
+      either key supplied under a method that ignores it -- a stated
+      preference that would silently not apply.
+    * map-form ``policy.epsilon`` / ``noise_estimate_pct`` keyed by a
+      non-objective (a typo'd metric falls to the default unnoticed), or used
+      without ``objectives`` (the single-objective path reads one spec, so the
+      map would be ignored).
+    """
+    from orchestrator.optimize.objectives import is_epsilon_map
+
+    response = (opt or {}).get("response")
+    if not isinstance(response, dict):
+        return []
+    errors: list[str] = []
+    has_primary = "primary" in response
+    has_objectives = "objectives" in response
+    pol = opt.get("policy") if isinstance(opt.get("policy"), dict) else {}
+    eps = pol.get("epsilon")
+    noise = response.get("noise_estimate_pct")
+
+    if has_primary and has_objectives:
+        errors.append(
+            "optimization.response declares both primary and objectives; they "
+            "are mutually exclusive. Keep primary for ONE objective (and "
+            "express the other responses as constraints), or move primary into "
+            "objectives (>= 2 entries) to measure the trade-off front."
+        )
+    elif not has_primary and not has_objectives:
+        errors.append(
+            "optimization.response declares neither primary nor objectives, so "
+            "there is nothing to fit. Add primary: {metric, direction} for one "
+            "objective, or objectives: [{metric, direction}, ...] (>= 2) for a "
+            "trade-off front."
+        )
+
+    if not has_objectives:
+        if response.get("preference") is not None:
+            errors.append(
+                "optimization.response.preference is declared without "
+                "response.objectives. preference chooses one point of a "
+                "multi-objective front; a single primary objective has no "
+                "front to choose from. Remove it, or declare objectives."
+            )
+        if is_epsilon_map(eps):
+            errors.append(
+                f"optimization.policy.epsilon is a per-objective map "
+                f"({sorted(eps)}) but the campaign has a single primary "
+                f"objective, which reads ONE spec -- the map would be ignored "
+                f"and the default {{pct: 2.0}} used instead. Write one spec, "
+                f"e.g. {{pct: 2.0}} or {{abs: 0.5}}."
+            )
+        if isinstance(noise, dict):
+            errors.append(
+                "optimization.response.noise_estimate_pct is a per-objective "
+                "map but the campaign has a single primary objective; write "
+                "one number (percent of the primary metric)."
+            )
+        return errors
+
+    raw = response.get("objectives")
+    if not isinstance(raw, list):
+        return errors + ["optimization.response.objectives must be a list of "
+                         "{metric, direction} entries (>= 2)."]
+    metrics: list[str] = []
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict) or not isinstance(entry.get("metric"), str) \
+                or not entry.get("metric"):
+            errors.append(
+                f"optimization.response.objectives[{i}] must be "
+                f"{{metric: <name>, direction: maximize|minimize}}."
+            )
+            continue
+        if entry.get("direction") not in ("maximize", "minimize"):
+            errors.append(
+                f"optimization.response.objectives[{i}] ({entry['metric']!r}) "
+                f"has direction {entry.get('direction')!r}; it must be "
+                f"maximize or minimize."
+            )
+        metrics.append(entry["metric"])
+    seen: dict[str, str] = {}
+    for m in metrics:
+        n = _norm_metric(m)
+        if n in seen:
+            errors.append(
+                f"optimization.response.objectives names {seen[n]!r} and {m!r}, "
+                f"which are the same metric (ignoring case/whitespace). Each "
+                f"objective must be a DISTINCT response; a front over one "
+                f"metric twice is a ranking in disguise."
+            )
+        else:
+            seen[n] = m
+    if len(seen) < 2:
+        errors.append(
+            f"optimization.response.objectives needs >= 2 distinct metrics "
+            f"(got {len(seen)}). For one objective use response.primary "
+            f"instead; a trade-off front needs at least two things to trade."
+        )
+    norms = set(seen)
+
+    for c in response.get("constraints") or []:
+        if not isinstance(c, dict):
+            continue
+        cm = c.get("metric") or c.get("observable")
+        if _norm_metric(cm) in norms:
+            errors.append(
+                f"optimization.response.constraints bounds {cm!r}, which is "
+                f"also one of response.objectives. Declare it as ONE of the "
+                f"two: a constraint when you already know the acceptable bound "
+                f"(admissibility -- the configurations past it are excluded), "
+                f"or an objective when you want to see what trading it buys "
+                f"(the front). As both, the constraint cuts off the very part "
+                f"of the front the objective asks to explore."
+            )
+
+    pref = response.get("preference")
+    if isinstance(pref, dict):
+        method = pref.get("method")
+        weights = pref.get("weights")
+        order = pref.get("order")
+        if method == "weights":
+            if not isinstance(weights, dict) or not weights:
+                errors.append(
+                    "optimization.response.preference.method is weights but no "
+                    "weights are declared. Add weights: {<objective metric>: "
+                    "<weight > 0>, ...}, or use method: knee (no weights needed)."
+                )
+        elif weights is not None:
+            errors.append(
+                f"optimization.response.preference.weights is declared but "
+                f"method is {method!r}, which ignores it -- the weights you "
+                f"wrote would never apply. Set method: weights, or remove "
+                f"weights."
+            )
+        if isinstance(weights, dict):
+            for k, w in sorted(weights.items(), key=lambda kv: str(kv[0])):
+                if _norm_metric(k) not in norms:
+                    errors.append(
+                        f"optimization.response.preference.weights names "
+                        f"{k!r}, which is not an objective metric "
+                        f"({', '.join(metrics)})."
+                    )
+                if (not isinstance(w, (int, float)) or isinstance(w, bool)
+                        or not w > 0):
+                    errors.append(
+                        f"optimization.response.preference.weights.{k} = {w!r} "
+                        f"must be a number > 0. An objective that should not "
+                        f"count does not belong in objectives."
+                    )
+            missing = [m for m in metrics
+                       if _norm_metric(m) not in {_norm_metric(k) for k in weights}]
+            if method == "weights" and missing:
+                errors.append(
+                    f"WARN: optimization.response.preference.weights omits "
+                    f"objective(s) {', '.join(missing)}, so they carry weight 0 "
+                    f"in choosing the recommendation (the front still reports "
+                    f"them). Give each objective an explicit weight."
+                )
+        if method == "lexicographic":
+            if not isinstance(order, list) or not order:
+                errors.append(
+                    "optimization.response.preference.method is lexicographic "
+                    "but no order is declared. Add order: [<most important "
+                    "objective>, ...], a permutation of the objective metrics."
+                )
+        elif order is not None:
+            errors.append(
+                f"optimization.response.preference.order is declared but "
+                f"method is {method!r}, which ignores it. Set method: "
+                f"lexicographic, or remove order."
+            )
+        if isinstance(order, list) and order:
+            onorm = [_norm_metric(x) for x in order]
+            if sorted(onorm, key=str) != sorted(norms, key=str) \
+                    or len(set(onorm)) != len(onorm):
+                errors.append(
+                    f"optimization.response.preference.order {order} must be a "
+                    f"permutation of the objective metrics ({', '.join(metrics)}): "
+                    f"each exactly once."
+                )
+
+    if is_epsilon_map(eps):
+        for k in sorted(eps):
+            if _norm_metric(k) not in norms:
+                errors.append(
+                    f"optimization.policy.epsilon.{k}: {k!r} is not an "
+                    f"objective metric ({', '.join(metrics)}). A per-objective "
+                    f"epsilon map is keyed by objective metric; a typo here "
+                    f"leaves the real objective at the {{pct: 2.0}} default."
+                )
+        omitted = [m for m in metrics
+                   if _norm_metric(m) not in {_norm_metric(k) for k in eps}]
+        if omitted:
+            errors.append(
+                f"WARN: optimization.policy.epsilon map omits objective(s) "
+                f"{', '.join(omitted)}, which take the {{pct: 2.0}} default "
+                f"indifference width. State each objective's width explicitly."
+            )
+    if isinstance(noise, dict):
+        for k in sorted(noise):
+            if _norm_metric(k) not in norms:
+                errors.append(
+                    f"optimization.response.noise_estimate_pct.{k}: {k!r} is "
+                    f"not an objective metric ({', '.join(metrics)})."
+                )
     return errors
 
 
@@ -2059,6 +2313,10 @@ def _rule20_self_check_is_a_real_invariant(opt: dict) -> list[str]:
     if not self_check:
         return []
     primary = ((response.get("primary") or {}).get("metric")) or ""
+    objectives = {
+        str(o.get("metric")) for o in (response.get("objectives") or [])
+        if isinstance(o, dict) and o.get("metric")
+    } if isinstance(response.get("objectives"), list) else set()
     errors: list[str] = []
     for pred in self_check:
         if not isinstance(pred, dict):
@@ -2091,6 +2349,18 @@ def _rule20_self_check_is_a_real_invariant(opt: dict) -> list[str]:
                 f"response.ceiling (a violation means the instrumentation is "
                 f"lying). As a self-check it would fail the row outright, "
                 f"discarding a measurement that is merely unattractive."
+            )
+        if path is not None and str(path) in objectives:
+            errors.append(
+                f"response.self_check entry is over {path!r}, which is one of "
+                f"response.objectives. A self-check must read the DIAGNOSTIC "
+                f"that defines an objective, never an objective itself: a "
+                f"bound on an objective belongs in response.constraints -- "
+                f"and then it should not also be an objective (declare it as "
+                f"one or the other) -- or in response.ceiling. As a "
+                f"self-check it would fail every row on the unattractive end "
+                f"of the trade-off, deleting exactly the part of the front the "
+                f"campaign exists to measure."
             )
     return errors
 

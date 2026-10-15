@@ -545,6 +545,84 @@ optimization:
 """
 
 
+_SINGLE_RQ = (
+    "TODO-which configuration of the declared knobs maximizes the "
+    "primary metric, subject to the constraints?"
+)
+_MULTI_RQ = (
+    "TODO-what is the trade-off frontier between the objectives over the "
+    "declared knobs, subject to the constraints?"
+)
+
+_PRIMARY_LINE = "    primary: {metric: TODO-primary-metric, direction: maximize}\n"
+_NOISE_COMMENT = (
+    "    # Run-to-run noise of the primary metric, percent (measure it:\n"
+    "    # --liveness prints the CV of repeated baseline runs).\n"
+)
+_EPSILON_COMMENT = (
+    "    # Indifference width: \"we would not reship for less than this\". Must be\n"
+    "    # ABOVE the screen's minimum detectable effect (--liveness prints it), or\n"
+    "    # certification rests on confirm's paired replicates alone.\n"
+    "    epsilon: {pct: 2.0}         # or {abs: 0.5} in the metric's units\n"
+)
+
+
+def _multi_objective_response(content: str, n: int) -> str:
+    """Rewrite the single-objective template's response for ``n`` objectives.
+
+    Applied to the RENDERED template rather than kept as a second template, so
+    the two scaffolds cannot drift anywhere except the lines this replaces --
+    and each replaced line must be present exactly once, or the template has
+    moved under this function and that is a bug to surface, not to paper over.
+    """
+    lines = [
+        "    # Two or more objectives: the campaign reports the TRADE-OFF FRONT\n",
+        "    # (configurations no other one beats on every objective at once) and\n",
+        "    # recommends one point of it by `preference`. Directions: maximize |\n",
+        "    # minimize -- CHECK each. An objective may not also be a constraint,\n",
+        "    # held_out or self_check metric: if you already know the acceptable\n",
+        "    # bound, make it a constraint instead (`nous docs guide`,\n",
+        "    # \"Multi-objective: finding the trade-off frontier\").\n",
+        "    objectives:\n",
+    ]
+    for i in range(1, n + 1):
+        direction = "maximize" if i == 1 else "minimize"
+        lines.append(f"      - {{metric: TODO-objective-{i}-metric, "
+                     f"direction: {direction}}}\n")
+    lines += [
+        "    # How ONE recommended configuration is chosen from the front. Default\n",
+        "    # knee (best bang for the buck; needs no weights). Or:\n",
+        "    # preference:\n",
+        "    #   method: weights          # knee | weights | lexicographic\n",
+        "    #   weights: {"
+        + ", ".join(f"TODO-objective-{i}-metric: 1.0" for i in range(1, n + 1))
+        + "}\n",
+        "    #   # method: lexicographic -> order: ["
+        + ", ".join(f"TODO-objective-{i}-metric" for i in range(1, n + 1))
+        + "]\n",
+    ]
+    replacements = [
+        (_PRIMARY_LINE, "".join(lines)),
+        (_NOISE_COMMENT,
+         "    # Run-to-run noise of EACH objective, percent (one number for all,\n"
+         "    # or a map objective metric -> pct; --liveness prints each CV).\n"),
+        (_EPSILON_COMMENT,
+         "    # Indifference width PER OBJECTIVE: a difference smaller than it is\n"
+         "    # not dominance. One spec for every objective, or a map objective\n"
+         "    # metric -> spec when units differ, e.g.\n"
+         "    # {TODO-objective-1-metric: {pct: 2.0}, TODO-objective-2-metric: {abs: 5}}.\n"
+         "    # --liveness prints each objective's screen MDE against it.\n"
+         "    epsilon: {pct: 2.0}\n"),
+    ]
+    for old, new in replacements:
+        if content.count(old) != 1:
+            raise RuntimeError(
+                f"optimization template changed: expected exactly one "
+                f"{old.strip()[:40]!r}")
+        content = content.replace(old, new)
+    return content
+
+
 def scaffold_optimization_campaign(
     target_path: Path,
     *,
@@ -559,13 +637,23 @@ def scaffold_optimization_campaign(
     run_id: str = "TODO-run-id",
     target_repo_path: Path | str | None = None,
     force: bool = False,
+    objectives: int = 1,
 ) -> Path:
     """Write a structurally complete ``kind: optimization`` campaign.yaml.
 
     Schema-valid, but carrying ``TODO-`` placeholders that
     ``find_placeholders`` reports by path, so validation fails naming them and
     ``nous run`` refuses it until they are filled.
+
+    ``objectives`` = 1 (default) writes ``response.primary`` -- byte-identical
+    to the template before multi-objective support existed. ``objectives`` >= 2
+    writes a ``response.objectives`` block of that many ``TODO-`` metrics plus
+    a commented ``preference`` block (see :func:`_multi_objective_response`).
     """
+    if not isinstance(objectives, int) or objectives < 1:
+        raise ValueError(f"objectives must be an integer >= 1, got {objectives!r}")
+    if objectives >= 2 and research_question == _SINGLE_RQ:
+        research_question = _MULTI_RQ
     target_path = Path(target_path)
     if target_path.exists() and not force:
         raise FileExistsError(
@@ -582,6 +670,8 @@ def scaffold_optimization_campaign(
         target_description=target_description.replace("\n", "\n    "),
         repo_path=str(repo.resolve()),
     )
+    if objectives >= 2:
+        content = _multi_objective_response(content, objectives)
     target_path.write_text(content)
     return target_path
 

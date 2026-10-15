@@ -122,7 +122,9 @@ says which step catches it. **[static]** = `nous validate campaign`,
   is aliased. Lower resolutions depend on a foldover to untangle what they
   confounded. [static warns]
 - **A factor that moves the objective by less than 2× the noise is a dead
-  axis.** Widen its levels or drop it before pre-registering. [live]
+  axis** — unless it moves a constraint metric, which `--liveness` also
+  measures and labels "keep (it decides feasibility)". Widen a dead axis's
+  levels or drop it before pre-registering. [live]
 
 ### Locks, responses, noise
 
@@ -134,6 +136,15 @@ says which step catches it. **[static]** = `nous validate campaign`,
   infeasible: kept as data, but never the winner. **Invariants of the
   measurement itself** (the run completed, nothing was censored) go in
   `response.self_check`. [static, smoke]
+- **Two things to trade? Declare `response.objectives`, not `primary`.**
+  `nous create-campaign --kind optimization --objectives 2` scaffolds it: ≥ 2
+  distinct `{metric, direction}` entries, an optional `preference` (`knee`
+  default, `weights`, `lexicographic`) choosing the one recommended point, and
+  `policy.epsilon` per objective (one spec, or a map by metric). The epoch
+  reports the trade-off front. A metric with a known acceptable bound is a
+  constraint instead — never both. `--liveness` prints a table per objective
+  and lists the trade-off candidate factors. See the guide, "Multi-objective:
+  finding the trade-off frontier". [static, smoke, live]
 - **`held_out` is reported, never optimized.** It is recorded on every row,
   split off the response so nothing fits or ranks on it, and summarised in
   `report.json`'s `held_out` block. [static rejects leakage]

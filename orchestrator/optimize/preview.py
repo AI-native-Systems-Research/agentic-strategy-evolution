@@ -32,6 +32,18 @@ class StageRuns:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class ObjectiveMDE:
+    """One objective's screen MDE against its own indifference width."""
+    metric: str
+    direction: str
+    noise_sd: float
+    mean: float
+    mde: float
+    epsilon: float | None
+    epsilon_spec: dict
+
+
 @dataclass
 class DesignPreview:
     stages: list[StageRuns] = field(default_factory=list)
@@ -53,6 +65,11 @@ class DesignPreview:
     epsilon: float | None = None
     epsilon_spec: dict = field(default_factory=dict)
     brackets: list[tuple[str, str]] = field(default_factory=list)
+    #: Multi-objective only: one entry per ``response.objectives`` metric.
+    per_objective: list[ObjectiveMDE] = field(default_factory=list)
+    #: Metrics ``response.constraints`` bounds (not objectives): named so the
+    #: preview can say they need no MDE.
+    constraint_metrics: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -78,7 +95,10 @@ def _ceil_div(a: int, b: int) -> int:
 def build_preview(
     campaign: dict, *, noise_sd: float | None, mean: float | None,
     run_secs: list[float] | None, baseline: dict | None = None,
+    objectives: dict | None = None,
 ) -> DesignPreview:
+    """``objectives``: ``{metric: {"noise_sd", "mean"}}`` measured per objective
+    (multi-objective campaigns); each gets its own MDE vs its own epsilon."""
     from orchestrator.optimize import certificate
     from orchestrator.optimize.design import alias_pairs
     from orchestrator.optimize.factors import parse_factors
@@ -191,11 +211,47 @@ def build_preview(
                     f"between iterations and report on a partial design.",
                 )
 
-    # (c) MDE vs epsilon.
+    # (c) MDE vs epsilon -- per objective when the campaign declares several.
+    from orchestrator.optimize import objectives as _obj
+
+    resp = opt.get("response") or {}
+    obj_metrics = set(_obj.objective_metrics(opt))
+    for c in resp.get("constraints") or []:
+        cm = (c.get("metric") or c.get("observable")) if isinstance(c, dict) else None
+        if cm and cm not in obj_metrics and cm not in pv.constraint_metrics:
+            pv.constraint_metrics.append(str(cm))
+    if _obj.is_multi_objective(opt):
+        n_df = pv.pure_error_df
+        seeded = bool((opt.get("workload") or {}).get("seed_env"))
+        for o in _obj.declared_objectives(opt):
+            m = o["metric"]
+            got = (objectives or {}).get(m) or {}
+            if got.get("noise_sd") is None or got.get("mean") is None:
+                continue
+            sd, mu = float(got["noise_sd"]), float(got["mean"])
+            spec = _obj.epsilon_spec_for(opt, m)
+            eps = certificate.resolve_epsilon(spec, mu)
+            mde, t = screen_mde(pv.screen_corners, n_df, sd)
+            pv.t_crit = t
+            pv.per_objective.append(ObjectiveMDE(
+                m, o["direction"], sd, mu, mde, eps, spec))
+            if eps < mde:
+                remedies = ["add confirm replicates"]
+                if not seeded:
+                    remedies.append("declare workload.seed_env (pairs confirm)")
+                remedies.append("add centre points (raises the screen's df)")
+                remedies.append(f"widen policy.epsilon.{m}")
+                pv.warnings.append(
+                    f"objective {m}: epsilon ({eps:.6g}) is below the screen's "
+                    f"minimum detectable effect ({_fmt(mde)}): dominance on {m} "
+                    f"is unresolvable from the screen; the front's statuses on "
+                    f"it will rest on confirm's replicates — "
+                    + " / ".join(remedies) + ".",
+                )
     pv.epsilon_spec = dict((pol.get("objective") or {}).get("epsilon") or {})
-    if mean is not None:
+    if mean is not None and not pv.per_objective:
         pv.epsilon = certificate.resolve_epsilon(pv.epsilon_spec, mean)
-    if noise_sd is not None:
+    if noise_sd is not None and not pv.per_objective:
         pv.noise_sd = float(noise_sd)
         pv.mde, pv.t_crit = screen_mde(
             pv.screen_corners, pv.pure_error_df, pv.noise_sd,
@@ -274,7 +330,20 @@ def format_preview(pv: DesignPreview) -> list[str]:
             f"{pv.spending_width} at spending stages, {pv.confirm_width} at "
             f"confirm",
         )
-    if pv.noise_sd is not None:
+    if pv.per_objective:
+        t = f"{pv.t_crit:.3f}" if pv.t_crit is not None else "n/a"
+        out.append(
+            f"    screen MDE per objective: t(0.975, df={pv.pure_error_df})={t} "
+            f"x 2 x sd / sqrt({pv.screen_corners} corners), against each "
+            f"objective's epsilon:")
+        for o in pv.per_objective:
+            mark = ("   <-- epsilon below MDE"
+                    if o.epsilon is not None and o.epsilon < o.mde else "")
+            out.append(
+                f"      {o.metric:<24} ({o.direction}) sd {o.noise_sd:.6g} -> "
+                f"MDE {_fmt(o.mde)}; epsilon {o.epsilon_spec} -> "
+                f"{_fmt(o.epsilon)}{mark}")
+    if pv.noise_sd is not None and not pv.per_objective:
         t = f"{pv.t_crit:.3f}" if pv.t_crit is not None else "n/a"
         out.append(
             f"    screen MDE: t(0.975, df={pv.pure_error_df})={t} x 2 x "
@@ -282,6 +351,11 @@ def format_preview(pv: DesignPreview) -> list[str]:
             f"{_fmt(pv.mde)}; epsilon {pv.epsilon_spec} -> "
             f"{_fmt(pv.epsilon)}",
         )
+    if pv.constraint_metrics and (pv.noise_sd is not None or pv.per_objective):
+        out.append(
+            f"    constraint metric(s) {', '.join(pv.constraint_metrics)}: no "
+            f"MDE needed — a constraint is admissibility, checked per row, "
+            f"not optimized or compared against epsilon")
     for fid, verdict in pv.brackets:
         out.append(f"    levels of {fid}: {verdict}")
     for w in pv.warnings:

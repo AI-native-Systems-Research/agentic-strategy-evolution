@@ -11,6 +11,13 @@ required: [target_system, research_question, prompts]
 additionalProperties: false
 
 $defs:
+  epsilon_spec:
+    type: object
+    additionalProperties: false
+    description: "One indifference width: EXACTLY ONE of abs or pct (the validator enforces 'exactly one')."
+    properties:
+      abs: { type: number, description: "Absolute width, in the objective metric's units." }
+      pct: { type: number, exclusiveMinimum: 0, description: "Width as a percent of the recommendation's value." }
   comparison:
     type: object
     required: [op, value]
@@ -729,11 +736,15 @@ properties:
     properties:
       response:
         type: object
-        required: [primary]
         additionalProperties: false
+        oneOf:
+          - required: [primary]
+          - required: [objectives]
         description: >
           What the campaign is optimizing, and the guardrails that keep a
-          winning candidate honest. Example: ``primary: {metric:
+          winning candidate honest. Declare EXACTLY ONE of ``primary`` (one
+          objective) or ``objectives`` (two or more: the campaign reports
+          the trade-off frontier between them). Example: ``primary: {metric:
           train_score, direction: maximize}`` plus a
           ``constraints`` entry so a config that turns a feature off
           entirely (and thereby "wins" trivially) is excluded.
@@ -742,7 +753,10 @@ properties:
             type: object
             required: [metric, direction]
             additionalProperties: false
-            description: "The single response the design matrix fits. Example: {metric: throughput_gbps, direction: maximize}."
+            description: >
+              The single response the design matrix fits. Example:
+              {metric: throughput_gbps, direction: maximize}. Mutually
+              exclusive with ``objectives``.
             properties:
               metric:
                 type: string
@@ -752,6 +766,88 @@ properties:
                 type: string
                 enum: [maximize, minimize]
                 description: "Whether the fitted surface is climbed or descended."
+          objectives:
+            type: array
+            minItems: 2
+            description: >
+              Two or more responses optimized TOGETHER, for a campaign whose
+              question is "what can I buy with what?" -- throughput vs
+              memory, compression ratio vs speed, latency vs cost -- rather
+              than "which configuration maximizes one number?". Mutually
+              exclusive with ``primary``. The design matrices are unchanged
+              (a factorial design measures every response it is given);
+              every objective is fitted on the same rows, and the epoch
+              reports the measured PARETO FRONT: the configurations no other
+              measured configuration beats on every objective at once, each
+              with a status (``confidently_nondominated`` only when that
+              claim survives the measurement uncertainty). A single
+              recommended configuration is still produced, chosen from the
+              front by ``preference``. Metrics must be distinct and may not
+              also appear in ``constraints``, ``held_out`` or
+              ``self_check``. Prefer a CONSTRAINT to an objective when you
+              already know the acceptable bound (an SLA, a memory budget):
+              a constraint answers "is this admissible?", an objective
+              answers "what does it cost to get more of the other one?".
+              Example: ``[{metric: ops_per_cpu_s, direction: maximize},
+              {metric: peak_rss_mib, direction: minimize}]``. See
+              ``nous docs guide`` ("Multi-objective: finding the trade-off
+              frontier").
+            items:
+              type: object
+              required: [metric, direction]
+              additionalProperties: false
+              properties:
+                metric:
+                  type: string
+                  minLength: 1
+                  description: "Metric name as it appears in the run observation (e.g. 'peak_rss_mib')."
+                direction:
+                  type: string
+                  enum: [maximize, minimize]
+                  description: "Whether more (maximize) or less (minimize) of this objective is better."
+          preference:
+            type: object
+            required: [method]
+            additionalProperties: false
+            description: >
+              Only with ``objectives``. How ONE configuration is chosen from
+              the measured front for ``recommendation.json`` /
+              ``report.json`` (the front itself is reported regardless).
+              Default ``{method: knee}``. ``knee``: the front point
+              furthest (normalized) from the line joining the two extreme
+              points -- the "best bang for the buck" corner, which needs no
+              weights and also reaches concave regions of the front;
+              for three or more objectives, the point maximizing the
+              minimum normalized improvement over the baseline.
+              ``weights``: maximize the weighted sum of normalized
+              objectives (requires ``weights``; note a weighted sum can
+              never select a point in a concave region of the front).
+              ``lexicographic``: best on ``order[0]``, ties (within that
+              objective's epsilon) broken by ``order[1]``, and so on
+              (requires ``order``). Example: ``{method: weights, weights:
+              {ops_per_cpu_s: 1.0, peak_rss_mib: 0.5}}``.
+            properties:
+              method:
+                type: string
+                enum: [knee, weights, lexicographic]
+                description: "Rule that picks the recommended point of the front."
+              weights:
+                type: object
+                minProperties: 1
+                additionalProperties:
+                  type: number
+                  exclusiveMinimum: 0
+                description: >
+                  ``method: weights`` only. Objective metric -> weight > 0,
+                  applied to objectives normalized by their measured range.
+                  Keys must be objective metrics.
+              order:
+                type: array
+                minItems: 2
+                items: { type: string, minLength: 1 }
+                description: >
+                  ``method: lexicographic`` only. A permutation of the
+                  objective metrics, most important first.
           constraints:
             type: array
             minItems: 1
@@ -851,7 +947,8 @@ properties:
               ``held_out`` block for the recommendation and each finalist.
               Example: ``[held_out_score]``. The validator
               hard-fails if any held_out metric also equals
-              ``response.primary.metric`` or appears in ``constraints``
+              ``response.primary.metric`` (or any ``response.objectives``
+              metric) or appears in ``constraints``
               / ``regimes`` -- that is the leakage class that let
               ``holdout-selection`` optimize against its own
               generalization check.
@@ -869,13 +966,23 @@ properties:
               metric: { type: string, minLength: 1 }
               value: { type: number }
           noise_estimate_pct:
-            type: number
-            minimum: 0
+            oneOf:
+              - type: number
+                minimum: 0
+              - type: object
+                minProperties: 1
+                additionalProperties:
+                  type: number
+                  minimum: 0
             description: >
               Rough expected measurement noise as a percent of the
               primary metric, used to size replicate counts (via
               ``power.required_seeds``). Example: 3.0 for ~3% run-to-run
-              variance.
+              variance. With ``objectives``, a single number applies to
+              every objective, or give a map objective metric -> percent
+              when they differ (e.g. ``{ops_per_cpu_s: 3.0, peak_rss_mib:
+              0.5}``); map keys must be objective metrics, and the map
+              form is accepted only with ``objectives``.
 
       factors:
         type: array
@@ -1279,8 +1386,11 @@ properties:
           into ``policy.json``'s ``objective`` block and hashed with it.
         properties:
           epsilon:
-            type: object
-            additionalProperties: false
+            anyOf:
+              - { "$ref": "#/$defs/epsilon_spec" }
+              - type: object
+                minProperties: 1
+                additionalProperties: { "$ref": "#/$defs/epsilon_spec" }
             description: >
               The indifference width: how much better a challenger would
               have to be for the campaign to care. Declare EXACTLY ONE of
@@ -1288,10 +1398,15 @@ properties:
               of the recommendation's value). Default ``{pct: 2.0}``.
               Certification is ``R_delta <= epsilon``, so an epsilon of
               zero can never be met and one wider than the whole response
-              range certifies immediately.
-            properties:
-              abs: { type: number, description: "Absolute width, in the primary metric's units." }
-              pct: { type: number, exclusiveMinimum: 0, description: "Width as a percent of the recommendation's value." }
+              range certifies immediately. With ``response.objectives``,
+              epsilon is EACH objective's indifference width: a difference
+              smaller than it is not dominance. Either one spec applied to
+              every objective, or a map objective metric -> spec when the
+              objectives live in different units (``{ops_per_cpu_s: {pct:
+              2}, peak_rss_mib: {abs: 5}}``). Map keys must be objective
+              metrics; an objective the map omits takes ``{pct: 2.0}``
+              (the validator warns); the map form is accepted only with
+              ``objectives``.
           delta_screen:
             type: number
             exclusiveMinimum: 0

@@ -71,8 +71,18 @@ def _target(tmp_path: Path) -> Path:
 
 def _fill(text: str, *, epsilon: str | None = None) -> str:
     """What an author does: replace every TODO- token with a real value."""
+    for a, b in fill_subs():
+        assert a in text, a
+        text = text.replace(a, b)
+    if epsilon is not None:
+        text = text.replace("epsilon: {pct: 2.0}", f"epsilon: {epsilon}")
+    return text
+
+
+def fill_subs() -> list[tuple[str, str]]:
+    """The (placeholder, value) pairs that fill the single-objective scaffold."""
     py = sys.executable
-    subs = [
+    return [
         ("TODO-run-id", "tiny-opt"),
         ("TODO-which configuration of the declared knobs maximizes the "
          "primary metric, subject to the constraints?",
@@ -103,12 +113,6 @@ def _fill(text: str, *, epsilon: str | None = None) -> str:
         ("TODO-tests/test_relations.py::test_choice_knob",
          "tests/test_relations.py::test_choice_knob"),
     ]
-    for a, b in subs:
-        assert a in text, a
-        text = text.replace(a, b)
-    if epsilon is not None:
-        text = text.replace("epsilon: {pct: 2.0}", f"epsilon: {epsilon}")
-    return text
 
 
 def _scaffold(tmp_path: Path, capsys, *extra: str) -> tuple[Path, Path]:
