@@ -311,8 +311,11 @@
         "percent"
       ],
       "additionalProperties": false,
-      "description": "OPTIONAL, written ONLY when confirmed_is_best_observed is false -- the size of the shortfall. Its presence is the signal that the observed corner, not the winner, is the campaign's real answer and the surface is mis-specified.",
+      "description": "OPTIONAL, written ONLY when confirmed_is_best_observed is false -- the size of the shortfall. Its presence is the signal that the observed corner, not the winner, is the campaign's real answer and the surface is mis-specified -- UNLESS within_epsilon is true: a single earlier row is an upward-biased estimate of its configuration, and a gap inside the campaign's own indifference width is recorded rather than raised. Never written when the best observed row belongs to the winning configuration itself.",
       "properties": {
+        "within_epsilon": {
+          "type": "boolean"
+        },
         "absolute": {
           "type": "number"
         },

@@ -5199,7 +5199,14 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         best_val = best_obs.get(metric)
         if isinstance(best_val, (int, float)):
             confirmed_mean = summary["mean"]
-            beats = (
+            # The SAME configuration is not a rival. `_best_observed` returns the
+            # best single row, so when that row belongs to the winner it is the
+            # winner's own luckiest replicate, and comparing the winner's mean to
+            # it reported "WORSE than the best configuration already observed --
+            # treat the surface as mis-specified" about a configuration against
+            # itself (found on a real campaign, gap 0.36%, inside the noise).
+            same_config = dict(best_obs.get("levels") or {}) == dict(winner_levels)
+            beats = same_config or (
                 confirmed_mean >= best_val if maximize
                 else confirmed_mean <= best_val
             )
@@ -5211,10 +5218,16 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             if not beats:
                 gap = abs(best_val - confirmed_mean)
                 pct = (gap / abs(best_val) * 100.0) if best_val else float("nan")
+                within_eps = isinstance(eps, (int, float)) and gap <= eps
                 summary["regression_vs_best_observed"] = {
                     "absolute": gap, "percent": pct,
+                    # A single earlier row is an upward-biased estimate of its
+                    # configuration (winner's curse), and epsilon is the
+                    # campaign's own indifference width: a gap inside it is
+                    # recorded, not raised as evidence against the surface.
+                    "within_epsilon": bool(within_eps),
                 }
-                logger.warning(
+                (logger.info if within_eps else logger.warning)(
                     "confirm: the winning finalist (%s=%.6g) is WORSE than the "
                     "best configuration already observed (%.6g at %s) — a gap "
                     "of %.6g (%.2f%%). Treat the observed corner as the "

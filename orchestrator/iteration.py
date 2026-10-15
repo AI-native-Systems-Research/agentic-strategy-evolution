@@ -764,7 +764,12 @@ def _capture_runtime_meta(repo_path: str | None) -> dict:
                 meta["target_repo"] = remote.split("github.com/")[-1].removesuffix(".git")
             else:
                 meta["target_repo"] = remote or None
-        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        except subprocess.CalledProcessError:
+            # A repository with no `origin` remote (a local experiment, a fresh
+            # `git init`) is a normal state, not a fault: record it at INFO so
+            # a WARNING still means something went wrong.
+            logger.info("No origin remote at %s; target_repo not recorded", repo_path)
+        except (FileNotFoundError, OSError):
             logger.warning("Could not capture target_repo from %s", repo_path)
 
     # Nous version: prefer package metadata, fall back to git SHA
