@@ -253,3 +253,41 @@ v8 changes below. Same model, CLI, effort and ruler as the Claude baseline; no t
 Not taken: trimming design.md from the arm prompt (~$3-5 per task; Claude's context per turn is larger),
 task-specific hints, any cap on reasoning length. Tests: 1536 passed (52 v8 tests); shared prompts byte-identical;
 v4-v7 unchanged. Run with `gen/nous_research_cap.py --design-profile v8 --wall-hours`.
+
+## 11. Status and plan (2026-10-15, written before compaction)
+
+**Runs in progress (v8 at $50, opus-4-6, same sandbox/judge/ruler as Claude):** p5 on 486d822 (vpc k3; 58.00
+at $49.69 vs Claude 57.00, v7 43.0); p0, p181 (vpc-int), p26, p58 (vpc) relaunched 15:23 on 125df97 after the
+live-run fixes below. Launcher `gen/nous_v8_c50.sh <pid> <URL var> <KEY var>` (keys from env, `--wall-hours 24`).
+Live log of every finding and restart: `NOUS_V7_RUN_NOTES.md` ("Nous v8 runs (2026-10-15)").
+
+**v8 fixes found live on 2026-10-15 (each one restarted the affected runs; none of their spend counts):**
+time limit read from the statement (26bc363); official-first evaluator, at most one h-alternative, $4 arm
+floor, results rebuilt from official measures (1288dbd..e46749f); iteration-1 evaluator credited back to the
+iteration budget (9635465); capped evaluator baseline from its best official measure (bcced84); $1 overshoot
+margin so a cap trip does not skip the second family (ecc98b1); baseline always the evaluator's best official
+measure (486d822); fallback one-arm design when a design is capped mid-reasoning (0e7ae60); an arm's result
+follows its best official measure when the judge recorded more than the agent wrote (125df97).
+
+**Claude robustness check (continue-on-crash, `gen/claude_c50cc.sh`):** p26 0 at $47.41, p58 0 at $48.55; even
+resuming after CLI crashes Claude never submitted a solution (gateway timeouts were heavy today). The plain
+baseline's zeros stand.
+
+**Plan (agreed):**
+1. Let the 5 focus runs finish. Fix only real bugs (rerun the affected task); do not tune v8 until it wins on
+   these dev tasks (that would overfit; the held-out tasks carry the claim).
+2. Freeze: tag the final commit `nous-algo-v1` and add a `design_profile: algo` alias for the paper.
+3. Held-out runs, nothing changed after the freeze: p225 (set merging; one-shot 0-39, published 99.8,
+   deterministic, bimodal) and p44 (Santa tour; one-shot 0-45, published 78, deterministic), optionally one
+   more task chosen before looking at results. Claude baseline (plain) and nous-algo at $50 each; re-judge
+   finals together (3x). Do not schedule until we discuss.
+
+**Paper framing (agreed, no v1-v8 history in the paper):** case studies are real open-ended research tasks and
+use Nous's full profile (heavyweight machinery: control, ablation, robustness, dose-response arms) because the
+goal is explanation and causal attribution. Frontier-CS is a scoped benchmark of algorithm discovery under a
+fixed budget with a fast automated judge, so it uses a lightweight profile of the same loop (hypotheses,
+measured experiments, principles) that spends the budget on competing algorithm families and deepening the
+best. State in the paper: the profile was developed on the benchmark's focus tasks and evaluated frozen on
+held-out tasks; the Claude baseline has identical model, CLI, effort, budget, sandbox and judge. One sentence:
+"Case studies use Nous's full profile; for the fixed-budget algorithmic benchmark we use a lightweight profile
+of the same loop, tuned for automated-judge optimization."

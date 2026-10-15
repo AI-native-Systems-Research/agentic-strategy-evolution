@@ -95,3 +95,35 @@ Result: Nous wins p0, p58, p26; Claude wins p5; p181 within judge noise (Claude 
   in the same gateway "Request timed out" loop (SDK api_retry 3/9, transcript system/api_error) that hit Nous
   yesterday. The gateway seems to cut requests longer than ~5 min (long reasoning turns). Shared environment
   condition for both agents.
+
+## Nous v8 runs (2026-10-15)
+- 11:20 p5 v8 launched (vpc k3, $50, --wall-hours 24, code 0c1c0b2). Evaluator baseline officially scored 28
+  at ~$1 and 39 at ~$4 (v7 needed a full arm and ~$12 for 39). Found: judge profile said "assumed 1 s" during
+  the evaluator although the statement says 4 s (limit was only read from instrument.json). Fixed in 26bc363
+  (parse "Time Limit: N second" from the statement). Restarted p5 at $4.08 so all v8 tasks run one version.
+- 11:29 p5 v8 relaunched on 26bc363; judge profile now: time limit 4.0 s from the statement.
+- 11:50 p5 v8 smoke #2 stopped at $12.35 (best 41 = evaluator baseline). Findings: (a) the evaluator spent its
+  whole $6 hard cap on this Mac's broken toolchain (Apple clang cannot find <vector> even outside the sandbox;
+  only /opt/homebrew/bin/g++-15 works) and wrote no instrument.json/README; (b) that squeezed the 3 screening
+  arms to a $1.77 target ($3.54 hard); h-main hit its hard cap without writing result.json, and its $1 repair
+  turn did too. Caps themselves worked (metrics $11.50 vs transcripts $12.26). Next: official-first evaluator
+  (orchestrator measures noise 3x and writes instrument.json), at most 1 h-alternative with a $4 arm floor,
+  orchestrator-built result.json from official measures in the session window.
+- 12:41 p5 v8 smoke #3 on 2039cfd (vpc k3): official-first evaluator ($2 target; orchestrator measures noise 3x
+  and writes instrument.json); max one h-alternative; $4 arm floor; iteration-1 evaluator credited back;
+  results rebuilt from official measures (attributed by submit time, incumbent re-measures ignored; a judge
+  that never answered is no score). measure_command in campaign: bash fmeasure_p5_v8c50.sh $PWD/solution.cpp.
+- 12:57 smoke #3 stopped at ~$6: evaluator capped before saving its baseline, so noise was measured on the 0 seed and arms started from it. Fixed (best official measure becomes the baseline; 0-score noise = unknown). Smoke #4 launched on bcced84.
+- 13:32 smoke 4 (p5 $16, best 43) showed the competing family skipped by a $0.14 margin (cap overshoot). Fixed ($1 overshoot margin per waiting arm). Relaunched p5 (vpc k3), p0 (vpc-int k1), p181 (vpc-int k2) on ecc98b1. p58/p26 follow on vpc k2/k1 when the Claude robustness runs end.
+- 14:06 Found: the committed baseline was the evaluator's saved patch even when its best official measure was
+  higher (p0 45.98 vs 63.51; p5 26 vs 40), so arms started from the worse version. Fixed: the baseline is
+  always the best official measure (> 0). I also stopped p5 thinking its official log mixed in aborted runs;
+  it did not (the launcher starts a fresh log per run), so that stop was unnecessary. All runs relaunched on
+  486d822: p5 vpc k3, p58 vpc k2, p0 vpc-int k1, p181 vpc-int k2; p26 starts on vpc k1 when
+  Claude p26 (continue-on-crash) ends. Claude p58 continue-on-crash ended 0 at $48.55 (stopped while stuck).
+- 14:25 Claude continue-on-crash robustness runs done: p26 0 at $47.41 (4 CLI crashes resumed), p58 0 at $48.55
+  (2 crashes resumed); neither ever submitted a solution. Both were stopped by me with < $3 left while stuck in
+  gateway "Request timed out" retries. Caveat: today's gateway timed out long requests far more than yesterday.
+- 15:03 p58 stopped at $20.71 (0): its designer hit the $8 cap mid-reasoning twice, wrote no bundle, iteration 1 abandoned (design_incomplete). Fixed: fallback one-arm design. p58 relaunched on 0e7ae60; other tasks keep running on 486d822 (the fallback only matters when a design fails).
+- 15:24 Found: arms' self-written result.json can understate their best official measure (p181 alt 49.55 official vs 12.46 written) so the wrong arm won. Fixed in 125df97 (result follows the judge). Restarted p181, p0, p26, p58 on it; p5 continues on 486d822 (its winner picks were correct).
+- 15:30 p5 v8: 58.00 at $49.69 (judge file m0042_152900_score58.00.cpp; clean: no exploit signatures, no tables, no file reads; 13.8 KB). Came from iteration 3 (explore after the exploit iteration plateaued at 55). Claude 57.00.
