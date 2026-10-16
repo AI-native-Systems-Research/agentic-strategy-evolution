@@ -29,7 +29,7 @@ from collections import defaultdict
 import numpy as np
 
 from benchmarks.optimization import gp as G
-from benchmarks.optimization.surfaces import Target, axes
+from benchmarks.optimization.surfaces import Target, axes, grid_size
 
 #: Candidate pool size above which GP-BO optimizes EI over a random sample of
 #: the grid plus every one-factor neighbour of the incumbent (local search)
@@ -239,9 +239,12 @@ def gp_bo_crude(surface, name, budget, rng):
     hyperparameter fitting."""
     import itertools
     ax, tgt, coder = axes(surface), Target(surface, name, rng), Coder(surface)
-    grid = [dict(zip([f["id"] for f, _ in ax], c))
-            for c in itertools.product(*[vals for _, vals in ax])]
-    if len(grid) > 20000:
+    # SIZE FIRST, never enumerate blindly: sparse_knobs(12) has 9^12 points,
+    # and materialising them is what exhausted a 64 GB machine.
+    if grid_size(surface) <= 20000:
+        grid = [dict(zip([f["id"] for f, _ in ax], c))
+                for c in itertools.product(*[vals for _, vals in ax])]
+    else:
         grid = [_random_point(ax, rng) for _ in range(20000)]
     Gx = np.array([coder(g) for g in grid])
     idx = [rng.randrange(len(grid)) for _ in range(min(6, budget))]
