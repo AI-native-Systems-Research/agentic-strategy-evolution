@@ -261,10 +261,18 @@ def _multi_objective_block(opt: dict) -> dict | None:
     objs = declared_objectives(opt)
     pref_raw = ((opt.get("response") or {}).get("preference") or {})
     pref = {"method": pref_raw.get("method") or DEFAULT_PREFERENCE}
+    # Resolved to the DECLARED objective names here, once: the validator
+    # compares names case/whitespace-insensitively, and the runtime looks them
+    # up exactly, so an author's `F1:` weight would otherwise weigh nothing.
+    from orchestrator.optimize.objectives import resolve_metric
+
+    metrics = [o["metric"] for o in objs]
     if pref["method"] == "weights":
-        pref["weights"] = {k: float(v) for k, v in (pref_raw.get("weights") or {}).items()}
+        pref["weights"] = {resolve_metric(k, metrics) or k: float(v)
+                           for k, v in (pref_raw.get("weights") or {}).items()}
     if pref["method"] == "lexicographic":
-        pref["order"] = list(pref_raw.get("order") or [o["metric"] for o in objs])
+        pref["order"] = [resolve_metric(m, metrics) or m
+                         for m in (pref_raw.get("order") or metrics)]
     return {
         "objectives": [{"metric": o["metric"], "direction": o["direction"],
                         "epsilon": epsilon_spec_for(opt, o["metric"])} for o in objs],

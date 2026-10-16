@@ -580,3 +580,23 @@ def test_a_finalist_missing_a_secondary_objective_is_unmeasured(tmp_path, monkey
     assert gone[0]["source"] == "confirm"
     assert r.report["certified"] is False
     assert "finalist_unmeasured" in r.report["certification_withheld"]
+
+
+def test_a_differently_cased_weight_key_counts_as_declared(tmp_path):
+    """A7: the validator folds case; so must the runtime. `F1` heavy must
+    pick the f1 extreme, not weigh f1 at 0 and pick the f2 extreme."""
+    base = {"objectives": [{"metric": "f1", "direction": "maximize"},
+                           {"metric": "f2", "direction": "maximize"}]}
+    r = evaluate_pareto_campaign(
+        PARETO_SURFACES["pareto_convex"](), seed=1, parent_dir=tmp_path,
+        campaign_overrides={"response": {**base, "preference": {
+            "method": "weights", "weights": {" F1": 1.0, "f2": 0.01}}}})
+    assert r["recommended"]["A"] == 16, r["recommended"]
+    pol = json.loads((Path(r["work_dir"]) / "policy.json").read_text())
+    assert pol["objective"]["preference"]["weights"] == {"f1": 1.0, "f2": 0.01}
+
+
+def test_a_differently_cased_epsilon_map_key_reaches_its_objective():
+    pol = compile_policy(_mo_campaign(policy={"epsilon": {"F2": {"abs": 0.5}, "f1": {"pct": 1}}}))
+    eps = {o["metric"]: o["epsilon"] for o in pol["objective"]["objectives"]}
+    assert eps == {"f1": {"pct": 1}, "f2": {"abs": 0.5}}

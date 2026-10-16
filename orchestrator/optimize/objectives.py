@@ -70,6 +70,31 @@ def is_epsilon_map(spec) -> bool:
             and all(isinstance(v, dict) for v in spec.values()))
 
 
+def fold(name) -> str:
+    """The comparison form of a metric name (validate._norm_metric's rule:
+    surrounding whitespace and letter case do not distinguish metrics)."""
+    return str(name).strip().casefold()
+
+
+def resolve_metric(name, metrics) -> str | None:
+    """The DECLARED objective metric ``name`` refers to: an exact match first,
+    else the unique case/whitespace-insensitive one, else ``None``. The
+    validator accepts the folded spelling, so every runtime lookup must too --
+    an exact-only lookup turned a ``F1:`` weight into a silent 0."""
+    metrics = list(metrics)
+    if name in metrics:
+        return name
+    hits = [m for m in metrics if fold(m) == fold(name)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _map_lookup(mapping: dict, metric: str):
+    if metric in mapping:
+        return mapping[metric]
+    hits = [k for k in mapping if fold(k) == fold(metric)]
+    return mapping[hits[0]] if len(hits) == 1 else None
+
+
 def epsilon_spec_for(opt: dict | None, metric: str) -> dict:
     """The indifference-width spec that applies to ``metric``.
 
@@ -81,7 +106,7 @@ def epsilon_spec_for(opt: dict | None, metric: str) -> dict:
     if not isinstance(spec, dict) or not spec:
         return dict(DEFAULT_EPSILON)
     if is_epsilon_map(spec):
-        sub = spec.get(metric)
+        sub = _map_lookup(spec, metric)
         return dict(sub) if isinstance(sub, dict) and sub else dict(DEFAULT_EPSILON)
     return dict(spec)
 
@@ -90,7 +115,7 @@ def noise_pct_for(opt: dict | None, metric: str) -> float | None:
     """``response.noise_estimate_pct`` for ``metric``: the number, or its map entry."""
     raw = _response(opt).get("noise_estimate_pct")
     if isinstance(raw, dict):
-        raw = raw.get(metric)
+        raw = _map_lookup(raw, metric)
     if isinstance(raw, (int, float)) and not isinstance(raw, bool):
         return float(raw)
     return None
