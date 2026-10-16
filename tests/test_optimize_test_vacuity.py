@@ -44,6 +44,7 @@ def _run(tmp_path, monkeypatch, writes, *, build_checks=None, name="vac"):
         f["relations"] = [{"id": f"{f['id']}-R", "kind": "correctness",
                            "statement": "the mechanism does what it claims",
                            "native_test": TEST_ID}]
+    c["optimization"].setdefault("build_checks", {})
     c["optimization"]["test_command"] = (
         f"{sys.executable} -m pytest -v -p no:cacheprovider tests")
     if build_checks:
@@ -128,7 +129,14 @@ def test_a_waiver_lets_a_nondiscriminating_test_through_and_is_recorded(tmp_path
     ("./x_test.go:9:2: undefined: Boost", "absence"),
     ("E   assert 3 == 6", "behavioral"),
     ("E   AssertionError: expected 6", "behavioral"),
-    ("E   ZeroDivisionError: division by zero", "behavioral"),
+    ("E   ZeroDivisionError: division by zero", "unknown"),   # neither list: not evidence
+    ("error[E0599]: no method named `boost` found for struct `Calc`", "absence"),
+    ("error TS2339: Property 'boost' does not exist on type 'Calc'.", "absence"),
+    ("E   TypeError: scale() takes 1 positional argument but 2 were given", "absence"),
+    ("E       fixture 'boosted' not found", "absence"),
+    ("Timeout: test exceeded 30s", "unknown"),
+    ("   12 |     assert_eq!(calc.scale(3), 6);", "unknown"),         # a source echo
+    ("E   assert False\nE    +  where False = hasattr(<module 'calc'>, 'fast')", "absence"),
     ("", "unknown"),
 ])
 def test_failure_kinds(text, kind):
@@ -143,3 +151,80 @@ def test_failure_text_is_isolated_per_test_from_pytest_output():
     texts = failure_texts(out, ["tests/t.py::test_a", "tests/t.py::test_b"])
     assert failure_kind(texts["tests/t.py::test_a"]) == "behavioral"
     assert failure_kind(texts["tests/t.py::test_b"]) == "absence"
+
+
+def test_test_names_are_matched_exactly_and_ambiguous_sections_are_not_used():
+    out = ("FAILED tests/t.py::test_ab - AssertionError: x\n"
+           "_____ test_dup _____\nE   assert 1 == 2\n"
+           "_____ test_dup _____\nE   ModuleNotFoundError: m\n")
+    texts = failure_texts(out, ["tests/t.py::test_a", "tests/a.py::test_dup"])
+    assert "tests/t.py::test_a" not in texts           # test_ab is not test_a
+    assert "tests/a.py::test_dup" not in texts         # two sections share the name
+
+
+def test_unisolatable_output_gives_no_text_and_no_evidence():
+    out = "Tests: 1 failed, 3 passed\nAssertionError somewhere in the suite\n"
+    assert failure_texts(out, ["suite::case"]) == {}
+
+
+def _check_direct(tmp_path, pre, *, repo=None, run_tests=None, scope_written=None,
+                  build_checks=None):
+    from orchestrator.optimize import test_vacuity
+    from orchestrator.optimize.factors import parse_factors
+
+    (tmp_path / "pre_build_tests.json").write_text(json.dumps(pre))
+    if scope_written is not None:
+        (tmp_path / "build_scope.json").write_text(json.dumps({"written": scope_written}))
+    f = {"id": "A", "name": "a", "type": "choice", "levels": ["x", "y"], "apply": "--a={level}",
+         "manipulation": {"observable": "cfg.a", "op": "==", "value": "{level}"},
+         "relations": [{"id": "R", "kind": "correctness", "statement": "s",
+                        "native_test": TEST_ID}]}
+    camp = {"optimization": {"build_checks": build_checks or {}}}
+    return test_vacuity.check(camp, tmp_path, parse_factors([f]), repo=repo,
+                              run_tests=run_tests, built_ids={"A"})
+
+
+def test_an_unclassified_pre_build_failure_is_not_evidence_when_output_existed(tmp_path):
+    pre = {"ran": [TEST_ID], "passed": [], "failure_kinds": {TEST_ID: "unknown"},
+           "output_recorded": True}
+    with pytest.raises(ValueError, match="no mutant could be run"):
+        _check_direct(tmp_path, pre)
+    pre["output_recorded"] = False          # injected verdicts: the test seam
+    rec = _check_direct(tmp_path, pre)
+    assert rec["tests"][TEST_ID]["evidence"] == "pre_build_failure_unclassified"
+
+
+def test_a_git_failure_building_the_mutant_is_recorded_not_blamed_on_the_test(tmp_path):
+    pre = {"ran": [], "passed": [], "failure_kinds": {}, "output_recorded": True}
+    not_git = tmp_path / "plain"
+    not_git.mkdir()
+    with pytest.raises(ValueError, match="no mutant could be run"):
+        _check_direct(tmp_path, pre, repo=not_git, run_tests=lambda cwd: ({}, ""),
+                      scope_written=["calc.py"])
+    rec = json.loads((tmp_path / "authored_tests.json").read_text())
+    assert "could not build the mutant" in rec["mutant"]["unavailable"]
+    assert "git" in rec["mutant"]["unavailable"]
+
+
+def test_a_hasattr_assertion_test_is_rejected(tmp_path, monkeypatch):
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+
+    with pytest.raises(OptimizationAborted, match="missing symbol"):
+        _run(tmp_path, monkeypatch, {
+            "calc.py": "def scale(x):\n    return x\n\ndef fast(x):\n    return 2 * x\n",
+            "tests/test_mech.py": ("import calc\n\ndef test_mech():\n"
+                                   "    assert hasattr(calc, 'fast')\n"),
+        })
+
+
+def test_a_corrupt_record_with_allow_preexisting_tests_fails_closed(tmp_path):
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import (
+        OptimizationAborted,
+        _check_authored_tests_discriminate,
+    )
+
+    (tmp_path / "pre_build_tests.json").write_text("{not json")
+    camp = {"optimization": {"build_checks": {"allow_preexisting_tests": True}}}
+    with pytest.raises(OptimizationAborted, match="unreadable"):
+        _check_authored_tests_discriminate(camp, tmp_path, [], 2)

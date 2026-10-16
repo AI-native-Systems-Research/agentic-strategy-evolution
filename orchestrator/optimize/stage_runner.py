@@ -1351,8 +1351,12 @@ def _check_authored_tests_discriminate(campaign: dict, work_dir: Path, factors,
         return
     try:
         pre = json.loads(pre_path.read_text())
-    except (OSError, ValueError):
-        return  # 2(b) already failed closed on an unreadable record
+    except (OSError, ValueError) as exc:
+        # Not "2(b) already failed": with allow_preexisting_tests 2(b) never
+        # reads the file, so this is the oracle that must fail closed.
+        raise OptimizationGateFailed(
+            f"pre_build_tests.json is unreadable ({exc}); oracle 2(d) cannot "
+            f"run. Re-run the build stage in a fresh work_dir.") from exc
     opt = _opt_block(campaign) or {}
     repo = (campaign.get("target_system") or {}).get("repo_path")
     run_tests = None
@@ -2614,6 +2618,10 @@ def run_stage(
             # missing symbol is not evidence the test observes the mechanism.
             "failure_kinds": test_vacuity.kinds_for(
                 test_results or {}, test_vacuity.read_log(test_run)),
+            # Whether those kinds were read from real test output (False only
+            # when verdicts were injected): 2(d) accepts an unclassified
+            # pre-build failure only without output.
+            "output_recorded": test_vacuity.read_log(test_run) is not None,
         })
         # ── oracle 2(c), first half: the control, measured before the build ──
         #
