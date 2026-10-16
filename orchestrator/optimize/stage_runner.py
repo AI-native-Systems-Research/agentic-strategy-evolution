@@ -6139,6 +6139,10 @@ def _refill_candidates(work_dir, factors, warnings: list | None = None) -> list[
     for lv_ in cands:
         if (lv_ and not any(_same_levels(r_, lv_) for r_ in retired)
                 and not any(_same_levels(o_, lv_) for o_ in out)
+                # Redundant with near_feasible (a measured-inadmissible
+                # configuration is its own nearest measured neighbour, at
+                # distance 0, and that neighbour is inadmissible) -- kept as
+                # the rule stated where it is read.
                 and not _measured_infeasible_contains(work_dir, lv_, invalid=invalid)
                 and near_feasible(lv_)):
             out.append(lv_)

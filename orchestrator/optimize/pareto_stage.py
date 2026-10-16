@@ -509,6 +509,20 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     om = rec.get("objective_models") or {}
     adequate = bool(om) and all((om.get(m) or {}).get("modelled") for m in metrics)
     predicted = _predicted_from_record(rec.get("predicted_front")) if adequate else []
+    if predicted:
+        # A configuration the campaign MEASURED inadmissible is outside the
+        # space: its prediction is no rival of an admissible point. (The
+        # predicted front was written before confirm measured it -- found on a
+        # vacated round whose only "dominator" was a finalist it had just
+        # struck off.)
+        from orchestrator.optimize.stage_runner import (
+            _config_admissible,
+            _measured_infeasible,
+        )
+
+        _invalid = _measured_infeasible(work_dir)
+        predicted = [pp for pp in predicted
+                     if _config_admissible(work_dir, pp.levels, invalid=_invalid)]
     if adequate:
         predicted_rivals = {"considered": True, "n": len(predicted),
                             "reason": "every objective model adequate: predicted-front "

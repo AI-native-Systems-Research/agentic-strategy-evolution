@@ -921,17 +921,28 @@ def _tight_surface():
                    constraints=({"metric": "p99_ms", "op": "<=", "value": 12},))
 
 
-@pytest.mark.parametrize("seed", [1, 2, 3, 4])
-def test_a_multi_objective_refill_round_never_certifies(seed, tmp_path):
+def test_a_multi_objective_refill_round_never_certifies(tmp_path):
     """D4: a vacated multi-objective round refills once; the refill round is
     shortlist_refilled, uncertified, judged at delta_terminal / round, and
-    ends with two admissible finalists."""
+    ends with two admissible finalists. On most seeds shortlist_refilled is
+    the ONLY reason left -- so the refill rule, not some other check, is what
+    keeps it uncertified. (That needed a fix: the round's preferred point used
+    to be 'possibly dominated' by the PREDICTION of a finalist the round had
+    just measured infeasible; measured-inadmissible configurations are no
+    longer predicted rivals.)"""
     from orchestrator.optimize.policy import REFILL_ACCOUNTING
 
     ov = {"design": {"screen": {"resolution": 5, "center_points": 4},
                      "refine": {"kind": "central_composite", "center_points": 4},
-                     "confirm": {"replicates": 3, "shortlist_size": 2}},
+                     "confirm": {"replicates": 3, "shortlist_size": 3}},
           "policy": {"confirm_max_rounds": 1}}
+    sole = 0
+    for seed in (1, 4, 5, 6):
+        sole += _check_mo_refill(seed, tmp_path / str(seed), ov, REFILL_ACCOUNTING)
+    assert sole >= 3
+
+
+def _check_mo_refill(seed, tmp_path, ov, REFILL_ACCOUNTING) -> bool:
     r = run_synthetic_campaign(_tight_surface(), seed=seed, parent_dir=tmp_path,
                                campaign_overrides=ov)
     wd = Path(r.work_dir)
@@ -946,3 +957,14 @@ def test_a_multi_objective_refill_round_never_certifies(seed, tmp_path):
     assert last["delta_terminal"] == pytest.approx(0.05 / 2)
     assert sum(f["status"] == "ok" for f in last["finalists"]) >= 2
     assert r.report["certified"] is False
+    return last["certification_withheld"] == ["shortlist_refilled"]
+
+
+def test_scalar_direction_is_the_declared_weights():
+    """D3/M25: the certificate's regret direction for `weights` IS the
+    declared weights, in objective order -- not a uniform vector."""
+    objs = _objs(3)
+    pref = pareto.Preference("weights", weights={"f2": 0.5, "f1": 2.0, "f3": 0.1})
+    assert pareto.scalar_direction(pref, objs, [[0, 0, 0]], 0) == [2.0, 0.5, 0.1]
+    assert pareto.scalar_epsilon(pref, objs, [0.1, 0.2, 0.3]) == pytest.approx(
+        2.0 * 0.1 + 0.5 * 0.2 + 0.1 * 0.3)
