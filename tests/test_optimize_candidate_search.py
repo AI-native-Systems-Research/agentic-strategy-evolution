@@ -147,16 +147,24 @@ def test_search_is_never_worse_than_the_best_configuration_it_was_seeded_with(k)
             assert sign * rec.predicted >= best_seed - 1e-12
 
 
-def test_search_is_deterministic():
-    """Same fit, same exclusions, same seed: the same evaluated set and the same
-    ranking -- so a searched campaign's artifacts are reproducible."""
+def test_a_twelve_knob_search_is_pinned():
+    """Golden values (B2): a change to Python's RNG, to SEARCH_SEED / SAMPLE /
+    STARTS or to the ascent would silently change every searched campaign's
+    artifacts; pinned here instead of comparing two runs of one process."""
+    import hashlib
+
     k = 12
-    fs = _factors(k)
-    fit = _random_quadratic(k, random.Random(3))
-    kw = dict(direction="maximize", fitted_ids=_ids(k), held_fixed={}, top=None)
-    a, b = decide.ranked(fit, fs, **kw), decide.ranked(fit, fs, **kw)
-    assert [c.levels for c in a] == [c.levels for c in b]
-    assert a.space == b.space
+    r = decide.ranked(_random_quadratic(k, random.Random(3)), _factors(k),
+                      direction="maximize", fitted_ids=_ids(k), held_fixed={}, top=None)
+    assert r.space.evaluated == len(r) == 5445
+    assert [[c.levels[i] for i in _ids(k)] for c in r[:3]] == [
+        [1, 1, 17, 13, 5, 1, 17, 17, 17, 17, 17, 1],
+        [1, 1, 17, 11, 5, 1, 17, 17, 17, 17, 17, 1],
+        [1, 1, 17, 13, 7, 1, 17, 17, 17, 17, 17, 1]]
+    assert r[0].predicted == pytest.approx(15.316508020038814, rel=1e-12)
+    assert hashlib.sha256(json.dumps([sorted(c.levels.items()) for c in r]).encode()
+                          ).hexdigest() == (
+        "5d1afb84703664a4dc8332b9e1355047d09f6ed349ac40a40244a4c13a06a3ea")
 
 
 # ─── (b) scale: 12 and 16 knobs ─────────────────────────────────────────────
