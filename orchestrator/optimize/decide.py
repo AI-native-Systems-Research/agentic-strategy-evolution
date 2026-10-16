@@ -41,15 +41,14 @@ did not finish in nine minutes).
     (<= 9^4 = 6561 candidates) and the largest real campaign ~ 26k.
   * Above it the space is SEARCHED (``_search``): a deterministic, seeded,
     multi-start coordinate ascent over the full axes, from a pool of every
-    measured configuration of the epoch plus a seeded uniform sample. For the
-    low-order polynomials this kind fits (main effects, two-factor
-    interactions, pure quadratics) coordinate ascent is the natural local
-    search -- along one axis a quadratic is a parabola, so cycling a factor
-    through its axis values with the rest held finds that axis's exact
-    conditional optimum -- and multiple starts guard the interaction-driven
-    local optima. The argmax is then over the EVALUATED set, which is not
-    claimed exhaustive: ``Scored.space`` says so, and the fitting stage records
-    it as ``recommendation.json["candidate_space"]``.
+    measured configuration of the epoch plus a seeded uniform sample. Each
+    move cycles one factor through ALL its axis values with the rest held, so
+    it finds that axis's exact conditional optimum on the grid (for any model:
+    the axis is enumerated, not solved); interactions make the result a LOCAL
+    optimum, which the multiple starts guard against without any global
+    guarantee. The argmax is then over the EVALUATED set, which is not claimed
+    exhaustive: ``Scored.space`` says so, and the fitting stage records it as
+    ``recommendation.json["candidate_space"]``.
 
 The same exclusions apply at every evaluated point in either mode: measured-
 inadmissible configurations (``exclude_levels``) and, with constraint models,
@@ -82,9 +81,10 @@ SEARCH_SEED = 0
 #: on purpose: the sample only supplies diverse STARTS for the ascent (which
 #: does the optimizing), while every sampled point is also carried into every
 #: downstream consumer of the evaluated set (the regret bound, the predicted
-#: front, the constraint record, each alias resolution's search). Measured on
-#: random 12- and 16-knob quadratics, the ascent reached the planted optimum
-#: from a 4k sample as reliably as from a 50k one (see tests).
+#: front, the constraint record). Measured once, not pinned by a test: on six
+#: planted concave quadratics at 12 and at 16 knobs both a 4k and a 50k sample
+#: reached the planted optimum every time, and on six random INDEFINITE ones
+#: at each size they named the same predicted maximum.
 SEARCH_SAMPLE = 4_000
 
 #: Above the cap, at most this many alias READINGS are assessed per call of
@@ -106,7 +106,9 @@ class CandidateSpace:
     ``candidate_space``.
 
     ``size`` is the product of the axis sizes (the full space), ``evaluated``
-    the number of distinct configurations actually scored (before exclusions),
+    the number of distinct configurations the search touched -- pooled, or
+    visited by an ascent, whether scored or rejected as inadmissible (before
+    exclusions; the feasibility descent's points included),
     ``method`` ``"enumeration"`` or ``"sampled_coordinate_ascent"``; ``seed``
     is the search seed (``None`` when enumerated: nothing was random).
     """
@@ -361,10 +363,12 @@ def _weight_vectors(k: int, step: int = 4) -> list[tuple[float, ...]]:
 def _search(fit: Fit, ids, axes, by_id, *, direction: str, objectives,
             seed_levels, admissible, seed: int, sample: int,
             extra_pool=()) -> list[tuple]:
-    """Every distinct axis-index tuple the search scored, ascending.
+    """Every distinct axis-index tuple the search touched (pooled, or tried by
+    an ascent move -- scored or rejected as inadmissible), ascending.
 
     Pool: the axes' centre, ``extra_pool`` (index tuples), ``seed_levels``
-    snapped onto the axes, then ``sample`` seeded uniform draws. Then, per direction, a coordinate ascent from each of the
+    snapped onto the axes, then ``sample`` seeded uniform draws. Then, per
+    direction, a coordinate ascent from each of the
     best pooled admissible points: cycle every factor through ALL its axis
     values holding the others, move to the best admissible improvement, and
     repeat until a full sweep improves nothing. Directions: ``fit`` at
