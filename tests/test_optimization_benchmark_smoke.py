@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -74,3 +75,76 @@ def test_an_infeasible_recommendation_is_charged_the_worst_admissible_regret():
     reg, status = S.true_regret(s, bad, tr)
     assert status == "infeasible" and reg == tr["best"] - tr["worst"]
     assert S.true_regret(s, None, tr)[1] == "none"
+
+
+# ─── review B1-B4 ────────────────────────────────────────────────────────────
+
+
+def _count_failed(monkeypatch):
+    from benchmarks.optimization import surfaces as S_
+
+    counts = {"failed": 0, "total": 0}
+    orig = S_.Target.measure
+
+    def measure(self, lv):
+        y, feas, obs = orig(self, lv)
+        counts["total"] += 1
+        counts["failed"] += y is None
+        return y, feas, obs
+    monkeypatch.setattr(S_.Target, "measure", measure)
+    return counts
+
+
+def test_gp_bo_does_not_spend_its_budget_re_measuring_a_failing_configuration(monkeypatch):
+    from benchmarks.optimization.baselines import run_method
+
+    counts = _count_failed(monkeypatch)
+    for seed in (1, 2):
+        run_method("GP-BO", S.get("fails_at_one_level"), "fails_at_one_level", 40, seed)
+    # Before the fix 31 of 40 runs went to one failing configuration.
+    assert counts["failed"] <= 0.25 * counts["total"], counts
+
+
+def test_an_errored_nous_campaign_is_charged_not_dropped(tmp_path, monkeypatch):
+    from orchestrator.optimize import harness
+
+    def boom(*a, **k):
+        raise TypeError("driver regression")
+    monkeypatch.setattr(harness, "run_synthetic_campaign", boom)
+    r = run_nous("bowl", 1.0, 1, str(tmp_path))
+    tr = S.truth(S.get("bowl"))
+    assert r["status"] == "error" and r["regret"] == tr["best"] - tr["worst"]
+    summary = summarize([r], [], [])
+    assert summary["rows"] and summary["rows"][0]["nous_regret"] == r["regret"]
+
+
+def test_rows_record_the_code_they_came_from_and_the_header_hides_the_cache_path(tmp_path):
+    from benchmarks.optimization.run import _meta
+
+    r = run_baseline("RS", "bowl", 1.0, 1, 10)
+    assert r["code"]
+    meta = _meta(["--cache-dir", "/secret/path", "--seeds", "1"], [1], [1.0])
+    assert "/secret/path" not in meta["argv"] and "<cache-dir>" in meta["argv"]
+
+
+def test_chunked_predictions_agree_with_unchunked():
+    rs = np.random.RandomState(3)
+    X, Xs = rs.rand(30, 3), rs.rand(500, 3)
+    y = X.sum(1) + 0.01 * rs.randn(30)
+    m = G.GP(restarts=0, seed=0).fit(X, y)
+    a, b = m.predict(Xs, chunk=7), m.predict(Xs, chunk=10_000)
+    assert np.allclose(a[0], b[0]) and np.allclose(a[1], b[1])
+    c, d = G.crude_posterior(X, y, Xs, chunk=7), G.crude_posterior(X, y, Xs, chunk=10_000)
+    assert np.allclose(c[0], d[0]) and np.allclose(c[1], d[1])
+
+
+def test_a_baselines_regret_matches_the_hand_computed_noiseless_value():
+    from benchmarks.optimization.baselines import run_method
+
+    s = S.get("bowl")
+    recs, _ = run_method("RS", s, "bowl", 12, 5)
+    rec = recs["best_observed"]
+    a, b = float(rec["A"]), float(rec["B"])
+    by_hand = 20.0 - (20.0 - 0.05 * (a - 9) ** 2 - 0.05 * (b - 11) ** 2)
+    assert S.true_regret(s, rec, S.truth(s)) == (pytest.approx(by_hand), "ok")
+    assert run_baseline("RS", "bowl", 1.0, 5, 12)["regret_best_observed"] == pytest.approx(by_hand)

@@ -93,6 +93,15 @@ class Log:
         return [e for e in g.values() if e["ys"]]
 
 
+def _failed_only(log: Log) -> set:
+    """Keys of configurations every measurement of which failed."""
+    seen: dict = {}
+    for lv, y, _f, _o in log.rows:
+        k = _key(lv)
+        seen[k] = seen.get(k, False) or (y is not None)
+    return {k for k, ok in seen.items() if not ok}
+
+
 def best_observed(log: Log) -> dict | None:
     cands = [e for e in log.grouped() if e["feas"]]
     if not cands:
@@ -210,7 +219,11 @@ def gp_bo(surface, name, budget, rng):
                 mu_m, _ = model.predict(np.array([coder(v) for v in feas_meas]))
                 inc_i = int(np.argmax(mu_m))
                 inc, inc_val = feas_meas[inc_i], float(mu_m[inc_i])
-            pool = _pool(ax, rng, inc)
+            # A configuration that has only ever FAILED to measure is not in the
+            # GP's data, so EI stays high there and the loop would re-measure it
+            # for most of its budget (review B1). Drop it from the pool.
+            dead = _failed_only(log)
+            pool = [p for p in _pool(ax, rng, inc) if _key(p) not in dead] or _pool(ax, rng, inc)
             P = np.array([coder(p) for p in pool])
             mu, sd = model.predict(P)
             pf = np.ones(len(pool))
@@ -256,10 +269,19 @@ def gp_bo_crude(surface, name, budget, rng):
         ys.append(y)
     while tgt.n < budget:
         ok = [(i, v) for i, v in zip(idx, ys) if v is not None]
-        X, y = Gx[[i for i, _ in ok]], np.array([v for _, v in ok])
-        mu, sd = G.crude_posterior(X, y, Gx)
-        best = mu[[i for i, _ in ok]].max()
-        i = int(np.argmax(G.expected_improvement(mu, sd, best)))
+        if len(ok) < 2:
+            i = rng.randrange(len(grid))
+        else:
+            X, y = Gx[[i for i, _ in ok]], np.array([v for _, v in ok])
+            mu, sd = G.crude_posterior(X, y, Gx)
+            best = mu[[i for i, _ in ok]].max()
+            ei = G.expected_improvement(mu, sd, best)
+            # Same rule as GP-BO (review B1): never re-pick a point that has
+            # only failed. (The audit's probe had no failing surfaces.)
+            okset = {i for i, _ in ok}
+            for j in set(idx) - okset:
+                ei[j] = -np.inf
+            i = int(np.argmax(ei))
         v, feas, _ = tgt.measure(grid[i])
         log.add(grid[i], v, feas)
         idx.append(i)

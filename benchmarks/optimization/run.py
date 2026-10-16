@@ -69,8 +69,18 @@ def run_nous(name: str, mult: float, seed: int, scratch: str) -> dict:
             r = run_synthetic_campaign(s, seed=seed, parent_dir=Path(d),
                                        campaign_overrides=S.campaign_overrides(name))
         except Exception as exc:  # noqa: BLE001 -- a crash is a data point
-            return {"surface": name, "mult": mult, "seed": seed,
-                    "error": f"{type(exc).__name__}: {exc}"[:300]}
+            # CHARGED, not dropped (review B2): a campaign that crashed returned
+            # no answer, so it scores the worst admissible regret, and the runs
+            # it spent before crashing are the budget its baselines get.
+            spent = sum(sum(1 for ln in p.read_text().splitlines() if ln.strip())
+                        for p in Path(d).glob("*/runs/iter-*/runs.jsonl"))
+            regret, status = S.true_regret(s, None, tr)
+            return {"surface": name, "mult": mult, "seed": seed, "budget": spent,
+                    "regret": regret, "status": "error", "certified": False,
+                    "false_cert": False, "epsilon": None,
+                    "error": f"{type(exc).__name__}: {exc}"[:300],
+                    "wall_s": time.perf_counter() - t0, "cpu_s": time.process_time() - c0,
+                    "code": _nous_digest()}
         runs = sum(sum(1 for ln in p.read_text().splitlines() if ln.strip())
                    for p in Path(r.work_dir).glob("runs/iter-*/runs.jsonl"))
         rep = r.report
@@ -82,7 +92,25 @@ def run_nous(name: str, mult: float, seed: int, scratch: str) -> dict:
             "regret": regret, "status": status, "certified": cert,
             "epsilon": eps, "basis": r.basis, "path_tail": (r.path or [""])[-1],
             "false_cert": cert and (status != "ok" or (eps is not None and regret > eps + 1e-9)),
-            "wall_s": wall, "cpu_s": cpu, "rec": r.recommendation}
+            "wall_s": wall, "cpu_s": cpu, "rec": r.recommendation,
+            "code": _nous_digest()}
+
+
+def _nous_digest() -> str:
+    """The Nous source digest the row was produced under (review B3)."""
+    from orchestrator.optimize.provenance import nous_version_info
+
+    return nous_version_info()["source_sha256"][:16]
+
+
+def _bench_digest() -> str:
+    """Digest of the benchmark's own code (surfaces, GP, baselines)."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for f in sorted(Path(__file__).parent.glob("*.py")):
+        h.update(f.name.encode() + f.read_bytes())
+    return h.hexdigest()[:16]
 
 
 def run_baseline(method: str, name: str, mult: float, seed: int, budget: int) -> dict:
@@ -92,7 +120,8 @@ def run_baseline(method: str, name: str, mult: float, seed: int, budget: int) ->
     recs, used = run_method(method, s, name, budget, seed)
     wall, cpu = time.perf_counter() - t0, time.process_time() - c0
     out = {"surface": name, "mult": mult, "seed": seed, "method": method,
-           "budget": budget, "used": used, "wall_s": wall, "cpu_s": cpu}
+           "budget": budget, "used": used, "wall_s": wall, "cpu_s": cpu,
+           "code": _bench_digest()}
     for rule, rec in recs.items():
         reg, st = S.true_regret(s, rec, tr)
         out[f"regret_{rule}"], out[f"status_{rule}"] = reg, st
@@ -146,7 +175,7 @@ def run_suite(names, mults, seeds, methods, workers, scratch, cache_dir: Path | 
                        cache_dir / "nous.jsonl" if cache_dir else None,
                        key=lambda j: f"{j[0]}|{j[1]}|{j[2]}")
     bjobs = [(meth, r["surface"], r["mult"], r["seed"], r["budget"])
-             for r in nous if "error" not in r for meth in methods]
+             for r in nous if r.get("budget") for meth in methods]
     # Longest (GP-BO on the biggest budgets) first, for load balance.
     bjobs.sort(key=lambda j: -(j[4] * (10 if j[0] == "GP-BO" else 1)))
     base = _cached_map(_base_job, bjobs, workers,
@@ -161,7 +190,7 @@ PRIMARY_RULE = {"RS": "best_observed", "LHS": "best_observed",
 
 
 def head_to_head(nous, base, method, rule, tol_eps=False):
-    nm = {(r["surface"], r["mult"], r["seed"]): r for r in nous if "error" not in r}
+    nm = {(r["surface"], r["mult"], r["seed"]): r for r in nous if "regret" in r}
     w = t = l = 0
     for b in base:
         if b["method"] != method:
@@ -185,10 +214,10 @@ def _mean(v):
 
 
 def summarize(nous, base, methods):
-    nm = {(r["surface"], r["mult"], r["seed"]): r for r in nous if "error" not in r}
+    nm = {(r["surface"], r["mult"], r["seed"]): r for r in nous if "regret" in r}
     cells = {}
     for r in nous:
-        if "error" in r:
+        if "regret" not in r:
             continue
         c = cells.setdefault((r["surface"], r["mult"]), {"nous": [], "base": {}})
         c["nous"].append(r)
@@ -222,7 +251,10 @@ def summarize(nous, base, methods):
                           "within_epsilon": head_to_head(fn, fb, m, PRIMARY_RULE[m], True)}
                       for m in methods}
     errors = [r for r in nous if "error" in r]
-    return {"rows": rows, "head_to_head": h2h, "by_family": fam, "errors": errors}
+    codes = {"nous": sorted({r.get("code", "unrecorded") for r in nous}),
+             "baselines": sorted({b.get("code", "unrecorded") for b in base})}
+    return {"rows": rows, "head_to_head": h2h, "by_family": fam, "errors": errors,
+            "code_digests": codes}
 
 
 def _f(v, nd=3):
@@ -232,9 +264,13 @@ def _f(v, nd=3):
 
 
 def render_markdown(summary, meta, methods) -> str:
-    out = [f"_Generated by `python -m benchmarks.optimization.run {meta['argv']}` "
-           f"on Nous {meta['nous_version']} ({meta['git_commit'] or 'no git'}); "
-           f"seeds {meta['seeds']}, noise multipliers {meta['mults']}._", ""]
+    cd = summary.get("code_digests") or {}
+    out = [f"_Tables aggregated by `python -m benchmarks.optimization.run {meta['argv']}` "
+           f"at checkout {meta['git_commit'] or 'no git'} (Nous {meta['nous_version']}); "
+           f"seeds {meta['seeds']}, noise multipliers {meta['mults']}. Rows come from "
+           f"the resume cache and record the code they were produced under: Nous "
+           f"source digest(s) {', '.join(cd.get('nous') or [])}; benchmark code "
+           f"digest(s) {', '.join(cd.get('baselines') or [])}._", ""]
     hdr = ["surface", "noise", "N", "Nous", "cert/false", *[
         f"{m} ({'obs' if PRIMARY_RULE[m] == 'best_observed' else 'GP mean'})" for m in methods],
         *[f"{m} ({'GP mean' if PRIMARY_RULE[m] == 'best_observed' else 'obs'})" for m in methods]]
@@ -274,7 +310,7 @@ def render_markdown(summary, meta, methods) -> str:
         out.append(f"| {r['surface']} | ×{r['mult']:g} | {_f(r['nous_cpu_s'], 2)} | "
                    + " | ".join(_f(r[f'{m}:cpu_s'], 2) for m in methods) + " |")
     if summary["errors"]:
-        out += ["", "### Nous campaigns that raised", ""]
+        out += ["", "### Nous campaigns that raised (charged the worst admissible regret)", ""]
         for e in summary["errors"]:
             out.append(f"- {e['surface']} ×{e['mult']:g} seed {e['seed']}: `{e['error']}`")
     return "\n".join(out) + "\n"
@@ -296,7 +332,15 @@ def write_markdown(path: Path, generated: str, section: str):
 def _meta(argv, seeds, mults):
     from orchestrator.optimize.provenance import nous_version_info
     v = nous_version_info()
-    return {"argv": " ".join(argv), "nous_version": v["package_version"],
+    shown, skip = [], False
+    for tok in argv:
+        if skip:
+            shown.append("<cache-dir>")
+            skip = False
+            continue
+        skip = tok == "--cache-dir"
+        shown.append("--cache-dir=<cache-dir>" if tok.startswith("--cache-dir=") else tok)
+    return {"argv": " ".join(shown), "nous_version": v["package_version"],
             "git_commit": v.get("git_commit"), "seeds": list(seeds), "mults": list(mults)}
 
 
