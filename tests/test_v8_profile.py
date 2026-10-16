@@ -1174,6 +1174,22 @@ class TestFundedArms:
         hard = screening_hard_cap(s, s8, 5.68, remaining, waiting=1)
         assert arm_funded(s, s8, remaining - hard - CAP_OVERSHOOT_USD * 0.9)  # a $0.90 overshoot is fine
 
+    def test_first_arm_and_its_repair_both_overshooting_still_leave_the_second_its_floor(self):
+        from orchestrator.v8_execute import CAP_OVERSHOOT_USD, arm_funded, repair_funded, screening_hard_cap
+        s, s8 = v7_settings(_v8()), v8_settings(_v8())
+        remaining = 21.42  # live p26 before h-main
+        hard = screening_hard_cap(s, s8, 6.0, remaining, waiting=1)
+        left = remaining - hard - CAP_OVERSHOOT_USD * 0.9
+        assert repair_funded(s, s8, left, waiting=1)
+        assert arm_funded(s, s8, left - s8.repair_budget_usd - CAP_OVERSHOOT_USD * 0.9)
+
+    def test_a_repair_that_would_starve_a_waiting_arm_is_not_run(self):
+        from orchestrator.v8_execute import repair_funded, winner_reserve
+        s, s8 = v7_settings(_v8()), v8_settings(_v8())
+        just_floor = winner_reserve(s, s8) + s8.arm_floor_usd + 0.5
+        assert not repair_funded(s, s8, just_floor, waiting=1)
+        assert repair_funded(s, s8, just_floor, waiting=0)
+
     def test_an_arm_the_iteration_cannot_fund_is_skipped_not_starved(self, tmp_path, monkeypatch):
         # $7: the evaluator's spend is credited back, but after h-main the floor no longer fits above
         # the winner reserve

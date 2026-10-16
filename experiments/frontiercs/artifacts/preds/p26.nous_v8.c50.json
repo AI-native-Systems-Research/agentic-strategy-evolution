@@ -1,0 +1,64 @@
+{
+  "problem_id": "26",
+  "track": "algorithmic",
+  "agent": "nous",
+  "label": "p26_v8c50",
+  "model": "claude-opus-4-6",
+  "final_score": 29.61,
+  "cost_usd": 48.61,
+  "n_clean_candidates": 9,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/nous_runs/research-p26-v8c50/runs/iter-1/patches/h-main.patch",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p26-v8c50/runs/iter-1/patches/h-main.patch",
+      "score": 29.611690000000003
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p26-v8c50/runs/iter-2/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p26_v8c50_measured_20261015_152303/m0007_160055_score29.61.cpp",
+      "score": 29.611690000000003
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p26_v8c50_measured_20261015_152303/m0010_163941_score29.61.cpp",
+      "score": 29.611690000000003
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p26_v8c50_measured_20261015_152303/m0012_165938_score20.00.cpp",
+      "score": 20.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p26_v8c50_measured_20261015_152303/m0011_165417_score20.00.cpp",
+      "score": 20.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p26_v8c50_measured_20261015_152303/m0005_155733_score15.86.cpp",
+      "score": 15.85602
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p26_v8c50_measured_20261015_152303/m0006_155848_score9.23.cpp",
+      "score": 9.226429999999999
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p26_v8c50_measured_20261015_152303/m0000_152324_score0.00.cpp",
+      "score": 0.0
+    }
+  ],
+  "elapsed_s": 7370.5,
+  "cost_usd_tokenbased": 57.51,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true,
+  "stop_rule": "finish the iteration in progress at $50.0 (ceiling $57.0)",
+  "best_at_budget": 29.61,
+  "budget_reached_at": 1792098508.0657558
+}

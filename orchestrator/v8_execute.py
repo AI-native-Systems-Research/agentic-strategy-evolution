@@ -76,9 +76,17 @@ def v8_screening_cap(s: V7Settings, s8: V8Settings, remaining: float, sessions_l
 def screening_hard_cap(s: V7Settings, s8: V8Settings, cap: float, remaining: float, waiting: int) -> float:
     """Hard stop for a screening arm: up to 2x its target, never into the winner's reserve or the floor of
     an arm still waiting. A cap trips after the reply that crosses it, so a margin covers that overshoot
-    (live p5: $0.30 over left $3.86, under the $4 floor, and the second family was skipped)."""
-    room = remaining - winner_reserve(s, s8) - waiting * (s8.arm_floor_usd + CAP_OVERSHOOT_USD)
-    return round(max(cap, min(cap * 2.0, room)), 2)
+    (live p5: $0.30 over left $3.86, under the $4 floor, and the second family was skipped). The arm's own
+    repair turn is set aside too (live p26/p0/p58: a $1.11 repair left $0.26 too little for the second family)."""
+    room = (remaining - winner_reserve(s, s8) - waiting * (s8.arm_floor_usd + CAP_OVERSHOOT_USD)
+            - (s8.repair_budget_usd + CAP_OVERSHOOT_USD if s8.repair_budget_usd > 0 else 0.0))
+    return round(max(min(cap, s8.arm_floor_usd), min(cap * 2.0, room)), 2)
+
+
+def repair_funded(s: V7Settings, s8: V8Settings, remaining: float, waiting: int) -> bool:
+    """True when a repair turn still leaves the winner's reserve and every waiting arm its floor."""
+    return (s8.repair_budget_usd > 0 and remaining - s8.repair_budget_usd - CAP_OVERSHOOT_USD
+            >= winner_reserve(s, s8) + waiting * s8.arm_floor_usd - 1e-9)
 
 
 def arm_funded(s: V7Settings, s8: V8Settings, remaining: float) -> bool:
@@ -580,9 +588,10 @@ def _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, ke
     s, s8 = v7_settings(campaign), v8_settings(campaign)
     patch = Path(iter_dir) / "patches" / f"{key}.patch"
     if (state["sessions"].get(key) or {}).get("status") != "ended":
+        hard = screening_hard_cap(s, s8, cap, remaining(), waiting)
+        cap = min(cap, hard)
         _start_session(repo, iteration, state, key, cap, extras)
         _save_state(adir, state)
-        hard = screening_hard_cap(s, s8, cap, remaining(), waiting)
         print(f"  v8 execute-arm `{key}` (target ${cap:.2f}, hard cap ${hard:.2f})")
         outcome = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, key,
                             "execute-arm-v8", label=key, target=cap, hard=hard, resume=None, extras=extras,
@@ -597,8 +606,7 @@ def _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, ke
     if reason and best is not None and best > 0:
         logger.info("v8: %s needs no repair: an official measure scored %s", key, best)
         reason = None
-    if reason and not rec.get("repaired") and s8.repair_budget_usd > 0 \
-            and remaining() - s8.repair_budget_usd >= winner_reserve(s, s8):
+    if reason and not rec.get("repaired") and repair_funded(s, s8, remaining(), waiting):
         rec.update({"repaired": True, "repair_reason": reason})
         _save_state(adir, state)
         print(f"  v8 repair `{key}` ({reason}; ${s8.repair_budget_usd:.2f})")
