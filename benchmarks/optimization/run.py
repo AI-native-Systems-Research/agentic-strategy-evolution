@@ -300,6 +300,10 @@ def _meta(argv, seeds, mults):
             "git_commit": v.get("git_commit"), "seeds": list(seeds), "mults": list(mults)}
 
 
+#: Hard cap on parallel benchmark workers (memory safety on shared machines).
+MAX_WORKERS = 3
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     ap = argparse.ArgumentParser()
@@ -307,7 +311,10 @@ def main(argv=None):
     ap.add_argument("--seeds", type=int, nargs="*", default=list(range(1, 9)))
     ap.add_argument("--mults", type=float, nargs="*", default=[1.0, 4.0])
     ap.add_argument("--methods", nargs="*", default=list(METHODS))
-    ap.add_argument("--workers", type=int, default=os.cpu_count() or 4)
+    # Default 2, hard cap MAX_WORKERS: eight workers at 28-40 GB each froze a
+    # 64 GB machine (2026-10-16). Run under nous-e2e/bin/heavy for the
+    # machine-wide lock and the memory watchdog.
+    ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--audit-repro", action="store_true",
                     help="the stage-0 audit's Q6 setup: its 9 surfaces, seeds 1-20, noise x1/x8")
@@ -316,6 +323,9 @@ def main(argv=None):
                     help="resume directory: finished campaigns are appended "
                          "here and reused by a re-run with the same arguments")
     a = ap.parse_args(argv)
+    if not 1 <= a.workers <= MAX_WORKERS:
+        ap.error(f"--workers must be 1..{MAX_WORKERS} (each worker can hold several GB; "
+                 f"see the module docstring)")
     if a.audit_repro:
         names, seeds, mults, section = AUDIT_SURFACES, list(range(1, 21)), [1.0, 8.0], "audit-repro"
     else:
