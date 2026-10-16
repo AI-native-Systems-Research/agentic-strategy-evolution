@@ -321,7 +321,9 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
 
         new = setup_work_dir(run_id, repo_path=None,
                              campaign=_detached(campaigns[min(campaigns)]))
-        for name in ("mechanism.sha256", "mechanism.patch"):
+        # build_review.json is a record of a human decision that report.json's
+        # provenance.waivers reads; it is carried, not re-derived.
+        for name in ("mechanism.sha256", "mechanism.patch", "build_review.json"):
             if (orig / name).exists():
                 shutil.copy2(orig / name, new / name)
         last = iters[-1] if iters else 0
@@ -379,6 +381,9 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         a, b = _files(orig), _files(new)
         for rel in sorted(a | b):
             name = rel.rsplit("/", 1)[-1]
+            if name in NOT_DERIVED:
+                result.not_rederived.append(rel)
+                continue
             if rel not in b:
                 if name in NOT_DERIVED or name.startswith("gate_summary"):
                     result.not_rederived.append(rel)

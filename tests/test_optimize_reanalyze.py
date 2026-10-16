@@ -115,3 +115,37 @@ def test_a_two_epoch_campaign_reproduces_each_epoch_from_its_own_registration(
     res = reanalyze(wd)
     assert res.identical, res.differences
     assert "epoch_end-1.json" in res.compared
+
+
+def test_a_built_campaign_reanalyzes_without_rerunning_the_build(tmp_path, monkeypatch):
+    """The build is an agent call and its oracles are measurements: they are
+    named as not re-run, and every derived artifact still reproduces."""
+    from orchestrator.engine import Engine
+    from orchestrator.iteration import IterationOutcome, setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    from tests.test_optimize_build_oracles import (
+        _build_campaign, _declared_ids, _fake_build, _git_repo)
+
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path)
+    s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("built", repo_path=str(repo), campaign=c)
+    runner = make_synthetic_runner(s, seed=3)
+    ids = _declared_ids(c)
+    for i in range(1, 10):
+        out = run_stage(c, wd, iteration=i, config_runner=runner,
+                        test_results={t: i > 1 for t in ids},
+                        sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+        if out == IterationOutcome.COMPLETED:
+            break
+        eng = Engine(wd)
+        if eng.phase != "DONE":
+            eng.transition("DONE")
+        eng.transition("DESIGN")
+    assert (wd / "report.json").exists()
+    res = reanalyze(wd)
+    assert res.identical, res.differences
+    assert [s_["stage"] for s_ in res.skipped_iterations] == ["build"]
+    assert "build_review.json" in res.not_rederived
+    assert "report.json" in res.compared
