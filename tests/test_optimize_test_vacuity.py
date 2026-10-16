@@ -253,3 +253,66 @@ def test_agent_code_rewriting_a_record_during_verify_changes_no_verdict(tmp_path
             "calc.py": "import mech\n\ndef scale(x):\n    return mech.boost(x)\n",
             "tests/test_mech.py": test_src,
         })
+
+
+# ─── round 2, B1: honest builds in other frameworks are classified correctly ─
+
+GO_V = """=== RUN   TestScale
+    calc_test.go:9: got 3 want 6
+--- FAIL: TestScale (0.00s)
+FAIL
+"""
+GO_JSON = ('{"Action":"run","Test":"TestScale"}\n'
+           '{"Action":"output","Test":"TestScale","Output":"    calc_test.go:9: got 3 want 6\\n"}\n'
+           '{"Action":"fail","Test":"TestScale"}\n')
+TESTIFY = """=== RUN   TestScale
+    calc_test.go:11:
+        \tError Trace:\tcalc_test.go:11
+        \tError:      \tNot equal:
+        \t            \texpected: 6
+        \t            \tactual  : 3
+--- FAIL: TestScale (0.00s)
+"""
+JEST = """  ● calc › scale doubles
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 6
+    Received: 3
+
+  ● calc › other
+"""
+RUST = """---- tests::scale stdout ----
+thread 'tests::scale' panicked at src/lib.rs:9:9:
+assertion `left == right` failed
+  left: 3
+ right: 6
+"""
+PYTEST = """tests/t.py::test_scale FAILED
+_____ test_scale _____
+>       assert calc.scale(3) == 6
+E       assert 3 == 6
+E        +  where 3 = <function scale at 0x1>(3)
+E        +    where <function scale at 0x1> = calc.scale
+"""
+
+
+@pytest.mark.parametrize("out,tid", [
+    (GO_V, "calc_test.go::TestScale"),
+    (GO_JSON, "calc_test.go::TestScale"),
+    (TESTIFY, "calc_test.go::TestScale"),
+    (JEST, "src/calc.test.js::scale doubles"),
+    (PYTEST, "tests/t.py::test_scale"),
+])
+def test_honest_assertion_failures_are_behavioral_in_every_framework(out, tid):
+    texts = failure_texts(out, [tid])
+    assert failure_kind(texts.get(tid)) == "behavioral", texts
+
+
+def test_rust_assertion_text_is_behavioral():
+    assert failure_kind(RUST) == "behavioral"
+
+
+def test_go_missing_symbol_is_still_absence():
+    out = "# calc [calc.test]\n./calc_test.go:9:9: undefined: Boost\nFAIL calc [build failed]\n"
+    assert failure_kind(out) == "absence"

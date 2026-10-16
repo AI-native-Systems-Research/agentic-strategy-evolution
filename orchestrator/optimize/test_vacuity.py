@@ -109,13 +109,20 @@ ABSENCE = [re.compile(p) for p in (
 #: NOT evidence (a timeout, a crash, an unparsed framework).
 ASSERTION = [re.compile(p) for p in (
     r"\bAssertionError\b", r"^\s*(E\s+)?assert\b", r"\bassert .*(==|!=|<|>|is)",
-    r"Error Trace:", r"expected .* (got|but was|actual)", r"assertion `left == right` failed",
-    r"assertion failed", r"Expected:|Received:", r"\bexpected:? .*\bactual\b",
+    r"Error Trace:", r"Not equal:", r"expected .* (got|but was|actual)",
+    r"assertion `left == right` failed", r"assertion failed", r"Expected:|Received:",
+    r"\bexpected:? .*\bactual\b", r"expect\(received\)",
+    r"\bgot\b.*\bwant\b", r"\bwant\b.*\bgot\b",              # go t.Errorf idiom
+    r"^\s*\S+_test\.go:\d+:",                                    # go t.Error/Fatal line
 )]
 #: Lines that ECHO source code rather than report the failure: pytest's ">"
-#: and indented source lines, rustc/tsc code frames ("  |", "-->", "^^^").
-#: An echoed `assert_eq!(...)` is not an assertion failure.
-ECHO = re.compile(r"^(>\s|\s{4}\S|\s*\d*\s*\|\s|\s*-->|\s*\^+)")
+#: source line and rustc/tsc code frames ("  12 |", "-->", "^^^"). NOT indented
+#: lines in general: Go prints its failure messages indented.
+ECHO = re.compile(r"^(>\s|\s*\d+\s*\|\s|\s*\|\s|\s*-->|\s*\^+\s*$)")
+#: pytest's "+  where ..." explanation lines restate the asserted expression;
+#: they count for absence only when they show an existence probe.
+WHERE = re.compile(r"^E?\s+\+\s+where\b")
+PROBES = [re.compile(r"\bhasattr\("), re.compile(r"\bgetattr\(")]
 
 TEST_DIRS = frozenset({"tests", "test", "__tests__", "spec"})
 TEST_FILE = re.compile(
@@ -136,8 +143,10 @@ def failure_kind(text: str | None) -> str:
     # and on the short-summary lines only.
     err = [ln for ln in lines if ln.startswith("E ") or ln.startswith(("FAILED ", "ERROR "))]
     lines = err or lines
-    if any(p.search(ln) for p in ABSENCE for ln in lines):
-        return "absence"
+    for ln in lines:
+        pats = PROBES if WHERE.match(ln) else ABSENCE
+        if any(p.search(ln) for p in pats):
+            return "absence"
     if any(p.search(ln) for p in ASSERTION for ln in lines):
         return "behavioral"
     return "unknown"
@@ -162,8 +171,7 @@ def failure_texts(output: str, tests: list[str]) -> dict[str, str]:
         chunks: list[str] = []
         summ = re.compile(r"^(FAILED|ERROR) " + re.escape(t) + r"(\s|$)")
         chunks += [ln for ln in lines if summ.match(ln)]
-        cands = {name, short} | {f"{c}.{name}" for c in ()}
-        hits = [h for h in headers if h in cands or h.endswith("." + name)]
+        hits = [h for h in headers if h in (name, short) or h.endswith("." + name)]
         if len(hits) == 1:
             for i, ln in enumerate(lines):
                 m = header.match(ln)
@@ -188,6 +196,15 @@ def failure_texts(output: str, tests: list[str]) -> dict[str, str]:
                     continue
                 if rec.get("Test") == short and rec.get("Output"):
                     chunks.append(rec["Output"])
+        # Jest: "  ● Suite › name" headers, each block running to the next one.
+        jest = [i for i, ln in enumerate(lines) if ln.strip().startswith("● ")]
+        jhits = [i for i in jest if lines[i].strip()[2:] == name
+                 or lines[i].strip().endswith("› " + name)]
+        if len(jhits) == 1:
+            i = jhits[0]
+            nxt = [j for j in jest if j > i]
+            end = nxt[0] if nxt else len(lines)
+            chunks.append("\n".join(lines[i:end]))
         if chunks:
             out[t] = "\n".join(chunks)
     return out
