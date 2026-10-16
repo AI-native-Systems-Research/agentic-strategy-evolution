@@ -218,7 +218,8 @@ def waivers(work_dir: Path, campaign: dict | None) -> list[dict]:
 
 
 #: ``build_checks`` keys whose (non-empty string) value waives a hard gate.
-WAIVER_KEYS = ("allow_unarmed_baseline", "allow_nondiscriminating_tests")
+WAIVER_KEYS = ("allow_unarmed_baseline", "allow_nondiscriminating_tests",
+               "allow_out_of_scope_writes")
 
 
 def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None = None) -> dict:

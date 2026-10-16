@@ -1930,6 +1930,34 @@ properties:
           are literal repo-relative paths; globs are rejected by the
           validator (see that field's own description).
         properties:
+          allow_unarmed_baseline:
+            type: string
+            minLength: 1
+            description: >
+              A WAIVER, written as the reason. Oracle 2(c) (the control is
+              unchanged across the build) is a hard gate: when it cannot run
+              -- the control could not be measured before the build, or no
+              runner exists to re-measure it -- ``verify`` aborts. Set this
+              only when the target truly cannot run the control before the
+              build; the reason is recorded in baseline_equivalence.json and
+              in report.json ``provenance.waivers``.
+          allow_nondiscriminating_tests:
+            type: string
+            minLength: 1
+            description: >
+              A WAIVER, written as the reason, for oracle 2(d): every declared
+              correctness test of a built factor must be shown to discriminate
+              the mechanism (fail before it, or against a mechanism-reverted
+              mutant, for a reason other than a missing symbol). Recorded in
+              authored_tests.json and report.json ``provenance.waivers``.
+          allow_out_of_scope_writes:
+            type: string
+            minLength: 1
+            description: >
+              A WAIVER, written as the reason, for the build write-scope gate
+              (writes outside ``mechanism_paths``, or to the benchmark harness
+              / a pre-existing test). Recorded in build_scope.json and
+              report.json ``provenance.waivers``.
           allow_preexisting_tests:
             type: boolean
             description: >

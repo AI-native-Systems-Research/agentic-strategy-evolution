@@ -517,18 +517,64 @@ def test_an_unarmed_oracle_is_recorded_not_silent(tmp_path, monkeypatch, caplog)
     assert "unknown flag" in be["pre_unavailable"], be
     assert be["levels"] == {"A": 2, "B": 2, "C": "off"}
 
-    # verify must proceed (nothing to compare against) and must SAY it did not
-    # check, rather than passing silently.
+    # verify must NOT proceed: an unarmed oracle is a gate, not a warning
+    # (audit Q8.1). And the record must not have been rewritten into
+    # something that looks OK.
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+    with pytest.raises(OptimizationAborted, match="NOT ARMED"):
+        run_stage(c, wd, iteration=2, stage="verify",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in ids})
+    assert not (Path(wd) / "policy.json").exists(), "no pre-registration on a broken apparatus"
+    be2 = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be2.get("ok") is None and "pre_unavailable" in be2
+
+
+def test_an_unarmed_oracle_proceeds_only_with_a_recorded_waiver(tmp_path, monkeypatch, caplog):
+    """The opt-out is explicit, carries a reason, and reaches report.json."""
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    c["optimization"]["build_checks"] = {
+        "allow_unarmed_baseline": "the harness is authored by the build itself"}
+    wd = setup_work_dir("waived", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build", config_runner=_strict_runner,
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
     import logging
     with caplog.at_level(logging.WARNING, logger="orchestrator.optimize.stage_runner"):
         run_stage(c, wd, iteration=2, stage="verify",
                   config_runner=make_synthetic_runner(s, seed=1),
                   test_results={t: True for t in ids})
-    assert any("NOT ARMED" in r.getMessage() for r in caplog.records), caplog.text
-    assert (Path(wd) / "policy.json").exists(), "the epoch still compiles"
-    # And the record must NOT have been rewritten into something that looks OK.
-    be2 = json.loads((wd / "baseline_equivalence.json").read_text())
-    assert be2.get("ok") is None and "pre_unavailable" in be2
+    assert (Path(wd) / "policy.json").exists()
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["armed"] is False and be["waived"] == "the harness is authored by the build itself"
+    from orchestrator.optimize.provenance import waivers
+    assert {"gate": "build_checks.allow_unarmed_baseline",
+            "reason": "the harness is authored by the build itself"} in waivers(wd, c)
+
+
+def test_a_build_with_no_control_attempt_is_unarmed_too(tmp_path, monkeypatch):
+    """No runner at build time: the file is never written. Absence after a
+    build is not 'never attempted, so fine' -- it is unarmed."""
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("noattempt", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build", config_runner=None,
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    assert not (wd / "baseline_equivalence.json").exists()
+    with pytest.raises(OptimizationAborted, match="NOT ARMED"):
+        run_stage(c, wd, iteration=2, stage="verify",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in ids})
 
 
 def test_a_post_build_measurement_failure_still_aborts(tmp_path, monkeypatch):

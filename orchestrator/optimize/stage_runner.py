@@ -1357,11 +1357,19 @@ def _check_baseline_equivalence(
     build stage, no declared baseline, no runner); ``pre_unavailable`` means it
     was attempted and the pre-build measurement could not be taken, which is a
     normal pre-build state (see the build branch) but must not read as a pass.
-    Every not-armed path says so at WARNING, because the alternative is a
-    campaign author assuming a check ran when nothing did.
+    Every not-armed path after a build is a HARD FAIL (``_baseline_unarmed``)
+    unless ``build_checks.allow_unarmed_baseline`` waives it with a reason,
+    which is recorded; the alternative is a campaign author assuming a check
+    ran when nothing did.
     """
     path = Path(work_dir) / "baseline_equivalence.json"
     if not path.exists():
+        # A build ran (its pre-build record exists) but no control was even
+        # attempted: unarmed, and a gate like every other unarmed path.
+        if (Path(work_dir) / "pre_build_tests.json").exists():
+            _baseline_unarmed(campaign, path, {},
+                              "no pre-build control measurement was attempted "
+                              "(no known_valid_baseline, or no runner at build)")
         return
     try:
         rec = json.loads(path.read_text())
@@ -1376,30 +1384,20 @@ def _check_baseline_equivalence(
     levels = dict(rec.get("levels") or {})
     unavailable = rec.get("pre_unavailable")
     if unavailable and not pre:
-        # The build stage tried and could not. Say so loudly and proceed: the
-        # pre-build measurement is gone for good (the mechanism is in the tree
-        # now), so there is nothing to compare against and no way to recover it
-        # without re-running the build.
-        logger.warning(
-            "verify: ORACLE 2(c) IS NOT ARMED for this campaign. The control "
-            "configuration %s could not be measured before the build (%s), so "
-            "nothing verifies that the mechanism is inert at its control level "
-            "— a mechanism that shifts the metric at its OFF setting would "
-            "confound every effect this epoch measures, and that would not be "
-            "detected. The epoch proceeds. To arm the oracle, make the "
-            "run_command able to execute the control configuration BEFORE the "
-            "build stage runs, then start a fresh campaign.",
-            levels or "<unrecorded>", unavailable,
-        )
+        # The build stage tried and could not. The pre-build measurement is gone
+        # for good (the mechanism is in the tree now), so nothing can verify the
+        # mechanism is inert at its control level: a GATE, not a warning (audit
+        # Q8.1), unless the author waived it with a recorded reason.
+        _baseline_unarmed(campaign, path, rec,
+                          f"the control {levels or '<unrecorded>'} could not be "
+                          f"measured before the build ({unavailable})")
         return
     if not pre or not levels:
         return
     if config_runner is None:
-        logger.warning(
-            "verify: a pre-build control measurement exists but no config_runner "
-            "is available, so baseline equivalence cannot be re-measured. The "
-            "epoch will run without oracle 2(c).",
-        )
+        _baseline_unarmed(campaign, path, rec,
+                          "a pre-build control measurement exists but no "
+                          "config_runner is available to re-measure it")
         return
 
     from orchestrator.optimize import build as build_mod
@@ -1483,6 +1481,34 @@ def _check_baseline_equivalence(
            "comparison shares workload draws and the workload's own variance "
            "cancels out of it")
         + ". See baseline_equivalence.json for both replicate vectors.",
+    )
+
+
+def _baseline_unarmed(campaign: dict, path: Path, rec: dict, why: str) -> None:
+    """Oracle 2(c) could not run. Hard-fail, unless the campaign waives it with
+    ``optimization.build_checks.allow_unarmed_baseline: "<reason>"``; a waiver
+    is recorded in ``baseline_equivalence.json`` and in report.json's
+    ``provenance.waivers``, so an unarmed oracle never reads as a passed one."""
+    reason = _build_checks(campaign).get("allow_unarmed_baseline")
+    if isinstance(reason, str) and reason.strip():
+        logger.warning(
+            "verify: ORACLE 2(c) IS NOT ARMED (%s). Waived by "
+            "build_checks.allow_unarmed_baseline: %r -- nothing verifies that "
+            "the mechanism is inert at its control level, and report.json says so.",
+            why, reason.strip(),
+        )
+        _write_json(path, {**rec, "armed": False, "unarmed_because": why,
+                           "waived": reason.strip()})
+        return
+    raise OptimizationGateFailed(
+        f"oracle 2(c) is NOT ARMED: {why}. Nothing would verify that the built "
+        f"mechanism is inert at its control level, and a mechanism that moves "
+        f"the metric at its OFF setting confounds every effect the epoch "
+        f"measures. Make the run_command able to execute the "
+        f"known_valid_baseline BEFORE the build runs and start a fresh "
+        f"campaign, or, if that is impossible for this target, waive the "
+        f"oracle in writing: optimization.build_checks.allow_unarmed_baseline: "
+        f"\"<why>\" (recorded in report.json).",
     )
 
 
