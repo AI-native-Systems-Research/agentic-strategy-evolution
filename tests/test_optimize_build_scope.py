@@ -446,3 +446,47 @@ def test_a_build_with_its_work_dir_inside_the_repo_is_refused(tmp_path, monkeypa
                   config_runner=make_synthetic_runner(s, seed=1),
                   test_results={t: False for t in _declared_ids(c)},
                   sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+
+
+# ─── round 2, A3: nothing the build starts may outlive it ────────────────────
+
+
+def test_a_process_the_build_leaves_running_is_killed_and_fails_the_build(tmp_path, monkeypatch):
+    import os
+    import sys
+
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+
+    pids = []
+
+    def act(repo, wd):
+        (repo / "mech.py").write_text("X = 2\n")
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                             start_new_session=True)
+        pids.append(p.pid)
+
+    _, build, _ = _adversarial(tmp_path, monkeypatch, act)
+    with pytest.raises(OptimizationAborted, match="process"):
+        build()
+    import time
+    time.sleep(0.3)
+    try:
+        os.waitpid(pids[0], os.WNOHANG)
+    except ChildProcessError:
+        pass
+    with pytest.raises(ProcessLookupError):
+        os.kill(pids[0], 0)
+    rec = json.loads((tmp_path / "adv" / "build_isolation.json").read_text())
+    assert pids[0] in rec["survivors"] and pids[0] in rec["killed"]
+
+
+def test_a_build_whose_processes_all_finish_passes_isolation(tmp_path, monkeypatch):
+    import sys
+
+    def act(repo, wd):
+        (repo / "mech.py").write_text("X = 2\n")
+        subprocess.run([sys.executable, "-c", "pass"], check=True)
+
+    wd, build, _ = _adversarial(tmp_path, monkeypatch, act)
+    build()
+    assert json.loads((Path(wd) / "build_isolation.json").read_text())["survivors"] == []

@@ -2784,14 +2784,22 @@ def run_stage(
         # The write-scope gate: what the agent changed is the diff between the
         # tree just before and just after its call (build_scope.py).
         _scope_before = build_scope.snapshot(Path(repo), work_dir) if repo else None
-        build_mod.run_build(
-            campaign, work_dir,
-            iteration=iteration,
-            declared_tests=build_mod.declared_native_tests(_factors_for_build),
-            model=model,
-            max_turns=_build_max_turns(campaign),
-            sdk_runner=sdk_runner,
-        )
+        from orchestrator.optimize import isolation
+
+        try:
+            # Every process the build starts must be gone when it returns
+            # (isolation.py): a survivor could act after every check.
+            with isolation.track(work_dir):
+                build_mod.run_build(
+                    campaign, work_dir,
+                    iteration=iteration,
+                    declared_tests=build_mod.declared_native_tests(_factors_for_build),
+                    model=model,
+                    max_turns=_build_max_turns(campaign),
+                    sdk_runner=sdk_runner,
+                )
+        except isolation.BuildSurvivors as exc:
+            raise OptimizationGateFailed(str(exc)) from exc
         if repo:
             try:
                 build_scope.check(campaign, Path(repo), work_dir, _scope_before,
