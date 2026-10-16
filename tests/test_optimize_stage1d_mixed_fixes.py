@@ -316,3 +316,47 @@ def test_R4_the_measured_rung_can_recommend_the_level_without_a_stale_lost_line(
     assert rep["recommendation"]["levels"]["POL"] == "arc"
     assert "lost_levels" not in rep
     assert "Levels lost" not in render_report_markdown(tmp_path)
+
+
+def test_R5_report_adequacy_and_coverage_facts_are_epoch_scoped_too(tmp_path):
+    """Same shape as R4, for the adequacy/coverage facts: epoch 1 recorded an
+    unknown model, untested curvature and unassessed aliases; epoch 2 ends
+    before writing a recommendation. The epoch-2 report must not carry epoch
+    1's adequacy verdict as its own."""
+    from types import SimpleNamespace
+
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.policy import compile_policy, policy_hash, write_policy
+    from orchestrator.optimize.stage_runner import _run_report
+
+    s = Surface(name="r5", fn=lambda lv: 0.0,
+                factors=(_numeric("A"), _choice("POL", levels=("lru", "lfu", "arc"))))
+    camp = synthetic_campaign(s)
+    pol1 = compile_policy(camp)
+    it1 = tmp_path / "runs" / "iter-2"
+    it1.mkdir(parents=True)
+    (it1 / "runs.jsonl").write_text("")
+    (it1 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol1)}))
+    (it1 / "recommendation.json").write_text(json.dumps({
+        "stage": "screen", "iteration": 2, "levels": {"A": 9, "POL": "lfu"},
+        "model_adequate": None, "model_adequate_basis": "curvature_untested",
+        "curvature_untested_levels": {"POL": ["arc"]},
+        "aliases_not_assessed": ["AB~POL[1]"]}))
+    pol2 = dict(pol1, epoch=2)
+    write_policy(tmp_path, pol2)
+    it3 = tmp_path / "runs" / "iter-3"
+    it3.mkdir(parents=True)
+    (it3 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol2)}))
+    (it3 / "runs.jsonl").write_text(json.dumps({
+        "row_index": 0, "status": "complete", "role": "corner",
+        "levels": {"A": 16, "POL": "lfu"}, "response": {"m": 1.0}}) + "\n")
+
+    class _Eng(SimpleNamespace):
+        def transition(self, *_a, **_k):
+            pass
+
+    _run_report(_Eng(), camp, tmp_path, 3, pol2, recommendation_levels=None)
+    rep = json.loads((tmp_path / "report.json").read_text())
+    for k in ("model_adequate", "model_adequate_basis", "curvature_untested_levels",
+              "aliases_not_assessed"):
+        assert k not in rep, (k, rep.get(k))

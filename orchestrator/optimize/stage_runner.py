@@ -2259,11 +2259,16 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # Unknown AND rejected adequacy are both copied (stage-1c P4): a
         # rejected model is otherwise invisible in a report whose confirm never
         # ran (certification_withheld is then only no_terminal_discrimination).
+        # EVERY adequacy/coverage fact below is read from THIS epoch's latest
+        # record (_epoch_rec), the one the bar reads: mixing an earlier epoch's
+        # facts into this epoch's report would describe two epochs at once.
         **({"model_adequate": None,
-            "model_adequate_basis": rec.get("model_adequate_basis")}
-           if "model_adequate" in rec and rec["model_adequate"] is None else {}),
-        **({"model_adequate": False} if rec.get("model_adequate") is False else {}),
-        **({k: dict(rec[k]) for k in ("curvature_untested_levels",) if rec.get(k)}),
+            "model_adequate_basis": _epoch_rec.get("model_adequate_basis")}
+           if "model_adequate" in _epoch_rec and _epoch_rec["model_adequate"] is None
+           else {}),
+        **({"model_adequate": False} if _epoch_rec.get("model_adequate") is False else {}),
+        **({k: dict(_epoch_rec[k]) for k in ("curvature_untested_levels",)
+            if _epoch_rec.get(k)}),
         # The LEVEL facts the bar acts on come from THIS epoch's latest record
         # only, exactly as ``_barred_levels`` reads them -- an epoch that ends
         # before writing a recommendation must not report the previous epoch's
@@ -2272,7 +2277,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
             if _epoch_rec.get(k)}),
         **({k: list(_epoch_rec[k]) for k in ("all_levels_inadmissible",)
             if _epoch_rec.get(k)}),
-        **({k: list(rec[k]) for k in ("aliases_not_assessed",) if rec.get(k)}),
+        **({k: list(_epoch_rec[k]) for k in ("aliases_not_assessed",)
+            if _epoch_rec.get(k)}),
         "residual_regret_terminal": (
             conf.get("residual_regret_terminal") if conf else None
         ),
