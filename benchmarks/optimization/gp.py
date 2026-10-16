@@ -42,8 +42,9 @@ def _sqdist_per_dim(A: np.ndarray, B: np.ndarray) -> np.ndarray:
 
 
 def matern52(A, B, ls, os_):
-    d2 = _sqdist_per_dim(A, B)
-    r = np.sqrt(np.maximum((d2 / (ls[:, None, None] ** 2)).sum(0), 0.0))
+    a, b = A / ls, B / ls  # scaled inputs: no n x m x d tensor
+    r2 = (a * a).sum(1)[:, None] + (b * b).sum(1)[None, :] - 2.0 * a @ b.T
+    r = np.sqrt(np.maximum(r2, 0.0))
     return os_ * (1.0 + SQRT5 * r + 5.0 / 3.0 * r * r) * np.exp(-SQRT5 * r)
 
 
@@ -166,19 +167,23 @@ def expected_improvement(mu: np.ndarray, sd: np.ndarray, incumbent: float) -> np
 
 
 # ── the audit's crude GP, kept only to reproduce its head-to-head ──────────
-def crude_posterior(X, y, Xs, ls=0.3, nug=1e-2):
+def crude_posterior(X, y, Xs, ls=0.3, nug=1e-2, chunk=1024):
     """Fixed-hyperparameter isotropic RBF GP exactly as ``probe_q6.gp_post``:
-    lengthscale 0.3 on [0,1] coding, nugget 0.01, no fitting."""
+    lengthscale 0.3 on [0,1] coding, nugget 0.01, no fitting. Evaluated over
+    ``Xs`` in chunks: an unchunked n x m x d difference tensor is GBs at the
+    many-knob budgets."""
     def k(a, b):
-        d = ((a[:, None, :] - b[None, :, :]) ** 2).sum(-1)
-        return np.exp(-0.5 * d / ls ** 2)
+        d = (a * a).sum(1)[:, None] + (b * b).sum(1)[None, :] - 2.0 * a @ b.T
+        return np.exp(-0.5 * np.maximum(d, 0.0) / ls ** 2)
     ym, ys = y.mean(), y.std() or 1.0
     yn = (y - ym) / ys
     K = k(X, X) + nug * np.eye(len(X))
     L = np.linalg.cholesky(K)
     a = np.linalg.solve(L.T, np.linalg.solve(L, yn))
-    Ks = k(X, Xs)
-    mu = Ks.T @ a
-    v = np.linalg.solve(L, Ks)
-    var = np.clip(1.0 - (v ** 2).sum(0), 1e-12, None)
-    return mu * ys + ym, np.sqrt(var) * ys
+    mus, sds = [], []
+    for i in range(0, len(Xs), chunk):
+        Ks = k(X, Xs[i:i + chunk])
+        v = np.linalg.solve(L, Ks)
+        mus.append(Ks.T @ a)
+        sds.append(np.sqrt(np.clip(1.0 - (v ** 2).sum(0), 1e-12, None)))
+    return np.concatenate(mus) * ys + ym, np.concatenate(sds) * ys
