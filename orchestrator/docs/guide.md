@@ -1649,46 +1649,88 @@ passed before the build; give the reason in a comment beside it, and expect it i
 Any check that runs in the same tree as agent-authored code can be tampered
 with by that code: it runs again at verify (the test command) and in every epoch
 (the run command). So after a build, Nous measures the RECORDED artifact in a
-clean environment, as reproducible builds do:
+clean environment that shares nothing with the agent's repository, as
+reproducible builds do.
 
-1. The pre-build tree must have every tracked file committed, and
-   `build_checks.mechanism_paths` must name a real scope. Validation and the
-   build stage both refuse a missing scope or a whole-repo entry (`.`, `**`).
-2. After the agent call, the mechanism is recorded as exactly the diff of
-   `mechanism_paths` against the pre-build commit. That is
-   `mechanism.clean.patch`: binary-safe, with new and deleted files, ignored
-   files excluded. Its sha256 is the mechanism hash the policy is compiled
-   with. A patch that touches the benchmark harness or a pre-existing declared
-   test is refused, unless that file is listed by exact path.
-3. Verify's test runs, the baseline re-measurement, the 2(d) mutants and EVERY
-   epoch measurement run in `clean-tree/` inside the work dir. That is a fresh
-   `git worktree` of the pre-build commit with the patch applied. The agent's
-   own working tree is never measured, so out-of-scope writes, commits, hidden
-   or ignored files, symlink swaps and planted caches there are simply absent.
-4. Before every later stage the clean tree must still be base + patch: the
-   mechanism paths diff to the same patch, no tracked file outside them
-   changed, and no untracked code file appeared. Target code that modifies the
-   checkout it is measured in aborts the campaign. A missing clean tree, for
-   example on a resume, is recreated from the recorded commit and patch.
+**Before any token is spent**, `nous validate` and `nous run` refuse a build
+campaign that is missing any of these:
 
-**Gate records are kept out of reach and sealed.** A build campaign's work dir
-must be outside the target repo (export `NOUS_CAMPAIGN_PARENT`).
+- a git repository (`target_system.repo_path`);
+- every tracked file committed (`git commit -am ...`);
+- a work dir outside the repo (`export NOUS_CAMPAIGN_PARENT=~/nous-campaigns`);
+- a real `build_checks.mechanism_paths` (not `.` or `**`).
 
-- Every build record (`pre_build_tests.json`, `baseline_equivalence.json`,
-  `build_scope.json`, `clean_tree.json`, the patch, and after verify
-  `authored_tests.json` and `build_review.json`) is sealed with HMAC-SHA256
-  under a per-campaign random key (`.nous_gate_key`, mode 0600).
+**After the build:**
+
+1. **The mechanism patch.** The mechanism is recorded as exactly the diff of
+   `mechanism_paths` against the pre-build commit (`mechanism.clean.patch`). It
+   is computed in a private tree from plain file reads; no git command runs in
+   the agent's repo except reading objects. Its sha256 is the mechanism hash the
+   policy is compiled with. A patch touching the benchmark harness or a
+   pre-existing declared test is refused, unless that file is listed by exact
+   path.
+2. **The clean tree** is PRIVATE.
+   - It is built from the pre-build commit's objects (`ls-tree`/`cat-file`, so
+     no hooks, filters or attributes apply) as plain files, in a directory under
+     `~/.nous/clean-trees/` unrelated to the work dir.
+   - It is committed to its own fresh repository, run with hardened git: no
+     hooks, no fsmonitor, no global or system config, no excludes, no
+     attributes.
+   - It is checked to hash to the pre-build TREE recorded before the agent ran,
+     so rewritten or replaced objects are refused.
+   - The patch is then applied. Mutant trees are built the same way.
+   - It shares no `.git`, hooks, config, attributes, excludes or index with the
+     agent's repository.
+3. **Where it runs.** Verify's test runs, the baseline re-measurement, the 2(d)
+   mutants and every epoch measurement run in the clean tree. Out-of-scope
+   writes, commits, hidden or ignored files, hooks, symlink swaps and planted
+   caches in the agent's tree are simply absent there.
+4. **Integrity checks.** The clean tree is checked before every stage, after
+   every measurement batch, and at the terminal transition. Every file on disk
+   is hashed against the manifest recorded when the tree was created,
+   independent of any index or exclude file, and a new code file or symlink is a
+   problem anywhere. A failure fails that iteration. A missing tree is recreated
+   byte-identically from the recorded commit and patch.
+5. **Imports from the agent's repo are refused.** Each Python interpreter the
+   run or test command names is probed. If its import path (`sys.path`, an
+   editable install's `direct_url.json`, a `.pth` file) reaches the agent's
+   repository, the clean tree is refused, because it would silently measure the
+   agent's tree. Install the package non-editably.
+6. **Ignored assets.** A data set, built binaries or a virtualenv go in
+   `target_system.worktree_extras`. Each is COPIED (never symlinked) into the
+   clean tree, every copied file is hashed into `clean_tree.extras.json`, and a
+   rebuilt tree must match.
+
+**Gate records are kept out of reach and sealed.**
+
+- Every build record is sealed with HMAC-SHA256 under a per-campaign random key.
+  The records sealed are `pre_build_tests.json`, `baseline_equivalence.json`,
+  `build_scope.json`, `build_isolation.json`, `clean_tree.json`, the patch, and
+  `mechanism.sha256`, plus `authored_tests.json` and `build_review.json` after
+  verify.
+- The key is kept in `~/.nous/keys/<hash>` (mode 0600, checked on every read).
+  It is not in the work dir or the clean tree, so no relative path from either
+  reaches it.
+- Target commands get no environment variable naming the work dir or the state
+  home.
 - Verify loads and checks the seals once, before any target code runs, and the
-  oracles use those in-memory copies. A record edited later is reported as a
-  broken seal in `provenance.waivers` and by `nous reanalyze`.
+  oracles use those in-memory copies. It reseals only after confirming that
+  what the build wrote is unchanged.
+- A broken or missing seal is reported in `provenance.waivers` and by
+  `nous reanalyze`.
 
-**Nothing the build starts may outlive it.** A poller records every process the
-build call starts. Any still running when the call returns is killed, together
-with its process group, and the build fails (`build_isolation.json`).
+**Nothing the build or a target command starts may outlive it.**
+
+- A poller records every process the build call starts. Any still running when
+  the call returns is killed, together with its process group, and the build
+  fails (`build_isolation.json`). If the process table cannot be read, the build
+  fails rather than passing.
+- Every test and run command runs in its own session. Whatever is left in its
+  process group when it returns is killed and recorded (`target_survivors.json`),
+  and that stage fails.
 
 **No planted bytecode.** Every target command runs with `PYTHONPYCACHEPREFIX`
-set to a Nous-owned directory, so a `__pycache__` file in any tree is never
-imported. Other runtimes' caches are not redirected.
+set to a Nous-owned directory. Other runtimes' caches are not redirected.
 
 **The write-scope diff is an early signal.** Just before and just after the
 agent call, the build stage snapshots the target:
@@ -1710,13 +1752,23 @@ protected file into the patch.
 
 **What all of this still does not cover:**
 
-- the build agent runs as the same OS user, so a process that reads
-  `.nous_gate_key` could forge a seal;
-- target code can modify the clean tree WITHIN one stage and restore it before
-  the next check;
-- anything outside the repository (the home directory, system libraries);
-- a process that double-forks and detaches within one polling interval;
-- untracked data files in the clean tree (only code files are checked).
+- **In-process tampering by in-scope mechanism code.** The mechanism is code
+  that runs inside the measured process. If it monkeypatches the harness's
+  timer or metric at import, nothing changes on disk, and no check above can see
+  it. Only the build review can catch that, and under `--auto-approve` nobody
+  reviews the mechanism.
+- **The seal key is reachable by same-user code that knows Nous's layout.** The
+  build agent and target code run as the same OS user, so code that knows to
+  look in `~/.nous/keys/` can read the key and forge a seal. Moving the key
+  removed every relative path to it; it did not remove the absolute one.
+- **Changes undone within one measurement batch.** Target code can modify the
+  clean tree during a batch and restore it before the check that follows.
+- **Anything outside the clean tree**, such as the home directory or system
+  libraries.
+- **A process that double-forks and detaches within one polling interval.**
+- **A planted data file in the clean tree** (no code suffix or name).
+- **Non-Python import paths.** A Go `replace`, an `npm link` or a `GOPATH`
+  pointing at the agent's repo is not probed.
 
 **The build review gate: a human only without `--auto-approve`.** After the
 build's automatic oracles pass, and before it compiles the policy, `verify`
