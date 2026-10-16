@@ -8,8 +8,11 @@ setup). Run through the machine's heavy wrapper with at most 3 workers. Both
 accept `--cache-dir`, so a killed run resumes. Every row is in
 `optimization-benchmark.json` / `optimization-benchmark-audit-repro.json`, and
 records the code digest it was produced under (`code`). The digests are listed
-in each table's header: rows reused from the cache before digests were recorded
-show as `unrecorded`.
+in each table's header. The code digest is part of the cache key, so no row
+produced by other code is reused. Every row in both tables was regenerated under a
+single Nous digest and a single benchmark digest. The numbers are unchanged from
+the previous run, including the GP-BO rows on surfaces without failing
+configurations, so the never-re-pick-a-failure rule is a no-op there.
 
 **This is a descriptive comparison, not a statistical one.** The budget N comes
 from Nous's own stopping rule, so every baseline is compared at the one budget
@@ -215,7 +218,7 @@ surface the exploration showed to be non-smooth.
 ## Results: suite (seeds 1-8, noise ×1/×4)
 
 <!-- BEGIN GENERATED suite -->
-_Tables aggregated by `python -m benchmarks.optimization.run --workers 3 --cache-dir <cache-dir>` at checkout 87e2322f512c79eeb589394ea56d2b025407038b (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8], noise multipliers [1.0, 4.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) 96db155603e57f64; benchmark code digest(s) bd882e3e846d347c, unrecorded._
+_Tables aggregated by `python -m benchmarks.optimization.run --workers 3 --cache-dir <cache-dir>` at checkout fd2e7227ca60ed93d2e058ad7ab0bedc4e7d08fc (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8], noise multipliers [1.0, 4.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) 10d74ceaa7add3b7; benchmark code digest(s) b6427c581ddb8006._
 
 ### Mean true regret per cell (lower is better)
 
@@ -292,55 +295,55 @@ _Tables aggregated by `python -m benchmarks.optimization.run --workers 3 --cache
 
 | surface | noise | Nous | RS | LHS | GP-BO | GP-BO-crude |
 |---|---|---|---|---|---|---|
-| additive | ×1 | 0.14 | 0.01 | 0.01 | 0.07 | 0.01 |
-| additive | ×4 | 0.14 | 0.01 | 0.01 | 0.07 | 0.01 |
-| interaction_only | ×1 | 0.10 | 0.01 | 0.01 | 0.32 | 0.08 |
-| interaction_only | ×4 | 0.10 | 0.01 | 0.01 | 0.31 | 0.09 |
-| bowl | ×1 | 0.13 | 0.01 | 0.01 | 0.05 | 0.01 |
-| bowl | ×4 | 0.13 | 0.01 | 0.01 | 0.05 | 0.01 |
-| bowl_centred | ×1 | 0.13 | 0.01 | 0.01 | 0.08 | 0.01 |
-| bowl_centred | ×4 | 0.13 | 0.01 | 0.01 | 0.07 | 0.01 |
-| saddle | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| saddle | ×4 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| choice_x_numeric | ×1 | 0.09 | 0.01 | 0.01 | 0.03 | 0.00 |
-| choice_x_numeric | ×4 | 0.09 | 0.01 | 0.01 | 0.03 | 0.00 |
-| drift | ×1 | 0.09 | 0.01 | 0.01 | 0.03 | 0.00 |
-| drift | ×4 | 0.09 | 0.01 | 0.01 | 0.03 | 0.00 |
-| sla | ×1 | 0.18 | 0.01 | 0.01 | 0.14 | 0.01 |
-| sla | ×4 | 0.17 | 0.01 | 0.01 | 0.13 | 0.01 |
-| infeasible_corner_interior | ×1 | 0.13 | 0.01 | 0.01 | 0.08 | 0.00 |
-| infeasible_corner_interior | ×4 | 0.13 | 0.01 | 0.01 | 0.07 | 0.00 |
+| additive | ×1 | 0.16 | 0.01 | 0.01 | 0.07 | 0.01 |
+| additive | ×4 | 0.15 | 0.01 | 0.01 | 0.07 | 0.01 |
+| interaction_only | ×1 | 0.11 | 0.01 | 0.01 | 0.34 | 0.10 |
+| interaction_only | ×4 | 0.11 | 0.01 | 0.01 | 0.34 | 0.09 |
+| bowl | ×1 | 0.14 | 0.01 | 0.01 | 0.06 | 0.01 |
+| bowl | ×4 | 0.15 | 0.01 | 0.01 | 0.05 | 0.01 |
+| bowl_centred | ×1 | 0.15 | 0.01 | 0.01 | 0.08 | 0.01 |
+| bowl_centred | ×4 | 0.14 | 0.01 | 0.01 | 0.07 | 0.01 |
+| saddle | ×1 | 0.14 | 0.01 | 0.01 | 0.06 | 0.01 |
+| saddle | ×4 | 0.14 | 0.01 | 0.01 | 0.06 | 0.01 |
+| choice_x_numeric | ×1 | 0.10 | 0.01 | 0.00 | 0.02 | 0.00 |
+| choice_x_numeric | ×4 | 0.10 | 0.01 | 0.00 | 0.02 | 0.00 |
+| drift | ×1 | 0.10 | 0.01 | 0.00 | 0.03 | 0.00 |
+| drift | ×4 | 0.10 | 0.01 | 0.00 | 0.03 | 0.00 |
+| sla | ×1 | 0.19 | 0.01 | 0.01 | 0.13 | 0.01 |
+| sla | ×4 | 0.19 | 0.01 | 0.01 | 0.13 | 0.01 |
+| infeasible_corner_interior | ×1 | 0.15 | 0.01 | 0.01 | 0.08 | 0.00 |
+| infeasible_corner_interior | ×4 | 0.14 | 0.01 | 0.01 | 0.07 | 0.00 |
 | nan_at_corner | ×1 | 0.05 | 0.00 | 0.00 | 0.01 | 0.00 |
 | nan_at_corner | ×4 | 0.05 | 0.00 | 0.00 | 0.01 | 0.00 |
-| fails_at_one_level | ×1 | 0.10 | 0.01 | 0.01 | 0.03 | 0.00 |
-| fails_at_one_level | ×4 | 0.10 | 0.01 | 0.01 | 0.03 | 0.00 |
-| stochastic_constraint_boundary | ×1 | 0.19 | 0.01 | 0.01 | 0.12 | 0.01 |
-| stochastic_constraint_boundary | ×4 | 0.20 | 0.01 | 0.01 | 0.13 | 0.01 |
-| geometric_knob | ×1 | 0.13 | 0.01 | 0.01 | 0.07 | 0.01 |
-| geometric_knob | ×4 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| geometric_knob_log | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| geometric_knob_log | ×4 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| deterministic_constraint_axis | ×1 | 0.21 | 0.01 | 0.01 | 0.23 | 0.02 |
-| deterministic_constraint_axis | ×4 | 0.21 | 0.01 | 0.01 | 0.23 | 0.02 |
-| step_cliff | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| step_cliff | ×4 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
+| fails_at_one_level | ×1 | 0.11 | 0.01 | 0.01 | 0.03 | 0.00 |
+| fails_at_one_level | ×4 | 0.11 | 0.01 | 0.00 | 0.03 | 0.00 |
+| stochastic_constraint_boundary | ×1 | 0.21 | 0.01 | 0.01 | 0.12 | 0.01 |
+| stochastic_constraint_boundary | ×4 | 0.20 | 0.01 | 0.01 | 0.12 | 0.01 |
+| geometric_knob | ×1 | 0.14 | 0.01 | 0.01 | 0.06 | 0.01 |
+| geometric_knob | ×4 | 0.14 | 0.01 | 0.01 | 0.06 | 0.01 |
+| geometric_knob_log | ×1 | 0.15 | 0.01 | 0.01 | 0.06 | 0.01 |
+| geometric_knob_log | ×4 | 0.14 | 0.01 | 0.01 | 0.05 | 0.01 |
+| deterministic_constraint_axis | ×1 | 0.22 | 0.01 | 0.01 | 0.23 | 0.02 |
+| deterministic_constraint_axis | ×4 | 0.23 | 0.01 | 0.01 | 0.23 | 0.02 |
+| step_cliff | ×1 | 0.14 | 0.01 | 0.01 | 0.06 | 0.01 |
+| step_cliff | ×4 | 0.14 | 0.01 | 0.01 | 0.05 | 0.01 |
 | ridge_cubic | ×1 | 0.14 | 0.01 | 0.01 | 0.07 | 0.01 |
-| ridge_cubic | ×4 | 0.13 | 0.01 | 0.01 | 0.07 | 0.01 |
-| two_peaks | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| two_peaks | ×4 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| sparse_knobs_6 | ×1 | 0.85 | 0.05 | 0.05 | 2.19 | 1.49 |
-| sparse_knobs_6 | ×4 | 0.86 | 0.05 | 0.05 | 2.15 | 1.48 |
-| sparse_knobs_8 | ×1 | 1.19 | 0.15 | 0.15 | 5.40 | 5.09 |
-| sparse_knobs_8 | ×4 | 1.19 | 0.12 | 0.14 | 5.35 | 5.10 |
-| sparse_knobs_12 | ×1 | 2.65 | 3.72 | 4.18 | 88.35 | 85.47 |
-| sparse_knobs_12 | ×4 | 2.61 | 4.13 | 4.21 | 87.56 | 83.94 |
+| ridge_cubic | ×4 | 0.15 | 0.01 | 0.01 | 0.07 | 0.01 |
+| two_peaks | ×1 | 0.14 | 0.01 | 0.01 | 0.05 | 0.01 |
+| two_peaks | ×4 | 0.15 | 0.01 | 0.01 | 0.05 | 0.01 |
+| sparse_knobs_6 | ×1 | 0.90 | 0.05 | 0.05 | 2.21 | 1.48 |
+| sparse_knobs_6 | ×4 | 0.90 | 0.05 | 0.05 | 2.16 | 1.48 |
+| sparse_knobs_8 | ×1 | 1.25 | 0.14 | 0.15 | 5.58 | 4.98 |
+| sparse_knobs_8 | ×4 | 1.27 | 0.12 | 0.14 | 5.52 | 4.78 |
+| sparse_knobs_12 | ×1 | 2.79 | 3.49 | 3.91 | 85.05 | 81.52 |
+| sparse_knobs_12 | ×4 | 2.76 | 3.91 | 3.96 | 83.96 | 79.82 |
 <!-- END GENERATED suite -->
 
 
 ## Results: audit reproduction (the audit's 9 surfaces, seeds 1-20, noise ×1/×8)
 
 <!-- BEGIN GENERATED audit-repro -->
-_Tables aggregated by `python -m benchmarks.optimization.run --audit-repro --workers 3 --cache-dir <cache-dir>` at checkout 87e2322f512c79eeb589394ea56d2b025407038b (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], noise multipliers [1.0, 8.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) 96db155603e57f64; benchmark code digest(s) unrecorded._
+_Tables aggregated by `python -m benchmarks.optimization.run --audit-repro --workers 3 --cache-dir <cache-dir>` at checkout fd2e7227ca60ed93d2e058ad7ab0bedc4e7d08fc (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], noise multipliers [1.0, 8.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) 10d74ceaa7add3b7; benchmark code digest(s) b6427c581ddb8006._
 
 ### Mean true regret per cell (lower is better)
 
@@ -395,20 +398,20 @@ _Tables aggregated by `python -m benchmarks.optimization.run --audit-repro --wor
 |---|---|---|---|---|---|---|
 | additive | ×1 | 0.14 | 0.01 | 0.01 | 0.07 | 0.01 |
 | additive | ×8 | 0.14 | 0.01 | 0.01 | 0.07 | 0.01 |
-| bowl | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
+| bowl | ×1 | 0.13 | 0.01 | 0.01 | 0.05 | 0.01 |
 | bowl | ×8 | 0.13 | 0.01 | 0.01 | 0.05 | 0.01 |
-| bowl_centred | ×1 | 0.13 | 0.01 | 0.01 | 0.08 | 0.01 |
+| bowl_centred | ×1 | 0.14 | 0.01 | 0.01 | 0.08 | 0.01 |
 | bowl_centred | ×8 | 0.14 | 0.01 | 0.01 | 0.07 | 0.01 |
 | saddle | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| saddle | ×8 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| choice_x_numeric | ×1 | 0.09 | 0.01 | 0.01 | 0.03 | 0.00 |
-| choice_x_numeric | ×8 | 0.10 | 0.01 | 0.01 | 0.03 | 0.00 |
-| geometric_knob | ×1 | 0.13 | 0.01 | 0.01 | 0.07 | 0.01 |
+| saddle | ×8 | 0.13 | 0.01 | 0.01 | 0.05 | 0.01 |
+| choice_x_numeric | ×1 | 0.10 | 0.01 | 0.01 | 0.02 | 0.00 |
+| choice_x_numeric | ×8 | 0.10 | 0.01 | 0.01 | 0.02 | 0.00 |
+| geometric_knob | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
 | geometric_knob | ×8 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
 | step_cliff | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| step_cliff | ×8 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| ridge_cubic | ×1 | 0.14 | 0.01 | 0.01 | 0.08 | 0.01 |
+| step_cliff | ×8 | 0.13 | 0.01 | 0.01 | 0.05 | 0.01 |
+| ridge_cubic | ×1 | 0.14 | 0.01 | 0.01 | 0.07 | 0.01 |
 | ridge_cubic | ×8 | 0.14 | 0.01 | 0.01 | 0.07 | 0.01 |
 | two_peaks | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
-| two_peaks | ×8 | 0.13 | 0.01 | 0.01 | 0.05 | 0.01 |
+| two_peaks | ×8 | 0.14 | 0.01 | 0.01 | 0.05 | 0.01 |
 <!-- END GENERATED audit-repro -->
