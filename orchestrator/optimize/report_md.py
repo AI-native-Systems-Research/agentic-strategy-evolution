@@ -296,6 +296,19 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
             continue
         if side == "below" and floor is not None and floor > 0 and suggest < floor:
             suggest = snap_to_grid(floor, f.grid)
+        if getattr(f, "levels_only", False):
+            # A levels_only knob takes only listed values, so the suggestion
+            # is the next value CONTINUING the declared spacing at that edge
+            # (the next power of two on 16..1024), in the factor's own scale.
+            from orchestrator.optimize.factors import runnable_levels
+
+            rl = runnable_levels(f)
+            if len(rl) >= 2:
+                a, b = ((rl[-2], rl[-1]) if side == "above" else (rl[1], rl[0]))
+                ya, yb = _to_axis(f, a), _to_axis(f, b)
+                suggest = round(_from_axis(f, yb + (yb - ya)), 9)
+                if all(isinstance(v, int) for v in f.levels) and float(suggest).is_integer():
+                    suggest = int(suggest)
         out.append(
             f"- **{fid}**: the fitted optimum is at about "
             f"{_fmt(_from_axis(f, mid + coded * half))} (coded {coded:+.2f}), "

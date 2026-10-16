@@ -63,7 +63,10 @@ Fill every `TODO-`. The rules that have cost real campaigns:
 - `run_command`/`test_command` are **argv, not shell** (no `cd`, `&&`, pipes);
   name an interpreter that has the deps (e.g. `.venv/bin/python`); test paths
   relative to `repo_path`; the target's own pytest addopts apply.
-- Integer levels need `grid: 1`; geometric knobs need `scale: log`.
+- Integer levels need `grid: 1`; geometric knobs need `scale: log`. A knob
+  that runs only at listed values (powers of two, a menu of sizes) needs
+  `levels_only: true` instead of `grid`: everything run or recommended is then
+  a declared level.
 - Any number of knobs is fine; the screen is always a fraction. Past about 10
   knobs, screen at `resolution: 4` first (about 2k runs) and refine the live
   ones next epoch; the `--liveness` preview prices each option.

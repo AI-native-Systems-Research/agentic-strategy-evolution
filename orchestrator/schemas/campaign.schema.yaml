@@ -1052,6 +1052,23 @@ properties:
                 log(level), which is how such knobs usually act. Levels must
                 be strictly positive. ``nous validate`` warns when a numeric
                 factor's levels look geometric and no scale is declared.
+            levels_only:
+              type: boolean
+              default: false
+              description: >
+                For ``numeric`` factors: only the declared ``levels`` are
+                runnable, although they are ORDERED (powers of two, a fixed
+                menu of sizes: ``[64, 128, 256, 1024]``). Every value Nous
+                derives from the fitted model -- refine's centre and axial
+                points, the candidate space, the recommendation and confirm's
+                finalists -- is then the nearest DECLARED level in the
+                factor's axis space (log space under ``scale: log``; ties go
+                to the lower level), and the fit is coded at the level that
+                actually ran. Without it a ``grid: 1`` knob can be asked to
+                run 181. Not with ``grid`` (both declare the runnable set and
+                can disagree -- a hard error) and not on ``type: choice``
+                (already runs only its levels). Changes nothing on a
+                two-level factor.
             screen_levels:
               type: array
               minItems: 2

@@ -63,7 +63,13 @@ import random
 from dataclasses import dataclass
 
 from orchestrator.optimize.effects import Fit
-from orchestrator.optimize.factors import Factor, code_actual, decode_coded, is_refinable
+from orchestrator.optimize.factors import (
+    Factor,
+    code_actual,
+    decode_coded,
+    is_refinable,
+    runnable_levels,
+)
 
 
 #: Product of axis sizes at or below which the candidate space is ENUMERATED
@@ -200,6 +206,15 @@ def _axis(f: Factor, *, max_points: int = 9) -> list[tuple[float, object]]:
     # that test and its space-level sibling are what fail now.
     if f.type == "choice" or not is_refinable(f):
         return [(-1.0, low), (1.0, high)]
+    if f.levels_only:
+        # Only the declared levels are runnable (spec 2026-10-16 feature 2), so
+        # the axis is EXACTLY those inside the screen range -- every one of
+        # them, not a 9-point interpolation that could skip one (on 16..1024
+        # in log space the 9-point axis is 16, 27, 45, 76, 128, 215, 362, 609,
+        # 1024: no declared level but the ends and the centre). Each is scored
+        # at the coding of the level itself, the same transform the fit used.
+        return sorted(((code_actual(f, lv), lv) for lv in runnable_levels(f)),
+                      key=lambda p: p[0])
     seen: dict = {}
     for i in range(max_points):
         coded = -1.0 + 2.0 * i / (max_points - 1)

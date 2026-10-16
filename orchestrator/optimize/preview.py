@@ -71,6 +71,8 @@ class DesignPreview:
     #: preview can say they need no MDE.
     constraint_metrics: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #: ``(factor_id, note)`` for each ``levels_only`` factor.
+    discrete: list[tuple[str, str]] = field(default_factory=list)
 
 
 def screen_mde(n_corners: int, df: int, sd: float) -> tuple[float, float | None]:
@@ -290,6 +292,15 @@ def build_preview(
                 f"replicates — " + " / ".join(remedies) + ".",
             )
 
+    # (e) a levels_only factor's runnable set: every point the design and the
+    # recommendation use is one of these (spec 2026-10-16 feature 2).
+    for f in factors:
+        if getattr(f, "levels_only", False):
+            pv.discrete.append((f.id, (
+                f"levels_only -- runnable set {list(f.levels)}; refine's centre "
+                f"and axial points, the candidates and confirm snap to the nearest "
+                f"declared level in {f.scale} space")))
+
     # (d) do numeric levels bracket the base point?
     base = baseline if baseline is not None else (opt.get("known_valid_baseline") or {})
     for f in factors:
@@ -379,6 +390,8 @@ def format_preview(pv: DesignPreview) -> list[str]:
             f"not optimized or compared against epsilon")
     for fid, verdict in pv.brackets:
         out.append(f"    levels of {fid}: {verdict}")
+    for fid, note in pv.discrete:
+        out.append(f"    levels of {fid}: {note}")
     for w in pv.warnings:
         out.append(f"    WARNING: {w}")
     return out

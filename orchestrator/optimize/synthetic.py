@@ -613,7 +613,10 @@ def candidate_grid(factors_raw: list[dict], *, max_numeric_points: int = 9) -> l
     for f in factors_raw:
         ids.append(f["id"])
         levels = list(f["levels"])
-        if f["type"] == "numeric" and f.get("grid") is not None:
+        if f.get("levels_only"):
+            # Only the declared levels are runnable: the truth is over them.
+            axes.append(levels)
+        elif f["type"] == "numeric" and f.get("grid") is not None:
             lo, hi = float(min(levels)), float(max(levels))
             n = max(2, int(max_numeric_points))
             # HAZARD for whoever adds a FRACTIONAL-grid surface: this set mixes

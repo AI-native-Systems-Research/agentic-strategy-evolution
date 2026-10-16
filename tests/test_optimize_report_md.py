@@ -184,3 +184,22 @@ def test_advice_extends_when_the_measurements_agree_with_the_fit(tmp_path):
                     "PROCS", {1: 50.0, 2: 80.0, 8: 120.0})
     [line] = _out_of_hull_axes(wd)
     assert "Extend `PROCS`" in line
+
+
+@pytest.mark.parametrize("coded, expected", [(1.5, "2048"), (-1.5, "8")])
+def test_a_levels_only_extension_continues_the_declared_spacing(tmp_path, coded, expected):
+    """A levels_only knob takes only listed values (powers of two here), so
+    'extend to about 1500' names a value it cannot run: the suggestion is the
+    next value continuing the declared spacing at that edge."""
+    import re
+
+    from orchestrator.optimize.report_md import _out_of_hull_axes
+
+    pow2 = {"id": "N", "name": "n", "type": "numeric",
+            "levels": [16, 32, 64, 128, 256, 512, 1024], "levels_only": True,
+            "scale": "log", "apply": "--n={level}",
+            "manipulation": {"observable": "cfg.x", "op": "==", "value": "{level}"},
+            "relations": [{"id": "R1", "kind": "correctness", "statement": "s",
+                           "native_test": "t"}]}
+    [line] = _out_of_hull_axes(_out_of_hull_work_dir(tmp_path, [pow2], {"N": coded}))
+    assert re.search(r"e\.g\. to ([0-9.e+]+)", line).group(1) == expected

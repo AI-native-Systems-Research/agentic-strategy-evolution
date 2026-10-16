@@ -9,6 +9,11 @@ levels runnable?
     never tries to run K=4.7.
   * ``choice`` — nothing lives between the levels (policies, mechanisms,
     on/off).
+  * ``numeric`` + ``levels_only: true`` — ordered, so interpolation is
+    meaningful for MODELLING, but only the declared values are RUNNABLE
+    (powers of two, a fixed menu of buffer sizes). Every value produced from
+    a coded value snaps to the nearest declared level in the factor's axis
+    space (spec 2026-10-16-mixed-level-factors-design.md, feature 2).
 
 The retired vocabulary ``continuous`` / ``ordinal`` / ``categorical`` is
 rejected with a pointer to the replacement: it made authors reason about
@@ -44,6 +49,12 @@ class Factor:
     #: orders of magnitude) is coded in log space, so the centre point is the
     #: geometric mean and equal coded steps are equal RATIOS.
     scale: str = "linear"
+    #: ``True``: only the declared ``levels`` are runnable, so every value
+    #: Nous derives from a coded coordinate (a fitted optimum, an axial or
+    #: centre point, a candidate) is the NEAREST DECLARED LEVEL in axis space
+    #: (log space under ``scale: log``). Numeric factors only; never with
+    #: ``grid`` (two declarations of the runnable set that can disagree).
+    levels_only: bool = False
 
 
 def _normalise_apply(raw: Any, factor_id: str) -> dict:
@@ -171,6 +182,14 @@ def parse_factors(raw: list[dict]) -> list[Factor]:
                     f"factor {fid!r}: scale: log needs strictly positive levels "
                     f"(got {list(levels)!r}); log space has no zero",
                 )
+        levels_only = entry.get("levels_only", False)
+        if not isinstance(levels_only, bool):
+            raise ValueError(
+                f"factor {fid!r}: levels_only must be true or false (got "
+                f"{levels_only!r})",
+            )
+        if levels_only:
+            _check_levels_only(fid, ftype, levels, grid)
         out.append(Factor(
             id=fid,
             name=str(entry.get("name") or fid),
@@ -182,8 +201,48 @@ def parse_factors(raw: list[dict]) -> list[Factor]:
             manipulation=_check_manipulation(entry.get("manipulation"), fid),
             relations=_check_relations(entry.get("relations"), fid),
             scale=scale,
+            levels_only=levels_only,
         ))
     return out
+
+
+def _check_levels_only(fid: str, ftype: str, levels: tuple, grid) -> None:
+    """The hard errors ``levels_only`` admits (spec feature 2, "Validation").
+
+    * on a ``choice`` factor it is redundant -- a choice already runs only its
+      levels -- and accepting it would suggest the levels are ORDERED, which a
+      choice factor's are not;
+    * with ``grid`` it is contradictory: ``grid: 1`` declares every integer in
+      range runnable, ``levels_only`` declares only the listed ones; Nous will
+      not guess which declaration the author meant;
+    * the levels must be distinct numbers: nearest-level snapping is defined
+      over a set of points on the axis.
+    """
+    if ftype != "numeric":
+        raise ValueError(
+            f"factor {fid!r}: levels_only applies to numeric factors only -- a "
+            f"choice factor already runs only its declared levels, and has no "
+            f"order for nearest-level snapping to use. Remove levels_only.",
+        )
+    if grid is not None:
+        raise ValueError(
+            f"factor {fid!r}: levels_only and grid both declare which values "
+            f"are runnable, and they disagree (grid {grid!r} admits values "
+            f"between the declared levels; levels_only admits only the "
+            f"levels). Keep levels_only for a knob that takes only the listed "
+            f"values, or grid for one that takes every multiple of the step.",
+        )
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+               and math.isfinite(float(v)) for v in levels):
+        raise ValueError(
+            f"factor {fid!r}: levels_only needs numeric levels (got "
+            f"{list(levels)!r})",
+        )
+    if len({float(v) for v in levels}) != len(levels):
+        raise ValueError(
+            f"factor {fid!r}: levels_only needs distinct levels; {list(levels)!r} "
+            f"has a duplicate, so the nearest declared level is not unique.",
+        )
 
 
 def screen_pair(f: Factor) -> tuple:
@@ -270,7 +329,9 @@ def decode_coded(f: Factor, coded: float) -> Any:
     ``choice`` factors have no interior, so the sign picks a declared
     level. ``numeric`` factors interpolate between the screen pair and then
     snap to ``grid`` — so the value handed to ``confirm`` is one the target
-    can actually run.
+    can actually run. A ``levels_only`` numeric snaps to the nearest DECLARED
+    level in axis space instead (``snap_to_levels``), so an axial point, a
+    centre point or a fitted optimum is always a value the knob takes.
     """
     low, high = f.screen_levels
     if f.type == "choice":
@@ -278,6 +339,8 @@ def decode_coded(f: Factor, coded: float) -> Any:
     lo, hi = _to_axis(f, low), _to_axis(f, high)
     mid = (lo + hi) / 2.0
     half = (hi - lo) / 2.0
+    if f.levels_only:
+        return snap_to_levels(f, mid + coded * half)
     value = snap_to_grid(_from_axis(f, mid + coded * half), f.grid)
 
     # CLAMP to the declared range. A central composite places axial points at
@@ -301,6 +364,46 @@ def decode_coded(f: Factor, coded: float) -> Any:
     if clamped != float(value):
         value = snap_to_grid(clamped, f.grid)
     return _integral_as_int(f, value)
+
+
+def runnable_levels(f: Factor) -> list:
+    """A ``levels_only`` factor's declared levels inside its screen range,
+    ascending on the axis: the set every decoded value is drawn from.
+
+    The screen range bounds it for the same reason ``decode_coded`` clamps an
+    ordinary numeric to it: the coded space is [-1, +1] over the screen pair,
+    and a level outside that span is one the design never brackets.
+    """
+    lo_b = min(float(v) for v in f.screen_levels)
+    hi_b = max(float(v) for v in f.screen_levels)
+    inside = [lv for lv in f.levels if lo_b <= float(lv) <= hi_b]
+    return sorted(inside, key=lambda lv: (_to_axis(f, lv), float(lv)))
+
+
+def snap_to_levels(f: Factor, axis_value: float) -> Any:
+    """The declared level nearest ``axis_value`` (a coordinate in the factor's
+    AXIS space: ``log(level)`` under ``scale: log``), returned verbatim.
+
+    Clamped to the screen range first (as ``decode_coded`` clamps an ordinary
+    numeric -- an axial point at coded 1.68 runs at the edge), then the nearest
+    declared level by axis distance. TIES GO TO THE LOWER LEVEL: deterministic,
+    and on a geometric knob the cheaper setting. Nearest in AXIS space is the
+    right metric because the fitted surface is a polynomial in the axis
+    coordinate, so axis distance is what the model's interpolation is linear in
+    (Myers, Montgomery & Anderson-Cook, RSM: rounding a continuous optimum to
+    the nearest feasible point). The snap only chooses which level RUNS; the
+    candidate axis (``decide._axis``) scores EVERY declared level, so the
+    recommendation is the fitted argmax over the runnable set, not a rounded
+    stationary point.
+    """
+    levels = runnable_levels(f)
+    lo, hi = _to_axis(f, levels[0]), _to_axis(f, levels[-1])
+    y = min(max(float(axis_value), lo), hi)
+    # Distances are rounded to 12 places so a tie that is exact in real
+    # arithmetic (log2 = 8.5 between 2^8 and 2^9) stays a tie in floating point
+    # and the documented lower-level rule decides it, not a 1e-16 residue.
+    return min(levels, key=lambda lv: (round(abs(_to_axis(f, lv) - y), 12),
+                                       _to_axis(f, lv)))
 
 
 def _integral_as_int(f: Factor, value: Any) -> Any:

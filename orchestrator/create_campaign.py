@@ -488,6 +488,9 @@ optimization:
     # `scale: log` for a GEOMETRIC knob (a size, batch, interval spanning
     # orders of magnitude): the centre point is then the geometric mean.
     # Delete it for an additive knob (a ratio, a threshold).
+    # A knob that runs ONLY at listed values (powers of two, a menu of sizes)
+    # takes `levels_only: true` INSTEAD of `grid`: every point refine runs and
+    # every recommendation is then one of the declared levels.
     - id: A
       name: TODO-numeric-knob-name
       type: numeric

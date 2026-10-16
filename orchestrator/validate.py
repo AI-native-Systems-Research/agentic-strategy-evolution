@@ -1821,6 +1821,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule23_commands_are_argv_not_shell(opt))
     errors.extend(_rule24_integer_levels_without_grid(factors))
     errors.extend(_rule25_geometric_levels_without_log_scale(factors))
+    errors.extend(_rule27_levels_only(factors))
     errors.extend(_rule26_objectives(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
@@ -2075,6 +2076,61 @@ def _rule26_objectives(opt: dict) -> list[str]:
     return errors
 
 
+def _rule27_levels_only(factors: list[dict]) -> list[str]:
+    """Rule 27: ``levels_only`` must be coherent (spec 2026-10-16, feature 2).
+
+    HARD ERRORS -- the same refusals ``factors.parse_factors`` makes, stated
+    here so ``nous validate`` reports them with the rest instead of the epoch
+    discovering them at compile:
+
+    * with ``grid``: two declarations of the runnable set that disagree
+      (``grid: 1`` admits 65 between 64 and 128; ``levels_only`` does not);
+    * on ``type: choice``: a choice factor already runs only its levels;
+    * non-numeric or duplicate levels: nearest-level snapping is undefined.
+
+    WARNING: on a two-level factor it changes nothing (a two-level numeric
+    already runs only its pair), which usually means the author meant to list
+    the interior levels too.
+    """
+    out: list[str] = []
+    for f in factors:
+        if not isinstance(f, dict) or "levels_only" not in f:
+            continue
+        fid = f.get("id", "<unknown>")
+        flag = f.get("levels_only")
+        if flag is not True:
+            continue
+        levels = list(f.get("levels") or [])
+        if f.get("type") != "numeric":
+            out.append(
+                f"factor {fid!r}: levels_only applies to numeric factors only -- "
+                f"a choice factor already runs only its declared levels. Remove "
+                f"levels_only.")
+            continue
+        if f.get("grid") is not None:
+            out.append(
+                f"factor {fid!r}: levels_only and grid both declare the runnable "
+                f"set and they disagree (grid {f.get('grid')!r} admits values "
+                f"between the levels {levels}). Keep levels_only for a knob that "
+                f"takes only the listed values, or grid for one that takes every "
+                f"multiple of the step -- not both.")
+            continue
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                   for v in levels) or len({float(v) for v in levels}) != len(levels):
+            out.append(
+                f"factor {fid!r}: levels_only needs distinct numeric levels (got "
+                f"{levels}); the nearest declared level must be unique.")
+            continue
+        if len(levels) <= 2:
+            out.append(
+                f"WARN: factor {fid!r} declares levels_only over {len(levels)} "
+                f"levels {levels}: it changes nothing, because a two-level "
+                f"numeric already runs only its pair. List the interior runnable "
+                f"levels (e.g. every power of two between them) so refine can "
+                f"use them, or drop levels_only.")
+    return out
+
+
 def _rule25_geometric_levels_without_log_scale(factors: list[dict]) -> list[str]:
     """Rule 25 (WARNING): levels that look geometric, coded linearly.
 
@@ -2133,7 +2189,9 @@ def _rule24_integer_levels_without_grid(factors: list[dict]) -> list[str]:
     for f in factors:
         levels = f.get("levels") or []
         if (f.get("type") != "numeric" or f.get("grid") is not None
-                or len(levels) <= 2):
+                or f.get("levels_only") is True or len(levels) <= 2):
+            # levels_only is the right declaration for an integer knob that
+            # takes only the listed values: refine never interpolates it.
             continue
         if all(isinstance(lv, int) and not isinstance(lv, bool) for lv in levels):
             warnings.append(

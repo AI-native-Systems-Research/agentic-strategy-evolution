@@ -567,6 +567,20 @@ else has a default.
   nearest multiple of this step, so `confirm` never has to run a value the
   target can't actually take (`K = 4.7` becomes `K = 5` with `grid: 1`).
   Omit when any real value ships (thresholds, ratios).
+- **`levels_only: true`** (numeric only) — the knob is ORDERED but runs only
+  at the declared values: powers of two (`[16, 32, 64, ..., 1024]`), a fixed
+  menu of buffer sizes. Every value Nous derives from the model — refine's
+  centre and axial points, the candidate space, the recommendation, confirm's
+  finalists — is then the nearest *declared* level in the factor's axis space
+  (log space under `scale: log`; a tie goes to the lower level), and the fit
+  is coded at the level that actually ran. The candidate axis is exactly the
+  declared levels, so on `16..1024` with the optimum at 256 the campaign
+  recommends 256 — where `grid: 1` interpolates nine points (16, 27, 45, 76,
+  128, 215, 362, 609, 1024) and recommends 215, a value the knob may not take.
+  Not with `grid` (both declare the runnable set and can disagree: a hard
+  error) and not on `choice` (already runs only its levels); on a two-level
+  factor it changes nothing (a warning). A levels_only factor with 3 or more
+  levels stays refinable.
 - **`screen_levels`** — the two `levels` members the 2-level screen uses for
   this factor. Declare only when the extremes are known-pathological and
   the screen should bracket a narrower span; otherwise omit and take the
@@ -2162,8 +2176,8 @@ Per iteration, under `runs/iter-N/`:
 **The candidate space: enumerated, or searched.** The recommendation is the
 best-predicted configuration over the *candidate space*: the product of the
 fitted factors' axes — up to 9 evenly spaced points (snapped to the grid,
-de-duplicated) per refinable numeric factor, the two screen levels per choice
-or two-level factor. That product is exponential in the number of knobs (9^6 =
+de-duplicated) per refinable numeric factor, exactly the declared levels of a
+`levels_only` factor, the two screen levels per choice or two-level factor. That product is exponential in the number of knobs (9^6 =
 531k at six, 9^12 = 2.8e11 at twelve), so:
 
 - **At or below `decide.CANDIDATE_CAP` = 50,000 candidates** the space is

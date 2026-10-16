@@ -106,6 +106,10 @@ says which step catches it. **[static]** = `nous validate campaign`,
 
 - **Integer levels need `grid: 1`**, or refine and the centre points can ask
   for `2.5`. [static warns]
+- **A knob that runs only at listed values needs `levels_only: true`**
+  (powers of two, a menu of sizes: `[64, 128, 256, 1024]`): every point Nous
+  runs or recommends is then a declared level, where `grid: 1` can recommend
+  181. Not together with `grid`. [static rejects the pair]
 - **Geometric knobs need `scale: log`** — sizes, batches, intervals whose
   levels span orders of magnitude (`[64, 512, 4096]`). Coded linearly, the
   centre of `[1, 64]` runs at 32.5 and the design never looks near 8; on the
