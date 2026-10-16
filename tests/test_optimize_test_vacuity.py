@@ -404,3 +404,55 @@ def test_confirm_build_part_refuses_a_rewritten_record(tmp_path):
         gr.confirm_build_part(tmp_path, {"baseline_equivalence.json": mem})
     (tmp_path / "baseline_equivalence.json").write_text(json.dumps({**mem, "post": [1.0]}))
     gr.confirm_build_part(tmp_path, {"baseline_equivalence.json": mem})
+
+
+# ─── round 3, C3: stub-mutant verdicts ───────────────────────────────────────
+
+
+def _stub_check(tmp_path, monkeypatch, verdict, text):
+    """Drive the stub-mutant branch with a canned test run."""
+    from orchestrator.optimize import test_vacuity as tv
+
+    monkeypatch.setattr(tv, "build_stub_mutant",
+                        lambda *a, **k: ["calc.py:fast"])
+    monkeypatch.setattr(tv, "remove_mutant", lambda *a, **k: None)
+    pre = {"ran": [TEST_ID], "passed": [], "output_recorded": True,
+           "verdicts_injected": False, "failure_kinds": {TEST_ID: "behavioral"}}
+    (tmp_path / "pre_build_tests.json").write_text(json.dumps(pre))
+    from orchestrator.optimize.factors import parse_factors
+    f = {"id": "A", "name": "a", "type": "choice", "levels": ["x", "y"], "apply": "--a={level}",
+         "manipulation": {"observable": "cfg.a", "op": "==", "value": "{level}"},
+         "relations": [{"id": "R", "kind": "correctness", "statement": "s",
+                        "native_test": TEST_ID}]}
+    records = {"pre_build_tests.json": pre,
+               "clean_tree.json": {"base_sha": "x", "touched": ["calc.py"]}}
+    return tv.check({"optimization": {}}, tmp_path, parse_factors([f]), repo=tmp_path,
+                    run_tests=lambda cwd: ({TEST_ID: verdict} if verdict is not None else {}, text),
+                    built_ids={"A"}, records=records)
+
+
+def test_a_stub_failure_by_notimplementederror_keeps_the_evidence(tmp_path, monkeypatch):
+    out = f"FAILED {TEST_ID} - NotImplementedError: nous stub mutant\n"
+    rec = _stub_check(tmp_path, monkeypatch, False, out)
+    assert rec["tests"][TEST_ID]["evidence"] == "pre_build_behavioral_failure"
+    assert rec["mutant"]["stub_mutant"]["ran"] is True
+
+
+@pytest.mark.parametrize("verdict,text", [(None, ""), (False, "Timeout after 30s\n")])
+def test_a_stub_run_that_did_not_run_or_cannot_be_read_strips_the_evidence(
+        tmp_path, monkeypatch, verdict, text):
+    with pytest.raises(ValueError, match="stub-body mutant"):
+        _stub_check(tmp_path, monkeypatch, verdict, text)
+    rec = json.loads((tmp_path / "authored_tests.json").read_text())
+    assert rec["mutant"]["stub_mutant"]["unclear"] == [TEST_ID]
+
+
+def test_a_stub_mutant_that_did_not_run_is_a_waiver_entry(tmp_path):
+    from orchestrator.optimize.provenance import waivers
+
+    (tmp_path / "pre_build_tests.json").write_text("{}")
+    (tmp_path / "authored_tests.json").write_text(json.dumps(
+        {"tests": {}, "mutant": {"stub_mutant": {"ran": False,
+                                                 "skipped_because": "no Python"}}}))
+    assert any(w["gate"] == "oracle_2d_stub_mutant" and w["note"] == "no Python"
+               for w in waivers(tmp_path, {}))

@@ -274,6 +274,10 @@ def waivers(work_dir: Path, campaign: dict | None) -> list[dict]:
             ev = (e or {}).get("evidence")
             if ev in ("pre_build_failure_unclassified", "declared_preexisting_behaviour"):
                 out.append({"gate": "oracle_2d_authored_tests", "reason": ev, "note": t})
+        sm = ((at or {}).get("mutant") or {}).get("stub_mutant")
+        if at is not None and (not sm or not sm.get("ran")):
+            out.append({"gate": "oracle_2d_stub_mutant", "reason": "not run",
+                        "note": str((sm or {}).get("skipped_because") or "not recorded")})
         if (at or {}).get("mutant", {}).get("unavailable"):
             out.append({"gate": "oracle_2d_authored_tests", "reason": "mutant unavailable",
                         "note": str(at["mutant"]["unavailable"])})

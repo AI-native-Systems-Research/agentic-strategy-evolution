@@ -330,7 +330,7 @@ class _Stubber:
 
 
 def build_stub_mutant(repo: Path, work_dir: Path, rec: dict, declared: list[str],
-                      dest: Path) -> list[str]:
+                      dest: Path, unparsed_out: list | None = None) -> list[str]:
     """The STUB-BODY mutant (Python only): base commit + the whole patch, with
     the body of every new or changed function in the patch's non-test ``.py``
     files replaced by ``raise NotImplementedError``. The new SYMBOLS still
@@ -343,7 +343,8 @@ def build_stub_mutant(repo: Path, work_dir: Path, rec: dict, declared: list[str]
     materialize(Path(repo), base, dest, patch=Path(work_dir) / PATCH,
                 expect_tree=rec.get("base_tree"))
     base_src_of = {p: d for _m, p, d in _read_objects(Path(repo), base)}
-    stubbed = []
+    stubbed: list[str] = []
+    unparsed: list[str] = []
     for rel in rec.get("touched") or []:
         if not rel.endswith(".py") or is_test_path(rel, declared) or not (dest / rel).exists():
             continue
@@ -355,9 +356,12 @@ def build_stub_mutant(repo: Path, work_dir: Path, rec: dict, declared: list[str]
         st = _Stubber(base_src)
         try:
             (dest / rel).write_text(st.apply((dest / rel).read_text()))
-        except SyntaxError:
+        except (SyntaxError, UnicodeDecodeError, ValueError):
+            unparsed.append(rel)
             continue
         stubbed += [f"{rel}:{q}" for q in st.stubbed]
+    if unparsed_out is not None:
+        unparsed_out.extend(unparsed)
     return stubbed
 
 
@@ -497,7 +501,12 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
     clean_rec = (records or {}).get("clean_tree.json")
     with_evidence = [t for t, e in evidence.items() if e["evidence"] in (
         "pre_build_behavioral_failure", "mutant_behavioral_failure")]
-    if with_evidence and clean_rec and repo is not None and run_tests is not None:
+    stub: dict = {"ran": False, "skipped_because": None, "unparsed_files": []}
+    if not with_evidence:
+        stub["skipped_because"] = "no test had evidence to confirm"
+    elif not (clean_rec and repo is not None and run_tests is not None):
+        stub["skipped_because"] = "no recorded clean mechanism, git target or test_command"
+    else:
         from orchestrator.optimize.build_scope import GitError
         from orchestrator.optimize.clean_tree import CleanTreeError, tree_root
 
@@ -507,22 +516,47 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
         try:
             declared = [r["native_test"] for f in factors for r in (f.relations or ())
                         if isinstance(r, dict) and r.get("native_test")]
-            stubbed = build_stub_mutant(Path(repo), wd, clean_rec, declared, dest)
+            stubbed = build_stub_mutant(Path(repo), wd, clean_rec, declared, dest,
+                                        unparsed_out=stub["unparsed_files"])
             mutant_info["stubbed"] = stubbed
-            if stubbed:
-                sv, _ = run_tests(dest)
+            if not stubbed:
+                stub["skipped_because"] = ("the patch changes no Python function body"
+                                           + (" that parses" if stub["unparsed_files"] else ""))
+            else:
+                sv, text = run_tests(dest)
+                stub["ran"] = True
+                texts = failure_texts(text or "", with_evidence)
                 mutant_info["stub_verdicts"] = {t: sv.get(t) for t in with_evidence}
                 for t in with_evidence:
-                    if sv.get(t):
+                    v = sv.get(t)
+                    if v is True:
                         evidence[t] = {"evidence": None, "why": (
                             "it PASSES with every new or changed function body "
                             "stubbed to raise NotImplementedError: it checks that "
                             "the mechanism's names exist, not what they do")}
+                        continue
+                    # Evidence is KEPT only on a failure we can read: the stub's
+                    # NotImplementedError, or an assertion (round 3, C3). A test
+                    # that did not run, or failed for a reason we cannot read,
+                    # loses its evidence.
+                    tx = texts.get(t) or ""
+                    if v is False and ("NotImplementedError" in tx
+                                       or failure_kind(tx) == "behavioral"):
+                        continue
+                    stub.setdefault("unclear", []).append(t)
+                    evidence[t] = {"evidence": None, "why": (
+                        "against the stub-body mutant it "
+                        + ("did not run" if v is None else
+                           "failed for a reason that is neither the stub's "
+                           "NotImplementedError nor an assertion")
+                        + ": that it observes the mechanism's behaviour is not shown")}
         except (GitError, CleanTreeError, UnicodeDecodeError) as exc:
+            stub["skipped_because"] = f"could not build the stub mutant: {exc}"
             mutant_info["stub_unavailable"] = str(exc)
         finally:
             remove_mutant(Path(repo), dest)
             shutil.rmtree(scratch, ignore_errors=True)
+    mutant_info["stub_mutant"] = stub
     bad = {t: e for t, e in evidence.items() if e["evidence"] is None}
     waiver = ((campaign.get("optimization") or {}).get("build_checks") or {}).get(
         "allow_nondiscriminating_tests")
