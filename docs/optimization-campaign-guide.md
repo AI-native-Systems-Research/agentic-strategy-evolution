@@ -2460,13 +2460,13 @@ locked_parameters:
   query_count: 10000
   threads: 8
 optimization:
-  # No entry in locked_observables for these locks: the target does not
-  # echo them, so they are recorded as unverified rather than read as enforced.
-  unverified_locks:
-    corpus: "the target does not report this value back; Nous cannot verify it"
-    vectors: "the target does not report this value back; Nous cannot verify it"
-    query_count: "the target does not report this value back; Nous cannot verify it"
-    threads: "the target does not report this value back; Nous cannot verify it"
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    corpus: cfg.corpus
+    vectors: cfg.vectors
+    query_count: cfg.query_count
+    threads: cfg.threads
   run_command: "python bench/nous_bench.py --corpus sift-1m --queries 10000"
   test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
 
@@ -2647,15 +2647,15 @@ locked_parameters:
   oos_start: "2026-02-01"
 
 optimization:
-  # No entry in locked_observables for these locks: the target does not
-  # echo them, so they are recorded as unverified rather than read as enforced.
-  unverified_locks:
-    arming_threshold: "the target does not report this value back; Nous cannot verify it"
-    score_floor: "the target does not report this value back; Nous cannot verify it"
-    cooldown_bars: "the target does not report this value back; Nous cannot verify it"
-    weighting: "the target does not report this value back; Nous cannot verify it"
-    is_start: "the target does not report this value back; Nous cannot verify it"
-    oos_start: "the target does not report this value back; Nous cannot verify it"
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    arming_threshold: cfg.arming_threshold
+    score_floor: cfg.score_floor
+    cooldown_bars: cfg.cooldown_bars
+    weighting: cfg.weighting
+    is_start: cfg.is_start
+    oos_start: cfg.oos_start
   response:
     primary: {metric: improvement_steady_pct, direction: maximize}
     constraints:
@@ -3248,15 +3248,15 @@ prompts:
   methodology_layer: prompts/methodology
 
 optimization:
-  # No entry in locked_observables for these locks: the target does not
-  # echo them, so they are recorded as unverified rather than read as enforced.
-  unverified_locks:
-    geometry: "the target does not report this value back; Nous cannot verify it"
-    boundary_conditions: "the target does not report this value back; Nous cannot verify it"
-    iteration_cap: "the target does not report this value back; Nous cannot verify it"
-    residual_target: "the target does not report this value back; Nous cannot verify it"
-    precision: "the target does not report this value back; Nous cannot verify it"
-    cfl: "the target does not report this value back; Nous cannot verify it"
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    geometry: cfg.geometry
+    boundary_conditions: cfg.boundary_conditions
+    iteration_cap: cfg.iteration_cap
+    residual_target: cfg.residual_target
+    precision: cfg.precision
+    cfl: cfg.cfl
   run_command: "python bench/nous_bench.py --config solver.json --geometry reference-cube-3d --json"
   test_command: "python -m pytest tests/test_solver_props.py -q --json-report --json-report-file=/dev/stdout"
   run_timeout_sec: 2700     # see the sizing note below this block
@@ -3459,13 +3459,13 @@ prompts:
   methodology_layer: prompts/methodology
 
 optimization:
-  # No entry in locked_observables for these locks: the target does not
-  # echo them, so they are recorded as unverified rather than read as enforced.
-  unverified_locks:
-    compiler: "the target does not report this value back; Nous cannot verify it"
-    target_arch: "the target does not report this value back; Nous cannot verify it"
-    benchmark_suite: "the target does not report this value back; Nous cannot verify it"
-    reference_build: "the target does not report this value back; Nous cannot verify it"
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    compiler: cfg.compiler
+    target_arch: cfg.target_arch
+    benchmark_suite: cfg.benchmark_suite
+    reference_build: cfg.reference_build
   run_command: "python bench/nous_bench.py --suite kernels-v3 --reference O0-strict-fp --json"
   test_command: "python -m pytest tests/test_codegen_props.py -q --json-report --json-report-file=/dev/stdout"
   # A full rebuild plus the suite; the LTO corner is the expensive one.
@@ -3655,16 +3655,16 @@ prompts:
   methodology_layer: prompts/methodology
 
 optimization:
-  # No entry in locked_observables for these locks: the target does not
-  # echo them, so they are recorded as unverified rather than read as enforced.
-  unverified_locks:
-    dataset: "the target does not report this value back; Nous cannot verify it"
-    base_checkpoint: "the target does not report this value back; Nous cannot verify it"
-    epochs: "the target does not report this value back; Nous cannot verify it"
-    max_seq_len: "the target does not report this value back; Nous cannot verify it"
-    val_split: "the target does not report this value back; Nous cannot verify it"
-    test_split: "the target does not report this value back; Nous cannot verify it"
-    warmup_pct: "the target does not report this value back; Nous cannot verify it"
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    dataset: cfg.dataset
+    base_checkpoint: cfg.base_checkpoint
+    epochs: cfg.epochs
+    max_seq_len: cfg.max_seq_len
+    val_split: cfg.val_split
+    test_split: cfg.test_split
+    warmup_pct: cfg.warmup_pct
   run_command: "python bench/nous_bench.py --dataset task-mix-v2 --checkpoint base-7b-r3 --epochs 3 --json"
   test_command: "python -m pytest tests/test_train_props.py -q --json-report --json-report-file=/dev/stdout"
   run_timeout_sec: 6600     # 90 min budget + margin; see the note below
