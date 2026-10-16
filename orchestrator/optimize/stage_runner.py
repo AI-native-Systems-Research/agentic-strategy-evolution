@@ -5345,7 +5345,15 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         key = f"f{(row.apply or {}).get('finalist', 0)}"
         if key not in samples:
             continue
-        if o.status != "complete" or y != y:
+        # Multi-objective: a replicate that measured objective 1 but not
+        # another objective is not a measurement of the trade-off -- the
+        # finalist is UNMEASURED, exactly like a timed-out one.
+        _mo_lacking = o.status == "complete" and y == y and any(
+            not (isinstance((o.response or {}).get(_ob.metric), (int, float))
+                 and not isinstance((o.response or {}).get(_ob.metric), bool)
+                 and math.isfinite((o.response or {}).get(_ob.metric)))
+            for _ob in pareto_stage.objectives(pol))
+        if o.status != "complete" or y != y or _mo_lacking:
             # WHY the finalist dropped out, not merely THAT it did. Collapsing
             # every non-complete status into one bucket reported a finalist that
             # TIMED OUT under `excluded_infeasible` -- i.e. as though it had
@@ -5973,16 +5981,29 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
     infeasible_veto = bool(n_inf) and not caveat
     no_admissible = bool(status) and all(v == "infeasible" for v in status.values())
     refilled = _refill_round(pol, work_dir)
+    # A lone admissible configuration has no rival to bound against
+    # (pareto.scalar_regret returns None for it): the single-objective rule.
+    no_rival = reg is None and str(pref.get("scalar_regret_method") or "").startswith(
+        "no_feasible_rival")
+    # An UNKNOWN epsilon (a pct of a zero best) resolves nothing and certifies
+    # nothing; it is never read as a zero width.
+    eps_unknown = bool(par.get("epsilon_unknown")) or eps_s is None
+    # A finalist measured on objective 1 but not on another objective is
+    # UNMEASURED here, like a timed-out one (pareto.excluded_incomplete).
+    incomplete = any(x.get("source") == "confirm"
+                     for x in par.get("excluded_incomplete") or [])
     certified = bool(pref["chosen"]) and chosen_ok and within and not unmeasured \
         and not infeasible_veto and not fit_bias and not model_inadequate \
-        and not refilled
+        and not refilled and not eps_unknown and not incomplete
     reasons = [r for r, hit in (
         ("no_admissible_finalist", no_admissible),
-        ("bound_not_computable", reg is None and not no_admissible),
+        ("no_feasible_rival", no_rival and not no_admissible),
+        ("epsilon_unknown", eps_unknown),
+        ("bound_not_computable", reg is None and not no_admissible and not no_rival),
         ("bound_above_epsilon", reg is not None and eps_s is not None and reg > eps_s),
         ("front_point_possibly_dominated", bool(pref["chosen"]) and not chosen_ok),
         ("finalist_measured_infeasible", infeasible_veto),
-        ("finalist_unmeasured", bool(unmeasured)),
+        ("finalist_unmeasured", bool(unmeasured) or incomplete),
         ("fit_exclusions_level_correlated", fit_bias),
         ("model_inadequate", model_inadequate),
         ("shortlist_refilled", refilled),

@@ -213,10 +213,13 @@ def test_single_objective_policies_carry_no_multi_objective_vocabulary(name):
 #:     parent spec's sticky rule), so part of the constrained edge is lost;
 #:   three 0.836 -- a 2-D front surface on a 9x9x9 grid from 78 runs;
 #:   choice_split 0.950 -- both branches, the C=on one carried from screen;
-#:   noisy 0.781 -- noise ~ epsilon, so neighbouring points stay unresolved.
+#:   noisy 0.490 -- noise ~ epsilon, so neighbouring points stay unresolved;
+#:     the statuses are a SIMULTANEOUS claim over the front (alpha =
+#:     delta / (N (N-1) K)), which leaves as few as 1-2 confident points here
+#:     (it was 0.781 under the per-point alpha = delta / ((N-1) K)).
 HV_FLOOR = {"pareto_convex": 0.95, "pareto_concave": 0.95,
             "pareto_with_constraint": 0.85, "pareto_three": 0.80,
-            "pareto_choice_split": 0.90, "pareto_noisy": 0.75}
+            "pareto_choice_split": 0.90, "pareto_noisy": 0.45}
 
 
 @pytest.fixture(scope="module")
@@ -471,3 +474,109 @@ def test_the_optimize_package_imports_no_forbidden_dependency():
             hits += [f"{py.name}:{node.lineno} {n}" for n in names
                      if n.split(".")[0] in forbidden]
     assert hits == [], hits
+
+
+# ── unknown epsilon, simultaneous statuses, incomplete rows, lone points ──────
+
+
+def test_an_unknown_epsilon_never_rules_a_predicted_rival_out():
+    """A2: eps None on an objective is not a zero width. A prediction ahead of
+    c on every objective (by eps where eps is known, by anything where it is
+    not) is UNRESOLVED, so c is possibly_dominated."""
+    objs = _objs()
+    c = _mp({"x": 0}, [10.0, 10.1, 9.9], [5.0, 5.1, 4.9])
+    pred = pareto.PredictedPoint({"x": 9}, {}, {"f1": 10.5, "f2": 5.01}, {}, "nondominated")
+    pooled = {m: pareto.pooled_variance([c], m) for m in ("f1", "f2")}
+    known = pareto.measured_front([c], objs, {"f1": 0.1, "f2": 0.1}, delta=0.05,
+                                  pooled=pooled, predicted=[pred])
+    unknown = pareto.measured_front([c], objs, {"f1": 0.1, "f2": None}, delta=0.05,
+                                    pooled=pooled, predicted=[pred])
+    assert known[0].status == "confidently_nondominated"  # 0.01 < eps on f2
+    assert unknown[0].status == "possibly_dominated"
+    assert unknown[0].dominated_by[0]["kind"] == "predicted"
+    assert pareto.scalar_epsilon(pareto.Preference("knee"), objs, [0.1, None]) is None
+
+
+def test_an_unknown_epsilon_withholds_certification(tmp_path):
+    """A2 end to end: an objective whose best is exactly 0 has no reference
+    for a pct epsilon. The campaign reports it, computes no gap threshold
+    from a fake zero, and does not certify."""
+    import dataclasses
+
+    s = PARETO_SURFACES["pareto_convex"]()
+    f1, _ = s.objectives
+    zero = {"metric": "f2", "direction": "maximize", "fn": lambda lv: 0.0, "noise_sd": 0.0}
+    s = dataclasses.replace(s, objectives=(f1, zero))
+    r = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path)
+    par = r.report["pareto"]
+    assert par["epsilon"]["f2"] is None and par["epsilon_unknown"] == ["f2"]
+    assert r.report["certified"] is False
+    assert "epsilon_unknown" in r.report["certification_withheld"]
+
+
+def test_dominance_statuses_are_simultaneous_over_the_front():
+    """A3: a rival resolvable at delta / ((N-1) K) but not at
+    delta / (N (N-1) K) leaves the point possibly_dominated."""
+    from scipy.stats import t as student_t
+
+    objs, eps = _objs(), {"f1": 0.1, "f2": 0.1}
+    pooled = {"f1": (1.0, 30), "f2": (1.0, 30)}  # se of a difference: 1.0
+    t_old = student_t.ppf(1 - 0.05 / ((3 - 1) * 2), 30)
+    t_new = student_t.ppf(1 - 0.05 / (3 * 2 * 2), 30)
+    g = (t_old + t_new) / 2 - 0.1  # d trails c on f1 by g, leads on f2
+    c = _mp({"x": 0}, [10.0, 10.0], [10.0, 10.0])
+    d = _mp({"x": 1}, [10.0 - g, 10.0 - g], [11.0, 11.0])
+    far = _mp({"x": 2}, [0.0, 0.0], [0.0, 0.0])
+    assert -g + t_old < 0.1 < -g + t_new
+    st = {e.index: e.status for e in pareto.measured_front([c, d, far], objs, eps,
+                                                           delta=0.05, pooled=pooled)}
+    assert st[0] == "possibly_dominated"
+
+
+def test_a_lone_configuration_has_no_regret_bound():
+    """A5: no rival is no bound -- never a certifying 0.0."""
+    objs = _objs()
+    p = [_mp({"x": 0}, [10.0, 10.1], [1.0, 1.1])]
+    pooled = {m: pareto.pooled_variance(p, m) for m in ("f1", "f2")}
+    frame = pareto.make_frame(objs, [x.means() for x in p], {"f1": 0.1, "f2": 0.1})
+    reg, why = pareto.scalar_regret(objs, p, 0, [0], [1.0, 1.0], frame, pooled, delta=0.05)
+    assert reg is None and why.startswith("no_feasible_rival")
+    reg, why = pareto.min_improvement_regret(objs, p, 0, [0], frame, [0.0, 0.0], pooled,
+                                             delta=0.05)
+    assert reg is None and why.startswith("no_feasible_rival")
+
+
+def test_a_finalist_missing_a_secondary_objective_is_unmeasured(tmp_path, monkeypatch):
+    """A4 / A6: a configuration whose rows report objective 1 but not
+    a usable objective 2 (here +inf) is listed in pareto.excluded_incomplete, never silently
+    dropped and never re-based on its fitting rows; as a confirm finalist it
+    is `unmeasured` and certification is withheld."""
+    import orchestrator.optimize.synthetic as syn
+
+    real = syn._observe
+
+    # +inf, not a vanished key: the adapter contract already aborts an epoch
+    # whose key disappears or turns null, and a NaN is the semantic
+    # nan_response exception. A non-finite number of the right type is what
+    # used to fall through silently.
+    def drop_f2(surface, levels, **kw):
+        obs = real(surface, levels, **kw)
+        if levels.get("A") == 16 and levels.get("B") == 16:
+            obs["f2"] = float("inf")
+        return obs
+
+    monkeypatch.setattr(syn, "_observe", drop_f2)
+    r = run_synthetic_campaign(PARETO_SURFACES["pareto_convex"](), seed=1, parent_dir=tmp_path)
+    par = r.report["pareto"]
+    gone = [x for x in par.get("excluded_incomplete") or []
+            if x["levels"] == {"A": 16, "B": 16}]
+    assert gone and gone[0]["missing"] == ["f2"]
+    assert all(f["levels"] != {"A": 16, "B": 16} for f in par["front"])
+    seated = [f for p in Path(r.work_dir).glob("runs/iter-*/confirmation.json")
+              for f in json.loads(p.read_text())["finalists"]
+              if f["levels"] == {"A": 16, "B": 16}]
+    assert seated, "the f1 extreme is seated as a finalist on this seed"
+    assert all(f["status"] == "unmeasured" for f in seated)
+    assert gone[0]["source"] == "confirm"
+    assert r.report["certified"] is False
+    assert "finalist_unmeasured" in r.report["certification_withheld"]

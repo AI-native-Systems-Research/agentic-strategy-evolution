@@ -945,11 +945,11 @@ def check_pareto_front(pareto_block: dict) -> list[str]:
     def vec(f):
         return [(-1.0 if o["direction"] == "minimize" else 1.0) * f["mean"][o["metric"]]
                 for o in objs]
-    e = [eps.get(o["metric"]) or 0.0 for o in objs]
+    e = [eps.get(o["metric"]) for o in objs]  # None = unknown, resolves nothing
     for i, a in enumerate(front):
         for j, b in enumerate(front):
             if i != j and all(x >= y for x, y in zip(vec(b), vec(a))) and any(
-                    x - y > ek for x, y, ek in zip(vec(b), vec(a), e)):
+                    ek is not None and x - y > ek for x, y, ek in zip(vec(b), vec(a), e)):
                 out.append(f"front point {i} {a['levels']} is eps-dominated in point "
                            f"estimate by front point {j} {b['levels']}")
         if a.get("status") == "confidently_nondominated" and a.get("dominated_by"):
@@ -962,6 +962,11 @@ def check_pareto_front(pareto_block: dict) -> list[str]:
         if first != sorted(first, reverse=True):
             out.append("the front is not sorted best-first by the first objective")
     hv = (par.get("hypervolume") or {}).get("value")
+    n_conf = sum(1 for f in front if f.get("status") == "confidently_nondominated")
+    if hv is None and n_conf:
+        out.append(f"hypervolume is null although {n_conf} point(s) are confident")
+    if hv is None and not (par.get("hypervolume") or {}).get("reason"):
+        out.append("a null hypervolume carries no reason")
     if hv is not None and (par.get("hypervolume") or {}).get("normalized") and not (
             -1e-12 <= hv <= 1.0 + 1e-9):
         out.append(f"normalised hypervolume {hv} is outside [0, 1]")

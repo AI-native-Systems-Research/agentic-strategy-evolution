@@ -225,7 +225,8 @@
           "front_point_possibly_dominated",
           "no_front_point",
           "no_feasible_rival",
-          "shortlist_refilled"
+          "shortlist_refilled",
+          "epsilon_unknown"
         ]
       },
       "description": "Why `certified` is false, as named reasons rather than an unexplained boolean -- so a reader can tell a bound that was simply too wide from a GLOBAL claim withheld because the delta_screen premise was broken, or from a shortlist that was never fully compared. Empty exactly when certified is true. `finalist_measured_infeasible` and `fit_exclusions_level_correlated` are the two premise-breaking reasons: both are evidence that the model's ranking is not tracking the constrained objective, so epsilon-optimality over X_valid is unearned even though residual_regret_terminal (a number over the admissible shortlist resting on fresh measurements and no model) remains valid and is still reported. `finalist_unmeasured` means an admissible finalist produced no usable measurement (timeout, crash, unparseable output): the comparison is incomplete, residual_regret_terminal is null, and the remedy is to re-run it rather than strike it off. `no_admissible_finalist` means EVERY finalist was measured inadmissible (each had at least one replicate violating a declared constraint): the measurements are valid and complete, there is simply no admissible configuration in this shortlist to bound, so it replaces `bound_not_computable` (which means too little data to estimate a bound) and is distinct from a NaN response (an instrumentation defect). `model_inadequate` means the latest fitting stage's lack-of-fit F on pure error rejected the registered response class (recommendation.json model_adequate: false): the shortlist was seeded from measured leaders and the ranking of a rejected surface, so nothing supports the delta_screen premise that screening did not exclude the winner (design spec 3.6 rung 3 sits below certification). The within-shortlist bound is still reported.",
@@ -339,8 +340,19 @@
           ],
           "properties": {
             "value": {
-              "type": "number",
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "null (with `reason`) when no point is confidently_nondominated: undefined, not zero."
+            },
+            "n_points": {
+              "type": "integer",
               "minimum": 0
+            },
+            "reason": {
+              "type": "string"
             },
             "reference": {
               "type": "object"
@@ -430,7 +442,62 @@
           }
         },
         "gap_threshold": {
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "null when no objective's epsilon is known: no gap can be called large."
+        },
+        "epsilon_unknown": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Objectives whose epsilon has no reference (null in `epsilon`); certification is withheld (epsilon_unknown)."
+        },
+        "predicted_rivals": {
+          "type": "object",
+          "required": [
+            "considered",
+            "reason"
+          ],
+          "properties": {
+            "considered": {
+              "type": "boolean"
+            },
+            "n": {
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "description": "Whether predicted-front candidates were checked as rivals of measured points (only when every objective model is adequate)."
+        },
+        "excluded_incomplete": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "levels",
+              "missing"
+            ],
+            "properties": {
+              "levels": {
+                "type": "object"
+              },
+              "missing": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "source": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Measured admissible configurations left out of the front because a complete row lacked a usable value for some objective (missing, null, NaN or non-numeric). A confirm finalist among them is unmeasured and blocks certification."
         },
         "front_gap_large": {
           "type": "boolean"

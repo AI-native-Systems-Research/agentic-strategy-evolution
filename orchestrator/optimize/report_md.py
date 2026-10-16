@@ -77,6 +77,9 @@ WITHHELD_MEANING = {
     "no_feasible_rival": "only one finalist was admissible, so the terminal "
                          "bound compares it against nothing -- the vacated "
                          "seats need refilling",
+    "epsilon_unknown": "an objective's epsilon has no reference (a percentage "
+                       "of a zero best), so no difference on it can be judged "
+                       "-- declare it as `abs`",
     "shortlist_refilled": "the shortlist was refilled after finalists were "
                           "measured inadmissible; the replacements were "
                           "compared, but the ranking that nominated the "

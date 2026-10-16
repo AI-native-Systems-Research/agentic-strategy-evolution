@@ -126,8 +126,10 @@ class Frame:
                        / self.range[o.metric])
         return out
 
-    def eps_z(self, eps: dict) -> list[float]:
-        return [(eps.get(o.metric) or 0.0) / self.range[o.metric]
+    def eps_z(self, eps: dict) -> list:
+        """Normalised epsilon per objective; ``None`` where it is unknown."""
+        return [None if eps.get(o.metric) is None
+                else float(eps[o.metric]) / self.range[o.metric]
                 for o in self.objectives]
 
     def as_dict(self) -> dict:
@@ -164,8 +166,10 @@ def eps_dominates(a: list[float], b: list[float], eps: list[float]) -> bool:
     No worse anywhere and better by MORE than epsilon somewhere: a difference
     below epsilon is not dominance.
     """
+    # An UNKNOWN epsilon (None) cannot establish "better by more than
+    # epsilon" on its objective; it never stands in as a zero.
     return (all(x >= y for x, y in zip(a, b))
-            and any(x - y > e for x, y, e in zip(a, b, eps)))
+            and any(e is not None and x - y > e for x, y, e in zip(a, b, eps)))
 
 
 def strictly_dominates(a, b) -> bool:
@@ -260,11 +264,16 @@ def scalar_epsilon(pref: Preference, objectives, eps_z: list[float]) -> float:
     (lexicographic), or the minimum normalised ε (knee) -- spec step 7."""
     metrics = [o.metric for o in objectives]
     if pref.method == "weights":
-        return sum(float(pref.weights.get(m, 0.0)) * e for m, e in zip(metrics, eps_z))
+        used = [(float(pref.weights.get(m, 0.0)), e) for m, e in zip(metrics, eps_z)]
+        if any(w and e is None for w, e in used):
+            return None  # an unknown width is not a zero one
+        return sum(w * e for w, e in used if w)
     if pref.method == "lexicographic":
         j = metrics.index(pref.order[0]) if pref.order and pref.order[0] in metrics else 0
         return eps_z[j]
-    return min(eps_z) if eps_z else 0.0
+    if not eps_z or any(e is None for e in eps_z):
+        return None
+    return min(eps_z)
 
 
 def _extremes(zs) -> tuple[int, int]:
@@ -311,7 +320,9 @@ def preferred_index(pref: Preference, objectives, zs: list[list[float]],
         cand = list(idx)
         for k in order:
             best = max(zs[i][k] for i in cand)
-            cand = [i for i in cand if best - zs[i][k] <= eps_z[k] + 1e-12]
+            # An unknown width gives no tie band (a CHOICE rule, not a claim).
+            band = eps_z[k] if eps_z[k] is not None else 0.0
+            cand = [i for i in cand if best - zs[i][k] <= band + 1e-12]
         best_k = order[0]
         return max(cand, key=lambda i: (zs[i][best_k], _neg_key(levels[i])))
     if K == 2:
@@ -602,11 +613,16 @@ def measured_front(points: list[MeasuredPoint], objectives, eps: dict, *,
     metrics = [o.metric for o in objectives]
     vec = [[sign(o.direction) * (p.mean(o.metric) if p.mean(o.metric) is not None
                                  else float("nan")) for o in objectives] for p in points]
-    e = [eps.get(m) or 0.0 for m in metrics]
+    e = [eps.get(m) for m in metrics]  # None = unknown, never a zero
     usable = [i for i in range(N) if all(math.isfinite(x) for x in vec[i])]
     members = [i for i in usable
                if not any(j != i and eps_dominates(vec[j], vec[i], e) for j in usable)]
-    alpha = float(delta) / max(1, (len(usable) - 1) * K)
+    # SIMULTANEOUS over the whole front: the statuses are one claim about every
+    # member at once, and the certified point is selected FROM them, so the
+    # family is every (member, rival, objective) bound -- at most
+    # N x (N - 1) x K of them.
+    n_u = len(usable)
+    alpha = float(delta) / max(1, n_u * (n_u - 1) * K)
     out = []
     for i in members:
         unresolved = []
@@ -615,6 +631,8 @@ def measured_front(points: list[MeasuredPoint], objectives, eps: dict, *,
                 continue
             resolved = False
             for o, ek in zip(objectives, e):
+                if ek is None:
+                    continue  # unknown width: this objective cannot resolve d
                 u = _upper(o, points[j], points[i], pooled, alpha)
                 if u is not None and u < ek:
                     resolved = True
@@ -626,10 +644,14 @@ def measured_front(points: list[MeasuredPoint], objectives, eps: dict, *,
                 # The model's prediction AT c is not a rival of c's own
                 # measurement; the measurement is the better evidence there.
                 continue
+            # Ahead by epsilon on every objective; where epsilon is UNKNOWN,
+            # merely ahead -- an unknown width can never rule the rival out.
             if all(isinstance(pp.predicted.get(m), (int, float))
                    and math.isfinite(pp.predicted[m]) for m in metrics) and all(
-                    sign(o.direction) * (pp.predicted[o.metric] - points[i].mean(o.metric))
-                    >= ek and ek > 0 for o, ek in zip(objectives, e)):
+                    (lambda d, w: d > 0 if w is None else d >= w)(
+                        sign(o.direction) * (pp.predicted[o.metric]
+                                             - points[i].mean(o.metric)), ek)
+                    for o, ek in zip(objectives, e)):
                 unresolved.append({"levels": dict(pp.levels), "kind": "predicted"})
                 break
         out.append(FrontEntry(i, "possibly_dominated" if unresolved
@@ -645,7 +667,10 @@ def scalar_regret(objectives, points: list[MeasuredPoint], chosen: int,
     normalised units. ``None`` when any needed variance is unknown."""
     others = [r for r in rivals if r != chosen]
     if not others:
-        return 0.0, "trivial: no rival"
+        # NO RIVAL IS NO BOUND: a regret of 0 over an empty comparison would
+        # certify a lone configuration against nothing (the single-objective
+        # rule: a certificate needs a measured-feasible rival).
+        return None, "no_feasible_rival: no other admissible configuration was measured"
     c = points[chosen]
     best = 0.0
     dfs = [pooled.get(o.metric, (None, 0))[1] for o, ak in zip(objectives, a) if ak]
@@ -686,7 +711,7 @@ def min_improvement_regret(objectives, points: list[MeasuredPoint], chosen: int,
     """
     others = [r for r in rivals if r != chosen]
     if not others:
-        return 0.0, "trivial: no rival"
+        return None, "no_feasible_rival: no other admissible configuration was measured"
     K = len(objectives)
     m_count = (len(others) + 1) * K
     dfs = [pooled.get(o.metric, (None, 0))[1] for o in objectives]

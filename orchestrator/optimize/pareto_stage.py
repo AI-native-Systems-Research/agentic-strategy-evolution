@@ -58,9 +58,20 @@ def _stage_of(iter_dir: Path) -> str:
 
 
 def measured_points(work_dir, objs) -> list[MeasuredPoint]:
-    """Every measured ADMISSIBLE configuration, with its complete-row samples
-    per objective (``stage_runner._config_admissible``: one infeasible or
-    rejected row anywhere strikes the configuration off). ``source`` is
+    """``measured_points_and_incomplete(...)[0]``."""
+    return measured_points_and_incomplete(work_dir, objs)[0]
+
+
+def _usable(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def measured_points_and_incomplete(work_dir, objs) -> tuple[list[MeasuredPoint], list[dict]]:
+    """Every measured ADMISSIBLE configuration with its complete-row samples
+    per objective, and the configurations left out for an INCOMPLETE row.
+
+    Admissible per configuration (``stage_runner._config_admissible``: one
+    infeasible or rejected row anywhere strikes it off). ``source`` is
     ``confirm`` when any of its rows came from a confirm round, otherwise the
     first fitting stage that measured it.
 
@@ -69,7 +80,16 @@ def measured_points(work_dir, objs) -> list[MeasuredPoint]:
     BECAUSE its screen value was high), so pooling them in would carry the
     winner's curse into the mean -- the reason single-objective terminal
     discrimination compares fresh replicates only. Fitting-stage-only
-    configurations keep their fitting rows; they were not selected by them."""
+    configurations keep their fitting rows; they were not selected by them.
+
+    ROW-WISE COMPLETENESS. A complete row that lacks a usable value for SOME
+    objective (missing, null, NaN, a string) is not a measurement of the
+    trade-off. A fitting-stage configuration keeps only its fully measured
+    rows. A CONFIRM configuration with any such replicate is left out entirely
+    and listed (it is UNMEASURED, exactly like a finalist that timed out) --
+    never silently re-based on its fitting rows, which would bring the winner's
+    curse back, and never dropped without a record. Returns ``(points,
+    excluded)``, ``excluded`` = ``[{levels, missing, source}]``."""
     from orchestrator.optimize import artifacts
     from orchestrator.optimize.stage_runner import (
         _config_admissible,
@@ -79,10 +99,11 @@ def measured_points(work_dir, objs) -> list[MeasuredPoint]:
 
     runs = Path(work_dir) / "runs"
     if not runs.exists():
-        return []
+        return [], []
     invalid = _measured_infeasible(work_dir)
     pts: dict[str, MeasuredPoint] = {}
     fresh: dict[str, dict] = {}
+    missing: dict[str, dict] = {}  # key -> {"fit": set, "confirm": set}
     # EPOCH-SCOPED, like `_top_measured`: a previous epoch measured a
     # different declared space (or mechanism), so its rows are not this
     # epoch's evidence. Feasibility stays sticky across epochs
@@ -107,17 +128,31 @@ def measured_points(work_dir, objs) -> list[MeasuredPoint]:
             if p is None:
                 p = pts[key] = MeasuredPoint(dict(lv), {o.metric: [] for o in objs}, src)
                 fresh[key] = {o.metric: [] for o in objs}
+                missing[key] = {"fit": set(), "confirm": set()}
             elif src == "confirm":
                 p.source = "confirm"
             resp = row.get("response") or {}
+            lacking = [o.metric for o in objs if not _usable(resp.get(o.metric))]
+            if lacking:
+                missing[key]["confirm" if role == "confirm" else "fit"].update(lacking)
+                continue
             for o in objs:
-                v = resp.get(o.metric)
-                if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
-                    (fresh[key] if role == "confirm" else p.samples)[o.metric].append(float(v))
+                (fresh[key] if role == "confirm" else p.samples)[o.metric].append(
+                    float(resp[o.metric]))
+    out, excluded = [], []
     for key, p in pts.items():
-        if p.source == "confirm" and all(fresh[key][o.metric] for o in objs):
+        if p.source == "confirm":
+            if missing[key]["confirm"] or not all(fresh[key][o.metric] for o in objs):
+                excluded.append({"levels": dict(p.levels), "source": "confirm",
+                                 "missing": sorted(missing[key]["confirm"])})
+                continue
             p.samples = fresh[key]
-    return [p for p in pts.values() if all(p.samples[o.metric] for o in objs)]
+        elif not all(p.samples[o.metric] for o in objs):
+            excluded.append({"levels": dict(p.levels), "source": p.source,
+                             "missing": sorted(missing[key]["fit"])})
+            continue
+        out.append(p)
+    return out, excluded
 
 
 def pooled(points, objs) -> dict:
@@ -266,8 +301,11 @@ def _resolution_margin(pol, par: dict, objs, eps: dict) -> dict:
         if v is None or df <= 0:
             out[o.metric] = 0.0
             continue
-        t = pareto.tcrit(float(par.get("delta_front") or 0.05) / ((n - 1) * len(objs)), df)
-        out[o.metric] = max(0.0, t * math.sqrt(2.0 * v / reps) - (eps.get(o.metric) or 0.0))
+        t = pareto.tcrit(_alpha(float(par.get("delta_front") or 0.05), n, len(objs)), df)
+        # An unknown epsilon is not subtracted: the margin is then the full
+        # t * se, the conservative reading.
+        e = eps.get(o.metric)
+        out[o.metric] = max(0.0, t * math.sqrt(2.0 * v / reps) - (e if e is not None else 0.0))
     return out
 
 
@@ -423,7 +461,7 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     hypervolume and the gaps (spec steps 5-8). Pure over what is on disk."""
     objs = objectives(pol)
     metrics = [o.metric for o in objs]
-    pts = measured_points(work_dir, objs)
+    pts, incomplete = measured_points_and_incomplete(work_dir, objs)
     delta_t = float(pol["objective"]["delta_terminal"])
     max_rounds = int(((pol.get("states") or {}).get("confirm") or {}).get(
         "design", {}).get("max_rounds", 1) or 1)
@@ -440,13 +478,28 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     # the divisor is the larger of the registered cap and the rounds spent.
     delta_cert = delta_t / max(1, max_rounds, int(rnd or 1))
     pool = pooled(pts, objs)
+    # UNKNOWN STAYS UNKNOWN: an epsilon with no reference (a pct of a zero
+    # best) is None all the way through -- it resolves nothing, blocks
+    # certification (`epsilon_unknown`) and is printed as unknown.
     eps = pareto.resolve_eps(objs, best_reference(pts, objs))
-    eps_known = {m: (e if e is not None else 0.0) for m, e in eps.items()}
-    frame = pareto.make_frame(objs, [p.means() for p in pts], eps_known)
+    eps_unknown = sorted(m for m, e in eps.items() if e is None)
+    frame = pareto.make_frame(objs, [p.means() for p in pts], eps)
     om = rec.get("objective_models") or {}
     adequate = bool(om) and all((om.get(m) or {}).get("modelled") for m in metrics)
     predicted = _predicted_from_record(rec.get("predicted_front")) if adequate else []
-    entries = pareto.measured_front(pts, objs, eps_known, delta=delta_front,
+    if adequate:
+        predicted_rivals = {"considered": True, "n": len(predicted),
+                            "reason": "every objective model adequate: predicted-front "
+                                      "candidates are checked as rivals of each "
+                                      "measured point"}
+    else:
+        bad = sorted(m for m in metrics if not (om.get(m) or {}).get("modelled"))
+        predicted_rivals = {"considered": False, "n": 0,
+                            "reason": (f"objective model(s) {bad} not adequate "
+                                       f"(no pure error, lack of fit, or not "
+                                       f"estimable): statuses rest on measured "
+                                       f"rivals only")}
+    entries = pareto.measured_front(pts, objs, eps, delta=delta_front,
                                     pooled=pool, predicted=predicted)
     entries.sort(key=lambda e: (-pareto.sign(objs[0].direction)
                                 * pts[e.index].mean(metrics[0]), e.index))
@@ -467,7 +520,7 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
             ref_z = [max(0.0, x) for x in frame.z(b.means())]
             ref_raw = b.means()
     pref = preference(pol)
-    eps_z = frame.eps_z(eps_known)
+    eps_z = frame.eps_z(eps)
     chosen_entry = None
     if choose_from:
         zs = [frame.z(pts[e.index].means()) for e in choose_from]
@@ -477,7 +530,7 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     # The preferred point's status at the CERTIFICATION level (see above).
     chosen_cert_status = None
     if chosen_entry is not None:
-        at_cert = pareto.measured_front(pts, objs, eps_known, delta=delta_cert,
+        at_cert = pareto.measured_front(pts, objs, eps, delta=delta_cert,
                                         pooled=pool, predicted=predicted)
         chosen_cert_status = next((e.status for e in at_cert
                                    if e.index == chosen_entry.index), None)
@@ -498,8 +551,15 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
                 objs, pts, chosen_entry.index, list(range(len(pts))), a,
                 frame, pool, delta=delta_cert)
     eps_scalar = pareto.scalar_epsilon(pref, objs, eps_z)
-    hv, hv_method = pareto.hypervolume(
-        [frame.z(pts[e.index].means()) for e in confident], ref_z)
+    if confident:
+        hv, hv_method = pareto.hypervolume(
+            [frame.z(pts[e.index].means()) for e in confident], ref_z)
+        hv_reason = None
+    else:
+        # Not zero: "the confident front encloses nothing" and "no point is
+        # confident" are different facts.
+        hv, hv_method = None, "none"
+        hv_reason = "no confidently_nondominated point: the hypervolume is undefined"
     gaps = pareto.front_gaps(zs_all)
     # The spec's threshold is 2 x max_k(eps_k / range_k). A gap is also only
     # worth a round when a point placed at its midpoint could be told apart
@@ -514,13 +574,16 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     resolvable = []
     for o, ez in zip(objs, eps_z):
         v, df = pool.get(o.metric, (None, 0))
-        if v is None or df <= 0:
+        if v is None or df <= 0 or ez is None:
             continue
-        t = pareto.tcrit(delta_front / max(1, (len(pts) - 1) * len(objs)), df)
+        t = pareto.tcrit(_alpha(delta_front, len(pts), len(objs)), df)
         se_z = math.sqrt(2.0 * v / reps) / frame.range[o.metric]
         resolvable.append(2.0 * max(0.0, t * se_z - ez))
-    threshold = max([2.0 * max(eps_z)] + resolvable) if eps_z else 0.0
-    gap_large = bool(gaps) and gaps[0]["size"] > threshold
+    known_z = [ez for ez in eps_z if ez is not None]
+    # No known epsilon at all: there is no indifference to compare a gap with,
+    # so no gap is called large (and every gap is listed as remaining).
+    threshold = max([2.0 * max(known_z)] + resolvable) if known_z else None
+    gap_large = bool(gaps) and threshold is not None and gaps[0]["size"] > threshold
 
     def _ci(p, o):
         v, df = pool.get(o.metric, (None, 0))
@@ -546,7 +609,8 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
         "objectives": [{"metric": o.metric, "direction": o.direction} for o in objs],
         "front": front,
         "hypervolume": {"value": hv, "reference": ref_raw, "normalized": True,
-                        "method": hv_method,
+                        "method": hv_method, "n_points": len(confident),
+                        **({"reason": hv_reason} if hv_reason else {}),
                         "over": "confidently_nondominated points, objectives "
                                 "normalised to [0, 1] by the measured range"},
         "preference": {"method": pref.method,
@@ -556,10 +620,14 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
                        "scalar_regret": regret, "scalar_epsilon": eps_scalar,
                        "scalar_regret_method": regret_method},
         "rounds": rnd,
-        "gaps_remaining": [g for g in gaps if g["size"] > threshold],
+        "gaps_remaining": [g for g in gaps
+                           if threshold is None or g["size"] > threshold],
         "gap_threshold": threshold,
         "front_gap_large": gap_large,
         "epsilon": eps,
+        "epsilon_unknown": eps_unknown,
+        **({"excluded_incomplete": incomplete} if incomplete else {}),
+        "predicted_rivals": predicted_rivals,
         "delta_front": delta_front,
         "delta_certification": delta_cert,
         "pooled_variance": {m: {"variance": v, "df": df} for m, (v, df) in pool.items()},
@@ -567,11 +635,17 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
         "n_measured_configurations": len(pts),
         "dominance_method": (
             "pooled within-configuration variance per objective (one-way ANOVA "
-            "mean square), one-sided t at delta_front / ((N - 1) * K), Bonferroni "
-            "over rivals and objectives; delta_front = delta_terminal. The "
+            "mean square), one-sided t at delta_front / (N (N - 1) K), Bonferroni "
+            "over every (member, rival, objective) bound so the statuses hold "
+            "SIMULTANEOUSLY over the front; delta_front = delta_terminal. The "
             "preferred point's certificate (its status and the scalar regret) "
             "is re-taken at delta_certification = delta_terminal / max_rounds"),
     }
+
+
+def _alpha(delta: float, n: int, k: int) -> float:
+    """The per-bound level of the simultaneous front claim (pareto.measured_front)."""
+    return float(delta) / max(1, n * (n - 1) * k)
 
 
 def _same(a: dict, b: dict) -> bool:
