@@ -72,13 +72,36 @@ def test_a_locked_parameter_disjoint_from_the_factors_is_not_an_error():
                              observables={"max_seq_len": "engine.max_seq_len"})) == []
 
 
-def test_an_unenforced_locked_parameter_is_named_in_a_warning():
-    """No observable means no enforcement -- say so rather than pass silently."""
-    warns = _warns(_campaign(locked={"max_seq_len": 2048, "model": "m-7b"},
-                             observables={"max_seq_len": "engine.max_seq_len"}))
-    unenforced = [w for w in warns if "locked_observables" in w]
-    assert len(unenforced) == 1, warns
-    assert "'model'" in unenforced[0] and "'max_seq_len'" not in unenforced[0]
+def test_an_unenforceable_lock_is_an_error_not_a_warning():
+    """No observable means no enforcement, so the lock must not pass as one."""
+    c = _campaign(locked={"max_seq_len": 2048, "model": "m-7b"},
+                  observables={"max_seq_len": "engine.max_seq_len"})
+    errs = [e for e in _errors(c) if "cannot be enforced" in e]
+    assert len(errs) == 1, _errors(c)
+    assert "'model'" in errs[0] and "'max_seq_len'" not in errs[0]
+
+
+def test_an_acknowledged_unverified_lock_is_a_warning_and_is_reported(tmp_path):
+    c = _campaign(locked={"max_seq_len": 2048, "model": "m-7b"},
+                  observables={"max_seq_len": "engine.max_seq_len"})
+    c["optimization"]["unverified_locks"] = {"model": "harness does not echo it"}
+    assert _errors(c) == []
+    warns = [w for w in _warns(c) if "UNVERIFIED" in w]
+    assert len(warns) == 1 and "'model'" in warns[0], _warns(c)
+    from orchestrator.optimize.provenance import waivers
+
+    got = waivers(tmp_path, c)
+    assert {"gate": "locked_parameters.model", "reason": "harness does not echo it",
+            "note": "lock declared but NOT verified at run time"} in got
+
+
+def test_unverified_locks_must_name_a_real_unobserved_lock():
+    c = _campaign(locked={"max_seq_len": 2048},
+                  observables={"max_seq_len": "engine.max_seq_len"})
+    c["optimization"]["unverified_locks"] = {"max_seq_len": "x", "typo": "y"}
+    errs = _errors(c)
+    assert any("'typo'" in e for e in errs) and any(
+        "'max_seq_len'" in e and "IS verified" in e for e in errs), errs
 
 
 def test_every_locked_parameter_enforced_means_no_warning():
@@ -165,7 +188,8 @@ def test_a_target_that_honours_the_locked_value_is_unaffected(tmp_path):
 
 
 def test_an_unobservable_lock_is_not_enforced_at_run_time(tmp_path):
-    """Without an observable there is nothing to compare; validation warns instead."""
+    """Without an observable there is nothing to compare at run time (validation
+    rejects such a lock unless it is acknowledged in unverified_locks)."""
     res = _run(tmp_path, locked_value=2048, observable=False)
     assert not [p for p in res.path if p.startswith("aborted:")], res.path
 

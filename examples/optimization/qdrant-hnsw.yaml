@@ -35,6 +35,14 @@ locked_parameters:
   segment_number: 1
   indexing_threshold: 0
 optimization:
+  # No entry in locked_observables for these locks: the target does not
+  # echo them, so they are recorded as unverified rather than read as enforced.
+  unverified_locks:
+    corpus: "the target does not report this value back; Nous cannot verify it"
+    distance: "the target does not report this value back; Nous cannot verify it"
+    queries: "the target does not report this value back; Nous cannot verify it"
+    segment_number: "the target does not report this value back; Nous cannot verify it"
+    indexing_threshold: "the target does not report this value back; Nous cannot verify it"
   run_command: "python bench/nous_bench.py --corpus dbpedia-openai-1M-1536d --queries 10000 --topk 10"
   test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
   known_valid_baseline: {M: 16, EFC: 128, Q: none, EFS: 64}

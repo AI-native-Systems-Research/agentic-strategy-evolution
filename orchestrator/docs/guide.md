@@ -772,10 +772,21 @@ Validation rules:
   **error** — it cannot be both held fixed and varied.
 - A `locked_observables` key that is not in `locked_parameters` is an
   **error** — a typo would leave the intended lock unenforced.
-- A locked parameter with **no** `locked_observables` entry is a **warning**
-  naming it: Nous cannot see what the target used, so the lock is a
-  declaration to the build prompt and the reader, not a check. Make the
-  adapter echo the value (see §7.7) and declare its path.
+- A locked parameter with **no** `locked_observables` entry is an **error**:
+  Nous cannot see what the target used, so the lock cannot be enforced, and a
+  lock that cannot be enforced must not read as one that is. Make the adapter
+  echo the value (see §7.7) and declare its path; or, when the target really
+  cannot report it, acknowledge it in writing:
+
+  ```yaml
+  optimization:
+    unverified_locks:
+      corpus: "passed on run_command; the harness does not echo it"
+  ```
+
+  An acknowledged lock is a **warning**, and `report.json` lists it under
+  `provenance.waivers` as declared-but-unverified, so a reader of the
+  certificate sees exactly which locks were checked.
 
 ### `guidance`
 
@@ -2341,6 +2352,13 @@ locked_parameters:
   query_count: 10000
   threads: 8
 optimization:
+  # No entry in locked_observables for these locks: the target does not
+  # echo them, so they are recorded as unverified rather than read as enforced.
+  unverified_locks:
+    corpus: "the target does not report this value back; Nous cannot verify it"
+    vectors: "the target does not report this value back; Nous cannot verify it"
+    query_count: "the target does not report this value back; Nous cannot verify it"
+    threads: "the target does not report this value back; Nous cannot verify it"
   run_command: "python bench/nous_bench.py --corpus sift-1m --queries 10000"
   test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
 
@@ -2521,6 +2539,15 @@ locked_parameters:
   oos_start: "2026-02-01"
 
 optimization:
+  # No entry in locked_observables for these locks: the target does not
+  # echo them, so they are recorded as unverified rather than read as enforced.
+  unverified_locks:
+    arming_threshold: "the target does not report this value back; Nous cannot verify it"
+    score_floor: "the target does not report this value back; Nous cannot verify it"
+    cooldown_bars: "the target does not report this value back; Nous cannot verify it"
+    weighting: "the target does not report this value back; Nous cannot verify it"
+    is_start: "the target does not report this value back; Nous cannot verify it"
+    oos_start: "the target does not report this value back; Nous cannot verify it"
   response:
     primary: {metric: improvement_steady_pct, direction: maximize}
     constraints:
@@ -3113,6 +3140,15 @@ prompts:
   methodology_layer: prompts/methodology
 
 optimization:
+  # No entry in locked_observables for these locks: the target does not
+  # echo them, so they are recorded as unverified rather than read as enforced.
+  unverified_locks:
+    geometry: "the target does not report this value back; Nous cannot verify it"
+    boundary_conditions: "the target does not report this value back; Nous cannot verify it"
+    iteration_cap: "the target does not report this value back; Nous cannot verify it"
+    residual_target: "the target does not report this value back; Nous cannot verify it"
+    precision: "the target does not report this value back; Nous cannot verify it"
+    cfl: "the target does not report this value back; Nous cannot verify it"
   run_command: "python bench/nous_bench.py --config solver.json --geometry reference-cube-3d --json"
   test_command: "python -m pytest tests/test_solver_props.py -q --json-report --json-report-file=/dev/stdout"
   run_timeout_sec: 2700     # see the sizing note below this block
@@ -3315,6 +3351,13 @@ prompts:
   methodology_layer: prompts/methodology
 
 optimization:
+  # No entry in locked_observables for these locks: the target does not
+  # echo them, so they are recorded as unverified rather than read as enforced.
+  unverified_locks:
+    compiler: "the target does not report this value back; Nous cannot verify it"
+    target_arch: "the target does not report this value back; Nous cannot verify it"
+    benchmark_suite: "the target does not report this value back; Nous cannot verify it"
+    reference_build: "the target does not report this value back; Nous cannot verify it"
   run_command: "python bench/nous_bench.py --suite kernels-v3 --reference O0-strict-fp --json"
   test_command: "python -m pytest tests/test_codegen_props.py -q --json-report --json-report-file=/dev/stdout"
   # A full rebuild plus the suite; the LTO corner is the expensive one.
@@ -3504,6 +3547,16 @@ prompts:
   methodology_layer: prompts/methodology
 
 optimization:
+  # No entry in locked_observables for these locks: the target does not
+  # echo them, so they are recorded as unverified rather than read as enforced.
+  unverified_locks:
+    dataset: "the target does not report this value back; Nous cannot verify it"
+    base_checkpoint: "the target does not report this value back; Nous cannot verify it"
+    epochs: "the target does not report this value back; Nous cannot verify it"
+    max_seq_len: "the target does not report this value back; Nous cannot verify it"
+    val_split: "the target does not report this value back; Nous cannot verify it"
+    test_split: "the target does not report this value back; Nous cannot verify it"
+    warmup_pct: "the target does not report this value back; Nous cannot verify it"
   run_command: "python bench/nous_bench.py --dataset task-mix-v2 --checkpoint base-7b-r3 --epochs 3 --json"
   test_command: "python -m pytest tests/test_train_props.py -q --json-report --json-report-file=/dev/stdout"
   run_timeout_sec: 6600     # 90 min budget + margin; see the note below
@@ -4836,7 +4889,7 @@ runs against a budget of 60–90.
 | # | Check | Cost | Fails if |
 |---|---|---|---|
 | 1 | `nous validate campaign FILE --smoke` | 1 run | predicates unsatisfiable, tests unmatched, `run_command` cannot exec, a declared `response.self_check` violated at the probe corner |
-| 1a | Every `locked_parameters` entry has an `optimization.locked_observables` path (`nous validate campaign` warns, naming each one that does not); `--smoke` then checks the probe ran with the locked values | 0 runs (part of #1) | a lock the target cannot report is a lock nothing enforces; a target that ignores one fails `--smoke` rather than aborting the epoch on row 1 |
+| 1a | Every `locked_parameters` entry has an `optimization.locked_observables` path (`nous validate campaign` rejects one that has neither a path nor an `unverified_locks` acknowledgement); `--smoke` then checks the probe ran with the locked values | 0 runs (part of #1) | a lock the target cannot report is a lock nothing enforces; a target that ignores one fails `--smoke` rather than aborting the epoch on row 1 |
 | 2 | Mechanism is active (§7.5) | 1 run | the mechanism's own metric is zero |
 | 3+4 | `nous validate campaign FILE --smoke --liveness` (§7.2, §7.3) | `sum(len(levels)) + N` runs | any declared level the target cannot execute, or one whose row violates a declared `response.self_check` — and it *reports* every factor under 2x the noise CV |
 | 5 | Objective is monotone and uncensored (§7.4) | 4–6 runs | orders-of-magnitude swings, or values pinned at a deadline |

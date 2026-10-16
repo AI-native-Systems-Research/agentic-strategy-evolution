@@ -35,6 +35,14 @@ locked_parameters:
   stable_window: 60s
   max_scale_up_rate: 1000
 optimization:
+  # No entry in locked_observables for these locks: the target does not
+  # echo them, so they are recorded as unverified rather than read as enforced.
+  unverified_locks:
+    service: "the target does not report this value back; Nous cannot verify it"
+    nodes: "the target does not report this value back; Nous cannot verify it"
+    load_profile: "the target does not report this value back; Nous cannot verify it"
+    stable_window: "the target does not report this value back; Nous cannot verify it"
+    max_scale_up_rate: "the target does not report this value back; Nous cannot verify it"
   run_command: "python bench/nous_bench.py --service hello-latency --profile diurnal-burst-10m"
   test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
   known_valid_baseline: {TC: 100, PW: 10, SZ: 30, MODE: concurrency}

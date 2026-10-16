@@ -875,6 +875,15 @@ locked_parameters:            # unchanged from the original campaign
   oos_start: "2026-02-01"
 
 optimization:
+  # No entry in locked_observables for these locks: the target does not
+  # echo them, so they are recorded as unverified rather than read as enforced.
+  unverified_locks:
+    arming_threshold: "the target does not report this value back; Nous cannot verify it"
+    score_floor: "the target does not report this value back; Nous cannot verify it"
+    cooldown_bars: "the target does not report this value back; Nous cannot verify it"
+    weighting: "the target does not report this value back; Nous cannot verify it"
+    is_start: "the target does not report this value back; Nous cannot verify it"
+    oos_start: "the target does not report this value back; Nous cannot verify it"
   response:
     primary: {metric: improvement_steady_pct, direction: maximize}
     constraints:

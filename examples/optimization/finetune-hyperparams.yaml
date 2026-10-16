@@ -74,6 +74,16 @@ locked_parameters:
   test_split: test-frozen-5k
   warmup_pct: 3
 optimization:
+  # No entry in locked_observables for these locks: the target does not
+  # echo them, so they are recorded as unverified rather than read as enforced.
+  unverified_locks:
+    dataset: "the target does not report this value back; Nous cannot verify it"
+    base_checkpoint: "the target does not report this value back; Nous cannot verify it"
+    epochs: "the target does not report this value back; Nous cannot verify it"
+    max_seq_len: "the target does not report this value back; Nous cannot verify it"
+    val_split: "the target does not report this value back; Nous cannot verify it"
+    test_split: "the target does not report this value back; Nous cannot verify it"
+    warmup_pct: "the target does not report this value back; Nous cannot verify it"
   run_command: "python bench/nous_bench.py --dataset task-mix-v2 --checkpoint base-7b-r3 --epochs 3 --json"
   test_command: "python -m pytest tests/test_train_props.py -q --json-report --json-report-file=/dev/stdout"
 

@@ -1317,9 +1317,24 @@ properties:
           evaluates the same check on the configuration it runs. A key
           that is not in ``locked_parameters`` is a validation error (a
           typo would leave the intended lock unenforced); a locked
-          parameter with no entry here is NOT enforced at run time, and
-          validation warns naming each one. Example:
+          parameter with no entry here CANNOT be enforced at run time, so
+          validation REJECTS it unless ``unverified_locks`` names it with a
+          reason. Example:
           ``{max_seq_len: engine.max_seq_len, model: config.model}``.
+      unverified_locks:
+        type: object
+        minProperties: 1
+        additionalProperties: { type: string, minLength: 1 }
+        description: >
+          ``{locked_parameter: <reason>}`` for every lock the target does
+          NOT report back, so Nous cannot verify it was honoured (e.g. a
+          dataset name passed on the run_command line that the target never
+          echoes). Without an entry here such a lock is a validation ERROR:
+          a lock that cannot be enforced must not read as one that was. With
+          an entry, validation warns and report.json records the lock under
+          ``provenance.waivers`` as declared-but-unverified. A key that is
+          not in ``locked_parameters``, or that also has a
+          ``locked_observables`` entry, is an error.
 
       guidance:
         type: object

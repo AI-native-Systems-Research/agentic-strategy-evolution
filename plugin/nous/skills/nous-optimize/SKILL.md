@@ -70,7 +70,9 @@ Fill every `TODO-`. The rules that have cost real campaigns:
 - `known_valid_baseline` uses a declared level of every factor.
 - Declare `refine` (and add it to `stages`) whenever ≥ 2 numeric factors have
   > 2 levels — curvature at the screen routes there.
-- `locked_parameters` are enforced only with `locked_observables`.
+- `locked_parameters` are enforced only with `locked_observables`; a lock with
+  neither a path nor an `optimization.unverified_locks: {param: reason}`
+  acknowledgement is a validation error.
 - `self_check` is an invariant of the measurement itself, never a bound on the
   objective (that is a constraint).
 

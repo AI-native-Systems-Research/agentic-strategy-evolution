@@ -28,8 +28,11 @@ the same dotted-path convention and the same ``==`` comparator as
 config" is read identically by every check.
 
 A locked parameter with no declared observable CANNOT be enforced here -- Nous
-has no way to see what the target used -- and validation says so with a
-``WARN:`` naming each one, rather than passing in silence.
+has no way to see what the target used. Validation therefore REJECTS it unless
+the author acknowledges it in ``optimization.unverified_locks`` with a reason;
+an acknowledged lock is a ``WARN:`` and is recorded in report.json
+(``provenance.waivers``), so an unenforceable lock never reads as an enforced
+one.
 """
 from __future__ import annotations
 
@@ -102,19 +105,56 @@ def validation_findings(campaign: dict) -> list[str]:
                 f"locked_parameters."
             )
 
+    unverified = unverified_locks(campaign)
+    for key in unverified:
+        if key not in locked:
+            out.append(
+                f"optimization.unverified_locks names {key!r}, which is not a key "
+                f"of locked_parameters. Fix the key or remove the entry."
+            )
+        elif key in observables:
+            out.append(
+                f"optimization.unverified_locks names {key!r}, which also has a "
+                f"locked_observables entry and IS verified on every row. Remove "
+                f"it from unverified_locks."
+            )
+
     unenforced = [k for k in locked if k not in observables and k not in factor_keys]
-    if unenforced:
+    undeclared = [k for k in unenforced if k not in unverified]
+    acknowledged = [k for k in unenforced if k in unverified]
+    if undeclared:
+        # AN ERROR, NOT A WARNING. A lock with no observable is unenforceable:
+        # nothing Nous measures can show the target ran with it, so letting it
+        # pass validation would let the campaign READ as locked when it is not.
+        # The author either says where the target reports the value, or
+        # acknowledges in writing that the lock is declarative only.
+        out.append(
+            "locked_parameter(s) "
+            + ", ".join(repr(k) for k in undeclared)
+            + " cannot be enforced: no entry in optimization.locked_observables "
+            "says where the target reports the value it ran with, so a target "
+            "that ignores the lock would measure a different experiment on every "
+            "row and nothing would notice. Either declare the path "
+            "(e.g. locked_observables: {max_seq_len: engine.max_seq_len}) to make "
+            "a deviation a hard abort, or acknowledge the lock as unverified "
+            "with a reason (optimization.unverified_locks: {<param>: <why>}); "
+            "the acknowledgement is recorded in report.json."
+        )
+    if acknowledged:
         out.append(
             "WARN: locked_parameter(s) "
-            + ", ".join(repr(k) for k in unenforced)
-            + " have no entry in optimization.locked_observables, so this "
-            "campaign CANNOT verify the target ran with them -- a target that "
-            "ignores one measures a different experiment on every row and "
-            "nothing notices. Declare where the target reports each value "
-            "(e.g. locked_observables: {max_seq_len: engine.max_seq_len}) to "
-            "make a deviation a hard abort."
+            + ", ".join(repr(k) for k in acknowledged)
+            + " are declared UNVERIFIED (optimization.unverified_locks): Nous "
+            "does not check the target honoured them, and report.json records "
+            "that under provenance.waivers."
         )
     return out
+
+
+def unverified_locks(campaign: dict) -> dict[str, str]:
+    opt = (campaign or {}).get("optimization") or {}
+    raw = opt.get("unverified_locks") if isinstance(opt, dict) else None
+    return {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
 
 
 def deviations(campaign: dict, observed: dict) -> list[str]:
