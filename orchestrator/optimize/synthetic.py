@@ -124,6 +124,12 @@ class Surface:
     #: oracle runs the campaign the surface was built for). Empty on every
     #: pre-existing surface, whose tests pass constraints explicitly.
     constraints: tuple = ()
+    #: The factor ids ``fn``, ``invalid`` and every objective actually read.
+    #: Empty means all of them. A many-knob surface names its few active
+    #: factors so the oracle enumerates only THEIR grid with the inert ones
+    #: pinned -- still exact, because nothing it judges depends on the inert
+    #: ones -- instead of 9^k points (a 16-knob truth would never finish).
+    active: tuple = ()
 
 
 def _numeric(fid: str, levels=(2, 4, 8, 16), grid=1) -> dict:
@@ -435,6 +441,23 @@ def _deterministic_constraint_axis() -> Surface:
     )
 
 
+
+def sparse_knobs(k: int, *, noise_sd: float = 0.05) -> Surface:
+    """``k`` numeric knobs of which only three move the response -- effect
+    sparsity, the usual shape of a real many-knob system. X00 has an interior
+    optimum, X01 is monotone (its best is the upper edge), and an X00 x X02
+    interaction moves the joint optimum to X00=12, X01=16, X02=16. Not in
+    ``SURFACES``: the every-surface loops would pay for a many-knob campaign
+    each; the many-knob tests use it directly."""
+    ids = tuple(f"X{i:02d}" for i in range(k))
+    a, b, c = ids[0], ids[1], ids[2]
+    return Surface(
+        name=f"sparse_knobs_{k}", noise_sd=noise_sd,
+        factors=tuple(_numeric(i) for i in ids),
+        fn=lambda lv: 20 - 0.05 * (lv[a] - 11) ** 2 + 0.2 * lv[b] + 0.01 * lv[a] * lv[c],
+        active=(a, b, c),
+    )
+
 SURFACES: dict[str, Callable[[], Surface]] = {
     "additive": _additive,
     "interaction_only": _interaction_only,
@@ -618,11 +641,25 @@ def candidate_grid(factors_raw: list[dict], *, max_numeric_points: int = 9) -> l
     return [dict(zip(ids, combo)) for combo in itertools.product(*axes)]
 
 
+def _truth_grid(surface: Surface):
+    """The grid the oracle judges over: every factor's candidate points, or,
+    when the surface declares ``active`` factors, only theirs with each inert
+    factor pinned at its first level (exact: nothing judged depends on it)."""
+    if not surface.active:
+        yield from candidate_grid(list(surface.factors))
+        return
+    act = [f for f in surface.factors if f["id"] in surface.active]
+    pinned = {f["id"]: f["levels"][0] for f in surface.factors
+              if f["id"] not in surface.active}
+    for lv in candidate_grid(act):
+        yield {**pinned, **lv}
+
+
 def true_optimum(surface: Surface) -> tuple[dict, float]:
     """Best VALID level combination on the candidate grid, by ``direction``."""
     best_lv, best_v = None, None
     sign = 1.0 if surface.direction == "maximize" else -1.0
-    for lv in candidate_grid(list(surface.factors)):
+    for lv in _truth_grid(surface):
         if surface.invalid is not None and surface.invalid(lv):
             continue
         # `fails_at` points are deliberately NOT skipped. `invalid` is a fact
@@ -653,7 +690,7 @@ def true_front(surface: Surface) -> list[tuple[dict, dict]]:
     skipped, for the reason ``true_optimum`` gives.
     """
     pts = []
-    for lv in candidate_grid(list(surface.factors)):
+    for lv in _truth_grid(surface):
         if surface.invalid is not None and surface.invalid(lv):
             continue
         pts.append((lv, objective_values(surface, lv)))
