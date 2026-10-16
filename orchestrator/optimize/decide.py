@@ -87,6 +87,13 @@ SEARCH_SEED = 0
 #: from a 4k sample as reliably as from a 50k one (see tests).
 SEARCH_SAMPLE = 4_000
 
+#: Above the cap, at most this many alias READINGS are assessed per call of
+#: ``alias_consequential`` (largest |coefficient| first), each by a local
+#: search; the rest are recorded as unassessed. A resolution-IV screen of 16
+#: knobs has ~100 readings and of 24 ~250, and one full search per reading
+#: was 120 of a 131 s campaign; a local search per reading costs ~0.05 s.
+ALIAS_READINGS_CAP = 64
+
 #: Ascent starts per objective direction (the best pooled points), and per
 #: multi-objective weight vector.
 SEARCH_STARTS = 8
@@ -744,6 +751,7 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
                         epsilon_pct: float = 2.0, constraint_models=(),
                         constraint_delta: float = 0.05,
                         baseline: Candidate | None = None,
+                        record: dict | None = None,
                         **search) -> list[tuple[str, str]]:
     """Aliased pairs whose resolution could change the recommended winner.
 
@@ -821,6 +829,23 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
     reading actually recommends. Extra objectives are not passed on: the
     question is about the primary fit's winner. Under the cap ``baseline`` is
     ignored -- enumeration already found the exact argmax.
+
+    BOUNDED WORK ABOVE THE CAP. One full search per reading made this the
+    dominant cost of a many-knob campaign (a resolution-IV screen has one
+    reading per member of every 2fi alias chain: ~100 at 16 knobs, ~250 at
+    24). Above the cap each reading is instead assessed by a LOCAL search --
+    no uniform sample; the pool is the reference winner, the fitted reading's
+    ``SEARCH_STARTS`` best evaluated points and the measured configurations --
+    and at most ``ALIAS_READINGS_CAP`` readings are assessed, largest
+    |coefficient| first: with coded levels in [-1, 1], re-attributing a
+    coefficient beta changes any prediction by at most 2|beta|, so a member of
+    the alternative's optimal set loses at most 4|beta| plus that reading's own
+    epsilon under the fitted one -- small coefficients are the least able to
+    move the winner. Nothing is skipped silently: ``record``, when given,
+    is filled with ``{readings, assessed, unassessed: [[kept, alt], ...],
+    method}``, which the fitting stage writes as
+    ``recommendation.json["alias_assessment"]``. Under the cap every reading
+    is enumerated, as before, and ``record`` says so.
     """
     search = {k: v for k, v in search.items() if k != "objectives"}
     kw = dict(direction=direction, fitted_ids=fitted_ids, held_fixed=held_fixed,
@@ -837,8 +862,30 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
         kw["seed_levels"] = [dict(baseline.levels), *(kw.get("seed_levels") or ())]
     eps = abs(base.predicted) * float(epsilon_pct) / 100.0
 
+    readings = alias_resolutions(fit)
+    if base_all.space.exhaustive:
+        assessed = set(range(len(readings)))
+        method = "enumeration"
+    else:
+        order = sorted(range(len(readings)),
+                       key=lambda r: (-abs(fit.effects[readings[r][0]].estimate), r))
+        assessed = set(order[:ALIAS_READINGS_CAP])
+        method = "local_coordinate_ascent"
+        kw["sample"] = 0
+        kw["seed_levels"] = ([dict(base.levels)]
+                             + [dict(c.levels) for c in base_all[:SEARCH_STARTS]]
+                             + list(kw.get("seed_levels") or ()))
+    if record is not None:
+        record.update({
+            "readings": len(readings), "assessed": len(assessed), "method": method,
+            "unassessed": [[readings[r][1], readings[r][2]]
+                           for r in range(len(readings)) if r not in assessed],
+        })
+
     out: list[tuple[str, str]] = []
-    for _i, kept_label, alt_label, alt_fit in alias_resolutions(fit):
+    for r, (_i, kept_label, alt_label, alt_fit) in enumerate(readings):
+        if r not in assessed:
+            continue
         alt_all = ranked(alt_fit, factors, top=None, **kw)
         if not alt_all:
             continue

@@ -324,6 +324,8 @@ def test_a_searched_campaign_records_candidate_space_and_still_finds_the_optimum
         assert 1 <= cs["evaluated"] and cs["seed"] == decide.SEARCH_SEED
         assert "NOT over all of X_valid" in doc["residual_regret_model"]["detail"]
         assert doc["alias_consequential_basis"] == "searched"
+        aa = doc["alias_assessment"]
+        assert aa["readings"] == aa["assessed"] + len(aa["unassessed"])
         assert "predicted_front_basis" not in doc
         assert check_candidate_space(doc) == []
     assert "Candidate space searched, not enumerated" in render_report_markdown(
@@ -469,8 +471,9 @@ def _alias_fit(k: int = 4) -> Fit:
 def test_a_searched_alias_test_uses_the_stage_baseline():
     """With a pool of just the axes' centre (``sample=0``) the ascent cannot
     leave the saddle of ``X00*X01`` -- no single-factor move improves on 0 -- so
-    alias_consequential's own search finds no winner worth defending and calls
-    the alias irrelevant. Given the stage's own argmax as ``baseline`` (here the
+    alias_consequential's own search finds no real winner to defend (before
+    the local per-reading searches it called the alias irrelevant). Given the
+    stage's own argmax as ``baseline`` (here the
     enumerated one), the searched test agrees with enumeration."""
     k = 4
     fs = _factors(k)
@@ -480,8 +483,13 @@ def test_a_searched_alias_test_uses_the_stage_baseline():
     assert exact == [("X00X01", "X02X03")]
     stage_rec = decide.recommend(fit, fs, **kw)
     assert stage_rec.predicted == 1.0
+    # Without the baseline the alias test's OWN primary search cannot leave
+    # the saddle. Since the per-reading searches became local ones (A7) the
+    # blind verdict agrees here too -- but for a DEGENERATE reason: the
+    # saddle winner predicts 0, so epsilon is 0 and any loss counts. Only
+    # the baseline makes the verdict rest on the real winner.
     blind = decide.alias_consequential(fit, fs, cap=0, sample=0, **kw)
-    assert blind == []          # the failure mode the baseline exists for
+    assert blind == exact
     assert decide.alias_consequential(fit, fs, cap=0, sample=0, baseline=stage_rec,
                                       **kw) == exact
 
@@ -641,3 +649,56 @@ def test_measured_seeds_that_cannot_be_placed_are_counted_not_dropped_silently()
     assert r.space.seeds_dropped == 2
     assert r.space.as_dict()["seeds_dropped"] == 2
     assert decide.ranked(fit, fs, seed_levels=[good], **kw).space.seeds_dropped == 0
+
+
+# ─── stage-0 review: the searched alias test bounds its work (A7) ───────────
+
+
+def _res_iv_fit(k: int):
+    from orchestrator.optimize.design import fractional_factorial, with_center_points
+    from orchestrator.optimize.effects import fit_effects
+
+    ids = _ids(k)
+    d = with_center_points(fractional_factorial(ids, 4), 4)
+    rng = random.Random(1)
+    ys = [10 + 2 * p.coded[0] - p.coded[1] + 1.5 * p.coded[2] * p.coded[3]
+          + rng.gauss(0, 0.3) for p in d.points]
+    return ids, fit_effects(d, ys, factor_ids=ids)
+
+
+def test_the_searched_alias_test_bounds_its_work_at_24_knobs_resolution_iv():
+    """A resolution-IV screen of 24 knobs has 245 alias readings; one full
+    search each took 67 s of CPU. Now at most ALIAS_READINGS_CAP readings are
+    assessed, each by a local search, and the rest are RECORDED as unassessed
+    -- never skipped silently. Generous CPU bound (measured ~3 s)."""
+    k = 24
+    ids, fit = _res_iv_fit(k)
+    fs = _factors(k)
+    kw = dict(direction="maximize", fitted_ids=ids, held_fixed={})
+    base = decide.ranked(fit, fs, top=None, **kw)
+    n_readings = len(decide.alias_resolutions(fit))
+    assert n_readings == 245
+    rec: dict = {}
+    t = time.process_time()
+    out = decide.alias_consequential(fit, fs, baseline=base[0], record=rec, **kw)
+    cpu = time.process_time() - t
+    assert cpu < 20.0, cpu
+    assert rec["readings"] == n_readings
+    assert rec["assessed"] == decide.ALIAS_READINGS_CAP
+    assert len(rec["unassessed"]) == n_readings - decide.ALIAS_READINGS_CAP
+    assert rec["method"] == "local_coordinate_ascent"
+    unassessed = {tuple(p) for p in rec["unassessed"]}
+    assert not unassessed & set(out), "an unassessed reading cannot be a finding"
+    # The largest coefficient's readings are assessed first.
+    biggest = max(fit.effects, key=lambda e: abs(e.estimate) if e.aliased_with else -1)
+    assert not [p for p in unassessed if p[0] == biggest.label]
+
+
+def test_under_the_cap_every_alias_reading_is_enumerated():
+    k = 4
+    fs = _factors(k)
+    rec: dict = {}
+    out = decide.alias_consequential(_alias_fit(k), fs, direction="maximize",
+                                     fitted_ids=_ids(k), held_fixed={}, record=rec)
+    assert out == [("X00X01", "X02X03")]
+    assert rec == {"readings": 1, "assessed": 1, "method": "enumeration", "unassessed": []}

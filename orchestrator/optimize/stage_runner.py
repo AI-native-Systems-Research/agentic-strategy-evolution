@@ -4048,6 +4048,7 @@ def run_stage(
     # there; recording them is what makes that verifiable rather than assumed,
     # and the foldover state deliberately carries no second foldover branch, so
     # a non-empty list there is a finding for a reader rather than another run.
+    alias_record: dict = {}
     alias_pairs_consequential = decide.alias_consequential(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded,
@@ -4056,7 +4057,7 @@ def run_stage(
         # The stage's own primary argmax (`scored` is sorted by the primary):
         # above the cap it came from the search that also climbed every
         # objective, so it can beat what alias_consequential's own search finds.
-        baseline=scored[0] if scored else None, **_search,
+        baseline=scored[0] if scored else None, record=alias_record, **_search,
     )
     # Counted over the set the ranking ACTUALLY filtered (`scored.unfiltered`),
     # not a fresh ranking: above the cap a second search would evaluate a
@@ -4147,6 +4148,10 @@ def run_stage(
             # Searched, not enumerated: an empty alias list means none was
             # FOUND, and front statuses are relative to the evaluated points.
             "alias_consequential_basis": "searched",
+            # Which alias readings the searched test actually assessed (a
+            # local search each, at most decide.ALIAS_READINGS_CAP of them,
+            # largest coefficient first) and which it did not.
+            **({"alias_assessment": alias_record} if alias_record else {}),
             **({"predicted_front_basis": "evaluated_points"}
                if (mo_record or {}).get("predicted_front") is not None else {})}
            if not candidate_space.exhaustive else {}),

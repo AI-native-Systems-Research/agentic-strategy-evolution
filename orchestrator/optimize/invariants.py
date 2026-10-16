@@ -986,8 +986,10 @@ def check_candidate_space(rec: dict, report: dict | None = None) -> list[str]:
     regret bound's ``detail`` says it was not taken over all of X_valid,
     ``alias_consequential_basis`` is ``"searched"``, a predicted front carries
     ``predicted_front_basis: "evaluated_points"``, every modelled
-    constraint's ``applied`` agrees with ``constraint_models_applied``, and no
-    constraint ``reason`` claims "every candidate" (only enumeration can).
+    constraint's ``applied`` agrees with ``constraint_models_applied``, no
+    constraint ``reason`` claims "every candidate" (only enumeration can), and
+    an ``alias_assessment`` accounts for every alias reading (assessed or
+    listed unassessed).
     """
     from orchestrator.optimize.decide import CANDIDATE_CAP
 
@@ -1016,6 +1018,10 @@ def check_candidate_space(rec: dict, report: dict | None = None) -> list[str]:
     if "NOT over all of X_valid" not in detail:
         out.append("residual_regret_model.detail does not say the bound was taken over "
                    "the evaluated set only")
+    aa = rec.get("alias_assessment")
+    if aa is not None and aa.get("readings") != (aa.get("assessed") or 0) + len(
+            aa.get("unassessed") or []):
+        out.append(f"alias_assessment does not account for every reading: {aa!r}")
     if rec.get("alias_consequential_basis") != "searched":
         out.append("alias_consequential is not marked alias_consequential_basis: "
                    "'searched'")
