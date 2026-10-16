@@ -2127,11 +2127,16 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     metric = primary.get("metric") or ""
     direction = primary.get("direction") or pol["objective"]["direction"]
     conf = _latest_confirmation(work_dir)
-    rec = _read_recommendation(work_dir) or {}
-    # This epoch's latest fitting-stage record (``{}`` before the epoch wrote
-    # one): the source of the report's lost/inadmissible-level facts, which
-    # must agree with the epoch-scoped bar (``_barred_levels``).
+    # THIS EPOCH's latest fitting-stage record, ``{}`` before the epoch wrote
+    # one. The report describes ONE epoch: its model rung, model bound,
+    # candidate space, epsilon fallback, adequacy and level facts all come from
+    # this record, the same one the epoch-scoped bar (``_barred_levels``) reads.
+    # Reading the latest record from ANY epoch let an epoch that ended before
+    # fitting present the previous epoch's fitted pick as its answer while
+    # omitting that epoch's verdict on the model; with ``{}`` such an epoch
+    # falls to the measured / baseline rungs, as it should.
     _epoch_rec = (_epoch_recommendations(work_dir) or [{}])[-1]
+    rec = _epoch_rec
     # ── MULTI-OBJECTIVE: the front is the answer; the ladder picks a point ──
     #
     # The latest confirm round's measured front when there is one; otherwise
@@ -2218,7 +2223,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
                      and t.get("to") != "exception"), None)
     boundary_block = None
     if boundary is not None:
-        sp = (_read_recommendation(work_dir) or {}).get("stationary_point") or {}
+        sp = (rec or {}).get("stationary_point") or {}
         boundary_block = {
             "axes": sorted(k for k, v in sp.items()
                            if isinstance(v, (int, float)) and abs(v) > 1.0),

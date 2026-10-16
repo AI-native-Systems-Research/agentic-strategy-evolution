@@ -268,18 +268,17 @@ def test_R4_report_level_facts_are_epoch_scoped(tmp_path):
     for k in ("lost_levels", "inadmissible_levels", "all_levels_inadmissible"):
         assert k not in rep, (k, rep.get(k))
     assert "recommendation_names_barred_level" not in rep
-    # The report never contradicts itself: whatever it recommends is
-    # consistent with the level facts it states.
-    assert inv.check_recommendation_avoids_lost_levels(
-        {k: rep[k] for k in ("lost_levels", "inadmissible_levels",
-                             "all_levels_inadmissible") if k in rep}, rep) == []
+    # The answer is THIS epoch's: with no epoch-2 fitting record the model rung
+    # has nothing to offer, so the report falls to the measured rung (the one
+    # epoch-2 row at arc), never to epoch 1's fitted pick (lfu).
+    assert rep["recommendation"]["basis"] == "measured", rep["recommendation"]
+    assert rep["recommendation"]["levels"] == {"A": 16, "POL": "arc"}
 
 
 def test_R4_the_measured_rung_can_recommend_the_level_without_a_stale_lost_line(tmp_path):
-    """The reviewer's exact path: epoch 2 has no recommendation and the
-    epoch-1 record is at the lost level itself, so the model rung declines
-    nothing and the MEASURED/model answer names arc; report.json must not
-    then claim arc is lost."""
+    """Epoch 2 has no recommendation; epoch 1's record names arc lost. The
+    answer comes from epoch 2's own measurement (basis measured) and
+    report.json must not then claim arc is lost."""
     from types import SimpleNamespace
 
     from orchestrator.optimize.harness import synthetic_campaign
@@ -313,6 +312,7 @@ def test_R4_the_measured_rung_can_recommend_the_level_without_a_stale_lost_line(
 
     _run_report(_Eng(), camp, tmp_path, 3, pol2, recommendation_levels=None)
     rep = json.loads((tmp_path / "report.json").read_text())
+    assert rep["recommendation"]["basis"] == "measured", rep["recommendation"]
     assert rep["recommendation"]["levels"]["POL"] == "arc"
     assert "lost_levels" not in rep
     assert "Levels lost" not in render_report_markdown(tmp_path)
@@ -360,3 +360,47 @@ def test_R5_report_adequacy_and_coverage_facts_are_epoch_scoped_too(tmp_path):
     for k in ("model_adequate", "model_adequate_basis", "curvature_untested_levels",
               "aliases_not_assessed"):
         assert k not in rep, (k, rep.get(k))
+
+
+def test_R6_an_epoch_without_a_fit_never_reports_the_previous_epochs_model(tmp_path):
+    """Merge-gate probe: epoch 1's record carries a REJECTED model with its
+    pick, prediction (123), model bound (7) and epsilon (5). Epoch 2 ends
+    before fitting. The report must not present epoch 1's fitted pick and
+    bound as epoch 2's answer (while omitting that the model was rejected)."""
+    from types import SimpleNamespace
+
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.policy import compile_policy, policy_hash, write_policy
+    from orchestrator.optimize.stage_runner import _run_report
+
+    s = Surface(name="r6", fn=lambda lv: 0.0,
+                factors=(_numeric("A"), _choice("POL", levels=("lru", "lfu", "arc"))))
+    camp = synthetic_campaign(s)
+    pol1 = compile_policy(camp)
+    it1 = tmp_path / "runs" / "iter-2"
+    it1.mkdir(parents=True)
+    (it1 / "runs.jsonl").write_text("")
+    (it1 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol1)}))
+    (it1 / "recommendation.json").write_text(json.dumps({
+        "stage": "screen", "iteration": 2, "levels": {"A": 2, "POL": "lfu"},
+        "predicted": 123.0, "model_adequate": False,
+        "residual_regret_model": {"value": 7.0}, "epsilon": 5.0}))
+    pol2 = dict(pol1, epoch=2)
+    write_policy(tmp_path, pol2)
+    it3 = tmp_path / "runs" / "iter-3"
+    it3.mkdir(parents=True)
+    (it3 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol2)}))
+    (it3 / "runs.jsonl").write_text(json.dumps({
+        "row_index": 0, "status": "complete", "role": "corner",
+        "levels": {"A": 16, "POL": "arc"}, "response": {"m": 1.0}}) + "\n")
+
+    class _Eng(SimpleNamespace):
+        def transition(self, *_a, **_k):
+            pass
+
+    _run_report(_Eng(), camp, tmp_path, 3, pol2, recommendation_levels=None)
+    rep = json.loads((tmp_path / "report.json").read_text())
+    assert rep["recommendation"]["basis"] != "model", rep["recommendation"]
+    assert rep["recommendation"].get("value") != 123.0
+    assert rep.get("residual_regret_model") in (None, {}), rep.get("residual_regret_model")
+    assert rep.get("epsilon") != 5.0
