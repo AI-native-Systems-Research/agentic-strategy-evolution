@@ -450,3 +450,24 @@ def test_the_knee_is_the_knee_of_the_whole_measured_front(name, seed, oracle_run
               if f["levels"] == par["preference"]["chosen"]]
     assert chosen, "the preferred point is not on the reported front"
     assert d[chosen[0]] >= max(d) - 1e-9
+
+
+def test_the_optimize_package_imports_no_forbidden_dependency():
+    """orchestrator/optimize/__init__.py: stdlib + scipy.stats only. An import
+    anywhere in the package (module level OR inside a function) is a
+    dependency the harness does not declare."""
+    import ast
+
+    forbidden = {"numpy", "pandas", "statsmodels", "pyDOE3", "pydoe3", "hypothesis"}
+    pkg = Path(__file__).resolve().parents[1] / "orchestrator" / "optimize"
+    hits = []
+    for py in sorted(pkg.glob("*.py")):
+        for node in ast.walk(ast.parse(py.read_text())):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module]
+            hits += [f"{py.name}:{node.lineno} {n}" for n in names
+                     if n.split(".")[0] in forbidden]
+    assert hits == [], hits

@@ -172,23 +172,35 @@ def strictly_dominates(a, b) -> bool:
     return all(x >= y for x, y in zip(a, b)) and any(x > y for x, y in zip(a, b))
 
 
-def nondominated_indices(vectors, eps=None) -> list[int]:
-    """Indices of vectors no other vector dominates (``eps`` = indifference)."""
-    import numpy as np
+def _pareto_set(vectors) -> list[int]:
+    """Indices of the vectors no other vector STRICTLY dominates (larger is
+    better), in input order. One pass in lexicographically descending order: a
+    later vector cannot strictly dominate an earlier one (it would have to be
+    componentwise >= it, hence lexicographically >= it, hence equal), so
+    comparing each vector against the kept set is exact. O(N * front)."""
+    order = sorted(range(len(vectors)), key=lambda i: tuple(vectors[i]), reverse=True)
+    kept: list[int] = []
+    for i in order:
+        v = vectors[i]
+        if not any(strictly_dominates(vectors[j], v) for j in kept):
+            kept.append(i)
+    return sorted(kept)
 
-    if not vectors:
+
+def nondominated_indices(vectors, eps=None) -> list[int]:
+    """Indices of vectors no other vector dominates (``eps`` = indifference).
+
+    Pure Python (this package imports no numpy). Without ``eps`` this is the
+    exact Pareto set (``_pareto_set``); with ``eps`` it is the pairwise
+    epsilon rule of ``eps_dominates``, which is not transitive, so every pair
+    is compared."""
+    vecs = [list(map(float, v)) for v in vectors or ()]
+    if not vecs:
         return []
-    v = np.asarray(vectors, dtype=float)
-    e = np.zeros(v.shape[1]) if eps is None else np.asarray(eps, dtype=float)
-    keep = []
-    for i in range(len(v)):
-        ge = np.all(v >= v[i], axis=1)
-        gt = np.any(v - v[i] > e, axis=1) if eps is not None else np.any(v > v[i], axis=1)
-        dom = ge & gt
-        dom[i] = False
-        if not dom.any():
-            keep.append(i)
-    return keep
+    if eps is None:
+        return _pareto_set(vecs)
+    return [i for i, v in enumerate(vecs)
+            if not any(j != i and eps_dominates(w, v, eps) for j, w in enumerate(vecs))]
 
 
 # ── preference ───────────────────────────────────────────────────────────────
@@ -444,8 +456,6 @@ def predicted_front(cands, models: dict, objectives, *, delta: float,
     to ``MAX_POSSIBLE_STORED`` further ``possibly_nondominated`` ones, nearest
     to the point front first.
     """
-    import numpy as np
-
     from orchestrator.optimize.constraint_models import predicted_with_se
 
     if not cands:
@@ -464,43 +474,46 @@ def predicted_front(cands, models: dict, objectives, *, delta: float,
             s[o.metric] = se if m.has_se else None
         preds.append(p)
         ses.append(s)
-    signs = np.array([sign(o.direction) for o in objectives])
-    Y = np.array([[pr[o.metric] for o in objectives] for pr in preds], dtype=float) * signs
-    T = np.array([tcrit(delta / K, models[o.metric].fit.pure_error_df)
-                  if models.get(o.metric) is not None and models[o.metric].has_se
-                  else np.inf for o in objectives])
-    S = np.array([[s[o.metric] if s[o.metric] is not None else np.inf
-                   for o in objectives] for s in ses], dtype=float)
-    with np.errstate(invalid="ignore"):
-        half = np.where(np.isinf(T) | np.isinf(S), np.inf, S * T)
-    pess = Y - half
-    opt = Y + half
-    finite = np.all(np.isfinite(Y), axis=1)
+    inf = float("inf")
+    T = [tcrit(delta / K, models[o.metric].fit.pure_error_df)
+         if models.get(o.metric) is not None and models[o.metric].has_se else inf
+         for o in objectives]
+    Y, pess, opt = [], [], []
+    for pr, se in zip(preds, ses):
+        y = [sign(o.direction) * float(pr[o.metric]) for o in objectives]
+        half = [inf if (T[k] == inf or se[o.metric] is None) else se[o.metric] * T[k]
+                for k, o in enumerate(objectives)]
+        Y.append(y)
+        pess.append([a - h for a, h in zip(y, half)])
+        opt.append([a + h for a, h in zip(y, half)])
     n = len(cands)
-    conf_dom = np.zeros(n, dtype=bool)
-    for i in range(n):
-        if not finite[i]:
-            conf_dom[i] = True
-            continue
-        ge = np.all(pess >= opt[i], axis=1)
-        gt = np.any(pess > opt[i], axis=1)
-        d = ge & gt & finite
-        d[i] = False
-        conf_dom[i] = bool(d.any())
-    Yf = [list(Y[i]) for i in range(n)]
-    nd_local = nondominated_indices([Yf[i] for i in range(n) if finite[i]])
+    finite = [all(math.isfinite(x) for x in y) for y in Y]
     finite_idx = [i for i in range(n) if finite[i]]
-    nd = sorted(finite_idx[j] for j in nd_local)
+    # CONFIDENTLY DOMINATED: some d's pessimistic vector is >= c's optimistic
+    # one everywhere and > somewhere. If any d does it, a member of the Pareto
+    # set of the pessimistic vectors does too (it is >= d's), so c is checked
+    # against that set only.
+    pess_front = [finite_idx[j] for j in _pareto_set([pess[i] for i in finite_idx])]
+    conf_dom = [True] * n
+    for i in finite_idx:
+        conf_dom[i] = any(
+            j != i and all(a >= b for a, b in zip(pess[j], opt[i]))
+            and any(a > b for a, b in zip(pess[j], opt[i]))
+            for j in pess_front)
+    nd = [finite_idx[j] for j in _pareto_set([Y[i] for i in finite_idx])]
     nd_set = set(nd)
-    possible = [i for i in range(n) if not conf_dom[i] and i not in nd_set and finite[i]]
+    possible = [i for i in finite_idx if not conf_dom[i] and i not in nd_set]
     if possible and nd:
-        ndY = Y[nd]
-        span = np.where(np.ptp(Y[finite], axis=0) > 0, np.ptp(Y[finite], axis=0), 1.0)
+        span = []
+        for k in range(K):
+            col = [Y[i][k] for i in finite_idx]
+            r = max(col) - min(col)
+            span.append(r if r > 0 else 1.0)
 
         def gap(i):
             # How far the point front is ahead of i (L-inf, normalised): the
             # smallest per-point max shortfall.
-            return float(np.min(np.max((ndY - Y[i]) / span, axis=1)))
+            return min(max((Y[j][k] - Y[i][k]) / span[k] for k in range(K)) for j in nd)
 
         possible.sort(key=lambda i: (gap(i), i))
     possible = possible[:MAX_POSSIBLE_STORED]
