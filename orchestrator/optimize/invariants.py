@@ -983,8 +983,9 @@ def check_candidate_space(rec: dict) -> list[str]:
     ``size`` and at least the number of ``top_candidates``, the model
     regret bound's ``detail`` says it was not taken over all of X_valid,
     ``alias_consequential_basis`` is ``"searched"``, a predicted front carries
-    ``predicted_front_basis: "evaluated_points"``, and every modelled
-    constraint's ``applied`` agrees with ``constraint_models_applied``.
+    ``predicted_front_basis: "evaluated_points"``, every modelled
+    constraint's ``applied`` agrees with ``constraint_models_applied``, and no
+    constraint ``reason`` claims "every candidate" (only enumeration can).
     """
     from orchestrator.optimize.decide import CANDIDATE_CAP
 
@@ -1020,6 +1021,9 @@ def check_candidate_space(rec: dict) -> list[str]:
         if e.get("modelled") and applied is not None and bool(e.get("applied")) != applied:
             out.append(f"constraint {e.get('metric')!r} says applied={e.get('applied')} "
                        f"but candidate_space.constraint_models_applied={applied}")
+        if "every candidate" in str(e.get("reason") or ""):
+            out.append(f"constraint {e.get('metric')!r}'s reason claims EVERY candidate "
+                       f"of a searched space; only the evaluated set is known")
     return out
 
 

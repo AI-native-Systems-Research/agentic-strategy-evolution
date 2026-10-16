@@ -806,7 +806,8 @@ def _fit_row_records(work_dir: Path, outcomes, stage_name: str,
 
 
 def _constraint_models_record(models, scored_all, rec, *, delta: float,
-                              applied: bool | None = None) -> list[dict]:
+                              applied: bool | None = None,
+                              evaluated: int | None = None) -> list[dict]:
     """What the constraint models did, per constraint, for ``recommendation.json``.
 
     ``scored_all`` is the candidate space BEFORE the model-based exclusion, so
@@ -821,6 +822,10 @@ def _constraint_models_record(models, scored_all, rec, *, delta: float,
     when given, is what the ranking actually did
     (``CandidateSpace.constraint_models_applied``); when ``None`` it is derived
     from ``scored_all``, which is the same thing for an enumerated space.
+    ``evaluated`` is given exactly when the space was SEARCHED (the number of
+    configurations the search scored); a dropped model's ``reason`` then says
+    no admissible point was FOUND among them, never that EVERY candidate is
+    infeasible -- only enumeration can say that.
     """
     d = cmodels.per_constraint_delta(models, delta)
     if applied is None:
@@ -842,11 +847,18 @@ def _constraint_models_record(models, scored_all, rec, *, delta: float,
                 if cmodels.bound(m, c.coded, delta=d)["verdict"] == "infeasible"
             ) if applied else 0
             entry["at_recommendation"] = cmodels.bound(m, rec.coded, delta=d)
-            if not applied:
+            if not applied and evaluated is None:
                 entry["reason"] = (
                     "modelled, but NOT applied: the models predict every "
                     "candidate confidently infeasible, and an empty space can only "
                     "abort -- left to measurement instead"
+                )
+            elif not applied:
+                entry["reason"] = (
+                    f"modelled, but NOT applied: no point the models admit was "
+                    f"FOUND among {int(evaluated)} evaluated configurations "
+                    f"(searched, not enumerated), and an empty space can only "
+                    f"abort -- left to measurement instead"
                 )
         out.append(entry)
     return out
@@ -4041,6 +4053,7 @@ def run_stage(
         rec, delta=delta_s,
         applied=(None if candidate_space.exhaustive
                  else bool(candidate_space.constraint_models_applied)),
+        evaluated=None if candidate_space.exhaustive else candidate_space.evaluated,
     )
     uncertain_at_rec = [
         e["metric"] for e in constraint_record

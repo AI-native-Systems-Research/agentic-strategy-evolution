@@ -537,3 +537,48 @@ def test_the_feasibility_ascent_respects_measured_exclusions():
     assert r[0].levels != corner
     assert sorted(r[0].levels.values()) == [15, 17, 17, 17, 17]
     assert all(c.levels != corner for c in r)
+
+
+# ─── stage-0 review: a searched drop never claims "every candidate" (A2) ────
+
+
+def _dropped_constraint_rec(tmp_path, monkeypatch, cap):
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    if cap is not None:
+        monkeypatch.setattr(decide, "CANDIDATE_CAP", cap)
+    s = SURFACES["infeasible_corner_interior"]()
+    # p99 <= 1 ms: every configuration is confidently infeasible, so the
+    # models are dropped (spec 3.6: always act; confirm can still measure).
+    ov = {"response": {"primary": {"metric": "m", "direction": s.direction},
+                       "constraints": [{"metric": "p99_ms", "op": "<=", "value": 1}]},
+          "stages": ["verify", "screen", "confirm"]}
+    res = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path, campaign_overrides=ov,
+                                 max_iterations=12)
+    return json.loads((Path(res.work_dir) / "runs" / "iter-2" /
+                       "recommendation.json").read_text())
+
+
+def test_a_searched_space_that_drops_its_models_says_found_not_every(tmp_path, monkeypatch):
+    """Searched (cap forced to 1): the reason says what is known -- no
+    admissible point was FOUND among the evaluated configurations -- and the
+    INV-STAT18 checker passes it."""
+    rec = _dropped_constraint_rec(tmp_path, monkeypatch, 1)
+    (entry,) = rec["constraint_models"]
+    assert entry["modelled"] is True and entry["applied"] is False
+    n = rec["candidate_space"]["evaluated"]
+    assert (f"no point the models admit was FOUND among {n} evaluated configurations "
+            f"(searched, not enumerated)") in entry["reason"]
+    assert "every candidate" not in entry["reason"]
+    assert check_candidate_space(rec) == []
+
+
+def test_an_enumerated_space_that_drops_its_models_keeps_its_wording(tmp_path, monkeypatch):
+    """Enumerated: "every candidate" is exactly right, and byte-identical."""
+    rec = _dropped_constraint_rec(tmp_path, monkeypatch, None)
+    (entry,) = rec["constraint_models"]
+    assert "candidate_space" not in rec
+    assert entry["reason"] == (
+        "modelled, but NOT applied: the models predict every candidate confidently "
+        "infeasible, and an empty space can only abort -- left to measurement instead")
