@@ -2176,11 +2176,18 @@ def _epoch_end_remedy(when: dict) -> str:
     )
 
 
+import contextvars
+
+#: Set while run_stage serves ``nous reanalyze``: nothing is measured, and the
+#: scratch work_dir has no clean tree to check.
+_REANALYSIS = contextvars.ContextVar("nous_reanalysis", default=False)
+
+
 def _check_clean_tree_after(campaign, work_dir, what: str) -> None:
     """Raise when target code modified the clean tree (clean_tree.check)."""
     from orchestrator.optimize import clean_tree as _ct
 
-    if not (Path(work_dir) / _ct.RECORD).exists():
+    if _REANALYSIS.get() or not (Path(work_dir) / _ct.RECORD).exists():
         return
     try:
         _ct.check(Path(work_dir))
@@ -2529,6 +2536,41 @@ def run_stage(
     agent call, mirroring ``SDKDispatcher(sdk_runner=...)``. Every other
     stage is pure Python and ignores it.
     """
+    from orchestrator.engine import Engine
+    from orchestrator.gates import HumanGate
+    from orchestrator.iteration import (
+        IterationOutcome,
+        _enter_phase,
+        finalize_iteration,
+    )
+
+    _reanalysis_token = _REANALYSIS.set(bool(reanalysis))
+    try:
+        return _run_stage_body(
+            campaign, work_dir, iteration=iteration, stage=stage,
+            config_runner=config_runner, integrity_check=integrity_check,
+            test_results=test_results, auto_approve=auto_approve, gate=gate,
+            model=model, sdk_runner=sdk_runner, reanalysis=reanalysis, **_ignored)
+    finally:
+        _REANALYSIS.reset(_reanalysis_token)
+
+
+def _run_stage_body(
+    campaign: dict,
+    work_dir: Path,
+    *,
+    iteration: int,
+    stage=None,
+    config_runner=None,
+    integrity_check=None,
+    test_results=None,
+    auto_approve: bool = True,
+    gate=None,
+    model=None,
+    sdk_runner=None,
+    reanalysis: bool = False,
+    **_ignored,
+):
     from orchestrator.engine import Engine
     from orchestrator.gates import HumanGate
     from orchestrator.iteration import (
