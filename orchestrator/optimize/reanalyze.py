@@ -22,7 +22,7 @@ iteration by iteration, with:
 * the per-iteration test verdicts recorded in ``relations.json``.
 
 ``plan`` and ``build`` iterations are agent calls and the build oracles
-(2(b)/2(c), the write-scope gate, the build review) are MEASUREMENTS of the
+(2(b), 2(c), 2(d), the write-scope gate, the build review) are MEASUREMENTS of the
 target tree; none of them is re-run. Their records are left out of the
 comparison and listed as such. ``mechanism.sha256`` is carried into the scratch
 dir so the recompiled policy hashes to the registered one.
@@ -31,7 +31,9 @@ Then every derived artifact (policy, transitions, design matrices, fits,
 recommendations, shortlists, confirmations, the report and report.md) is
 compared with the original after removing volatile fields (timestamps,
 durations, attempt counts, absolute paths, the Nous version stamp). Identical
-means the campaign is reproducible from its rows; every difference is listed.
+means the ANALYSIS is re-derived from its rows (the measurements are not re-run,
+and row attempt counts and durations are not replayed); every difference is
+listed. Exit 2 when the work_dir cannot be reanalysed at all.
 Before any of that, the input hashes ``report.json`` recorded
 (``provenance.inputs``) are checked against the files on disk, so a row edited
 after the report was written is reported as such.
@@ -87,6 +89,7 @@ class Reanalysis:
     replay_mismatches: list[str] = field(default_factory=list)
     compared: list[str] = field(default_factory=list)
     not_rederived: list[str] = field(default_factory=list)
+    excluded: list[dict] = field(default_factory=list)
     skipped_iterations: list[dict] = field(default_factory=list)
     nous_then: dict | None = None
     nous_now: dict | None = None
@@ -218,16 +221,30 @@ def _iter_numbers(work_dir: Path) -> list[int]:
     return sorted(out)
 
 
-def _epoch_campaigns(work_dir: Path, fallback: dict | None) -> dict[int, dict]:
-    out = {}
+def _epoch_campaigns(work_dir: Path, fallback: dict | None
+                     ) -> tuple[dict[int, dict], list[dict]]:
+    """``({epoch: campaign}, problems)``. An epoch file that does not parse is
+    a PROBLEM (recorded as a difference), never silently replaced by another
+    epoch's campaign."""
+    out, problems = {}, []
     for p in work_dir.glob("campaign.epoch-*.yaml"):
         try:
-            out[int(p.stem.split("-")[-1])] = yaml.safe_load(p.read_text())
-        except (ValueError, yaml.YAMLError):
+            e = int(p.stem.split("-")[-1])
+        except ValueError:
+            problems.append({"file": p.name, "difference": "epoch file name is not campaign.epoch-<int>.yaml"})
             continue
-    if not out and fallback is not None:
+        try:
+            doc = yaml.safe_load(p.read_text())
+        except (OSError, yaml.YAMLError) as exc:
+            problems.append({"file": p.name, "difference": f"registered campaign does not parse: {exc}"})
+            continue
+        if not isinstance(doc, dict):
+            problems.append({"file": p.name, "difference": "registered campaign is not a mapping"})
+            continue
+        out[e] = doc
+    if not out and not problems and fallback is not None:
         out[1] = fallback
-    return out
+    return out, problems
 
 
 def _iteration_epochs(work_dir: Path, iters: list[int], n_epochs: int) -> dict[int, int]:
@@ -264,7 +281,8 @@ def check_inputs(work_dir: Path) -> list[dict]:
 
     rep = work_dir / "report.json"
     if not rep.exists():
-        return []
+        return [{"file": "report.json", "change": "absent: inputs_unchecked (no recorded "
+                 "hashes to compare the rows against)"}]
     recorded = ((json.loads(rep.read_text()).get("provenance") or {}).get("inputs")) or {}
     if not recorded:
         return [{"file": "report.json", "change": "no provenance.inputs recorded "
@@ -307,7 +325,11 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         result.nous_then = None
     result.nous_now = nous_version_info()
 
-    campaigns = _epoch_campaigns(orig, campaign)
+    campaigns, problems = _epoch_campaigns(orig, campaign)
+    if problems:
+        result.differences.extend(problems)
+        result.identical = False
+        return result
     if not campaigns:
         raise ValueError(f"{orig} has no campaign.epoch-*.yaml and no campaign was given")
     iters = _iter_numbers(orig)
@@ -368,29 +390,39 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
 
         roots = [str(orig), str(new), str(Path(work_dir))]
 
-        def _files(root: Path) -> set[str]:
+        def _files(root: Path, excluded: list | None = None) -> set[str]:
             out = set()
             for p in root.rglob("*"):
-                if not p.is_file() or ".claude" in p.parts:
-                    continue
-                if p.suffix not in (".json", ".jsonl", ".sha256", ".md", ".patch"):
+                if not p.is_file():
                     continue
                 rel = p.relative_to(root).as_posix()
-                if p.name in IGNORED or p.name == "CLAUDE.md":
-                    continue
-                if "failed_runs" in p.parts or p.name in ("build_summary.md",):
+                why = None
+                if ".claude" in p.parts or p.name == "CLAUDE.md":
+                    why = "session configuration"
+                elif p.suffix not in (".json", ".jsonl", ".sha256", ".md", ".patch"):
+                    why = f"not an analysis artifact type ({p.suffix or 'no suffix'})"
+                elif p.name in IGNORED:
+                    why = "bookkeeping, outside the analysis"
+                elif "failed_runs" in p.parts or p.name in ("build_summary.md",):
+                    why = "a measurement or agent log"
+                elif p.name.startswith("gate_summary") or p.name in (
+                        "halt.json", "halt_history.jsonl", "progress.json"):
+                    why = "written by the campaign loop, not by the stage runner"
+                if why:
+                    if excluded is not None:
+                        excluded.append({"file": rel, "why": why})
                     continue
                 out.add(rel)
             return out
 
-        a, b = _files(orig), _files(new)
+        a, b = _files(orig, result.excluded), _files(new)
         for rel in sorted(a | b):
             name = rel.rsplit("/", 1)[-1]
             if name in NOT_DERIVED:
                 result.not_rederived.append(rel)
                 continue
             if rel not in b:
-                if name in NOT_DERIVED or name.startswith("gate_summary"):
+                if name in NOT_DERIVED:
                     result.not_rederived.append(rel)
                 else:
                     result.differences.append({"file": rel, "difference": "not re-derived"})
@@ -417,9 +449,14 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
 
 
 def format_result(r: Reanalysis) -> str:
-    lines = [("REPRODUCIBLE: every re-derived artifact matches the recorded one."
-              if r.identical else "NOT REPRODUCED: differences below."),
+    lines = [("ANALYSIS RE-DERIVED: every re-derived artifact matches the recorded one "
+              "(the measurements themselves were not re-run)."
+              if r.identical else "ANALYSIS NOT RE-DERIVED IDENTICALLY: differences below."),
              f"  compared {len(r.compared)} derived artifact(s)"]
+    if r.excluded:
+        lines.append(f"  excluded from the comparison: {len(r.excluded)} file(s): "
+                     + ", ".join(f"{e['file']} ({e['why']})" for e in r.excluded[:12])
+                     + (" ..." if len(r.excluded) > 12 else ""))
     then, now = r.nous_then or {}, r.nous_now or {}
     if then:
         same = then.get("source_sha256") == now.get("source_sha256")

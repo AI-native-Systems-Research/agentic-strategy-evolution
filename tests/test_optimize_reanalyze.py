@@ -33,7 +33,7 @@ def campaign(tmp_path):
 def test_an_untouched_campaign_reanalyzes_identically(campaign, monkeypatch, capsys):
     assert _cli(monkeypatch, str(campaign.work_dir)) == 0
     out = capsys.readouterr().out
-    assert out.startswith("REPRODUCIBLE")
+    assert out.startswith("ANALYSIS RE-DERIVED")
 
 
 def test_reanalysis_compares_every_fitted_artifact(campaign):
@@ -149,3 +149,81 @@ def test_a_built_campaign_reanalyzes_without_rerunning_the_build(tmp_path, monke
     assert [s_["stage"] for s_ in res.skipped_iterations] == ["build"]
     assert "build_review.json" in res.not_rederived
     assert "report.json" in res.compared
+
+
+# ─── review R2: every way the record can disagree with its rows is caught ───
+
+
+def _rows(p):
+    return [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()]
+
+
+def test_a_flipped_transition_decision_is_a_difference(campaign):
+    p = campaign.work_dir / "transitions.jsonl"
+    rows = _rows(p)
+    rows[0]["to"] = "report"
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    res = reanalyze(campaign.work_dir)
+    assert not res.identical
+    assert "transitions.jsonl" in {d["file"] for d in res.differences}
+
+
+def test_a_deleted_derived_artifact_is_a_difference(campaign):
+    (campaign.work_dir / "runs" / "iter-3" / "effects.json").unlink()
+    res = reanalyze(campaign.work_dir)
+    assert {"file": "runs/iter-3/effects.json", "difference": "only in reanalysis"} in res.differences
+
+
+def test_an_extra_derived_artifact_is_a_difference(campaign):
+    (campaign.work_dir / "runs" / "iter-2" / "planted.json").write_text("{}")
+    res = reanalyze(campaign.work_dir)
+    assert {"file": "runs/iter-2/planted.json", "difference": "not re-derived"} in res.differences
+
+
+def test_rows_added_after_the_report_are_an_input_change(campaign):
+    p = campaign.work_dir / "runs" / "iter-2" / "runs.jsonl"
+    rows = _rows(p)
+    extra = dict(rows[0], row_index=999)
+    p.write_text(p.read_text() + json.dumps(extra) + "\n")
+    res = reanalyze(campaign.work_dir)
+    assert not res.identical
+    assert {"file": "runs/iter-2/runs.jsonl",
+            "change": "content changed after the report was written"} in res.input_changes
+
+
+def test_a_recorded_row_at_other_levels_is_a_replay_mismatch(campaign):
+    p = campaign.work_dir / "runs" / "iter-2" / "runs.jsonl"
+    rows = _rows(p)
+    rows[0]["levels"] = {k: (v if not isinstance(v, (int, float)) else v + 1)
+                         for k, v in rows[0]["levels"].items()}
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    res = reanalyze(campaign.work_dir)
+    assert not res.identical and res.replay_mismatches, res
+
+
+def test_an_unparseable_epoch_campaign_is_a_difference_not_a_substitution(campaign):
+    (campaign.work_dir / "campaign.epoch-1.yaml").write_text("optimization: [unclosed\n")
+    res = reanalyze(campaign.work_dir)
+    assert not res.identical
+    assert any(d["file"] == "campaign.epoch-1.yaml" for d in res.differences)
+
+
+def test_a_missing_report_means_inputs_unchecked(campaign):
+    (campaign.work_dir / "report.json").unlink()
+    res = reanalyze(campaign.work_dir)
+    assert not res.identical
+    assert any("inputs_unchecked" in c["change"] for c in res.input_changes)
+
+
+def test_excluded_files_are_listed(campaign):
+    (campaign.work_dir / "notes.txt").write_text("hand notes")
+    res = reanalyze(campaign.work_dir)
+    assert res.identical
+    assert any(e["file"] == "notes.txt" for e in res.excluded)
+
+
+def test_a_work_dir_that_cannot_be_reanalysed_exits_2(tmp_path, monkeypatch, capsys):
+    wd = tmp_path / "bare"
+    wd.mkdir()
+    (wd / "state.json").write_text("{}")
+    assert _cli(monkeypatch, str(wd)) == 2
